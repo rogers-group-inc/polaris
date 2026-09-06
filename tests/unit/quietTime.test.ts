@@ -140,4 +140,61 @@ describe("describeQuietWindow / describeQuietTime", () => {
   it("is empty with no quiet time, so the policy sentence prunes it away", () => {
     expect(describeQuietTime(null)).toBe("");
   });
+
+  it("groups days that keep the same hours, in calendar order", () => {
+    // Nights Mon–Wed, all day at the weekend — one window, not four.
+    const w = quietConfigSchema.parse({
+      windows: [{
+        version: 1, kind: "recurring", freq: "weekly",
+        daysOfWeek: [0, 1, 2, 3, 6],
+        hours: [{ startTime: "22:00", endTime: "06:00" }],
+        hoursByDay: [{ dow: 0, hours: [] }, { dow: 6, hours: [] }],
+      }],
+    }).windows[0]!;
+    expect(describeQuietWindow(w)).toBe("Sun all day; Mon, Tue, Wed 22:00–06:00; Sat all day");
+  });
+
+  it("lists several ranges on one line", () => {
+    const w = quietConfigSchema.parse({
+      windows: [{
+        version: 1, kind: "recurring", freq: "daily",
+        hours: [{ startTime: "22:00", endTime: "06:00" }, { startTime: "12:00", endTime: "13:00" }],
+      }],
+    }).windows[0]!;
+    expect(describeQuietWindow(w)).toBe("daily 22:00–06:00, 12:00–13:00");
+  });
+});
+
+/**
+ * Per-day hours are what let ONE window say "nights during the week, all
+ * weekend" — the configuration that used to need two, and the reason the
+ * wizard now edits a single window instead of a list.
+ */
+describe("a single window with per-day hours", () => {
+  const weekNightsAndWeekend = quiet({
+    version: 1, kind: "recurring", freq: "weekly",
+    daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+    hours: [{ startTime: "22:00", endTime: "06:00" }],
+    hoursByDay: [{ dow: 0, hours: [] }, { dow: 6, hours: [] }],
+  });
+
+  it("is quiet overnight on a weekday and all day at the weekend", () => {
+    expect(isQuietNow(weekNightsAndWeekend, at(2026, 8, 25, 23, 0))).toBe(true); // Tue night
+    expect(isQuietNow(weekNightsAndWeekend, at(2026, 8, 25, 14, 0))).toBe(false); // Tue afternoon
+    expect(at(2026, 8, 29).getDay()).toBe(6);
+    expect(isQuietNow(weekNightsAndWeekend, at(2026, 8, 29, 14, 0))).toBe(true); // Saturday
+  });
+
+  it("chains a Friday-night alert through the whole weekend", () => {
+    // Fri 22:00 → Sat 06:00 OVERLAPS all-day Saturday, which abuts all-day
+    // Sunday: one unbroken stretch of silence from Friday night.
+    expect(at(2026, 8, 28).getDay()).toBe(5);
+    // It ends at MIDNIGHT on Monday, not 06:00 — and that is the START-day
+    // rule doing exactly what it says. Sunday's own hours are "all day", which
+    // replaces the 22:00–06:00 range rather than adding to it, so nothing
+    // covers Monday 00:00–06:00: Monday's range starts on MONDAY at 22:00.
+    // An operator who wants the weekend to run into Monday morning gives
+    // Sunday the hours 22:00–06:00 instead of all-day, or adds them to it.
+    expect(quietResumesAt(weekNightsAndWeekend, at(2026, 8, 28, 23, 30))).toEqual(at(2026, 8, 31, 0, 0));
+  });
 });

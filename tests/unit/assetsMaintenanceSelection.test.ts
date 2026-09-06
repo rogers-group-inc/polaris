@@ -60,6 +60,10 @@ beforeAll(() => {
       },
     },
   };
+  // The shared recurrence editor, loaded before this file on every page that
+  // carries it: the schedule editor's days-and-hours rows are built from it
+  // while the modal body is assembled, so without it the whole modal throws.
+  (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recurrence-editor.js"), "utf8"));
   const src = readFileSync(resolve(__dirname, "../../public/js/assets-maintenance.js"), "utf8");
   (0, eval)(src);
   openMaintenanceModal = (win as unknown as { openMaintenanceModal: typeof openMaintenanceModal })

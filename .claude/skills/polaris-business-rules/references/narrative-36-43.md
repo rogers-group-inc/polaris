@@ -404,14 +404,25 @@ validates the windows with `maintenanceRecurrence.scheduleShapeSchema` and evalu
 with its `currentWindow` / `nextWindow`. Everything that module solved is solved here for
 free: server-local wall clock (a 22:00 quiet window means 22:00 at the site across a DST
 shift), the half-open midnight-spanning window whose day-of-week selector matches the START
-day, and an operator who already learned that vocabulary in the Maintenance modal. The one
-thing that differs is that a quiet time is a LIST — "nights, and all weekend" is two
-recurrences and no single shape expresses it — so any one window being active means quiet,
-and `quietResumesAt` chains through abutting windows because a Friday-night alert resumes
-Monday at 06:00, not Saturday at 06:00. The browser's summary of the same shape comes from
-the same place for the same reason: `PolarisRecurrence.summary` in `assets-maintenance.js`,
-rather than a second summariser in the wizard that would drift into describing one window
-two ways on two pages.
+day, and an operator who already learned that vocabulary in the Maintenance modal. A quiet
+time is still a LIST of windows, and any one of them being active means quiet — but since
+per-day hours arrived (business rule 16) a SINGLE window says "nights during the week, all
+weekend", which used to need two. That is why the wizard edits one window with the shared
+`PolarisRecurrence` day/hours editor and lists anything else — a one-shot, a monthly change
+freeze, active-date bounds, none of which those rows can express — read-only, offering
+removal but never an edit that would silently rewrite it into something else. The list
+survives for exactly those, and `quietResumesAt` still chains through abutting windows
+because a Friday-night alert resumes Monday at 06:00, not Saturday at 06:00. The browser's
+summary and its editor come from the same place for the same reason:
+`public/js/recurrence-editor.js`, rather than a second copy in the wizard that would drift
+into describing — or saving — one window two ways on two pages.
+
+One consequence of the START-day rule is worth stating because operators meet it here
+first. "All day Sunday" replaces Sunday's hours rather than adding to them, so a schedule
+of week-nights 22:00–06:00 plus all-day Saturday and Sunday goes quiet from Friday 22:00
+and resumes at MIDNIGHT on Monday, not at 06:00: Monday's range starts on Monday at 22:00,
+and nothing covers Monday 00:00–06:00. An operator who wants the weekend to run into Monday
+morning gives Sunday the hours 22:00–06:00 instead of all day. `quietTime.test.ts` pins it.
 
 **Quiet applies to the reminder pass ONLY.** Not the first alert — a new outage pages
 whatever the hour. Not the escalation tiers: a tier exists to chase a *specific* person

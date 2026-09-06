@@ -47,6 +47,9 @@ beforeAll(() => {
   g.wireModalTabs = () => {};
   g.collectTagCriteria = () => null;
   g.api = {};
+  // The shared recurrence editor, loaded before this file on every page that
+  // carries it — the schedule editor's days-and-hours rows come from it.
+  (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recurrence-editor.js"), "utf8"));
   const src = readFileSync(resolve(__dirname, "../../public/js/assets-maintenance.js"), "utf8");
   (0, eval)(src);
   const w = win as unknown as {

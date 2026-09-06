@@ -35,8 +35,11 @@ import {
   scheduleShapeSchema,
   currentWindow,
   nextWindow,
+  resolveDayRanges,
   type MaintenanceOccurrence,
   type MaintenanceScheduleShape,
+  type RecurringSchedule as RecurringShape,
+  type TimeRange,
 } from "./maintenanceRecurrence.js";
 
 /** Cap on windows in one automation's quiet time. Eight covers "nights +
@@ -124,40 +127,62 @@ export function quietResumesAt(quiet: QuietConfig | null | undefined, now: Date)
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "22:00–06:00" / "all day" — the time half of a window's description. */
-function timePhrase(startTime?: string, endTime?: string): string {
-  return startTime && endTime ? `${startTime}–${endTime}` : "all day";
+/** "22:00–06:00, 12:00–13:00" / "all day" — the hours half of a description. */
+function hoursPhrase(ranges: TimeRange[] | null): string {
+  if (ranges === null || ranges.length === 0) return "all day";
+  return ranges.map((r) => `${r.startTime}–${r.endTime}`).join(", ");
 }
 
 /**
- * One window in words: "daily 22:00–06:00", "Sat, Sun all day".
+ * The days of a weekly/daily window grouped by the hours they keep:
+ * "Mon, Tue, Wed 22:00–06:00; Sat all day".
+ *
+ * Grouped rather than listed per day because with per-day hours the common
+ * shape is still "the same hours on most days, and something else at the
+ * weekend" — seven segments saying the same thing is what makes a policy
+ * sentence unreadable.
+ */
+function describeDayHours(w: RecurringShape): string {
+  const days = w.freq === "daily" ? [0, 1, 2, 3, 4, 5, 6] : (w.daysOfWeek ?? []).slice().sort((a, b) => a - b);
+  if (days.length === 0) return "";
+  const groups: { hours: string; days: number[] }[] = [];
+  for (const d of days) {
+    const hours = hoursPhrase(resolveDayRanges(w, d));
+    const last = groups[groups.length - 1];
+    // Only ADJACENT days merge, so the label keeps calendar order — "Mon, Tue,
+    // Wed 22:00–06:00; Thu all day; Fri, Sat 22:00–06:00" reads as a week,
+    // where collecting all the 22:00 days together would not.
+    if (last && last.hours === hours) last.days.push(d);
+    else groups.push({ hours, days: [d] });
+  }
+  // Every day the same: say it once, and say "daily" when that is all seven.
+  if (groups.length === 1) {
+    return days.length === 7 ? `daily ${groups[0]!.hours}` : `${days.map((d) => WEEKDAY_LABELS[d]).join(", ")} ${groups[0]!.hours}`;
+  }
+  return groups.map((g) => `${g.days.map((d) => WEEKDAY_LABELS[d]).join(", ")} ${g.hours}`).join("; ");
+}
+
+/**
+ * One window in words: "daily 22:00–06:00", "Mon, Tue 22:00–06:00; Sat all day".
  *
  * Terse on purpose. This text goes into `{repeat.policy}` — a sentence inside
  * an alert email, read by someone who wants to know when the next reminder is
  * coming, not into a schedule editor. The browser's own summary of the same
- * shape (`PolarisRecurrence.summary`, assets-maintenance.js) is the richer one
- * and is what the wizard shows while the operator is building the window.
+ * shape (`PolarisRecurrence.summary`, `public/js/recurrence-editor.js`) is the
+ * richer one and is what the wizard shows while the operator is building it.
  */
 export function describeQuietWindow(w: MaintenanceScheduleShape): string {
   if (w.kind === "oneshot") {
     return `${w.startAt.replace("T", " ")} – ${w.endAt.replace("T", " ")}`;
   }
-  const time = timePhrase(w.startTime, w.endTime);
   switch (w.freq) {
     case "daily":
-      return `daily ${time}`;
-    case "weekly": {
-      const days = (w.daysOfWeek ?? [])
-        .slice()
-        .sort((a, b) => a - b)
-        .map((d) => WEEKDAY_LABELS[d] ?? String(d))
-        .join(", ");
-      return days ? `${days} ${time}` : `weekly ${time}`;
-    }
+    case "weekly":
+      return describeDayHours(w) || `weekly ${hoursPhrase(resolveDayRanges(w, 0))}`;
     case "monthly":
-      return `day ${w.dayOfMonth} of each month, ${time}`;
+      return `day ${w.dayOfMonth} of each month, ${hoursPhrase(resolveDayRanges(w, 0))}`;
     case "yearly":
-      return `${MONTH_LABELS[(w.month ?? 1) - 1]} ${w.day} each year, ${time}`;
+      return `${MONTH_LABELS[(w.month ?? 1) - 1]} ${w.day} each year, ${hoursPhrase(resolveDayRanges(w, 0))}`;
   }
 }
 

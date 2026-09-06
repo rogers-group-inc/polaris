@@ -7,10 +7,12 @@
  *   Create Schedule — name + dynamic asset filter (partial hostname, IP or
  *     subnet CIDR, model, manufacturer, OS, asset type — only MONITORED
  *     assets are eligible) with a debounced live device-list preview, plus a
- *     schedule editor (one-time window or daily/weekly/monthly/yearly
- *     recurrence with time-of-day range and optional active date bounds).
- *     The same form doubles as the editor when a schedule is opened from the
- *     list tab.
+ *     schedule editor (one-time window, or a recurrence whose DAYS AND HOURS
+ *     come from the shared `PolarisRecurrence` editor in
+ *     public/js/recurrence-editor.js — each day off, all day, or carrying one
+ *     or more hour ranges — with monthly/yearly taking the hour list on its
+ *     own, plus optional active date bounds). The same form doubles as the
+ *     editor when a schedule is opened from the list tab.
  *
  *   Schedules — every schedule with a human-readable date/time summary,
  *     enabled toggle, edit + delete.
@@ -32,6 +34,10 @@
 
 /* global api, openModal, closeModal, showToast, showConfirm, escapeHtml,
           tabbedBodyHTML, wireModalTabs, loadAssets */
+// The shared recurrence editor is reached as `window.PolarisRecurrence`, never
+// bare: the DOM tests eval these files against a happy-dom Window that is not
+// the module's global object, so a bare reference resolves in a browser and
+// throws in the harness.
 
 // ─── Filter vocabulary ───────────────────────────────────────────────────────
 
@@ -51,11 +57,8 @@ var MAINT_STRING_OPS = [
   { value: "exact",    label: "is" },
   { value: "pattern",  label: "matches (wildcard *)" },
 ];
-var MAINT_WEEKDAYS = [
-  { value: 0, label: "Sun" }, { value: 1, label: "Mon" }, { value: 2, label: "Tue" },
-  { value: 3, label: "Wed" }, { value: 4, label: "Thu" }, { value: 5, label: "Fri" },
-  { value: 6, label: "Sat" },
-];
+// (The weekday vocabulary moved to window.PolarisRecurrence.weekdays with the
+// day/hours editor — nothing here renders a day picker of its own any more.)
 
 var _maintSchedules = [];       // list-tab cache
 var _maintEditingId = null;     // schedule id being edited (null = create mode)
@@ -178,58 +181,18 @@ function _maintFmtDate(iso) {
   return _MAINT_MONTHS[Number(m[2]) - 1] + " " + Number(m[3]) + " " + m[1];
 }
 
-/** Human-readable one-liner for a schedule's recurrence shape. */
-function maintScheduleSummary(schedule) {
-  if (!schedule || !schedule.kind) return "—";
-  if (schedule.kind === "oneshot") {
-    return "One-time " + _maintFmtLocal(schedule.startAt) + " → " + _maintFmtLocal(schedule.endAt);
-  }
-  var time = schedule.startTime && schedule.endTime
-    ? " " + schedule.startTime + "–" + schedule.endTime
-    : " (all day)";
-  var base;
-  switch (schedule.freq) {
-    case "daily":  base = "Daily" + time; break;
-    case "weekly": {
-      var days = (schedule.daysOfWeek || []).slice().sort().map(function (d) {
-        var w = MAINT_WEEKDAYS.find(function (x) { return x.value === d; });
-        return w ? w.label : d;
-      }).join(", ");
-      base = "Weekly " + days + time;
-      break;
-    }
-    case "monthly": base = "Monthly on day " + schedule.dayOfMonth + time; break;
-    case "yearly":  base = "Yearly " + _MAINT_MONTHS[(schedule.month || 1) - 1] + " " + schedule.day + time; break;
-    default: base = schedule.freq + time;
-  }
-  if (schedule.activeFrom || schedule.activeUntil) {
-    base += " · " + (schedule.activeFrom ? _maintFmtDate(schedule.activeFrom) : "…") +
-      " – " + (schedule.activeUntil ? _maintFmtDate(schedule.activeUntil) : "…");
-  }
-  return base;
-}
-
 /**
- * The recurrence seam other surfaces read.
+ * Human-readable one-liner for a schedule's recurrence shape.
  *
- * `MaintenanceSchedule.schedule` stopped being the only thing shaped like a
- * recurrence when automation reminders gained a quiet time (business rule 44):
- * both are the same JSON, validated by the same server-side schema
- * (`maintenanceRecurrence.scheduleShapeSchema`). The automations wizard
- * therefore labels its quiet windows through THIS function rather than growing
- * a second summariser — two summarisers of one shape drift, and the drift
- * shows up as two different sentences describing the same window on two pages.
- *
- * Named rather than reached for as `maintScheduleSummary` so the dependency is
- * legible from the other side, and resolved at CALL time so script order
- * between the two files can't matter.
+ * A thin delegate to `window.PolarisRecurrence.summary` (public/js/recurrence-editor.js),
+ * which owns the shape now that two surfaces edit it — this modal and the
+ * automations wizard's quiet time (business rule 44). Kept as a local name
+ * because this file's list tab and calendar tab both call it, and resolved at
+ * CALL time so script order between the two files can't matter.
  */
-window.PolarisRecurrence = {
-  /** One-line human summary of a recurrence shape (oneshot or recurring). */
-  summary: maintScheduleSummary,
-  /** The weekday vocabulary the day pickers render from (0 = Sunday). */
-  weekdays: MAINT_WEEKDAYS,
-};
+function maintScheduleSummary(schedule) {
+  return window.PolarisRecurrence.summary(schedule);
+}
 
 // ─── Modal shell ────────────────────────────────────────────────────────────
 
@@ -360,11 +323,6 @@ function _maintRuleRowHTML(rule) {
 }
 
 function _maintEditorHTML() {
-  // Default all checked = "every day" (collected as freq=daily).
-  var weekdayBoxes = MAINT_WEEKDAYS.map(function (w) {
-    return '<label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;cursor:pointer">' +
-      '<input type="checkbox" class="maint-dow" value="' + w.value + '" checked style="width:auto">' + w.label + '</label>';
-  }).join("");
   return (
     '<div id="maint-edit-banner" class="hint" style="display:none;margin-bottom:8px;font-weight:600"></div>' +
     '<div class="form-group">' +
@@ -419,20 +377,20 @@ function _maintEditorHTML() {
             '<input type="number" id="maint-day" min="1" max="31" value="1" style="max-width:80px">' +
           '</div>' +
         '</div>' +
+        // Days AND their hours, from the shared recurrence editor
+        // (public/js/recurrence-editor.js) — the same widget the automations
+        // wizard's quiet time uses, because both edit the same stored shape.
+        // Each day is off, all day, or carries one or more hour ranges.
         '<div id="maint-weekly-block" style="margin-top:8px">' +
-          '<label>Days</label>' +
-          '<div>' + weekdayBoxes + '</div>' +
-          '<span class="hint">All days checked = every day.</span>' +
+          '<label>Days and hours</label>' +
+          '<div id="maint-days">' + window.PolarisRecurrence.dayEditorHtml({ hint: false, defaultStart: "20:00", defaultEnd: "02:00" }) + '</div>' +
         '</div>' +
-        '<div style="margin-top:10px">' +
-          '<label>Time range</label>' +
-          '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-right:14px">' +
-            '<input type="checkbox" id="maint-allday" style="width:auto"> All day' +
-          '</label>' +
-          '<span id="maint-time-range">' +
-            '<input type="time" id="maint-time-start" value="20:00"> &ndash; <input type="time" id="maint-time-end" value="02:00">' +
-          '</span>' +
-          '<span class="hint" style="display:block">An end at or before the start runs into the next day — 20:00 &ndash; 02:00 ends at 2 AM the following morning (the day checkboxes match the START day).</span>' +
+        // Monthly / yearly match ONE day per period, so they have no per-day
+        // rows — but they still need hours, and several ranges on that day is
+        // the same want.
+        '<div id="maint-period-hours" style="margin-top:10px;display:none">' +
+          '<label>Hours</label>' +
+          '<div id="maint-period-hours-host">' + window.PolarisRecurrence.hoursListHtml([]) + '</div>' +
         '</div>' +
         '<div style="margin-top:10px">' +
           '<label>Date range (optional)</label>' +
@@ -462,6 +420,33 @@ function _maintEditorHTML() {
   );
 }
 
+/**
+ * Re-seed the per-day rows from a stored shape (null = the defaults).
+ *
+ * The host div is stable and already wired, so replacing its contents keeps
+ * the shared editor's delegated handlers — which is the whole reason the
+ * wiring sits on the host rather than on the rows.
+ */
+function _maintRenderDayEditor(shape) {
+  var host = document.getElementById("maint-days");
+  if (!host) return;
+  // 20:00–02:00 is this modal's own long-standing evening default (the
+  // calendar's click-to-create says the same), so it is passed on every render
+  // rather than left to the shared editor's.
+  host.innerHTML = window.PolarisRecurrence.dayEditorHtml({
+    shape: shape, hint: false, defaultStart: "20:00", defaultEnd: "02:00",
+  });
+  window.PolarisRecurrence.refreshSummary(host);
+}
+
+/** The monthly/yearly hour list, seeded through the same resolution order. */
+function _maintRenderPeriodHours(shape) {
+  var host = document.getElementById("maint-period-hours-host");
+  if (!host) return;
+  var ranges = shape ? window.PolarisRecurrence.dayRanges(shape, 0) : null;
+  host.innerHTML = window.PolarisRecurrence.hoursListHtml(ranges || []);
+}
+
 function _maintCollectCriteria() {
   // Shared DOM→TagCriteria walker (api.js collectTagCriteria) — the wire
   // shape (comma-split, bare-IP→/32 promotion, integration single-id) is
@@ -486,31 +471,24 @@ function _maintCollectSchedule() {
   var freq = document.getElementById("maint-freq").value;
   var out = { version: 1, kind: "recurring", freq: freq };
   if (freq === "days") {
-    // UI mode "specific days" maps onto the stored shape: all 7 checked =
-    // freq "daily", a subset = freq "weekly" + daysOfWeek.
-    var days = Array.prototype.map.call(
-      document.querySelectorAll(".maint-dow:checked"),
-      function (cb) { return Number(cb.value); }
-    );
-    if (!days.length) throw new Error("Pick at least one day of the week");
-    if (days.length === 7) {
-      out.freq = "daily";
-    } else {
-      out.freq = "weekly";
-      out.daysOfWeek = days;
+    // The shared editor owns the whole days-and-hours half of the shape: it
+    // decides between the compact form (every chosen day keeps the same
+    // hours → `hours`, and `freq: "daily"` when that is all seven) and
+    // per-day `hoursByDay`. Its error text names the day at fault.
+    var collected = window.PolarisRecurrence.collectDayEditor(document.getElementById("maint-days"));
+    if (collected.empty) throw new Error("Pick at least one day of the week");
+    if (collected.error) throw new Error(collected.error);
+    Object.keys(collected).forEach(function (k) { out[k] = collected[k]; });
+  } else {
+    if (freq === "monthly") out.dayOfMonth = parseInt(document.getElementById("maint-daymonth").value, 10) || 1;
+    if (freq === "yearly") {
+      out.month = parseInt(document.getElementById("maint-month").value, 10) || 1;
+      out.day = parseInt(document.getElementById("maint-day").value, 10) || 1;
     }
-  }
-  if (freq === "monthly") out.dayOfMonth = parseInt(document.getElementById("maint-daymonth").value, 10) || 1;
-  if (freq === "yearly") {
-    out.month = parseInt(document.getElementById("maint-month").value, 10) || 1;
-    out.day = parseInt(document.getElementById("maint-day").value, 10) || 1;
-  }
-  if (!document.getElementById("maint-allday").checked) {
-    var ts = document.getElementById("maint-time-start").value;
-    var te = document.getElementById("maint-time-end").value;
-    if (!ts || !te) throw new Error("Start and end times are required (or check All day)");
-    out.startTime = ts;
-    out.endTime = te;
+    var hours = window.PolarisRecurrence.collectHoursList(document.getElementById("maint-period-hours-host"), "Hours");
+    if (hours.error) throw new Error(hours.error);
+    // An empty list is all day, which the shape says by carrying no hours.
+    if (hours.ranges.length) out.hours = hours.ranges;
   }
   var af = document.getElementById("maint-active-from").value;
   var au = document.getElementById("maint-active-until").value;
@@ -567,8 +545,11 @@ function _maintSyncScheduleBlocks() {
   document.getElementById("maint-weekly-block").style.display  = (!oneshot && freq === "days")    ? "" : "none";
   document.getElementById("maint-monthly-block").style.display = (!oneshot && freq === "monthly") ? "" : "none";
   document.getElementById("maint-yearly-block").style.display  = (!oneshot && freq === "yearly")  ? "" : "none";
-  document.getElementById("maint-time-range").style.display =
-    document.getElementById("maint-allday").checked ? "none" : "";
+  // Monthly and yearly match one day per period, so they take the hour list on
+  // its own; the per-day rows are the days mode's. The All-day reveal inside
+  // either one belongs to the shared editor, not here.
+  document.getElementById("maint-period-hours").style.display =
+    (!oneshot && (freq === "monthly" || freq === "yearly")) ? "" : "none";
 }
 
 function _maintSyncExplicitLine() {
@@ -680,9 +661,13 @@ function _maintWireEditor() {
     }
   });
 
-  ["maint-kind-oneshot", "maint-kind-recurring", "maint-freq", "maint-allday"].forEach(function (id) {
+  ["maint-kind-oneshot", "maint-kind-recurring", "maint-freq"].forEach(function (id) {
     document.getElementById(id).addEventListener("change", _maintSyncScheduleBlocks);
   });
+  // Wired ONCE on the stable hosts: the shared editor delegates its handlers,
+  // so re-rendering their contents (reset, or loading a schedule) keeps them.
+  window.PolarisRecurrence.wire(document.getElementById("maint-days"));
+  window.PolarisRecurrence.wire(document.getElementById("maint-period-hours-host"));
   _maintSyncScheduleBlocks();
 
   document.getElementById("maint-save").addEventListener("click", _maintSave);
@@ -700,7 +685,8 @@ function _maintResetEditor() {
   document.getElementById("maint-suppress-children").checked = true;
   document.getElementById("maint-kind-oneshot").checked = true;
   document.getElementById("maint-freq").value = "days";
-  document.querySelectorAll(".maint-dow").forEach(function (cb) { cb.checked = true; });
+  _maintRenderDayEditor(null);
+  _maintRenderPeriodHours(null);
   _maintOneshotTouched = false;
   var now = maintServerNow();
   document.getElementById("maint-start").value = _maintLocalIso(now);
@@ -743,20 +729,15 @@ function _maintLoadIntoEditor(row) {
     var storedFreq = s.freq || "daily";
     var daysMode = storedFreq === "daily" || storedFreq === "weekly";
     document.getElementById("maint-freq").value = daysMode ? "days" : storedFreq;
-    document.querySelectorAll(".maint-dow").forEach(function (cb) {
-      cb.checked = storedFreq === "weekly"
-        ? Array.isArray(s.daysOfWeek) && s.daysOfWeek.indexOf(Number(cb.value)) !== -1
-        : true;
-    });
+    // Both halves are re-rendered from the stored shape rather than poked
+    // field by field: the shared editor reads `hours` / `hoursByDay` / the
+    // legacy startTime-endTime pair in ONE resolution order, and a loader that
+    // set individual controls would be a second, drifting copy of it.
+    _maintRenderDayEditor(daysMode ? s : null);
+    _maintRenderPeriodHours(daysMode ? null : s);
     if (s.dayOfMonth) document.getElementById("maint-daymonth").value = s.dayOfMonth;
     if (s.month) document.getElementById("maint-month").value = s.month;
     if (s.day) document.getElementById("maint-day").value = s.day;
-    var allDay = !s.startTime;
-    document.getElementById("maint-allday").checked = allDay;
-    if (!allDay) {
-      document.getElementById("maint-time-start").value = s.startTime;
-      document.getElementById("maint-time-end").value = s.endTime;
-    }
     document.getElementById("maint-active-from").value = s.activeFrom || "";
     document.getElementById("maint-active-until").value = s.activeUntil || "";
   }
