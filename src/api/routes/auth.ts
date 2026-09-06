@@ -6,7 +6,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { hashPassword, verifyPassword } from "../../utils/password.js";
-import { isLocked, recordFailure, clearLockout } from "../../utils/loginLockout.js";
+import { isLocked, lockoutRemaining, recordFailure, clearLockout } from "../../utils/loginLockout.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import {
   verifyCode as verifyTotpCode,
@@ -56,6 +56,7 @@ import {
   testEntraProxyRequest,
 } from "../../services/entraProxyAuthService.js";
 import { normalizeNotificationPreference } from "../../services/notificationPreferenceService.js";
+import { normalizeUserTimezone, serverTimeZone } from "../../services/userTimezoneService.js";
 import { resolveTagScopesForUser } from "../../services/regionScopeService.js";
 import { isBlockedOutboundHost } from "../../utils/netGuard.js";
 import { totpCodeLimiter, ssoEntryLimiter, entraProxyLoginLimiter, ssoCallbackLimiter } from "../middleware/rateLimits.js";
@@ -123,7 +124,7 @@ router.post("/login", async (req, res, next) => {
       });
       throw new AppError(
         423,
-        `Account temporarily locked due to too many failed attempts. Try again after ${lock.until?.toLocaleTimeString() ?? "later"}.`,
+        `Account temporarily locked due to too many failed attempts. Try again in ${lockoutRemaining(lock.until)}.`,
       );
     }
 
@@ -301,7 +302,7 @@ router.post("/login/totp", async (req, res, next) => {
       });
       throw new AppError(
         423,
-        `Account temporarily locked due to too many failed attempts. Try again after ${lock.until?.toLocaleTimeString() ?? "later"}.`,
+        `Account temporarily locked due to too many failed attempts. Try again in ${lockoutRemaining(lock.until)}.`,
       );
     }
 
@@ -441,6 +442,22 @@ router.get("/me", async (req, res, next) => {
       // enrollment to the account's choice on the same boot request it already
       // makes, instead of a second round trip before it can decide.
       notificationPreference: normalizeNotificationPreference(u.notificationPreference),
+      // Rides /auth/me for the same reason: every absolute time the UI draws
+      // needs the zone before the first render, and a second round trip would
+      // mean the first paint used the browser zone and then jumped.
+      // "auto" is passed through AS "auto" rather than resolved here — on the
+      // client that means "pass no timeZone option and let the browser use its
+      // own", which is not the same answer as the server's zone.
+      timezone: normalizeUserTimezone(u.timezone),
+      // What "auto" will mean in an EMAIL, so the account menu can say so
+      // instead of leaving the operator to guess how a server-side render
+      // resolves it.
+      serverTimezone: serverTimeZone(),
+      // What the server currently believes this account's BROWSER zone is.
+      // Echoed back so the client can compare before POSTing /me/timezone
+      // /detected — this endpoint is hit on every page load, and without the
+      // echo every one of those loads would be a write.
+      detectedTimezone: u.detectedTimezone ?? null,
     });
   } catch (err) {
     next(err);

@@ -48,6 +48,60 @@ if (typeof window !== "undefined") window.mobileFormatDate = mobileFormatDate;
 // these live here rather than app.js. The dash-boot forks and the per-page
 // copies (agent-build, assets, server-settings, both mobile tabs) are gone.
 
+// ─── Display timezone ───────────────────────────────────────────────────────
+// The account's chosen IANA zone, or "auto" (the default) meaning "let the
+// browser use its own" — which is what every formatter here did before the
+// preference existed, so an untouched account renders identically.
+//
+// Cached in localStorage and read SYNCHRONOUSLY at load, because api.js is the
+// first script on every page and the first table can paint before /auth/me
+// comes back. Without the cache a returning operator would see one frame of
+// browser-zone times and then a jump. app.js calls setDisplayTimeZone() from
+// the /auth/me response, which corrects the cache for the next load if the
+// account's choice changed on another device.
+//
+// Per-browser storage of a per-ACCOUNT setting is deliberate and safe in one
+// direction only: it is a render hint that the server's answer always
+// overwrites, never the source of truth. The server re-renders its own emails
+// from User.timezone and never consults this.
+var POLARIS_TZ_KEY = "polaris-timezone";
+var _displayTimeZone = "auto";
+try {
+  _displayTimeZone = localStorage.getItem(POLARIS_TZ_KEY) || "auto";
+} catch (_) {
+  // Private mode / blocked site data — "auto" is the correct fallback.
+}
+
+/** The stored preference verbatim: "auto" or an IANA zone name. */
+function displayTimeZone() { return _displayTimeZone; }
+if (typeof window !== "undefined") window.displayTimeZone = displayTimeZone;
+
+/**
+ * Adopt the account's zone (from /auth/me) and remember it for the next boot.
+ * Idempotent; a falsy value resets to "auto" rather than leaving a stale zone
+ * on a browser someone else has since signed into.
+ */
+function setDisplayTimeZone(tz) {
+  _displayTimeZone = tz || "auto";
+  try { localStorage.setItem(POLARIS_TZ_KEY, _displayTimeZone); } catch (_) {}
+}
+if (typeof window !== "undefined") window.setDisplayTimeZone = setDisplayTimeZone;
+
+/**
+ * The `timeZone` option to spread into a toLocale* call — EMPTY on "auto", so
+ * the platform keeps using the browser's own zone rather than us resolving one
+ * for it. Spreading nothing is not the same as passing the browser's zone
+ * explicitly: it is what the call did before, byte for byte.
+ *
+ * Every absolute-time formatter in the app should spread this. A formatter
+ * that doesn't renders in the browser's zone regardless of the preference,
+ * which is only correct while the two agree.
+ */
+function timeZoneOpts() {
+  return _displayTimeZone && _displayTimeZone !== "auto" ? { timeZone: _displayTimeZone } : {};
+}
+if (typeof window !== "undefined") window.timeZoneOpts = timeZoneOpts;
+
 // Compact relative time ("5s ago" / "5m ago" / "3h ago" / "2d ago").
 function timeAgo(dateStr) {
   var diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -68,8 +122,16 @@ function formatDateTime(value) {
   if (!value) return "";
   var d = value instanceof Date ? value : new Date(value);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-    " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  var tz = timeZoneOpts();
+  try {
+    return d.toLocaleDateString(undefined, Object.assign({ month: "short", day: "numeric", year: "numeric" }, tz)) +
+      " " + d.toLocaleTimeString(undefined, Object.assign({ hour: "2-digit", minute: "2-digit", second: "2-digit" }, tz));
+  } catch (_) {
+    // A stored zone this browser's ICU can't apply — render in the browser's
+    // own rather than showing nothing.
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
+      " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
 }
 if (typeof window !== "undefined") window.formatDateTime = formatDateTime;
 
@@ -77,8 +139,14 @@ function formatShortDateTime(value) {
   if (!value) return "";
   var d = value instanceof Date ? value : new Date(value);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
-    " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  var tz = timeZoneOpts();
+  try {
+    return d.toLocaleDateString(undefined, Object.assign({ month: "short", day: "numeric" }, tz)) +
+      " " + d.toLocaleTimeString(undefined, Object.assign({ hour: "2-digit", minute: "2-digit", second: "2-digit" }, tz));
+  } catch (_) {
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
+      " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
 }
 if (typeof window !== "undefined") window.formatShortDateTime = formatShortDateTime;
 
@@ -547,6 +615,15 @@ const api = {
   tableTabs: {
     get:  (scope)         => request("GET", "/me/table-tabs" + toQuery({ scope })),
     save: (scope, layout) => request("PUT", "/me/table-tabs" + toQuery({ scope }), layout),
+  },
+  // Per-user display timezone (the /me/dashboard sibling — private, no gate
+  // beyond being signed in). `detected` is NOT a preference: it reports where
+  // this browser is, so an account that never opens the picker still gets its
+  // alert EMAIL on its own wall clock instead of the server's.
+  timezone: {
+    get:      ()   => request("GET",  "/me/timezone"),
+    set:      (tz) => request("PUT",  "/me/timezone", { timezone: tz }),
+    detected: (tz) => request("POST", "/me/timezone/detected", { timezone: tz }),
   },
   savedFilters: {
     list:   (scope)   => request("GET",    "/saved-filters" + toQuery({ scope })),

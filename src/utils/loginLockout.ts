@@ -27,6 +27,29 @@ function key(username: string): string {
   return username.trim().toLowerCase();
 }
 
+/**
+ * How much longer the lockout has to run, as an operator-facing phrase
+ * ("12 minutes", "1 minute", "less than a minute").
+ *
+ * A DURATION rather than a wall-clock time on purpose. The lockout message is
+ * produced before the caller has authenticated, so there is no account whose
+ * timezone we could render in — and looking one up by the submitted username
+ * would turn this message into an account-existence oracle. The previous form
+ * interpolated a bare server-local `toLocaleTimeString()` with no zone name at
+ * all, which on a UTC-clocked host told a Central operator to come back five
+ * hours after they actually could.
+ *
+ * Rounds UP, so the phrase never invites a retry that is still locked.
+ */
+export function lockoutRemaining(until: Date | undefined, now: Date = new Date()): string {
+  if (!until) return "later";
+  const ms = until.getTime() - now.getTime();
+  if (ms <= 0) return "now";
+  const mins = Math.ceil(ms / 60_000);
+  if (mins < 1) return "less than a minute";
+  return mins === 1 ? "1 minute" : `${mins} minutes`;
+}
+
 export function isLocked(username: string): { locked: boolean; until?: Date } {
   const entry = store.get(key(username));
   if (!entry) return { locked: false };

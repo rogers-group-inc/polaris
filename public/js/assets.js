@@ -16471,6 +16471,19 @@ async function confirmDelete(id, name) {
   }
 }
 
+/**
+ * The YYYY-MM-DD an <input type="date"> wants.
+ *
+ * Reads back in UTC, and MUST keep doing so — this is the only formatter in
+ * the app that deliberately ignores the display-timezone preference. acquiredAt
+ * and warrantyExpiry are date-ONLY facts stored in a DateTime column: the save
+ * path above writes `new Date("2026-01-15").toISOString()`, i.e. UTC midnight,
+ * so UTC is the zone the stored instant actually means. Rendering it in a zone
+ * behind UTC would show 2026-01-14, and saving the untouched form would then
+ * walk the date one day earlier on every edit.
+ *
+ * The pairing is what matters: change this only together with the write half.
+ */
 function dateInputVal(isoStr) {
   if (!isoStr) return "";
   return new Date(isoStr).toISOString().split("T")[0];
@@ -18877,7 +18890,11 @@ async function _exportPanelLogsCsv(kind, asset, key, flaggedOnly, btn) {
         ? l.flags.map(function (f) { return f.label || f.name || ""; }).filter(Boolean).join("; ")
         : "";
       return [
-        l.timestamp ? new Date(l.timestamp).toISOString() : "",
+        // formatDateTime, not toISOString: this column used to be UTC while the
+        // sibling events export (_exportAssetEventsCsv) wrote the operator's own
+        // clock, so the same outage read two different times depending on which
+        // button produced the file.
+        l.timestamp ? formatDateTime(l.timestamp) : "",
         l.level || "",
         l.message || "",
         flags,

@@ -3139,6 +3139,42 @@ model User {
   // email action; a push action in a single-method group ignores it entirely.
   notificationPreference String @default("email") @map("notification_preference")
 
+  // IANA zone this account wants its times rendered in ("America/Chicago"), or
+  // the literal "auto" — the default — meaning "whatever the browser resolves".
+  //
+  // Stored on the USER rather than per browser for the same reason
+  // notificationPreference is: it has to reach a surface that has NO browser.
+  // An alert email is composed server-side and handed to SMTP, so before this
+  // column the only zone it could name was the SERVER's — which on a
+  // UTC-clocked host reads hours off to every operator reading it.
+  //
+  // "auto" resolves to the browser in the UI and to the server zone in an
+  // email, which is exactly the pre-column behaviour: an account that never
+  // touches this sees nothing change.
+  //
+  // Free-form TEXT, not an enum: the tz database gains and retires zones on
+  // its own schedule, and a value this build's ICU cannot resolve must
+  // degrade to "auto" at READ time rather than fail a render or a send.
+  // Validation is normalizeUserTimezone() in userTimezoneService.
+  timezone String @default("auto")
+
+  // The zone this account's BROWSER last reported, reported by the client on
+  // boot. Never operator-set and never shown as a choice — it exists so that
+  // "auto" can mean something on a surface with no browser.
+  //
+  // Without it "auto" (the default, and what nearly every account will stay
+  // on) resolves to the SERVER's zone in an alert email, which on a
+  // UTC-clocked host is the exact reading this whole column set exists to
+  // stop. With it, an operator who never opens the setting still gets email
+  // on their own wall clock.
+  //
+  // Explicit preference beats this; this beats the server zone. Null until the
+  // account signs in on a browser once — an account that only ever receives
+  // email (a service account on a distribution list) keeps the server zone,
+  // which is the best answer available for it.
+  detectedTimezone String? @map("detected_timezone")
+
+
   // Flipped true the first time the user actually logs in (lastLogin transitions
   // null → set). Drives the sidebar "new user — review role" notification for
   // admins; cleared globally by Dismiss.

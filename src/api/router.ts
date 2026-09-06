@@ -44,6 +44,7 @@ import savedFiltersRouter from "./routes/savedFilters.js";
 import savedDashboardsRouter from "./routes/savedDashboards.js";
 import tableTabsRouter from "./routes/tableTabs.js";
 import notificationPreferenceRouter from "./routes/notificationPreference.js";
+import userTimezoneRouter from "./routes/userTimezone.js";
 import { agentsEnrollRouter, agentsRouter, agentsBinaryRouter } from "./routes/agents.js";
 import rolesRouter from "./routes/roles.js";
 import groupMappingsRouter from "./routes/groupMappings.js";
@@ -133,6 +134,7 @@ router.use("/me/table-tabs", tableTabsRouter);
 // per-caller /me route. Stored on the User so it follows them between devices;
 // each client enrolls or unsubscribes its own browser to match at boot.
 router.use("/me/notification-preference", notificationPreferenceRouter);
+router.use("/me/timezone", userTimezoneRouter);
 // Saved table filters (Assets page → Filters ▾). Gated per-request on the
 // function key that owns the requested scope — see routes/savedFilters.ts.
 router.use("/saved-filters", savedFiltersRouter);
