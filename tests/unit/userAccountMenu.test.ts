@@ -2,10 +2,11 @@
  * tests/unit/userAccountMenu.test.ts — the page-header account menu
  * (`openUserMenu` in public/js/app.js).
  *
- * The notification preference, two-factor enrollment and logout live behind
- * the user badge, which means a regression here doesn't misalign a button — it
- * removes the only way to log out from every page at once. The theme toggle is
- * NOT here: it sits at the bottom of the sidebar (see sidebarThemeToggleDom).
+ * The notification preference, display timezone, two-factor enrollment and
+ * logout live behind the user badge, which means a regression here doesn't
+ * misalign a button — it removes the only way to log out from every page at
+ * once. The theme toggle is NOT here: it sits at the bottom of the sidebar
+ * (see sidebarThemeToggleDom).
  *
  * openUserMenu is pulled out of app.js rather than evaluating the whole file
  * (119 KB with polling loops that would fire here); everything it reaches for
@@ -41,7 +42,7 @@ interface Item {
   onSelect?: () => void;
 }
 
-function open(opts: { pref?: Item | null; totp?: Item | null } = {}) {
+function open(opts: { pref?: Item | null; tz?: Item | null; totp?: Item | null } = {}) {
   const captured: { items: Item[]; opts: Record<string, unknown>; anchor: unknown } =
     { items: [], opts: {}, anchor: null };
   const fetches: string[] = [];
@@ -51,9 +52,10 @@ function open(opts: { pref?: Item | null; totp?: Item | null } = {}) {
     captured.anchor = anchor; captured.items = items; captured.opts = o;
   };
   g._notifPrefMenuItem = () => (opts.pref === undefined ? null : opts.pref);
+  g._tzMenuItem = () => (opts.tz === undefined ? null : opts.tz);
   g._totpMenuItem = () => (opts.totp === undefined ? null : opts.totp);
   g._csrfHeaders = () => ({ "x-csrf-token": "t" });
-  g.ICONS = { logout: "<svg id='logout'/>", bell: "<svg id='bell'/>", shield: "<svg id='shield'/>" };
+  g.ICONS = { logout: "<svg id='logout'/>", bell: "<svg id='bell'/>", shield: "<svg id='shield'/>", clock: "<svg id='clock'/>" };
   g.fetch = vi.fn((url: string) => { fetches.push(url); return Promise.resolve({}); });
 
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -91,6 +93,32 @@ describe("openUserMenu", () => {
       totp: { label: "Set up two-factor auth", icon: "<svg/>", onSelect: () => {} },
     });
     expect(r.labels).toEqual(["Notifications: Push", "Set up two-factor auth", "—", "Logout"]);
+  });
+
+  it("slots the timezone row between the preference and two-factor", () => {
+    // It names the RESOLVED zone rather than "Automatic" alone, because the
+    // setting exists for a surface the operator can't see from here (their
+    // alert email), so the row has to say what that surface will use.
+    const r = open({
+      pref: { label: "Notifications: Email", icon: "<svg/>", onSelect: () => {} },
+      tz: { label: "Timezone: America/Chicago", icon: "<svg/>", onSelect: () => {} },
+      totp: { label: "Set up two-factor auth", icon: "<svg/>", onSelect: () => {} },
+    });
+    expect(r.labels).toEqual([
+      "Notifications: Email",
+      "Timezone: America/Chicago",
+      "Set up two-factor auth",
+      "—",
+      "Logout",
+    ]);
+  });
+
+  it("keeps the timezone row for a role that has no notification row", () => {
+    // The timezone row carries NO permission gate, unlike the notification
+    // one: what zone a timestamp is drawn in changes nothing about which data
+    // an account can reach, so a role below alerts:read must still reach it.
+    const r = open({ pref: null, tz: { label: "Timezone: Automatic", icon: "<svg/>", onSelect: () => {} } });
+    expect(r.labels).toEqual(["Timezone: Automatic", "—", "Logout"]);
   });
 
   it("omits the two-factor row for an SSO account without disturbing the rest", () => {

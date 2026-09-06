@@ -48,6 +48,12 @@ import {
   preferenceAllowsTransport,
   type NotificationPreference,
 } from "./notificationPreferenceService.js";
+// Cyclic with userTimezoneService (it imports bumpRecipientIndex from here) —
+// the SAME cycle notificationPreferenceService above already forms, and safe
+// for the same reason: nothing here is called at module-evaluation time, only
+// from inside functions, so both modules finish initializing before either
+// reaches across.
+import { resolveTimeZone, serverTimeZone } from "./userTimezoneService.js";
 import {
   type DeliveryTarget,
   type ChannelType,
@@ -142,6 +148,14 @@ export interface RecipientUser {
    * which is the pre-feature behaviour for every account.
    */
   notificationPreference: NotificationPreference;
+  /**
+   * The CONCRETE IANA zone this account should be mailed in — already resolved
+   * (explicit choice → last-reported browser zone → server zone), never the
+   * literal "auto". Carried alongside the preference, and cached on the same
+   * index, because the email path groups a To list by it and rebuilds the body
+   * once per group; see the timezone grouping in expandDeliveries.
+   */
+  timezone: string;
 }
 
 interface IndexedUser extends RecipientUser {
@@ -168,6 +182,7 @@ function toRecipient(u: IndexedUser): RecipientUser {
     displayName: u.displayName,
     canAcknowledge: u.canAcknowledge,
     notificationPreference: u.notificationPreference,
+    timezone: u.timezone,
   };
 }
 
@@ -175,6 +190,14 @@ function toRecipient(u: IndexedUser): RecipientUser {
 // createTtlCache (2026-08 audit) — the hand-rolled value+timestamp pair it
 // replaces had no in-flight coalescing, so a cold cache could stampede one
 // findMany per concurrent delivery expansion.
+/**
+ * The zone lookup a send that CANNOT rebuild its body per zone uses. Every
+ * address misses, so splitTimeZoneGroups falls all of them back to the server
+ * zone and returns one group — the single row the composed path always
+ * produced. Shared and never written, so it costs nothing per send.
+ */
+const EMPTY_ZONE_MAP: ReadonlyMap<string, string> = new Map<string, string>();
+
 const USER_INDEX_TTL_MS = 30_000;
 const _userIndexCache = createTtlCache<IndexedUser[]>({ ttlMs: USER_INDEX_TTL_MS, maxEntries: 1 });
 
@@ -200,6 +223,8 @@ function loadUserIndex(): Promise<IndexedUser[]> {
       authProvider: true,
       roleId: true,
       notificationPreference: true,
+      timezone: true,
+      detectedTimezone: true,
       role: { select: { regionTags: true, otherTags: true, permissions: true } },
     },
   });
@@ -228,6 +253,10 @@ function loadUserIndex(): Promise<IndexedUser[]> {
         ? rankMeets(permissionOf(normalizePermissions(u.role.permissions), "alerts"), "write")
         : true,
       notificationPreference: normalizeNotificationPreference(u.notificationPreference),
+      // Resolved to a CONCRETE zone here, not stored as "auto": an email has
+      // no browser, so the account's own last-reported browser zone is the
+      // best answer available and the server's is the last resort.
+      timezone: resolveTimeZone(u.timezone, u.detectedTimezone),
     });
   }
   return index;
@@ -480,6 +509,93 @@ export async function ackCapabilityByAddress(): Promise<Map<string, boolean>> {
   return out;
 }
 
+/**
+ * Every signed-in address → the IANA zone that account reads times in.
+ *
+ * The ackCapabilityByAddress sibling, built off the same cached index and for
+ * the same reason: the composed-email path holds ADDRESSES (the To line merges
+ * users, typed addresses and address-book contacts) but needs a per-account
+ * fact about them. Resolved to a concrete zone here rather than left as
+ * "auto" — an email has no browser, so "auto" can only mean the server's zone,
+ * and resolving once here keeps that decision out of the grouping loop.
+ *
+ * An address no account owns is simply absent; the caller falls back to the
+ * server zone, which is what a typed address or a contact always got.
+ *
+ * When two accounts share an address (User.email is nullable and NOT unique)
+ * the LOWEST user id wins — the same tie-break buildAddressOwnerMap uses, so
+ * the zone a shared address is mailed in is stable across sends instead of
+ * flipping with row order.
+ */
+export async function timeZoneByAddress(): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const winner = new Map<string, string>();
+  for (const u of await loadUserIndex()) {
+    if (!u.email?.trim()) continue;
+    const key = u.email.trim().toLowerCase();
+    const held = winner.get(key);
+    if (held !== undefined && held <= u.id) continue;
+    winner.set(key, u.id);
+    out.set(key, u.timezone);
+  }
+  return out;
+}
+
+/** One outbound copy of a composed alert email, addressed to one zone's readers. */
+export interface TimeZoneGroup {
+  /** Concrete IANA zone this copy's times are rendered in. */
+  timeZone: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+}
+
+/**
+ * Split a composed email's recipient lists by the zone each address reads in.
+ *
+ * Composed alerts are ONE message to a shared To line (business rule 25), and
+ * that stays true per zone: this splits a send into one copy per DISTINCT zone
+ * among its recipients, not one per person. In practice a fleet whose
+ * operators all sit in one zone produces exactly one group and the identical
+ * single row it always did — the split only costs a message when the readers
+ * genuinely disagree about what time it is.
+ *
+ * It composes with splitAckVariants rather than replacing it: the caller runs
+ * this first, then splits each group by acknowledge capability, so the worst
+ * case is (distinct zones x 2) rows.
+ *
+ * Cc and Bcc are grouped on the same key as To — an address is mailed in its
+ * OWNER's zone whichever line it sits on — so nobody receives two copies and
+ * a Cc'd reader gets the same wall clock they would as a direct recipient.
+ * Insertion order follows first appearance across to, then cc, then bcc, so
+ * the primary recipients' zone leads.
+ *
+ * Pure — exported for the tests.
+ */
+export function splitTimeZoneGroups(
+  to: string[],
+  cc: string[],
+  bcc: string[],
+  zoneOf: ReadonlyMap<string, string>,
+  fallbackZone: string,
+): TimeZoneGroup[] {
+  const groups = new Map<string, TimeZoneGroup>();
+  const zoneFor = (a: string) => zoneOf.get(a.trim().toLowerCase()) ?? fallbackZone;
+  const push = (line: "to" | "cc" | "bcc", a: string) => {
+    const tz = zoneFor(a);
+    let g = groups.get(tz);
+    if (!g) {
+      g = { timeZone: tz, to: [], cc: [], bcc: [] };
+      groups.set(tz, g);
+    }
+    g[line].push(a);
+  };
+  for (const a of to) push("to", a);
+  for (const a of cc) push("cc", a);
+  for (const a of bcc) push("bcc", a);
+  return Array.from(groups.values());
+}
+
 /** One outbound variant of a composed alert email. */
 export interface AckVariant {
   /** Does this copy carry the Acknowledge button? */
@@ -582,6 +698,24 @@ export interface ExpandDeliveriesOptions {
   assetContactEmails?: string[];
   composedEmail?: ComposedEmail;
   /**
+   * Rebuild `composedEmail` with its times rendered in `timeZone`.
+   *
+   * Supplying this opts the send into per-recipient timezones: the To/Cc/Bcc
+   * lines are grouped by the zone each address's account reads in, and each
+   * group is mailed a body rebuilt through this closure. OMITTING it keeps the
+   * pre-column behaviour exactly — one body in the server's zone for everyone —
+   * which is what a caller with no (composition, context) pair in hand can
+   * honestly offer.
+   *
+   * A closure rather than a (comp, ctx) pair because the two live in different
+   * layers: the action layer merges per-action overrides into the composition
+   * before rendering, and this service must not learn that merge.
+   *
+   * Called at most once per distinct zone per send, and memoized by the caller
+   * loop — so the common all-one-zone fleet pays for exactly one rebuild.
+   */
+  composedEmailForTimeZone?: (timeZone: string) => ComposedEmail;
+  /**
    * "Reminders every 15 minutes until acknowledged. Escalates in 30 minutes…"
    * — the follow-up policy as one line, appended to the WEB PUSH body.
    *
@@ -621,7 +755,7 @@ export async function expandDeliveries(
   targets: DeliveryTarget[] | undefined,
   opts: ExpandDeliveriesOptions = {},
 ): Promise<number> {
-  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp } = opts;
+  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, composedEmailForTimeZone, escalation, repeat, enforceUserPreference, followUp } = opts;
   if (!targets || targets.length === 0) return 0;
 
   // Resolve the referenced channels once (type + enabled).
@@ -796,6 +930,60 @@ export async function expandDeliveries(
     return _ackCapable;
   };
 
+  // ── Per-recipient timezone ────────────────────────────────────────────────
+  // All four of these no-op unless the caller supplied composedEmailForTimeZone
+  // — a send that can't rebuild its body per zone must not be split into
+  // groups that would all read identically, so it stays the ONE row it was.
+  const perZone = !!composedEmailForTimeZone;
+  const serverZone = serverTimeZone();
+
+  let _zoneMap: Map<string, string> | null = null;
+  const zoneMap = async (): Promise<ReadonlyMap<string, string>> => {
+    if (!perZone) return EMPTY_ZONE_MAP;
+    if (!_zoneMap) _zoneMap = await timeZoneByAddress();
+    return _zoneMap;
+  };
+
+  // Every address falls back to the server zone, so with an empty map above
+  // this collapses to exactly one group — the pre-column single send.
+  const timeZoneGroups = (to: string[], cc: string[], bcc: string[], zones: ReadonlyMap<string, string>) =>
+    splitTimeZoneGroups(to, cc, bcc, zones, serverZone);
+
+  // Rebuilt bodies, memoized per zone — the closure re-renders the whole
+  // template, so an all-one-zone fleet pays for exactly one rebuild and the
+  // ack/no-ack pair below share it. The server-zone group reuses the body the
+  // caller already built rather than rebuilding an identical one.
+  const _byZone = new Map<string, ComposedEmail>();
+  const rawBodyForZone = (tz: string): ComposedEmail => {
+    if (!perZone || tz === serverZone) return composedEmail as ComposedEmail;
+    let b = _byZone.get(tz);
+    if (!b) {
+      b = composedEmailForTimeZone!(tz);
+      _byZone.set(tz, b);
+    }
+    return b;
+  };
+  const _ackByZone = new Map<string, ComposedEmail>();
+  const bodyForZone = (tz: string): ComposedEmail => {
+    if (!perZone || tz === serverZone) return composedBody as ComposedEmail;
+    let b = _ackByZone.get(tz);
+    if (!b) {
+      b = fillComposedAckUrl(rawBodyForZone(tz), ackUrlForEmail(notificationId));
+      _ackByZone.set(tz, b);
+    }
+    return b;
+  };
+  const _noAckByZone = new Map<string, ComposedEmail>();
+  const bodyForZoneNoAck = (tz: string): ComposedEmail => {
+    if (!perZone || tz === serverZone) return composedBodyNoAck();
+    let b = _noAckByZone.get(tz);
+    if (!b) {
+      b = fillComposedAckUrl(rawBodyForZone(tz), null);
+      _noAckByZone.set(tz, b);
+    }
+    return b;
+  };
+
   for (const t of targets) {
     const channel = byId.get(t.channelId);
     if (!channel || !channel.enabled || !isChannelType(channel.type)) continue;
@@ -812,23 +1000,38 @@ export async function expandDeliveries(
       if (composedBody) {
         const to = Array.from(owners.keys());
         if (to.length === 0) continue; // no recipients = no send (Graph rejects empty To)
-        // ONE row for the whole To list — the body carries an acknowledge link
-        // that works for whoever reads it, so there is nothing left to fan out
-        // per person. The one thing that still splits a send is capability: a
-        // reader whose role can't acknowledge gets the same alert with no
-        // button, so this is at most TWO rows.
-        for (const v of splitAckVariants(to, ccResolved, bccResolved, await ackCapable())) {
-          const body = v.ack ? composedBody : composedBodyNoAck();
-          const { cc, bcc } = dedupeEmailRecipients(v.to, v.cc, v.bcc);
-          add(channel.id, "email", v.to.join(", "), {
-            composed: true,
-            to: v.to,
-            cc,
-            bcc,
-            subject: body.subject,
-            text: body.text,
-            ...(body.html ? { html: body.html } : {}),
-          });
+        // ONE row per (timezone, acknowledge-capability) pair — never one per
+        // person (the per-recipient fan-out business rule 25 retired).
+        //
+        // The body carries an acknowledge link that works for whoever reads
+        // it, so nothing about the LINK splits a send any more. Two things
+        // about the READER still do: a role that can't acknowledge is mailed
+        // the same alert without the button, and an account that reads times
+        // in a different zone is mailed the same alert on its own wall clock.
+        // A fleet in one zone whose readers can all acknowledge — the ordinary
+        // case — still produces the single row it always did.
+        for (const zg of timeZoneGroups(to, ccResolved, bccResolved, await zoneMap())) {
+          for (const v of splitAckVariants(zg.to, zg.cc, zg.bcc, await ackCapable())) {
+            const body = v.ack ? bodyForZone(zg.timeZone) : bodyForZoneNoAck(zg.timeZone);
+            const { cc, bcc } = dedupeEmailRecipients(v.to, v.cc, v.bcc);
+            add(channel.id, "email", v.to.join(", "), {
+              composed: true,
+              to: v.to,
+              cc,
+              bcc,
+              subject: body.subject,
+              text: body.text,
+              ...(body.html ? { html: body.html } : {}),
+              // The zone this copy's body was rendered in, for the blocks the
+              // DRAIN stitches in later (the LLDP "Last advertised" row). Those
+              // are built after this function has returned and would otherwise
+              // fall back to the server's zone, leaving one email disagreeing
+              // with itself about what time it is. Only stamped when the send
+              // actually split by zone — a plain send carries no key and the
+              // drain keeps its server-zone default.
+              ...(perZone ? { timeZone: zg.timeZone } : {}),
+            });
+          }
         }
       } else {
         // Plain (uncomposed) email is already one row per address, so the

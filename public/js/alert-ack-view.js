@@ -49,9 +49,9 @@
     var d = new Date(iso);
     if (isNaN(d.getTime())) return "";
     try {
-      return d.toLocaleString(undefined, {
+      return d.toLocaleString(undefined, Object.assign({
         year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-      });
+      }, typeof timeZoneOpts === "function" ? timeZoneOpts() : {}));
     } catch (_) {
       return d.toISOString();
     }

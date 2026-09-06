@@ -191,14 +191,40 @@ export interface TemplateContextParts {
   /** Which reminder this is; empty on the initial notification. */
   repeatAttempt?: number;
   repeatElapsed?: string;
+  /**
+   * IANA zone to render `{time.local}` in. Omitted = the server's zone, which
+   * is what every caller had before User.timezone existed and what every
+   * recipient-less surface (webhook, Slack post, test preview) still wants.
+   *
+   * The EMAIL path sets this per recipient group — see rebuildForTimeZone in
+   * notificationRecipientService. It is deliberately NOT part of the snapshot
+   * identity: Notification.templateCtx stores the server-zone rendering, and a
+   * per-recipient copy is rebuilt from the same parts rather than stored.
+   */
+  timeZone?: string | null;
 }
 
 const str = (v: string | null | undefined): string => v ?? "";
 
 /**
- * "Aug 12, 2026, 1:46 PM CDT" — the trigger time as a person reads it, in the
- * SERVER's timezone (the same wall clock maintenance windows are expressed in,
- * and the only one Polaris knows: a recipient's is unknowable from an email).
+ * "Aug 12, 2026, 1:46 PM CDT" — the trigger time as a person reads it, in
+ * `timeZone` when one is given, otherwise the SERVER's zone.
+ *
+ * The zone used to be unconditionally the server's, on the reasoning that a
+ * recipient's was unknowable from an email. That stopped being true with
+ * User.timezone: the delivery layer now groups an alert's To list by the
+ * recipients' zones and rebuilds the body once per group, so each copy names
+ * the reader's own wall clock. Callers with no recipient in hand (webhooks,
+ * a Slack post, the automation test preview) pass nothing and keep the server
+ * zone, which is what they always had.
+ *
+ * `timeZoneName: "short"` is NOT optional here and must survive any edit: two
+ * operators comparing the same alert in different zones need the label to tell
+ * the copies apart, and it is the only thing that makes an "auto" recipient's
+ * server-zone rendering self-describing.
+ *
+ * An unresolvable zone falls back to the server's rather than throwing — an
+ * alert must never fail to send over a bad timezone string.
  *
  * ISO-8601 stays available as `{time}` for anything machine-read. It is a poor
  * default for a body, though: besides being unfriendly it is a 24-character
@@ -206,12 +232,13 @@ const str = (v: string | null | undefined): string => v ?? "";
  * table. Returns "" for an unparseable input rather than "Invalid Date", so the
  * row prunes away instead of mailing an error.
  */
-export function formatLocalTime(value: Date | string | null | undefined): string {
+export function formatLocalTime(value: Date | string | null | undefined, timeZone?: string | null): string {
   if (!value) return "";
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return "";
   try {
     return d.toLocaleString("en-US", {
+      ...(timeZone ? { timeZone } : {}),
       year: "numeric",
       month: "short",
       day: "numeric",
@@ -220,9 +247,46 @@ export function formatLocalTime(value: Date | string | null | undefined): string
       timeZoneName: "short",
     });
   } catch {
+    // Either the zone is one this build's ICU cannot apply, or there is no
+    // ICU data at all. Retry once WITHOUT the zone before giving up, so a bad
+    // User.timezone costs the reader only the label they asked for and not the
+    // whole legible timestamp.
+    if (timeZone) return formatLocalTime(value, null);
     // A Node build without full ICU: the ISO form beats nothing.
     return d.toISOString();
   }
+}
+
+/**
+ * Re-render an ALREADY-BUILT context's zone-dependent tokens in `timeZone`.
+ *
+ * The email path needs one body per recipient zone, but by then the context is
+ * a flat token→string map (it has been snapshotted onto
+ * Notification.templateCtx and may have come back out of the database) — the
+ * TemplateContextParts it was built from are long gone. This rebuilds the
+ * derived tokens from the ones that survived the flattening.
+ *
+ * `{time}` is the ISO-8601 instant and is what makes this possible: it is
+ * kept in the context precisely because it is machine-read, so `{time.local}`
+ * can always be re-derived from it. That is the ONLY zone-dependent token in
+ * the catalogue — every other time-ish token ({escalation.elapsed},
+ * {repeat.elapsed}) is a DURATION, which reads the same in every zone.
+ *
+ * Anything a new zone-dependent token is added for must be re-derived here
+ * too, or half an alert's copies will disagree with the other half.
+ *
+ * A context with no usable `{time}` is returned untouched rather than blanked:
+ * a pre-upgrade snapshot keeps whatever `{time.local}` it was stored with.
+ */
+export function retimeContext(
+  ctx: Record<string, string>,
+  timeZone: string,
+): Record<string, string> {
+  const iso = ctx["time"];
+  if (!iso) return ctx;
+  const local = formatLocalTime(iso, timeZone);
+  if (!local) return ctx;
+  return { ...ctx, "time.local": local };
 }
 
 /**
@@ -250,7 +314,7 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     // escalation re-rendering that snapshot renders it blank (unknown:"blank"
     // for our own default body) and the "Raised" row prunes away — a missing
     // row, never a literal "{time.local}" in an operator's inbox.
-    "time.local": formatLocalTime(parts.time ?? null),
+    "time.local": formatLocalTime(parts.time ?? null, parts.timeZone ?? null),
     "link": str(parts.link),
     "rule": str(parts.ruleName),
     "rule.description": str(parts.ruleDescription),

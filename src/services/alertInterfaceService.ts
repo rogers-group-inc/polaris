@@ -147,8 +147,15 @@ function truncateDesc(value: string | null): string | null {
   return flat.length > MAX_SYSTEM_DESC ? `${flat.slice(0, MAX_SYSTEM_DESC).trimEnd()}…` : flat;
 }
 
-/** Label / value pairs for one neighbour, empties already dropped. */
-function neighborFacts(n: AlertLldpNeighbor): Array<[string, string]> {
+/**
+ * Label / value pairs for one neighbour, empties already dropped.
+ *
+ * `timeZone` is the recipient's — this block is stitched into a body that is
+ * already rendered in their zone, so "Last advertised" has to agree with the
+ * "Raised" row above it. Null keeps the server's zone (a send with no
+ * per-recipient zone, which is every send before User.timezone existed).
+ */
+function neighborFacts(n: AlertLldpNeighbor, timeZone: string | null): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   out.push(["Neighbor", n.matchedType ? `${n.name} (${n.matchedType})` : n.name]);
   if (n.port) out.push(["Neighbor port", n.port]);
@@ -158,7 +165,7 @@ function neighborFacts(n: AlertLldpNeighbor): Array<[string, string]> {
   // Always last, and never omitted: the entry predates the outage by
   // definition (see the 48h stickiness note at the top), so how stale it is
   // IS part of the finding.
-  out.push(["Last advertised", formatLocalTime(n.lastSeen)]);
+  out.push(["Last advertised", formatLocalTime(n.lastSeen, timeZone)]);
   return out;
 }
 
@@ -178,7 +185,7 @@ function heading(ifName: string, count: number): string {
 export function renderInterfaceLldp(
   ifName: string,
   neighbors: AlertLldpNeighbor[],
-  opts: { html: boolean },
+  opts: { html: boolean; timeZone?: string | null },
 ): string {
   if (neighbors.length === 0) return "";
   const shown = neighbors.slice(0, MAX_NEIGHBORS);
@@ -188,7 +195,7 @@ export function renderInterfaceLldp(
     const lines: string[] = [heading(ifName, shown.length)];
     shown.forEach((n, i) => {
       if (i > 0) lines.push("");
-      for (const [label, value] of neighborFacts(n)) {
+      for (const [label, value] of neighborFacts(n, opts.timeZone ?? null)) {
         lines.push(`  ${label.padEnd(16)}${value}`);
       }
     });
@@ -198,7 +205,7 @@ export function renderInterfaceLldp(
 
   const blocks = shown
     .map((n, i) => {
-      const rows = neighborFacts(n)
+      const rows = neighborFacts(n, opts.timeZone ?? null)
         .map(([label, value]) => factRow(escapeHtml(label), escapeHtml(value)))
         .join("\n");
       const sep =
@@ -264,13 +271,14 @@ export async function buildInterfaceLldpBlocks(
   assetId: string | null,
   metric: string | null,
   dimension: string | null,
+  timeZone: string | null = null,
 ): Promise<{ html: string; text: string }> {
   const empty = { html: "", text: "" };
   if (!assetId || !dimension || !isInterfaceDimensionMetric(metric)) return empty;
   const neighbors = await loadInterfaceLldp(assetId, dimension);
   if (neighbors.length === 0) return empty;
   return {
-    html: renderInterfaceLldp(dimension, neighbors, { html: true }),
-    text: renderInterfaceLldp(dimension, neighbors, { html: false }),
+    html: renderInterfaceLldp(dimension, neighbors, { html: true, timeZone }),
+    text: renderInterfaceLldp(dimension, neighbors, { html: false, timeZone }),
   };
 }

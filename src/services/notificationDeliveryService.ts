@@ -203,6 +203,10 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
         d.notification.assetId,
         d.notification.metric,
         d.notification.dimension,
+        // Rendered in the same zone as the body this block is stitched into —
+        // see the timeZone stamp in expandDeliveries. Absent on a send that
+        // did not split by zone, which keeps the server-zone default.
+        typeof meta.timeZone === "string" ? meta.timeZone : null,
       );
       text = pruneEmptyTextLines(substituteInterfaceTokens(text, lldp.text));
       if (html) html = substituteInterfaceTokens(html, lldp.html);

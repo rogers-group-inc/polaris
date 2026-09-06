@@ -138,6 +138,10 @@ var currentUserRegions = [];         // user.regionTags
 var currentRoleRegions = [];         // role.regionTags
 var currentUsername = null;
 var currentUserAuthProvider = "local"; // "local" | "azure" | "oidc" | "ldap"
+// What "auto" resolves to in a server-rendered surface (an alert email), so
+// the account menu can SAY so instead of describing it abstractly. Null until
+// /auth/me lands.
+var currentServerTimezone = null;
 var _userReadyResolve = null;
 var userReady = new Promise(function (resolve) { _userReadyResolve = resolve; });
 
@@ -153,6 +157,13 @@ async function fetchCurrentUser() {
       currentUserRegions = (data.regionTags && data.regionTags.user) || [];
       currentRoleRegions = (data.regionTags && data.regionTags.role) || [];
       currentEffectiveRegions = (data.regionTags && data.regionTags.effective) || [];
+      currentServerTimezone = data.serverTimezone || null;
+      _tzPref = data.timezone || "auto";
+      // Hand the account's zone to the formatters in api.js, which read it
+      // synchronously from localStorage at load — this call is what keeps that
+      // cache honest when the choice was changed on another device.
+      if (typeof setDisplayTimeZone === "function") setDisplayTimeZone(data.timezone);
+      reportBrowserTimezone(data.detectedTimezone);
       try {
         localStorage.setItem("polaris-user", JSON.stringify({
           role: currentUserRole,
@@ -168,6 +179,24 @@ async function fetchCurrentUser() {
   } catch (_) {}
   if (_userReadyResolve) { _userReadyResolve(); _userReadyResolve = null; }
   return currentUserRole;
+}
+
+/**
+ * Tell the server what zone this browser is in, so "auto" can mean the
+ * operator's own wall clock on a surface that HAS no browser — an alert email.
+ *
+ * Fire-and-forget, and only when it actually differs from what the server
+ * already has: this runs on every page load, so comparing first is what keeps
+ * it a write per RELOCATION rather than a write per navigation. A failure is
+ * silent by design — the whole point is a boot that never notices this.
+ */
+function reportBrowserTimezone(known) {
+  var tz = null;
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (_) { return; }
+  if (!tz || tz === known) return;
+  try {
+    api.timezone.detected(tz).catch(function () {});
+  } catch (_) {}
 }
 
 // permAtLeast(functionKey, level) — the canonical capability check.
@@ -289,6 +318,14 @@ var _notifPref = null;
 var NOTIF_PREF_LABELS = { email: "Email", push: "Push", any: "Email and push" };
 var NOTIF_PREF_ORDER = ["email", "push", "any"];
 
+// The account's display timezone, from /auth/me. Module-level for the same
+// reason _notifPref is: the account menu is rebuilt from scratch on every open,
+// so the current value has to outlive the menu. Null until /auth/me lands.
+var _tzPref = null;
+// The zone list, fetched ONCE and only when the picker is first opened — it is
+// the whole IANA database (~400 names) and no page needs it to render.
+var _tzOptions = null;
+
 // Last known TOTP enrollment state for the account menu's two-factor row, and
 // a one-per-page-load fetch guard. Same reason as _pushState: the row is built
 // fresh every time the menu opens, so there's no control to repaint.
@@ -364,6 +401,120 @@ function _notifPrefMenuItem(anchor) {
     icon: ICONS.bell,
     onSelect: function () { _openNotifPrefMenu(anchor); },
   };
+}
+
+/**
+ * The user menu's timezone row.
+ *
+ * Unlike the notification row this has NO permission gate: what zone a
+ * timestamp is drawn in changes nothing about which data an account can reach,
+ * so gating it on any function key would leave some legitimate signed-in user
+ * unable to fix their own clock. It matches the route, which is authenticated
+ * only.
+ *
+ * Labelled with the resolved answer rather than the literal "auto", because
+ * "Automatic" alone doesn't tell the operator what their EMAIL will say — and
+ * that surface is the reason the setting exists.
+ */
+function _tzMenuItem() {
+  if (!_tzPref) return null;
+  var label = _tzPref === "auto" ? "Automatic" : _tzPref;
+  return {
+    label: "Timezone: " + label,
+    icon: ICONS.clock,
+    onSelect: function () { _openTimezoneModal(); },
+  };
+}
+
+/**
+ * The zone picker. A modal with a native <select> rather than the row-menu
+ * chooser the notification preference uses: that one has three options and
+ * this one has the whole tz database, which a menu cannot show and a native
+ * select can (it scrolls, and type-ahead finds a zone by name).
+ */
+function _openTimezoneModal() {
+  if (typeof openModal !== "function") return;
+  var loading = _tzOptions ? "" : '<div class="muted">Loading zones…</div>';
+  openModal(
+    "Display timezone",
+    '<div class="form-group"><label for="tz-select">Show times in</label>' +
+      '<select id="tz-select"' + (_tzOptions ? "" : " disabled") + '></select></div>' +
+      loading +
+      '<div class="muted" style="margin-top:10px;font-size:12px" id="tz-hint"></div>',
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+      '<button class="btn btn-primary" id="tz-save">Save</button>',
+  );
+
+  var hint = document.getElementById("tz-hint");
+  if (hint) {
+    hint.textContent = currentServerTimezone
+      ? 'Automatic follows this browser, and tells Polaris to send your alert emails on the same clock. ' +
+        'Accounts that have never signed in on a browser fall back to the server (' + currentServerTimezone + ').'
+      : 'Automatic follows this browser and is used for your alert emails too.';
+  }
+
+  var save = document.getElementById("tz-save");
+  if (save) {
+    save.addEventListener("click", function () {
+      var sel = document.getElementById("tz-select");
+      if (!sel || sel.disabled) return;
+      _saveTimezone(sel.value);
+    });
+  }
+
+  var fill = function (zones) {
+    _tzOptions = zones;
+    var sel = document.getElementById("tz-select");
+    if (!sel) return; // modal closed while the list was in flight
+    var opts = ['<option value="auto">Automatic (this browser)</option>'];
+    for (var i = 0; i < zones.length; i++) {
+      opts.push('<option value="' + escapeHtml(zones[i]) + '">' + escapeHtml(zones[i]) + "</option>");
+    }
+    sel.innerHTML = opts.join("");
+    sel.value = _tzPref || "auto";
+    // A stored zone this build no longer lists would otherwise leave the
+    // select on its first entry, so Save would silently change the setting.
+    if (sel.value !== (_tzPref || "auto")) {
+      sel.insertAdjacentHTML("afterbegin",
+        '<option value="' + escapeHtml(_tzPref) + '">' + escapeHtml(_tzPref) + " (current)</option>");
+      sel.value = _tzPref;
+    }
+    sel.disabled = false;
+    var l = document.querySelector(".modal-body .muted");
+    if (l && l.textContent === "Loading zones…") l.remove();
+  };
+
+  if (_tzOptions) { fill(_tzOptions); return; }
+  api.timezone.get()
+    .then(function (r) { fill((r && r.options) || []); })
+    .catch(function () {
+      var sel = document.getElementById("tz-select");
+      if (sel) sel.innerHTML = '<option value="auto">Automatic (this browser)</option>';
+      if (sel) sel.disabled = false;
+      showToast("Couldn't load the timezone list", "error");
+    });
+}
+
+/**
+ * Persist a chosen zone and repaint.
+ *
+ * A full reload rather than a re-render: absolute times are formatted at render
+ * time all over the app (tables, charts, slide-overs, cached widget HTML), and
+ * there is no repaint hook that reaches all of them. Reloading is the only
+ * thing that guarantees the operator doesn't end up reading half a page in the
+ * old zone.
+ */
+function _saveTimezone(tz) {
+  api.timezone.set(tz)
+    .then(function (r) {
+      _tzPref = (r && r.timezone) || tz;
+      if (typeof setDisplayTimeZone === "function") setDisplayTimeZone(_tzPref);
+      closeModal();
+      window.location.reload();
+    })
+    .catch(function (err) {
+      showToast((err && err.message) || "Couldn't save the timezone", "error");
+    });
 }
 
 /**
@@ -524,6 +675,7 @@ const ICONS = {
   plug: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a6 6 0 01-12 0V8h12z"/></svg>',
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
   share2: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
   zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
@@ -1553,6 +1705,9 @@ function openUserMenu(anchor) {
 
   var pref = _notifPrefMenuItem(anchor);
   if (pref) items.push(pref);
+
+  var tz = _tzMenuItem();
+  if (tz) items.push(tz);
 
   var totp = _totpMenuItem();
   if (totp) items.push(totp);
@@ -3435,7 +3590,15 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
 
 function formatDate(dateStr) {
   if (!dateStr) return "-";
-  return new Date(dateStr).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  var d = new Date(dateStr);
+  var base = { month: "short", day: "numeric", year: "numeric" };
+  try {
+    return d.toLocaleDateString(undefined, Object.assign({}, base, timeZoneOpts()));
+  } catch (_) {
+    // A stored zone this browser's ICU can't apply — the browser's own beats
+    // rendering nothing.
+    return d.toLocaleDateString(undefined, base);
+  }
 }
 
 // Compact device-uptime duration: "42d 6h" / "6h 12m" / "12m" / "<1m".

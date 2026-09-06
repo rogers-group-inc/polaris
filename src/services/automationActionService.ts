@@ -35,6 +35,7 @@ import { prisma } from "../db.js";
 import { logEvent } from "./eventLogService.js";
 import { renderNotificationTemplate,
   followUpLine,
+  retimeContext,
 } from "../utils/notificationTemplate.js";
 import {
   expandDeliveries,
@@ -134,6 +135,22 @@ export async function executeActions(
           assetRegionTags: exec.assetRegionTags,
           ...(action.recipientAssetContacts ? { assetContactEmails: await assetContactEmails() } : {}),
           composedEmail: composed,
+          // Opt this send into per-recipient timezones. expandDeliveries groups
+          // the To/Cc/Bcc lines by the zone each address's account reads in and
+          // calls this once per DISTINCT zone — so an all-one-zone fleet (the
+          // common case) never calls it at all: that group resolves to the
+          // server zone and reuses `composed` above.
+          //
+          // Recomposing rather than patching the rendered body: an operator's
+          // template may place {time.local} anywhere, more than once, or in the
+          // HTML half only, so re-running the same compose against a retimed
+          // context is the only thing guaranteed to agree with itself.
+          ...(composed
+            ? {
+                composedEmailForTimeZone: (tz: string) =>
+                  composeForNotify(action.emailComposition ?? null, exec, retimeContext(ctx, tz))!,
+              }
+            : {}),
           // Push has no facts table to prune, so the two policy sentences
           // are joined into one line and appended to the body. Both are ""
           // on an automation that neither repeats nor escalates, and the
