@@ -71,8 +71,14 @@ export interface ActionExecContext {
   /** Set by the sweep's REPEAT pass: this is a RE-SEND of the initial
    *  notification, not an escalation tier. Mutually exclusive with
    *  `escalation` — a reminder must never be labelled an escalation, since the
-   *  two mean different things to whoever is reading the alert. */
-  repeat?: { attempt: number };
+   *  two mean different things to whoever is reading the alert.
+   *
+   *  `elapsed` is how long the alert has been active ("9h 12m"), and
+   *  `quietResumed` marks the reminder that ends a quiet-time hold (business
+   *  rule 44). Together they put the age in the SUBJECT, which is the only
+   *  part of the email an operator reads in a full inbox after a silent
+   *  night. */
+  repeat?: { attempt: number; elapsed?: string; quietResumed?: boolean };
   /** Audit actor; defaults to "system:automation". */
   actor?: string;
 }
@@ -265,7 +271,14 @@ function composeForNotify(
     const comp = actionComp ?? exec.ruleEmailComposition ?? {};
     const composed = buildComposedEmail(comp, ctx);
     if (!comp.subjectTemplate || !comp.subjectTemplate.trim()) {
-      composed.subject = `[REMINDER ${exec.repeat.attempt}] ${composed.subject}`;
+      // The reminder that ends a quiet-time hold carries the alert's AGE in
+      // the subject as well as the body (business rule 44): it lands in an
+      // inbox beside a night's worth of other mail, and "[REMINDER 4]" alone
+      // does not distinguish an alert twenty minutes old from one that has
+      // been burning since 22:00. Only on that reminder — putting the age on
+      // every one of them would make the marker mean nothing.
+      const age = exec.repeat.quietResumed && exec.repeat.elapsed ? ` · ACTIVE ${exec.repeat.elapsed}` : "";
+      composed.subject = `[REMINDER ${exec.repeat.attempt}${age}] ${composed.subject}`;
     }
     return composed;
   }

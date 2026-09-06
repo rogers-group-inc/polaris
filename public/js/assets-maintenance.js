@@ -209,6 +209,28 @@ function maintScheduleSummary(schedule) {
   return base;
 }
 
+/**
+ * The recurrence seam other surfaces read.
+ *
+ * `MaintenanceSchedule.schedule` stopped being the only thing shaped like a
+ * recurrence when automation reminders gained a quiet time (business rule 44):
+ * both are the same JSON, validated by the same server-side schema
+ * (`maintenanceRecurrence.scheduleShapeSchema`). The automations wizard
+ * therefore labels its quiet windows through THIS function rather than growing
+ * a second summariser — two summarisers of one shape drift, and the drift
+ * shows up as two different sentences describing the same window on two pages.
+ *
+ * Named rather than reached for as `maintScheduleSummary` so the dependency is
+ * legible from the other side, and resolved at CALL time so script order
+ * between the two files can't matter.
+ */
+window.PolarisRecurrence = {
+  /** One-line human summary of a recurrence shape (oneshot or recurring). */
+  summary: maintScheduleSummary,
+  /** The weekday vocabulary the day pickers render from (0 = Sunday). */
+  weekdays: MAINT_WEEKDAYS,
+};
+
 // ─── Modal shell ────────────────────────────────────────────────────────────
 
 /**

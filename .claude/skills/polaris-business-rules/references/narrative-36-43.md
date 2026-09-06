@@ -1,4 +1,4 @@
-# Business rules 36–43 — full narrative
+# Business rules 36–44 — full narrative
 
 Verbatim from BUSINESS-RULES.md: each rule records the decision *and the incident or constraint that forced it*. The invariant for each rule is in `invariants-12-29.md` / `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
@@ -10,6 +10,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 41](#rule-41) — A subnet dies with its FortiGate; the chassis, not the name, says which gate that is
 - [Rule 42](#rule-42) — Some address space is not one network, and the way to say so is to exclude it
 - [Rule 43](#rule-43) — A grant is only as narrow as the act it names
+- [Rule 44](#rule-44) — A quiet window withholds the reminder, not the alert, and the reminder that follows says how long
 
 <a id="rule-36"></a>
 
@@ -360,3 +361,87 @@ It does not create a function key. Agent deployment rides the level above `asset
 It does not retro-scope credentials. Nothing is reassigned, nothing is deleted, and an admin who wants a shared credential to stay shared changes nothing: every built-in role sits at `credentials=read`, so the dimension only starts mattering the moment someone is granted `write`.
 
 And it does not change what a probe can reach. `assetsProbe=read` dials exactly what `assetsProbe=write` dialled — the narrowing is about which cells the matrix offers and which level the routes name, not about what the act does.
+
+---
+
+<a id="rule-44"></a>
+
+## Rule 44 — A quiet window withholds the reminder, not the alert, and the reminder that follows says how long
+
+Reminders (`NotificationRule.repeat`, business rule 32's replacement for the retired
+`cooldownSec`) exist to chase an alert nobody has handled. The complaint that produced
+this rule is what that costs at night: an unacknowledged alert at 22:00 with a 15-minute
+reminder mails the on-call rota 32 times before anyone is awake to read one of them, and
+every one of those emails says exactly what the first one said. The first reaction — turn
+the reminders off overnight — is the wrong shape, because the reminder is not the problem;
+the reminder arriving *while nobody can act on it* is.
+
+So the window holds the reminder rather than cancelling it. The sweep does not advance
+`escalationState.tiers.repeat.lastSentAt` on a send it withholds, which means the withheld
+reminder is still due — and the first tick after the window ends sends it. There is
+deliberately nothing scheduled, nothing queued and no catch-up job: a held reminder is an
+overdue one, and `repeatIsDue` already answers that question. It also means quiet time
+cannot lose a reminder to a restart, because the only state it keeps is "a reminder was
+withheld", not "a reminder is pending".
+
+That withheld-ness is the whole reason the second half of the rule is possible. The stamp
+(`quietHeldSince` / `quietHeldCount`) is what lets the reminder ending a hold be a
+different email from the fourteen that would have arrived overnight: it leads with
+"Reminders resumed after a quiet period — this alert has been active for 9h 12m", and
+carries `· ACTIVE 9h 12m` in the subject beside `[REMINDER n]`. The subject is where it
+earns its place. That email lands in an inbox holding a night's worth of other mail, and
+`[REMINDER 4]` does not distinguish an alert twenty minutes old from one that has been
+burning since 22:00 — which is the single fact deciding what the reader does next. It rides
+that reminder only: an ACTIVE marker on every reminder is a marker that means nothing.
+A standing `Active for` row is a separate, smaller decision — it rides *every* reminder,
+because on any re-send the reader's own clock is no longer the answer, and it renders empty
+(and prunes) on the initial alert where "Active for: 0m" beside "Raised: just now" is noise.
+
+Four smaller decisions carry it.
+
+**The recurrence is the maintenance scheduler's, not a new one.** `utils/quietTime.ts`
+validates the windows with `maintenanceRecurrence.scheduleShapeSchema` and evaluates them
+with its `currentWindow` / `nextWindow`. Everything that module solved is solved here for
+free: server-local wall clock (a 22:00 quiet window means 22:00 at the site across a DST
+shift), the half-open midnight-spanning window whose day-of-week selector matches the START
+day, and an operator who already learned that vocabulary in the Maintenance modal. The one
+thing that differs is that a quiet time is a LIST — "nights, and all weekend" is two
+recurrences and no single shape expresses it — so any one window being active means quiet,
+and `quietResumesAt` chains through abutting windows because a Friday-night alert resumes
+Monday at 06:00, not Saturday at 06:00. The browser's summary of the same shape comes from
+the same place for the same reason: `PolarisRecurrence.summary` in `assets-maintenance.js`,
+rather than a second summariser in the wizard that would drift into describing one window
+two ways on two pages.
+
+**Quiet applies to the reminder pass ONLY.** Not the first alert — a new outage pages
+whatever the hour. Not the escalation tiers: a tier exists to chase a *specific* person
+harder, usually somebody senior on a longer clock, and silencing it from a control labelled
+"reminders" would weaken an escalation the operator configured on a different screen and
+would not think to re-check. Not the reset notifications, which are the good news. This is
+why the config lives INSIDE `repeat` rather than beside it: it modifies the reminder clock
+and nothing else, and it cannot outlive the control that owns it — turning reminders off
+drops the windows with them.
+
+**The hold is closed by the send, not by the window.** A reminder whose channel was disabled
+or whose recipients resolved empty produces `executed === 0`, retries on the next sweep, and
+must still be the one that reports the silence — so the flag is cleared where
+`tiers.repeat` is bumped, in the same branch, and nowhere else. For the same reason the
+sweep no longer returns early on `tierRuns === 0 && repeatRuns === 0`: a hold is a state
+update with no execution behind it, and that early return would have discarded the stamp
+every time, leaving the feature working exactly as far as the eye could see (reminders do go
+quiet) and failing at the part it was asked for (the reminder afterwards would say nothing).
+
+**A malformed quiet blob must not silence what it was only meant to pause.**
+`normalizeRuleToV2` reads a repeat config that no longer matches the schema as "never
+repeats" — the right instinct for a hand-edited or restored row, and the wrong one here,
+because a bad window would convert "pause overnight" into "never remind anyone again" and
+nothing would report it until an outage went unchased. It therefore retries the parse with
+`quiet` stripped: the reminders keep their normal cadence and the automation's page shows no
+quiet time, which is a bug an operator can actually see.
+
+Two things a reader should not expect. `stopAfterHours` is wall time from the fire, quiet
+time included — a quiet period outlasting the cut-off means no further reminders at all, and
+the wizard says so in a warning rather than quietly extending an operator's own deadline.
+And the maintenance / dependency-suppression pause is not a quiet hold: it `continue`s
+above the repeat pass and retires the live alert outright (business rule 16), so nothing
+is held and nothing is reported afterwards.

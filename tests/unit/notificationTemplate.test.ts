@@ -70,6 +70,8 @@ const FULL_PARTS: TemplateContextParts = {
   escalationElapsed: "1h 30m",
   repeatAttempt: 3,
   repeatElapsed: "45m",
+  // The reminder that ends a quiet-time hold (business rule 44).
+  repeatQuiet: "Reminders resumed after a quiet period — this alert has been active for 9h 12m.",
   // The follow-up policy the alert was RAISED under — snapshotted at fire
   // time so a reminder describes the same automation the first email did.
   repeatPolicy: "Reminders every 15 minutes until acknowledged.",
