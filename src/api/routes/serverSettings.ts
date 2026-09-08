@@ -2346,7 +2346,10 @@ router.post("/agents/build", requirePermission("serverSettingsSystem", "fullwrit
         return res.status(409).json({ error: err.message });
       }
       if (err instanceof GoUnavailableError) {
-        return res.status(400).json({ error: `Go is not available on this Polaris server: ${err.message}. Install Go 1.22+ and reload.` });
+        // The service's message already names the floor and distinguishes
+        // "not installed" from "installed but too old" — pass it through
+        // rather than re-stating a hardcoded minimum here.
+        return res.status(400).json({ error: err.message });
       }
       throw err;
     }

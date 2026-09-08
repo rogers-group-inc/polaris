@@ -130,13 +130,20 @@
     // Go-detection: when Go isn't installed, gate the whole Build pathway
     // with a yellow notice. Inventory grid still renders (operators may
     // have staged binaries from a separate build host).
+    // "Too old" is reported separately from "not installed": they need
+    // different actions, and the old copy sent an operator with Go 1.21 off
+    // to install a toolchain they already had.
+    var goMin = inv.goMinimum || "1.22";
     var goNotice = "";
-    if (!inv.goAvailable) {
+    if (!inv.goAvailable || inv.goTooOld) {
       goNotice =
         '<div style="margin-bottom:0.75rem;padding:0.5rem 0.75rem;background:rgba(255,160,40,0.08);' +
           'border-left:3px solid var(--color-warning);border-radius:4px;font-size:0.82rem;color:var(--color-warning)">' +
-          '⚠ Go is not installed on this Polaris server. Install Go 1.22+ on the host (see ' +
-          '<code>docs/INSTALL.md</code> → "Optional: Polaris Agent") and reload to enable the Build button.' +
+          (inv.goTooOld
+            ? '⚠ Go ' + escapeHtml(inv.goVersion || "") + ' is installed, but building the agent requires Go ' +
+              escapeHtml(goMin) + '+. Upgrade the toolchain on this host and reload.'
+            : '⚠ Go is not installed on this Polaris server. Install Go ' + escapeHtml(goMin) + '+ on the host (see ' +
+              '<code>docs/INSTALL.md</code> → "Optional: Polaris Agent") and reload to enable the Build button.') +
         '</div>';
     }
 
@@ -172,9 +179,13 @@
         '</tr>';
     }).join("");
 
-    var buildBtn = inv.goAvailable
+    var buildBtn = inv.goAvailable && !inv.goTooOld
       ? '<button class="btn btn-primary" id="btn-agent-build">Build agent binaries (v' + escapeHtml(inv.agentSourceVersion) + ')</button>'
-      : '<button class="btn btn-primary" disabled title="Install Go 1.22+ on the server to enable">Build agent binaries</button>';
+      : '<button class="btn btn-primary" disabled title="' +
+        (inv.goTooOld
+          ? 'Go ' + escapeHtml(inv.goVersion || "") + ' is too old — upgrade to Go ' + escapeHtml(goMin) + '+ to enable'
+          : 'Install Go ' + escapeHtml(goMin) + '+ on the server to enable') +
+        '">Build agent binaries</button>';
 
     var goVerLine = inv.goAvailable && inv.goVersion
       ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.5rem 0 0">Toolchain: ' + escapeHtml(inv.goVersion) + '</p>'

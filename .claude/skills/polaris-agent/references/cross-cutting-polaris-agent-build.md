@@ -11,7 +11,7 @@ build auto-prune + boot-time auto-build are layered on top.
 - `src/services/agentBuildService.ts` — owns everything: state map,
   FIFO queue, mutex, per-build child-process handle, version reads,
   manifest writes, post-build prune. Exports:
-  - `goAvailable()` — runs `go version`, no cache. UI / route gate on this.
+  - `goAvailable()` — runs `go version`, no cache. UI / route gate on this. Returns `ok` (the binary ran) *and* `meetsMinimum` (the parsed minor line is ≥ `GO_MINIMUM`); `startBuild()` and the auto-build both refuse when the toolchain is present but too old, instead of failing later inside `go build`. An unparseable version counts as meeting the minimum — a vendored or `devel` toolchain must not be refused.
   - `startBuild({actor})` — queues or runs immediately. 400 on no-Go,
     409 on queue-full (`BuildQueueFullError`). Emits `agent.build.started`
     (immediate) or `agent.build.queued` (enqueued).
