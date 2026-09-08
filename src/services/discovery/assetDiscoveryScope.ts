@@ -28,11 +28,13 @@
  * the route, not in a fleet loop, but the slide-in opens constantly, so the
  * selects stay tight.
  *
- * Covered today: the Fortinet family (FortiGate directly, FortiSwitch/FortiAP
- * through their controller) and the directory types (Entra/Intune by `deviceId`,
- * AD by `objectGUID`). vCenter and Arc are recognised and reported as
- * not-yet-supported rather than silently omitted, so the UI can say WHY a
- * device can't be refreshed instead of hiding the control.
+ * Covered: the Fortinet family (FortiGate directly, FortiSwitch/FortiAP through
+ * their controller), the directory types (Entra/Intune by `deviceId`, AD by
+ * `objectGUID`), vCenter (VM/host by moref, read off `Asset.virtualization` —
+ * the source row's externalId is the instanceUuid, not the moref) and Azure Arc
+ * (by ARM resource id). Anything left — an agent-only, sysDescr-only or manual
+ * asset — is reported with a REASON rather than silently omitted, so the UI can
+ * say why a device can't be refreshed instead of hiding the control.
  */
 
 import { prisma } from "../../db.js";
@@ -100,19 +102,16 @@ const UNREFRESHABLE_REASON: Record<string, string> = {
 };
 
 /**
- * Hypervisor / cloud kinds — recognised, not yet targetable.
- *
- * Entra, Intune and AD left this map when their collectors gained a target
- * parameter. vCenter and Arc stay until theirs do AND their sync layers can be
- * told not to sweep: `syncVcenterDevices` decommissions assets whose sources
- * vanished from the result set, so a one-VM result would read as "the rest of
- * the fleet is gone". That is a sync-layer problem, not a collector one.
+ * Kinds recognised but not targetable. Empty as of Phase 3 — every discovery
+ * source can now be scoped — but kept as the seam a new source kind lands in,
+ * because "we know what this is and here is why it can't refresh" is a far
+ * better answer than the generic no-source message.
  */
 const NOT_YET_SCOPED: Record<string, string> = {
-  "vcenter-vm": "vCenter",
-  "vcenter-host": "vCenter",
-  arc: "Azure Arc",
-  "arc-k8s": "Azure Arc",
+  // `arc-k8s` is a connected Kubernetes CLUSTER, not a machine: it has no
+  // per-resource refresh of its own — it is created by the cluster query a
+  // full Arc run performs, which a scoped run deliberately skips.
+  "arc-k8s": "Azure Arc (connected Kubernetes cluster)",
 };
 
 /**
@@ -133,6 +132,7 @@ export async function resolveDiscoveryScopeForAsset(assetId: string): Promise<As
       learnedLocation: true,
       assetType: true,
       fortinetTopology: true,
+      virtualization: true,
       discoveredByIntegration: { select: { id: true, name: true, type: true, config: true, enabled: true } },
       sources: {
         select: {
@@ -184,6 +184,7 @@ function resolveFromDirectorySources(asset: {
   ipAddress: string | null;
   learnedLocation: string | null;
   assetType: string;
+  virtualization: unknown;
   sources: SourceRow[];
 }): AssetScopeResolution | null {
   const pick = (kind: string, type: string) =>
@@ -199,6 +200,50 @@ function resolveFromDirectorySources(asset: {
       resolved: {
         integration: entra.integration,
         scope: { kind: "entra-device", deviceId: entra.externalId },
+        deviceName: asset.hostname,
+        filterAsset: baseFilterAsset(asset),
+        viaController: false,
+      },
+    };
+  }
+
+  // vCenter: the moref lives on `Asset.virtualization`, NOT on the source row —
+  // the vcenter-vm externalId is the instanceUuid (with an
+  // `<integrationId>:<moref>` fallback), so parsing it would be wrong for every
+  // VM that reports a UUID.
+  const vc = pick("vcenter-vm", "vcenter") || pick("vcenter-host", "vcenter");
+  if (vc?.integration) {
+    if (!vc.integration.enabled) {
+      return { ok: false, reason: `Integration "${vc.integration.name}" is disabled` };
+    }
+    const v = (asset.virtualization as Record<string, unknown> | null) || {};
+    const moref = v.role === "vm" ? v.vmMoref : v.role === "host" ? v.hostMoref : null;
+    if (typeof moref !== "string" || !moref) {
+      return { ok: false, reason: "This asset has no vCenter managed-object reference recorded yet — it refreshes on the next full vCenter discovery" };
+    }
+    return {
+      ok: true,
+      resolved: {
+        integration: vc.integration,
+        scope: v.role === "vm" ? { kind: "vcenter-vm", moref } : { kind: "vcenter-host", moref },
+        deviceName: asset.hostname,
+        filterAsset: baseFilterAsset(asset),
+        viaController: false,
+      },
+    };
+  }
+
+  const arc = pick("arc", "azurearc");
+  if (arc?.integration) {
+    if (!arc.integration.enabled) {
+      return { ok: false, reason: `Integration "${arc.integration.name}" is disabled` };
+    }
+    return {
+      ok: true,
+      resolved: {
+        integration: arc.integration,
+        // The arc source's externalId IS the ARM resource id.
+        scope: { kind: "arc-machine", resourceId: arc.externalId },
         deviceName: asset.hostname,
         filterAsset: baseFilterAsset(asset),
         viaController: false,

@@ -33,13 +33,22 @@ export type DiscoveryScope =
   /** One AD computer object, by its `objectGUID` (lowercase wire-order hex).
    *  Keyed on the GUID rather than the DN deliberately: a computer object that
    *  moves OU keeps its GUID but changes its DN. */
-  | { kind: "ad-object"; objectGuid: string };
+  | { kind: "ad-object"; objectGuid: string }
+  /** One vCenter VM, by managed-object reference (e.g. "vm-1024"). */
+  | { kind: "vcenter-vm"; moref: string }
+  /** One ESXi host, by managed-object reference (e.g. "host-42"). */
+  | { kind: "vcenter-host"; moref: string }
+  /** One Arc-enabled machine, by its full ARM resource id. */
+  | { kind: "arc-machine"; resourceId: string };
 
 /** The ONE integration type each scope kind is valid against. */
 export const SCOPE_INTEGRATION_TYPE: Record<DiscoveryScope["kind"], string> = {
   "fmg-device": "fortimanager",
   "entra-device": "entraid",
   "ad-object": "activedirectory",
+  "vcenter-vm": "vcenter",
+  "vcenter-host": "vcenter",
+  "arc-machine": "azurearc",
 };
 
 /** Is this scope usable against this integration type? */
@@ -66,7 +75,26 @@ export function scopeLabel(scope: DiscoveryScope | undefined, displayName?: stri
     case "fmg-device": return scope.deviceName;
     case "entra-device": return scope.deviceId;
     case "ad-object": return scope.objectGuid;
+    case "vcenter-vm": return scope.moref;
+    case "vcenter-host": return scope.moref;
+    case "arc-machine": return scope.resourceId;
   }
+}
+
+/**
+ * The vCenter target, or null when this scope isn't a vCenter one.
+ *
+ * A helper rather than an inline ternary at the call site because BOTH vCenter
+ * kinds map to the same collector argument, and a call site that handled only
+ * `vcenter-vm` would silently run a host refresh as a FULL inventory read —
+ * which is precisely the fleet-scale accident the union exists to prevent.
+ */
+export function vcenterScopeTarget(
+  scope: DiscoveryScope | undefined,
+): { kind: "vm" | "host"; moref: string } | undefined {
+  if (scope?.kind === "vcenter-vm") return { kind: "vm", moref: scope.moref };
+  if (scope?.kind === "vcenter-host") return { kind: "host", moref: scope.moref };
+  return undefined;
 }
 
 /**

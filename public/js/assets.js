@@ -11311,15 +11311,12 @@ function _assetDiscoverNowBtnHTML(a) {
   // (Entra deviceId / AD objectGUID). The integration type is the cheap proxy
   // the panel has to hand; the server re-resolves from the source rows and
   // answers with a clear 400 if this asset has none.
-  var isDirectory = integ && (integ.type === "entraid" || integ.type === "activedirectory");
+  var isDirectory = integ && (integ.type === "entraid" || integ.type === "activedirectory"
+    || integ.type === "vcenter" || integ.type === "azurearc");
 
   var disabledReason = "";
   if (!isGate && !isInfra && !isDirectory) {
-    disabledReason = integ && (integ.type === "vcenter" || integ.type === "azurearc")
-      ? "Per-asset discovery is not available for " +
-        (integ.type === "vcenter" ? "vCenter" : "Azure Arc") +
-        "-discovered assets yet — run a discovery from the Integrations page to refresh it."
-      : "No discovery source owns this asset, so there is nothing to re-run.";
+    disabledReason = "No discovery source owns this asset, so there is nothing to re-run.";
   } else if (isGate && !fortinetIntg) {
     disabledReason = "This FortiGate is not owned by a FortiManager or FortiGate integration.";
   } else if (integ && integ.enabled === false) {
@@ -11352,10 +11349,15 @@ function _assetDiscoverNowBtnHTML(a) {
     title = "Run discovery for this device's controller FortiGate: refreshes this " +
       (role === "fortiap" ? "FortiAP" : "FortiSwitch") + " and its siblings without a full sweep";
   } else if (isDirectory) {
-    title = "Re-read just this device from " +
-      (integ.type === "entraid" ? "Entra ID / Intune" : "Active Directory") +
-      " — no full directory sweep, and none of the fleet-wide passes (agent auto-deploy, " +
-      "auto-monitor, presence verification) a scheduled run performs";
+    var sourceLabels = {
+      entraid: "Entra ID / Intune",
+      activedirectory: "Active Directory",
+      vcenter: "vCenter",
+      azurearc: "Azure Arc",
+    };
+    title = "Re-read just this device from " + (sourceLabels[integ.type] || "its integration") +
+      " — no full sweep, and none of the fleet-wide passes (agent auto-deploy, auto-monitor, " +
+      "presence verification, stale-source cleanup) a scheduled run performs";
   } else {
     title = "Run discovery for this FortiGate only: refresh its subnets, reservations, VIPs, " +
       "FortiSwitches and FortiAPs without a full " +

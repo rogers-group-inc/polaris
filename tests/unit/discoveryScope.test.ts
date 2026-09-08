@@ -18,6 +18,7 @@ import {
   ldapGuidFilterValue,
   scopeLabel,
   scopeMatchesIntegrationType,
+  vcenterScopeTarget,
   SCOPE_INTEGRATION_TYPE,
   type DiscoveryScope,
 } from "../../src/services/discovery/discoveryScope.js";
@@ -72,6 +73,9 @@ describe("scopeMatchesIntegrationType", () => {
     [{ kind: "fmg-device", deviceName: "fgt-1" }, "fortimanager"],
     [{ kind: "entra-device", deviceId: "abc" }, "entraid"],
     [{ kind: "ad-object", objectGuid: "abc" }, "activedirectory"],
+    [{ kind: "vcenter-vm", moref: "vm-1" }, "vcenter"],
+    [{ kind: "vcenter-host", moref: "host-1" }, "vcenter"],
+    [{ kind: "arc-machine", resourceId: "/subscriptions/x" }, "azurearc"],
   ];
 
   it("accepts each kind against its own integration type", () => {
@@ -90,9 +94,41 @@ describe("scopeMatchesIntegrationType", () => {
   });
 
   it("maps every union member — a new kind must declare its type", () => {
-    const kinds: DiscoveryScope["kind"][] = ["fmg-device", "entra-device", "ad-object"];
+    const kinds: DiscoveryScope["kind"][] = [
+      "fmg-device", "entra-device", "ad-object", "vcenter-vm", "vcenter-host", "arc-machine",
+    ];
     for (const k of kinds) expect(typeof SCOPE_INTEGRATION_TYPE[k]).toBe("string");
     expect(Object.keys(SCOPE_INTEGRATION_TYPE).sort()).toEqual([...kinds].sort());
+  });
+
+  it("lets both vCenter kinds share the vcenter integration type", () => {
+    expect(SCOPE_INTEGRATION_TYPE["vcenter-vm"]).toBe("vcenter");
+    expect(SCOPE_INTEGRATION_TYPE["vcenter-host"]).toBe("vcenter");
+  });
+});
+
+// Both vCenter kinds hand the collector the same argument shape. A call site
+// that pattern-matched only `vcenter-vm` would let a HOST refresh fall through
+// as an unscoped call — i.e. a full inventory read, and with it the full
+// per-VM detail fan-out — which is the fleet-scale accident this helper exists
+// to make impossible.
+describe("vcenterScopeTarget", () => {
+  it("maps a VM scope to a vm target", () => {
+    expect(vcenterScopeTarget({ kind: "vcenter-vm", moref: "vm-1024" }))
+      .toEqual({ kind: "vm", moref: "vm-1024" });
+  });
+
+  it("maps a HOST scope to a host target — not undefined", () => {
+    expect(vcenterScopeTarget({ kind: "vcenter-host", moref: "host-42" }))
+      .toEqual({ kind: "host", moref: "host-42" });
+  });
+
+  it("is undefined for an unscoped run and for every non-vCenter kind", () => {
+    expect(vcenterScopeTarget(undefined)).toBeUndefined();
+    expect(vcenterScopeTarget({ kind: "fmg-device", deviceName: "fgt" })).toBeUndefined();
+    expect(vcenterScopeTarget({ kind: "entra-device", deviceId: "x" })).toBeUndefined();
+    expect(vcenterScopeTarget({ kind: "ad-object", objectGuid: "x" })).toBeUndefined();
+    expect(vcenterScopeTarget({ kind: "arc-machine", resourceId: "/x" })).toBeUndefined();
   });
 });
 
@@ -111,6 +147,9 @@ describe("scopeLabel", () => {
     expect(scopeLabel({ kind: "fmg-device", deviceName: "FGT-HQ" })).toBe("FGT-HQ");
     expect(scopeLabel({ kind: "entra-device", deviceId: "9f1c" })).toBe("9f1c");
     expect(scopeLabel({ kind: "ad-object", objectGuid: "abcd" })).toBe("abcd");
+    expect(scopeLabel({ kind: "vcenter-vm", moref: "vm-1024" })).toBe("vm-1024");
+    expect(scopeLabel({ kind: "vcenter-host", moref: "host-42" })).toBe("host-42");
+    expect(scopeLabel({ kind: "arc-machine", resourceId: "/subscriptions/a/x" })).toBe("/subscriptions/a/x");
   });
 
   it("ignores a blank display name rather than labelling a run with whitespace", () => {

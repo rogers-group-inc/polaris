@@ -275,27 +275,109 @@ describe("resolveDiscoveryScopeForAsset — directory sources", () => {
   });
 });
 
+describe("resolveDiscoveryScopeForAsset — vCenter and Arc", () => {
+  const VC = { id: "i-vc", name: "Prod vCenter", type: "vcenter", config: {}, enabled: true };
+  const ARC = { id: "i-arc", name: "Azure Arc", type: "azurearc", config: {}, enabled: true };
+  const RESOURCE_ID = "/subscriptions/aaaa/resourcegroups/rg1/providers/microsoft.hybridcompute/machines/srv-9";
+
+  it("scopes a VM by the moref from Asset.virtualization, not the source externalId", async () => {
+    // The vcenter-vm externalId is the INSTANCE UUID (with an
+    // "<integrationId>:<moref>" fallback), so reading the moref off the source
+    // row would be wrong for every VM that reports a UUID.
+    subject = {
+      id: "a-vm", hostname: "app-01", ipAddress: "10.4.0.9", learnedLocation: null,
+      assetType: "server", fortinetTopology: null, discoveredByIntegration: VC,
+      virtualization: { role: "vm", vcenterIntegrationId: "i-vc", vmMoref: "vm-1024", hostMoref: "host-7" },
+      sources: [{ sourceKind: "vcenter-vm", externalId: "5001-instance-uuid", observed: {}, integration: VC }],
+    };
+    const r = await resolveDiscoveryScopeForAsset("a-vm");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved.scope).toEqual({ kind: "vcenter-vm", moref: "vm-1024" });
+    expect(r.resolved.integration.id).toBe("i-vc");
+  });
+
+  it("scopes an ESXi host by its hostMoref", async () => {
+    subject = {
+      id: "a-esx", hostname: "esx-03", ipAddress: "10.4.0.3", learnedLocation: null,
+      assetType: "hypervisor", fortinetTopology: null, discoveredByIntegration: VC,
+      virtualization: { role: "host", vcenterIntegrationId: "i-vc", hostMoref: "host-42" },
+      sources: [{ sourceKind: "vcenter-host", externalId: "host-ext", observed: {}, integration: VC }],
+    };
+    const r = await resolveDiscoveryScopeForAsset("a-esx");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved.scope).toEqual({ kind: "vcenter-host", moref: "host-42" });
+  });
+
+  it("refuses a vCenter asset whose moref has not been recorded yet", async () => {
+    // Better a clear "not recorded yet" than a scope built from a guess.
+    subject = {
+      id: "a-vm", hostname: "app-01", ipAddress: null, learnedLocation: null,
+      assetType: "server", fortinetTopology: null, discoveredByIntegration: VC,
+      virtualization: null,
+      sources: [{ sourceKind: "vcenter-vm", externalId: "uuid", observed: {}, integration: VC }],
+    };
+    const r = await resolveDiscoveryScopeForAsset("a-vm");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toMatch(/managed-object reference/i);
+  });
+
+  it("scopes an Arc machine by its ARM resource id (the source externalId)", async () => {
+    subject = {
+      id: "a-arc", hostname: "srv-9", ipAddress: "10.7.0.9", learnedLocation: null,
+      assetType: "server", fortinetTopology: null, discoveredByIntegration: ARC,
+      virtualization: null,
+      sources: [{ sourceKind: "arc", externalId: RESOURCE_ID, observed: {}, integration: ARC }],
+    };
+    const r = await resolveDiscoveryScopeForAsset("a-arc");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved.scope).toEqual({ kind: "arc-machine", resourceId: RESOURCE_ID });
+  });
+
+  it("does not scope a connected-Kubernetes cluster asset", async () => {
+    // arc-k8s rows come from the cluster query a scoped run deliberately skips.
+    subject = {
+      id: "a-k8s", hostname: "aks-1", ipAddress: null, learnedLocation: null,
+      assetType: "other", fortinetTopology: null, discoveredByIntegration: ARC,
+      virtualization: null,
+      sources: [{ sourceKind: "arc-k8s", externalId: "/subscriptions/a/clusters/c", observed: {}, integration: ARC }],
+    };
+    const r = await resolveDiscoveryScopeForAsset("a-k8s");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain("Kubernetes");
+  });
+});
+
 describe("resolveDiscoveryScopeForAsset — assets with no scoped path", () => {
   const base = {
     id: "a-x", hostname: "host-1", ipAddress: "10.9.0.5", learnedLocation: null,
     assetType: "workstation", fortinetTopology: null, discoveredByIntegration: null,
   };
 
-  it("names vCenter for a VM", async () => {
-    subject = { ...base, assetType: "server", sources: [{ sourceKind: "vcenter-vm" }] };
+  it("does not scope a vCenter source whose integration row is gone", async () => {
+    subject = {
+      ...base, assetType: "server",
+      sources: [{ sourceKind: "vcenter-vm", externalId: "uuid", observed: {}, integration: null }],
+    };
     const r = await resolveDiscoveryScopeForAsset("a-x");
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reason).toContain("vCenter");
+    expect(r.reason).toMatch(/No discovery source owns this asset/i);
   });
 
-  it("names Azure Arc for an Arc machine", async () => {
-    subject = { ...base, assetType: "server", sources: [{ sourceKind: "arc" }] };
+  it("does not scope an Arc source whose integration row is gone", async () => {
+    subject = {
+      ...base, assetType: "server",
+      sources: [{ sourceKind: "arc", externalId: "/subscriptions/a/x", observed: {}, integration: null }],
+    };
     const r = await resolveDiscoveryScopeForAsset("a-x");
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reason).toContain("Azure Arc");
-    expect(r.reason).toMatch(/Integrations page/);
+    expect(r.reason).toMatch(/No discovery source owns this asset/i);
   });
 
   it("does not scope a directory source whose integration row is gone", async () => {

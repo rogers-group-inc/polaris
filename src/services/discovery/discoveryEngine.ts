@@ -55,7 +55,7 @@ import { normalizeHardwareSerial, indexUniqueBy } from "../../utils/hardwareIden
 import { recordSample, getBaselines, type Baseline } from "../discoveryDurationService.js";
 import { evaluateAutoAbort, clearAutoAbortState } from "../discoveryAutoAbortService.js";
 import { publishDiscoveryJob } from "../queueService.js";
-import { scopeLabel, scopeMatchesIntegrationType, type DiscoveryScope } from "./discoveryScope.js";
+import { scopeLabel, scopeMatchesIntegrationType, vcenterScopeTarget, type DiscoveryScope } from "./discoveryScope.js";
 import {
   upsertQueuedRun,
   markRunStarted,
@@ -777,9 +777,10 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     } else if (integration.type === "vcenter") {
       // vCenter discovery produces assets only — VMs + ESXi hosts (plus the
       // current-state datastore table). No subnets, reservations, or VIPs.
-      const result = await vcenter.discoverInventory(config as any, ac.signal, onProgress);
+      const vcTarget = vcenterScopeTarget(scope);
+      const result = await vcenter.discoverInventory(config as any, ac.signal, onProgress, vcTarget);
       if (!ac.signal.aborted) {
-        const r = await syncVcenterDevices(integrationId, integrationName, config, result, actor);
+        const r = await syncVcenterDevices(integrationId, integrationName, config, result, actor, vcTarget ? "scoped" : "full");
         syncTotals.created.push(...r.created);
         syncTotals.updated.push(...r.updated);
         syncTotals.skipped.push(...r.skipped);
@@ -788,7 +789,12 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     } else if (integration.type === "azurearc") {
       // Azure Arc discovery produces assets only — Arc-enabled machines. No
       // subnets, reservations, or VIPs.
-      const result = await azureArc.discoverMachines(config as any, ac.signal, onProgress);
+      // Arc's sync needs no scoped mode: it has NO fleet-absence passes — it
+      // deliberately never writes `status` (a Disconnected agent is a
+      // reachability fact, not a lifecycle one, so aging-out stays with
+      // decommissionStaleAssets) and issues no bulk delete/update. Audited
+      // 2026-09-08; re-check if you add a pass that reads absence.
+      const result = await azureArc.discoverMachines(config as any, ac.signal, onProgress, scope?.kind === "arc-machine" ? { resourceId: scope.resourceId } : undefined);
       if (!ac.signal.aborted) {
         const r = await syncArcDevices(integrationId, integrationName, config, result, actor);
         syncTotals.created.push(...r.created);
@@ -1712,6 +1718,45 @@ class AssetIndex {
 //                        inventory query this run. Phases 8–9/12/13.x are fleet-wide reconciles
 //                        owned by full runs (their gates only pass full|finalize).
 export type SyncMode = "full" | "skip-deprecation" | "deprecation-only" | "finalize" | "finalize-scoped";
+
+/**
+ * vCenter sync mode. "scoped" = the run was narrowed to one VM or host by the
+ * asset slide-in's Discover Now.
+ */
+export type VcenterSyncMode = "full" | "scoped";
+
+/**
+ * Pure gate for the three fleet-absence passes in `syncVcenterDevices`.
+ * Exported and unit-tested for the same reason as `sweepPhaseEnabled`: each of
+ * these reads "absent from the result" as "gone from vCenter", and on a
+ * one-device result that is catastrophically wrong.
+ *
+ *   dependency-edges — delete-replaces `AssetDependencyParent(source="vcenter")`
+ *     across EVERY VM asset this integration owns (`priorVmAssetIds`), so a
+ *     scoped run would wipe VM→host suppression fleet-wide.
+ *   datastores       — a delete-replace keyed on the integration; a scoped
+ *     result carries no datastores, so it would empty the table.
+ *   stale-sweep      — deletes vanished `vcenter-*` AssetSource rows and
+ *     decommissions assets left with no source at all.
+ *
+ * The stale sweep has a SECOND, independent guard in
+ * `vcenterService.vcenterSweepBlockedReason` (which refuses on both `scoped`
+ * and `inventoryComplete: false`). Two guards on purpose: that pass
+ * decommissions assets, and the failure is silent.
+ */
+export type VcenterSweepPass = "dependency-edges" | "datastores" | "stale-sweep";
+
+/** Which modes each pass may run under. All three are full-only today; a pass
+ *  that becomes safe on a one-device result changes here and nowhere else. */
+const VCENTER_PASS_MODES: Record<VcenterSweepPass, VcenterSyncMode[]> = {
+  "dependency-edges": ["full"],
+  datastores: ["full"],
+  "stale-sweep": ["full"],
+};
+
+export function vcenterPassEnabled(mode: VcenterSyncMode, pass: VcenterSweepPass): boolean {
+  return VCENTER_PASS_MODES[pass].includes(mode);
+}
 
 /**
  * Pure gate for the four asset-only post-sync passes in `runDiscovery` — agent
@@ -9282,6 +9327,8 @@ export async function syncVcenterDevices(
   integrationConfig: Record<string, unknown> | null,
   result: vcenter.VcenterDiscoveryResult,
   actor?: string,
+  /** "scoped" disables every fleet-absence pass — see `vcenterPassEnabled`. */
+  mode: VcenterSyncMode = "full",
 ): Promise<{ created: string[]; updated: string[]; skipped: string[]; decommissioned: string[] }> {
   const syncLog = (level: "info" | "error" | "warning", message: string) => {
     logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
@@ -9871,7 +9918,12 @@ export async function syncVcenterDevices(
   // Delete-replace scoped strictly to source="vcenter" rows on this
   // integration's VM assets (prior + current) — never touches the Fortinet
   // "computed" rows or operator "override" rows.
-  try {
+  //
+  // SKIPPED on a scoped run. `priorVmAssetIds` is every VM asset this
+  // integration owns, so a one-VM run would delete the vcenter dependency edges
+  // off the WHOLE fleet and recreate only the scoped VM's — silently disabling
+  // VM→host dependency suppression everywhere until the next full run.
+  if (vcenterPassEnabled(mode, "dependency-edges")) try {
     const edges = vcenter.buildVcenterDependencyEdges(
       placements,
       hostAssetIdByMoref,
@@ -9898,7 +9950,11 @@ export async function syncVcenterDevices(
   }
 
   // ── Pass D — datastores (current-state delete-replace) + stale sweep ──────
-  try {
+  //
+  // SKIPPED on a scoped run for the bluntest possible reason: it is a
+  // delete-replace keyed on the INTEGRATION, and a scoped result carries no
+  // datastore reads to replace them with, so it would empty the table.
+  if (vcenterPassEnabled(mode, "datastores")) try {
     const toBigInt = (n: number | null): bigint | null =>
       n === null || !Number.isFinite(n) ? null : BigInt(Math.round(n));
     await prisma.$transaction([
@@ -9956,7 +10012,14 @@ export async function syncVcenterDevices(
   //      asset instead of orphaning its identity.
   const decommissioned: string[] = [];
   try {
-    const blockedReason = vcenter.vcenterSweepBlockedReason(result);
+    // Two independent guards, deliberately. `vcenterPassEnabled` is the mode
+    // the caller asked for; `vcenterSweepBlockedReason` re-derives the answer
+    // from the RESULT itself (it refuses on both `scoped` and an incomplete
+    // inventory). Either alone would do — but this pass deletes source rows and
+    // decommissions assets, and it fails silently, so it gets two.
+    const blockedReason = !vcenterPassEnabled(mode, "stale-sweep")
+      ? "the run was scoped to a single device"
+      : vcenter.vcenterSweepBlockedReason(result);
     if (blockedReason) {
       const priorCount = vcenterSources.filter((src: any) => src.integrationId === integrationId).length;
       if (priorCount > 0) {
