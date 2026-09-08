@@ -1785,6 +1785,36 @@ router.get("/capacity-advisor", async (_req, res, next) => {
   }
 });
 
+// ─── Platform lifecycle ───────────────────────────────────────────────────
+//
+// What this host is running, and whether any of it is past or approaching end
+// of life. Feeds the Platform Lifecycle card on the Maintenance tab.
+//
+// No per-route gate: the blanket requirePermission("serverSettingsSystem",
+// "read") on the whole /server-settings mount in src/api/router.ts already
+// covers this, exactly as it does for /database, /pg-tuning and
+// /capacity-advisor. Adding one here would be inconsistent noise.
+//
+// Note what this route does NOT do: it never records a lifecycle transition.
+// /pg-tuning and /capacity-advisor both do, because disk state is
+// minutes-volatile and an admin loading the tab is the freshest signal
+// available. A lifecycle condition is true for months, so letting a page
+// refresh re-fire the Event would let a browser reload spam the on-call inbox.
+// Transitions belong to the daily job alone.
+const platformLifecycleQuery = z
+  .object({ refresh: z.coerce.boolean().optional() })
+  .strict();
+
+router.get("/platform-lifecycle", async (req, res, next) => {
+  try {
+    const q = platformLifecycleQuery.parse(req.query);
+    const { getPlatformLifecycle } = await import("../../services/platformLifecycleService.js");
+    res.json(await getPlatformLifecycle({ force: q.refresh === true }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Stages .env changes on disk — operator-level blast radius.
 router.post("/capacity-advisor/stage", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
   try {
