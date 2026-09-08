@@ -1,0 +1,103 @@
+# Dependency updates. The triage procedure — and the reason for every `ignore`
+# below — is .claude/skills/polaris-tech-lifecycle/references/dependency-audit.md.
+#
+# Two rules that shape this whole file:
+#
+#   1. A PR that touches a VERSION PIN FAMILY member is not mergeable on its own.
+#      A Node major lives in 23 places; Dependabot can only see one of them. So
+#      @types/node and Dockerfile node majors are ignored here and bumped through
+#      the pin inventory instead.
+#   2. Majors of the architectural dependencies are ignored on purpose. An
+#      ignored major is not invisible — the upgrade playbooks and the quarterly
+#      `npm outdated` pass catch it. An un-ignored one becomes a PR that sits
+#      open forever and trains everyone to ignore Dependabot.
+#
+# Dependabot does NOT know about the `overrides` block in package.json. A grouped
+# parent bump can make an override redundant or, worse, insufficient — which
+# still looks patched. Check it during triage, not with config.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    groups:
+      # One version across three packages. Ungrouped these arrive as three PRs
+      # and merging any one alone breaks the build.
+      prisma:
+        patterns: ["prisma", "@prisma/client", "@prisma/adapter-pg"]
+      typescript-toolchain:
+        patterns: ["typescript", "typescript-eslint", "eslint", "@eslint/*"]
+      # vitest and @vitest/coverage-v8 must be the same version.
+      vitest:
+        patterns: ["vitest", "@vitest/coverage-v8", "happy-dom", "supertest", "@types/supertest"]
+      types:
+        patterns: ["@types/*"]
+        exclude-patterns: ["@types/node", "@types/supertest"]
+      prod-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+      dev-minor-patch:
+        dependency-type: development
+        update-types: [minor, patch]
+    ignore:
+      # A Node-pin family member: moves with engines.node and 21 other sites.
+      - dependency-name: "@types/node"
+      # Architectural majors — a project, not a bump. See the upgrade playbooks.
+      - dependency-name: express
+        update-types: [version-update:semver-major]
+      - dependency-name: prisma
+        update-types: [version-update:semver-major]
+      - dependency-name: "@prisma/client"
+        update-types: [version-update:semver-major]
+      - dependency-name: "@prisma/adapter-pg"
+        update-types: [version-update:semver-major]
+      - dependency-name: zod
+        update-types: [version-update:semver-major]
+      - dependency-name: pg
+        update-types: [version-update:semver-major]
+      - dependency-name: pg-boss
+        update-types: [version-update:semver-major]
+      - dependency-name: pino
+        update-types: [version-update:semver-major]
+      - dependency-name: undici
+        update-types: [version-update:semver-major]
+      - dependency-name: multer
+        update-types: [version-update:semver-major]
+
+  # Monthly, not weekly: eight modules with low churn, and every agent-side bump
+  # implies agent/VERSION, a rebuild of every platform binary and a re-sign. The
+  # review cost dwarfs the bump.
+  - package-ecosystem: gomod
+    directory: /agent
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels: [dependencies, agent-rebuild-required]
+
+  # The pinned actions/* set rots invisibly. This will NOT bump `node-version:`
+  # in a workflow — that is a Node pin and belongs to check:versions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies]
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Dockerfile FROM lines only. Node majors are ignored: Dependabot would offer
+  # node:20-bookworm -> node:22-bookworm, a 23-site platform bump disguised as a
+  # one-line PR. Ignoring the major keeps this as a useful "20.x moved" signal.
+  # It cannot touch the compose files, which use floating tags anyway.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies]
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]

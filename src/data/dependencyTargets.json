@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-09-08",
+  "reviewedBy": "david.moore@rogersgroupinc.com",
+  "notes": "Read by scripts/check-deps.mjs and by the quarterly pass in .claude/skills/polaris-tech-lifecycle/references/dependency-audit.md. NEVER read by anything under src/ at runtime: npm majors publish no end-of-life dates, and which major an install runs is fixed by its build, so this is a repo fact rather than a per-install monitoring signal. targetMajor is the major this repo intends to be on; check-deps fails when the installed major is below it.",
+  "npm": [
+    { "name": "express", "targetMajor": 5, "architectural": true, "note": "Routing is validated at boot, not per request. tests/unit/routerBoots.test.ts guards the :param(regex) form that crashed production once." },
+    { "name": "prisma", "targetMajor": 7, "architectural": true, "note": "Moves as one version with @prisma/client and @prisma/adapter-pg." },
+    { "name": "@prisma/client", "targetMajor": 7, "architectural": true, "note": "See prisma." },
+    { "name": "@prisma/adapter-pg", "targetMajor": 7, "architectural": true, "note": "See prisma." },
+    { "name": "zod", "targetMajor": 3, "architectural": true, "note": "Issue shape feeds the API's 400 bodies, so an error-shape change is an API-contract change." },
+    { "name": "typescript", "targetMajor": 6, "architectural": false },
+    { "name": "vitest", "targetMajor": 4, "architectural": false, "note": "Must match @vitest/coverage-v8." },
+    { "name": "@vitest/coverage-v8", "targetMajor": 4, "architectural": false, "note": "Must match vitest." },
+    { "name": "eslint", "targetMajor": 9, "architectural": false, "note": "Moves with typescript-eslint." },
+    { "name": "typescript-eslint", "targetMajor": 8, "architectural": false, "note": "Moves with eslint." },
+    { "name": "pg", "targetMajor": 8, "architectural": true },
+    { "name": "pg-boss", "targetMajor": 12, "architectural": true, "note": "Queue schema; a major can require a queue migration." },
+    { "name": "pino", "targetMajor": 10, "architectural": true },
+    { "name": "undici", "targetMajor": 6, "architectural": true },
+    { "name": "multer", "targetMajor": 2, "architectural": true },
+    { "name": "helmet", "targetMajor": 8, "architectural": false },
+    { "name": "express-session", "targetMajor": 1, "architectural": false },
+    { "name": "express-rate-limit", "targetMajor": 8, "architectural": false, "note": "Backs the login limiter." },
+    { "name": "happy-dom", "targetMajor": 20, "architectural": false, "note": "Mis-parses <option selected>; DOM tests must set selection in JS after insertion." },
+    { "name": "@types/node", "targetMajor": 20, "architectural": true, "pinFamily": "node-major", "note": "A Node-pin family member. Moves with engines.node and every other Node declaration site, NOT on Dependabot's schedule." }
+  ],
+  "go": [
+    { "name": "github.com/gorilla/websocket", "target": "v1.5.3", "note": "The agent command channel." },
+    { "name": "github.com/shirou/gopsutil/v3", "target": "v3.24.5", "note": "Reads OS internals for the sample streams - a bump can change what a metric means on one platform and not another. Verify one Linux and one Windows agent before shipping." },
+    { "name": "golang.org/x/sys", "target": "v0.20.0" }
+  ],
+  "overrides": [
+    { "name": "@hono/node-server", "floor": "^1.19.14", "reason": "Prisma 7 dev-server tooling; floored rather than taking npm audit's suggested Prisma major downgrade.", "runtimeReachable": false, "reviewedAt": "2026-09-08" },
+    { "name": "qs", "floor": "^6.16.0", "reason": "qs.stringify DoS, reached through Express.", "runtimeReachable": true, "reviewedAt": "2026-09-08" },
+    { "name": "fflate", "floor": "^0.8.3", "reason": "Transitive advisory.", "runtimeReachable": true, "reviewedAt": "2026-09-08" },
+    { "name": "@xmldom/xmldom", "floor": "^0.8.15", "reason": "Reached through the SAML stack - this one is in a runtime auth path.", "runtimeReachable": true, "reviewedAt": "2026-09-08" },
+    { "name": "fast-uri", "floor": "^3.1.7", "reason": "Path traversal / host confusion via percent-encoding, via ajv and Prisma engine tooling.", "runtimeReachable": true, "reviewedAt": "2026-09-08" }
+  ]
+}
