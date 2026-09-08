@@ -41,6 +41,7 @@ const sshUtils = ssh2.utils;
 
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
+import { generateEd25519Keypair, SshKeygenError } from "../utils/sshKeygen.js";
 import { logEvent } from "./eventLogService.js";
 import { createSettingStore } from "./settingsStore.js";
 import {
@@ -84,6 +85,7 @@ export const MANAGED_CREDENTIAL_NAMES: Record<SshOnboardingPlatform, string> = {
 };
 /** Comment baked into the public key so it is identifiable in authorized_keys. */
 const KEY_COMMENT = "polaris-agent-deploy";
+
 const DEFAULT_USERNAME = "polaris-agent";
 
 export interface PlatformAccountConfig {
@@ -316,19 +318,27 @@ async function syncCredentialUsername(
 export async function generateKeypair(actor: string): Promise<WindowsSshOnboardingState> {
   const cfg = await store.get();
 
-  // ed25519: small, fast, and supported by both ssh2 and Windows OpenSSH.
-  // generateKeyPairSync emits the OpenSSH private-key format ssh2.connect
-  // accepts directly — no conversion, no shelling out to ssh-keygen.
-  const pair = sshUtils.generateKeyPairSync("ed25519", { comment: KEY_COMMENT });
-  const privateKey = String(pair.private);
-  const publicKey = String(pair.public).trim();
-
-  // Fail before touching the DB if the toolchain ever returns something the
-  // connect path can't use — better a clean 500 here than a credential that
-  // silently never authenticates.
-  const parsed = sshUtils.parseKey(privateKey);
-  if (parsed instanceof Error) {
-    throw new AppError(500, `Generated SSH key failed to parse: ${parsed.message}`);
+  // ed25519: small, fast, and supported by both ssh2 and Windows OpenSSH, and
+  // the OpenSSH private-key format ssh2.connect accepts directly — no
+  // conversion, no shelling out to ssh-keygen.
+  //
+  // Through the shared helper because ssh2's generator intermittently emits a
+  // key its own parser rejects (about one call in three on Node 20+). Before
+  // that helper existed, this button returned a 500 roughly a third of the time
+  // and two test files flaked at the same rate. The helper validates by parsing
+  // and retries, so a key that reaches the database is one that will actually
+  // authenticate.
+  let privateKey: string;
+  let publicKey: string;
+  try {
+    const pair = generateEd25519Keypair(KEY_COMMENT);
+    privateKey = pair.privateKey;
+    publicKey = pair.publicKey;
+  } catch (err) {
+    // Fail before touching the DB rather than storing a credential that would
+    // silently never authenticate.
+    if (err instanceof SshKeygenError) throw new AppError(500, err.message);
+    throw err;
   }
 
   // Both platforms get the SAME keypair; only the username differs. Rotation
