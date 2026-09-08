@@ -155,13 +155,14 @@
         escapeHtml(ackWho) + '</span>'
       : "";
     // An alert is a prompt to go look at the device, so the row opens that
-    // device's details slide-in. An alert about Polaris ITSELF (a host_metric
+    // device's details slide-in on its Alerts tab (the alert itself, not the
+    // General tab the operator would then have to leave). An alert about Polaris ITSELF (a host_metric
     // rule, a system-scoped event) carries no assetId and stays an inert div —
     // there's no device page to open.
     var tag = r.assetId ? "a" : "div";
     var attrs = r.assetId
       ? ' href="/assets.html#view=asset:' + encodeURIComponent(r.assetId) +
-        '" data-asset-id="' + escapeHtml(r.assetId) + '"'
+        '&tab=notifications" data-asset-id="' + escapeHtml(r.assetId) + '"'
       : "";
     return "<" + tag + ' class="recent-item' + (r.assetId ? " recent-item-link" : "") + '"' + attrs +
       ' style="border-left:3px solid ' + bar + ';padding-left:8px">' +
@@ -205,7 +206,8 @@
     renderInstance: function (el, config, data, ctx) {
       render(el, data, config);
       // Click an alert → open its device's details slide-in in place (over the
-      // dashboard) when openViewModal is loaded; fall back to navigation.
+      // dashboard) on the Alerts tab when openViewModal is loaded; fall back to
+      // navigation with the same tab in the hash.
       // Ctrl/meta/middle-click keep the href so the Assets page can still open
       // in a new tab. Delegated on el so it survives the 30s re-render.
       var onClick = function (ev) {
@@ -213,7 +215,7 @@
         var link = ev.target.closest(".recent-item[data-asset-id]");
         if (!link || !el.contains(link)) return;
         ev.preventDefault();
-        PolarisWidgets.openAssetDetail(link.getAttribute("data-asset-id"));
+        PolarisWidgets.openAssetDetail(link.getAttribute("data-asset-id"), { tab: "notifications" });
       };
       el.addEventListener("click", onClick);
       var timer = setInterval(function () {
