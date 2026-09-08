@@ -47,6 +47,14 @@ For each selected worktree:
 3. On conflict: **stop**. Do not resolve silently. Report the conflicting files and ask; the
    common conflict is the same skill reference file edited by two branches, which is resolved
    by keeping both entries.
+   **One conflict is foreseeable and is resolved before merging, not reported**: two open
+   worktrees that each added a business rule both took "the next free number". The branch
+   merging second renumbers its rule to main's current next-free number (`(N is the next free
+   number.)` in `polaris-business-rules/SKILL.md`, plus every `rule N` citation in its code,
+   tests and skill entries), and **the rule reference files are never renamed** — main keeps
+   `invariants-30-43.md` / `narrative-36-43.md` whatever range they now hold, because other
+   skills and code link to those paths. Do it in the worktree (re-enter it, WORKLOCK, `git merge
+   main`, fix, commit), then merge to main. 2026-09-08: two branches both claimed rule 44.
 4. Continue with the next selection only after the previous merge is clean.
 
 ## 4. Review what landed against the skills
