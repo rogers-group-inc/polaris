@@ -1163,11 +1163,17 @@ function scriptPublishingFormHTML(publishToIntune) {
         '<ol style="margin:0;padding-left:1.2rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.6">' +
           '<li>Open this app registration in <strong>Entra ID &rarr; App registrations &rarr; API permissions</strong>.</li>' +
           '<li>Add the <strong>Microsoft Graph &rarr; Application permission</strong> ' +
-            '<code>DeviceManagementConfiguration.ReadWrite.All</code>.</li>' +
+            '<code>DeviceManagementScripts.ReadWrite.All</code> &mdash; this is the scope Graph ' +
+            'enforces on Remediations (<code>deviceHealthScripts</code>). Some tenants answer on an ' +
+            'API version that asks for <code>DeviceManagementConfiguration.ReadWrite.All</code> ' +
+            'instead; if publishing fails, the 403 names the scope that tenant wants &mdash; add that one.</li>' +
           '<li><strong>Grant admin consent</strong> for the tenant &mdash; application permissions do not work without it.</li>' +
         '</ol>' +
         '<p style="margin:0.5rem 0 0 0;font-size:0.82rem;color:var(--color-text-secondary)">' +
-          'Discovery keeps working on the read permissions it already has; this is additive.' +
+          'Discovery keeps working on the read permissions it already has; this is additive. ' +
+          'A newly granted permission reaches Polaris on its next access token, which it caches for up to ' +
+          'an hour &mdash; a publish that fails right after the grant is retried automatically on a fresh ' +
+          'token, so try it once more before assuming the grant did not take.' +
         '</p>' +
       '</div>' +
       '<p class="hint" style="color:var(--color-warning,#d98c00);margin:0">' +
