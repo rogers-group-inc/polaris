@@ -95,6 +95,10 @@
     "node": ">=20.0.0"
   },
   "overrides": {
-    "@hono/node-server": "^1.19.14"
+    "@hono/node-server": "^1.19.14",
+    "qs": "^6.16.0",
+    "fflate": "^0.8.3",
+    "@xmldom/xmldom": "^0.8.15",
+    "fast-uri": "^3.1.7"
   }
 }
