@@ -106,10 +106,11 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Upsert is by `displayName`, so **renaming `INTUNE_POLICY_NAME` strands the published policy** and the next publish creates a second one.
 - The version probe treats **404 as "wrong API version, try the next"** and **403 as "this version exists, permission missing"**. Falling through on a 403 would report the wrong problem and publish to the wrong base. It depends on `graphApiRequest`'s 403 message wording — the graphRequest test pins that string.
 - Opt-in per integration (`publishToIntune`); refuses with a message naming the checkbox, and reaches the tenant zero times when off.
+- **The Graph scope this needs is `DeviceManagementScripts.ReadWrite.All`**, observed against a live tenant 2026-09-08 — NOT the `DeviceManagementConfiguration.*` the v1.0 reference lists for `deviceHealthScripts`. Which one a tenant enforces tracks the API version it answers the collection on, which is what the version probe is for. Operator-facing copy (the integration modal's Script Publishing tab, README, INSTALL) names the Scripts scope and tells the reader the 403 text is the authority. Do not "fix" this back to a single scope from the docs alone.
 - **The version-probe cache is keyed by `tenantId`, never process-global.** Which API version serves `deviceHealthScripts` is a property of the TENANT, so one shared string would let the first tenant probed decide for every other one — an install with two Entra integrations (prod + test, or a post-acquisition pair) would publish against the wrong base and fail confusingly. `resolvedBaseByTenant` + `_resetResolvedBase()` (test seam, clears all); two tests pin it — a second tenant gets its own probe, and a repeat publish to the SAME tenant re-probes zero times.
 
 **When changing this:**
-- Tests: `tests/unit/intunePublish.test.ts` (18) + `tests/unit/graphRequest.test.ts` (11, the transport).
+- Tests: `tests/unit/intunePublish.test.ts` (20) + `tests/unit/graphRequest.test.ts` (14, the transport).
 - Route gate is chained at **fullwrite on BOTH** `serverSettingsSystem` and `integrations` — `integrations:write` is the blanket gate on that whole router and must not confer tenant writes.
 
 ---
@@ -153,6 +154,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - OAuth2 client-credentials flow; tokens cached in-memory by tenantId:clientId until expiry ≥60s buffer.
+- **A 403 on a CACHED token re-mints once and retries; a 403 on a fresh token does not.** An app-only token freezes its `roles` claim at issuance, so a permission granted after the cached token was minted is invisible for up to an hour — the operator fixes the grant, clicks again, and gets a byte-identical 403. `getAccessToken` returns `{token, fromCache}` for exactly this decision; the `fromCache` guard is what keeps a genuinely unauthorized app from paying a token fetch per attempt. Three cases in `tests/unit/graphRequest.test.ts` pin all three outcomes.
 - Device identity: Entra `deviceId` (GUID) is stable key → `AssetSource.externalId` with `sourceKind="entra"` or `"intune"`.
 - When enableIntune=true, both `/v1.0/devices` and `/v1.0/deviceManagement/managedDevices` are fetched & merged on azureADDeviceId ↔ deviceId; Intune data wins on shared fields.
 - Hybrid-joined devices carry `onPremisesSecurityIdentifier` (SID) → cross-link to activeDirectoryService via `sid:{SID}` tags.
@@ -162,7 +164,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - proxyQuery is read-only Graph API pass-through (GET only, /v1.0/ or /beta/ prefix required).
 
 **When changing this:**
-- Test OAuth2 token caching + refresh 60s before expiry; verify no mid-request expirations.
+- Test OAuth2 token caching + refresh 60s before expiry; verify no mid-request expirations, and that the 401/403 re-mint paths still retry exactly once.
 - Verify Intune merge logic on shared fields (Intune data must win over Entra).
 - Check hybrid-join SID cross-link still tags assets correctly for AD ↔ Entra matching.
 - Validate deviceInclude/deviceExclude wildcard matching against displayName.

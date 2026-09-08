@@ -1458,10 +1458,14 @@ Downloading the script and pushing it yourself works fine and needs no extra per
 Uploads the remediation + detection pair as an Intune **Remediation**.
 
 1. Open the app registration behind your Entra ID integration → **API permissions**.
-2. Add the Microsoft Graph **application** permission `DeviceManagementConfiguration.ReadWrite.All`.
+2. Add the Microsoft Graph **application** permission `DeviceManagementScripts.ReadWrite.All`.
 3. **Grant admin consent** — application permissions do nothing without it.
 4. Tick *Allow Polaris to publish scripts to Intune* on the integration's Script Publishing tab.
 5. Integrations → Polaris Agent → SSH Deployment → **Publish to Intune**.
+
+> **If publishing returns a 403 naming a different scope**, grant that one. Graph serves Remediations (`deviceHealthScripts`) from both `/v1.0` and `/beta`, Polaris uses whichever your tenant answers on, and the two do not enforce the same scope — some tenants want `DeviceManagementConfiguration.ReadWrite.All` instead. The error text names the scope your tenant is asking for; that is the authority, not this page.
+>
+> **A 403 immediately after fixing the grant is expected once.** Polaris authenticates with an app-only token whose permissions are frozen when the token is issued, and it caches that token for up to an hour, so the first attempt after a grant can still be carrying the pre-grant token. Polaris now discards a cached token and retries once when Graph returns 403, so pressing the button again is enough; you no longer need to restart the service or wait the token out.
 
 **Polaris never assigns the policy.** It arrives targeting nothing; you review the script and choose device groups in the Intune console. Re-publishing updates the same policy rather than creating a second one.
 

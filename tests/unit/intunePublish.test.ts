@@ -262,7 +262,7 @@ describe("v1.0 / beta probe", () => {
     seedEnabledIntegration();
     graphResponder = (url, opts) => (opts.allow404 ? null : { value: [] });
     await expect(publishOnboardingScripts(db.integrations[0].id, "t"))
-      .rejects.toThrow(/DeviceManagementConfiguration.ReadWrite.All/);
+      .rejects.toThrow(/DeviceManagementScripts\.ReadWrite\.All/);
   });
 
   it("caches the probe PER TENANT, so a second tenant is probed on its own", async () => {

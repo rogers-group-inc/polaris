@@ -99,11 +99,24 @@ function cacheKey(config: EntraIdConfig): string {
   return `${config.tenantId}:${config.clientId}`;
 }
 
-async function getAccessToken(config: EntraIdConfig, signal?: AbortSignal): Promise<string> {
+/**
+ * Returns the app-only access token, minting one when the cache is cold.
+ *
+ * `fromCache` is part of the return because a client-credentials token carries
+ * its `roles` claim FROZEN at issuance: an admin who grants a new Graph
+ * application permission changes nothing about a token already minted. Callers
+ * that hit an authorization failure need to know whether re-asking could
+ * plausibly help (cached token, possibly pre-dating the grant) or whether the
+ * app genuinely lacks the permission (token minted seconds ago).
+ */
+async function getAccessToken(
+  config: EntraIdConfig,
+  signal?: AbortSignal,
+): Promise<{ token: string; fromCache: boolean }> {
   const key = cacheKey(config);
   const cached = tokenCache.get(key);
   if (cached && cached.expiresAt > Date.now() + 60_000) {
-    return cached.token;
+    return { token: cached.token, fromCache: true };
   }
 
   const { url, body } = buildClientCredentialsTokenRequest({
@@ -143,14 +156,14 @@ async function getAccessToken(config: EntraIdConfig, signal?: AbortSignal): Prom
     }
     const expiresInMs = (parsed.expires_in ?? 3600) * 1000;
     tokenCache.set(key, { token: parsed.access_token, expiresAt: Date.now() + expiresInMs });
-    return parsed.access_token;
+    return { token: parsed.access_token, fromCache: false };
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
-/** Invalidate the cached token for this config (e.g. after a 401). */
+/** Invalidate the cached token for this config (e.g. after a 401 or 403). */
 function invalidateToken(config: EntraIdConfig): void {
   tokenCache.delete(cacheKey(config));
 }
@@ -168,6 +181,8 @@ export interface GraphRequestOptions {
   body?: unknown;
   signal?: AbortSignal;
   retryOn401?: boolean;
+  /** Internal: false once a 403 has already been retried on a fresh token. */
+  retryOn403?: boolean;
   throttleAttempt?: number;
   /** Return null instead of throwing on 404 (upsert lookups). */
   allow404?: boolean;
@@ -175,7 +190,7 @@ export interface GraphRequestOptions {
 
 /**
  * One Graph call. Generalized from the former GET-only `graphGet` so write
- * verbs (Intune script publishing) share the token cache, the 401
+ * verbs (Intune script publishing) share the token cache, the 401/403
  * invalidate-and-retry, and the host pinning rather than hand-rolling a second
  * transport — the repo already carries one hand-rolled Graph POST
  * (emailChannel.sendM365Email) and a second would be two too many.
@@ -197,7 +212,7 @@ async function graphRequest(
 ): Promise<any> {
   const {
     method = "GET", body, signal,
-    retryOn401 = true, throttleAttempt = 0, allow404 = false,
+    retryOn401 = true, retryOn403 = true, throttleAttempt = 0, allow404 = false,
   } = opts;
 
   // Host pinning. `new URL()` alone is not enough — a crafted path can move
@@ -209,7 +224,7 @@ async function graphRequest(
     throw new AppError(400, `Graph host must be ${GRAPH_HOST}`);
   }
 
-  const token = await getAccessToken(config, signal);
+  const { token, fromCache } = await getAccessToken(config, signal);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   const onExternalAbort = () => controller.abort();
@@ -242,6 +257,19 @@ async function graphRequest(
       throw new AppError(502, "Microsoft Graph throttled the request (429) — retry in a moment.");
     }
     if (res.status === 404 && allow404) return null;
+    if (res.status === 403 && retryOn403 && fromCache) {
+      // An app-only token's `roles` claim is fixed at issuance, so a permission
+      // an admin granted five minutes ago is invisible to a token minted before
+      // it — and this cache holds one for up to an hour. Without this retry the
+      // operator fixes the grant in Entra, presses the button again, and gets a
+      // byte-identical 403; the only cures were restarting Polaris or pressing
+      // Test Connection (which invalidates for its own reasons). Discard and
+      // re-mint ONCE. Bounded: only when the token was cached, so a genuinely
+      // unauthorized app costs one extra token fetch per operator click, not a
+      // loop.
+      invalidateToken(config);
+      return graphRequest(config, url, { ...opts, retryOn403: false });
+    }
     if (res.status === 403) {
       const text = await res.text();
       throw new AppError(502, `Graph API permission denied (403): ${extractGraphError(text)}`);
