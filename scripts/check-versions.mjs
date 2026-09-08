@@ -369,7 +369,44 @@ for (const family of FAMILIES) {
   for (const w of family.extra?.(found) ?? []) warnings.push({ check: family.id, msg: `${family.label}: ${w}` });
 }
 
+/**
+ * unversioned-install — warn-only.
+ *
+ * A site that installs a distro default instead of a named version is invisible
+ * to the equality check: there is no number in it to disagree with. It still
+ * drifts, just silently and per-host — `default-jre-headless` is Java 17 on
+ * Ubuntu 22.04 and Java 21 on 24.04, so two supported Polaris hosts sign agent
+ * binaries with different JDK majors and only one of them matches what the
+ * Dockerfile and the RHEL and Windows scripts pin.
+ */
+// Only unversioned installs with NO version verification anywhere near them.
+// The Go installs look unversioned too (`dnf install -y golang`,
+// `apt-get install -y golang-go`) but are deliberately guarded — RHEL enables
+// the go-toolset module stream first, Ubuntu re-checks `go version` against the
+// accept-regex and falls back to snap when the distro package is too old. They
+// are excluded on purpose: a checker that cries wolf gets ignored, which is the
+// failure this whole guard exists to prevent.
+const UNVERSIONED = [
+  { re: /apt-get install -y default-jre-headless/g, what: "Java", pinned: "java-17-openjdk-headless (RHEL) / Microsoft.OpenJDK.17 (Windows)" },
+];
+function checkUnversionedInstalls() {
+  const out = [];
+  for (const rel of ALL_SETUP()) {
+    const src = read(rel) ?? "";
+    for (const u of UNVERSIONED) {
+      for (const m of src.matchAll(u.re)) {
+        out.push(
+          `${rel} installs ${u.what} unversioned (\`${m[0]}\`) — whatever the distro default is — while other ` +
+            `sites pin ${u.pinned}. Nothing here can disagree, so nothing here can be checked; the host decides.`,
+        );
+      }
+    }
+  }
+  return out;
+}
+
 for (const msg of checkPostgresSource()) warnings.push({ check: "postgres-source", msg });
+for (const msg of checkUnversionedInstalls()) warnings.push({ check: "unversioned-install", msg });
 
 // --- dataset shape ---------------------------------------------------------
 const rawDataset = read(DATASET);
