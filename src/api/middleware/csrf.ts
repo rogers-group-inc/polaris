@@ -35,6 +35,13 @@ const EXEMPT_PATH_PREFIXES = [
                                 //   * /binary/<name> is a public GET (whitelist-checked against manifest.json)
                                 // None of these have a session to carry a CSRF token in. Same security
                                 // model as /auth/login above — token-based auth is the CSRF defense.
+  "/api/v1/ha/enroll",         // HA node enrollment — a node being built has no browser session.
+                                // It presents a single-use token in the request body, and redeeming
+                                // it only registers a request an operator must then APPROVE in the
+                                // UI, so the endpoint cannot release anything by itself. Same
+                                // token-is-the-defense model as /agents/ above.
+                                // NOTE: this prefix covers /ha/enroll only, NOT the operator
+                                // surface at /api/v1/ha/* — those are session routes and keep CSRF.
 ];
 
 export function csrfMiddleware(req: Request, res: Response, next: NextFunction) {
