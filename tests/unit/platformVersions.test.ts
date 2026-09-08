@@ -1,5 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { deriveTrack, compareTracks, parseGoVersion } from "../../src/utils/platformVersions.js";
+import { describe, it, expect, vi } from "vitest";
+import {
+  deriveTrack,
+  compareTracks,
+  parseGoVersion,
+  runningNodeTrack,
+  checkNodeVersionAtBoot,
+  NODE_MINIMUM_MAJOR,
+} from "../../src/utils/platformVersions.js";
 
 describe("deriveTrack", () => {
   it("cuts to a major", () => {
@@ -77,5 +84,42 @@ describe("parseGoVersion", () => {
     expect(parseGoVersion("command not found")).toBeNull();
     expect(parseGoVersion("")).toBeNull();
     expect(parseGoVersion("go version unknown")).toBeNull();
+  });
+});
+
+describe("runningNodeTrack", () => {
+  it("reports the major of the Node running the tests", () => {
+    // Whatever runs this suite, the track must be the major of
+    // process.versions.node — the point is that it is readable at all.
+    expect(runningNodeTrack()).toBe(process.versions.node.split(".")[0]);
+  });
+});
+
+describe("checkNodeVersionAtBoot", () => {
+  it("warns, once, when the running major is below the minimum", () => {
+    const warn = vi.fn();
+    // Pick a minimum far above anything that could be running.
+    const warned = checkNodeVersionAtBoot("999", warn);
+    expect(warned).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(process.versions.node);
+    expect(warn.mock.calls[0][0]).toContain("999");
+  });
+
+  it("stays silent when the running major meets the minimum", () => {
+    const warn = vi.fn();
+    expect(checkNodeVersionAtBoot("1", warn)).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("stays silent at exactly the minimum", () => {
+    const warn = vi.fn();
+    const current = process.versions.node.split(".")[0];
+    expect(checkNodeVersionAtBoot(current, warn)).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("declares a minimum matching package.json engines.node", () => {
+    expect(NODE_MINIMUM_MAJOR).toBe("20");
   });
 });

@@ -91,7 +91,7 @@ const FAMILIES = [
     id: "node-major",
     label: "Node.js",
     agree: "major",
-    minSites: 12,
+    minSites: 13,
     sites: [
       { file: "package.json", label: "engines.node", kind: "accept-range",
         re: /"node":\s*">=\s*(\d+)\./g, pick: (m) => m[1] },
@@ -113,6 +113,11 @@ const FAMILIES = [
         re: /node-version:\s*(\d+)/g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md", "README.md", "CLAUDE.md"], label: "prose floor", kind: "prose",
         re: /Node\.js (\d+)\+/g, pick: (m) => m[1] },
+      // The minimum the app itself enforces at boot. Without this site the
+      // code constant could drift from engines.node and the boot advisory
+      // would police a number nothing else agrees with.
+      { file: "src/utils/platformVersions.ts", label: "NODE_MINIMUM_MAJOR", kind: "pin",
+        re: /NODE_MINIMUM_MAJOR = "(\d+)"/g, pick: (m) => m[1] },
     ],
     // The Linux scripts accept a *range* (v20 or v22) while Windows pins one
     // exact build. That is not a contradiction the equality check can see, but
@@ -159,6 +164,10 @@ const FAMILIES = [
         re: /go\.dev\/dl\/go(\d+\.\d+)\./g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose",
         re: /Go (\d+\.\d+)\+/g, pick: (m) => m[1] },
+      // The minimum the app enforces at the agent-build preflight, and the
+      // number every operator-facing "install Go N+" string interpolates.
+      { file: "src/services/agentBuildService.ts", label: "GO_MINIMUM", kind: "pin",
+        re: /GO_MINIMUM = "(\d+\.\d+)"/g, pick: (m) => m[1] },
     ],
   },
 

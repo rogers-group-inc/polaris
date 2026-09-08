@@ -63,3 +63,39 @@ export function parseGoVersion(raw: string): string | null {
   if (!m) return null;
   return m[3] === undefined ? `${m[1]}.${m[2]}` : `${m[1]}.${m[2]}.${m[3]}`;
 }
+
+/**
+ * The Node major Polaris supports. Mirrors `engines.node` in package.json,
+ * which npm only warns about, and is one of 23 Node declaration sites — see
+ * .claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md.
+ */
+export const NODE_MINIMUM_MAJOR = "20";
+
+/**
+ * The running Node major, from the process itself.
+ *
+ * Nothing in the app read this before: `process.version` and
+ * `process.versions` appear nowhere outside generated code, so "which Node am
+ * I actually on" was unanswerable from the UI.
+ */
+export function runningNodeTrack(): string | null {
+  return deriveTrack(process.versions.node, "major");
+}
+
+/**
+ * Emit an advisory when the running Node major is below `minimum`. Calls
+ * `warn` at most once and returns whether it did.
+ *
+ * Takes the sink as a parameter so this stays a pure-ish, testable function
+ * and so the caller at boot can write to the console before the logger exists.
+ */
+export function checkNodeVersionAtBoot(minimum: string, warn: (msg: string) => void): boolean {
+  const track = runningNodeTrack();
+  if (!track || compareTracks(track, minimum) >= 0) return false;
+  warn(
+    `Polaris is running on Node ${process.versions.node}, below the supported minimum of Node ${minimum}. ` +
+      `This combination is untested — upgrade the runtime on this host. ` +
+      `See the Platform Lifecycle card under Server Settings -> Maintenance.`,
+  );
+  return true;
+}
