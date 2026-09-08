@@ -118,6 +118,11 @@ const FAMILIES = [
       // would police a number nothing else agrees with.
       { file: "src/utils/platformVersions.ts", label: "NODE_MINIMUM_MAJOR", kind: "pin",
         re: /NODE_MINIMUM_MAJOR = "(\d+)"/g, pick: (m) => m[1] },
+      // The canonical supported-versions table in the install guide. It is the
+      // operator-facing mirror of these pins, so it gets policed like one — an
+      // unchecked canonical list is the most confident way to be wrong.
+      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
+        re: /\*\*Node\.js\*\*\s*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
     ],
     // The Linux scripts accept a *range* (v20 or v22) while Windows pins one
     // exact build. That is not a contradiction the equality check can see, but
@@ -168,6 +173,8 @@ const FAMILIES = [
       // number every operator-facing "install Go N+" string interpolates.
       { file: "src/services/agentBuildService.ts", label: "GO_MINIMUM", kind: "pin",
         re: /GO_MINIMUM = "(\d+\.\d+)"/g, pick: (m) => m[1] },
+      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
+        re: /\*\*Go\*\*[^|\n]*\|\s*(\d+\.\d+)\s*\|/g, pick: (m) => m[1] },
     ],
   },
 
@@ -182,6 +189,8 @@ const FAMILIES = [
         pick: (m) => `${m[1]}.${m[2]}${m[3]}` },
       { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose",
         re: /nginx[^\n]*?(?:≥|>=)\s*(\d+\.\d+)/gi, pick: (m) => m[1] },
+      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
+        re: /\*\*nginx\*\*\s*\|\s*(\d+\.\d+)\s*\|/g, pick: (m) => m[1] },
     ],
   },
 
@@ -207,6 +216,8 @@ const FAMILIES = [
         re: /timescaledb-2-postgresql-(\d+)/g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md"], label: "pg_config path", kind: "pin",
         re: /\/usr\/pgsql-(\d+)\//g, pick: (m) => m[1] },
+      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
+        re: /\*\*PostgreSQL\*\*\s*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
     ],
   },
 
@@ -224,6 +235,8 @@ const FAMILIES = [
         re: /Microsoft\.OpenJDK\.(\d+)/g, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "JDK MSI URL", kind: "pin",
         re: /microsoft-jdk-(\d+)-windows/g, pick: (m) => m[1] },
+      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
+        re: /\*\*Java\*\*[^|\n]*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
     ],
   },
 
