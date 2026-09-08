@@ -1,6 +1,6 @@
 ---
 name: polaris-change-impact
-description: "'If I change X, what else touches it?' — the Polaris touches index: per-service writers/readers/invariants/change checklists for every service, 26 cross-cutting concerns (monitor state machine, asset projection, polling resolver, reservation push, dependency suppression, sample retention, permission matrix, migrations, metrics…), the 17 canonical backend patterns to copy, and the file-by-file source map. Load BEFORE editing anything in src/services, src/jobs, src/utils or a route; before adding a service, job, integration type or metric; and when asked where something lives or what depends on it."
+description: "'If I change X, what else touches it?' — the Polaris touches index: per-service writers/readers/invariants/change checklists for every service, 26 cross-cutting concerns (monitor state machine, asset projection, polling resolver, reservation push, dependency suppression, sample retention, permission matrix, migrations, metrics…), the 17 canonical backend patterns to copy, and the file-by-file source map. Load BEFORE editing anything in src/services, src/jobs, src/utils or a route; before adding a service, job, integration type or metric; when asked where something lives or what depends on it; and when a figure on the Maintenance tab looks wrong — capacity snapshot, steady-state size projection, disk forecast, TimescaleDB chunk intervals."
 ---
 
 # Polaris change impact (the touches index)
