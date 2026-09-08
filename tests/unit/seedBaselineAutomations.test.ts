@@ -82,6 +82,7 @@ import {
   seedBaselineAutomations,
   BASELINE_RULES,
   EVENT_BASELINE_RULES,
+  PLATFORM_LIFECYCLE_RULES,
 } from "../../src/jobs/seedBaselineAutomations.js";
 import { ruleInputSchema } from "../../src/services/notificationTypes.js";
 import { globToRegExp } from "../../src/services/notificationEngine.js";
@@ -100,14 +101,14 @@ beforeEach(() => {
 });
 
 describe("seed bodies", () => {
-  it("every baseline rule (both sets) parses through the real ruleInputSchema", () => {
-    for (const raw of [...BASELINE_RULES, ...EVENT_BASELINE_RULES]) {
+  it("every baseline rule (all sets) parses through the real ruleInputSchema", () => {
+    for (const raw of [...BASELINE_RULES, ...EVENT_BASELINE_RULES, ...PLATFORM_LIFECYCLE_RULES]) {
       expect(() => ruleInputSchema.parse(raw), `rule "${(raw as { name?: string }).name}"`).not.toThrow();
     }
   });
 
-  it("every V2 event rule is storm-proofed: a real reset + cooldown + a message template", () => {
-    for (const raw of EVENT_BASELINE_RULES) {
+  it("every event rule is storm-proofed: a real reset + cooldown + a message template", () => {
+    for (const raw of [...EVENT_BASELINE_RULES, ...PLATFORM_LIFECYCLE_RULES]) {
       const rule = ruleInputSchema.parse(raw);
       expect(rule.trigger.type, rule.name).toBe("event");
       // Either a clock or — better, where Polaris writes a counterpart event —
@@ -128,26 +129,45 @@ describe("seed bodies", () => {
 });
 
 describe("marker gating (V2 reaches existing installs)", () => {
-  it("fresh install: seeds both sets and stamps both markers", async () => {
+  it("fresh install: seeds every set and stamps every marker", async () => {
     const res = await seedBaselineAutomations();
     expect(res.skipped).toBe(false);
     // +1 for the V3 down-detection rule, which is computed rather than
     // listed in a static set.
-    expect(res.created).toBe(BASELINE_RULES.length + EVENT_BASELINE_RULES.length + 1);
+    expect(res.created).toBe(
+      BASELINE_RULES.length + EVENT_BASELINE_RULES.length + PLATFORM_LIFECYCLE_RULES.length + 1,
+    );
     expect(settings.has("seedBaselineAutomationsSeededAt")).toBe(true);
     expect(settings.has("seedBaselineAutomationsV2SeededAt")).toBe(true);
     expect(settings.has("seedBaselineAutomationsV3SeededAt")).toBe(true);
+    expect(settings.has("seedBaselineAutomationsV6PlatformLifecycleSeededAt")).toBe(true);
   });
 
-  it("pre-V2 install (v1 marker stamped): seeds ONLY the event set", async () => {
+  it("pre-V2 install (v1 marker stamped): seeds the later sets only", async () => {
     settings.set("seedBaselineAutomationsSeededAt", { key: "seedBaselineAutomationsSeededAt", value: {} });
     const res = await seedBaselineAutomations();
     expect(res.skipped).toBe(false);
-    expect(res.created).toBe(EVENT_BASELINE_RULES.length + 1);
+    expect(res.created).toBe(EVENT_BASELINE_RULES.length + PLATFORM_LIFECYCLE_RULES.length + 1);
     expect(createdRules).toEqual([
       ...EVENT_BASELINE_RULES.map((r) => (r as { name: string }).name),
       "Asset down", // the V3 down-detection rule
+      ...PLATFORM_LIFECYCLE_RULES.map((r) => (r as { name: string }).name),
     ]);
+  });
+
+  // The whole point of a separate V6 marker: an install that stamped V2 long
+  // before this rule existed must still receive it. An entry appended to
+  // EVENT_BASELINE_RULES would reach brand-new installs only.
+  it("install seeded before V6: still receives the platform lifecycle rule", async () => {
+    settings.set("seedBaselineAutomationsSeededAt", { key: "x", value: {} });
+    settings.set("seedBaselineAutomationsV2SeededAt", { key: "y", value: {} });
+    settings.set("seedBaselineAutomationsV3SeededAt", { key: "z", value: {} });
+    settings.set("seedBaselineAutomationsV4ResetEventSeededAt", { key: "w", value: {} });
+    settings.set("seedBaselineAutomationsV5LossCeilingSeededAt", { key: "v", value: {} });
+    const res = await seedBaselineAutomations();
+    expect(res.skipped).toBe(false);
+    expect(res.created).toBe(PLATFORM_LIFECYCLE_RULES.length);
+    expect(createdRules).toEqual(PLATFORM_LIFECYCLE_RULES.map((r) => (r as { name: string }).name));
   });
 
   it("fully seeded install: no-op", async () => {
@@ -156,6 +176,7 @@ describe("marker gating (V2 reaches existing installs)", () => {
     settings.set("seedBaselineAutomationsV3SeededAt", { key: "z", value: {} });
     settings.set("seedBaselineAutomationsV4ResetEventSeededAt", { key: "w", value: {} });
     settings.set("seedBaselineAutomationsV5LossCeilingSeededAt", { key: "v", value: {} });
+    settings.set("seedBaselineAutomationsV6PlatformLifecycleSeededAt", { key: "u", value: {} });
     const res = await seedBaselineAutomations();
     expect(res).toEqual({ created: 0, skipped: true });
     expect(createdRules).toEqual([]);

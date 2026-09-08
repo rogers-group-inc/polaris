@@ -556,3 +556,161 @@ export function lifecycleCapacityReasons(result: PlatformLifecycleResult): Lifec
     return { severity, code, message, suggestion, family: LIFECYCLE_REASON_FAMILY };
   });
 }
+
+// ─── Transition recording ─────────────────────────────────────────────
+
+export const LIFECYCLE_STATE_SETTING_KEY = "platformLifecycle.lastState";
+export const LIFECYCLE_CHANGED_ACTION = "platform.lifecycle_changed";
+export const LIFECYCLE_RECOVERED_ACTION = "platform.lifecycle_recovered";
+
+interface StoredLifecycleState {
+  severity: LifecycleSeverity;
+  /** Sorted `id:track:state` join over every non-ok component. */
+  fingerprint: string;
+  recordedAt: string;
+}
+
+const SEVERITY_RANK: Record<LifecycleSeverity, number> = { none: 0, watch: 1, warning: 2, critical: 3 };
+
+/**
+ * A stable signature of "what is wrong right now".
+ *
+ * Severity alone is not enough, and that is the whole reason this exists: an
+ * install already at `warning` for "Node approaching EOL" that then also goes
+ * EOL on PostgreSQL stays at `warning`, so a severity-only comparison would
+ * never tell anyone about the second problem.
+ */
+export function lifecycleFingerprint(result: PlatformLifecycleResult): string {
+  return result.components
+    .filter((c) => c.grade.severity !== "none")
+    .map((c) => `${c.id}:${c.grade.track ?? "-"}:${c.grade.state}`)
+    .sort()
+    .join("|");
+}
+
+async function readStoredLifecycleState(): Promise<StoredLifecycleState | null> {
+  try {
+    const row = await prisma.setting.findUnique({ where: { key: LIFECYCLE_STATE_SETTING_KEY } });
+    const v = row?.value as Partial<StoredLifecycleState> | null;
+    if (!v || !v.severity) return null;
+    return {
+      severity: v.severity,
+      fingerprint: v.fingerprint ?? "",
+      recordedAt: v.recordedAt ?? new Date(0).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compare the current lifecycle state against the last recorded one and emit an
+ * Event when it has changed. Structural copy of capacityService's
+ * recordCapacityTransition, including its single-Setting-row approach — there is
+ * no table here, because the only state that must survive a restart is "what
+ * did we last tell the operator".
+ *
+ * Called ONLY by the daily job, never by the route. A lifecycle condition is
+ * true for months, so re-firing it on every page load would spam the on-call
+ * inbox; disk pressure is minutes-volatile and earns the opposite treatment.
+ */
+export async function recordPlatformLifecycleTransition(result: PlatformLifecycleResult): Promise<void> {
+  try {
+    const fingerprint = lifecycleFingerprint(result);
+    const prior = await readStoredLifecycleState();
+
+    // Fire on a change of severity OR fingerprint — see lifecycleFingerprint.
+    if (prior && prior.severity === result.severity && prior.fingerprint === fingerprint) return;
+
+    const direction = !prior
+      ? "initial"
+      : SEVERITY_RANK[result.severity] > SEVERITY_RANK[prior.severity]
+        ? "escalated"
+        : SEVERITY_RANK[result.severity] < SEVERITY_RANK[prior.severity]
+          ? "recovered"
+          : "changed";
+
+    const actionable = result.components.filter(
+      (c) => c.grade.severity === "warning" || c.grade.severity === "critical",
+    );
+    const headline = actionable.length > 0 ? actionable[0] : null;
+
+    // A distinct recovery action, rather than one action for both. The
+    // notification layer's event-mode reset accepts only actionPattern and
+    // resourceType — no detailsMatch — so a single-action design would have its
+    // reset match its own escalation and self-clear immediately. That is why
+    // the capacity rule settled for a timed reset; emitting two actions costs
+    // nothing and makes the automation genuinely self-clearing on an upgrade.
+    const recovered = result.severity === "none" && direction === "recovered";
+    const action = recovered ? LIFECYCLE_RECOVERED_ACTION : LIFECYCLE_CHANGED_ACTION;
+
+    const level = recovered
+      ? "info"
+      : result.severity === "critical"
+        ? "error"
+        : result.severity === "none"
+          ? "info"
+          : "warning";
+
+    const message = !prior
+      ? `Platform lifecycle baseline established at ${result.severity}.`
+      : recovered
+        ? "Every platform component is back within its supported life."
+        : headline
+          ? `Platform lifecycle ${prior.severity} → ${result.severity}: ${headline.label} ${headline.grade.track ?? ""} is ${headline.grade.state.replace(/_/g, " ")}.`
+          : `Platform lifecycle ${prior.severity} → ${result.severity}.`;
+
+    const { logEvent } = await import("./eventLogService.js");
+    await logEvent({
+      action,
+      level,
+      resourceType: "system",
+      resourceName: "Polaris server",
+      actor: "system",
+      message,
+      details: {
+        from: prior?.severity ?? null,
+        to: result.severity,
+        direction,
+        datasetReviewedAt: result.datasetReviewedAt,
+        components: result.components
+          .filter((c) => c.grade.severity !== "none")
+          .map((c) => ({
+            id: c.id,
+            label: c.label,
+            observedVersion: c.observedVersion,
+            track: c.grade.track,
+            state: c.grade.state,
+            severity: c.grade.severity,
+            eolAt: c.grade.eolAt,
+            daysUntilEol: c.grade.daysUntilEol,
+          })),
+      },
+    });
+
+    const value: StoredLifecycleState = {
+      severity: result.severity,
+      fingerprint,
+      recordedAt: new Date().toISOString(),
+    };
+    await prisma.setting.upsert({
+      where: { key: LIFECYCLE_STATE_SETTING_KEY },
+      update: { value: value as any },
+      create: { key: LIFECYCLE_STATE_SETTING_KEY, value: value as any },
+    });
+  } catch (err) {
+    // Best-effort: never let the transition record break the caller.
+    logger.warn({ err }, "failed to record platform lifecycle transition");
+  }
+}
+
+/** How old a stored state may be before the watch job runs again. */
+export const LIFECYCLE_WATCH_MIN_AGE_MS = 20 * 60 * 60 * 1000;
+
+/** True when the stored state is fresh enough that the job should skip. */
+export async function lifecycleStateIsFresh(now = Date.now()): Promise<boolean> {
+  const prior = await readStoredLifecycleState();
+  if (!prior) return false;
+  const age = now - Date.parse(prior.recordedAt);
+  return Number.isFinite(age) && age >= 0 && age < LIFECYCLE_WATCH_MIN_AGE_MS;
+}

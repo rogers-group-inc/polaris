@@ -14,15 +14,33 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // vi.hoisted, because vi.mock factories are lifted above ordinary top-level
 // declarations and would otherwise read these before initialization.
-const { queryRawUnsafe, detectionState, goAvailableMock, containerMock, pgbouncerMock } = vi.hoisted(() => ({
+const {
+  queryRawUnsafe,
+  detectionState,
+  goAvailableMock,
+  containerMock,
+  pgbouncerMock,
+  settingFindUnique,
+  settingUpsert,
+  logEventMock,
+} = vi.hoisted(() => ({
   queryRawUnsafe: vi.fn(),
   detectionState: vi.fn(),
   goAvailableMock: vi.fn(),
   containerMock: vi.fn(),
   pgbouncerMock: vi.fn(),
+  settingFindUnique: vi.fn(),
+  settingUpsert: vi.fn(),
+  logEventMock: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({ prisma: { $queryRawUnsafe: queryRawUnsafe } }));
+vi.mock("../../src/db.js", () => ({
+  prisma: {
+    $queryRawUnsafe: queryRawUnsafe,
+    setting: { findUnique: settingFindUnique, upsert: settingUpsert },
+  },
+}));
+vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: logEventMock }));
 vi.mock("../../src/services/timescaleService.js", () => ({ getDetectionState: detectionState }));
 vi.mock("../../src/services/agentBuildService.js", () => ({ goAvailable: goAvailableMock }));
 vi.mock("../../src/utils/deploymentContext.js", () => ({ runtimeIsContainer: containerMock }));
@@ -37,6 +55,13 @@ import {
   loadPlatformEolDataset,
   lifecycleCapacityReasons,
   LIFECYCLE_REASON_FAMILY,
+  lifecycleFingerprint,
+  recordPlatformLifecycleTransition,
+  lifecycleStateIsFresh,
+  LIFECYCLE_STATE_SETTING_KEY,
+  LIFECYCLE_CHANGED_ACTION,
+  LIFECYCLE_RECOVERED_ACTION,
+  LIFECYCLE_WATCH_MIN_AGE_MS,
   _resetLifecycleMemo,
   _resetDatasetCache,
 } from "../../src/services/platformLifecycleService.js";
@@ -50,6 +75,9 @@ beforeEach(() => {
   goAvailableMock.mockResolvedValue({ ok: true, version: "go version go1.26.3 linux/amd64", versionNumber: "1.26.3", track: "1.26", meetsMinimum: true });
   containerMock.mockReturnValue(false);
   pgbouncerMock.mockReturnValue(false);
+  settingFindUnique.mockResolvedValue(null);
+  settingUpsert.mockResolvedValue({});
+  logEventMock.mockResolvedValue(undefined);
 });
 
 describe("loadPlatformEolDataset", () => {
@@ -316,5 +344,155 @@ describe("lifecycleCapacityReasons", () => {
       ]),
     );
     expect(out[0].message).toContain("Extended support runs to 2032-04-21");
+  });
+});
+
+describe("transition recording", () => {
+  function res(over: Record<string, any> = {}): any {
+    return {
+      computedAt: new Date().toISOString(),
+      datasetReviewedAt: "2026-09-08",
+      datasetError: null,
+      severity: "warning",
+      components: [
+        {
+          id: "node",
+          label: "Node.js",
+          observedVersion: "20.19.0",
+          grade: { state: "eol", severity: "warning", track: "20", eolAt: "2026-04-30", daysUntilEol: -131 },
+        },
+      ],
+      informational: [],
+      ...over,
+    };
+  }
+
+  const stored = (v: Record<string, any>) => ({ key: LIFECYCLE_STATE_SETTING_KEY, value: v });
+
+  it("fires on the first observation and records the state", async () => {
+    await recordPlatformLifecycleTransition(res());
+    expect(logEventMock).toHaveBeenCalledTimes(1);
+    const ev = logEventMock.mock.calls[0][0];
+    expect(ev.action).toBe(LIFECYCLE_CHANGED_ACTION);
+    expect(ev.resourceType).toBe("system");
+    expect(ev.actor).toBe("system");
+    expect(ev.details.direction).toBe("initial");
+    expect(settingUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-ops when neither severity nor fingerprint changed", async () => {
+    const r = res();
+    settingFindUnique.mockResolvedValue(
+      stored({ severity: "warning", fingerprint: lifecycleFingerprint(r), recordedAt: new Date().toISOString() }),
+    );
+    await recordPlatformLifecycleTransition(r);
+    expect(logEventMock).not.toHaveBeenCalled();
+    expect(settingUpsert).not.toHaveBeenCalled();
+  });
+
+  it("fires when the fingerprint changed at the SAME severity", async () => {
+    // The whole reason the fingerprint exists: an install already at warning
+    // for Node that also goes EOL on PostgreSQL stays at warning, and a
+    // severity-only compare would never mention the second problem.
+    settingFindUnique.mockResolvedValue(
+      stored({ severity: "warning", fingerprint: "node:20:approaching_eol", recordedAt: new Date().toISOString() }),
+    );
+    await recordPlatformLifecycleTransition(res());
+    expect(logEventMock).toHaveBeenCalledTimes(1);
+    expect(logEventMock.mock.calls[0][0].details.direction).toBe("changed");
+  });
+
+  it("emits the recovery action when everything is back in support", async () => {
+    settingFindUnique.mockResolvedValue(
+      stored({ severity: "critical", fingerprint: "node:20:eol", recordedAt: new Date().toISOString() }),
+    );
+    await recordPlatformLifecycleTransition(res({ severity: "none", components: [] }));
+    const ev = logEventMock.mock.calls[0][0];
+    expect(ev.action).toBe(LIFECYCLE_RECOVERED_ACTION);
+    expect(ev.level).toBe("info");
+  });
+
+  it("uses error level for a critical escalation", async () => {
+    settingFindUnique.mockResolvedValue(
+      stored({ severity: "none", fingerprint: "", recordedAt: new Date().toISOString() }),
+    );
+    await recordPlatformLifecycleTransition(res({ severity: "critical" }));
+    const ev = logEventMock.mock.calls[0][0];
+    expect(ev.level).toBe("error");
+    expect(ev.details.direction).toBe("escalated");
+  });
+
+  it("carries every non-ok component in details, not just the headline", async () => {
+    const r = res({
+      severity: "critical",
+      components: [
+        { id: "node", label: "Node.js", observedVersion: "20.1.0", grade: { state: "eol", severity: "critical", track: "20", eolAt: "2026-04-30", daysUntilEol: -131 } },
+        { id: "go", label: "Go toolchain", observedVersion: "1.22.7", grade: { state: "eol", severity: "warning", track: "1.22", eolAt: "2025-02-11", daysUntilEol: -574 } },
+        { id: "prisma", label: "Prisma", observedVersion: "7.9.1", grade: { state: "unknown", severity: "none", track: "7", eolAt: null, daysUntilEol: null } },
+      ],
+    });
+    await recordPlatformLifecycleTransition(r);
+    const ids = logEventMock.mock.calls[0][0].details.components.map((c: any) => c.id);
+    expect(ids).toEqual(["node", "go"]); // the severity:none row is excluded
+  });
+
+  it("never throws when the Setting write fails", async () => {
+    settingUpsert.mockRejectedValue(new Error("read-only transaction"));
+    await expect(recordPlatformLifecycleTransition(res())).resolves.toBeUndefined();
+  });
+
+  it("never throws when logEvent fails", async () => {
+    logEventMock.mockRejectedValue(new Error("event table gone"));
+    await expect(recordPlatformLifecycleTransition(res())).resolves.toBeUndefined();
+  });
+});
+
+describe("lifecycleFingerprint", () => {
+  it("ignores healthy components and is order-independent", () => {
+    const mk = (components: any[]) => ({ components } as any);
+    const a = mk([
+      { id: "go", grade: { track: "1.22", state: "eol", severity: "warning" } },
+      { id: "node", grade: { track: "20", state: "eol", severity: "critical" } },
+      { id: "prisma", grade: { track: "7", state: "unknown", severity: "none" } },
+    ]);
+    const b = mk([
+      { id: "node", grade: { track: "20", state: "eol", severity: "critical" } },
+      { id: "go", grade: { track: "1.22", state: "eol", severity: "warning" } },
+    ]);
+    expect(lifecycleFingerprint(a)).toBe(lifecycleFingerprint(b));
+  });
+
+  it("changes when a component's state changes", () => {
+    const mk = (state: string) =>
+      ({ components: [{ id: "node", grade: { track: "20", state, severity: "warning" } }] } as any);
+    expect(lifecycleFingerprint(mk("approaching_eol"))).not.toBe(lifecycleFingerprint(mk("eol")));
+  });
+});
+
+describe("lifecycleStateIsFresh — the restart-loop guard", () => {
+  it("is false with no stored state", async () => {
+    expect(await lifecycleStateIsFresh()).toBe(false);
+  });
+
+  it("is true just inside the window", async () => {
+    const now = Date.now();
+    settingFindUnique.mockResolvedValue({
+      key: LIFECYCLE_STATE_SETTING_KEY,
+      value: { severity: "none", fingerprint: "", recordedAt: new Date(now - 1000).toISOString() },
+    });
+    expect(await lifecycleStateIsFresh(now)).toBe(true);
+  });
+
+  it("is false once the window has passed", async () => {
+    const now = Date.now();
+    settingFindUnique.mockResolvedValue({
+      key: LIFECYCLE_STATE_SETTING_KEY,
+      value: {
+        severity: "none",
+        fingerprint: "",
+        recordedAt: new Date(now - LIFECYCLE_WATCH_MIN_AGE_MS - 1000).toISOString(),
+      },
+    });
+    expect(await lifecycleStateIsFresh(now)).toBe(false);
   });
 });
