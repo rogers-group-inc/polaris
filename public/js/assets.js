@@ -5380,7 +5380,13 @@ window.openAssetBySerial = async function (serial) {
   }
 };
 
-async function openViewModal(id) {
+// opts.tab — the data-tab key of the slide-over tab to land on (e.g.
+// "notifications" for Alerts). An alert entry is a prompt to look at THAT
+// alert, so the Active Alerts widget asks for the Alerts tab instead of
+// leaving the operator on General to find it. A tab the viewer isn't shown
+// (permission-gated, or type-specific) falls back to General silently.
+async function openViewModal(id, opts) {
+  opts = opts || {};
   _ensureAssetPanelDOM();
   // Back/forward bookkeeping. The walk direction is consumed SYNCHRONOUSLY
   // here, before any await, so a walk can't leak into whatever opens next.
@@ -5690,6 +5696,10 @@ async function openViewModal(id) {
       });
     }
     _syncAssetFooterButtons();
+    if (opts.tab) {
+      var wantTab = document.querySelector('#asset-view-tabs .page-tab[data-tab="' + opts.tab + '"]');
+      if (wantTab) wantTab.click();
+    }
     if (showSnmpWalkTab) _wireSnmpWalkTab(a);
     if (canQuarantineAssets()) _wireQuarantineTab(a);
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) _wireSdwanTab(a, sdwanRules, sdwanLinks, sdwanMembers);

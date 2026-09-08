@@ -732,15 +732,20 @@
   // (openViewModal from assets.js) is loaded on the page — it is on the
   // dashboard (index.html pulls assets.js + deps), map, and assets pages.
   // Falls back to navigating to the Assets page with the view hash. Returns
-  // true when it opened in place.
-  window.PolarisWidgets.openAssetDetail = function (id) {
+  // true when it opened in place. opts.tab names the slide-over tab to land
+  // on (openViewModal's opts.tab); the navigation fallback carries it as
+  // #view=asset:<id>&tab=<key>, which processSearchHash hands back to
+  // openViewModal on the Assets page.
+  window.PolarisWidgets.openAssetDetail = function (id, opts) {
     if (!id) return false;
-    if (typeof window.openViewModal === "function") { window.openViewModal(id); return true; }
+    opts = opts || {};
+    if (typeof window.openViewModal === "function") { window.openViewModal(id, opts); return true; }
     // Dash wallboard (dash.html): the asset slide-over isn't loaded and there
     // is no session — navigating would bounce the kiosk to the login page.
     // Make the click a no-op instead.
     if (window.POLARIS_DASH_LOCAL) return false;
-    window.location.href = "/assets.html#view=asset:" + encodeURIComponent(id);
+    window.location.href = "/assets.html#view=asset:" + encodeURIComponent(id) +
+      (opts.tab ? "&tab=" + encodeURIComponent(opts.tab) : "");
     return false;
   };
 

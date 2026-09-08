@@ -1560,12 +1560,16 @@ function processSearchHash() {
   // #view=<type>:<id> — legacy single-param form (still emitted by Blocks/
   // Networks legacy redirects). Match on either the legacy page paths or
   // the new IPAM consolidated page.
+  // An optional &tab=<key> names the asset slide-over tab to land on (the
+  // Active Alerts widget's navigation fallback sends tab=notifications).
   var m = /#view=(\w+):([^&]+)/.exec(hash);
   if (m) {
     var type = m[1], id = decodeURIComponent(m[2]);
+    var tabM = /[#&]tab=([^&]+)/.exec(hash);
+    var viewTab = tabM ? decodeURIComponent(tabM[1]) : null;
     setTimeout(function () {
       if (type === "asset" && path.indexOf("/assets.html") !== -1 && typeof openViewModal === "function") {
-        openViewModal(id);
+        openViewModal(id, viewTab ? { tab: viewTab } : undefined);
       } else if (type === "block" && (onIpamPage || path.indexOf("/blocks.html") !== -1) && typeof openBlockEditModal === "function") {
         openBlockEditModal(id);
       } else if (type === "subnet" && (onIpamPage || path.indexOf("/subnets.html") !== -1) && typeof openSubnetEditModal === "function") {
