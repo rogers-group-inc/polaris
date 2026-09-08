@@ -41,6 +41,19 @@
  * Repeats land on the 60s tick, so real spacing is everyMin + up to 60s of
  * jitter. That is fine at a 5-minute floor — don't "fix" the drift.
  *
+ * QUIET TIME (business rule 44): a reminder due inside one of the repeat
+ * config's quiet windows is HELD, not skipped — `lastSentAt` is deliberately
+ * not advanced, so the reminder stays due and goes out on the first sweep
+ * after the window ends. That is the whole mechanism, and it is why nothing
+ * here needs to know when the window ends in order to schedule anything: a
+ * held reminder is simply an overdue one. The hold is recorded on
+ * `escalationState.quietHeldSince` / `quietHeldCount`, and that stamp is what
+ * lets the reminder which follows say how long the alert has been active
+ * ({repeat.quiet}, plus the "· ACTIVE 9h 12m" subject marker) — the operator's
+ * question after a silent night is "how long has this been going on", not
+ * "which reminder number is this". Quiet applies to the repeat pass ONLY:
+ * escalation tiers run through a quiet window untouched.
+ *
  * Rendering context = the fire-time Notification.templateCtx snapshot (exact
  * fire-time metric/asset values, survives asset deletion) plus the live
  * {escalation.tier}/{escalation.elapsed} tokens. Per-tier progress lives on
@@ -56,6 +69,8 @@ import {
   formatElapsed,
   notificationsPageUrl,
 } from "../utils/notificationTemplate.js";
+import { isQuietNow, quietResumesAt } from "../utils/quietTime.js";
+import { formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
 import { logEvent } from "./eventLogService.js";
 import { isSuppressedForNotifications } from "./notificationEngine.js";
 import { executeActions } from "./automationActionService.js";
@@ -124,12 +139,30 @@ interface TierState {
 // newly-entered band's escalation timers restart from band-entry rather than
 // the original fire. Absent for single-severity alerts (timers run off
 // triggeredAt). Stamped by the engine's applyBandTransition.
-type EscalationState = { tiers: Record<string, TierState>; bandSince?: string };
+//
+// quietHeldSince / quietHeldCount (business rule 44): when the first reminder
+// of the CURRENT hold was withheld for quiet time, and how many have been.
+// Present only while a hold is open — cleared by the reminder that finally
+// goes out. Top-level rather than inside the repeat TierState because a hold
+// is not a send: TierState's three fields all describe a delivery that
+// happened, and overloading `lastSentAt` with "would have sent" is exactly
+// what would make the reminder clock drift.
+type EscalationState = {
+  tiers: Record<string, TierState>;
+  bandSince?: string;
+  quietHeldSince?: string;
+  quietHeldCount?: number;
+};
 
 function stateOf(raw: unknown): EscalationState {
   const o = raw && typeof raw === "object" ? (raw as any) : {};
   const tiers = o.tiers && typeof o.tiers === "object" ? o.tiers : {};
-  return { tiers: { ...tiers }, ...(typeof o.bandSince === "string" ? { bandSince: o.bandSince } : {}) };
+  return {
+    tiers: { ...tiers },
+    ...(typeof o.bandSince === "string" ? { bandSince: o.bandSince } : {}),
+    ...(typeof o.quietHeldSince === "string" ? { quietHeldSince: o.quietHeldSince } : {}),
+    ...(typeof o.quietHeldCount === "number" ? { quietHeldCount: o.quietHeldCount } : {}),
+  };
 }
 
 /** Is this tier due to run now? (first run after afterMin; repeats per
@@ -286,6 +319,23 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
   let tierRuns = 0;
   let repeatRuns = 0;
 
+  // Is each repeating rule quiet at THIS instant? Per rule, not per
+  // notification: the answer is a property of the rule's windows and `now`
+  // alone, and an all-assets automation with hundreds of live alerts would
+  // otherwise re-evaluate the same recurrence for every one of them.
+  const quietRules = new Map<string, boolean>();
+  for (const r of rules.values()) {
+    if (r.repeat?.quiet) quietRules.set(r.id, isQuietNow(r.repeat.quiet, now));
+  }
+  /** Reminders whose hold STARTED this sweep — one Event each, written after
+   *  the loop so the notification pass stays free of extra awaits. */
+  const quietPausedEvents: {
+    notificationId: string;
+    ruleName: string;
+    assetHostname: string | null;
+    resumesAt: string | null;
+  }[] = [];
+
   for (const n of notifs) {
     const rule = rules.get(n.ruleId!);
     if (!rule) continue;
@@ -367,37 +417,79 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
       const stopsOnAck = rule.repeat.stopOn !== "clear";
       const prevRepeat = state.tiers[REPEAT_STATE_KEY];
       if (!(stopsOnAck && n.acknowledged) && repeatIsDue(rule.repeat, startAt, prevRepeat, now)) {
-        const attempt = (prevRepeat?.count ?? 0) + 1;
-        const ctx: Record<string, string> = {
-          ...followUpContext(n, rule),
-          "repeat.attempt": String(attempt),
-          "repeat.elapsed": formatElapsed(now.getTime() - n.triggeredAt.getTime()),
-        };
-        // NOTIFY only — see REPEATABLE_ACTION_TYPES. validateRuleV2 refuses a
-        // repeat on an automation with no notify action anywhere, so an empty
-        // list here means the alert is in a band whose own actions are all
-        // api_call/script, which is a real state and simply sends nothing.
-        const repeatable = new Set<string>(REPEATABLE_ACTION_TYPES);
-        const actions = effectiveActionsForSeverity(rule, n.severity).filter((a) => repeatable.has(a.type));
-        if (actions.length > 0) {
-          const { executed } = await executeActions(n.id, actions, ctx, {
-            scopeRegionTags: scopeRegionTagsOf(rule.scope),
-            assetRegionTags: n.regionTags,
-            assetId: n.assetId,
-            ruleId: rule.id,
-            ruleName: rule.name,
-            ruleEmailComposition: rule.emailComposition,
-            repeat: { attempt },
-            actor: "system:notification-repeat",
-          });
-          if (executed > 0) {
-            state.tiers[REPEAT_STATE_KEY] = {
-              firstSentAt: prevRepeat?.firstSentAt ?? now.toISOString(),
-              lastSentAt: now.toISOString(),
-              count: attempt,
-            };
-            dirty = true;
-            repeatRuns++;
+        // QUIET TIME. Resolved once per rule per sweep (quietRules), because a
+        // recurrence answer is per rule and per instant — nothing about it
+        // varies by notification, and an all-assets automation with 400 live
+        // alerts must not evaluate the same windows 400 times.
+        if (quietRules.get(rule.id)) {
+          // HELD, not skipped: `lastSentAt` stays where it was, so this
+          // reminder is still due on the first sweep after the window ends.
+          const held = (state.quietHeldCount ?? 0) + 1;
+          if (!state.quietHeldSince) {
+            state.quietHeldSince = now.toISOString();
+            // ONE Event per hold, not one per withheld sweep: an eight-hour
+            // quiet window ticks 480 times, and 480 identical rows would bury
+            // the timeline of the outage they describe. The resume time is the
+            // detail worth having — it is the answer to "why has this alert
+            // gone silent", and it is not derivable from the row.
+            const resumesAt = quietResumesAt(rule.repeat.quiet, now);
+            quietPausedEvents.push({
+              notificationId: n.id,
+              ruleName: rule.name,
+              assetHostname: n.assetHostname,
+              resumesAt: resumesAt ? formatLocalIsoMinute(resumesAt) : null,
+            });
+          }
+          state.quietHeldCount = held;
+          dirty = true;
+        } else {
+          const attempt = (prevRepeat?.count ?? 0) + 1;
+          const elapsed = formatElapsed(now.getTime() - n.triggeredAt.getTime());
+          // The reminder that ENDS a hold says so, and says how long the alert
+          // has been active — the question someone reads it to answer. Carried
+          // as a token rather than prepended to the body so an operator's own
+          // template can place it, and so the push body gets the same sentence
+          // through followUpLine.
+          const resumedFromQuiet = !!state.quietHeldSince;
+          const ctx: Record<string, string> = {
+            ...followUpContext(n, rule),
+            "repeat.attempt": String(attempt),
+            "repeat.elapsed": elapsed,
+            "repeat.quiet": resumedFromQuiet
+              ? `Reminders resumed after a quiet period — this alert has been active for ${elapsed}.`
+              : "",
+          };
+          // NOTIFY only — see REPEATABLE_ACTION_TYPES. validateRuleV2 refuses a
+          // repeat on an automation with no notify action anywhere, so an empty
+          // list here means the alert is in a band whose own actions are all
+          // api_call/script, which is a real state and simply sends nothing.
+          const repeatable = new Set<string>(REPEATABLE_ACTION_TYPES);
+          const actions = effectiveActionsForSeverity(rule, n.severity).filter((a) => repeatable.has(a.type));
+          if (actions.length > 0) {
+            const { executed } = await executeActions(n.id, actions, ctx, {
+              scopeRegionTags: scopeRegionTagsOf(rule.scope),
+              assetRegionTags: n.regionTags,
+              assetId: n.assetId,
+              ruleId: rule.id,
+              ruleName: rule.name,
+              ruleEmailComposition: rule.emailComposition,
+              repeat: { attempt, elapsed, ...(resumedFromQuiet ? { quietResumed: true } : {}) },
+              actor: "system:notification-repeat",
+            });
+            if (executed > 0) {
+              state.tiers[REPEAT_STATE_KEY] = {
+                firstSentAt: prevRepeat?.firstSentAt ?? now.toISOString(),
+                lastSentAt: now.toISOString(),
+                count: attempt,
+              };
+              // The hold is closed by the SEND, not by the window ending: a
+              // reminder whose channel was dead retries next sweep and must
+              // still be the one that reports the silence.
+              delete state.quietHeldSince;
+              delete state.quietHeldCount;
+              dirty = true;
+              repeatRuns++;
+            }
           }
         }
       }
@@ -406,13 +498,34 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     if (dirty) stateUpdates.push({ id: n.id, state });
   }
 
-  if (tierRuns === 0 && repeatRuns === 0) return 0;
+  // NOT `tierRuns === 0 && repeatRuns === 0`: a quiet hold produces a state
+  // update and no execution at all, and returning early on the counters alone
+  // would drop the very stamp that lets the post-quiet reminder report the
+  // silence — the whole feature, lost to an optimization for the common case.
+  if (stateUpdates.length === 0 && quietPausedEvents.length === 0) return 0;
 
-  await prisma.$transaction(
-    stateUpdates.map((u) =>
-      prisma.notification.update({ where: { id: u.id }, data: { escalationState: u.state as unknown as Prisma.InputJsonValue } }),
-    ),
-  );
+  if (stateUpdates.length > 0) {
+    await prisma.$transaction(
+      stateUpdates.map((u) =>
+        prisma.notification.update({ where: { id: u.id }, data: { escalationState: u.state as unknown as Prisma.InputJsonValue } }),
+      ),
+    );
+  }
+
+  for (const q of quietPausedEvents) {
+    await logEvent({
+      action: "notification.reminders_paused",
+      resourceType: "notification",
+      resourceId: q.notificationId,
+      resourceName: q.ruleName,
+      actor: "system:notification-repeat",
+      level: "info",
+      message:
+        `Reminders paused for quiet time${q.assetHostname ? ` on ${q.assetHostname}` : ""}` +
+        (q.resumesAt ? ` — next reminder at ${q.resumesAt}` : ""),
+      details: { resumesAt: q.resumesAt, assetHostname: q.assetHostname },
+    }).catch(() => {});
+  }
 
   if (tierRuns > 0) {
     await logEvent({
@@ -439,6 +552,9 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     }).catch(() => {});
   }
 
-  logger.debug({ tierRuns, repeatRuns, notifications: stateUpdates.length }, "escalation sweep");
+  logger.debug(
+    { tierRuns, repeatRuns, quietHolds: quietPausedEvents.length, notifications: stateUpdates.length },
+    "escalation sweep",
+  );
   return tierRuns + repeatRuns;
 }

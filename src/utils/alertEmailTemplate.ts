@@ -43,6 +43,12 @@ export const DEFAULT_ALERT_TEXT = [
   "",
   "{severity.upper}: {trigger.summary}",
   "",
+  // The reminder that ends a quiet period leads with the fact that it does,
+  // and with the alert's age (business rule 44). Above the facts because
+  // after a silent night "how long has this been going on" is the question,
+  // and it renders away — collapsing its blank line with it — on every other
+  // send, including every ordinary reminder.
+  "{repeat.quiet}",
   // No {message} line here either — same redundancy, and the two bodies must
   // stay in step or an operator editing one wonders why the other differs.
   // "Subject", not "Device": plenty of alerts are about Polaris itself (a
@@ -70,6 +76,11 @@ export const DEFAULT_ALERT_TEXT = [
   // that wrapped mid-token in the HTML table. {time} stays catalogued for
   // operator templates that want the machine form.
   "Raised:     {time.local}",
+  // How long it has been going on. Blank (and pruned) on the initial alert —
+  // "Active for: 0m" beside "Raised: just now" is noise — and filled on every
+  // reminder, which is the send where the reader's own clock is no longer the
+  // answer.
+  "Active for: {repeat.elapsed}",
   "",
   // What was on the port, when the alert is about ONE port. Renders away for
   // every other alert — and for a port that advertised no neighbour — so it
@@ -130,6 +141,12 @@ export const DEFAULT_ALERT_HTML = [
   // the operator wrote the automation in — the raw message underneath it reads
   // like a log line.
   '<div style="font-size:16px;font-weight:600;color:{severity.color};margin-top:8px">{trigger.summary}</div>',
+  // The quiet-period notice (business rule 44). A DIV, not a facts row, for
+  // two reasons: it belongs above the facts on the one send it appears on, and
+  // `pruneEmptyDivs` deletes an exactly-empty div — so on every other send it
+  // and its whole band of padding disappear rather than leaving a grey stripe.
+  // No token but this one inside it, or the div is never exactly empty.
+  '<div style="font-size:13px;font-weight:600;color:#374151;background:#f3f4f6;border-left:3px solid {severity.color};padding:8px 10px;margin-top:10px">{repeat.quiet}</div>',
   // {message} is deliberately NOT printed under it. The two say the same thing:
   // the sentence above is generated from the automation's own trigger, and the
   // message — whether the generated default or a template like "{asset} is
@@ -191,6 +208,11 @@ export const DEFAULT_ALERT_HTML = [
   factRow("Detail", "{event.message}"),
   factRow("Automation", "{rule}"),
   factRow("Raised", "{time.local}"),
+  // How long it has been going on — beside the time it was raised, since the
+  // two are read together. Empty (and pruned by pruneEmptyRows) on the initial
+  // alert, filled on every reminder. Mirrors the text body's "Active for"
+  // line; the two must stay in step.
+  factRow("Active for", "{repeat.elapsed}"),
   // What happens if the reader does nothing. Last in the facts table, under
   // the automation that decided it — these describe the AUTOMATION's
   // behaviour, not the device's, so they belong beside {rule} rather than up

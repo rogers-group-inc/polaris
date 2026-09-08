@@ -4494,12 +4494,156 @@ async function openAutomationWizard(existing, opts) {
                  'placeholder="never" value="' + escapeHtml(r && r.stopAfterHours != null ? String(r.stopAfterHours) : "") + '" style="width:5rem">' +
           '<span style="font-size:0.85rem">hours (optional)</span>' +
         '</div>' +
+        quietControlHtml() +
         '<p id="aw-repeat-note" style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0"></p>' +
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0">' +
           'Reminders re-send the notifications only — API calls and scripts run once, when the alert first fires. ' +
           'The Test delivery button can’t exercise reminders.' +
         '</p>' +
       '</div>';
+  }
+
+  // ─── Quiet time ───────────────────────────────────────────────────────────
+  // Windows during which a DUE reminder is held rather than sent, and after
+  // which the next one states how long the alert has been active (business
+  // rule 44). The stored shape is the Maintenance scheduler's recurrence JSON,
+  // which is why the summary line comes from PolarisRecurrence rather than
+  // from a formatter of our own.
+
+  function quietMeta() {
+    var m = repeatMeta();
+    return (m && m.quietMeta) || { maxWindows: 8, serverClock: null, help: "" };
+  }
+
+  /** A recurrence shape in words, through the shared summariser. */
+  function quietSummary(w) {
+    var r = window.PolarisRecurrence;
+    if (r && typeof r.summary === "function") return r.summary(w);
+    return "quiet period";
+  }
+
+  /**
+   * Can the shared day/hours editor express this window?
+   *
+   * It edits ONE weekly recurrence — each day off, all day, or carrying its
+   * own hour ranges — which is every quiet time anyone has asked for now that
+   * a day can hold several ranges ("nights, and all weekend" is one window,
+   * not two). The SERVER still accepts the whole recurrence vocabulary, so an
+   * API-authored rule can carry a one-time window, a monthly change freeze or
+   * active-date bounds; those are listed read-only and re-sent VERBATIM.
+   * Rewriting one into what these rows can say would silently destroy a policy
+   * whose author never opened this wizard.
+   */
+  function quietWindowEditable(w) {
+    if (!w || w.kind !== "recurring") return false;
+    if (w.freq !== "daily" && w.freq !== "weekly") return false;
+    if (w.activeFrom || w.activeUntil) return false;
+    return true;
+  }
+
+  /** The window the day/hours editor owns — the first one it can express. */
+  function quietEditableWindow() {
+    var q = (draft.repeat && draft.repeat.quiet) || null;
+    return ((q && q.windows) || []).filter(quietWindowEditable)[0] || null;
+  }
+
+  /** The rest: windows only the API can express, shown but never rewritten. */
+  function quietExtraWindows() {
+    var q = (draft.repeat && draft.repeat.quiet) || null;
+    var editable = quietEditableWindow();
+    return ((q && q.windows) || []).filter(function (w) { return w !== editable; });
+  }
+
+  function quietExtraRowHtml(w) {
+    return '<div class="aw-quiet-extra" style="display:flex;align-items:center;gap:8px;border:1px solid var(--color-border);' +
+        'border-radius:6px;padding:5px 8px;margin-top:6px">' +
+      '<span style="font-size:0.85rem">' + escapeHtml(quietSummary(w)) + '</span>' +
+      '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">— set through the API; edit it there</span>' +
+      '<button type="button" class="aw-quiet-extra-remove btn-icon" title="Remove this quiet period" ' +
+        'aria-label="Remove this quiet period" style="margin-left:auto;border:1px solid var(--color-border);' +
+        'border-radius:4px;background:transparent;color:var(--color-text-secondary);cursor:pointer;width:26px;height:26px">×</button>' +
+    '</div>';
+  }
+
+  function quietControlHtml() {
+    var q = (draft.repeat && draft.repeat.quiet) || null;
+    var wins = (q && q.windows) || [];
+    var editable = quietEditableWindow();
+    var extras = quietExtraWindows();
+    var clock = quietMeta().serverClock;
+    // The zone is NOT decoration: the hours are the server's wall clock, and an
+    // operator in another zone picking 22:00 from their own head is the trap
+    // maintenanceRecurrence.serverClockInfo exists for.
+    var zone = clock ? (clock.timeZone || ("UTC" + (clock.offsetMinutes >= 0 ? "+" : "-") +
+      Math.floor(Math.abs(clock.offsetMinutes) / 60))) : "";
+    return '' +
+      '<label style="display:block;margin:0.5rem 0 0;font-weight:400">' +
+        '<input type="checkbox" id="aw-quiet-on"' + (wins.length ? " checked" : "") + '> ' +
+        'Quiet time' +
+      '</label>' +
+      '<div id="aw-quiet-fields" style="margin:4px 0 0 1.4rem"' + (wins.length ? "" : ' hidden') + '>' +
+        // The SAME editor the Maintenance modal uses — one day per row, each
+        // off, all day, or carrying its own hour ranges.
+        '<div id="aw-quiet-editor">' +
+          window.PolarisRecurrence.dayEditorHtml({
+            shape: editable,
+            allOff: !editable && extras.length > 0,
+            zone: zone,
+          }) +
+        '</div>' +
+        '<div id="aw-quiet-extras">' + extras.map(quietExtraRowHtml).join("") + '</div>' +
+        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">' +
+          'Reminders due during a quiet period are <strong>held, not skipped</strong>: when it ends, the next reminder ' +
+          'goes out straight away and says how long the alert has been active. The first alert, escalations and ' +
+          'reset notifications are never quiet.' +
+        '</p>' +
+      '</div>';
+  }
+
+  /** Stash each read-only row's source shape so it is re-sent verbatim. */
+  function stashQuietWindows(panel) {
+    var extras = quietExtraWindows();
+    var rows = panel.querySelectorAll("#aw-quiet-extras .aw-quiet-extra");
+    for (var i = 0; i < rows.length; i++) rows[i]._quietWindow = extras[i] || null;
+  }
+
+  /**
+   * The whole quiet time: the day/hours editor's window first, then whatever
+   * read-only rows survive.
+   *
+   * A day editor with nothing ticked contributes NO window rather than an
+   * error — a quiet time whose only window came from the API is a real state
+   * (see `allOff`). validateStep5 is what refuses a ticked Quiet time with
+   * nothing behind it at all.
+   */
+  function collectQuiet(panel) {
+    var on = panel.querySelector("#aw-quiet-on");
+    if (!on || !on.checked) return null;
+    var out = [];
+    var host = panel.querySelector("#aw-quiet-editor");
+    if (host) {
+      var got = window.PolarisRecurrence.collectDayEditor(host);
+      if (!got.error && !got.empty) {
+        out.push(Object.assign({ version: 1, kind: "recurring" }, got));
+      }
+    }
+    panel.querySelectorAll("#aw-quiet-extras .aw-quiet-extra").forEach(function (row) {
+      if (row._quietWindow) out.push(row._quietWindow);
+    });
+    return out.length ? { windows: out } : null;
+  }
+
+  /** The day editor's own problem with what is typed, or "" when it is fine. */
+  function quietEditorProblem(panel) {
+    var host = panel && panel.querySelector("#aw-quiet-editor");
+    if (!host) return "";
+    var got = window.PolarisRecurrence.collectDayEditor(host);
+    if (got.error) return "Quiet time — " + got.error;
+    // "No days" is only a problem when nothing else supplies a window.
+    if (got.empty && panel.querySelectorAll("#aw-quiet-extras .aw-quiet-extra").length === 0) {
+      return "Quiet time: pick the days and hours, or untick Quiet time.";
+    }
+    return "";
   }
 
   /** The live volume line + the two conditional warnings. */
@@ -4514,6 +4658,7 @@ async function openAutomationWizard(existing, opts) {
 
     var every = Number((panel.querySelector("#aw-repeat-every") || {}).value) || 0;
     var stopAfter = Number((panel.querySelector("#aw-repeat-stopafter") || {}).value) || 0;
+    var quiet = collectQuiet(panel);
     var bits = [];
     if (every >= 1) {
       var perDay = Math.round((24 * 60) / every);
@@ -4529,7 +4674,31 @@ async function openAutomationWizard(existing, opts) {
       bits.push('<span style="color:var(--color-warning)">This automation only clears when someone clears it by hand, so reminders will not stop on their own.</span>');
     }
     if (draftHasAnyEscalation()) {
-      bits.push("This automation also escalates; a reminder and an escalation can arrive in the same minute.");
+      bits.push("This automation also escalates; a reminder and an escalation can arrive in the same minute." +
+        (quiet ? " Escalations are not held by quiet time." : ""));
+    }
+    if (quiet && stopAfter) {
+      // The give-up clock is wall time from the FIRE, quiet included. Worth
+      // saying out loud: an operator reading "quiet 22:00–06:00" and "give up
+      // after 8 hours" would reasonably expect the two not to interact, and
+      // the outcome is an alert nobody is reminded about again.
+      bits.push('<span style="color:var(--color-warning)">“Give up after ' + stopAfter + ' hour' +
+        (stopAfter === 1 ? "" : "s") + '” counts quiet time too — if the quiet period outlasts it, no further ' +
+        'reminders are sent and the held one is dropped.</span>');
+    }
+    // Every day, and no hours on any of them, is a quiet time with no gaps for
+    // a reminder to arrive in. Read through the shared resolver rather than by
+    // testing one field, since "all day" can be said three ways now (no
+    // `hours`, an empty per-day list, or the absent legacy pair).
+    if (quiet && (quiet.windows || []).some(function (w) {
+      if (w.kind !== "recurring" || (w.freq !== "daily" && (w.daysOfWeek || []).length !== 7)) return false;
+      for (var d = 0; d < 7; d++) {
+        if (window.PolarisRecurrence.dayRanges(w, d) !== null) return false;
+      }
+      return true;
+    })) {
+      bits.push('<span style="color:var(--color-warning)">A quiet period covering every day, all day holds every ' +
+        'reminder indefinitely — untick “Repeat this notification” instead if that is what you want.</span>');
     }
     note.innerHTML = bits.join(" ");
   }
@@ -4804,6 +4973,40 @@ async function openAutomationWizard(existing, opts) {
           syncRepeatNote();
         });
       });
+      // Quiet time: the shared editor owns its own rows and their handlers
+      // (window.PolarisRecurrence.wire delegates on the host, so adding and removing
+      // hour ranges needs nothing from here) and calls back on every change.
+      stashQuietWindows(panel);
+      var quietOn = panel.querySelector("#aw-quiet-on");
+      var quietFields = panel.querySelector("#aw-quiet-fields");
+      var quietHost = panel.querySelector("#aw-quiet-editor");
+      if (quietOn) {
+        quietOn.addEventListener("change", function () {
+          if (quietFields) quietFields.hidden = !quietOn.checked;
+          collectStep5();
+          syncRepeatNote();
+        });
+      }
+      if (quietHost) {
+        window.PolarisRecurrence.wire(quietHost, function () {
+          collectStep5();
+          syncRepeatNote();
+        });
+      }
+      var quietExtras = panel.querySelector("#aw-quiet-extras");
+      if (quietExtras) {
+        quietExtras.addEventListener("click", function (ev) {
+          var btn = ev.target.closest && ev.target.closest(".aw-quiet-extra-remove");
+          if (!btn) return;
+          // Removing an API-authored window is explicit, and only removal is
+          // offered: this wizard cannot express one, so any "edit" it allowed
+          // would be a rewrite into something else.
+          var row = btn.closest(".aw-quiet-extra");
+          if (row) row.remove();
+          collectStep5();
+          syncRepeatNote();
+        });
+      }
       syncRepeatNote();
     }
     var perSevCb = panel.querySelector("#aw-band-actions-multi");
@@ -7032,6 +7235,11 @@ async function openAutomationWizard(existing, opts) {
         if (afterRaw !== "" && afterRaw != null && !isNaN(Number(afterRaw))) {
           rep.stopAfterHours = Number(afterRaw);
         }
+        // Quiet time rides INSIDE repeat — it modifies the reminder clock and
+        // nothing else, so it cannot outlive the control that owns it: turning
+        // reminders off drops the windows with them.
+        var quiet = collectQuiet(panel);
+        if (quiet) rep.quiet = quiet;
         draft.repeat = rep;
       }
     }
@@ -7297,6 +7505,21 @@ async function openAutomationWizard(existing, opts) {
         if (p) return p;
       }
     }
+    // Quiet time: what the editor can't collect contributes NO window to the
+    // draft, so a ticked checkbox over a half-typed day would save silently as
+    // "no quiet time" — the operator would have to notice the reminders still
+    // arriving overnight to find out. `quietEditorProblem` names the day, and
+    // the overlapping pair of hours, in the same words the server would.
+    var panel5 = document.getElementById("aw-step-5");
+    var repeatOn = panel5 && panel5.querySelector("#aw-repeat-on");
+    var quietOn = panel5 && panel5.querySelector("#aw-quiet-on");
+    // Only while reminders are ON: with the repeat control unticked the whole
+    // block is hidden and its windows are dropped on purpose, so a leftover
+    // tick in the DOM must not block the save.
+    if (repeatOn && repeatOn.checked && quietOn && quietOn.checked) {
+      var quietProblem = quietEditorProblem(panel5);
+      if (quietProblem) return quietProblem;
+    }
     return null;
   }
   function condText(g) {
@@ -7362,10 +7585,19 @@ async function openAutomationWizard(existing, opts) {
     var ackNoteRow = draft.requireAckNote
       ? '<dt>Acknowledging</dt><dd>requires a note</dd>'
       : "";
+    // The quiet time is part of the REMINDER answer, not a row of its own:
+    // "every 15 min" and "paused overnight" together are what the reader is
+    // checking before they save.
+    var quietWins = (draft.repeat && draft.repeat.quiet && draft.repeat.quiet.windows) || [];
     var repeatRow = draft.repeat
       ? '<dt>Reminders</dt><dd>every ' + escapeHtml(String(draft.repeat.everyMin)) + ' min until ' +
           (draft.repeat.stopOn === "clear" ? "cleared" : "acknowledged") +
           (draft.repeat.stopAfterHours ? ", giving up after " + escapeHtml(String(draft.repeat.stopAfterHours)) + "h" : " — no limit") +
+          (quietWins.length
+            ? '<br><span style="color:var(--color-text-tertiary)">held during ' +
+                quietWins.map(function (w) { return escapeHtml(quietSummary(w)); }).join("; ") +
+                ' (server time); the next reminder after that says how long the alert has been active</span>'
+            : "") +
         '</dd>'
       : "";
     var resetRow = (draft.resetActions && draft.resetActions.length)

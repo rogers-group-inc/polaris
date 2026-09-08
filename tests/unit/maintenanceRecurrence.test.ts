@@ -340,3 +340,173 @@ describe("serverClockInfo", () => {
     expect(typeof info.timeZone).toBe("string");
   });
 });
+
+// ─── Per-day hour ranges ────────────────────────────────────────────────────
+
+/**
+ * A day carries a LIST of hour ranges now, and each range is its own
+ * occurrence. The cases that matter are the ones where "one occurrence per
+ * day" used to be load-bearing: currentWindow picking the CONTAINING range,
+ * nextWindow skipping a range that is already over, and expandOccurrences
+ * emitting several rows for one day.
+ */
+describe("hours[] — several ranges on every matched day", () => {
+  const twice = recurring({
+    freq: "daily",
+    hours: [
+      { startTime: "09:00", endTime: "11:00" },
+      { startTime: "14:00", endTime: "16:00" },
+    ],
+  });
+
+  it("is in window inside either range and out between them", () => {
+    expect(isInWindow(twice, at(2026, 8, 25, 9, 30))).toBe(true);
+    expect(isInWindow(twice, at(2026, 8, 25, 12, 0))).toBe(false);
+    expect(isInWindow(twice, at(2026, 8, 25, 15, 0))).toBe(true);
+    expect(isInWindow(twice, at(2026, 8, 25, 16, 0))).toBe(false); // half-open
+  });
+
+  it("identifies the CONTAINING range, not merely the day", () => {
+    // Occurrence identity is what the operator-release check compares against,
+    // so the afternoon window must not answer with the morning's start.
+    expect(currentWindow(twice, at(2026, 8, 25, 15, 0))?.start).toEqual(at(2026, 8, 25, 14, 0));
+    expect(currentWindow(twice, at(2026, 8, 25, 9, 30))?.start).toEqual(at(2026, 8, 25, 9, 0));
+  });
+
+  it("nextWindow skips a range that has already ended today", () => {
+    expect(nextWindow(twice, at(2026, 8, 25, 12, 0))?.start).toEqual(at(2026, 8, 25, 14, 0));
+    // After both, it rolls to tomorrow's first.
+    expect(nextWindow(twice, at(2026, 8, 25, 17, 0))?.start).toEqual(at(2026, 8, 26, 9, 0));
+  });
+
+  it("expands to one occurrence PER RANGE per day", () => {
+    const occs = expandOccurrences(twice, at(2026, 8, 25), at(2026, 8, 27));
+    expect(occs).toHaveLength(4);
+    expect(occs.map((o) => o.start.getHours())).toEqual([9, 14, 9, 14]);
+  });
+
+  it("caps on occurrences, not days", () => {
+    expect(expandOccurrences(twice, at(2026, 8, 25), at(2026, 8, 30), 3)).toHaveLength(3);
+  });
+
+  it("still spans midnight, per range", () => {
+    const overnight = recurring({
+      freq: "daily",
+      hours: [{ startTime: "22:00", endTime: "02:00" }, { startTime: "12:00", endTime: "13:00" }],
+    });
+    expect(isInWindow(overnight, at(2026, 8, 26, 1, 0))).toBe(true);
+    expect(currentWindow(overnight, at(2026, 8, 26, 1, 0))?.start).toEqual(at(2026, 8, 25, 22, 0));
+  });
+});
+
+describe("hoursByDay — different hours on different days", () => {
+  // Nights on Mon/Tue with a lunchtime slot on Monday; Saturday all day.
+  const perDay = recurring({
+    freq: "weekly",
+    daysOfWeek: [1, 2, 6],
+    hours: [{ startTime: "22:00", endTime: "06:00" }],
+    hoursByDay: [
+      { dow: 1, hours: [{ startTime: "22:00", endTime: "06:00" }, { startTime: "12:00", endTime: "13:00" }] },
+      { dow: 6, hours: [] },
+    ],
+  });
+
+  it("uses the day's own hours where it has them", () => {
+    expect(at(2026, 8, 24).getDay()).toBe(1); // Monday
+    expect(isInWindow(perDay, at(2026, 8, 24, 12, 30))).toBe(true);
+    // Tuesday has no entry of its own, so it falls back to `hours`.
+    expect(at(2026, 8, 25).getDay()).toBe(2);
+    expect(isInWindow(perDay, at(2026, 8, 25, 12, 30))).toBe(false);
+    expect(isInWindow(perDay, at(2026, 8, 25, 23, 0))).toBe(true);
+  });
+
+  it("treats an EMPTY hours list as all day", () => {
+    expect(at(2026, 8, 29).getDay()).toBe(6); // Saturday
+    expect(isInWindow(perDay, at(2026, 8, 29, 3, 0))).toBe(true);
+    expect(isInWindow(perDay, at(2026, 8, 29, 15, 0))).toBe(true);
+    expect(currentWindow(perDay, at(2026, 8, 29, 15, 0))).toEqual({
+      start: at(2026, 8, 29), end: at(2026, 8, 30),
+    });
+  });
+
+  it("never matches a day the day selector excludes", () => {
+    expect(at(2026, 8, 26).getDay()).toBe(3); // Wednesday, not selected
+    expect(isInWindow(perDay, at(2026, 8, 26, 23, 0))).toBe(false);
+  });
+});
+
+describe("hour-range validation", () => {
+  it("refuses two ranges that overlap on the same day", () => {
+    expect(() => recurring({
+      freq: "daily",
+      hours: [{ startTime: "09:00", endTime: "11:00" }, { startTime: "10:00", endTime: "12:00" }],
+    })).toThrow();
+    // Including the midnight-spanning pair, which reads as fine until you
+    // carry the end past 24:00.
+    expect(() => recurring({
+      freq: "daily",
+      hours: [{ startTime: "22:00", endTime: "06:00" }, { startTime: "23:00", endTime: "01:00" }],
+    })).toThrow();
+    // Per DAY: the same clash inside one hoursByDay entry.
+    expect(() => recurring({
+      freq: "weekly",
+      daysOfWeek: [1],
+      hoursByDay: [{ dow: 1, hours: [{ startTime: "09:00", endTime: "11:00" }, { startTime: "10:30", endTime: "12:00" }] }],
+    })).toThrow();
+  });
+
+  it("allows ranges that merely abut, and ranges that overlap ACROSS days", () => {
+    expect(() => recurring({
+      freq: "daily",
+      hours: [{ startTime: "09:00", endTime: "11:00" }, { startTime: "11:00", endTime: "12:00" }],
+    })).not.toThrow();
+    // Friday night running into an all-day Saturday — the most ordinary
+    // schedule anyone writes, and it must not be refused as a typo.
+    const weekend = recurring({
+      freq: "weekly",
+      daysOfWeek: [5, 6],
+      hours: [{ startTime: "22:00", endTime: "06:00" }],
+      hoursByDay: [{ dow: 6, hours: [] }],
+    });
+    expect(at(2026, 8, 28).getDay()).toBe(5); // Friday
+    // Both occurrences contain Saturday 03:00; the answer is the earliest
+    // STARTING one, deterministically.
+    expect(currentWindow(weekend, at(2026, 8, 29, 3, 0))?.start).toEqual(at(2026, 8, 28, 22, 0));
+  });
+
+  it("refuses hours[] alongside the legacy startTime/endTime pair", () => {
+    expect(() => recurring({
+      freq: "daily",
+      startTime: "22:00",
+      endTime: "06:00",
+      hours: [{ startTime: "09:00", endTime: "11:00" }],
+    })).toThrow();
+  });
+
+  it("refuses hoursByDay on a monthly or yearly recurrence", () => {
+    expect(() => recurring({
+      freq: "monthly", dayOfMonth: 1,
+      hoursByDay: [{ dow: 1, hours: [] }],
+    })).toThrow();
+  });
+
+  it("refuses hours for a day the recurrence never matches, and a doubled day", () => {
+    expect(() => recurring({
+      freq: "weekly", daysOfWeek: [1],
+      hoursByDay: [{ dow: 4, hours: [] }],
+    })).toThrow();
+    expect(() => recurring({
+      freq: "weekly", daysOfWeek: [1],
+      hoursByDay: [{ dow: 1, hours: [] }, { dow: 1, hours: [{ startTime: "09:00", endTime: "10:00" }] }],
+    })).toThrow();
+  });
+
+  it("still accepts every shape written before per-day hours", () => {
+    // parseStoredShape warns-and-SKIPS a schedule whose shape no longer
+    // validates, so a rejection here would silently stop an existing
+    // maintenance schedule from ever running again.
+    expect(() => recurring({ freq: "daily", startTime: "22:00", endTime: "02:00" })).not.toThrow();
+    expect(() => recurring({ freq: "weekly", daysOfWeek: [0, 6] })).not.toThrow();
+    expect(() => recurring({ freq: "monthly", dayOfMonth: 31, startTime: "01:00", endTime: "03:00" })).not.toThrow();
+  });
+});

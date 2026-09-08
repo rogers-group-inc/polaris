@@ -151,6 +151,13 @@ beforeAll(() => {
   // here reproduces a typeahead that silently knows about nobody.
   const abSrc = readFileSync(resolve(__dirname, "../../public/js/automations-address-book.js"), "utf8");
   (0, eval)(abSrc);
+  // The shared recurrence editor, also loaded before the wizard on every page
+  // that carries it. Quiet time's day/hour rows are built from it WHILE the
+  // Actions step is assembled, so without it that step throws mid-render and
+  // every step-5 assertion here fails on a null panel — which is exactly what
+  // a page that forgot the script tag would do.
+  const recSrc = readFileSync(resolve(__dirname, "../../public/js/recurrence-editor.js"), "utf8");
+  (0, eval)(recSrc);
   const src = readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8");
   (0, eval)(src);
   // Export / import / view-code. Loaded on every page that loads the wizard.
