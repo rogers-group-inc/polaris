@@ -1000,6 +1000,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // recording one IP. Scheduler role only: one grouped scan for the
       // fleet, not one per monitor replica.
       "./jobs/detectDuplicateIpAssets.js",
+      // IP-keyed upstream sweep: MAC-less assets get their Last Seen Switch /
+      // AP derived through the owning gate's ARP cache, since every MAC-keyed
+      // writer of those columns can never reach them. Scheduler role only.
+      "./jobs/resolveIpUpstreamChain.js",
       "./jobs/dependencyReconciler.js",
       "./jobs/maintenanceScheduler.js",
       "./jobs/retryQueuedReservationPushes.js",

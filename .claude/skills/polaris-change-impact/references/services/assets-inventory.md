@@ -291,6 +291,38 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/ipUpstreamChainService.ts
+
+**What it owns:** The IP-keyed upstream chain (business rule 44): for an asset that has an address and NO MAC, derive `lastSeenSwitch` / `lastSeenAp` by walking IP → containing subnet's owning FortiGate → THAT gate's `AssetArpEntry` → MAC → `AssetMacTableEntry` (lowest-cardinality learned port) / `AssetWirelessStation` (by MAC, or by the station's own recorded address). Every other writer of those two columns is keyed by MAC, so an asset from AD / Azure Arc / a vCenter cluster / an active scan / the operator form could never acquire them — this service reads the current-state tables those writers leave behind and joins the chain. No device I/O.
+
+**Public API:** `resolveIpUpstreamForMaclessAssets(now?)` → `IpUpstreamChainResult` counts; the pure `claimIsFresh`, `pickArpMac`, `pickBestSwitchPort`, `switchPortLabel`, `portKey`, `stampChanged`; `loadMaclessClaims`; `EVIDENCE_FRESH_MS`.
+
+**Cross-service deps:** `subnetService.buildIpContexts` (containment — the single most-specific-subnet SQL), `utils/fortinetParentKey` (`buildInfraParentIndex` / `resolveInfraParentAsset` — the subnet's `fortigateSerial` first, its FMG device NAME second, never a hostname match), `duplicateIpConflictService.claimIsOperatorOwned` + `CLAIM_FRESH_DAYS` (rule 40's claim model, imported rather than re-stated), `eventLogService.buildConnectionChangedEvent` + `logEventsBatch`, `utils/dbRetry.retryOnDeadlock`, `utils/chunk.chunkArray`, `utils/assetInvariants.UNMONITORABLE_STATUSES`.
+
+**Used by:** `src/jobs/resolveIpUpstreamChain.ts` (boot + 90s, then every 10 min; scheduler role). Total 1 call site today.
+
+**Invariants:**
+- **MAC-less assets ONLY** (`macAddress IS NULL`). A MAC-bearing asset is already served by discovery Phase 7.5 and the FortiAP station scrape, whose label format (`<switchId>/<portName>`) differs from this one (`<hostname>/<ifName>`); a second writer would ping-pong the column every tick and audit both halves as changes forever. This job writes only what no other writer can.
+- **Fortinet infrastructure is excluded** (`firewall` / `switch` / `access_point`) — their topology lives on `fortinetTopology`, the Phase 7.5 exclusion.
+- **The ARP lookup is scoped to the owning gate.** With a gate resolved, only its rows count; with none, rows are accepted only when exactly ONE gate reports the address — two gates answering is the overlapping-RFC1918 case (the Phase 7.6 / rule 26 `(gate, ip)` scoping). `pickArpMac` is the pure statement of this.
+- **Two MACs at one address is `"ambiguous"`, not a pick** — a duplicate on the wire is not evidence (rule 26's ARP rule).
+- **Two freshness gates.** The asset's claim on the address must be current per rule 40 (`claimIsFresh`: operator-owned never expires; a discovered claim needs its `(asset, ip)` `AssetIpHistory.lastSeen`, or `Asset.lastSeen` when no history row, within `CLAIM_FRESH_DAYS`); ARP / FDB / station rows must have `lastSeen` within `EVIDENCE_FRESH_MS` (24h) — the tables are delete-replaced per scrape, so an older row means its writer stopped answering.
+- **Port rank is lowest MAC cardinality** (`pickBestSwitchPort`, Phase 7.5's rule: an access port sees one MAC, the trunk above it sees fifty), then freshest, then a stable name order so ties can't flip the stamp between ticks. Cardinality comes from ONE `groupBy` bounded to the switches involved, never the fleet.
+- **The MAC is derived, never adopted onto the asset.** Adoption would make the row eligible for MAC-keyed dedupe and merge (`mergeDuplicateHostnameAssets`, Entra cross-linking), and a wrong adoption merges two devices. That step is a deliberate follow-up behind an opt-in, not a default.
+- **Stamps are never cleared** — absence of evidence is not a move — and written only on change (`stampChanged`, case-insensitive like the station scrape's compare).
+- **Writes are sorted by asset id inside `$transaction` chunks under `retryOnDeadlock`** (the documented `lastSeenAp` 3-way deadlock fix), and the `asset.switch_port.changed` / `asset.wireless_ap.changed` Events (actor `system:upstream-chain`, source `ip-upstream-chain`) are batched AFTER each commit, never inside it.
+- **Set-based end to end**: one claim query (`LIMIT` `CANDIDATE_CAP`), one containment query, one firewall load, IN-chunked ARP / FDB / station queries, one device-name query, chunked updates. No per-asset awaits.
+
+**When changing this:**
+- Widening the sweep to MAC-bearing assets means first reconciling the two label formats with Phase 7.5 (`discoveryEngine.ts`) and the SNMP `persistMacTable` path, or every tick emits change Events in both directions.
+- Adopting the MAC onto the asset: gate it on a Setting (the rule 26 `adoptDiscoveredMac` precedent), write through `macAddressService.reconcileMacAddresses` with its own source tag, and re-read the dedupe jobs' MAC-keyed tie rules before shipping.
+- If `lastSeenSwitch`'s `"<switch>/<port>"` shape shifts, `switchPortLabel` here joins the three parsers listed under `assetUpstreamService`.
+- A fourth evidence table (e.g. a DHCP client table) goes in as another `load*Rows` + a pure picker, and its freshness rides `EVIDENCE_FRESH_MS`.
+
+**Tests:** `tests/unit/ipUpstreamChain.test.ts` (the pure pickers and both freshness rules), `tests/integration/ipUpstreamChain.test.ts` (gate scoping by FMG device name, the other-gate refusal, the two-MAC refusal, the stale claim, the MAC-bearing exclusion, the station-by-IP path, idempotent second pass, the audit rows).
+
+---
+
 ## services/connectionPathService.ts
 
 **What it owns:** `resolveConnectionPath(assetId)` — endpoint → switch → … → FortiGate connection-path resolver. Walks the upward dependency chain so the Device Map topology overlay can dim everything off-path.

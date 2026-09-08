@@ -1,4 +1,4 @@
-# Business rules 36–43 — full narrative
+# Business rules 36–44 — full narrative
 
 Verbatim from BUSINESS-RULES.md: each rule records the decision *and the incident or constraint that forced it*. The invariant for each rule is in `invariants-12-29.md` / `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
@@ -360,3 +360,35 @@ It does not create a function key. Agent deployment rides the level above `asset
 It does not retro-scope credentials. Nothing is reassigned, nothing is deleted, and an admin who wants a shared credential to stay shared changes nothing: every built-in role sits at `credentials=read`, so the dimension only starts mattering the moment someone is granted `write`.
 
 And it does not change what a probe can reach. `assetsProbe=read` dials exactly what `assetsProbe=write` dialled — the narrowing is about which cells the matrix offers and which level the routes name, not about what the act does.
+
+---
+
+<a id="rule-44"></a>
+
+## Rule 44 — An address places a device only through the gate that owns it, and only a device nothing else can place
+
+**The invariant.** For an asset that has an IP address and NO MAC, `lastSeenSwitch` and `lastSeenAp` are derived by the `resolveIpUpstreamChain` sweep (`services/ipUpstreamChainService.ts`, every 10 minutes) along one chain: IP → the containing subnet's owning FortiGate (its chassis serial first, its FortiManager device name second, through `utils/fortinetParentKey.ts`) → THAT gate's `AssetArpEntry` → MAC → the `AssetMacTableEntry` learned port with the fewest MACs, and the `AssetWirelessStation` carrying the MAC or the address. Four refusals, each deliberate: another gate's ARP row never counts (with no owning gate resolvable, the address is accepted only when exactly one gate reports it); two MACs at the address on the owning gate is no answer; an address claim that is not current under rule 40's model is skipped; and ARP / FDB / station rows older than 24 hours are not evidence. The sweep touches MAC-less assets ONLY, it derives the MAC and never adopts it onto the asset, and it never clears a stamp. Each move is audited as `asset.switch_port.changed` / `asset.wireless_ap.changed` by `system:upstream-chain`.
+
+### What was missing
+
+Every writer of the two "last seen" columns was keyed by MAC. Discovery Phase 7.5 matched the FortiSwitch MAC map through the run's own MAC index; the FortiAP station scrape matched `staMacAddr` through the LLDP match index; the SNMP forwarding-database persist resolved its `matchedAssetId` by MAC and stamped nothing at all. So an asset that arrived from Active Directory, Azure Arc, a vCenter cluster, an active scan or the operator form — an address and a hostname, no hardware identity — could never be placed on a switch port or an AP, even though the gate's neighbour cache and the switches' tables already held every fact needed. The Add Asset form's IP cross-reference (`ipContextService`) had walked most of that chain read-only since 2026-08 for a typed address, and stopped one step short of the station table; nothing ran it for the inventory.
+
+### Why a separate sweep, and why it stops where it does
+
+**A sweep, not a hook.** The evidence arrives from three writers on three cadences — FMG/FortiGate discovery for ARP, the SNMP system-info pass for the FDB, the FortiAP scrape for stations — and a MAC-less asset is reached by none of them. Joining the chain inside any one of those write sites would mean the others' tables might be a cycle stale at that moment; reading all three on a cadence of their own, from the current-state tables they leave behind, is the only place the join is honest. The same reasoning made rule 40 a sweep.
+
+**The ARP lookup is scoped to the owning gate.** Overlapping RFC1918 ranges behind different gates on one FortiManager are the normal case on a multi-site fleet, so a global "who has this IP" over every gate's cache would hand a Site A workstation the MAC of whatever sits at the same address in Site B. Phase 7.6 keys ARP evidence by `(gate, ip)` for exactly this reason (rule 17), placeholder-MAC adoption does the same (rule 26), and the subnet's owning gate is resolved the way rule 41 says a gate must be — serial first, FMG device name second, never the hostname. When no gate can be named — a manual subnet, a gate with no Asset row — the rows are still accepted if a single gate reports the address, because a single reporter means no overlap was observed; two reporters is the overlap case and is skipped.
+
+**Two MACs is no answer.** Rule 26 already refuses to burn an address that two ARP rows disagree about into DHCP config; the same duplicate is not a reason to move a device's switch port either. The address is skipped and counted (`ambiguous`), so a persistent count is itself a finding.
+
+**Both ends must be fresh.** The asset's claim on the address follows rule 40's model exactly — an operator-owned claim (pin, or `ipSource="manual"`) never expires; a discovered one must have been re-asserted within `CLAIM_FRESH_DAYS` on its `AssetIpHistory` row, or the device seen when there is no history — because a recycled DHCP address is the other way this chain goes wrong: the laptop that left three weeks ago still records `10.1.1.50`, the printer that got the lease next is what the gate's ARP now answers with, and without the gate the laptop would be stamped onto the printer's port. The evidence tables have their own ceiling (24 hours): they are delete-replaced per scrape, so an older row does not mean the device is still there, it means the writer stopped answering — an offline gate, a switch dropped from monitoring.
+
+**MAC-less assets only.** A MAC-bearing asset already has writers, and their label format differs from this one (`<switchId>/<portName>` from the FortiSwitch MAC map, `<hostname>/<ifName>` here). A second writer on the same column would move it back and forth every tick and audit both halves as changes forever — the ping-pong the asset-change-events baseline exists to prevent within a single discovery run. This sweep therefore writes only what no other writer can. Widening it means reconciling the formats first, and is not a small change.
+
+**The MAC is derived, never adopted.** The obvious "better" version writes the ARP MAC onto the asset so every downstream matcher works for free. It also makes the row eligible for MAC-keyed dedupe and merge (`mergeDuplicateHostnameAssets` collapses rows sharing a MAC; Entra cross-links by Ethernet MAC), so one wrong adoption — a recycled address inside the freshness window, a gate misresolved — merges two devices and permanently deletes one row's monitoring history. Rule 26 gates the reservation-side adoption behind a double opt-in for the same reason. Adoption here is a deliberate follow-up behind an opt-in Setting, not a default, and the touches entry names what it must go through when it comes.
+
+**Nothing is cleared.** An address the network cannot currently account for is absence of evidence, not a move; the last known switch port stays until the chain places the device somewhere else.
+
+### What it gives the form
+
+The same change taught the Add Asset IP cross-reference the station table, with the two ways in that the sweep uses: by the resolved MAC, or by the address the AP itself recorded for the station. The switch-port line can only ever follow a MAC; the Wireless AP line is the one source on that panel that can place a device nothing wired has ever seen, and it says which path found it.
