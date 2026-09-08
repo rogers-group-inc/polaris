@@ -5,3 +5,8 @@ Dockerfile  text eol=lf
 .dockerignore text eol=lf
 *.yml       text eol=lf
 *.yaml      text eol=lf
+
+# The lifecycle datasets are re-edited every quarter by /polaris-tech-lifecycle.
+# Scoped rather than a blanket *.json so package-lock.json and the Grafana
+# dashboards keep their existing normalization.
+src/data/*.json text eol=lf
