@@ -1,0 +1,474 @@
+#!/usr/bin/env node
+/**
+ * scripts/check-versions.mjs — pin-consistency guard for the tech stack.
+ *
+ * Polaris declares the same version in a dozen places at once: a Node major
+ * lives in package.json, both Dockerfiles, six deploy/setup-* scripts, two
+ * workflow files and four operator docs. Nothing cross-checked them, so a bump
+ * could land in nine of twelve sites and the tenth would keep provisioning the
+ * old runtime on every fresh host — silently, until someone rebuilt a box.
+ *
+ * This script reads every declaration site and asserts the family agrees. It is
+ * pure file reads: no npm, no network, no database, so it runs in CI with no
+ * install (the same discipline as check-docs.mjs) and finishes in milliseconds.
+ *
+ * It also sanity-checks src/data/platformEol.json — every family here must have
+ * a dataset entry, or the in-app Platform Lifecycle card would grade a pin it
+ * cannot describe.
+ *
+ * Wiring: `npm run check:versions`, a narrow arm of .githooks/pre-commit, and a
+ * step in .github/workflows/check-docs.yml. Deliberately NOT folded into
+ * check:docs — two concerns, two exit codes, so either can be bypassed alone.
+ *
+ * Adding a declaration site: add it to the family's `sites`. Globbed families
+ * (the deploy scripts, the workflows) pick up a new file automatically and fail
+ * if it declares no pin — add it to `skip` with a reason if that is correct.
+ * Accepted divergences go in `allow` with the decision they defer, so the
+ * checker stays a hard gate instead of decaying into ignored warnings.
+ *
+ * The family list mirrors the "Family index" table in
+ * .claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md.
+ * The two drift together or not at all.
+ */
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const JSON_OUT = process.argv.includes("--json");
+
+/** Read a repo-relative file, CRLF-normalized. Returns null when absent. */
+function read(rel) {
+  try {
+    return readFileSync(join(ROOT, rel), "utf8").replace(/\r\n/g, "\n");
+  } catch {
+    return null;
+  }
+}
+
+/** Repo-relative paths in `dir` whose basename matches `re`, sorted. */
+function glob(dir, re) {
+  const abs = join(ROOT, dir);
+  if (!existsSync(abs)) return [];
+  return readdirSync(abs)
+    .filter((n) => re.test(n))
+    .sort()
+    .map((n) => `${dir}/${n}`);
+}
+
+const LINUX_SETUP = () => glob("deploy", /^setup-(rhel|ubuntu)(-nodb)?\.sh$/);
+const WINDOWS_SETUP = () => glob("deploy", /^setup-windows(-nodb)?\.ps1$/);
+const ALL_SETUP = () => [...LINUX_SETUP(), ...WINDOWS_SETUP()];
+const UNITS = () => glob("deploy", /^polaris-.*\.service$/);
+const WORKFLOWS = () => glob(".github/workflows", /\.ya?ml$/);
+
+/** Truncate a version to the family's agreed granularity. */
+function track(value, agree) {
+  const parts = String(value).split(".");
+  return agree === "major" ? parts[0] : parts.slice(0, 2).join(".");
+}
+
+/** Numeric track comparison: "1.9" < "1.10", "20" < "22". */
+function compareTracks(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Families. Each site yields zero or more { value } from one file; `pick` turns
+// a regex match into the version string. `kind` is informational in the output:
+//   pin           an exact version this repo installs or requires
+//   accept-range  a floor an install script will accept (a range, not a pin)
+//   prose         a version claim in a doc or a script header
+// ---------------------------------------------------------------------------
+const FAMILIES = [
+  {
+    id: "node-major",
+    label: "Node.js",
+    agree: "major",
+    minSites: 12,
+    sites: [
+      { file: "package.json", label: "engines.node", kind: "accept-range",
+        re: /"node":\s*">=\s*(\d+)\./g, pick: (m) => m[1] },
+      { file: "package.json", label: "@types/node", kind: "pin",
+        re: /"@types\/node":\s*"[\^~]?(\d+)\./g, pick: (m) => m[1] },
+      { files: ["Dockerfile", "Dockerfile.dev"], label: "FROM node", kind: "pin",
+        re: /^FROM node:(\d+)-/gm, pick: (m) => m[1] },
+      { files: LINUX_SETUP, label: "node -v accept floor", kind: "accept-range",
+        re: /node -v\)" == v(\d+)\*/g, pick: (m) => m[1] },
+      { files: LINUX_SETUP, label: "install source", kind: "pin",
+        re: /nodejs:(\d+)\b|node_(\d+)\.x/g, pick: (m) => m[1] ?? m[2] },
+      { files: WINDOWS_SETUP, label: "node accept floor", kind: "accept-range",
+        re: /node -v\) -match "\^v\((\d+)\|/g, pick: (m) => m[1] },
+      { files: WINDOWS_SETUP, label: "winget pin", kind: "pin",
+        re: /OpenJS\.NodeJS\.LTS --version (\d+)\./g, pick: (m) => m[1] },
+      { files: WINDOWS_SETUP, label: "MSI fallback URL", kind: "pin",
+        re: /nodejs\.org\/dist\/v(\d+)\./g, pick: (m) => m[1] },
+      { files: WORKFLOWS, label: "node-version", kind: "pin",
+        re: /node-version:\s*(\d+)/g, pick: (m) => m[1] },
+      { files: ["docs/INSTALL.md", "README.md", "CLAUDE.md"], label: "prose floor", kind: "prose",
+        re: /Node\.js (\d+)\+/g, pick: (m) => m[1] },
+    ],
+    // The Linux scripts accept a *range* (v20 or v22) while Windows pins one
+    // exact build. That is not a contradiction the equality check can see, but
+    // it does mean "Node 20+" is false on Windows past the pinned patch.
+    extra(found) {
+      const warns = [];
+      const linuxCeiling = new Set();
+      for (const rel of LINUX_SETUP()) {
+        const src = read(rel) ?? "";
+        for (const m of src.matchAll(/\|\| "\$\(node -v\)" == v(\d+)\*/g)) linuxCeiling.add(m[1]);
+      }
+      for (const rel of WINDOWS_SETUP()) {
+        const src = read(rel) ?? "";
+        for (const m of src.matchAll(/node -v\) -match "\^v\(\d+\|(\d+)\)/g)) linuxCeiling.add(m[1]);
+      }
+      const pins = found.filter((f) => f.kind === "pin").map((f) => f.value);
+      for (const ceil of linuxCeiling) {
+        if (!pins.includes(ceil)) {
+          warns.push(
+            `install scripts accept Node ${ceil}, but nothing installs it — every pin is ${[...new Set(pins)].join("/")}. ` +
+              `A host that already has ${ceil} is accepted and never tested.`,
+          );
+        }
+      }
+      return warns;
+    },
+  },
+
+  {
+    id: "go-pin",
+    label: "Go toolchain",
+    agree: "major.minor",
+    minSites: 8,
+    sites: [
+      { file: "agent/go.mod", label: "go directive", kind: "pin",
+        re: /^go (\d+\.\d+)/gm, pick: (m) => m[1] },
+      { files: LINUX_SETUP, label: "go version accept floor", kind: "accept-range",
+        re: /go1\\\.\((\d)\[(\d)-9\]/g, pick: (m) => `1.${m[1]}${m[2]}` },
+      { files: WINDOWS_SETUP, label: "go accept floor", kind: "accept-range",
+        re: /go1\\\.\((\d)\[(\d)-9\]/g, pick: (m) => `1.${m[1]}${m[2]}` },
+      { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
+        re: /GoLang\.Go\.(\d+\.\d+)/g, pick: (m) => m[1] },
+      { files: WINDOWS_SETUP, label: "MSI fallback URL", kind: "pin",
+        re: /go\.dev\/dl\/go(\d+\.\d+)\./g, pick: (m) => m[1] },
+      { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose",
+        re: /Go (\d+\.\d+)\+/g, pick: (m) => m[1] },
+    ],
+  },
+
+  {
+    id: "nginx-floor",
+    label: "nginx",
+    agree: "major.minor",
+    minSites: 5,
+    sites: [
+      { files: LINUX_SETUP, label: "nginx -v accept floor", kind: "accept-range",
+        re: /nginx -v 2>&1 \| grep -qE '(\d)\\\.\((\d)\[(\d)-9\]/g,
+        pick: (m) => `${m[1]}.${m[2]}${m[3]}` },
+      { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose",
+        re: /nginx[^\n]*?(?:≥|>=)\s*(\d+\.\d+)/gi, pick: (m) => m[1] },
+    ],
+  },
+
+  {
+    id: "postgres-major",
+    label: "PostgreSQL",
+    agree: "major",
+    minSites: 8,
+    sites: [
+      { files: UNITS, label: "unit After=/Requires=", kind: "pin",
+        re: /postgresql-(\d+)\.service/g, pick: (m) => m[1] },
+      { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
+        re: /PostgreSQL\.PostgreSQL\.(\d+)/g, pick: (m) => m[1] },
+      { files: WINDOWS_SETUP, label: "installer URL", kind: "pin",
+        re: /postgresql-(\d+)\.\d+-\d+-windows/g, pick: (m) => m[1] },
+      { files: WINDOWS_SETUP, label: "--servicename", kind: "pin",
+        re: /--servicename postgresql-(\d+)/g, pick: (m) => m[1] },
+      { file: "compose.dev.yml", label: "dev image tag", kind: "pin",
+        re: /timescaledb:latest-pg(\d+)/g, pick: (m) => m[1] },
+      { files: WORKFLOWS, label: "CI service image", kind: "pin",
+        re: /image:\s*postgres:(\d+)-/g, pick: (m) => m[1] },
+      { files: ["docs/INSTALL.md"], label: "timescaledb package", kind: "pin",
+        re: /timescaledb-2-postgresql-(\d+)/g, pick: (m) => m[1] },
+      { files: ["docs/INSTALL.md"], label: "pg_config path", kind: "pin",
+        re: /\/usr\/pgsql-(\d+)\//g, pick: (m) => m[1] },
+    ],
+  },
+
+  {
+    id: "java-major",
+    label: "Java (agent signing)",
+    agree: "major",
+    minSites: 5,
+    sites: [
+      { file: "Dockerfile", label: "JDK package", kind: "pin",
+        re: /openjdk-(\d+)-jre-headless|java-(\d+)-openjdk/g, pick: (m) => m[1] ?? m[2] },
+      { files: LINUX_SETUP, label: "JDK package", kind: "pin",
+        re: /java-(\d+)-openjdk|openjdk-(\d+)-jre/g, pick: (m) => m[1] ?? m[2] },
+      { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
+        re: /Microsoft\.OpenJDK\.(\d+)/g, pick: (m) => m[1] },
+      { files: WINDOWS_SETUP, label: "JDK MSI URL", kind: "pin",
+        re: /microsoft-jdk-(\d+)-windows/g, pick: (m) => m[1] },
+    ],
+  },
+
+  {
+    id: "jsign-pin",
+    label: "jsign",
+    agree: "major.minor",
+    minSites: 3,
+    sites: [
+      { file: "Dockerfile", label: "release URL", kind: "pin",
+        re: /jsign\/releases\/download\/(\d+\.\d+)\//g, pick: (m) => m[1] },
+      { files: LINUX_SETUP, label: "JSIGN_VERSION", kind: "pin",
+        re: /JSIGN_VERSION="?(\d+\.\d+)"?/g, pick: (m) => m[1] },
+      { files: WINDOWS_SETUP, label: "JSIGN_VERSION", kind: "pin",
+        re: /JSIGN_VERSION\s*=\s*"(\d+\.\d+)"/g, pick: (m) => m[1] },
+    ],
+  },
+];
+
+// Divergences we have decided to live with, each recorded with the decision it
+// defers. An entry here suppresses one file's value from the equality check —
+// it does NOT hide it from the report. Empty today; keep it that way by fixing
+// drift rather than allow-listing it, and give every entry a real reason.
+const ALLOW = [];
+
+/**
+ * postgres-source — warn-only, and deliberately not a family.
+ *
+ * A family asserts "these sites name the same version". This asserts something
+ * different: that the RHEL script installs a Postgres that can actually satisfy
+ * the units the same script goes on to install. It cannot today —
+ * `dnf install -y postgresql-server` + `postgresql-setup --initdb` yields an
+ * unversioned postgresql.service, while the shipped units declare
+ * Requires=postgresql-15.service and docs/INSTALL.md documents the PGDG
+ * packages instead (whose names are also the only ones that satisfy
+ * timescaledb-2-postgresql-15).
+ *
+ * Warn rather than fail: fixing it changes the RHEL install path, which is a
+ * behaviour decision for a human, not a drift fix a checker should force.
+ */
+function checkPostgresSource() {
+  const out = [];
+  const unitMajors = new Set();
+  for (const rel of UNITS()) {
+    for (const m of (read(rel) ?? "").matchAll(/postgresql-(\d+)\.service/g)) unitMajors.add(m[1]);
+  }
+  if (unitMajors.size === 0) return out;
+
+  for (const rel of glob("deploy", /^setup-rhel(-nodb)?\.sh$/)) {
+    const src = read(rel) ?? "";
+    const appstream = /dnf install -y postgresql-server\b/.test(src) || /postgresql-setup --initdb/.test(src);
+    const versioned = /postgresql1\d-server|\/usr\/pgsql-\d+\//.test(src);
+    if (appstream && !versioned) {
+      out.push(
+        `${rel} installs unversioned AppStream postgresql-server (postgresql.service), but the shipped units ` +
+          `require postgresql-${[...unitMajors].join("/")}.service and docs/INSTALL.md documents the PGDG ` +
+          `packages. The script cannot satisfy its own units, and AppStream's package names cannot satisfy ` +
+          `timescaledb-2-postgresql-${[...unitMajors][0]}. Decide the RHEL install path; this is not a pin fix.`,
+      );
+    }
+  }
+  return out;
+}
+
+// Tags that cannot be pin-checked at all. Reported so a bump session knows what
+// the checker is blind to.
+const FLOATING = [
+  { file: "compose.dev.yml", re: /timescale\/timescaledb:latest-pg\d+/g },
+  { file: "docker-compose.yml", re: /nginx:mainline/g },
+  { file: "docker-compose.yml", re: /polaris:latest/g },
+];
+
+const DATASET = "src/data/platformEol.json";
+const DATASET_STALE_DAYS = 120;
+
+// ---------------------------------------------------------------------------
+
+const failures = [];
+const warnings = [];
+const report = [];
+
+function resolveFiles(site) {
+  if (site.file) return [site.file];
+  return typeof site.files === "function" ? site.files() : site.files;
+}
+
+function collect(family) {
+  const found = [];
+  const filesSeen = new Set();
+  for (const site of family.sites) {
+    for (const rel of resolveFiles(site)) {
+      const src = read(rel);
+      if (src === null) continue;
+      filesSeen.add(rel);
+      let values = [];
+      for (const m of src.matchAll(site.re)) {
+        const raw = site.pick(m);
+        if (raw) values.push(track(raw, family.agree));
+      }
+      // An accept-range site declares a FLOOR. `[[ node -v == v20* || == v22* ]]`
+      // yields two matches, but only the lower one is the requirement — the
+      // upper end is a tested-ceiling question, which the family's `extra`
+      // check reports separately as a warning.
+      if (site.kind === "accept-range" && values.length > 1) {
+        values = [values.sort(compareTracks)[0]];
+      }
+      for (const value of new Set(values)) {
+        found.push({ file: rel, label: site.label, kind: site.kind, value });
+      }
+    }
+  }
+  return { found, filesSeen };
+}
+
+for (const family of FAMILIES) {
+  const { found } = collect(family);
+
+  if (found.length === 0) {
+    failures.push({
+      check: family.id,
+      msg: `${family.label}: no declaration sites matched at all. A pin was renamed or a file moved — the patterns in scripts/check-versions.mjs are stale.`,
+    });
+    continue;
+  }
+  if (family.minSites && found.length < family.minSites) {
+    failures.push({
+      check: family.id,
+      msg:
+        `${family.label}: only ${found.length} declaration site(s) matched, expected at least ${family.minSites}. ` +
+        `A site was renamed or removed, or a new install script declares no ${family.label} pin.`,
+    });
+  }
+
+  const allowed = new Set(ALLOW.filter((a) => a.family === family.id).map((a) => a.file));
+  const considered = found.filter((f) => !allowed.has(f.file));
+  const distinct = [...new Set(considered.map((f) => f.value))].sort();
+
+  report.push({ family: family.id, label: family.label, sites: found.length, agreed: distinct, found });
+
+  if (distinct.length > 1) {
+    const lines = considered
+      .map((f) => `      ${f.value.padEnd(8)} ${f.file} (${f.label}, ${f.kind})`)
+      .sort();
+    failures.push({
+      check: family.id,
+      msg:
+        `${family.label}: declaration sites disagree — found ${distinct.join(", ")}.\n` +
+        [...new Set(lines)].join("\n"),
+    });
+  }
+
+  for (const w of family.extra?.(found) ?? []) warnings.push({ check: family.id, msg: `${family.label}: ${w}` });
+}
+
+for (const msg of checkPostgresSource()) warnings.push({ check: "postgres-source", msg });
+
+// --- dataset shape ---------------------------------------------------------
+const rawDataset = read(DATASET);
+if (rawDataset === null) {
+  failures.push({ check: "dataset-shape", msg: `${DATASET} is missing — the in-app lifecycle card has no data to grade against.` });
+} else {
+  let data = null;
+  try {
+    data = JSON.parse(rawDataset);
+  } catch (err) {
+    failures.push({ check: "dataset-shape", msg: `${DATASET} does not parse: ${err.message}` });
+  }
+  if (data) {
+    const ids = new Set((data.technologies ?? []).map((t) => t.id));
+    const playbooks = new Set((data.playbooks ?? []).map((p) => p.id));
+
+    for (const t of data.technologies ?? []) {
+      if (!t.source || !t.sourceCheckedOn) {
+        failures.push({ check: "dataset-shape", msg: `${DATASET}: technology "${t.id}" has no source/sourceCheckedOn. Every date must name the page a human read and when.` });
+      }
+      if (t.upgradePlaybook && !playbooks.has(t.upgradePlaybook)) {
+        failures.push({ check: "dataset-shape", msg: `${DATASET}: technology "${t.id}" points at unknown playbook "${t.upgradePlaybook}".` });
+      }
+    }
+    for (const p of data.playbooks ?? []) {
+      for (const f of p.files ?? []) {
+        if (!existsSync(join(ROOT, f))) {
+          failures.push({ check: "dataset-shape", msg: `${DATASET}: playbook "${p.id}" names ${f}, which does not exist. A playbook that sends you to a missing file is worse than none.` });
+        }
+      }
+    }
+
+    // Every checked family must be describable by the dataset.
+    const FAMILY_TO_TECH = {
+      "node-major": ["node"],
+      "go-pin": ["go"],
+      "nginx-floor": ["nginx"],
+      "postgres-major": ["postgres"],
+      "java-major": ["java"],
+      "jsign-pin": [],
+    };
+    for (const family of FAMILIES) {
+      for (const techId of FAMILY_TO_TECH[family.id] ?? []) {
+        if (!ids.has(techId)) {
+          failures.push({ check: "dataset-shape", msg: `${DATASET}: no entry for "${techId}", but check-versions polices the ${family.label} pin. The card would grade a pin it cannot describe.` });
+        }
+      }
+    }
+
+    const reviewed = Date.parse(`${data.reviewedAt}T00:00:00Z`);
+    if (Number.isNaN(reviewed)) {
+      failures.push({ check: "dataset-shape", msg: `${DATASET}: reviewedAt "${data.reviewedAt}" is not an ISO date.` });
+    } else {
+      const ageDays = Math.floor((Date.now() - reviewed) / 86_400_000);
+      if (ageDays > DATASET_STALE_DAYS) {
+        warnings.push({
+          check: "dataset-shape",
+          msg: `${DATASET} was last reviewed ${ageDays} days ago (>${DATASET_STALE_DAYS}). Refresh it: /polaris-tech-lifecycle → references/eol-dataset.md.`,
+        });
+      }
+    }
+  }
+}
+
+// --- floating tags (informational) -----------------------------------------
+const floating = [];
+for (const f of FLOATING) {
+  const src = read(f.file);
+  if (src === null) continue;
+  for (const m of src.matchAll(f.re)) floating.push(`${m[0]} (${f.file})`);
+}
+
+// --- output ----------------------------------------------------------------
+if (JSON_OUT) {
+  console.log(JSON.stringify({ ok: failures.length === 0, failures, warnings, families: report, floating }, null, 2));
+  process.exit(failures.length === 0 ? 0 : 1);
+}
+
+for (const w of warnings) console.log(`⚠ check-versions (warn) [${w.check}]: ${w.msg}\n`);
+
+if (floating.length > 0) {
+  console.log(`ℹ check-versions: ${floating.length} floating tag(s) — these move under you and cannot be pin-checked:`);
+  for (const f of [...new Set(floating)]) console.log(`      ${f}`);
+  console.log("");
+}
+
+if (failures.length > 0) {
+  console.error(`✗ check-versions: ${failures.length} issue(s) found.\n`);
+  for (const f of failures) console.error(`  [${f.check}] ${f.msg}\n`);
+  console.error("Every site for a version must agree. The full site list per family is in");
+  console.error(".claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md.");
+  process.exit(1);
+}
+
+const totalSites = report.reduce((n, r) => n + r.sites, 0);
+console.log(`✓ check-versions: ${report.length} families consistent (${totalSites} declaration sites).`);
+for (const r of report) console.log(`      ${r.label.padEnd(22)} ${r.agreed.join(", ").padEnd(8)} (${r.sites} sites)`);
+if (ALLOW.length > 0) {
+  console.log(`\n  ${ALLOW.length} allow-listed divergence(s) excluded from the equality check:`);
+  for (const a of ALLOW) console.log(`      [${a.family}] ${a.file}`);
+}
+process.exit(0);
