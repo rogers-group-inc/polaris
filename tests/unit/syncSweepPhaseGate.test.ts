@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sweepPhaseEnabled, cascadeControllerOf, isVouchedManagedDevice, type SyncMode, type ManagedDeviceSightings } from "../../src/services/discovery/discoveryEngine.js";
+import { sweepPhaseEnabled, assetOnlyPostSyncPassesEnabled, cascadeControllerOf, isVouchedManagedDevice, type SyncMode, type ManagedDeviceSightings } from "../../src/services/discovery/discoveryEngine.js";
 
 // The mode→sweep-phase matrix behind syncDhcpSubnets' destructive phases.
 // Getting this wrong on a scoped run mass-deprecates subnets (Phase 2) or
@@ -110,5 +110,35 @@ describe("isVouchedManagedDevice — Phase 2b stale switch/AP sighting decision"
   it("does not vouch for a serial-less, hostname-less asset (decommission proceeds)", () => {
     const s = sightings({ seenHostnamesByController: new Map([["riverbend-112f-1", new Set(["RIVERBEND-112F-7"])]]) });
     expect(isVouchedManagedDevice({ serialNumber: null, hostname: null }, "RIVERBEND-112F-1", s)).toBe(false);
+  });
+});
+
+// The asset-only (Entra / AD / vCenter / Arc) post-sync passes: agent
+// auto-deploy, interface+storage auto-monitor, presence verification, GAL sync.
+// All four read the DB fleet-wide rather than the run's result, so a SCOPED
+// single-device run must skip them. Auto-deploy is the expensive one to get
+// wrong — a scoped run that ran it would start agent installs across every
+// agent-less device in the fleet because one operator clicked Discover Now on
+// one workstation.
+describe("assetOnlyPostSyncPassesEnabled", () => {
+  it("runs the passes on a full, un-aborted asset-only run", () => {
+    expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: true, scoped: false, aborted: false })).toBe(true);
+  });
+
+  it("SKIPS every pass on a scoped run", () => {
+    expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: true, scoped: true, aborted: false })).toBe(false);
+  });
+
+  it("skips on an aborted run, scoped or not", () => {
+    expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: true, scoped: false, aborted: true })).toBe(false);
+    expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: true, scoped: true, aborted: true })).toBe(false);
+  });
+
+  it("never runs for a non-asset-only (Fortinet) integration", () => {
+    for (const scoped of [false, true]) {
+      for (const aborted of [false, true]) {
+        expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: false, scoped, aborted })).toBe(false);
+      }
+    }
   });
 });

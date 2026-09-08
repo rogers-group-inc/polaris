@@ -187,20 +187,99 @@ describe("resolveDiscoveryScopeForAsset — FortiSwitch / FortiAP via controller
   });
 });
 
+describe("resolveDiscoveryScopeForAsset — directory sources", () => {
+  const ENTRA = { id: "i-entra", name: "Corp Entra", type: "entraid", config: {}, enabled: true };
+  const AD = { id: "i-ad", name: "Corp AD", type: "activedirectory", config: {}, enabled: true };
+  const wks = (sources: any[]) => ({
+    id: "a-w", hostname: "LAPTOP-42", ipAddress: "10.9.0.5", learnedLocation: null,
+    assetType: "workstation", fortinetTopology: null, discoveredByIntegration: ENTRA, sources,
+  });
+
+  it("scopes an Entra device by its deviceId", async () => {
+    subject = wks([{ sourceKind: "entra", externalId: "9f1c-dev-guid", observed: {}, integration: ENTRA }]);
+    const r = await resolveDiscoveryScopeForAsset("a-w");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved.scope).toEqual({ kind: "entra-device", deviceId: "9f1c-dev-guid" });
+    expect(r.resolved.integration.id).toBe("i-entra");
+    // The run row gets a name an operator recognises, not the GUID.
+    expect(r.resolved.deviceName).toBe("LAPTOP-42");
+    expect(r.resolved.viaController).toBe(false);
+  });
+
+  it("resolves an Intune-only row to the same Entra run", async () => {
+    // Intune enrichment rides the owning Entra integration's discovery; there
+    // is no separate Intune run to scope.
+    subject = wks([{ sourceKind: "intune", externalId: "9f1c-dev-guid", observed: {}, integration: ENTRA }]);
+    const r = await resolveDiscoveryScopeForAsset("a-w");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved.scope).toEqual({ kind: "entra-device", deviceId: "9f1c-dev-guid" });
+  });
+
+  it("prefers the entra row over an intune row on the same asset", async () => {
+    subject = wks([
+      { sourceKind: "intune", externalId: "intune-id", observed: {}, integration: ENTRA },
+      { sourceKind: "entra", externalId: "entra-id", observed: {}, integration: ENTRA },
+    ]);
+    const r = await resolveDiscoveryScopeForAsset("a-w");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved.scope).toEqual({ kind: "entra-device", deviceId: "entra-id" });
+  });
+
+  it("scopes an AD object by objectGUID and carries its OU path to the filter", async () => {
+    subject = {
+      ...wks([{
+        sourceKind: "ad",
+        externalId: "4ca21f00112233445566778899aabbcc",
+        observed: { ouPath: "OU=Plants,DC=example,DC=com" },
+        integration: AD,
+      }]),
+      discoveredByIntegration: AD,
+    };
+    const r = await resolveDiscoveryScopeForAsset("a-w");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved.scope).toEqual({ kind: "ad-object", objectGuid: "4ca21f00112233445566778899aabbcc" });
+    // ouInclude/ouExclude match on the OU path; without it the route's filter
+    // re-check falls back to learnedLocation and reads as "no OU".
+    expect(r.resolved.filterAsset.adOuPath).toBe("OU=Plants,DC=example,DC=com");
+  });
+
+  it("ignores an enrichment-only source and scopes the real one", async () => {
+    subject = wks([
+      { sourceKind: "snmp-sysdescr", externalId: "a-w", observed: {}, integration: null },
+      { sourceKind: "entra", externalId: "real-id", observed: {}, integration: ENTRA },
+    ]);
+    const r = await resolveDiscoveryScopeForAsset("a-w");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved.scope).toEqual({ kind: "entra-device", deviceId: "real-id" });
+  });
+
+  it("refuses a disabled directory integration by name", async () => {
+    subject = wks([{ sourceKind: "entra", externalId: "x", observed: {}, integration: { ...ENTRA, enabled: false } }]);
+    const r = await resolveDiscoveryScopeForAsset("a-w");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain("Corp Entra");
+  });
+
+  it("does not match a source whose integration is of another type", async () => {
+    // An "entra" row pointing at a non-entraid integration is corrupt state;
+    // scoping it would aim an entra-device scope at the wrong collector.
+    subject = wks([{ sourceKind: "entra", externalId: "x", observed: {}, integration: AD }]);
+    const r = await resolveDiscoveryScopeForAsset("a-w");
+    expect(r.ok).toBe(false);
+  });
+});
+
 describe("resolveDiscoveryScopeForAsset — assets with no scoped path", () => {
   const base = {
     id: "a-x", hostname: "host-1", ipAddress: "10.9.0.5", learnedLocation: null,
     assetType: "workstation", fortinetTopology: null, discoveredByIntegration: null,
   };
-
-  it("names the product for a directory-discovered asset", async () => {
-    subject = { ...base, sources: [{ sourceKind: "ad" }] };
-    const r = await resolveDiscoveryScopeForAsset("a-x");
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toContain("Active Directory");
-    expect(r.reason).toMatch(/Integrations page/);
-  });
 
   it("names vCenter for a VM", async () => {
     subject = { ...base, assetType: "server", sources: [{ sourceKind: "vcenter-vm" }] };
@@ -210,14 +289,23 @@ describe("resolveDiscoveryScopeForAsset — assets with no scoped path", () => {
     expect(r.reason).toContain("vCenter");
   });
 
-  it("prefers a discovery source over an enrichment-only one", async () => {
-    // snmp-sysdescr describes a device without claiming it; the Entra row is
-    // the one an operator could act on, so it should drive the message.
-    subject = { ...base, sources: [{ sourceKind: "snmp-sysdescr" }, { sourceKind: "entra" }] };
+  it("names Azure Arc for an Arc machine", async () => {
+    subject = { ...base, assetType: "server", sources: [{ sourceKind: "arc" }] };
     const r = await resolveDiscoveryScopeForAsset("a-x");
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reason).toContain("Entra ID");
+    expect(r.reason).toContain("Azure Arc");
+    expect(r.reason).toMatch(/Integrations page/);
+  });
+
+  it("does not scope a directory source whose integration row is gone", async () => {
+    // A source left behind by a deleted integration must read as
+    // unrefreshable, never run against some other integration.
+    subject = { ...base, sources: [{ sourceKind: "ad", externalId: "abcd", observed: {}, integration: null }] };
+    const r = await resolveDiscoveryScopeForAsset("a-x");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toMatch(/No discovery source owns this asset/i);
   });
 
   it("explains an agent-reported asset", async () => {

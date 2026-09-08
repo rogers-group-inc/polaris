@@ -277,7 +277,7 @@ Notes:
 - For an HA cluster, re-discovering any member's asset re-discovers the cluster (the FMG device).
 - On a standalone FortiGate integration the button simply runs that integration's normal discovery — it already is a single gate.
 - **Discover Now on a FortiSwitch or FortiAP** scopes the run to that device's CONTROLLER gate (resolved through `src/utils/fortinetParentKey.ts`, never by hostname match) — a switch is only ever discovered as a by-product of its controller's pass, and the per-controller decommission above is exactly what a stale switch needs. The response carries `viaController: true` and the gate's name so the UI can say which device is actually being discovered.
-- Every other asset type renders the button DISABLED with the reason in its title rather than hidden; the route returns the same reason as a 400. Directory / vCenter / Arc assets are told to run their integration from the Integrations page (per-asset scoping for those is not built yet).
+- **Directory assets scope too** (Entra/Intune by `deviceId`, AD by `objectGUID`) — see polaris-monitoring-discovery → discovery-overview.md. Only vCenter and Arc assets render the button DISABLED with the reason in its title rather than hidden; the route returns the same reason as a 400, and they are told to run their integration from the Integrations page.
 
 ## Direct mode vs the probe path — same strict behavior
 

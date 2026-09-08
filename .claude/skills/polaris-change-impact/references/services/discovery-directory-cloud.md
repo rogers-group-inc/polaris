@@ -44,7 +44,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** testConnection, proxyQuery, discoverDevices, ActiveDirectoryConfig, DiscoveredAdDevice, AdDiscoveryResult, AdDiscoveryProgressCallback.
 
-**Cross-service deps:** None (pure LDAP client; no service-to-service calls).
+**Scoped (single-object) discovery:** `discoverDevices` takes a 4th arg `scope?: { objectGuid }` — the asset slide-in's Discover Now. It ANDs `(objectGUID=\xx\xx…)` into the computer-object filter, still searching from `config.baseDn` at the configured scope (so an object moved out of the base DN correctly returns nothing — the same answer a full run gives). Keyed on the GUID, NOT the DN: a computer object that moves OU keeps its GUID and changes its DN, so a DN-based search would silently find nothing for exactly the machines most likely to need a refresh. The escaped-byte form comes from `ldapGuidFilterValue` (`src/services/discovery/discoveryScope.ts`), which is the exact inverse of `decodeObjectGuid` — both are wire-order, no byte-swapping — and a malformed GUID throws 400 rather than building a filter that matches the wrong object.
+
+**Cross-service deps:** `src/services/discovery/discoveryScope.ts -> ldapGuidFilterValue` (pure). Otherwise a pure LDAP client; no service-to-service calls.
 
 **Used by:** src/api/routes/integrations.ts — discovery trigger, test connection, manual LDAP proxy query. src/services/discovery/discoveryEngine.ts — sync path syncActiveDirectoryDevices.
 
@@ -148,6 +150,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** testConnection, proxyQuery, discoverDevices, EntraIdConfig, DiscoveredEntraDevice, EntraDiscoveryResult, EntraDiscoveryProgressCallback.
 
+**Scoped (single-device) discovery:** `discoverDevices` takes a 4th arg `scope?: { deviceId }` — the asset slide-in's Discover Now. It swaps `$top=999` for `$filter=deviceId eq '<guid>'` on `/devices` and `$filter=azureADDeviceId eq '<guid>'` on `/deviceManagement/managedDevices`; the deviceId is GUID-validated before interpolation and a malformed one throws 400 rather than reaching an OData string. Everything downstream is untouched — the Intune merge, deviceInclude/deviceExclude and includeDisabled all still apply, so a scoped run on an excluded device correctly returns zero devices instead of smuggling one past the filter.
+
 **Cross-service deps:** None (pure Graph API client; no service-to-service calls).
 
 **Used by:** src/api/routes/integrations.ts — discovery trigger, test connection, manual Graph proxy query. src/services/discovery/discoveryEngine.ts — sync path syncEntraDevices.
@@ -164,6 +168,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - proxyQuery is read-only Graph API pass-through (GET only, /v1.0/ or /beta/ prefix required).
 
 **When changing this:**
+- A scoped run must stay a strict SUBSET of a full run's behavior for that device. If you add a phase that reads the whole tenant, gate it on the scope being absent.
 - Test OAuth2 token caching + refresh 60s before expiry; verify no mid-request expirations, and that the 401/403 re-mint paths still retry exactly once.
 - Verify Intune merge logic on shared fields (Intune data must win over Entra).
 - Check hybrid-join SID cross-link still tags assets correctly for AD ↔ Entra matching.

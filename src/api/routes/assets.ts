@@ -1876,8 +1876,11 @@ router.post("/:id/rediscover", requirePermission("assets", "write"), async (req,
     // requestActor covers bearer-token callers ("api:<token name>") as well
     // as sessions — the actor string labels the run's start/complete Events.
     const actor = requestActor(req) ?? "";
+    // `scopeLabel` gives the run row a name an operator recognises: the gate
+    // name for FMG, the asset's hostname for a directory device (whose scope
+    // identifier is an opaque GUID).
     const started = scope
-      ? await triggerDiscovery(integration.id, actor, { scopeDeviceName: scope.deviceName })
+      ? await triggerDiscovery(integration.id, actor, { scope, scopeLabel: deviceName })
       : await triggerDiscovery(integration.id, actor);
     if (!started) {
       res.status(409).json({ message: `A discovery is already running for "${integration.name}" — try again when it finishes` });

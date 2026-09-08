@@ -55,6 +55,7 @@ import { normalizeHardwareSerial, indexUniqueBy } from "../../utils/hardwareIden
 import { recordSample, getBaselines, type Baseline } from "../discoveryDurationService.js";
 import { evaluateAutoAbort, clearAutoAbortState } from "../discoveryAutoAbortService.js";
 import { publishDiscoveryJob } from "../queueService.js";
+import { scopeLabel, scopeMatchesIntegrationType, type DiscoveryScope } from "./discoveryScope.js";
 import {
   upsertQueuedRun,
   markRunStarted,
@@ -508,14 +509,19 @@ export async function runPreflightTest(integration: { id: string; type: string; 
  *
  * actor: the username triggering the run, or "auto-discovery" for scheduled runs.
  */
-export async function triggerDiscovery(integrationId: string, actor: string, opts?: { scopeDeviceName?: string }): Promise<boolean> {
+export async function triggerDiscovery(
+  integrationId: string,
+  actor: string,
+  opts?: { scope?: DiscoveryScope; scopeLabel?: string | null },
+): Promise<boolean> {
   const integration = await prisma.integration.findUnique({ where: { id: integrationId } });
   if (!integration) throw new AppError(404, "Integration not found");
 
-  // Scoped single-device re-discovery only makes sense for FortiManager —
-  // it's the only type whose discovery iterates a multi-device roster.
-  if (opts?.scopeDeviceName && integration.type !== "fortimanager") {
-    throw new AppError(400, "Scoped re-discovery is only supported on FortiManager integrations");
+  // Each scope kind identifies a device the way exactly ONE integration type
+  // does (an FMG roster name, an Entra deviceId, an AD objectGUID), so a
+  // mismatch is a caller bug, not a degradable condition.
+  if (opts?.scope && !scopeMatchesIntegrationType(opts.scope, integration.type)) {
+    throw new AppError(400, `A ${opts.scope.kind} scope cannot run against a ${integration.type} integration`);
   }
 
   const config = integration.config as Record<string, unknown>;
@@ -550,15 +556,24 @@ export async function triggerDiscovery(integrationId: string, actor: string, opt
   // scheduler ignore the return.
   if (await isRunActive(integrationId)) return false;
 
-  await upsertQueuedRun({ integrationId, integrationName: integration.name, type: integration.type, actor, scopeDeviceName: opts?.scopeDeviceName });
+  // The run row keeps a flat DISPLAY label (the Integrations card renders it,
+  // and the asset button compares against it); the structured scope travels
+  // separately in the job payload.
+  await upsertQueuedRun({
+    integrationId,
+    integrationName: integration.name,
+    type: integration.type,
+    actor,
+    scopeDeviceName: scopeLabel(opts?.scope, opts?.scopeLabel),
+  });
 
   // pg-boss live → hand off to the discovery-role worker. Off (cursor mode,
   // single-process) → run in-process detached, the historical behavior. The
   // credential preflight now runs inside runDiscovery (it may execute in a
   // different process), so the manual route returns 202 immediately and a
   // failed preflight surfaces via the DiscoveryRun row + an Event.
-  const enqueued = await publishDiscoveryJob(integrationId, actor, opts?.scopeDeviceName);
-  if (!enqueued) void runDiscovery(integrationId, actor, opts?.scopeDeviceName);
+  const enqueued = await publishDiscoveryJob(integrationId, actor, opts?.scope);
+  if (!enqueued) void runDiscovery(integrationId, actor, opts?.scope);
   return true;
 }
 
@@ -569,19 +584,22 @@ export async function triggerDiscovery(integrationId: string, actor: string, opt
  * progress accumulator (flushed to the row), and cancellation (polls the row's
  * cancelRequested flag and aborts its local AbortController).
  */
-export async function runDiscovery(integrationId: string, actor: string, scopeDeviceName?: string): Promise<void> {
+export async function runDiscovery(integrationId: string, actor: string, scope?: DiscoveryScope): Promise<void> {
   const integration = await prisma.integration.findUnique({ where: { id: integrationId } });
   if (!integration) {
     await finishRun(integrationId, "error").catch(() => {});
     return;
   }
 
-  // Scope is FMG-only (triggerDiscovery enforces it for API callers); a stray
-  // scoped pg-boss payload against another type degrades to a full run.
-  if (scopeDeviceName && integration.type !== "fortimanager") {
-    logger.warn({ integrationId, scopeDeviceName, type: integration.type }, "ignoring scopeDeviceName on non-FortiManager discovery run");
-    scopeDeviceName = undefined;
+  // triggerDiscovery enforces the scope/type pairing for API callers; a stray
+  // mismatched pg-boss payload (an old job replayed after a type change)
+  // degrades to a full run rather than aiming a scope at a collector that
+  // cannot honour it.
+  if (scope && !scopeMatchesIntegrationType(scope, integration.type)) {
+    logger.warn({ integrationId, scopeKind: scope.kind, type: integration.type }, "ignoring scope on mismatched discovery run");
+    scope = undefined;
   }
+  const scopeDeviceName = scopeLabel(scope);
 
   const config = integration.config as Record<string, unknown>;
   const integrationName = integration.name;
@@ -621,7 +639,7 @@ export async function runDiscovery(integrationId: string, actor: string, scopeDe
   // Scoped runs deliberately do NOT stamp lastDiscoveryAt — the scheduler
   // gates the next full run on it, and a per-device refresh must not delay
   // the fleet-wide cycle by a whole pollInterval.
-  if (!scopeDeviceName) {
+  if (!scope) {
     await prisma.integration.update({ where: { id: integrationId }, data: { lastDiscoveryAt: new Date() } });
   }
   logEvent({ action: "integration.discover.started", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, message: `${label} ${kindLabel} started for "${integrationName}"`, ...(scopeDeviceName ? { details: { scopeDeviceName } } : {}) });
@@ -740,7 +758,7 @@ export async function runDiscovery(integrationId: string, actor: string, scopeDe
 
     if (integration.type === "entraid") {
       // Entra ID discovery produces assets only — no subnets, reservations, or VIPs.
-      const result = await entraId.discoverDevices(config as any, ac.signal, onProgress);
+      const result = await entraId.discoverDevices(config as any, ac.signal, onProgress, scope?.kind === "entra-device" ? { deviceId: scope.deviceId } : undefined);
       if (!ac.signal.aborted) {
         const r = await syncEntraDevices(integrationId, integrationName, config, result, actor);
         syncTotals.created.push(...r.created);
@@ -749,7 +767,7 @@ export async function runDiscovery(integrationId: string, actor: string, scopeDe
       }
     } else if (integration.type === "activedirectory") {
       // Active Directory discovery produces assets only — no subnets, reservations, or VIPs.
-      const result = await activeDirectory.discoverDevices(config as any, ac.signal, onProgress);
+      const result = await activeDirectory.discoverDevices(config as any, ac.signal, onProgress, scope?.kind === "ad-object" ? { objectGuid: scope.objectGuid } : undefined);
       if (!ac.signal.aborted) {
         const r = await syncActiveDirectoryDevices(integrationId, integrationName, config, result, actor);
         syncTotals.created.push(...r.created);
@@ -862,7 +880,7 @@ export async function runDiscovery(integrationId: string, actor: string, scopeDe
       // ARP presence sweep targets (opt-in): per-FortiGate reserved-IP lists,
       // swept by processDevice right before each device's ARP-table read.
       const arpSweepTargets = await buildArpSweepTargets(integrationId, config);
-      discoveryResult = await fortimanager.discoverDhcpSubnets(config as any, ac.signal, onProgress, integration.pollInterval ?? 24, onDeviceComplete, integrationId, warmCacheIps, arpSweepTargets.size > 0 ? arpSweepTargets : undefined, scopeDeviceName);
+      discoveryResult = await fortimanager.discoverDhcpSubnets(config as any, ac.signal, onProgress, integration.pollInterval ?? 24, onDeviceComplete, integrationId, warmCacheIps, arpSweepTargets.size > 0 ? arpSweepTargets : undefined, scope?.kind === "fmg-device" ? scope.deviceName : undefined);
       // Skip Phase 2 (stale deprecation) if the run was aborted — an aborted
       // run shouldn't take destructive actions, even though the FMG device
       // roster used for deprecation is captured up front (not per-device).
@@ -875,8 +893,8 @@ export async function runDiscovery(integrationId: string, actor: string, scopeDe
         // switch AND AP inventory queries both came back empty/failed, 2b is
         // a guaranteed no-op — skip the sync call (and its fleet-scale
         // preload queries) entirely.
-        const finalizeMode: "finalize" | "finalize-scoped" = scopeDeviceName ? "finalize-scoped" : "finalize";
-        const scopedFinalizeIsNoop = scopeDeviceName !== undefined
+        const finalizeMode: "finalize" | "finalize-scoped" = scope ? "finalize-scoped" : "finalize";
+        const scopedFinalizeIsNoop = scope !== undefined
           && (discoveryResult.switchInventoriedDevices?.length ?? 0) === 0
           && (discoveryResult.apInventoriedDevices?.length ?? 0) === 0;
         if (!scopedFinalizeIsNoop) {
@@ -902,7 +920,7 @@ export async function runDiscovery(integrationId: string, actor: string, scopeDe
     // which never runs for these assets-only integrations. Runs only when the
     // sync completed (not aborted). Each pass is wrapped so a failure logs and
     // continues — neither poisons the discovery run's success/abort accounting.
-    if (assetsOnly && !ac.signal.aborted) {
+    if (assetOnlyPostSyncPassesEnabled({ assetsOnly, scoped: scope !== undefined, aborted: ac.signal.aborted })) {
       // 1) Agent auto-deploy FIRST so newly-discovered, agent-less devices get
       //    the Polaris Agent kicked off this cycle; their interface/storage
       //    samples (and thus the pins below) land on the NEXT discovery.
@@ -998,7 +1016,7 @@ export async function runDiscovery(integrationId: string, actor: string, scopeDe
       // direction: a seconds-long run would drag the full-run baseline down
       // and false-flag future full runs as slow. (The per-device sample in
       // onProgress still records — that baseline is per-device and valid.)
-      if (!scopeDeviceName) {
+      if (!scope) {
         recordSample(integrationId, Date.now() - runStartedAt).catch(() => {});
         // A successful full run resets the auto-abort loop-breaker — the fresh
         // sample above is the re-baseline the exemption existed to obtain.
@@ -1694,6 +1712,26 @@ class AssetIndex {
 //                        inventory query this run. Phases 8–9/12/13.x are fleet-wide reconciles
 //                        owned by full runs (their gates only pass full|finalize).
 export type SyncMode = "full" | "skip-deprecation" | "deprecation-only" | "finalize" | "finalize-scoped";
+
+/**
+ * Pure gate for the four asset-only post-sync passes in `runDiscovery` — agent
+ * auto-deploy, interface/storage auto-monitor, presence verification and the
+ * GAL directory sync.
+ *
+ * Extracted and exported for the same reason as `sweepPhaseEnabled` below:
+ * getting it wrong is expensive and invisible. All four read the DB fleet-wide
+ * rather than this run's result, so on a SCOPED (single-device) run they would
+ * do the entire fleet's work on behalf of one asset — and agent auto-deploy
+ * would do worse than waste time: clicking "Discover Now" on one workstation
+ * would start agent installs across every agent-less device in the fleet.
+ *
+ * Same reasoning that keeps Phases 8–9/12/13.x out of a scoped FMG run.
+ */
+export function assetOnlyPostSyncPassesEnabled(
+  args: { assetsOnly: boolean; scoped: boolean; aborted: boolean },
+): boolean {
+  return args.assetsOnly && !args.scoped && !args.aborted;
+}
 
 /**
  * Pure gate for the destructive/apply sweep phases inside syncDhcpSubnets'

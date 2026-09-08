@@ -645,11 +645,30 @@ export async function discoverDevices(
   config: EntraIdConfig,
   signal?: AbortSignal,
   onProgress?: EntraDiscoveryProgressCallback,
+  /**
+   * Narrow the run to ONE device, by its stable Entra `deviceId` GUID (the
+   * value stored on the AssetSource row). Backs the asset slide-in's
+   * "Discover Now".
+   *
+   * Everything downstream of the fetch is unchanged — the Intune merge, the
+   * include/exclude filter and the includeDisabled rule all still apply — so a
+   * scoped run on a device the operator's filter excludes correctly returns
+   * zero devices rather than smuggling one past the filter.
+   */
+  scope?: { deviceId: string },
 ): Promise<EntraDiscoveryResult> {
   const log = onProgress || (() => {});
+  // Guard the interpolation: a deviceId is a GUID, and anything else must not
+  // reach an OData $filter string.
+  const scopedDeviceId = scope && /^[0-9a-fA-F-]{36}$/.test(scope.deviceId) ? scope.deviceId.toLowerCase() : null;
+  if (scope && !scopedDeviceId) {
+    throw new AppError(400, `Malformed Entra deviceId for scoped discovery: ${scope.deviceId}`);
+  }
 
   // 1. Entra ID core devices
-  const entraUrl = "https://graph.microsoft.com/v1.0/devices?$top=999&$select=" + [
+  const entraUrl = (scopedDeviceId
+    ? `https://graph.microsoft.com/v1.0/devices?$filter=deviceId eq '${scopedDeviceId}'&$select=`
+    : "https://graph.microsoft.com/v1.0/devices?$top=999&$select=") + [
     "id",
     "deviceId",
     "displayName",
@@ -676,7 +695,9 @@ export async function discoverDevices(
   // 2. Intune managed devices (optional overlay)
   const intuneByDeviceId = new Map<string, any>();
   if (config.enableIntune && !signal?.aborted) {
-    const intuneUrl = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$top=999&$select=" + [
+    const intuneUrl = (scopedDeviceId
+      ? `https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$filter=azureADDeviceId eq '${scopedDeviceId}'&$select=`
+      : "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$top=999&$select=") + [
       "id",
       "azureADDeviceId",
       "deviceName",

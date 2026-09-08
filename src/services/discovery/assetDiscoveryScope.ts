@@ -28,14 +28,15 @@
  * the route, not in a fleet loop, but the slide-in opens constantly, so the
  * selects stay tight.
  *
- * Phase 1 covers the Fortinet family, which rides discovery machinery that
- * already exists (`scopeDeviceName` + the `finalize-scoped` sweep mode). The
- * directory / hypervisor / cloud source kinds are recognised and reported as
+ * Covered today: the Fortinet family (FortiGate directly, FortiSwitch/FortiAP
+ * through their controller) and the directory types (Entra/Intune by `deviceId`,
+ * AD by `objectGUID`). vCenter and Arc are recognised and reported as
  * not-yet-supported rather than silently omitted, so the UI can say WHY a
  * device can't be refreshed instead of hiding the control.
  */
 
 import { prisma } from "../../db.js";
+import type { DiscoveryScope } from "./discoveryScope.js";
 import {
   readControllerStamp,
   parentAssetWhereOr,
@@ -43,18 +44,6 @@ import {
   resolveInfraParentAsset,
   readFirewallDeviceName,
 } from "../../utils/fortinetParentKey.js";
-
-/**
- * How a discovery run is narrowed to one device.
- *
- * Only `fmg-device` exists today — it is what `triggerDiscovery`'s
- * `scopeDeviceName` has always carried. The union shape is deliberate: the
- * directory/vCenter/Arc scopes land here as their collectors gain a target
- * parameter and their sync layers gain a sweep-disabling mode, and a union
- * makes each addition a compile-time decision at every consumer rather than a
- * silently-ignored extra string.
- */
-export type DiscoveryScope = { kind: "fmg-device"; deviceName: string };
 
 /** The integration fields every caller of a resolved scope needs. */
 export interface ScopeIntegration {
@@ -84,7 +73,15 @@ export interface ResolvedAssetScope {
    * against. For a switch/AP that is the CONTROLLER gate: the filters name
    * gates, and a switch's own hostname would match nothing.
    */
-  filterAsset: { hostname: string | null; ipAddress: string | null; learnedLocation: string | null; assetType: string };
+  filterAsset: {
+    hostname: string | null;
+    ipAddress: string | null;
+    learnedLocation: string | null;
+    assetType: string;
+    /** The AD source’s `observed.ouPath`. `assetMatchesIntegrationFilter`
+     *  prefers it over `learnedLocation` when matching ouInclude/ouExclude. */
+    adOuPath?: string | null;
+  };
   /** True when the clicked asset is not itself the targeted device. */
   viaController: boolean;
 }
@@ -102,11 +99,16 @@ const UNREFRESHABLE_REASON: Record<string, string> = {
   manual: "This asset was created manually, so no discovery source owns it",
 };
 
-/** Directory / hypervisor / cloud kinds — recognised, not yet targetable. */
+/**
+ * Hypervisor / cloud kinds — recognised, not yet targetable.
+ *
+ * Entra, Intune and AD left this map when their collectors gained a target
+ * parameter. vCenter and Arc stay until theirs do AND their sync layers can be
+ * told not to sweep: `syncVcenterDevices` decommissions assets whose sources
+ * vanished from the result set, so a one-VM result would read as "the rest of
+ * the fleet is gone". That is a sync-layer problem, not a collector one.
+ */
 const NOT_YET_SCOPED: Record<string, string> = {
-  entra: "Entra ID",
-  intune: "Intune",
-  ad: "Active Directory",
   "vcenter-vm": "vCenter",
   "vcenter-host": "vCenter",
   arc: "Azure Arc",
@@ -132,7 +134,14 @@ export async function resolveDiscoveryScopeForAsset(assetId: string): Promise<As
       assetType: true,
       fortinetTopology: true,
       discoveredByIntegration: { select: { id: true, name: true, type: true, config: true, enabled: true } },
-      sources: { select: { sourceKind: true } },
+      sources: {
+        select: {
+          sourceKind: true,
+          externalId: true,
+          observed: true,
+          integration: { select: { id: true, name: true, type: true, config: true, enabled: true } },
+        },
+      },
     },
   });
   if (!asset) return { ok: false, reason: "Asset not found", notFound: true };
@@ -143,7 +152,93 @@ export async function resolveDiscoveryScopeForAsset(assetId: string): Promise<As
   if (role === "fortigate" && asset.assetType === "firewall") return resolveForGate(asset);
   if (role === "fortiswitch" || role === "fortiap") return resolveViaController(asset, topo, role);
 
+  // Directory sources. Tried in trust order (Intune enrichment rides the same
+  // Entra run, so an intune row resolves to the entra-device scope) and only
+  // when the row still names an integration of the matching type — a source
+  // left behind by a deleted integration must read as unrefreshable, not as a
+  // run against whatever integration happens to be first.
+  const directory = resolveFromDirectorySources(asset);
+  if (directory) return directory;
+
   return { ok: false, reason: unsupportedReason(asset.sources.map((s) => s.sourceKind)) };
+}
+
+/** One AssetSource row as the resolver selects it. */
+type SourceRow = {
+  sourceKind: string;
+  externalId: string;
+  observed: unknown;
+  integration: ScopeIntegration | null;
+};
+
+/**
+ * Entra / Intune / AD: the identity the collector needs is already the source
+ * row's `externalId` (Entra `deviceId`, AD `objectGUID`) — which is exactly why
+ * these two could be scoped without inventing a new identity concept.
+ *
+ * Returns null when no directory source applies, so the caller falls through to
+ * the "why not" message rather than this function guessing one.
+ */
+function resolveFromDirectorySources(asset: {
+  hostname: string | null;
+  ipAddress: string | null;
+  learnedLocation: string | null;
+  assetType: string;
+  sources: SourceRow[];
+}): AssetScopeResolution | null {
+  const pick = (kind: string, type: string) =>
+    asset.sources.find((r) => r.sourceKind === kind && r.integration?.type === type && r.externalId);
+
+  const entra = pick("entra", "entraid") || pick("intune", "entraid");
+  if (entra?.integration) {
+    if (!entra.integration.enabled) {
+      return { ok: false, reason: `Integration "${entra.integration.name}" is disabled` };
+    }
+    return {
+      ok: true,
+      resolved: {
+        integration: entra.integration,
+        scope: { kind: "entra-device", deviceId: entra.externalId },
+        deviceName: asset.hostname,
+        filterAsset: baseFilterAsset(asset),
+        viaController: false,
+      },
+    };
+  }
+
+  const ad = pick("ad", "activedirectory");
+  if (ad?.integration) {
+    if (!ad.integration.enabled) {
+      return { ok: false, reason: `Integration "${ad.integration.name}" is disabled` };
+    }
+    const observed = (ad.observed as Record<string, unknown> | null) || {};
+    const ouPath = typeof observed.ouPath === "string" ? observed.ouPath : null;
+    return {
+      ok: true,
+      resolved: {
+        integration: ad.integration,
+        scope: { kind: "ad-object", objectGuid: ad.externalId },
+        deviceName: asset.hostname,
+        // ouPath is what the AD include/exclude patterns match on; without it
+        // the filter falls back to learnedLocation and can read as "no OU".
+        filterAsset: { ...baseFilterAsset(asset), adOuPath: ouPath },
+        viaController: false,
+      },
+    };
+  }
+
+  return null;
+}
+
+function baseFilterAsset(asset: {
+  hostname: string | null; ipAddress: string | null; learnedLocation: string | null; assetType: string;
+}) {
+  return {
+    hostname: asset.hostname,
+    ipAddress: asset.ipAddress,
+    learnedLocation: asset.learnedLocation,
+    assetType: asset.assetType,
+  };
 }
 
 type AssetRow = {

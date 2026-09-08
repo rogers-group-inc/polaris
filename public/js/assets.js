@@ -11288,11 +11288,12 @@ function _assetOverrideResetBtn(a) {
 //
 // Shown to operators with assets:write (the route's gate — a discovery mutates
 // inventory, unlike the read-only probe Poll Now used to run). Enabled for the
-// Fortinet family: a FortiGate scopes a run to itself, while a FortiSwitch /
-// FortiAP scopes one to its CONTROLLER gate (a switch is only ever discovered
-// as a by-product of its controller's pass). Every other asset renders the
-// button DISABLED with the reason in its title rather than hidden — an absent
-// control reads as a permission problem, which is exactly the wrong guess.
+// Fortinet family (a FortiGate scopes a run to itself; a FortiSwitch/FortiAP
+// scopes one to its CONTROLLER gate, since a switch is only ever discovered as
+// a by-product of its controller's pass) and for directory-discovered assets
+// (Entra/Intune by deviceId, AD by objectGUID). vCenter and Arc assets render
+// the button DISABLED with the reason in its title rather than hidden — an
+// absent control reads as a permission problem, which is the wrong guess.
 //
 // The server re-resolves all of this (assetDiscoveryScope.ts) and is the
 // authority; this function only decides what to render. In particular it does
@@ -11306,13 +11307,23 @@ function _assetDiscoverNowBtnHTML(a) {
   var isGate = role === "fortigate" && a.assetType === "firewall";
   var isInfra = role === "fortiswitch" || role === "fortiap";
   var fortinetIntg = integ && (integ.type === "fortimanager" || integ.type === "fortigate");
+  // Directory assets scope by the identifier already on their AssetSource row
+  // (Entra deviceId / AD objectGUID). The integration type is the cheap proxy
+  // the panel has to hand; the server re-resolves from the source rows and
+  // answers with a clear 400 if this asset has none.
+  var isDirectory = integ && (integ.type === "entraid" || integ.type === "activedirectory");
 
   var disabledReason = "";
-  if (!isGate && !isInfra) {
-    disabledReason = "Per-asset discovery is available for FortiGates, FortiSwitches and FortiAPs. " +
-      "Refresh other assets from their integration on the Integrations page.";
+  if (!isGate && !isInfra && !isDirectory) {
+    disabledReason = integ && (integ.type === "vcenter" || integ.type === "azurearc")
+      ? "Per-asset discovery is not available for " +
+        (integ.type === "vcenter" ? "vCenter" : "Azure Arc") +
+        "-discovered assets yet — run a discovery from the Integrations page to refresh it."
+      : "No discovery source owns this asset, so there is nothing to re-run.";
   } else if (isGate && !fortinetIntg) {
     disabledReason = "This FortiGate is not owned by a FortiManager or FortiGate integration.";
+  } else if (integ && integ.enabled === false) {
+    disabledReason = 'Integration "' + (integ.name || "") + '" is disabled.';
   }
   if (disabledReason) {
     return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" disabled style="margin-right:6px" ' +
@@ -11336,11 +11347,20 @@ function _assetDiscoverNowBtnHTML(a) {
       'title="A discovery is already running for ' + escapeHtml(integ.name) + '">' + label + '</button>';
   }
 
-  var title = isInfra
-    ? "Run discovery for this device's controller FortiGate: refreshes this " +
-      (role === "fortiap" ? "FortiAP" : "FortiSwitch") + " and its siblings without a full sweep"
-    : "Run discovery for this FortiGate only: refresh its subnets, reservations, VIPs, FortiSwitches and FortiAPs without a full " +
+  var title;
+  if (isInfra) {
+    title = "Run discovery for this device's controller FortiGate: refreshes this " +
+      (role === "fortiap" ? "FortiAP" : "FortiSwitch") + " and its siblings without a full sweep";
+  } else if (isDirectory) {
+    title = "Re-read just this device from " +
+      (integ.type === "entraid" ? "Entra ID / Intune" : "Active Directory") +
+      " — no full directory sweep, and none of the fleet-wide passes (agent auto-deploy, " +
+      "auto-monitor, presence verification) a scheduled run performs";
+  } else {
+    title = "Run discovery for this FortiGate only: refresh its subnets, reservations, VIPs, " +
+      "FortiSwitches and FortiAPs without a full " +
       (integ.type === "fortimanager" ? "FortiManager sweep" : "discovery cycle");
+  }
   return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" style="margin-right:6px" ' +
     'title="' + escapeHtml(title) + '">Discover Now</button>';
 }

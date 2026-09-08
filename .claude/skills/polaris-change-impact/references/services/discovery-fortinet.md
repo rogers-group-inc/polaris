@@ -44,13 +44,16 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - It answers TWO separate questions and must not conflate them: WHICH INTEGRATION runs, and WHAT the run is narrowed to. A FortiSwitch/FortiAP’s integration is the one owning its CONTROLLER GATE, not necessarily the one that stamped the child.
+- A directory source is only scoped when its row still names an integration OF THE MATCHING TYPE. A row orphaned by a deleted integration, or an `entra` row pointing at an AD integration, must read as unrefreshable — scoping it would aim a scope at a collector that cannot honour it.
+- `intune` resolves to the owning Entra run. Intune enrichment has no discovery run of its own.
 - The controller is resolved through `utils/fortinetParentKey.ts` (`readControllerStamp` → `parentAssetWhereOr` → `resolveInfraParentAsset`). **Never** match `fortinetTopology.controllerFortigate` against `Asset.hostname`: FMG’s device name need not equal the gate’s configured hostname, and the mismatch fails silently (prod 2026-08-12).
 - `scope: null` is meaningful — a standalone-FortiGate integration IS one device, so a plain full run is the exact equivalent, and `scopeDeviceName` is rejected for non-FMG types anyway.
 - `filterAsset` is the row the integration include/exclude filter is re-checked against. For a switch/AP that is the CONTROLLER, because the filter patterns name gates.
 - Every refusal carries a human REASON. The UI renders the button disabled with that text, so returning a bare false would read to an operator as a permission problem.
 
 **When changing this:**
-- Adding a scope kind is a three-part change: the `DiscoveryScope` union here, a target parameter on that integration’s collector, AND a sweep-disabling sync mode. The directory / vCenter / Arc sync layers run ABSENCE-BASED destructive sweeps — handing one a single-device result without a scoped mode decommissions the rest of the fleet. `sweepPhaseEnabled` in `discoveryEngine.ts` is the pattern to copy.
+- Adding a scope kind is a three-part change: the `DiscoveryScope` union (now in `discovery/discoveryScope.ts`), a target parameter on that integration’s collector, AND a guarantee the sync layer takes no absence-based destructive action on a one-device result. **Audited 2026-09-08:** `syncEntraDevices` / `syncActiveDirectoryDevices` have NO fleet-absence sweeps — their only `decommissioned` writes come from the device’s own disabled flag, and both `assetSource.deleteMany` calls are `assetId`-scoped — which is why Entra/AD needed no new SyncMode. `syncVcenterDevices` DOES sweep on absence (and `syncArcDevices` isn’t exported), so those two still need that work. `sweepPhaseEnabled` in `discoveryEngine.ts` is the pattern to copy.
+- The four asset-only post-sync passes must stay skipped on a scoped run — see `assetOnlyPostSyncPassesEnabled`. Agent auto-deploy is the one that hurts.
 - Keep the selects tight: this runs on the route, and the slide-in opens constantly.
 
 ---
