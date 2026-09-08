@@ -43,7 +43,7 @@ import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } 
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
-import { getDiscoveredHostnames, getDiscoveredHostname } from "../../services/discoveredHostnameService.js";
+import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
 import { shapeMacRows, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter, TEXT_FILTER_OPS } from "../../utils/prismaTextFilter.js";
@@ -584,6 +584,51 @@ const AssetListQuerySchema = z.object({
 }).passthrough(); // per-column text filters (<col>, <col>Op) read off req.query
 
 /**
+ * Asset ids that match a filter term through their DISCOVERED hostname rather
+ * than the `hostname` column — i.e. rows whose hostname is pinned, where the
+ * list prints the discovered name as a second line under the pin. Typing
+ * either of those two names has to find the row, and only the pin is in a
+ * column, so the other half is resolved here (one indexed lookup per term-
+ * bearing filter; nothing at all when neither filter carries a term).
+ *
+ * Deliberately NOT run for the `empty` / `is_not_empty` ops: those ask about
+ * the Hostname cell's own value, which a pinned row always has.
+ */
+interface DiscoveredHostnameMatches {
+  /** Hostname-column filter term hits, or null for "nothing to add". */
+  hostnameIds: string[] | null;
+  /** Free-text `search` param hits, or null. */
+  searchIds: string[] | null;
+}
+
+const NO_DISCOVERED_MATCHES: DiscoveredHostnameMatches = { hostnameIds: null, searchIds: null };
+
+async function resolveDiscoveredHostnameMatches(
+  q: z.infer<typeof AssetListQuerySchema>,
+  raw: Record<string, unknown>,
+): Promise<DiscoveredHostnameMatches> {
+  const rawOp = typeof raw["hostnameOp"] === "string" ? (raw["hostnameOp"] as string) : undefined;
+  // Mirror buildPrismaTextFilter's op resolution exactly — an unrecognized op
+  // falls back to `contains` there, so it must here too.
+  const op = rawOp && ASSET_TEXT_OPS.has(rawOp) ? rawOp : "contains";
+  const hostnameTerm = op === "contains" || op === "not_contains"
+    ? (typeof raw["hostname"] === "string" ? (raw["hostname"] as string).trim() : "")
+    : "";
+  const searchTerm = (q.search ?? "").trim();
+  if (!hostnameTerm && !searchTerm) return NO_DISCOVERED_MATCHES;
+
+  const empty = new Map<string, string>();
+  const [hostnameHits, searchHits] = await Promise.all([
+    hostnameTerm ? findAssetIdsByDiscoveredHostname([hostnameTerm]) : Promise.resolve(empty),
+    searchTerm ? findAssetIdsByDiscoveredHostname([searchTerm]) : Promise.resolve(empty),
+  ]);
+  return {
+    hostnameIds: hostnameHits.size ? Array.from(hostnameHits.keys()) : null,
+    searchIds: searchHits.size ? Array.from(searchHits.keys()) : null,
+  };
+}
+
+/**
  * Build the Prisma `where` from validated list-query params. Shared by the list
  * endpoint and the "export filtered" path so both honor exactly the same
  * filters.
@@ -592,6 +637,7 @@ function buildAssetListWhere(
   q: z.infer<typeof AssetListQuerySchema>,
   raw: Record<string, unknown>,
   sessionUsername: string | undefined,
+  discovered: DiscoveredHostnameMatches = NO_DISCOVERED_MATCHES,
 ): Record<string, unknown> {
   const where: Record<string, unknown> = {};
   const and: Record<string, unknown>[] = [];
@@ -615,6 +661,11 @@ function buildAssetListWhere(
       { assetTag:   { contains: q.search, mode: "insensitive" } },
       { assignedTo: { contains: q.search, mode: "insensitive" } },
     ];
+    // Pinned rows whose DISCOVERED hostname matches — the `hostname` column
+    // above only ever holds the pin.
+    if (discovered.searchIds) {
+      (where.OR as Record<string, unknown>[]).push({ id: { in: discovered.searchIds } });
+    }
   }
 
   // Per-column operator-aware text filters.
@@ -623,7 +674,18 @@ function buildAssetListWhere(
     const op = typeof raw[key + "Op"] === "string" ? (raw[key + "Op"] as string) : undefined;
     if (value == null && op == null) continue;
     const frag = buildAssetTextFilter(column, value, op);
-    if (frag) and.push(frag);
+    if (!frag) continue;
+    // The Hostname cell shows two names on a pinned row (the pin, plus the
+    // discovered name underneath), so its filter spans both: `contains` matches
+    // either, `not_contains` has to reject the row if EITHER name matches.
+    if (key === "hostname" && discovered.hostnameIds) {
+      const isNot = op === "not_contains";
+      and.push(isNot
+        ? { AND: [frag, { id: { notIn: discovered.hostnameIds } }] }
+        : { OR: [frag, { id: { in: discovered.hostnameIds } }] });
+      continue;
+    }
+    and.push(frag);
   }
   // `_server` spans location + learnedLocation.
   const serverVal = typeof raw["server"] === "string" ? (raw["server"] as string) : undefined;
@@ -824,7 +886,8 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     const limit = Math.min(q.limit ?? ASSET_LIST_DEFAULT_LIMIT, ASSET_LIST_MAX_LIMIT);
     const offset = q.offset ?? 0;
 
-    const where = buildAssetListWhere(q, req.query as Record<string, unknown>, requestActor(req));
+    const discovered = await resolveDiscoveredHostnameMatches(q, req.query as Record<string, unknown>);
+    const where = buildAssetListWhere(q, req.query as Record<string, unknown>, requestActor(req), discovered);
     const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
 
     let favoriteIds = csvToArray(q.favoriteIds);
