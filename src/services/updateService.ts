@@ -1018,6 +1018,16 @@ export async function restartService() {
       `done`,
       `systemctl daemon-reload`,
       `systemctl restart polaris.target`,
+      // HA (docs/HA.md): the updater only ever runs on the ACTIVE node, so
+      // the standby is now one commit behind. Poke it to pull the new tree
+      // immediately rather than waiting up to a minute for its own reconcile
+      // timer — that window is when a failover would start the standby on
+      // code older than the freshly-migrated schema. Best-effort, and inert
+      // on a non-HA install (no marker file, no script).
+      // Lockstep: deploy/update-linux.sh calls notify-peer at the end too.
+      `if [ -f /etc/polaris/ha-node ] && [ -x /usr/local/sbin/polaris-ha-role ]; then`,
+      `  /usr/local/sbin/polaris-ha-role notify-peer || logger -t polaris-updater "HA: notify-peer failed; the standby will sync on its own timer"`,
+      `fi`,
     ].filter(Boolean).join("\n");
     try {
       const child = spawn("systemd-run", ["--no-block", "/bin/sh", "-c", syncScript], {

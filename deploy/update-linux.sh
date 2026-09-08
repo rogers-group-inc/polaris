@@ -13,6 +13,11 @@
 #   7. Restarts the service (polaris.target for split-role, polaris.service for single-process)
 #   8. Verifies the service is healthy
 #
+# On an HA node (/etc/polaris/ha-node present, see docs/HA.md) the script
+# additionally refuses to run unless THIS host is the Patroni primary, and
+# holds off the HA reconciler for the duration so it cannot start the group
+# back up in the middle of the migration step.
+#
 # Works for BOTH deployment topologies — the script detects which by asking
 # systemctl which unit is enabled. Mirrors the in-app updater's auto-sync
 # behavior (src/services/updateService.ts) so manual + in-app paths produce
@@ -51,7 +56,29 @@ done
 # this layout automatically via deploy/setup-*.sh; pre-Phase-3 installs
 # that are still on polaris.service should follow the migration steps in
 # docs/INSTALL.md before running this updater.
-if ! systemctl is-enabled --quiet polaris.target 2>/dev/null; then
+# HA nodes (docs/HA.md) deliberately leave polaris.target DISABLED — the
+# reconciler starts the group only where Postgres is primary — so the
+# is-enabled check below would reject a perfectly good HA install. Detect the
+# marker first and substitute the check that actually matters there: am I the
+# primary? Updating the standby would migrate a read-only replica and rebuild
+# a tree the next sync overwrites.
+HA_MODE=0
+HA_HOLD_FILE="/run/polaris-ha/hold"
+if [[ -f /etc/polaris/ha-node ]]; then
+  HA_MODE=1
+  if ! curl -sf --max-time 3 -o /dev/null http://127.0.0.1:8008/primary 2>/dev/null; then
+    echo "[ERROR] This is an HA node but its PostgreSQL is not the Patroni primary." >&2
+    echo "[ERROR] Run the update on the ACTIVE node; the standby picks the new code up by sync." >&2
+    echo "[ERROR] Check with: patronictl -c /etc/patroni/patroni.yml list" >&2
+    exit 1
+  fi
+  # Stop the reconciler from starting polaris.target back up while step 7 has
+  # it deliberately stopped for the migration. Released on ANY exit, including
+  # a rollback, so a failed update never leaves the group pinned down.
+  mkdir -p "$(dirname "$HA_HOLD_FILE")"
+  echo "update-linux.sh pid $ started $(date -Is)" > "$HA_HOLD_FILE"
+  trap 'rm -f "$HA_HOLD_FILE"' EXIT
+elif ! systemctl is-enabled --quiet polaris.target 2>/dev/null; then
   echo "[ERROR] polaris.target is not enabled. This updater only supports the split-role layout." >&2
   echo "[ERROR] If you're on the legacy single-process polaris.service install, follow docs/INSTALL.md → " >&2
   echo "[ERROR] 'Migrating from single-process polaris.service' before running this script." >&2
@@ -418,6 +445,16 @@ fi
 info "  Logs:    journalctl -u $LOG_UNIT -f"
 info "============================================"
 echo ""
+
+# HA: tell the standby to pull the new tree now rather than on its next
+# 60s reconcile. Lockstep with the in-app updater (updateService.ts).
+if [[ "$HA_MODE" -eq 1 && -x /usr/local/sbin/polaris-ha-role ]]; then
+  if /usr/local/sbin/polaris-ha-role notify-peer; then
+    info "Notified the standby to sync the new code"
+  else
+    warn "Could not notify the standby — it will sync on its own timer (up to 60s)"
+  fi
+fi
 
 # Clean up old backups (keep last 10)
 BACKUP_COUNT=$(ls -1 "$BACKUP_DIR"/polaris-pre-update-*.sql.gz 2>/dev/null | wc -l)
