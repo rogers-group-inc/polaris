@@ -178,6 +178,22 @@
       });
     });
 
+    // The access point a wireless station on this address is associated to.
+    // Reached by the resolved MAC or by the address the AP itself recorded, so
+    // unlike the switch-port line it can answer with no MAC known at all.
+    (ctx.apStations || []).slice(0, 3).forEach(function (s) {
+      var ap = s.apAsset ? (s.apAsset.hostname || "an access point") : "an access point";
+      var via = s.matchedBy === "ip" ? " reports this address for " : " has station ";
+      out.push({
+        kind: "ap", level: "info", label: "Wireless AP",
+        text: ap + via + s.macAddress +
+          (s.ssid ? " on " + s.ssid : "") +
+          (s.band ? " (" + s.band + ")" : "") +
+          " — " + relTime(s.lastSeen) + ".",
+        assetId: s.apAsset ? s.apAsset.id : null,
+      });
+    });
+
     // Sightings only when they add a gate the firewall line didn't already
     // name — otherwise it is the same fact twice.
     var namedGate = ctx.firewall ? ctx.firewall.deviceName : null;
