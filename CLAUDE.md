@@ -36,6 +36,7 @@ In-place references the skills point at: `.env.example` (runtime variables, with
 External plugins (separate repos; clone, then `claude --plugin-dir <clone>`):
 `fortinet-api-conventions` — https://github.com/davidmoore-rogers/fortinet-api-conventions (FortiManager / FortiOS / FortiSwitch / FortiAP API traps) and
 `polaris-api-conventions` — https://github.com/rogers-group-inc/polaris-api-conventions (the client guide to this app's `/api/v1`, generated from `public/api.html`; regenerate it there when that page changes).
+Both are fed from this repo's commits, not edited on their own schedule: the `/polaris-docs-sync` routing table has a row for each saying when a change here must be recorded there.
 
 ---
 
