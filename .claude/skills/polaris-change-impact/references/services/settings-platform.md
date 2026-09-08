@@ -244,6 +244,52 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ---
 
+## services/haService.ts
+
+**What it owns:** the `ha.config` Setting and everything the High Availability tab reads — the three nodes and their cluster addresses, the witness placement, the etcd certificate authority, Patroni's four credentials plus the etcd cluster token, the two file-sync keypairs, and the load-balancer figures used to estimate downtime. Also assembles the guidance card (`computeAdvisories`) and reads live cluster state from the local Patroni.
+
+**Public API:** `getHaConfig`, `invalidateHaConfigCache`, `redactHaConfig`, `enableHa`, `disableHa`, `computeAdvisories`, `getClusterStatus`, `issueEtcdCert`, `detectLocalAddresses`, `measureRtt`, `HA_CONFIG_KEY`, `DEFAULT_TTL_SEC`, `SYNC_KEYGEN_ATTEMPTS`, and the `HaConfig` / `HaNode` / `HaRole` / `HaClusterStatus` / `HaAdvisories` types.
+
+**Cross-service deps:** `settingsStore` (10s TTL), `haHeartbeatService` (`WAL_SAMPLES_KEY`), `utils/haAdvisories` (all the arithmetic), `utils/dbConnections`, `utils/proxyMode`, `utils/publicUrl`, `prisma` for `pg_database_size` / `pg_stat_replication` / `current_setting`. Shells out to `openssl` for the CA and member certificates, and to `id` / `rpm` / `chronyc` for host facts. Read by `haEnrollmentService`.
+
+**Used by:** `src/api/routes/ha.ts` (every operator route), `haEnrollmentService` (config + `issueEtcdCert` when building a bundle).
+
+**Invariants:**
+- **The secret leaf names are the contract, not decoration.** `Setting.value` sealing walks the blob recursively and matches on the KEY name, so credentials are stored as `{ password }`, keys as `{ privateKey }` and the etcd token as `{ token }`. Renaming any of those to something more descriptive silently stores it in plaintext. This is why nothing was added to `SECRET_CONFIG_KEYS`.
+- **`redactHaConfig` is the only shape that may reach a response.** It reports presence flags, never values. An integration test asserts no `privateKey` and no PEM header appears in `GET /ha/status`.
+- **Re-enabling never rotates anything.** `enableHa` keeps existing credentials, CA and sync keys, because a node already holds certificates signed by them; re-running Enable to fix a typo in an address must not invalidate the cluster.
+- **`getClusterStatus` is tolerant by design.** Before adoption there is no Patroni at all, and the tab has to render its build instructions in exactly that state — so an unreachable API is `available: false` with a reason, never a thrown error. It accepts both `master` (Patroni 3.x) and `primary` (4.x) as the leader role rather than pinning a version.
+- **`automaticFailover` is only true when no replica carries `nofailover`.** That tag is how the standby ships, and removing it is the deliberate act that arms failover after a rehearsal.
+- **Advisories answer "unknown" rather than guessing.** Every probe is best-effort (the DB role may lack `pg_read_all_settings`, `rpm` may be absent), and a figure that could not be measured must read as unmeasured — a confident green tick that quietly meant "probably" is worse than a blank.
+- **`generateSyncKeypair` retries.** ssh2's ed25519 generator intermittently emits a private key its own parser rejects (about one attempt in three on Node 20+); without the loop, one Enable in three would 500 after having already created the CA. The same bug is why `windowsSshOnboardingService.generateKeypair` retries — fix them together.
+
+**When changing this:** adding a config field means deciding first whether it is a secret, and if so naming its leaf `password` / `privateKey` / `token`; then `redactHaConfig`, the rendered output in `haEnrollmentService`, and the `ha.config` entry in `polaris-domain-model` → platform.md. Changing `DEFAULT_TTL_SEC` changes both the downtime estimate and the Patroni template — they must move together, and docs/HA.md quotes the number to operators.
+
+---
+
+## services/haEnrollmentService.ts
+
+**What it owns:** how a node joins the cluster — token minting, the pending/approve/deliver ladder, the node bundle, the bootstrap script and the teardown script. The only service reachable (in part) without a session.
+
+**Public API:** `mintNodeToken`, `registerEnrollment`, `pollEnrollment`, `listEnrollments`, `approveEnrollment`, `rejectEnrollment`, `claimBundle`, `buildNodeBundle`, `renderNodeScript`, `renderTeardownScript`, `TOKEN_TTL_MS`, `APPROVAL_WINDOW_MS`.
+
+**Cross-service deps:** `haService` (config + `issueEtcdCert`), `certInfo` (`getServerCertFingerprint` for the script's pin), `utils/password` (argon2id), `utils/bearerToken` (the `polaris_<32>` format), `utils/tarWriter`, `utils/paths` (`ENV_FILE`), `utils/publicUrl`, `node:zlib`.
+
+**Used by:** `src/api/routes/ha.ts` — `haRouter` for minting and approval, `haEnrollRouter` for the three unauthenticated node calls.
+
+**Invariants:**
+- **A token buys the right to ASK, never the bundle.** Registration records the source address and the SSH host keys presented and stops at `pending`; only an operator moves it to `approved`. This is the entire security model: a bundle contains `.env` (the key that decrypts every credential), the nginx private key and the database passwords, so a leaked script must surface as a request a human can reject.
+- **The token is spent at registration, before approval.** A second attempt with the same token is refused, and the attempt is itself visible. Claiming is a conditional `updateMany` on `status`, so two simultaneous registrations cannot both win.
+- **The bundle downloads exactly once.** `claimBundle` flips `approved` → `delivered` with a conditional update BEFORE building the archive. A build failure therefore burns the approval and the operator re-approves — the right way round, since a second copy of a bundle full of private keys is worse than a repeated click.
+- **The witness bundle carries etcd material only.** No `.env`, no nginx key, no database credentials. A vote does not need to be able to impersonate the application.
+- **Every rejection on the unauthenticated surface returns identical text.** A caller must not be able to tell "no such token" from "expired" from "already used".
+- **The script carries the token and nothing else sensitive.** Asserted in `tests/unit/haEnrollmentService.test.ts` against every credential in the config. It pins the nginx leaf (`--pinnedpubkey`) and forces the route (`--resolve`) so a private-address install needs no second certificate and DNS is not trusted.
+- **A database node's bundle refuses to build without `POLARIS_PROXY_CERT_PATH`.** The standby must serve the identical leaf agents pin, so a bundle without it would build a node the whole fleet rejects.
+
+**When changing this:** anything added to a bundle needs the witness exclusion re-checked (does a vote need it?) and `renderBundleReadme` updated, since that file is what the operator reads on the node. Changing the script's flow means changing the poll strings it greps for (`"ready":true`, `rejected`, `expired`, `delivered`) in lockstep with `pollEnrollment`. New file paths in a bundle must stay under 99 bytes — `tarWriter` refuses longer names rather than truncating them.
+
+---
+
 ## services/haHeartbeatService.ts
 
 **What it owns:** The active-instance heartbeat and the WAL-rate ring behind the active/standby HA deployment (docs/HA.md). Two Setting rows: `ha.activeInstance` = `{hostname, pid, at}`, re-stamped every 30s by the scheduler role, and `ha.walSamples` = a 288-entry (24h, one per 5 min) ring of `pg_current_wal_lsn()` readings used to size the WAN link, `max_slot_wal_keep_size` and `maximum_lag_on_failover` BEFORE anyone enables HA.

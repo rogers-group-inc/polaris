@@ -456,7 +456,40 @@ NULL `savedPositions` means this (site, view) was never saved — the state ever
 
 #### Setting
 
-**Setting** — key-value config store (`manualMonitorSettings`, `sampleRetention`, `mapRegions`, `agentEventLog`, `branding` (appName / subtitle / logoUrl / **`logoAccent`** + **`logoOnLogin`** + **`logoOnSidebar`** — see business rule 27 — + **`temperatureUnit`** — the install-wide DISPLAY-ONLY °C/°F choice for hardware sensors, Server Settings → Customization → Display Units. Samples are always collected, stored, rolled up and ALERTED ON in Celsius; the frontends convert at render via `public/js/temp-unit.js`, gated on each reading's own stored unit so fan RPM / voltage rails are untouched, and automation thresholds stay °C. It rides branding because that payload is unauthenticated, cached in localStorage for synchronous reads, and reaches the identity-less Dash wallboard), `appMapAutoMap`, `backupSchedule`, `backup_history`, `assetSourcePriority`, `reservationMacPlaceholder`, `loginAccessConfig`, etc.). `assetSourcePriority` (`{order[], integrationPrefix}`, Assets → Settings → Sources) orders which discovery source's learned location wins — see business rule 22. `reservationMacPlaceholder` (`{prefix}`, default `02:0F:5E`, Server Settings → Identification) is the OUI every generated placeholder MAC starts with, and the only thing marking such a MAC as synthetic — see business rule 26. `agentEventLog` (`{enabled, minLevel, windowsChannels, linuxMinPriority, maxPerPush, perAssetHourlyCap}`, default disabled) tunes the OS event-log → audit Event ingest (`osEventLogService`); ingested host events become `os_event.<channel>` Events (resourceType=asset) visible in the Events tab.
+**Setting** — key-value config store (`manualMonitorSettings`, `sampleRetention`, `mapRegions`, `agentEventLog`, `branding` (appName / subtitle / logoUrl / **`logoAccent`** + **`logoOnLogin`** + **`logoOnSidebar`** — see business rule 27 — + **`temperatureUnit`** — the install-wide DISPLAY-ONLY °C/°F choice for hardware sensors, Server Settings → Customization → Display Units. Samples are always collected, stored, rolled up and ALERTED ON in Celsius; the frontends convert at render via `public/js/temp-unit.js`, gated on each reading's own stored unit so fan RPM / voltage rails are untouched, and automation thresholds stay °C. It rides branding because that payload is unauthenticated, cached in localStorage for synchronous reads, and reaches the identity-less Dash wallboard), `appMapAutoMap`, `backupSchedule`, `backup_history`, `assetSourcePriority`, `reservationMacPlaceholder`, `loginAccessConfig`, **`ha.config`** (the HA cluster: the three nodes and their cluster addresses, the witness placement, the etcd certificate authority, Patroni's credentials and the file-sync keypairs — see docs/HA.md. **The secret leaves are named so the seal catches them**: a password is stored as `{ password }`, a private key as `{ privateKey }` and the etcd cluster token as `{ token }`, nested under whatever describes them, because `Setting.value` sealing walks the blob recursively and matches on the KEY name. Renaming one of those leaves to something more descriptive would silently store it in plaintext. It lives in the database rather than only on disk because a failover has to leave the surviving node able to re-issue a bundle), **`ha.activeInstance`** (`{hostname, pid, at}`, re-stamped every 30s by the scheduler role — a booting web role refuses to start when a DIFFERENT hostname holds a stamp younger than 90s, the last guard against two instances on one database) and **`ha.walSamples`** (a 288-entry 24h ring of `pg_current_wal_lsn()` readings, which is what sizes the WAN link and the replication slot cap before HA is enabled), etc.). `assetSourcePriority` (`{order[], integrationPrefix}`, Assets → Settings → Sources) orders which discovery source's learned location wins — see business rule 22. `reservationMacPlaceholder` (`{prefix}`, default `02:0F:5E`, Server Settings → Identification) is the OUI every generated placeholder MAC starts with, and the only thing marking such a MAC as synthetic — see business rule 26. `agentEventLog` (`{enabled, minLevel, windowsChannels, linuxMinPriority, maxPerPush, perAssetHourlyCap}`, default disabled) tunes the OS event-log → audit Event ingest (`osEventLogService`); ingested host events become `os_event.<channel>` Events (resourceType=asset) visible in the Events tab.
+
+#### HaEnrollment
+
+**HaEnrollment** — one node joining an active/standby HA cluster (docs/HA.md). The Server Settings → High Availability tab mints a single-use token per node (`polaris_<32>`, argon2id-hashed, prefix-indexed — the `ManagedAgent` enrollment pattern) and hands the operator a thin bootstrap script carrying it. **Redeeming the token is deliberately not enough to receive anything**: the node registers as `pending`, recording `registeredFromIp` + the `sshHostKeyFingerprints` it presented, and an operator has to APPROVE it in the UI before the bundle is released. That is the whole design — a bundle carries `.env` (so the key that decrypts every stored credential), the nginx private key and the database passwords, so a leaked script must produce a request a human can reject rather than a silent handover, and the operator approves against evidence rather than a member name the requester chose for itself. The token is consumed at REGISTRATION, before approval, so a second attempt with the same token is refused and is itself visible. `requestId` (32 random bytes, unique) is the poll handle the script holds afterwards — separate from the token because by then the token is spent and a poll must not carry a credential worth stealing. Status ladder: `issued` → `pending` → `approved` → `delivered` (terminal, and the audit trail), with `rejected` / `expired` as the other terminals; `delivered` is claimed by a conditional UPDATE so two concurrent downloads cannot both win. A witness bundle carries etcd material ONLY — no `.env`, no nginx key, no database credentials, because a vote does not need to be able to impersonate the application.
+
+```prisma
+model HaEnrollment {
+  id                     String   @id @default(uuid())
+  role                   String   // "primary" | "standby" | "witness"
+  nodeName               String   // what the operator typed when minting
+  nodeAddr               String
+  tokenHash              String   // argon2id
+  tokenPrefix            String   // "polaris_xxxxxxxx", indexed
+  expiresAt              DateTime // 24h — a human workflow, not a machine one
+  requestId              String?  @unique // opaque poll handle, 32 bytes hex
+  status                 String   @default("issued")
+  registeredFromIp       String?  // evidence the operator approves against
+  registeredNodeName     String?
+  sshHostKeyFingerprints String[] @default([])
+  registeredAt           DateTime?
+  approvedBy             String?
+  approvedAt             DateTime?
+  rejectedBy             String?
+  rejectedAt             DateTime?
+  deliveredAt            DateTime?
+  createdBy              String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  @@index([tokenPrefix])
+  @@index([status])
+  @@map("ha_enrollments")
+}
+```
 
 #### Tag
 

@@ -306,6 +306,86 @@ the new files up within a minute.
 
 ## 7. Build it
 
+There are two ways through this, and they install the same thing.
+
+**Server Settings → High Availability** is the shorter one. You enter the three
+nodes, press Enable, and it hands you one bootstrap script per node. Each script
+carries a single-use token and nothing else sensitive; run it as root on that
+node and it registers back here, waits for you to approve it, then downloads its
+own configuration, certificates and keys over pinned TLS. Read §7a.
+
+The flag-by-flag path in §7b does the same work with `deploy/ha/setup-rhel-ha.sh`
+invoked by hand. Use it when you are automating the build, when the node cannot
+reach this Polaris over HTTPS, or when you want to see exactly what is happening.
+
+Either way, read §1 to §6 first.
+
+### 7a. Through the High Availability tab
+
+**Phase 0 — ship the code and point the monitor at readiness.** Update Polaris
+normally, then repoint your load balancer at `/health/ready` (the monitor spec is
+in §7b, phase 0). Do this before anything else: on a single node it already turns
+"PostgreSQL is down" from an invisible failure into an out-of-pool node.
+
+**Phase 1 — provision the two new hosts.** The standby gets the same OS image and
+hardening as the primary. The witness can be a 1 vCPU cloud instance. Open 2379
+and 2380 between all three, 5432 / 8008 / 22 between the two database nodes, and
+443 on the standby so your load balancer can probe it.
+
+**Phase 2 — measure, then enable.** Open Server Settings → High Availability.
+
+1. Press **Measure this install**. The guidance card states this install's
+   figures: round-trip time to each node, the write-ahead-log rate over the last
+   24 hours and the link it implies, how much data a failover would lose, how long
+   it would take given your own monitor settings, and how big the standby has to
+   be. Anything it could not measure says so rather than showing a green tick.
+2. Fill in the three nodes. The **cluster address** is how the nodes reach each
+   other and is usually a private address; the public URL is never used between
+   them. The primary's row offers this host's own interfaces.
+3. Choose the **witness location**, having read the table on that card. This is
+   the most consequential choice in the design (§3).
+4. Press **Enable**. Nothing is installed and nothing restarts: it generates the
+   etcd certificate authority, the database credentials and the file-sync keys,
+   and stores them sealed in the database.
+
+**Phase 3 — witness.** Under **Node scripts**, generate the witness script, run it
+as root on the witness, then approve the node when it appears under **Approvals**.
+Check the source address and the SSH host key fingerprints are the machine you
+built before you approve — that is what the panel shows them for. Start etcd:
+`systemctl start etcd`.
+
+**Phase 4 — primary (the maintenance window, ~15 min).** Generate and run the
+primary script on this host, and approve it. It adopts the running PostgreSQL
+under Patroni, which stops the database and the application for a few minutes.
+It prints the settings Patroni is taking ownership of and waits for you to
+confirm them. Accept the window when the **Cluster** card shows one leader, the
+tab reports this node as the primary, `systemctl is-enabled polaris.target` says
+disabled, and `curl -sk https://localhost/health/ready` returns 200. Log in,
+confirm agents reconnected, run a discovery.
+
+**Phase 5 — standby.** Generate and run the standby script, approve it. It
+installs every package the primary has, joins etcd, clones the database and leaves
+the application stopped. Watch the lag fall to zero on the Cluster card, then:
+
+```bash
+polaris-ha-role verify                    # must be clean
+systemctl start polaris-migrate.service   # must FAIL on the standby
+```
+
+The second command is the guard proving itself.
+
+**Phase 6 — load balancer, then rehearse.** Add the standby with the same monitor;
+it shows down, which is correct. Then work through the drills in §7b phase 6 and
+§12. The Cluster card reports **automatic failover not armed** until the standby
+sheds its `nofailover` tag, which is the deliberate act that turns failover on.
+
+Two things the tab will not do, on purpose. It never runs the primary's adoption
+for you — that stops the database serving the page you clicked from, and it is the
+one step with a rollback a human should be watching. And it never switches over:
+use `patronictl`, because the command would kill the process answering it.
+
+### 7b. By hand, with flags
+
 ### Phase 0 — ship the code, point the monitor at readiness
 
 Update Polaris normally. Then repoint your load balancer's monitor at
@@ -658,6 +738,12 @@ proving against.
 ---
 
 ## 13. Command reference
+
+Most of §7a is also reachable from the command line, and the tab shows the same
+state these commands report. The tab is the only place that lists **pending node
+approvals**, since that decision needs the source address and host keys in front
+of you.
+
 
 ```bash
 polaris-ha-role role          # primary | replica | unknown
