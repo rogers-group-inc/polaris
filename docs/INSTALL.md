@@ -1477,8 +1477,40 @@ Note the permission grade: this takes the credential from "reads your device inv
 
 Runs the script directly on Arc-connected machines via **Run Command**. This is how Linux and Windows Server get onboarded — Intune deploys scripts to neither.
 
-1. Discovery needs only **Reader**. This additionally needs a role carrying `Microsoft.HybridCompute/machines/runCommands/write` — e.g. **Azure Connected Machine Resource Administrator**, or a custom role.
-2. Assign it to the service principal at the **subscription or resource-group scope** covering the machines you intend to onboard. This is an **Azure RBAC role assignment**, not a Graph API permission — a different mechanism from the Intune side, and a common point of confusion.
+1. Discovery needs only **Reader**. Running scripts additionally needs **all three** of these actions:
+
+   | Action | Why |
+   |---|---|
+   | `Microsoft.HybridCompute/machines/read` | lists the machines in the target picker |
+   | `Microsoft.HybridCompute/machines/runCommands/write` | dispatches the run command |
+   | `Microsoft.HybridCompute/machines/runCommands/read` | reads back exit code, stdout and stderr |
+
+   The third is the one people miss, and its absence is invisible until after a dispatch: the script runs, and no result ever comes back.
+
+   A **custom role** with exactly those three is the least-privilege option:
+
+   ```json
+   {
+     "Name": "Polaris Arc Run Command",
+     "Description": "Dispatch and read Polaris onboarding run commands on Arc machines.",
+     "IsCustom": true,
+     "Actions": [
+       "Microsoft.HybridCompute/machines/read",
+       "Microsoft.HybridCompute/machines/runCommands/read",
+       "Microsoft.HybridCompute/machines/runCommands/write"
+     ],
+     "NotActions": [],
+     "AssignableScopes": ["/subscriptions/<SUBSCRIPTION_ID>"]
+   }
+   ```
+
+   ```bash
+   az role definition create --role-definition polaris-arc-run-command.json
+   ```
+
+   The built-in **Azure Connected Machine Resource Administrator** also covers all three, but it can additionally modify and delete Arc machine resources.
+
+2. Assign it to the service principal at the **subscription or resource-group scope** covering the machines you intend to onboard. This is an **Azure RBAC role assignment**, not a Graph API permission — a different mechanism from the Intune side, and a common point of confusion. Two practical notes: the service principal is the app's entry under **Entra ID → Enterprise applications** (search by **Application (client) ID**, not display name), and **keep the existing Reader assignment** — Azure roles are additive and discovery still needs it. Allow a few minutes for propagation; a 403 straight after assigning usually means "not yet" rather than "wrong role".
 3. Tick *Allow Polaris to run deployment scripts* on the Arc integration's Script Publishing tab.
 4. Integrations → Polaris Agent → SSH Deployment → Azure Arc → **Choose machines…**, tick the targets, confirm.
 
