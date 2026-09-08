@@ -183,6 +183,34 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ---
 
+## services/platformLifecycleService.ts
+
+**What it owns:** Observing what this Polaris host is actually running (Node, PostgreSQL, TimescaleDB, Go, Java, nginx, the OS, PgBouncer, Prisma) and assembling that against the committed end-of-life dataset into the Platform Lifecycle card's answer. Also the transition record that decides when a lifecycle change is worth an Event.
+
+**Public API:** `getPlatformLifecycle`, `observePlatformStack`, `loadPlatformEolDataset`, `_resetDatasetCache`, `_resetLifecycleMemo` (test seams), plus the `ObservedComponent` / `LifecycleComponent` / `PlatformLifecycleResult` types.
+
+**Cross-service deps:** `timescaleService.getDetectionState()` (cached boot state — no query), `agentBuildService.goAvailable()`, `utils/platformVersions` (all parsing), `utils/platformLifecycleGrade` (all grading), `utils/deploymentContext.runtimeIsContainer`, `utils/dbConnections.isPgbouncerMode`, `utils/version` for the informational rows. Spawns `java -version` and `nginx -v`; runs one `SHOW server_version`.
+
+**Used by:** `src/api/routes/serverSettings.ts — GET /platform-lifecycle`, and the Platform Lifecycle card it feeds.
+
+**Invariants:**
+- **`observePlatformStack()` never throws.** Every probe owns its try/catch and reports `probeStatus` (`ok` / `absent` / `error` / `undetectable`) instead. `getPlatformLifecycle()` additionally swallows a missing or malformed dataset into `datasetError` with an empty component list — the capacity snapshot and the whole Maintenance tab must keep rendering when the lifecycle data is the only broken thing.
+- **`absent` is not `error`.** nginx, Go, Java and PgBouncer are legitimately missing on a supported install (Docker has Go but no nginx; a `-nodb` host may have neither). Treating absence as failure would put a permanent error on a healthy card.
+- **No per-asset queries, ever.** The only new database work is one `SHOW server_version` — a GUC read, not the banner-building `SELECT version()`. The 2000-asset case must cost exactly what the 100-asset case costs.
+- The whole assembly is memoized for six hours; `{force: true}` bypasses it. A 10-minute caller therefore pays the exec cost at most four times a day.
+- **The nginx probe is gated on the managed config existing**, so an install that is not fronted by nginx never spawns a process. It reads STDERR (where `nginx -v` writes) and is deliberately NOT routed through the `polaris-nginx-apply` sudo wrapper — that wrapper's argument surface is the entire granted privilege and must not widen for a version read.
+- **The OS row is relabelled inside a container.** Without that, the container's Debian os-release gets reported as the operator's RHEL host.
+- **PgBouncer's version is `undetectable`, not unknown-by-accident.** It needs `SHOW VERSION` on the admin console with credentials Polaris does not hold; the card asks the operator to confirm the floor by hand.
+- The service reads the dataset and never writes it. Refreshing `src/data/platformEol.json` is a human-reviewed task owned by `polaris-tech-lifecycle`.
+- The grader sets `capacitySeverityCap: "warning"` on upstream EOL so it can never hold the non-dismissible sidebar alert open for months; `below_minimum` is uncapped and does reach it.
+
+**When changing this:**
+- Adding a probe: give it its own try/catch, decide honestly between `absent` and `error`, and confirm the whole thing still resolves with that probe throwing.
+- Adding a technology: it needs a dataset entry, a probe reporting under the same `id`, an inventory row and a checker family — see `polaris-tech-lifecycle` → eol-dataset.md.
+- Anything that adds a query here needs the 2000-asset check; this runs on a schedule.
+- Changing a severity or the cap changes what an operator gets woken for. Re-read the reasoning in `utils/platformLifecycleGrade.ts` before moving `capacitySeverityCap`.
+- Real-host validation is not optional for the exec probes: the systemd unit's hardening, SELinux, `/etc/os-release` in-container versus on-host, and Windows all behave differently from a dev box.
+
 ## services/nginxApplyService.ts
 
 **What it owns:** Orchestrator that combines config persistence, rendering, the privileged sysadmin wrapper, and cert-info invalidation into the operator-facing operations: apply config, rotate cert, bootstrap, and report drift.

@@ -6,6 +6,10 @@ import {
   runningNodeTrack,
   checkNodeVersionAtBoot,
   NODE_MINIMUM_MAJOR,
+  parsePostgresVersion,
+  parseNginxVersion,
+  parseJavaVersion,
+  parseOsRelease,
 } from "../../src/utils/platformVersions.js";
 
 describe("deriveTrack", () => {
@@ -84,6 +88,89 @@ describe("parseGoVersion", () => {
     expect(parseGoVersion("command not found")).toBeNull();
     expect(parseGoVersion("")).toBeNull();
     expect(parseGoVersion("go version unknown")).toBeNull();
+  });
+});
+
+describe("parsePostgresVersion", () => {
+  it("parses the SELECT version() banner", () => {
+    expect(parsePostgresVersion("PostgreSQL 15.13 on x86_64-pc-linux-gnu, compiled by gcc")).toBe("15.13");
+    expect(parsePostgresVersion("PostgreSQL 17.2 (Debian 17.2-1.pgdg120+1) on x86_64")).toBe("17.2");
+  });
+
+  it("parses bare SHOW server_version output", () => {
+    expect(parsePostgresVersion("15.13")).toBe("15.13");
+    expect(parsePostgresVersion("18.0")).toBe("18.0");
+  });
+
+  it("parses SHOW server_version with a distro suffix", () => {
+    expect(parsePostgresVersion("15.13 (Debian 15.13-1.pgdg120+1)")).toBe("15.13");
+  });
+
+  it("returns null when there is no version at all", () => {
+    expect(parsePostgresVersion("unknown")).toBeNull();
+    expect(parsePostgresVersion("")).toBeNull();
+  });
+});
+
+describe("parseNginxVersion", () => {
+  it("parses nginx -v output", () => {
+    expect(parseNginxVersion("nginx version: nginx/1.28.0")).toBe("1.28.0");
+    expect(parseNginxVersion("nginx version: nginx/1.31.1\n")).toBe("1.31.1");
+  });
+
+  it("parses an openresty build", () => {
+    expect(parseNginxVersion("nginx version: openresty/1.25.3.1")).toBe("1.25.3.1");
+  });
+
+  it("returns null for unrelated output", () => {
+    expect(parseNginxVersion("command not found")).toBeNull();
+    expect(parseNginxVersion("")).toBeNull();
+  });
+});
+
+describe("parseJavaVersion", () => {
+  it("parses a modern JDK", () => {
+    expect(parseJavaVersion('openjdk version "17.0.11" 2024-04-16')).toBe("17.0.11");
+    expect(parseJavaVersion('openjdk version "21.0.5" 2024-10-15')).toBe("21.0.5");
+  });
+
+  it("maps the pre-9 1.x scheme to its feature version", () => {
+    // "1.8" would sort below every modern release, so 8 is the useful answer.
+    expect(parseJavaVersion('java version "1.8.0_402"')).toBe("8");
+  });
+
+  it("returns null when no quoted version is present", () => {
+    expect(parseJavaVersion("java: not found")).toBeNull();
+    expect(parseJavaVersion("")).toBeNull();
+  });
+});
+
+describe("parseOsRelease", () => {
+  it("parses RHEL 9", () => {
+    const out = parseOsRelease('NAME="Red Hat Enterprise Linux"\nID="rhel"\nVERSION_ID="9.4"\n');
+    expect(out).toEqual({ id: "rhel", versionId: "9.4" });
+  });
+
+  it("parses Ubuntu 24.04 with bare values", () => {
+    expect(parseOsRelease("ID=ubuntu\nVERSION_ID=24.04\n")).toEqual({ id: "ubuntu", versionId: "24.04" });
+  });
+
+  it("parses Debian bookworm", () => {
+    expect(parseOsRelease('ID=debian\nVERSION_ID="12"\n')).toEqual({ id: "debian", versionId: "12" });
+  });
+
+  it("tolerates a missing VERSION_ID", () => {
+    // Rolling releases legitimately omit it.
+    expect(parseOsRelease("ID=arch\n")).toEqual({ id: "arch", versionId: null });
+  });
+
+  it("returns nulls for an empty file", () => {
+    expect(parseOsRelease("")).toEqual({ id: null, versionId: null });
+  });
+
+  it("does not match a key that merely ends with the name", () => {
+    // VERSION_CODENAME must not satisfy a VERSION_ID lookup.
+    expect(parseOsRelease("VERSION_CODENAME=bookworm\n").versionId).toBeNull();
   });
 });
 

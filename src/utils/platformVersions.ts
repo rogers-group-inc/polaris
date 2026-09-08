@@ -65,6 +65,71 @@ export function parseGoVersion(raw: string): string | null {
 }
 
 /**
+ * Extract a PostgreSQL version from either shape the server reports it in.
+ *
+ *   `SELECT version()`      -> "PostgreSQL 15.13 on x86_64-pc-linux-gnu, …"
+ *   `SHOW server_version`   -> "15.13" or "15.13 (Debian 15.13-1.pgdg120+1)"
+ *
+ * Returns the bare numeric version, or null when neither shape matches.
+ */
+export function parsePostgresVersion(raw: string): string | null {
+  const s = String(raw).trim();
+  const banner = s.match(/PostgreSQL\s+(\d+(?:\.\d+)*)/i);
+  if (banner) return banner[1];
+  const bare = s.match(/^(\d+(?:\.\d+)*)/);
+  return bare ? bare[1] : null;
+}
+
+/**
+ * Extract the nginx version from `nginx -v` output.
+ *
+ * nginx writes this to STDERR by convention, so the caller must read stderr:
+ *   "nginx version: nginx/1.28.0"       -> "1.28.0"
+ *   "nginx version: openresty/1.25.3.1" -> "1.25.3.1"
+ */
+export function parseNginxVersion(raw: string): string | null {
+  const m = String(raw).match(/nginx version:\s*\S*?\/(\d+(?:\.\d+)*)/i);
+  if (m) return m[1];
+  const loose = String(raw).match(/\/(\d+\.\d+\.\d+)/);
+  return loose ? loose[1] : null;
+}
+
+/**
+ * Extract a Java feature version from `java -version` output (also STDERR).
+ *
+ *   `openjdk version "17.0.11" …`  -> "17.0.11"
+ *   `java version "1.8.0_402"`     -> "8"   (the pre-9 1.x scheme)
+ */
+export function parseJavaVersion(raw: string): string | null {
+  const quoted = String(raw).match(/version\s+"([^"]+)"/i);
+  if (!quoted) return null;
+  const v = quoted[1];
+  // Java 8 and earlier report as 1.8.0_x; the feature version is the second
+  // component, and reporting "1.8" would sort below every modern release.
+  const legacy = v.match(/^1\.(\d+)/);
+  if (legacy) return legacy[1];
+  const m = v.match(/^(\d+(?:\.\d+)*)/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Parse the ID and VERSION_ID out of an /etc/os-release body.
+ *
+ * Values may be quoted or bare. Returns nulls rather than throwing on a file
+ * that exists but is missing either key — a container base image or a minimal
+ * distro can legitimately omit VERSION_ID.
+ */
+export function parseOsRelease(raw: string): { id: string | null; versionId: string | null } {
+  const pick = (key: string): string | null => {
+    const m = String(raw).match(new RegExp(`^${key}=(.*)$`, "m"));
+    if (!m) return null;
+    const v = m[1].trim().replace(/^["']|["']$/g, "").trim();
+    return v.length > 0 ? v : null;
+  };
+  return { id: pick("ID"), versionId: pick("VERSION_ID") };
+}
+
+/**
  * The Node major Polaris supports. Mirrors `engines.node` in package.json,
  * which npm only warns about, and is one of 23 Node declaration sites — see
  * .claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md.

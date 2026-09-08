@@ -114,6 +114,7 @@ import {
 import { BACKUP_DIR, UPLOADS_DIR } from "../../utils/paths.js";
 import { maintenanceLimiter } from "../middleware/rateLimits.js";
 import { getAppVersion } from "../../utils/version.js";
+import { parsePostgresVersion } from "../../utils/platformVersions.js";
 import { isTimescaleAvailable } from "../../services/timescaleService.js";
 import { detectImageMagic } from "../../utils/imageMagic.js";
 import { BRANDING_DEFAULTS, getBranding, hasCustomLogo, normalizeBrandingFlag, normalizeTemperatureUnit } from "../../services/brandingService.js";
@@ -340,9 +341,9 @@ router.get("/database", async (_req, res, next) => {
     const maxConnections = Number(connResult[0]?.max || 100);
     const uptime = uptimeResult[0]?.uptime || "Unknown";
 
-    // Parse version string to extract short version
-    const versionMatch = version.match(/PostgreSQL\s+([\d.]+)/);
-    const shortVersion = versionMatch ? versionMatch[1] : version;
+    // Parse version string to extract short version. Shared with the platform
+    // lifecycle probe so the two cannot disagree about what "15.13" means.
+    const shortVersion = parsePostgresVersion(version) ?? version;
 
     // Parse connection URL for host/port
     const connUrl = process.env.DATABASE_URL || "";
