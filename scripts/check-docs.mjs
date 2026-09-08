@@ -28,8 +28,11 @@
 //   orphan-reference           Every references/**/*.md and scripts/* is linked from its SKILL.md.
 //   claude-md-size             CLAUDE.md under 25 KB (fail); over 15 KB warns.
 //   util-tests (warn)          src/utils files with exports lacking tests/unit/<name>.test.ts.
+//   api-plugin-fresh (warn)    public/api.html changed since the polaris-api-conventions plugin
+//                              was generated from it (skipped when that clone isn't present).
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve, relative, sep } from "node:path";
 
@@ -276,6 +279,58 @@ if (utilTestWarnings.length) {
       utilTestWarnings.join("\n      ") +
       `\n    Not a failure — but add coverage when you next touch one.\n`,
   );
+}
+
+// === api-plugin-fresh (WARN-only): the polaris-api-conventions plugin vs public/api.html ===
+// That plugin is generated from public/api.html and lives in its OWN repo, cloned beside this
+// one. Its import script stamps the source file's sha256 into plugin.json, which is the only
+// mechanical signal that the published client guide has fallen behind this repo's API page.
+// Deliberately a warning that SKIPS when the clone is absent: the plugin is not a build input,
+// so CI, a fresh clone and anyone who has not cloned it must not be failed by its absence.
+const API_HTML = "public/api.html";
+// The clone sits BESIDE the main checkout, but this script also runs from a worktree under
+// .claude/worktrees/<slug>, where "../polaris-api-conventions" resolves inside the worktrees
+// folder and finds nothing. Walking up instead finds the clone from either place — otherwise
+// the check would silently pass in exactly the trees where the work happens.
+function findApiPluginManifest() {
+  let dir = ROOT;
+  for (;;) {
+    const candidate = join(dir, "polaris-api-conventions", ".claude-plugin", "plugin.json");
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+const apiPluginManifest = findApiPluginManifest();
+if (exists(API_HTML) && apiPluginManifest) {
+  let recorded;
+  try {
+    recorded = JSON.parse(readFileSync(apiPluginManifest, "utf8")).sourceApiHtmlSha256;
+  } catch {
+    recorded = undefined; // a hand-edited or half-written manifest is not this check's business
+  }
+  // The stamp is over the file's RAW bytes, so a checkout whose line endings differ from the
+  // one that last ran the generator would mismatch on whitespace alone. Compare all three
+  // renderings and treat any match as current — the question is whether the CONTENT moved.
+  const sha = (buf) => createHash("sha256").update(buf).digest("hex");
+  const rawBytes = readFileSync(r(API_HTML));
+  const asLf = Buffer.from(rawBytes.toString("utf8").replace(/\r\n/g, "\n"), "utf8");
+  const asCrlf = Buffer.from(asLf.toString("utf8").replace(/\n/g, "\r\n"), "utf8");
+  const current = new Set([sha(rawBytes), sha(asLf), sha(asCrlf)]);
+  if (!recorded) {
+    console.warn(
+      `\n⚠ check-docs (warn): polaris-api-conventions/.claude-plugin/plugin.json has no sourceApiHtmlSha256, so nothing can tell whether the` +
+        `\n    polaris-api-conventions plugin still matches ${API_HTML}. Re-run its import script to stamp one.\n`,
+    );
+  } else if (!current.has(recorded)) {
+    console.warn(
+      `\n⚠ check-docs (warn): the polaris-api-conventions plugin was generated from a different ${API_HTML}` +
+        `\n    (plugin ${recorded.slice(0, 12)}… vs this checkout ${sha(rawBytes).slice(0, 12)}…).` +
+        `\n    From the folder holding both clones:  node polaris-api-conventions/scripts/import-api-html.mjs polaris/${API_HTML}` +
+        `\n    then bump plugin.json version, commit and push IN THAT REPO (it is a separate git repo).\n`,
+    );
+  }
 }
 
 // --- report ---

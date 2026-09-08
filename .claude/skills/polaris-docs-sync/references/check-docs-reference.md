@@ -20,6 +20,7 @@ review in `SKILL.md`. Bypass one commit with `git commit --no-verify` and say so
 | `orphan-reference` | a `references/**/*.md` (or `scripts/*`) is not linked from its skill's `SKILL.md` | add a `[name](references/…)` link in the routing table |
 | `claude-md-size` | `CLAUDE.md` is over 25 KB (fail); over 15 KB warns | move reference material into a skill; CLAUDE.md holds conventions and the index only |
 | util-test coverage (warn) | a `src/utils/*.ts` with runtime exports has no `tests/unit/<name>.test.ts` | add the test when you next touch the util |
+| `api-plugin-fresh` (warn) | `public/api.html` no longer hashes to the `sourceApiHtmlSha256` that the `polaris-api-conventions` plugin recorded when it was generated — i.e. the published client guide has fallen behind this repo's API page | regenerate the plugin in its own clone and push it there (the routing row in `SKILL.md` has the command). Warn-only and **skipped entirely when the clone is not found**, because the plugin lives in a separate repo and is not a build input: CI and a fresh clone must not be failed by its absence |
 
 ## Typical failure → cause
 
@@ -27,6 +28,8 @@ review in `SKILL.md`. Bypass one commit with `git commit --no-verify` and say so
 - **`paths-exist` after a rename**: grep the doc set for the old path; the skills cite files by path in dozens of places.
 - **`orphan-reference` after splitting a big file**: the new sibling needs its own link in the SKILL.md table.
 - **The hook did not run**: `git config core.hooksPath` should print `.githooks`; `npm install` sets it.
+- **`api-plugin-fresh` says nothing at all**: it is silent both when the plugin is current and when the clone was not found. It looks for `polaris-api-conventions/` by walking UP from the repo root, so it works from the main checkout and from a worktree under `.claude/worktrees/<slug>` alike — a plain `../` lookup would resolve inside the worktrees folder and skip silently in every tree where work actually happens.
+- **`api-plugin-fresh` must not fire on line endings alone**: the plugin stamps the hash of api.html's RAW bytes, so a checkout with different endings than the machine that ran the generator would mismatch on whitespace. The check hashes the file as-is, as LF and as CRLF, and accepts any match — the question it asks is whether the CONTENT moved.
 
 ## History
 
