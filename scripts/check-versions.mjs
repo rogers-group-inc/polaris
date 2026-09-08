@@ -123,6 +123,12 @@ const FAMILIES = [
       // unchecked canonical list is the most confident way to be wrong.
       { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
         re: /\*\*Node\.js\*\*\s*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
+      // README's system-requirements table. Its own row format, so the prose
+      // regex above misses it — and it said "20 LTS" for both minimum and
+      // recommended long after Node 20 went EOL, which is precisely the drift
+      // an unchecked site accumulates.
+      { file: "README.md", label: "system-requirements table", kind: "prose",
+        re: /\|\s*Node\.js\s*\|\s*(\d+)\+/g, pick: (m) => m[1] },
     ],
     // The Linux scripts accept a *range* (v20 or v22) while Windows pins one
     // exact build. That is not a contradiction the equality check can see, but
@@ -218,6 +224,8 @@ const FAMILIES = [
         re: /\/usr\/pgsql-(\d+)\//g, pick: (m) => m[1] },
       { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
         re: /\*\*PostgreSQL\*\*\s*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
+      { file: "README.md", label: "system-requirements table", kind: "prose",
+        re: /\|\s*PostgreSQL\s*\|\s*(\d+)\+/g, pick: (m) => m[1] },
     ],
   },
 
