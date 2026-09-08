@@ -454,3 +454,105 @@ export async function getPlatformLifecycle(opts: { force?: boolean } = {}): Prom
   memo = { at: Date.now(), value };
   return value;
 }
+
+// ─── Capacity-snapshot reasons ────────────────────────────────────────
+
+/** The shape capacityService's CapacityReason expects. Kept structural to
+ *  avoid importing capacityService here and creating a module cycle. */
+export interface LifecycleCapacityReason {
+  severity: "watch" | "warning" | "critical";
+  code: string;
+  message: string;
+  suggestion: string;
+  family: string;
+}
+
+/**
+ * All lifecycle rows share ONE family, deliberately.
+ *
+ * collapseReasonsByFamily keeps the highest-severity row per family and merges
+ * the suppressed rows' suggestions onto the winner. So an install on EOL
+ * PostgreSQL *and* near-EOL Node produces one capacity row — the PostgreSQL
+ * problem, with the Node remediation appended — and the full per-technology
+ * breakdown lives on the Platform Lifecycle card, where it belongs.
+ *
+ * Per-technology families would let a neglected install push four rows into the
+ * Database card and four entries into every capacity.severity_changed Event's
+ * details. The honest cost of one family is that it understates breadth, which
+ * is why the winning message says how many others need attention.
+ */
+export const LIFECYCLE_REASON_FAMILY = "platform_lifecycle";
+
+/**
+ * Turn a lifecycle result into capacity reasons.
+ *
+ * Two rules that matter more than they look:
+ *
+ * `watch` rows NEVER reach here. "Node 20 goes end-of-life in five months" is
+ * real but not yet actionable, and writing it into the capacity snapshot would
+ * fire a severity-transition Event on every restart. That is the noise that
+ * teaches operators to ignore the channel.
+ *
+ * Upstream EOL is capped at `warning` via the grader's capacitySeverityCap,
+ * even when the component grades critical. It stays red on the card, still
+ * fires an error-level Event and still emails — but it cannot hold the
+ * non-dismissible sidebar alert open for the months between "PostgreSQL went
+ * EOL" and "we booked the window". `below_minimum` is uncapped and does reach
+ * that alert, because it is a misconfiguration of this install and one package
+ * command from fixed.
+ */
+export function lifecycleCapacityReasons(result: PlatformLifecycleResult): LifecycleCapacityReason[] {
+  const actionable = result.components.filter(
+    (c) => c.grade.severity === "warning" || c.grade.severity === "critical",
+  );
+  if (actionable.length === 0) return [];
+
+  const rank = { warning: 1, critical: 2 } as const;
+  const sorted = [...actionable].sort(
+    (a, b) =>
+      (rank[b.grade.severity as "warning" | "critical"] ?? 0) -
+      (rank[a.grade.severity as "warning" | "critical"] ?? 0),
+  );
+
+  return sorted.map((c, i) => {
+    const g = c.grade;
+    const cap = g.capacitySeverityCap;
+    const severity = (cap && rank[g.severity as "warning" | "critical"] > rank[cap]
+      ? cap
+      : g.severity) as "warning" | "critical";
+
+    let code: string;
+    let message: string;
+    let suggestion: string;
+    const target = c.polarisTarget
+      ? `Move to ${c.label} ${c.polarisTarget}${c.targetTrackEolAt ? ` (supported through ${c.targetTrackEolAt})` : ""}.`
+      : `Plan an upgrade.`;
+
+    if (g.state === "below_minimum") {
+      code = "platform_below_minimum";
+      message = `${c.label} ${c.observedVersion ?? g.track ?? "(unknown)"} is below Polaris's minimum (${c.label} ${c.polarisMinimum}).`;
+      suggestion = `Upgrade the runtime on this host. ${target}`;
+    } else if (g.state === "eol" || g.state === "eol_extended") {
+      code = "platform_eol";
+      const extended = g.state === "eol_extended" && g.extendedSupportUntil
+        ? ` Extended support runs to ${g.extendedSupportUntil}.`
+        : "";
+      message = `${c.label} ${g.track} reached end of life on ${g.eolAt} (no further security patches).${extended}`;
+      suggestion = target;
+    } else {
+      code = "platform_eol_approaching";
+      const days = g.daysUntilEol ?? 0;
+      message = `${c.label} ${g.track} reaches end of life in ${days} day${days === 1 ? "" : "s"} (${g.eolAt}).`;
+      suggestion = target;
+    }
+
+    // The collapse pass merges suggestions but not messages, so the winner has
+    // to carry the breadth itself or the card understates the problem.
+    if (i === 0 && sorted.length > 1) {
+      const others = sorted.length - 1;
+      message += ` (+${others} other platform component${others === 1 ? "" : "s"} need${others === 1 ? "s" : ""} attention — see Platform Lifecycle.)`;
+    }
+
+    return { severity, code, message, suggestion, family: LIFECYCLE_REASON_FAMILY };
+  });
+}

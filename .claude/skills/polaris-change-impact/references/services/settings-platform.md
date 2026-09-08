@@ -187,11 +187,11 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** Observing what this Polaris host is actually running (Node, PostgreSQL, TimescaleDB, Go, Java, nginx, the OS, PgBouncer, Prisma) and assembling that against the committed end-of-life dataset into the Platform Lifecycle card's answer. Also the transition record that decides when a lifecycle change is worth an Event.
 
-**Public API:** `getPlatformLifecycle`, `observePlatformStack`, `loadPlatformEolDataset`, `_resetDatasetCache`, `_resetLifecycleMemo` (test seams), plus the `ObservedComponent` / `LifecycleComponent` / `PlatformLifecycleResult` types.
+**Public API:** `getPlatformLifecycle`, `observePlatformStack`, `loadPlatformEolDataset`, `lifecycleCapacityReasons`, `LIFECYCLE_REASON_FAMILY`, `_resetDatasetCache`, `_resetLifecycleMemo` (test seams), plus the `ObservedComponent` / `LifecycleComponent` / `PlatformLifecycleResult` types.
 
 **Cross-service deps:** `timescaleService.getDetectionState()` (cached boot state — no query), `agentBuildService.goAvailable()`, `utils/platformVersions` (all parsing), `utils/platformLifecycleGrade` (all grading), `utils/deploymentContext.runtimeIsContainer`, `utils/dbConnections.isPgbouncerMode`, `utils/version` for the informational rows. Spawns `java -version` and `nginx -v`; runs one `SHOW server_version`.
 
-**Used by:** `src/api/routes/serverSettings.ts — GET /platform-lifecycle`, and the Platform Lifecycle card it feeds.
+**Used by:** `src/api/routes/serverSettings.ts — GET /platform-lifecycle` and the card it feeds; `src/services/capacityService.ts — computeReasons()` via the lazy `lifecycleReasonsSafe()` import.
 
 **Invariants:**
 - **`observePlatformStack()` never throws.** Every probe owns its try/catch and reports `probeStatus` (`ok` / `absent` / `error` / `undetectable`) instead. `getPlatformLifecycle()` additionally swallows a missing or malformed dataset into `datasetError` with an empty component list — the capacity snapshot and the whole Maintenance tab must keep rendering when the lifecycle data is the only broken thing.
@@ -203,6 +203,9 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - **PgBouncer's version is `undetectable`, not unknown-by-accident.** It needs `SHOW VERSION` on the admin console with credentials Polaris does not hold; the card asks the operator to confirm the floor by hand.
 - The service reads the dataset and never writes it. Refreshing `src/data/platformEol.json` is a human-reviewed task owned by `polaris-tech-lifecycle`.
 - The grader sets `capacitySeverityCap: "warning"` on upstream EOL so it can never hold the non-dismissible sidebar alert open for months; `below_minimum` is uncapped and does reach it.
+- **Every lifecycle reason shares `family: "platform_lifecycle"`.** `collapseReasonsByFamily()` therefore yields ONE capacity row, with the suppressed rows' suggestions merged onto it, and the per-component breakdown stays on the card. The cost is that one row understates breadth, which is why the winning message appends "+N other platform components need attention" — the collapse pass merges suggestions but not messages.
+- **`watch`-severity rows never reach the capacity snapshot at all.** "Node 20 goes end-of-life in five months" is real but not yet actionable, and a capacity row would fire a severity-transition Event on every restart. That is the noise that teaches operators to ignore the channel.
+- `lifecycleReasonsSafe()` in capacityService wraps the whole thing: a lifecycle failure must never take the capacity snapshot with it, because the snapshot drives the sidebar disk alert, which is the more urgent of the two signals.
 
 **When changing this:**
 - Adding a probe: give it its own try/catch, decide honestly between `absent` and `error`, and confirm the whole thing still resolves with that probe throwing.

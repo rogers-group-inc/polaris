@@ -35,6 +35,8 @@ import {
   getPlatformLifecycle,
   observePlatformStack,
   loadPlatformEolDataset,
+  lifecycleCapacityReasons,
+  LIFECYCLE_REASON_FAMILY,
   _resetLifecycleMemo,
   _resetDatasetCache,
 } from "../../src/services/platformLifecycleService.js";
@@ -199,5 +201,120 @@ describe("getPlatformLifecycle", () => {
     const pg = r.components.find((c) => c.id === "postgres")!;
     expect(pg.grade.state).toBe("unknown");
     expect(pg.grade.severity).toBe("none");
+  });
+});
+
+describe("lifecycleCapacityReasons", () => {
+  function result(components: any[]): any {
+    return {
+      computedAt: new Date().toISOString(),
+      datasetReviewedAt: "2026-09-08",
+      datasetError: null,
+      severity: "none",
+      components,
+      informational: [],
+    };
+  }
+
+  function c(over: Record<string, any> = {}): any {
+    return {
+      id: "node",
+      label: "Node.js",
+      observedVersion: "20.19.0",
+      polarisMinimum: "20",
+      polarisTarget: "24",
+      targetTrackEolAt: "2028-04-30",
+      grade: {
+        state: "eol",
+        severity: "critical",
+        track: "20",
+        eolAt: "2026-04-30",
+        daysUntilEol: -131,
+        capacitySeverityCap: "warning",
+      },
+      ...over,
+    };
+  }
+
+  it("emits nothing when everything is healthy", () => {
+    expect(lifecycleCapacityReasons(result([]))).toEqual([]);
+    expect(
+      lifecycleCapacityReasons(result([c({ grade: { ...c().grade, severity: "none", state: "current" } })])),
+    ).toEqual([]);
+  });
+
+  it("never emits a watch-severity row", () => {
+    // "Node 20 goes EOL in five months" is real but not yet actionable, and a
+    // capacity row would fire a severity-transition Event on every restart.
+    expect(
+      lifecycleCapacityReasons(result([c({ grade: { ...c().grade, severity: "watch", state: "aging" } })])),
+    ).toEqual([]);
+  });
+
+  it("caps upstream EOL at warning even when the component grades critical", () => {
+    const out = lifecycleCapacityReasons(result([c()]));
+    expect(out).toHaveLength(1);
+    expect(out[0].severity).toBe("warning");
+    expect(out[0].code).toBe("platform_eol");
+  });
+
+  it("leaves below_minimum uncapped so it reaches the sidebar alert", () => {
+    const out = lifecycleCapacityReasons(
+      result([
+        c({
+          observedVersion: "18.20.4",
+          grade: { state: "below_minimum", severity: "critical", track: "18", eolAt: null, daysUntilEol: null },
+        }),
+      ]),
+    );
+    expect(out[0].severity).toBe("critical");
+    expect(out[0].code).toBe("platform_below_minimum");
+    expect(out[0].message).toContain("below Polaris's minimum");
+  });
+
+  it("puts every row in one family so the collapse pass yields one", () => {
+    const out = lifecycleCapacityReasons(
+      result([
+        c(),
+        c({ id: "postgres", label: "PostgreSQL", grade: { ...c().grade, state: "approaching_eol", severity: "warning", daysUntilEol: 74, capacitySeverityCap: undefined } }),
+      ]),
+    );
+    expect(new Set(out.map((r) => r.family))).toEqual(new Set([LIFECYCLE_REASON_FAMILY]));
+  });
+
+  it("names the breadth on the winning row, since collapse merges suggestions not messages", () => {
+    const out = lifecycleCapacityReasons(
+      result([
+        c(),
+        c({ id: "postgres", label: "PostgreSQL", grade: { ...c().grade, severity: "warning", state: "approaching_eol", daysUntilEol: 74, capacitySeverityCap: undefined } }),
+        c({ id: "nginx", label: "nginx", grade: { ...c().grade, severity: "warning", state: "approaching_eol", daysUntilEol: 20, capacitySeverityCap: undefined } }),
+      ]),
+    );
+    expect(out[0].message).toContain("+2 other platform components need attention");
+  });
+
+  it("says nothing about breadth when there is only one problem", () => {
+    expect(lifecycleCapacityReasons(result([c()]))[0].message).not.toContain("other platform component");
+  });
+
+  it("states the approaching-EOL day count and the target", () => {
+    const out = lifecycleCapacityReasons(
+      result([
+        c({ grade: { ...c().grade, state: "approaching_eol", severity: "warning", daysUntilEol: 74, eolAt: "2026-11-21", capacitySeverityCap: undefined } }),
+      ]),
+    );
+    expect(out[0].code).toBe("platform_eol_approaching");
+    expect(out[0].message).toContain("74 days");
+    expect(out[0].suggestion).toContain("Node.js 24");
+    expect(out[0].suggestion).toContain("2028-04-30");
+  });
+
+  it("mentions extended support when that is the state", () => {
+    const out = lifecycleCapacityReasons(
+      result([
+        c({ grade: { ...c().grade, state: "eol_extended", severity: "warning", extendedSupportUntil: "2032-04-21" } }),
+      ]),
+    );
+    expect(out[0].message).toContain("Extended support runs to 2032-04-21");
   });
 });
