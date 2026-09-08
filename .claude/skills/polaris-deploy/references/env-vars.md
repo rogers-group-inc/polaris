@@ -136,6 +136,11 @@ POLARIS_PROXY_CERT_PATH=
 POLARIS_PUBLIC_URL=
 
 # TimescaleDB chunk compression window (days). Default 7. 0 disables.
+# At the default, detail tables compress almost nothing: the compression and
+# retention policies both key off a chunk's end plus their own window, so a
+# 7-day detail retention drops each chunk about when it becomes compressible
+# (real install: 146 MB compressed of 89 GB, 2026-09). The 10-30× saving lands
+# on the 30d/365d rollups. Set it BELOW detail retention to compress detail.
 TIMESCALE_COMPRESS_AFTER_DAYS=7
 
 # Persistent-state dir. When set, .env / .setup-complete / data/backups /
