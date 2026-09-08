@@ -42,6 +42,18 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
  */
 const EXEMPT = new Set<string>([]);
 
+/**
+ * Managed hypertables deliberately left OUT of capacityService's steady-state
+ * projection. Empty, and it should stay that way: a table in
+ * ALL_HYPERTABLE_CANDIDATES holds sample data on a retention window, which is
+ * exactly what the projection exists to forecast. Adding a name here means its
+ * bytes sit in the projection's `baseBytes` term and are carried into the
+ * steady-state figure unchanged, so justify it in a comment — "it's small" is
+ * not a justification (asset_service_log_samples reached 13 GB on that
+ * reasoning, 2026-09).
+ */
+const PROJECTION_EXEMPT = new Set<string>([]);
+
 const managed = new Set<string>(ALL_HYPERTABLE_CANDIDATES);
 
 /** Every double-quoted sample-table string literal in a source file. */
@@ -55,8 +67,9 @@ function tablesReferencedIn(relPath: string): string[] {
 
 describe("timescaleService managed-table inventory", () => {
   it("covers one detail + hourly + daily table per retention entity, plus standalones", () => {
-    // 7 retention entities × 3 tiers = 21 tiered hypertables (+ 1 standalone
-    // = 22 ALL_HYPERTABLE_CANDIDATES). A new tiered sample stream must land in
+    // 7 retention entities × 3 tiers = 21 tiered hypertables, + the four
+    // STANDALONE_SAMPLE_TABLES = 25 ALL_HYPERTABLE_CANDIDATES. A new tiered
+    // sample stream must land in
     // SAMPLE_TABLES + ROLLUP_TABLES alongside its RETENTION_ENTITIES entry, or
     // this count diverges. Detail-only streams with no rollups live in
     // STANDALONE_SAMPLE_TABLES instead. (SD-WAN rules became a current-state
@@ -82,28 +95,43 @@ describe("timescaleService managed-table inventory", () => {
     expect(unmanaged).toEqual([]);
   });
 
-  it("capacityService's local projection map covers every TIERED managed table", () => {
-    // capacityService keeps its own per-table list (entity/tier/countKey) plus
-    // DEFAULT_ROWS_PER_ASSET_PER_DAY / DEFAULT_BYTES_PER_ROW maps. The rows
-    // map is dereferenced WITHOUT a fallback (`DEFAULT_ROWS_PER_ASSET_PER_DAY
-    // [def.name](intervals)`), so a managed table missing there throws inside
-    // the capacity snapshot. The maps use unquoted identifier keys, so match
-    // bare words rather than string literals.
-    // Scope: the TIERED tables only. STANDALONE_SAMPLE_TABLES are deliberately
-    // excluded from the steady-state size projection — they have no
-    // RetentionEntity (the projection keys retention off entity/tier) and are
-    // small (custom-widget samples only exist when operators define widgets).
-    const tiered = new Set<string>([...SAMPLE_TABLES, ...ROLLUP_TABLES]);
+  it("capacityService projects EVERY managed hypertable, tiered and standalone", () => {
+    // This is the guard that was missing when asset_service_log_samples was
+    // added to STANDALONE_SAMPLE_TABLES (2026-09). capacityService keeps its own
+    // per-table projection list, and projectSteadyStateSize() subtracts the
+    // measured bytes of exactly that list from the database size before adding
+    // the projection back — so a managed hypertable absent from it does not
+    // merely go unprojected: its bytes stay inside `baseBytes` and ride into the
+    // steady-state figure at face value. The card then tracks the live database
+    // size instead of forecasting it, which is how a 13 GB table hid for a
+    // release (89 GB database reporting a 71 GB "steady state").
+    //
+    // The old version of this test scoped itself to the TIERED tables and
+    // rationalised the standalones as "small" — which is precisely the
+    // assumption a log table breaks. It also matched any MENTION of a table
+    // name anywhere in the file, so a name appearing only in a comment satisfied
+    // it. Parse the actual list entries instead: `{ name: "asset_x", entity: ...`.
     const src = readFileSync(join(ROOT, "src", "services", "capacityService.ts"), "utf8");
-    const re = /\basset_[a-z_]+_samples(?:_hourly|_daily)?\b/g;
-    const referenced = new Set<string>();
-    for (const m of src.matchAll(re)) referenced.add(m[0]);
+    const re = /\{\s*name:\s*"(asset_[a-z_]+)"\s*,\s*entity:/g;
+    const projected = new Set<string>();
+    for (const m of src.matchAll(re)) projected.add(m[1]);
+    expect(projected.size).toBeGreaterThan(0);
 
-    const missing = [...tiered].filter((t) => !referenced.has(t)).sort();
+    const missing = [...managed].filter((t) => !projected.has(t) && !PROJECTION_EXEMPT.has(t)).sort();
     expect(missing).toEqual([]);
 
-    const unmanaged = [...referenced].filter((t) => !managed.has(t) && !EXEMPT.has(t)).sort();
+    const unmanaged = [...projected].filter((t) => !managed.has(t) && !EXEMPT.has(t)).sort();
     expect(unmanaged).toEqual([]);
+
+    // DEFAULT_ROWS_PER_ASSET_PER_DAY is dereferenced without a fallback
+    // (`DEFAULT_ROWS_PER_ASSET_PER_DAY[def.name](intervals)`), so a tiered table
+    // missing from that map throws inside the capacity snapshot. The map uses
+    // unquoted identifier keys, so match bare words.
+    const tiered = new Set<string>([...SAMPLE_TABLES, ...ROLLUP_TABLES]);
+    const rowsMapKeys = new Set<string>();
+    for (const m of src.matchAll(/^\s{2}(asset_[a-z_]+):\s*\(/gm)) rowsMapKeys.add(m[1]);
+    const noRowModel = [...tiered].filter((t) => !rowsMapKeys.has(t)).sort();
+    expect(noRowModel).toEqual([]);
   });
 
   it("every sample-shaped table in prisma/schema.prisma is Timescale-managed or explicitly exempt", () => {
