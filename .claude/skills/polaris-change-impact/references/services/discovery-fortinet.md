@@ -32,6 +32,29 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/discovery/assetDiscoveryScope.ts
+
+**What it owns:** The answer to "which discovery would refresh THIS asset, and how do I narrow the run to just this one device?" Backs the asset details slide-in’s **Discover Now** button (`POST /assets/:id/rediscover`), keeping that route thin.
+
+**Public API:** `DiscoveryScope`, `ScopeIntegration`, `ResolvedAssetScope`, `AssetScopeResolution`, `resolveDiscoveryScopeForAsset`
+
+**Cross-service deps:** `prisma`, `src/utils/fortinetParentKey.ts`.
+
+**Used by:** `src/api/routes/assets.ts` (`POST /:id/rediscover`).
+
+**Invariants:**
+- It answers TWO separate questions and must not conflate them: WHICH INTEGRATION runs, and WHAT the run is narrowed to. A FortiSwitch/FortiAP’s integration is the one owning its CONTROLLER GATE, not necessarily the one that stamped the child.
+- The controller is resolved through `utils/fortinetParentKey.ts` (`readControllerStamp` → `parentAssetWhereOr` → `resolveInfraParentAsset`). **Never** match `fortinetTopology.controllerFortigate` against `Asset.hostname`: FMG’s device name need not equal the gate’s configured hostname, and the mismatch fails silently (prod 2026-08-12).
+- `scope: null` is meaningful — a standalone-FortiGate integration IS one device, so a plain full run is the exact equivalent, and `scopeDeviceName` is rejected for non-FMG types anyway.
+- `filterAsset` is the row the integration include/exclude filter is re-checked against. For a switch/AP that is the CONTROLLER, because the filter patterns name gates.
+- Every refusal carries a human REASON. The UI renders the button disabled with that text, so returning a bare false would read to an operator as a permission problem.
+
+**When changing this:**
+- Adding a scope kind is a three-part change: the `DiscoveryScope` union here, a target parameter on that integration’s collector, AND a sweep-disabling sync mode. The directory / vCenter / Arc sync layers run ABSENCE-BASED destructive sweeps — handing one a single-device result without a scoped mode decommissions the rest of the fleet. `sweepPhaseEnabled` in `discoveryEngine.ts` is the pattern to copy.
+- Keep the selects tight: this runs on the route, and the slide-in opens constantly.
+
+---
+
 ## services/discoveryCancelWatchdog.ts
 
 **What it owns:** The force-exit backstop for discovery cancellation. Armed when a run's abort signal fires, disarmed when `runDiscovery` reaches its finally. If the run hasn't unwound within the grace window (2 min), it logs the in-flight devices with ages, writes an `integration.discover.force_exit` Event, finalizes the `DiscoveryRun` row as `aborted`, and exits the process with code 1 (systemd `Restart=on-failure` / NSSM restart it).
