@@ -1,5 +1,18 @@
 # Multi-process deployment — systemd, per-role metrics, nginx
 
+> **Liveness vs readiness.** `GET /health` is liveness and deliberately checks
+> NOTHING — the first-run setup wizard polls it from localhost before a database
+> exists, so a database check there would deadlock provisioning. `GET
+> /health/ready` (added with the HA work) is readiness: 200 only when the local
+> PostgreSQL is a writable primary, 503 with `in-recovery` | `db-error` |
+> `timeout` otherwise, on its own one-connection pool over the DIRECT url so a
+> saturated Prisma pool cannot flap a healthy site out of a load balancer. Both
+> honour `HEALTH_TOKEN`, both are skipped by the HTTP metrics middleware (which
+> matches the `/health` PREFIX for exactly this reason), and both are served
+> only by roles with `runsHttp` — `monitor`, `discovery` and `dash` answer
+> neither. Point a load balancer at `/health/ready`; see
+> `high-availability.md` and `docs/HA.md`.
+
 Verbatim from ARCHITECTURE.md → Multi-process architecture (runtime half: `polaris-monitoring-discovery/references/process-roles-runtime.md`).
 **Deployment.** systemd: `polaris-migrate.service` (oneshot, sole migrator) →
 `polaris-web.service` / `polaris-monitor@.service` (templated, N) /

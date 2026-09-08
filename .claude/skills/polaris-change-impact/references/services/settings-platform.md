@@ -244,6 +244,28 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ---
 
+## services/haHeartbeatService.ts
+
+**What it owns:** The active-instance heartbeat and the WAL-rate ring behind the active/standby HA deployment (docs/HA.md). Two Setting rows: `ha.activeInstance` = `{hostname, pid, at}`, re-stamped every 30s by the scheduler role, and `ha.walSamples` = a 288-entry (24h, one per 5 min) ring of `pg_current_wal_lsn()` readings used to size the WAN link, `max_slot_wal_keep_size` and `maximum_lag_on_failover` BEFORE anyone enables HA.
+
+**Public API:** `evaluateHeartbeat` (pure), `checkActiveInstanceConflict`, `stampActiveInstance`, `readActiveInstance`, `appendWalSample`, `isHeartbeatEnabled`, `ACTIVE_INSTANCE_KEY`, `WAL_SAMPLES_KEY`, `HEARTBEAT_INTERVAL_MS`, `CONFLICT_WINDOW_MS`, `WAL_SAMPLE_EVERY_TICKS`, `WAL_SAMPLE_RING_SIZE`, `ActiveInstanceStamp`, `WalSample`, `HeartbeatVerdict`.
+
+**Cross-service deps:** `prisma` (settings), `src/utils/dbConnections.ts` (`getDirectDatabaseUrl` gates the WAL read), `node:os`. No other service.
+
+**Used by:** `src/jobs/activeInstanceHeartbeat.ts` (the 30s tick, scheduler role only), `src/app.ts` (boot guard before `listen()`, gated on `cfg.runsSchedulers`; increments `polaris_ha_active_instance_conflict_total` and exits 1 on a conflict).
+
+**Invariants:**
+- **The asymmetry is the whole design.** A FOREIGN stamp younger than `CONFLICT_WINDOW_MS` blocks a boot; this host's OWN stamp never does, whatever its age. Without that exception a systemd restart mid-tick would leave the app permanently refusing to start.
+- **Not a lock.** A stale stamp expires (90s = three missed writes), so a legitimate failover is delayed by at most one systemd restart, never blocked. Do not add waiting, retrying-until-clear, or a longer window without re-reading why: this is the LAST guard, behind the Patroni lease, the systemd `ExecStartPre` role check, and `DATABASE_URL=localhost` on both nodes. It exists only for two hosts pointed at ONE database.
+- **Falls open on anything it cannot parse.** A malformed stamp, an unparseable timestamp or a read error are all "no conflict" — a corrupt bookkeeping row must never be able to wedge the app, and the schema sanity check already fails loudly on a genuinely unusable database.
+- A future-dated foreign stamp (peer clock skew) counts as LIVE. Erring toward "someone else is running" is the safe direction.
+- Production only (`isHeartbeatEnabled`), so dev and the test suite never trip on it; `POLARIS_HA_HEARTBEAT=off` is the documented escape hatch.
+- `appendWalSample` is advisory: it logs at debug and returns null when the role lacks WAL introspection or the query fails. Nothing depends on it to run.
+
+**When changing this:** the window arithmetic is asserted in `tests/unit/haHeartbeatService.test.ts` (`CONFLICT_WINDOW_MS / HEARTBEAT_INTERVAL_MS === 3`, ring = 24h) — change the constants and those assertions together, and update docs/HA.md §5, which states the 30s/90s numbers to operators. If the stamp ever gains a reader beyond the boot guard (an HA status card, for example), state whether that reader tolerates a stale row before relying on it.
+
+---
+
 ## services/settingsStore.ts
 
 **What it owns:** The generic TTL-cached accessor for JSON-blob Setting rows — `createSettingStore<T>({key, ttlMs, parse})` returning `{get, peek, save, invalidate}`. The store owns the read cache, the row I/O, and cache priming on save; callers keep their parse (defaults merge) and write-side validation/merge rules.

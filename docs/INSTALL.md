@@ -655,8 +655,13 @@ than 9 monitor replicas or need to reach Prometheus from a different host
 
 **Updater group-restart grant.** The in-app updater (Server Settings →
 Maintenance) restarts the whole group via `systemd-run … systemctl restart
-polaris.target`. Grant the `polaris` user permission with a polkit rule
-(`/etc/polkit-1/rules.d/49-polaris.rules`):
+polaris.target`, which needs a polkit grant for the `polaris` user.
+`deploy/setup-rhel.sh` and `deploy/ha/setup-rhel-ha.sh` install it from
+`deploy/polkit/49-polaris.rules`; an install that predates that gets it on the
+next run of either script, or you can drop the file in by hand. Without the
+grant the updater silently falls back to restarting only the web process, so
+the monitor and discovery roles keep running the previous release against the
+freshly migrated schema. What it grants (`/etc/polkit-1/rules.d/49-polaris.rules`):
 
 ```javascript
 polkit.addRule(function(action, subject) {
@@ -1183,6 +1188,43 @@ POLARIS_HEAVY_CONCURRENCY=8    # cursor mode only
 For headless installs (no UI access) the same env vars can be set by hand. The defaults above cover up to ~500 monitored assets in cursor mode; past that, flip to pg-boss (`Setting.monitor.queueMode = "pgboss"`) and let the advisor scale worker counts as the fleet grows.
 
 `max_connections` on the PostgreSQL side should sit at roughly `(prismaPool + pgbossPool) / 0.65` rounded up to a multiple of 50, leaving ~35% headroom for non-Polaris consumers (psql sessions, backups, replication, monitoring agents). The advisor surfaces the exact recommendation alongside the pool sizes.
+
+---
+
+## Optional: High availability (active/standby, two datacenters)
+
+A second host in another datacenter that takes over automatically when the
+first is lost, behind one public name. PostgreSQL is managed by **Patroni**
+with a three-member **etcd** (the two database nodes plus a small witness);
+replication is asynchronous streaming, so the recovery point is the
+replication lag and the recovery time is roughly 1.5 to 3 minutes.
+
+The application follows its database: `polaris-ha-role` starts
+`polaris.target` only where the local PostgreSQL is the Patroni primary, and
+stops it everywhere else. That is not a preference — Polaris has no leader
+election, so two live web roles would poll every device twice and duplicate
+every alert. Four independent layers make a second instance impossible, and
+`GET /health/ready` (200 only on a writable primary) is what takes a demoted
+node out of your load balancer.
+
+Two things about this deployment surprise people, so they are worth knowing
+before you plan it:
+
+- **The standby must serve the identical nginx certificate.** Every enrolled
+  agent pins that exact leaf by SHA-256 and does not validate a chain, so a
+  different certificate — even a valid one from the same CA — is refused by the
+  whole fleet. The file sync copies it for exactly this reason.
+- **`.env` must be identical too.** `POLARIS_SECRET_KEY` decrypts every stored
+  credential and `SESSION_SECRET` signs every cookie; a mismatch blanks the
+  first and invalidates the second, silently.
+
+Tooling lives in `deploy/ha/` (etcd and Patroni templates, the certificate
+authority, the reconciler, the systemd drop-ins, `setup-rhel-ha.sh`).
+
+**Read [docs/HA.md](HA.md) before starting.** It covers the witness-placement
+trade-off, the network and hardware requirements, exactly what a failover
+loses, the split-brain proof, the build walkthrough, the update procedure, the
+rollback out of Patroni, and the drills.
 
 ---
 

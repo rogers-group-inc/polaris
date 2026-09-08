@@ -4,6 +4,14 @@ The route groupings under `/api/v1/` as CLAUDE.md summarized them (route file in
 
 All routes are prefixed `/api/v1/` and aggregated by `src/api/router.ts`. Permission gates live in `src/api/middleware/permissions.ts` — `requirePermission(functionKey, level)` resolves against the caller's role snapshot (session-stamped for browser callers; resolved from the token's bound Role for bearer callers), with ownership-aware `requireOwnership(functionKey)` for `subnets` / `reservations`.
 
+**Three endpoints live OUTSIDE `/api/v1` and outside the permission model**, declared directly on the app in `src/app.ts` and gated only by an optional bearer token from `.env`:
+
+- `GET /health` — liveness. Answers 200 `{status:"ok"}` whenever the process is up and **checks nothing at all**: the first-run setup wizard polls it from localhost before a database exists, so a database check here would deadlock provisioning. Gated by `HEALTH_TOKEN` when set.
+- `GET /health/ready` — readiness. 200 `{status:"ready"}` only when the local PostgreSQL is a **writable primary**; otherwise 503 `{status:"not-ready", reason}` with reason `in-recovery` (this node is a hot standby — the expected answer on the standby of an active/standby pair), `db-error` or `timeout`. `Cache-Control: no-store`. Same `HEALTH_TOKEN` gate. Backed by `utils/readinessCheck.ts` on its own one-connection pool over the DIRECT database url, never the Prisma pool: a saturated application pool must not be able to flap a healthy site out of a load balancer. This is the endpoint a load balancer should monitor — see `docs/HA.md`.
+- `GET /metrics` — Prometheus. Gated by `METRICS_TOKEN` when set, and additionally by an nginx `allow` block in production.
+
+None of the three carry a session, a role snapshot or a `requirePermission` gate, and all three are served only by roles with `runsHttp` (`web` / `all`) — `monitor`, `discovery` and `dash` answer none of them. When adding an app-level endpoint, decide deliberately which side of `/api/v1` it belongs on: everything on the router inherits CSRF, the session/bearer resolution and a permission gate, and these three deliberately do not.
+
 Resource groupings (route file in `src/api/routes/`):
 
 - **auth** (login / logout / Azure SSO / TOTP)

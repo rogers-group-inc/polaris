@@ -76,8 +76,17 @@ SESSION_SECRET=changeme
 # hop count, "loopback", or CIDR only when behind a real proxy.
 TRUST_PROXY=
 
-# /health bearer token — auto-generated at first-run setup. Clearing reopens the
-# endpoint and surfaces a `health_token_unset` watch reason on Maintenance tab.
+# Active-instance heartbeat kill switch (HA). Production-only guard: the web
+# role refuses to boot when another hostname holds a <90s-old
+# Setting("ha.activeInstance") stamp. "off" disables it. See docs/HA.md and
+# high-availability.md.
+POLARIS_HA_HEARTBEAT=
+
+# /health AND /health/ready bearer token — auto-generated at first-run setup.
+# Clearing reopens both endpoints and surfaces a `health_token_unset` watch
+# reason on Maintenance tab. /health is liveness (checks nothing, the setup
+# wizard polls it); /health/ready is readiness (200 only on a writable primary,
+# 503 in-recovery/db-error/timeout) and is what a load balancer should monitor.
 HEALTH_TOKEN=
 
 # /metrics bearer token — auto-generated at first-run setup. Endpoint leaks
