@@ -733,7 +733,7 @@ export interface ExpandDeliveriesOptions {
   /** Repeat provenance (attempt) — a SEPARATE meta key from `escalation`, so a
    *  reminder is never mistaken for an escalation by anything reading the
    *  delivery history. */
-  repeat?: { attempt: number };
+  repeat?: { attempt: number; elapsed?: string; quietResumed?: boolean };
   /**
    * May a target's `respectUserPreference` flag actually filter recipients?
    *

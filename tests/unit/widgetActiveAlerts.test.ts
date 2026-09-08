@@ -189,8 +189,32 @@ describe("row contents", () => {
     const row = rowsOf(el)[0];
     expect(row.tagName.toLowerCase()).toBe("a");
     expect(row.getAttribute("data-asset-id")).toBe("asset-9");
-    expect(row.getAttribute("href")).toBe("/assets.html#view=asset:asset-9");
+    // The hash carries the Alerts tab too, so the Assets page lands there on
+    // a ctrl/middle-click just as the in-place open does.
+    expect(row.getAttribute("href")).toBe("/assets.html#view=asset:asset-9&tab=notifications");
     expect(row.getAttribute("class")).toContain("recent-item-link");
+  });
+
+  it("opens the asset slide-over on its Alerts tab, not General", () => {
+    // An alert entry is a prompt to look at THAT alert; landing on General
+    // made the operator hunt for the tab on every click.
+    const win = g.window as any;
+    const opened: Array<[string, unknown]> = [];
+    win.openViewModal = (id: string, opts: unknown) => { opened.push([id, opts]); };
+    try {
+      const el = mountWidget();
+      const cleanups: Array<() => void> = [];
+      mod.renderInstance(el, { minSeverity: "warning" },
+        { rows: [alert({ id: "a", severity: "critical", assetId: "asset-9" })], total: 1 },
+        { onUnmount: (fn) => cleanups.push(fn) });
+      const ev = new win.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+      rowsOf(el)[0].dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(true);
+      expect(opened).toEqual([["asset-9", { tab: "notifications" }]]);
+      cleanups.forEach((fn) => fn());
+    } finally {
+      delete win.openViewModal;
+    }
   });
 
   it("leaves an alert about Polaris itself unlinked — there is no device page", () => {

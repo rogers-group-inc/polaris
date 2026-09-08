@@ -293,7 +293,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/ipUpstreamChainService.ts
 
-**What it owns:** The IP-keyed upstream chain (business rule 44): for an asset that has an address and NO MAC, derive `lastSeenSwitch` / `lastSeenAp` by walking IP → containing subnet's owning FortiGate → THAT gate's `AssetArpEntry` → MAC → `AssetMacTableEntry` (lowest-cardinality learned port) / `AssetWirelessStation` (by MAC, or by the station's own recorded address). Every other writer of those two columns is keyed by MAC, so an asset from AD / Azure Arc / a vCenter cluster / an active scan / the operator form could never acquire them — this service reads the current-state tables those writers leave behind and joins the chain. No device I/O.
+**What it owns:** The IP-keyed upstream chain (business rule 45): for an asset that has an address and NO MAC, derive `lastSeenSwitch` / `lastSeenAp` by walking IP → containing subnet's owning FortiGate → THAT gate's `AssetArpEntry` → MAC → `AssetMacTableEntry` (lowest-cardinality learned port) / `AssetWirelessStation` (by MAC, or by the station's own recorded address). Every other writer of those two columns is keyed by MAC, so an asset from AD / Azure Arc / a vCenter cluster / an active scan / the operator form could never acquire them — this service reads the current-state tables those writers leave behind and joins the chain. No device I/O.
 
 **Public API:** `resolveIpUpstreamForMaclessAssets(now?)` → `IpUpstreamChainResult` counts; the pure `claimIsFresh`, `pickArpMac`, `pickBestSwitchPort`, `switchPortLabel`, `portKey`, `stampChanged`; `loadMaclessClaims`; `EVIDENCE_FRESH_MS`.
 

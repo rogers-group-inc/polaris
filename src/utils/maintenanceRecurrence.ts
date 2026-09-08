@@ -18,16 +18,47 @@
  *     daysOfWeek: [0, 6],                // weekly only; 0 = Sunday
  *     dayOfMonth: 31,                    // monthly; clamped to month length
  *     month: 7, day: 4,                  // yearly (day clamped too)
- *     startTime: "22:00", endTime: "02:00",  // both or neither (neither = all-day);
- *                                        // endTime <= startTime spans midnight and
- *                                        // the day-of-* selector matches the START day
+ *     hours: [{ startTime: "22:00", endTime: "02:00" },   // SEVERAL ranges per day;
+ *             { startTime: "12:00", endTime: "13:00" }],  // applies to every matched day
+ *     hoursByDay: [{ dow: 6, hours: [] }],  // PER-DAY override (daily/weekly only);
+ *                                        // hours: [] means all day for that day
+ *     startTime: "22:00", endTime: "02:00",  // LEGACY single range — every row stored
+ *                                        // before per-day hours carries this pair, and
+ *                                        // it is still read (see resolveDayRanges)
  *     activeFrom: "2026-07-01", activeUntil: "2026-12-31" }  // optional recurrence
  *                                        // bounds (local dates, inclusive, checked
  *                                        // against the occurrence's START day)
  *
+ * A day therefore produces ZERO OR MORE occurrences, not one — which is why
+ * `occurrencesStartingOn` returns an array and every consumer of it iterates.
+ * Ranges are resolved per matched day in one order: the day's own `hoursByDay`
+ * entry, else `hours`, else the legacy `startTime`/`endTime` pair, else all
+ * day. `endTime <= startTime` still spans midnight, and the day-of-* selector
+ * still matches the START day.
+ *
  * Occurrences are half-open intervals [start, end): a window ending 02:00 is
  * no longer active at exactly 02:00, so a window starting 02:00 can hand over
  * without a double-active instant.
+ *
+ * **Two ranges on the SAME day may not overlap** (`overlapProblems`, refused at
+ * validation): "22:00–06:00 and 23:00–01:00" is a mistyped end time every
+ * time, and each range is its own occurrence, so accepting it would put two
+ * occurrences over one instant — ambiguous for a consumer that identifies an
+ * occurrence by its start, which the operator-release check in
+ * `maintenanceScheduleService.runReconcile` does (it compares the release time
+ * against `currentWindow(...).start` to decide whether an operator who ended
+ * maintenance by hand stays released).
+ *
+ * Overlap ACROSS days is deliberately allowed, because it is not a mistake:
+ * "Mon–Fri 22:00–06:00 plus all day Saturday" has Friday's overnight range
+ * running into Saturday's all-day one, and that is the most ordinary schedule
+ * anyone writes. Where two occurrences do overlap, `currentWindow` returns the
+ * earliest-STARTING one that contains the instant (yesterday's before
+ * today's), so the answer is deterministic — but it describes that range
+ * rather than the whole contiguous stretch, which is why the Maintenance
+ * modal's "until" can read Saturday 06:00 on an asset that stays in
+ * maintenance all weekend. Callers that need the end of the STRETCH chain
+ * forward themselves (`quietTime.quietResumesAt` is the one that does).
  */
 
 import { z } from "zod";
@@ -54,6 +85,79 @@ const oneshotSchema = z
     message: "endAt must be after startAt",
   });
 
+/** "22:00" → 1320. */
+function minutesOfDay(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
+/**
+ * Hour ranges that overlap each other WITHIN one day, as messages naming both.
+ *
+ * Each range is measured from its own day's midnight, so a range whose end is
+ * at or before its start is carried past 1440 — that is what makes
+ * "22:00–06:00" and "23:00–01:00" comparable at all, and it is the pair this
+ * check exists to catch. Sorting by start and comparing each range with the
+ * one before it is sufficient for a set of intervals.
+ *
+ * Deliberately per-day and not across days: see the module header. A schedule
+ * whose Friday night runs into an all-day Saturday is ordinary, not a typo.
+ */
+function overlapProblems(s: {
+  hours?: TimeRange[];
+  hoursByDay?: DayHours[];
+}): string[] {
+  const out: string[] = [];
+  const check = (ranges: TimeRange[] | undefined, label: string): void => {
+    if (!ranges || ranges.length < 2) return;
+    const iv = ranges
+      .map((r) => {
+        const a = minutesOfDay(r.startTime);
+        const b = minutesOfDay(r.endTime);
+        return { a, b: b <= a ? b + 1440 : b, text: `${r.startTime}–${r.endTime}` };
+      })
+      .sort((x, y) => x.a - y.a);
+    for (let i = 1; i < iv.length; i++) {
+      if (iv[i]!.a < iv[i - 1]!.b) {
+        out.push(`${label}: ${iv[i - 1]!.text} overlaps ${iv[i]!.text}`);
+      }
+    }
+  };
+  check(s.hours, "hours");
+  for (const d of s.hoursByDay ?? []) check(d.hours, `hours on day ${d.dow}`);
+  return out;
+}
+
+/** Cap on hour ranges in ONE day. Eight covers "overnight, plus a lunch
+ *  window, plus a couple of afternoon slots" with room to spare, and bounds
+ *  both the overlap check and the per-tick occurrence expansion. */
+export const MAX_RANGES_PER_DAY = 8;
+
+/**
+ * One hour range within a day. Both ends are required — an "open" range has no
+ * meaning here, and all-day is expressed by having NO ranges rather than by a
+ * half-filled one (which is what made the legacy `startTime`/`endTime` pair
+ * need a both-or-neither refinement of its own).
+ */
+const timeRangeSchema = z
+  .object({
+    startTime: timeOfDay,
+    endTime: timeOfDay,
+  })
+  .strict();
+
+export type TimeRange = z.infer<typeof timeRangeSchema>;
+
+/** Per-day hours: which day, and the ranges on it (`[]` = all day). */
+const dayHoursSchema = z
+  .object({
+    dow: z.number().int().min(0).max(6),
+    hours: z.array(timeRangeSchema).max(MAX_RANGES_PER_DAY),
+  })
+  .strict();
+
+export type DayHours = z.infer<typeof dayHoursSchema>;
+
 const recurringSchema = z
   .object({
     version: z.literal(1),
@@ -65,6 +169,11 @@ const recurringSchema = z
     day: z.number().int().min(1).max(31).optional(),
     startTime: timeOfDay.optional(),
     endTime: timeOfDay.optional(),
+    hours: z.array(timeRangeSchema).min(1).max(MAX_RANGES_PER_DAY).optional(),
+    // An ARRAY, not a record keyed by day: a `z.record` of a day enum is not
+    // partial in Zod 3 (it would demand all seven keys), and the array form
+    // also lets the duplicate-day check below say which day is doubled.
+    hoursByDay: z.array(dayHoursSchema).min(1).max(7).optional(),
     activeFrom: localDate.optional(),
     activeUntil: localDate.optional(),
   })
@@ -82,8 +191,48 @@ const recurringSchema = z
     if ((s.startTime == null) !== (s.endTime == null)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "startTime and endTime must be set together (omit both for all-day)" });
     }
+    // The legacy pair is the SAME field as `hours`, one range wide. Accepting
+    // both would leave the reader deciding which the operator meant, and the
+    // resolution order is not something a stored blob should depend on.
+    if (s.hours && (s.startTime != null || s.endTime != null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "use hours[] or startTime/endTime, not both",
+      });
+    }
+    if (s.hoursByDay) {
+      if (s.freq !== "daily" && s.freq !== "weekly") {
+        // A monthly or yearly recurrence matches ONE day per period, so
+        // "different hours on Tuesday" has nothing to attach to; several
+        // ranges on that day are what `hours` is for.
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "hoursByDay needs a daily or weekly recurrence (use hours[] for monthly/yearly)",
+        });
+      }
+      const seen = new Set<number>();
+      for (const d of s.hoursByDay) {
+        if (seen.has(d.dow)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `hoursByDay lists day ${d.dow} twice` });
+        }
+        seen.add(d.dow);
+        // A day whose hours the schedule states but whose day the schedule
+        // never matches is an editing accident every time — the operator
+        // unticked the day and the hours stayed behind, so the summary and the
+        // engine would silently disagree with what the editor shows.
+        if (s.freq === "weekly" && s.daysOfWeek && !s.daysOfWeek.includes(d.dow)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `hoursByDay states hours for day ${d.dow}, which daysOfWeek does not include`,
+          });
+        }
+      }
+    }
     if (s.activeFrom && s.activeUntil && s.activeUntil < s.activeFrom) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "activeUntil must not be before activeFrom" });
+    }
+    for (const problem of overlapProblems(s)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
     }
   });
 
@@ -243,18 +392,49 @@ function setTime(day: Date, hhmm: string): Date {
 }
 
 /**
- * The occurrence STARTING on local day `day`, or null if the day selector /
- * active bounds don't match. All-day = [00:00, next-day 00:00). A time range
- * with endTime <= startTime ends on the FOLLOWING day (spans midnight).
+ * The hour ranges that apply to one matched day-of-week, or null for all day.
+ *
+ * ONE resolution order, everywhere: the day's own `hoursByDay` entry (whose
+ * empty list means all day — an operator who says "Saturday" and picks no
+ * hours means the whole day, exactly as an omitted `startTime` always has),
+ * then the schedule-wide `hours`, then the legacy `startTime`/`endTime` pair
+ * that every row written before per-day hours carries, then all day.
+ *
+ * Keyed by day-of-week rather than by Date so the validator can ask the same
+ * question about a day that hasn't happened yet.
  */
-function occurrenceStartingOn(s: RecurringSchedule, day: Date): MaintenanceOccurrence | null {
-  if (!dayMatches(s, day) || !withinActiveBounds(s, day)) return null;
-  if (s.startTime == null || s.endTime == null) {
-    return { start: day, end: addDays(day, 1) };
+export function resolveDayRanges(s: RecurringSchedule, dow: number): TimeRange[] | null {
+  const own = s.hoursByDay?.find((d) => d.dow === dow);
+  if (own) return own.hours.length > 0 ? own.hours : null;
+  if (s.hours && s.hours.length > 0) return s.hours;
+  if (s.startTime != null && s.endTime != null) {
+    return [{ startTime: s.startTime, endTime: s.endTime }];
   }
-  const start = setTime(day, s.startTime);
-  const end = s.endTime > s.startTime ? setTime(day, s.endTime) : setTime(addDays(day, 1), s.endTime);
-  return { start, end };
+  return null;
+}
+
+/**
+ * Every occurrence STARTING on local day `day`, earliest first — empty when
+ * the day selector / active bounds don't match. All-day = [00:00, next-day
+ * 00:00). A range with endTime <= startTime ends on the FOLLOWING day (spans
+ * midnight).
+ *
+ * An ARRAY because a day can carry several hour ranges (an overnight window
+ * and a lunchtime one), each of which is its own occurrence with its own
+ * start — which is what makes an operator who ends maintenance during the
+ * morning window stay released for that window and re-enter for the
+ * afternoon one.
+ */
+function occurrencesStartingOn(s: RecurringSchedule, day: Date): MaintenanceOccurrence[] {
+  if (!dayMatches(s, day) || !withinActiveBounds(s, day)) return [];
+  const ranges = resolveDayRanges(s, day.getDay());
+  if (ranges === null) return [{ start: day, end: addDays(day, 1) }];
+  return ranges
+    .map((r) => ({
+      start: setTime(day, r.startTime),
+      end: r.endTime > r.startTime ? setTime(day, r.endTime) : setTime(addDays(day, 1), r.endTime),
+    }))
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
 }
 
 /**
@@ -269,13 +449,17 @@ export function currentWindow(schedule: MaintenanceScheduleShape, date: Date): M
     return date.getTime() >= start.getTime() && date.getTime() < end.getTime() ? { start, end } : null;
   }
   // An occurrence is at most 24h (all-day) so only ones starting today or
-  // yesterday can contain `date`. Check today last so it wins on the
-  // boundary instant where yesterday's midnight-spanning window ends
-  // exactly as today's begins (half-open intervals make both checks exact).
+  // yesterday can contain `date`. Yesterday FIRST, and within a day the
+  // ranges are in start order, so where two occurrences overlap (a Friday
+  // night running into an all-day Saturday — legitimate, see the module
+  // header) the answer is always the earliest-starting one that contains the
+  // instant, rather than whichever the scan happened to reach. Half-open
+  // intervals keep the handover instant unambiguous either way.
   const today = startOfDay(date);
   for (const day of [addDays(today, -1), today]) {
-    const occ = occurrenceStartingOn(schedule, day);
-    if (occ && date.getTime() >= occ.start.getTime() && date.getTime() < occ.end.getTime()) return occ;
+    for (const occ of occurrencesStartingOn(schedule, day)) {
+      if (date.getTime() >= occ.start.getTime() && date.getTime() < occ.end.getTime()) return occ;
+    }
   }
   return null;
 }
@@ -329,11 +513,16 @@ export function expandOccurrences(
   }
   const out: MaintenanceOccurrence[] = [];
   let day = addDays(startOfDay(rangeStart), -1);
-  for (let i = 0; i <= EXPAND_MAX_DAYS && day.getTime() < rangeEnd.getTime(); i++) {
-    const occ = occurrenceStartingOn(schedule, day);
-    if (occ && occ.end.getTime() > rangeStart.getTime() && occ.start.getTime() < rangeEnd.getTime()) {
-      out.push(occ);
-      if (out.length >= maxOccurrences) break;
+  outer: for (let i = 0; i <= EXPAND_MAX_DAYS && day.getTime() < rangeEnd.getTime(); i++) {
+    for (const occ of occurrencesStartingOn(schedule, day)) {
+      if (occ.end.getTime() > rangeStart.getTime() && occ.start.getTime() < rangeEnd.getTime()) {
+        out.push(occ);
+        // The cap counts OCCURRENCES, not days, now that one day can carry
+        // several — a schedule with eight ranges a day reaches it eight times
+        // faster, which is the honest accounting for a caller that is
+        // protecting itself against volume.
+        if (out.length >= maxOccurrences) break outer;
+      }
     }
     day = addDays(day, 1);
   }
@@ -352,8 +541,11 @@ export function nextWindow(schedule: MaintenanceScheduleShape, date: Date): Main
   for (let i = 0; i <= NEXT_WINDOW_SCAN_DAYS; i++) {
     const day = addDays(today, i);
     if (schedule.activeUntil && day.getTime() > parseLocalDate(schedule.activeUntil).getTime()) return null;
-    const occ = occurrenceStartingOn(schedule, day);
-    if (occ && occ.end.getTime() > date.getTime()) return occ;
+    // Start order within the day, so on a day whose morning range is already
+    // over this returns the afternoon one rather than the first one listed.
+    for (const occ of occurrencesStartingOn(schedule, day)) {
+      if (occ.end.getTime() > date.getTime()) return occ;
+    }
   }
   return null;
 }

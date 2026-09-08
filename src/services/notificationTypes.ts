@@ -16,6 +16,16 @@ import { TEMPLATE_VARIABLES } from "../utils/notificationTemplate.js";
 import { defaultAlertEmailTemplate } from "../utils/alertEmailTemplate.js";
 import { SENSOR_CLASS_UNITS } from "../utils/hardwareSensors.js";
 import { POE_STATUS_VALUES } from "../utils/poePorts.js";
+import {
+  quietConfigSchema,
+  describeQuietTime,
+  MAX_QUIET_WINDOWS,
+  type QuietConfig,
+} from "../utils/quietTime.js";
+// The wizard picks quiet windows in the SERVER's wall clock and has no
+// business asking the maintenance router for the time — that route is gated on
+// maintenanceManagement:read, which an automation author needn't hold.
+import { serverClockInfo } from "../utils/maintenanceRecurrence.js";
 
 // Notification severity (rule.severity → notification.severity). Ordered
 // least → most severe. NOTE: distinct from EVENT_LEVELS below — that's the
@@ -1737,16 +1747,31 @@ export const escalationV2Schema = z
  * `stopAfterHours` is an optional, blank-by-default absolute cut-off so an
  * unacknowledged holiday weekend doesn't require an emergency edit to a live
  * automation.
+ *
+ * `quiet` is the recurring stretches during which a DUE reminder is held
+ * rather than sent (business rule 44) — server-local wall clock, the same
+ * recurrence shapes the Maintenance scheduler uses (utils/quietTime.ts). It
+ * lives INSIDE the repeat config, not beside it, because it is the reminder
+ * clock it modifies and nothing else: the first alert always sends, and
+ * escalation tiers keep running through a quiet window on purpose (a tier
+ * exists to chase a specific person harder, and silencing it would quietly
+ * weaken an escalation the operator configured somewhere they weren't
+ * looking).
  */
 export const repeatConfigSchema = z
   .object({
     everyMin: z.number().int().min(5).max(1440),
     stopOn: z.enum(["acknowledge", "clear"]).default("acknowledge"),
     stopAfterHours: z.number().int().min(1).max(720).optional().nullable(),
+    quiet: quietConfigSchema.optional().nullable(),
   })
   .strict();
 
 export type RepeatConfig = z.infer<typeof repeatConfigSchema>;
+
+/** Re-exported so the sweep and the schema route can name the quiet-time
+ *  shape without reaching past this module for half of one config. */
+export type { QuietConfig };
 
 // ─── Per-action escalation (escalatable actions) ────────────────────────────
 // A rule's top-level actions and each severity band's actions may carry their
@@ -2774,8 +2799,29 @@ export function normalizeRuleToV2(row: {
   // Defensive parse, like the bands above: a hand-edited or restored row that
   // no longer matches the schema reads as "never repeats" rather than throwing
   // on the engine's hot path.
+  //
+  // A malformed QUIET blob is the one part that retries without it. Quiet time
+  // only ever PAUSES reminders, so letting a bad window take the whole repeat
+  // config down would turn "reminders pause overnight" into "this alert never
+  // reminds anyone again" — the opposite of what the operator asked for, and
+  // invisible until someone missed an outage. Dropping the windows fails in
+  // the loud direction instead: reminders come at their normal cadence and
+  // the automation's own page shows no quiet time, which is a bug an operator
+  // can see.
   const repeatParsed = row.repeat ? repeatConfigSchema.safeParse(row.repeat) : null;
-  const repeat = repeatParsed?.success ? repeatParsed.data : null;
+  let repeat = repeatParsed?.success ? repeatParsed.data : null;
+  if (
+    repeatParsed &&
+    !repeatParsed.success &&
+    typeof row.repeat === "object" &&
+    !Array.isArray(row.repeat) &&
+    row.repeat !== null &&
+    "quiet" in (row.repeat as Record<string, unknown>)
+  ) {
+    const { quiet: _dropped, ...withoutQuiet } = row.repeat as Record<string, unknown>;
+    const retry = repeatConfigSchema.safeParse(withoutQuiet);
+    if (retry.success) repeat = retry.data;
+  }
 
   return { reset, actions, escalation: normalizeEscalationToV2(row.escalation), severityBands, bandNotify, resetActions, repeat };
 }
@@ -3002,7 +3048,13 @@ export function followUpPolicy(
     // The cut-off is stated because it is the difference between "this will
     // chase you until you deal with it" and "this goes quiet at 8 hours",
     // and a reader planning their night needs the second one.
+    // The quiet time is stated in the SAME sentence rather than a row of its
+    // own: "every 15 minutes" and "paused overnight" are one answer to one
+    // question ("when will this chase me again?"), and a reader who sees only
+    // the cadence plans their night around a reminder that isn't coming.
+    const quiet = describeQuietTime(r.quiet);
     repeat = `Reminders every ${humanMinutes(r.everyMin)} until ${stopWord(r.stopOn)}` +
+      (quiet ? `, paused ${quiet}` : "") +
       (r.stopAfterHours ? `, for up to ${r.stopAfterHours === 1 ? "1 hour" : `${r.stopAfterHours} hours`}.` : ".");
   }
 
@@ -3577,6 +3629,18 @@ export function buildSchemaCatalog() {
       actionTypes: REPEATABLE_ACTION_TYPES,
       stopOnOptions: ["acknowledge", "clear"],
       maxStopAfterHours: 720,
+      // Quiet time (business rule 44). `serverClock` is the load-bearing one:
+      // every window is SERVER-local wall clock, so a browser prefilling
+      // 22:00 from its own clock would save a window that opens hours off at
+      // the site (the same trap maintenanceRecurrence.serverClockInfo exists
+      // for). `holds` states what quiet does NOT stop, because that is the
+      // thing an operator assumes wrongly.
+      quietMeta: {
+        maxWindows: MAX_QUIET_WINDOWS,
+        holds: ["reminder"],
+        serverClock: serverClockInfo(),
+        help: "Reminders due inside a quiet period are held, not skipped: when it ends, the next reminder goes out immediately and states how long the alert has been active. The first alert, escalations and reset notifications are never quiet.",
+      },
     },
     // Severity-band vocabulary for the wizard's per-severity action sections.
     bandMeta: {

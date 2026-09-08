@@ -199,8 +199,9 @@ describe("the sweep's repeat pass", () => {
     const meta = db.deliveries[0].meta;
     expect(meta.subject).toContain("[REMINDER 1]");
     expect(meta.subject).not.toContain("ESCALATION");
-    // Provenance is its own meta key.
-    expect(meta.repeat).toEqual({ attempt: 1 });
+    // Provenance is its own meta key. `elapsed` joined it with quiet time
+    // (business rule 44) — the delivery row records the age the email stated.
+    expect(meta.repeat).toEqual({ attempt: 1, elapsed: "35m" });
     expect(meta.escalation).toBeUndefined();
   });
 
@@ -319,5 +320,149 @@ describe("the sweep's repeat pass", () => {
     seedRule({ actions: [NOTIFY], repeat: { everyMin: 15, stopOn: "acknowledge", stopAfterHours: 1 } });
     seedNotif({ triggeredAt: minsAgo(90) });
     expect(await runEscalationSweep(NOW)).toBe(0);
+  });
+});
+
+/**
+ * Quiet time (business rule 44).
+ *
+ * The mechanism under test is that a held reminder is an OVERDUE one: nothing
+ * schedules the catch-up send, `lastSentAt` simply isn't advanced. Which means
+ * the two things that can silently break the feature are (a) the sweep
+ * returning early on `tierRuns === 0 && repeatRuns === 0` and never persisting
+ * the hold stamp, and (b) the hold being cleared by the window ending rather
+ * than by the send. Both have a case here.
+ *
+ * Quiet windows are SERVER-LOCAL wall clock, so these cases build local Dates
+ * (`atLocal`) instead of leaning on the UTC `NOW` the rest of the file uses.
+ */
+describe("the repeat pass's quiet time", () => {
+  // (y, m 1-based, d, hh, mm) in the server's own zone.
+  const atLocal = (y: number, m: number, d: number, hh = 0, mm = 0) => new Date(y, m - 1, d, hh, mm, 0, 0);
+  const NIGHTLY = { version: 1, kind: "recurring", freq: "daily", startTime: "22:00", endTime: "06:00" };
+  const QUIET_REPEAT = { everyMin: 15, stopOn: "acknowledge", quiet: { windows: [NIGHTLY] } };
+
+  // 02:00 — inside the nightly window, and 04:00 after a 22:00 fire.
+  const NIGHT = atLocal(2026, 8, 26, 2, 0);
+  // 06:05 the same morning — five minutes after reminders resume.
+  const MORNING = atLocal(2026, 8, 26, 6, 5);
+  const firedAt = atLocal(2026, 8, 25, 22, 30);
+
+  const heldState = (heldSince: Date, count: number) => ({
+    tiers: {},
+    quietHeldSince: heldSince.toISOString(),
+    quietHeldCount: count,
+  });
+
+  it("holds a due reminder, stamping the hold instead of sending", async () => {
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedNotif({ triggeredAt: firedAt });
+
+    const runs = await runEscalationSweep(NIGHT);
+
+    expect(runs).toBe(0);
+    expect(db.deliveries).toHaveLength(0);
+    // The stamp MUST be persisted even though nothing executed — the early
+    // return on the run counters is what would eat it.
+    expect(db.notifUpdates).toHaveLength(1);
+    const state = db.notifUpdates[0].data.escalationState;
+    expect(state.quietHeldSince).toBe(NIGHT.toISOString());
+    expect(state.quietHeldCount).toBe(1);
+    // And no reminder was recorded as sent.
+    expect(state.tiers.repeat).toBeUndefined();
+  });
+
+  it("audits the pause ONCE per hold, naming when reminders resume", async () => {
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedNotif({ triggeredAt: firedAt });
+
+    await runEscalationSweep(NIGHT);
+    const paused = db.events.filter((e) => e.action === "notification.reminders_paused");
+    expect(paused).toHaveLength(1);
+    // 06:00 the next morning, in server-local minute form.
+    expect(paused[0].details.resumesAt).toBe("2026-08-26T06:00");
+
+    // A second sweep inside the same window counts the hold up and stays quiet
+    // in the audit log — 480 identical rows over an eight-hour window would
+    // bury the outage they describe.
+    db.notifs[0].escalationState = db.notifUpdates[0].data.escalationState;
+    await runEscalationSweep(atLocal(2026, 8, 26, 2, 1));
+    expect(db.events.filter((e) => e.action === "notification.reminders_paused")).toHaveLength(1);
+    expect(db.notifUpdates[1].data.escalationState.quietHeldCount).toBe(2);
+  });
+
+  it("sends the held reminder as soon as the window ends, stating the alert's age", async () => {
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    seedNotif({ triggeredAt: firedAt, escalationState: heldState(NIGHT, 14) });
+
+    const runs = await runEscalationSweep(MORNING);
+
+    expect(runs).toBe(1);
+    expect(db.deliveries).toHaveLength(1);
+    const meta = db.deliveries[0].meta;
+    // 22:30 → 06:05 = 7h 35m, in the subject as well as the body: this email
+    // lands beside a night's worth of other mail.
+    expect(meta.subject).toContain("[REMINDER 1 · ACTIVE 7h 35m]");
+    expect(meta.repeat).toEqual({ attempt: 1, elapsed: "7h 35m", quietResumed: true });
+    expect(meta.text).toContain("Reminders resumed after a quiet period");
+    expect(meta.text).toContain("7h 35m");
+    expect(meta.html).toContain("Reminders resumed after a quiet period");
+    // The standing "Active for" row rides every reminder, quiet or not.
+    expect(meta.text).toContain("Active for: 7h 35m");
+    // The hold is closed by the SEND, and the reminder clock starts from here.
+    const state = db.notifUpdates[0].data.escalationState;
+    expect(state.quietHeldSince).toBeUndefined();
+    expect(state.quietHeldCount).toBeUndefined();
+    expect(state.tiers.repeat.count).toBe(1);
+  });
+
+  it("says nothing about quiet time on an ordinary reminder", async () => {
+    seedRule({ actions: [NOTIFY], repeat: QUIET_REPEAT });
+    // Noon, well outside the window, and no hold ever opened.
+    seedNotif({ triggeredAt: atLocal(2026, 8, 26, 11, 0) });
+
+    await runEscalationSweep(atLocal(2026, 8, 26, 12, 0));
+
+    const meta = db.deliveries[0].meta;
+    expect(meta.subject).toContain("[REMINDER 1]");
+    expect(meta.subject).not.toContain("ACTIVE");
+    expect(meta.text).not.toContain("quiet period");
+    // The HTML callout is a DIV so pruneEmptyDivs deletes it whole — a grey
+    // band of padding on every ordinary reminder is what a <tr> would have left.
+    expect(meta.html).not.toContain("border-left:3px solid");
+    // The age still appears — it is the reminder, not the quiet time, that
+    // makes "how long has this been going on" worth answering.
+    expect(meta.text).toContain("Active for: 1h");
+  });
+
+  it("does NOT hold an escalation tier — quiet applies to reminders only", async () => {
+    seedRule({
+      actions: [NOTIFY],
+      repeat: QUIET_REPEAT,
+      escalation: {
+        stopOn: "acknowledge",
+        tiers: [{ afterMin: 30, actions: [{ type: "notify", channelId: "ch-email", addresses: ["boss@example.com"] }] }],
+      },
+    });
+    seedNotif({ triggeredAt: firedAt });
+
+    const runs = await runEscalationSweep(NIGHT);
+
+    // The tier ran; only the reminder was held.
+    expect(runs).toBe(1);
+    expect(db.deliveries).toHaveLength(1);
+    expect(db.deliveries[0].meta.subject).toContain("[ESCALATION 1]");
+    expect(db.notifUpdates[0].data.escalationState.quietHeldCount).toBe(1);
+  });
+
+  it("keeps reminding when the quiet blob is malformed", async () => {
+    // A hand-edited or restored row must not be able to turn "pause overnight"
+    // into "never remind anyone again" — normalizeRuleToV2 drops the windows
+    // and keeps the repeat.
+    seedRule({ actions: [NOTIFY], repeat: { everyMin: 15, stopOn: "acknowledge", quiet: { windows: "nightly" } } });
+    seedNotif({ triggeredAt: firedAt });
+
+    expect(await runEscalationSweep(NIGHT)).toBe(1);
+    expect(db.deliveries).toHaveLength(1);
   });
 });
