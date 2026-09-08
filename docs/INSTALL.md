@@ -12,6 +12,8 @@ If you're upgrading an existing install rather than installing fresh, use the in
 
 The single most common operational footgun on a fresh Polaris install is undersized `/var` (Linux) or undersized `C:` (Windows) — both are where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.
 
+**Budget more than your retention window.** When TimescaleDB is installed, sample data is reclaimed a whole *chunk* at a time — a chunk can only be dropped once all of it is past the cutoff, and the prune runs once every 24 h. Each tier therefore keeps its configured window **plus one chunk interval plus one prune cycle**. Most sample tables use TimescaleDB's default 7-day chunk interval (only the interface, storage and IPsec detail tables are narrowed to 1 day), so a 7-day detail retention holds up to ~15 days on disk and a 3-day retention holds up to ~11. Size for that, not for the number in the retention setting.
+
 The largest single driver is usually **how many interfaces operators pin** for fast-cadence polling (the System tab's *Poll 1m* column, and the per-integration interface auto-monitor selection). Polaris records interface *current state* for every port on every device at negligible cost, but keeps a time-series only for pinned interfaces — so a broad auto-monitor pattern across a fleet of 48-port switches is the difference between a few gigabytes and a few hundred. Server Settings → Maintenance → Capacity Advisor projects the steady-state size from your actual pinned count; if the forecast looks wrong, narrow the auto-monitor selection before buying disk.
 
 | Volume | Minimum | Recommended | What lives here |

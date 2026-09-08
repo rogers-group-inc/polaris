@@ -1939,7 +1939,14 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
       '<h5>Database</h5>' +
       '<div class="db-info-grid">' +
         dbInfoRow("Current size", _capacityFormatBytes(db.sizeBytes)) +
-        dbInfoRow("Steady-state at current settings", _capacityFormatBytes(work.steadyStateSizeBytes)) +
+        dbInfoRow(
+          "Steady-state at current settings",
+          _capacityFormatBytes(work.steadyStateSizeBytes),
+          "Peak size the database grows to if nothing changes. Legitimately larger than " +
+          "the current size while sample tables are still filling. Retention windows are " +
+          "reclaimed a whole TimescaleDB chunk at a time, so each tier keeps its configured " +
+          "window plus one chunk interval plus one prune cycle.",
+        ) +
         (allTables.length ? dbInfoRow("Tables", allTables.length) : "") +
         dbInfoRow("TimescaleDB", tsLabel) +
         dbInfoRow("Monitor queue", queueLabel) +
@@ -2992,8 +2999,9 @@ function formatFileSize(bytes) {
   return size.toFixed(i === 0 ? 0 : 1) + " " + units[i];
 }
 
-function dbInfoRow(label, value) {
-  return '<div class="db-info-label">' + escapeHtml(label) + '</div>' +
+function dbInfoRow(label, value, hint) {
+  var titleAttr = hint ? ' title="' + escapeHtml(hint) + '"' : "";
+  return '<div class="db-info-label"' + titleAttr + '>' + escapeHtml(label) + '</div>' +
          '<div class="db-info-value">' + escapeHtml(String(value)) + '</div>';
 }
 
