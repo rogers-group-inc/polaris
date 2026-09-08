@@ -116,7 +116,7 @@ Server Settings → Maintenance shows host CPU/RAM/disk, database size with samp
 | App / state volume | 5 GB | 20 GB |
 | OS | Windows Server 2019+, RHEL 9, Ubuntu 22.04+ | Windows Server 2022, RHEL 9, Ubuntu 22.04+ |
 | PostgreSQL | 15+ | 15+ |
-| Node.js | 20 LTS | 20 LTS |
+| Node.js | 22.12 (hard floor) | 24 LTS |
 
 Discovery pre-loads subnets, reservations, and assets for O(1) lookups; peak memory is ~200–400 MB on top of the Node.js base. Monitoring sample tables grow proportionally with monitored asset count × cadence × retention; the Capacity card on Server Settings → Maintenance projects this at runtime. The **DB data volume** (where PostgreSQL stores its `data_directory`) is the number that matters most — Postgres degrades hard when its volume hits 100%. See [docs/INSTALL.md](docs/INSTALL.md) → "Disk sizing — read this first" for the authoritative per-volume sizing table and platform-specific data-directory paths.
 
@@ -131,7 +131,7 @@ Discovery pre-loads subnets, reservations, and assets for O(1) lookups; peak mem
    CREATE DATABASE polaris OWNER polaris;
    ```
 
-2. **Install Node.js 20+** (https://nodejs.org).
+2. **Install Node.js 24 LTS** (https://nodejs.org) — 22.12 is the hard floor.
 
 3. **Clone, configure, run:**
 
@@ -147,7 +147,7 @@ The dashboard is at `http://localhost:3000`; the API at `http://localhost:3000/a
 
 ## Production deployment
 
-Automated scripts install Node.js 20, PostgreSQL 15, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
+Automated scripts install Node.js 24, PostgreSQL 15, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
 
 **RHEL / Rocky / Alma 9:**
 
@@ -317,7 +317,7 @@ npm run test:coverage     # with coverage report
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js 20+ / TypeScript (ESM) |
+| Runtime | Node.js 24 LTS / TypeScript (ESM) — floor is 22.12 |
 | Framework | Express 5 |
 | ORM | Prisma 7 (driver-adapter via `@prisma/adapter-pg`) |
 | Database | PostgreSQL 15 |

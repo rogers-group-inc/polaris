@@ -62,7 +62,9 @@ sudo bash deploy/upgrade-node.sh
 Useful flags: `--target 22` (Node 22 LTS instead of 24), `--skip-backup` (no
 `pg_dump` first), `--pull` (fast-forward the checkout before rebuilding).
 `POLARIS_APP_DIR` and `POLARIS_APP_USER` override the `/opt/polaris` + `polaris`
-defaults.
+defaults, and `POLARIS_UPGRADE_BACKUP_DIR` moves the `pg_dump` off `/var/tmp`.
+All three are read from the invoking environment, not from `.env` — they are
+script arguments, not Polaris runtime settings.
 
 The script is idempotent: on a host that already meets the floor with a current
 build it reports that and exits without stopping anything.
@@ -1306,7 +1308,7 @@ The Polaris Agent is a small Go binary you can install on Linux / macOS / Window
 
 ### Build the binaries
 
-**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.22+ alongside Node 20+, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
+**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.22+ alongside Node 24, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
 
 1. Sign in as admin
 2. Integrations → **Polaris Agents** tab → **Polaris Agent** card → **Build agent binaries (vX.Y.Z)**
