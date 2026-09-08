@@ -1375,6 +1375,24 @@ const api = {
     getUpdateSettings: () => request("GET", "/server-settings/updates/settings"),
     setUpdateSettings: (body) => request("PUT", "/server-settings/updates/settings", body),
   },
+  // High availability (Server Settings -> High Availability, docs/HA.md).
+  // The node-facing half of this API (/ha/enroll) is deliberately NOT here:
+  // it is called by a bootstrap script on another host, never by the browser.
+  ha: {
+    status:     ()      => request("GET",  "/ha/status"),
+    // Separate from status because it runs socket probes and shell-outs on the
+    // server; the tab polls status every few seconds and asks for advisories
+    // only when the operator edits an address or opens the card.
+    advisories: (body)  => request("POST", "/ha/advisories", body || {}),
+    enable:     (body)  => request("POST", "/ha/enable", body),
+    disable:    ()      => request("POST", "/ha/disable"),
+    // Returns { script, filename } along with the enrollment id — the raw
+    // token exists only in this response, so there is no later download.
+    mintToken:  (role)  => request("POST", "/ha/tokens", { role: role }),
+    approve:    (id)    => request("POST", "/ha/enrollments/" + encodeURIComponent(id) + "/approve"),
+    reject:     (id)    => request("POST", "/ha/enrollments/" + encodeURIComponent(id) + "/reject"),
+    teardownScript: ()  => request("GET",  "/ha/teardown-script"),
+  },
   search: {
     query: (q) => request("GET", `/search?q=${encodeURIComponent(q)}`),
   },

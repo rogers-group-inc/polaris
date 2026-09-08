@@ -55,6 +55,12 @@ document.addEventListener("DOMContentLoaded", function () {
       if (target === "credentials" && !_credsLoaded) loadCredentialsTab();
       if (target === "retention" && !_retentionLoaded) loadRetentionTab();
       if (target === "api-tokens" && !_apiTokensLoaded) loadApiTokensTab();
+      // High Availability lives in its own module (server-settings-ha.js):
+      // the tab is a build procedure with its own state machine, and it
+      // polls while visible because a node registering arrives from
+      // another machine. It reloads on every activation rather than once,
+      // so returning to it shows current cluster state.
+      if (target === "ha" && window.PolarisHaTab) window.PolarisHaTab.load();
     });
   });
 
