@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 20, PostgreSQL 15, Go 1.22+, nginx (mainline ≥1.25)
+#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, nginx (mainline ≥1.25)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -89,15 +89,18 @@ info "  Prometheus IP:     $PROMETHEUS_IP"
 info "Updating package lists..."
 apt-get update -qq
 
-# ─── 1. Install Node.js 20 ───────────────────────────────────────────────────
-if command -v node &>/dev/null && [[ "$(node -v)" == v20* || "$(node -v)" == v22* ]]; then
+# ─── 1. Install Node.js 24 (LTS) ─────────────────────────────────────────────
+# 22.12 is the hard floor (pg-boss declares >=22.12.0, @prisma/streams-local
+# >=22) and v20 went EOL in April 2026. An existing v22 is accepted; v20 and
+# below are replaced.
+if command -v node &>/dev/null && [[ "$(node -v)" == v24* || "$(node -v)" == v22* ]]; then
   info "Node.js $(node -v) already installed"
 else
-  info "Installing Node.js 20 via NodeSource..."
+  info "Installing Node.js 24 via NodeSource..."
   apt-get install -y ca-certificates curl gnupg
   mkdir -p /etc/apt/keyrings
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
   apt-get update -qq
   apt-get install -y nodejs
   info "Node.js $(node -v) installed"

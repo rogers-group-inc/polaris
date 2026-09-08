@@ -3,7 +3,7 @@
 # Dev-only image used by compose.dev.yml. The production build lives in
 # Dockerfile (multi-stage, npm prune --omit=dev). This one keeps the dev
 # deps, runs tsx watch, and expects the project to be bind-mounted in.
-FROM node:20-bookworm
+FROM node:24-bookworm
 
 # Native-module compile deps (argon2, etc.) + postgres client for ad-hoc
 # psql sessions inside the container. iputils-ping is used by ICMP probes

@@ -29,6 +29,58 @@ The setup wizard runs a preflight check that statfs's the conventional PGDATA pa
 
 ---
 
+## Upgrading Node on an existing install
+
+**The in-app updater cannot do this, by design.** It runs as the unprivileged
+`polaris` user, whose only root grant is the nginx apply wrapper
+(`deploy/sudoers.d/polaris-nginx`) — installing a system package is not something
+the web application is allowed to do, and giving it that power to save a
+once-every-two-years operation would be a poor trade. Node upgrades are an
+operator (or configuration-management) task.
+
+Order matters. Native modules are compiled against the Node headers present at
+install time, so **`node_modules` must be rebuilt after the runtime changes** —
+and `npm ci` deletes `node_modules` before it installs, so the service must be
+down for the whole window rather than restarted at the end.
+
+```bash
+# 1. Stop Polaris (all roles).
+sudo systemctl stop polaris.target
+
+# 2. Replace the runtime. RHEL 9 AppStream carries a nodejs:24 stream; the reset
+#    is required because a host pinned to nodejs:20 refuses a second stream.
+sudo dnf module reset nodejs -y
+sudo dnf module enable nodejs:24 -y
+sudo dnf install -y nodejs
+node -v        # expect v24.x
+
+#    Ubuntu/Debian instead:
+#    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+#    sudo apt install -y nodejs
+
+# 3. Rebuild dependencies against the new ABI, then rebuild the app.
+cd /opt/polaris
+sudo -u polaris npm ci --production=false
+sudo -u polaris npm run build
+
+# 4. Start, then confirm.
+sudo systemctl start polaris.target
+systemctl status 'polaris-*' --no-pager
+journalctl -u polaris-web -n 50 --no-pager
+```
+
+Two things to check afterwards. `npm ci` should no longer print `EBADENGINE`
+warnings for `pg-boss` or `@prisma/streams-local` — those warnings were the
+symptom of running below the floor. And if the install uses pg-boss queue mode,
+confirm it still comes up (Server Settings → Maintenance → Database → *Monitor
+queue*), since pg-boss was the package demanding `>=22.12` in the first place.
+
+If step 3 fails, **do not start the service** — `npm ci` will have left
+`node_modules` empty and the process cannot boot. Fix the install error and re-run
+step 3; nothing else in the sequence needs repeating.
+
+---
+
 ## RHEL / Rocky / AlmaLinux 9
 
 > **Note:** This walkthrough installs PostgreSQL from PGDG (the official PostgreSQL Global Development Group repo), not the RHEL AppStream module. PGDG matches upstream within days, supports the full Postgres extension ecosystem (TimescaleDB, PostGIS, etc.), and supports side-by-side major versions. AppStream's module ships a curated subset and lags upstream; in particular, **the TimescaleDB package targets PGDG only** — the AppStream `postgresql:15` module's package names (`postgresql-server`) don't satisfy `timescaledb-2-postgresql-15`'s requirement on `postgresql15-server`. If you have an existing AppStream install you want to migrate from, see *Migrating from AppStream to PGDG* below.
@@ -111,13 +163,19 @@ sudo chmod o+x /var/lib/pgsql /var/lib/pgsql/15
 
 Edit `/var/lib/pgsql/15/data/pg_hba.conf` and add a line for the polaris user (typically `host polaris polaris 127.0.0.1/32 scram-sha-256`), then `sudo systemctl reload postgresql-15`.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
 ```bash
 sudo dnf module reset nodejs -y
-sudo dnf module enable nodejs:20 -y
+sudo dnf module enable nodejs:24 -y
 sudo dnf install -y nodejs
 ```
+
+Node **22.12 is the hard floor** — `pg-boss` declares `>=22.12.0` and
+`@prisma/streams-local` declares `>=22`. Node 20 reached end-of-life in April 2026
+and is below that floor; installs still on it should follow *Upgrading Node on an
+existing install* below. Node 22 is also supported (to ~April 2027) if you are
+already on it.
 
 ### 4. Polaris
 
@@ -350,12 +408,15 @@ sudo chmod o+x /var/lib/postgresql
 
 Edit `/etc/postgresql/<version>/main/pg_hba.conf` to add the polaris user, then `sudo systemctl reload postgresql`.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
+
+Node **22.12 is the hard floor** (`pg-boss` requires `>=22.12.0`). Node 20 is
+end-of-life as of April 2026 — see *Upgrading Node on an existing install* below.
 
 ### 4. Polaris
 
@@ -423,9 +484,11 @@ Edit `pg_hba.conf` (in the data directory) to add a line for the polaris user, t
 
 The `pgboss` schema grants are required for pg-boss queue mode (operators with thousands of monitored assets). Without them Polaris falls back to in-process cursor mode — fine for small/medium fleets, won't keep up at thousands.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
-Download the LTS installer from <https://nodejs.org/> and run it.
+Download the **24.x LTS** installer from <https://nodejs.org/> and run it. Node
+**22.12 is the hard floor** (`pg-boss` requires `>=22.12.0`); Node 20 is
+end-of-life as of April 2026.
 
 ### 4. Polaris
 
