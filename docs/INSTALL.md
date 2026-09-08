@@ -43,6 +43,34 @@ install time, so **`node_modules` must be rebuilt after the runtime changes** â€
 and `npm ci` deletes `node_modules` before it installs, so the service must be
 down for the whole window rather than restarted at the end.
 
+### The scripted path
+
+`deploy/upgrade-node.sh` performs the whole sequence with preflight checks, a
+pre-migration `pg_dump`, and a fail-safe: if `npm ci` fails it leaves the service
+stopped rather than starting a host with no dependencies.
+
+```bash
+cd /opt/polaris
+
+# See exactly what it would do; changes nothing.
+sudo bash deploy/upgrade-node.sh --dry-run
+
+# Do it.
+sudo bash deploy/upgrade-node.sh
+```
+
+Useful flags: `--target 22` (Node 22 LTS instead of 24), `--skip-backup` (no
+`pg_dump` first), `--pull` (fast-forward the checkout before rebuilding).
+`POLARIS_APP_DIR` and `POLARIS_APP_USER` override the `/opt/polaris` + `polaris`
+defaults.
+
+The script is idempotent: on a host that already meets the floor with a current
+build it reports that and exits without stopping anything.
+
+### The manual path
+
+Equivalent to the above, if you would rather run each step yourself:
+
 ```bash
 # 1. Stop Polaris (all roles).
 sudo systemctl stop polaris.target
