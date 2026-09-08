@@ -172,6 +172,22 @@ describe("buildFindings", () => {
     expect(p.text).toContain("VLAN 12");
   });
 
+  it("reports the access point a station on the address is associated to", () => {
+    const f = IPC.buildFindings(ctx({
+      apStations: [{ macAddress: "AA:BB:CC:DD:EE:FF", ssid: "Corp", band: "5GHz", lastSeen: "2026-08-20T00:00:00Z", matchedBy: "mac", apAsset: { id: "ap1", hostname: "plv-ap-03" } }],
+    }));
+    const a = byKind(f, "ap")!;
+    expect(a.text).toContain("plv-ap-03 has station AA:BB:CC:DD:EE:FF on Corp (5GHz)");
+  });
+
+  it("says so when the AP was reached by its own recorded address rather than a MAC", () => {
+    const f = IPC.buildFindings(ctx({
+      apStations: [{ macAddress: "AA:BB:CC:DD:EE:FF", ssid: null, band: null, lastSeen: "2026-08-20T00:00:00Z", matchedBy: "ip", apAsset: null }],
+    }));
+    const a = byKind(f, "ap")!;
+    expect(a.text).toContain("an access point reports this address for AA:BB:CC:DD:EE:FF");
+  });
+
   it("orders the duplicate-asset warning first", () => {
     const f = IPC.buildFindings(ctx({
       subnet: SUBNET,

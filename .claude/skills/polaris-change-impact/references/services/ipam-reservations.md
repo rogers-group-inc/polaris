@@ -33,7 +33,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `subnetService` (`buildIpContexts` -- containment), `utils/cidr` (`isValidIpAddress`), `utils/fortinetParentKey` (`buildInfraParentIndex` / `resolveInfraParentAsset`).
 
-**Reads:** `Subnet` (+ its `IpBlock` and `Integration`), `Reservation`, `AssetArpEntry`, `AssetFortigateSighting`, `AssetMacTableEntry`, `Asset` (+ `AssetAssociatedIp` via `associatedIpRows`).
+**Reads:** `Subnet` (+ its `IpBlock` and `Integration`), `Reservation`, `AssetArpEntry`, `AssetFortigateSighting`, `AssetMacTableEntry`, `AssetWirelessStation`, `Asset` (+ `AssetAssociatedIp` via `associatedIpRows`).
 
 **Writes:** nothing. No device I/O, no Events, no rows -- it is a lookup, and every mutation stays in the operator's hands.
 
@@ -49,6 +49,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`visibility` must keep reporting which halves were consulted.** A hidden section has to render as "not shown"; collapsing it into an absent one would have the panel assert "no network contains this address" to a role that never looked.
 - **Suggestions are advisory and never applied server-side**, and only ever carry a value some row actually supplied -- so an empty block means "nothing known". MAC prefers ARP over the reservation for the same reason placeholder-MAC adoption does (business rule 26): a live L2 binding is what the wire says, a reservation MAC is what somebody typed. Coordinates come from the GATE, because a gate's coordinates are the site's.
 - **Row caps are per source (`ROW_CAP` = 10).** An address resolving to more rows than that in any of these tables is itself a duplicate-address finding; the cap keeps a pathological one from filling the panel.
+- **The AP station lookup (`apStations`) has two ways in, and the second needs no MAC.** Stations are matched by the resolved MAC (`staMacAddr`) OR by the address the AP itself recorded for the station (`staIpAddr`), each row saying which (`matchedBy`). The switch-port line can only ever follow a MAC; the AP line is the one source here that can place a device nothing wired has ever seen. The same two paths drive the `ipUpstreamChainService` sweep's `lastSeenAp` stamp.
 
 **When changing this:** the frontend's `buildFindings` reads every field name in `IpContextResult` -- adding a source means a finding line in `public/js/assets-ipcontext.js` and a case in `tests/unit/ipContextDom.test.ts`. A new source that can name a gate belongs in the ranking (`pickNamedGate` or `resolveFirewall`), not in a fourth ad-hoc branch. Any new table joined by IP needs an index on its IP column -- this runs from a debounced keystroke handler (`asset_fortigate_sightings_ipAddress_idx`, migration `20260820000000_sighting_ip_index`, was added for exactly that). Pure halves are covered by `tests/unit/ipContextService.test.ts`.
 
