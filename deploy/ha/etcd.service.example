@@ -1,0 +1,41 @@
+[Unit]
+# deploy/ha/etcd.service.example — for a witness host that is NOT EL9.
+#
+# On RHEL / Rocky / Alma 9 the witness gets etcd from the PGDG extras repo
+# (`dnf --enablerepo=pgdg-rhel9-extras install etcd`) and that package ships
+# its own unit — use it, not this file. This unit exists so the witness can be
+# any small Linux box: install the upstream static binary to
+# /usr/local/bin/etcd, drop the rendered etcd.conf at /etc/etcd/etcd.conf, and
+# install this.
+Description=etcd — Polaris HA distributed configuration store (witness)
+Documentation=https://etcd.io/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=etcd
+Group=etcd
+EnvironmentFile=/etc/etcd/etcd.conf
+ExecStart=/usr/local/bin/etcd
+Restart=always
+RestartSec=5s
+LimitNOFILE=65536
+
+# etcd is latency-sensitive to disk fsync: a witness on burstable/throttled
+# storage causes leader elections that look like network problems.
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/etcd
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=etcd
+
+[Install]
+WantedBy=multi-user.target

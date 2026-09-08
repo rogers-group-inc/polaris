@@ -1,0 +1,21 @@
+[Unit]
+Description=Polaris HA — periodic role reconcile (fallback for the Patroni callbacks)
+Documentation=https://github.com/rogers-group-inc/polaris
+
+[Timer]
+# Patroni's on_role_change callback is the fast path (seconds). This timer is
+# the safety net: it covers a callback that failed to fire, a node that booted
+# with Patroni already settled, and a sync that failed and needs retrying.
+#
+# 60s is chosen for one specific reason: after an update on the active node the
+# standby is briefly running older code, and if that update dropped or renamed
+# a column, a failover inside the window would find the standby refusing to
+# boot on the schema sanity check. The updater also calls notify-peer to close
+# the gap immediately; this bounds it when that call cannot get through.
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=polaris-ha-role.service
+
+[Install]
+WantedBy=timers.target

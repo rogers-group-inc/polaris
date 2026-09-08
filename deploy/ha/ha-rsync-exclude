@@ -1,0 +1,34 @@
+# deploy/ha/ha-rsync-exclude — installed as /etc/polaris/ha-rsync-exclude
+#
+# What the standby must NOT copy from the primary's /opt/polaris.
+#
+# Everything not listed here IS synced, including node_modules, dist,
+# src/generated, .git, data/agents (built agent binaries), data/signing (the
+# code-signing keystore), public/uploads and tools. That is deliberate: the two
+# nodes run the same OS major, arch and Node major (setup asserts it, `verify`
+# re-checks it), so native modules load fine, and a promoted standby that had
+# to run `npm ci` and a build before serving would turn a 2-minute failover
+# into a 10-minute one.
+
+# Per-host updater state. Copying the primary's would make the standby's HA
+# tab and update card report the primary's progress as its own.
+.update-status.json
+
+# Build caches: large, host-local, and rebuilt on demand.
+.cache/
+
+# Transient script bodies written per automation run, mode 0600.
+data/automation-scripts-tmp/
+
+# Backups are copied in their own pass WITHOUT --delete, so that swapping
+# roles never destroys the other node's pre-update recovery points.
+data/backups/
+backups/
+
+# Never meaningful on another host.
+.git/index.lock
+.rsync-partial/
+
+# Session working files from a developer checkout; must never reach a node.
+WORKLOCK
+DEVLOCK
