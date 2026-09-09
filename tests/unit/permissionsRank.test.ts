@@ -12,6 +12,8 @@ import {
   rankRole,
   pickHighestPrivilegeRoleId,
   isAdminEquivalentPermissions,
+  callerIsAdminEquivalent,
+  assertNoPrivilegeEscalation,
 } from "../../src/api/middleware/permissions.js";
 
 const adminEquiv = { users: "fullwrite", roles: "fullwrite" };
@@ -61,5 +63,60 @@ describe("pickHighestPrivilegeRoleId", () => {
       { id: "mid", permissions: writer },
     ];
     expect(pickHighestPrivilegeRoleId(roles)).toBe("alpha");
+  });
+});
+
+/**
+ * Business rule 48 — nobody hands out authority they do not hold.
+ *
+ * users:write and roles:write both sit a rung BELOW admin-equivalent, and both
+ * used to be enough to manufacture an admin (create an account on an admin
+ * role / promote one into it / add the two fullwrite grants to your own role).
+ */
+describe("assertNoPrivilegeEscalation", () => {
+  const asCaller = (permissions: unknown) => ({ session: { roleSnapshot: { permissions } } } as any);
+  const tokenCaller = (permissions: unknown) => ({ roleSnapshot: { permissions } } as any);
+
+  it("reads the caller's own role from a session or a bearer token snapshot", () => {
+    expect(callerIsAdminEquivalent(asCaller(adminEquiv))).toBe(true);
+    expect(callerIsAdminEquivalent(tokenCaller(adminEquiv))).toBe(true);
+    expect(callerIsAdminEquivalent(asCaller(writer))).toBe(false);
+    // No snapshot resolved at all is not admin — it must never fail open.
+    expect(callerIsAdminEquivalent({} as any)).toBe(false);
+  });
+
+  it("refuses a non-admin caller granting an admin-equivalent role", () => {
+    const caller = asCaller({ users: "write", roles: "write" });
+    expect(() => assertNoPrivilegeEscalation(caller, adminEquiv, 'the role "Administrator"'))
+      .toThrow(/admin-equivalent control/);
+  });
+
+  it("refuses even a users:fullwrite caller who lacks roles:fullwrite", () => {
+    const caller = asCaller({ users: "fullwrite", roles: "write" });
+    expect(() => assertNoPrivilegeEscalation(caller, adminEquiv, "this permission set")).toThrow();
+  });
+
+  it("allows an admin-equivalent caller — this is a no-escalation rule, not four-eyes", () => {
+    expect(() => assertNoPrivilegeEscalation(asCaller(adminEquiv), adminEquiv, "x")).not.toThrow();
+  });
+
+  it("ignores every target that is not admin-equivalent", () => {
+    const caller = asCaller({ users: "write" });
+    for (const target of [writer, reader, none, { users: "fullwrite" }, { roles: "fullwrite" }]) {
+      expect(() => assertNoPrivilegeEscalation(caller, target, "x")).not.toThrow();
+    }
+  });
+
+  it("does not fail open on a caller with no snapshot", () => {
+    expect(() => assertNoPrivilegeEscalation({} as any, adminEquiv, "x")).toThrow();
+  });
+
+  it("throws a 403, not a 400", () => {
+    try {
+      assertNoPrivilegeEscalation(asCaller(writer), adminEquiv, "x");
+      throw new Error("should have thrown");
+    } catch (e: any) {
+      expect(e.httpStatus).toBe(403);
+    }
   });
 });

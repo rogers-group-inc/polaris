@@ -750,6 +750,17 @@ nssm start Polaris
 
 Browse to `http://<host>:3000` to run the setup wizard.
 
+> **The wizard is unauthenticated, by construction** — it exists to create the
+> first account, so there is nobody to authenticate yet. Until you finish it,
+> whoever reaches that port first chooses the admin password, the database and
+> the secrets. On a server reachable by anyone but you, set
+> `POLARIS_SETUP_BIND=127.0.0.1` in the environment before the first start and
+> complete the wizard over an RDP session or an SSH tunnel
+> (`ssh -L 3000:127.0.0.1:3000 you@host`); the boot banner states which
+> interface it bound to. Unset, it binds all interfaces — the default, because
+> a container can only reach the wizard through a published port. Once
+> `DATABASE_URL` is set the wizard never runs again and the variable is inert.
+
 Windows runs single-process (`POLARIS_ROLE` unset = `all`), so the Dash
 wallboard listener boots in-process and serves `http://<host>:3001/dash`
 once enabled under Server Settings → Web Server → Dash Wallboard (no
@@ -1033,6 +1044,24 @@ chmod 600 ./state/.env
 `POLARIS_SECRET_KEY` encrypts the credentials Polaris uses to reach your
 infrastructure — see [Secrets at rest](#secrets-at-rest) for the full list and
 for what to do if you skipped it and the values are already in the clear.
+
+**The container runs Polaris as the unprivileged `node` user (uid 1000), and
+takes ownership of the state directory to do it.** `./state` is a bind mount, so
+its ownership comes from your host directory rather than from the image — on the
+first start after upgrading to this image the entrypoint runs
+`chown -R node:node` over it (announced in the container log) and then drops
+privileges for everything else, including the migration. Two consequences worth
+knowing:
+
+- Files you place in `./state` before the first start — the `.env` above, an
+  `internal-root.pem`, a mounted `codesign.pfx` — end up owned by uid 1000. That
+  is correct and intended; `chmod 600 ./state/.env` still applies.
+- Editing `./state/.env` afterwards from your host account needs `sudo` (or add
+  yourself to a group with access), because the file is no longer owned by you.
+
+The chown only runs when the directory is not already node-owned, so it is a
+first-boot cost rather than a per-restart walk of your backups. `/app` itself
+stays root-owned and read-only to the process.
 Without it they are stored as **plaintext**, which means plaintext in every
 `pg_dump` and in any snapshot of the database volume.
 

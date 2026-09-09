@@ -145,3 +145,38 @@ describe("key handling", () => {
     expect(openValue(sealValue(SECRET))).toBe(SECRET);
   });
 });
+
+/**
+ * User.totpSecret is a SCALAR column, so it is outside the JSON-blob
+ * seal-on-write extension in db.ts and is sealed explicitly by auth.ts. What
+ * makes that safe on an existing install is openValue's pass-through: the
+ * verify path must keep working for enrollments made before sealing existed,
+ * on an install with no key, and on one where the key arrived later.
+ */
+describe("TOTP secret at rest (the scalar-column case)", () => {
+  const TOTP = "JBSWY3DPEHPK3PXP";
+
+  it("round-trips a base32 TOTP secret and never stores it in the clear", () => {
+    const sealed = sealValue(TOTP);
+    expect(sealed).not.toContain(TOTP);
+    expect(openValue(sealed)).toBe(TOTP);
+  });
+
+  it("passes a legacy plaintext enrollment straight through, so it still verifies", () => {
+    // The row a pre-sealing install already has. openValue must not touch it.
+    expect(isSealed(TOTP)).toBe(false);
+    expect(openValue(TOTP)).toBe(TOTP);
+  });
+
+  it("keeps working on an install with no key configured at all", () => {
+    useKey(undefined);
+    expect(sealValue(TOTP)).toBe(TOTP);
+    expect(openValue(TOTP)).toBe(TOTP);
+  });
+
+  it("is idempotent, so the backfill cannot double-seal a row it already converted", () => {
+    const once = sealValue(TOTP);
+    expect(sealValue(once)).toBe(once);
+    expect(openValue(sealValue(once))).toBe(TOTP);
+  });
+});

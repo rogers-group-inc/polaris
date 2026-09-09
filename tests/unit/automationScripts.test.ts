@@ -92,7 +92,7 @@ import {
   MIN_AGENT_SCRIPT_VERSION,
   type ScriptInput,
 } from "../../src/services/automationScriptService.js";
-import { executeServerScript, buildScriptEnv } from "../../src/services/automationScriptRunner.js";
+import { executeServerScript, buildScriptEnv, buildCmdCommandLine } from "../../src/services/automationScriptRunner.js";
 
 const WIN = process.platform === "win32";
 const SHELL = WIN ? ("cmd" as const) : ("sh" as const);
@@ -276,6 +276,59 @@ describe("executeServerScript (real interpreter)", () => {
     const res = await executeServerScript({ id: "x", scriptId: "gone", args: null, timeoutSec: 5, notificationId: null, ruleId: null, assetId: null });
     expect(res.status).toBe("failed");
     expect(res.stderr).toMatch(/no longer exists/);
+  });
+
+  /**
+   * args is a RENDERED TEMPLATE of alert context (renderNotificationTemplate
+   * over argsTemplate), so the text below can originate from a device's own
+   * hostname. cmd.exe re-parses its command line, so before this was escaped a
+   * hostname of `x" & <command> & rem "` executed <command> as the service
+   * user. Windows-only: the cmd interpreter does not exist elsewhere.
+   */
+  it.runIf(WIN)("does not let a crafted arg inject a second command through cmd.exe", async () => {
+    const run = await makeRun("@echo ARG=[%~1]", { args: "safe ( a ) & echo INJECTED | echo NOPE" });
+    const res = await executeServerScript(run);
+    expect(res.status).toBe("succeeded");
+    // Delivered verbatim as one argument...
+    expect(res.stdout).toContain("ARG=[safe ( a ) & echo INJECTED | echo NOPE]");
+    // ...and nothing ran on its own line.
+    const lines = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    expect(lines.every((l) => l.startsWith("ARG="))).toBe(true);
+  });
+});
+
+/**
+ * cmd.exe is the one interpreter with no argv: `cmd /c` re-parses the raw
+ * command line. Each expectation below was verified against a real cmd.exe.
+ */
+describe("buildCmdCommandLine", () => {
+  const S = "C:\\state\\run.cmd";
+
+  it("wraps the whole command in the extra quote pair /s requires", () => {
+    expect(buildCmdCommandLine(S, null)).toBe(`/d /s /c ""${S}""`);
+    expect(buildCmdCommandLine(S, "hello")).toBe(`/d /s /c ""${S}" "hello""`);
+  });
+
+  it("caret-escapes every cmd metacharacter — quoting alone does not stop a pipe", () => {
+    expect(buildCmdCommandLine(S, "a & b")).toBe(`/d /s /c ""${S}" "a ^& b""`);
+    expect(buildCmdCommandLine(S, "a | b")).toBe(`/d /s /c ""${S}" "a ^| b""`);
+    expect(buildCmdCommandLine(S, "a > b")).toBe(`/d /s /c ""${S}" "a ^> b""`);
+    expect(buildCmdCommandLine(S, "a ( b )")).toBe(`/d /s /c ""${S}" "a ^( b ^)""`);
+    expect(buildCmdCommandLine(S, "a ^ b")).toBe(`/d /s /c ""${S}" "a ^^ b""`);
+  });
+
+  it("refuses what cmd.exe cannot be told literally, rather than mangling it", () => {
+    expect(buildCmdCommandLine(S, 'x" & rem ')).toBeNull();   // ends the quoted token
+    expect(buildCmdCommandLine(S, "x %USERNAME%")).toBeNull(); // expanded at parse time
+    expect(buildCmdCommandLine(S, "x !DELAYED!")).toBeNull();
+    expect(buildCmdCommandLine(S, "x\r\ny")).toBeNull();       // control chars end the line
+    expect(buildCmdCommandLine(S, "x\u001ay")).toBeNull();     // 0x1A is still EOF to cmd
+  });
+
+  it("leaves ordinary operator input untouched", () => {
+    for (const arg of ["core-sw-01", "AP-1234.example.local", "bldg A floor 2", "C:\\some\\path\\"]) {
+      expect(buildCmdCommandLine(S, arg)).toBe(`/d /s /c ""${S}" "${arg}""`);
+    }
   });
 });
 

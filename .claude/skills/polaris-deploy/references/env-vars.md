@@ -69,6 +69,18 @@ PORT=3000
 NODE_ENV=development
 LOG_LEVEL=info
 
+# Interface the FIRST-RUN SETUP WIZARD binds to. Only consulted while
+# DATABASE_URL is unset; once provisioned the wizard never runs again. The
+# wizard is unauthenticated BY CONSTRUCTION (it exists to create the first
+# account), so until it is finished whoever reaches it first chooses the admin
+# password, the database and the secrets. 127.0.0.1 restricts it to the host —
+# finish the wizard over an SSH tunnel. Unset binds 0.0.0.0, which is the
+# default because a container can only reach the wizard through a published
+# port and a remote server is usually browsed to; loopback-by-default would
+# make a fresh `docker compose up` unreachable. The boot banner states which
+# way it went.
+POLARIS_SETUP_BIND=
+
 # Session — required in production; server refuses to boot without it
 SESSION_SECRET=changeme
 
