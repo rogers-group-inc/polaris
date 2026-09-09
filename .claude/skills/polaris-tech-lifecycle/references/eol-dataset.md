@@ -92,6 +92,18 @@ occasionally stale — so anything taken from it gets `confidence: "aggregator"`
 | Debian | the Debian LTS wiki — the LTS window is a volunteer project, not the security team |
 | Java | the Microsoft Build of OpenJDK support page — that is what the scripts install, and its dates can differ from Oracle's and Temurin's for the same major |
 | Windows Server | the Microsoft product lifecycle pages |
+| etcd (HA only) | `etcd.io/docs/*/op-guide/versioning/` states a RULE, not dates — "the current version and previous release", so a branch dies when a newer one ships. Dates therefore come from endoflife.date, which is why the entry is `policy: "compat"` with `confidence: "aggregator"` even though the policy itself was read from the vendor |
+| Patroni (HA only) | nothing to read. The docs and GitHub carry release notes and a supported-PostgreSQL matrix but **no supported-version or end-of-life policy** — hence `policy: "none"`, and `confidence: "aggregator"` rather than implying a vendor read of a policy that does not exist |
+
+**etcd and Patroni are the exception to the refresh procedure's "four things".** A new technology
+normally needs a family in `scripts/check-versions.mjs` as well, and these two deliberately have
+none: both are installed unversioned (`dnf install -y etcd`, `dnf install -y patroni
+patroni-etcd` from PGDG), so no file names a version and a pin family would have nothing to
+compare. They get an `unversioned-install` warning apiece instead — see
+[version-pin-inventory.md](version-pin-inventory.md) → *etcd and Patroni*. Do not "finish the
+job" by inventing a family; pinning them explicitly is a deployment decision that wants a human
+and a real HA pair. Their `polarisMinimum` / `polarisTarget` are also still marked DRAFT in the
+dataset notes for that reason.
 
 ## How to verify a date
 
