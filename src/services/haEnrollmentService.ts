@@ -52,6 +52,27 @@ import {
 const TOKEN_PREFIX_LEN = TOKEN_INDEX_PREFIX_LEN;
 
 /**
+ * The PostgreSQL major the setup scripts provision, used only when this host's
+ * real paths were never probed. Keep in step with PG_MAJOR in
+ * deploy/setup-rhel.sh and deploy/ha/setup-rhel-ha.sh.
+ */
+const DEFAULT_PG_MAJOR = 17;
+
+/**
+ * Pull the major out of a PGDG path — `/usr/pgsql-17/bin`, `/var/lib/pgsql/17/data`.
+ * Returns null when neither path is present or neither carries a number, which
+ * is the signal to fall back to DEFAULT_PG_MAJOR rather than guess.
+ */
+function pgMajorFromPaths(binDir?: string | null, dataDir?: string | null): number | null {
+  for (const p of [binDir, dataDir]) {
+    const m = p?.match(/pgsql-(\d+)|pgsql\/(\d+)/);
+    const n = Number.parseInt(m?.[1] ?? m?.[2] ?? "", 10);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/**
  * 24 hours. Longer than the agent's ten minutes because this is a human
  * workflow: the operator downloads three scripts and then walks to (or
  * provisions) three machines. Short enough that a forgotten script in a
@@ -815,7 +836,13 @@ export async function renderNodeScript(role: HaRole, token: string): Promise<Nod
 export async function renderTeardownScript(): Promise<NodeScript> {
   const cfg = await getHaConfig();
   const facts = cfg.hostFacts;
-  const pgdata = facts?.pgdata ?? "/var/lib/pgsql/15/data";
+  const pgdata = facts?.pgdata ?? `/var/lib/pgsql/${DEFAULT_PG_MAJOR}/data`;
+  // The stock unit this host will go back to. Derived from the recorded paths
+  // rather than hardcoded: the major moves (15 -> 17 on 2026-09-09), and a
+  // teardown script naming the wrong one leaves the operator with a database
+  // that never starts and no clue why. hostFacts carries what this host
+  // actually runs; the constant is only the fallback when it was never probed.
+  const pgService = `postgresql-${pgMajorFromPaths(facts?.pgBinDir, facts?.pgdata) ?? DEFAULT_PG_MAJOR}`;
   const script = [
     "#!/usr/bin/env bash",
     "# Polaris HA teardown — return this host to a single-node install.",
@@ -837,8 +864,8 @@ export async function renderTeardownScript(): Promise<NodeScript> {
     "systemctl stop etcd 2>/dev/null || true",
     "systemctl disable etcd 2>/dev/null || true",
     "",
-    "systemctl unmask postgresql-15",
-    "systemctl enable postgresql-15",
+    `systemctl unmask ${pgService}`,
+    `systemctl enable ${pgService}`,
     "",
     `cd ${pgdata}`,
     "# Patroni renamed the original config and includes it; restore the plain file.",
@@ -849,7 +876,7 @@ export async function renderTeardownScript(): Promise<NodeScript> {
     "rm -f /etc/polaris/ha-node",
     "systemctl daemon-reload",
     "",
-    "systemctl start postgresql-15",
+    `systemctl start ${pgService}`,
     "systemctl enable --now polaris.target",
     "",
     "echo",

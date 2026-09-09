@@ -174,7 +174,7 @@ fi
 # existed. Prod, 2026-09-09. The same lesson setup-rhel.sh learned for the
 # SERVER packages, applied to the client. Step 5 checks the installed major
 # against the actual server once the connection string is known to work.
-PG_CLIENT_MAJOR=15
+PG_CLIENT_MAJOR=17
 if [[ -x "/usr/pgsql-${PG_CLIENT_MAJOR}/bin/pg_dump" ]]; then
   info "PostgreSQL ${PG_CLIENT_MAJOR} client tools already installed"
 else
@@ -467,9 +467,10 @@ if ! grep -q '^POLARIS_MONITOR_REPLICAS=' "$APP_DIR/.env"; then
   } >> "$APP_DIR/.env"
 fi
 
-# Install split-role systemd units. The polaris-migrate unit has
-# Requires=postgresql-15.service in its shipped form; the -nodb variant of
-# this script strips that out since the DB is remote (no local postgres).
+# Install split-role systemd units. The shipped units name no PostgreSQL unit
+# at all (it is a host fact, and an update overwrites these files verbatim), so
+# the -nodb variant has nothing to strip — it simply writes no dependency
+# drop-in. See deploy/dropins/20-postgres.conf.example.
 info "Installing split-role systemd units..."
 cp "$APP_DIR/deploy/polaris-migrate.service"    /etc/systemd/system/polaris-migrate.service
 cp "$APP_DIR/deploy/polaris-web.service"        /etc/systemd/system/polaris-web.service
@@ -478,10 +479,11 @@ cp "$APP_DIR/deploy/polaris-discovery.service"  /etc/systemd/system/polaris-disc
 cp "$APP_DIR/deploy/polaris-dash.service"       /etc/systemd/system/polaris-dash.service
 cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.target
 
-# Strip local-postgres dependencies from all four units — DB is remote.
+# The DB is remote, so no local-postgres dependency drop-in is written. Clear
+# a stale one if this host used to run its database locally — the drop-in
+# survives updates by design, so nothing else would ever remove it.
 for unit in polaris-migrate polaris-web polaris-monitor@ polaris-discovery polaris-dash; do
-  sed -i -E "s/(After=.*)postgresql-15\\.service\\s*/\\1/" "/etc/systemd/system/${unit}.service"
-  sed -i "/^Requires=postgresql-15\\.service\\s*$/d"        "/etc/systemd/system/${unit}.service"
+  rm -f "/etc/systemd/system/${unit}.service.d/20-postgres.conf"
 done
 
 # nginx-dependency drop-in for polaris-web

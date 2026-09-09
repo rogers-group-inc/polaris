@@ -23,15 +23,15 @@ name: polaris
 
 services:
   postgres:
-    # TimescaleDB, not plain postgres:15-alpine — dev should match what every
+    # TimescaleDB, not plain postgres:17-alpine — dev should match what every
     # documented production install runs (docs/INSTALL.md installs
-    # timescaledb-2-postgresql-15). Without the extension here, the 21 sample +
+    # timescaledb-2-postgresql-17). Without the extension here, the 21 sample +
     # rollup tables stay plain tables in dev, so hypertable-specific behavior
     # (compression policies, drop_chunks pruning, the
     # timescaledb_pre_restore/post_restore gates in backupService) is only ever
     # exercised in production. Same Alpine base and same PG 15.x as the previous
     # image, so an existing `pgdata` volume carries over untouched.
-    image: timescale/timescaledb:latest-pg15
+    image: timescale/timescaledb:latest-pg17
     restart: unless-stopped
     environment:
       POSTGRES_USER: polaris

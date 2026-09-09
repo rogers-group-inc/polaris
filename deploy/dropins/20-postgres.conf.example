@@ -1,0 +1,43 @@
+# deploy/dropins/20-postgres.conf.example — the local-PostgreSQL ordering
+# dependency for the Polaris units.
+#
+# The shipped units (deploy/polaris-*.service) do NOT name a PostgreSQL unit.
+# They can't: the name is a host fact, not a Polaris fact —
+#
+#   RHEL / Rocky / Alma, PGDG packages   postgresql-17.service
+#   Debian / Ubuntu                      postgresql.service   (the wrapper;
+#                                        the real unit is postgresql@17-main)
+#   external database (-nodb installs)   no dependency at all
+#   Patroni-managed HA                   no dependency at all — Patroni owns it
+#
+# — and every update overwrites the main unit files verbatim, in-app and via
+# deploy/update-linux.sh alike. A major named in the unit therefore survives
+# exactly until the next update, at which point the host is handed a Requires=
+# for a unit that may not exist and the start fails.
+#
+# Drop-ins are not overwritten by either sync path, so the dependency lives
+# here. The setup scripts write one per unit with the right name filled in:
+#
+#   /etc/systemd/system/polaris-web.service.d/20-postgres.conf
+#   /etc/systemd/system/polaris-monitor@.service.d/20-postgres.conf
+#   /etc/systemd/system/polaris-discovery.service.d/20-postgres.conf
+#   /etc/systemd/system/polaris-dash.service.d/20-postgres.conf
+#   /etc/systemd/system/polaris-migrate.service.d/20-postgres.conf
+#
+# To write them by hand — on a host whose database moved majors, say — replace
+# postgresql-17.service below with the unit name `systemctl list-units
+# 'postgresql*'` reports, then:
+#
+#   for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
+#     install -d -m 0755 "/etc/systemd/system/$u.service.d"
+#     install -m 0644 this-file "/etc/systemd/system/$u.service.d/20-postgres.conf"
+#   done
+#   systemctl daemon-reload
+#
+# To REMOVE the dependency (you moved the database off-host), delete the
+# drop-ins and daemon-reload. Do not edit the main unit files: the next update
+# puts them back.
+
+[Unit]
+After=postgresql-17.service
+Requires=postgresql-17.service

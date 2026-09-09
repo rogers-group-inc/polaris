@@ -46,8 +46,8 @@ see *Why two numbers* below.
 | two Windows setup scripts | `(node -v) -match "^v(22\|24)\."` | floor (22) |
 | `docs/INSTALL.md` | the **Supported platform versions** table, minimum column | floor |
 | `README.md` | the system-requirements table, minimum column | floor |
-| `Dockerfile` | `FROM node:24-bookworm` (builder) and `node:24-bookworm-slim` (runtime) | pin |
-| `Dockerfile.dev` | `FROM node:24-bookworm` | pin |
+| `Dockerfile` | `FROM node:24-trixie` (builder) and `node:24-trixie-slim` (runtime) | pin |
+| `Dockerfile.dev` | `FROM node:24-trixie` | pin |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y nodejs:24` | pin |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | NodeSource `deb.nodesource.com/node_24.x` | pin |
 | two Windows setup scripts | `winget install --id OpenJS.NodeJS.LTS --version 24.19.0` | pin |
@@ -89,22 +89,52 @@ and lying in the Dockerfile.
 
 ## PostgreSQL
 
-Currently **15** across 12 checked sites.
+Currently **17** across 15 checked sites. Moved from 15 on 2026-09-09.
 
 | Site | Form | Kind |
 |---|---|---|
-| `deploy/polaris-web.service` and the other shipped units | `After=` / `Requires=postgresql-15.service` | pin |
-| `deploy/setup-ubuntu.sh` | rewrites `postgresql-15.service` → `postgresql.service` in the units | pin |
-| `deploy/setup-rhel-nodb.sh`, `deploy/setup-ubuntu-nodb.sh` | strip the `postgresql-15.service` dependency for the external-DB variant | pin |
-| `deploy/setup-rhel-nodb.sh` | `PG_CLIENT_MAJOR=15` → `dnf install -y "postgresql${PG_CLIENT_MAJOR}"` from PGDG (was an unversioned `dnf install -y postgresql`, which is PostgreSQL 13 on RHEL 9 and cannot dump a 15 server — rule 47) | pin |
-| two Windows setup scripts | `winget install --id PostgreSQL.PostgreSQL.15` | pin |
-| two Windows setup scripts | `postgresql-15.13-1-windows-x64.exe` fallback URL | pin |
-| two Windows setup scripts | `--servicename postgresql-15`, the `C:\Program Files\PostgreSQL\15\bin` candidate, NSSM `DependOnService` | pin |
-| `compose.dev.yml` | `timescale/timescaledb:latest-pg15` | pin (floating patch) |
-| `.github/workflows/docker-publish.yml` | `image: postgres:15-alpine` service container | pin |
-| `Dockerfile`, `Dockerfile.dev` | `postgresql-client` — unversioned, resolves to 15 only because the base is bookworm; must become `postgresql-client-<N>` (PGDG apt) when the major moves, or in-container backups fail rule 47's check | implicit pin |
-| `docs/INSTALL.md` | `timescaledb-2-postgresql-15`, `/usr/pgsql-15/bin/`, `postgresql15-server` | pin |
-| `README.md`, `CONTRIBUTING.md`, `CLAUDE.md` | "PostgreSQL 15+", `postgres:15` | prose |
+| `deploy/setup-rhel.sh` | `PG_MAJOR=17` — derives `PG_SERVICE`, `PG_BINDIR`, `PG_DATADIR` and the package names | pin |
+| `deploy/setup-rhel-nodb.sh` | `PG_CLIENT_MAJOR=17` → `dnf install -y "postgresql${PG_CLIENT_MAJOR}"` from PGDG (was an unversioned `dnf install -y postgresql`, which is PostgreSQL 13 on RHEL 9 and cannot dump a 17 server — rule 47) | pin |
+| `deploy/setup-ubuntu.sh` | `PG_MAJOR=17` + the PGDG **apt** repo → `apt-get install -y postgresql-17` | pin |
+| `deploy/ha/setup-rhel-ha.sh` | `PG_MAJOR=17` — the Patroni node's server packages, `PG_BIN`, `PGDATA` and the TimescaleDB package | pin |
+| `deploy/dropins/20-postgres.conf.example` | `After=` / `Requires=postgresql-17.service` — the reference copy of the per-host drop-in | pin |
+| two Windows setup scripts | `winget install --id PostgreSQL.PostgreSQL.17` | pin |
+| two Windows setup scripts | `postgresql-17.11-1-windows-x64.exe` fallback URL | pin |
+| two Windows setup scripts | `--servicename postgresql-17`, and the `C:\Program Files\PostgreSQL\<major>\bin` probe list (newest first) | pin |
+| `compose.dev.yml` | `timescale/timescaledb:latest-pg17` | pin (floating patch) |
+| `.github/workflows/docker-publish.yml` | `image: postgres:17-alpine` service container | pin |
+| `Dockerfile`, `Dockerfile.dev` | `postgresql-client-17` — named, and checked. Was the unversioned `postgresql-client`, i.e. whatever the base image shipped | pin |
+| `docs/INSTALL.md` | `timescaledb-2-postgresql-17`, `/usr/pgsql-17/bin/`, `postgresql17-server` | pin |
+| `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `DEVELOPMENT.md` | "PostgreSQL 17+", `postgres:17`, `latest-pg17` | prose |
+| `src/services/haService.ts` | `pgBinDir` / `pgdata` fallbacks when a host was never probed | pin (code) |
+| `src/services/haEnrollmentService.ts` | `DEFAULT_PG_MAJOR`, and `pgMajorFromPaths()` which derives the teardown script's unit name from the host's own paths | pin (code) |
+
+**NOT a site any more: the shipped systemd units.** They named
+`Requires=postgresql-15.service` until 2026-09-09. That was wrong in a way the equality check
+could not see, because the unit files agreed with each other perfectly:
+
+- the PostgreSQL unit name is a **host** fact — `postgresql-17.service` on RHEL/PGDG,
+  `postgresql.service` on Debian/Ubuntu, nothing at all for an external database, masked under
+  Patroni — while the unit file is **overwritten verbatim by every update**, in-app (via the
+  transient systemd-run unit under the manage-units polkit grant) and by
+  `deploy/update-linux.sh` alike;
+- so `setup-ubuntu.sh` rewriting the name in place at install time was undone by the very next
+  update, which handed Debian hosts a `Requires=` for a unit that does not exist there;
+- and bumping the major in the units would have done the same to every existing install on its
+  first update after the bump.
+
+The dependency is a per-host drop-in now — `/etc/systemd/system/<unit>.d/20-postgres.conf`,
+written by the setup scripts, reference copy in `deploy/dropins/20-postgres.conf.example`.
+Drop-ins survive both sync paths. Three things enforce it:
+
+- `check:versions` **fails** if a shipped unit names a postgresql unit again
+  (`units-name-no-postgres`);
+- both updaters migrate an existing host by reading the name out of the installed unit and
+  writing it into a drop-in *before* overwriting — `preserve_postgres_dependency()` in
+  `deploy/update-linux.sh` and the matching block in `updateService.ts`'s sync script;
+- both skip that migration on an HA node (`/etc/polaris/ha-node` or a `10-ha.conf`), because
+  drop-ins apply in lexical order and a `20-` file would re-add the dependency **after**
+  `10-ha.conf` reset it to `patroni.service`. `setup-rhel-ha.sh` deletes any that exists.
 
 **RESOLVED 2026-09-09 — and the bug was bigger than "the service name was wrong".**
 `deploy/setup-rhel.sh` ran `dnf install -y postgresql-server postgresql` with no module
@@ -180,7 +210,7 @@ most recent majors alive).
 | two Windows setup scripts | `(go version) -match "go1\.(2[2-9]\|[3-9][0-9])"` | accept-range |
 | two Windows setup scripts | `winget install --id GoLang.Go.1.22` | pin |
 | two Windows setup scripts | `go.dev/dl/go1.22.7.windows-amd64.msi` fallback | pin |
-| `Dockerfile` | `golang-go` from `bookworm-backports`, because bookworm-slim ships 1.21.x | pin (suite) |
+| `Dockerfile` | `golang-go` from `trixie-backports`, because trixie ships 1.24. The backports SUITE must track the base image — a `bookworm-backports` line on a trixie base resolves to nothing and the build fails at `apt-get install` | pin (suite) |
 | `agent/Makefile` | `go-winres@v0.3.3` for the Windows resource files | pin |
 | `docs/INSTALL.md` | "Go 1.22+" — three occurrences | prose |
 
@@ -258,7 +288,7 @@ a missing or mismatched JDK degrades signing rather than breaking the app.
 | RHEL / Rocky / AlmaLinux | 9 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh`, `docs/INSTALL.md`, `README.md` |
 | Ubuntu / Debian | Ubuntu 22.04+ | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh`, `docs/INSTALL.md` |
 | Windows Server | 2019 / 2022 | `deploy/setup-windows.ps1`, `deploy/setup-windows-nodb.ps1`, `README.md` |
-| Debian (container base) | 12 bookworm | `Dockerfile`, `Dockerfile.dev` |
+| Debian (container base) | 13 trixie | `Dockerfile`, `Dockerfile.dev` — moved from 12 bookworm on 2026-09-09, because trixie ships the PostgreSQL 17 client and openjdk-25 |
 
 The nginx.org `baseurl` in the RHEL scripts encodes the OS release (`centos/9`), so a RHEL 10
 move is a URL change in the install scripts, not just a documentation change. Check the PGDG
@@ -311,7 +341,7 @@ not as a figure to keep in step by hand — `npm run check:versions` prints the 
 | `node-major` | major | 22 → 24 | — (the accept-range gap closed when 24 became the pin) |
 | `go-pin` | major.minor | 1.22 | — |
 | `nginx-floor` | major.minor | 1.30 | — |
-| `postgres-major` | major | 15 | `postgres-source` — quiet since setup-rhel.sh moved to PGDG |
+| `postgres-major` | major | 17 | `postgres-source` — quiet since setup-rhel.sh moved to PGDG; plus `units-name-no-postgres`, a hard gate |
 | `java-major` | major | 17 | `unversioned-install` — quiet since the Ubuntu scripts pinned 17 |
 | `jsign-pin` | major.minor | 7.4 | — |
 | `dataset-shape` | n/a | n/a | dataset older than 120 days |

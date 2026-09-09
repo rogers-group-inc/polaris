@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, git, nginx (stable ≥1.30)
+#   1. Installs Node.js 24, PostgreSQL 17, Go 1.22+, git, nginx (stable ≥1.30)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -199,9 +199,9 @@ else
   warn "  interval to suit. To fix later:  dnf install -y epel-release fping"
 fi
 
-# ─── 2. Install PostgreSQL 15 (PGDG, not AppStream) ─────────────────────────
+# ─── 2. Install PostgreSQL 17 (PGDG, not AppStream) ─────────────────────────
 # PGDG rather than RHEL's AppStream module, and the reason is load-bearing
-# rather than preference: the TimescaleDB package requires `postgresql15-server`,
+# rather than preference: the TimescaleDB package requires `postgresql17-server`,
 # a PGDG package name. AppStream has no package by that name at all, so an
 # AppStream install can never gain the extension every sample table wants.
 #
@@ -215,12 +215,12 @@ fi
 #   * the non-modular default in AppStream is `postgresql-server-13.16-1.el9`.
 #
 # So a fresh install got **PostgreSQL 13** -- two majors below the 15 Polaris
-# states as its minimum, incapable of TimescaleDB, and producing an unversioned
-# `postgresql.service` while the units this same script installs declare
-# `Requires=postgresql-15.service`. It could not satisfy its own units and it
-# was not even installing the right major. docs/INSTALL.md documented the PGDG
-# path all along.
-PG_MAJOR=15
+# stated as its minimum at the time, incapable of TimescaleDB, and producing an
+# unversioned `postgresql.service` while the units this script installed declared
+# `Requires=postgresql-15.service` (the dependency is a per-host drop-in now).
+# It could not satisfy its own units and was not even installing the right
+# major. docs/INSTALL.md documented the PGDG path all along.
+PG_MAJOR=17
 PG_SERVICE="postgresql-${PG_MAJOR}"
 PG_BINDIR="/usr/pgsql-${PG_MAJOR}/bin"
 PG_DATADIR="/var/lib/pgsql/${PG_MAJOR}/data"
@@ -241,7 +241,7 @@ fi
 # PGDG handles that itself: its packages register /usr/bin/psql and
 # /usr/bin/pg_dump through `alternatives`, pointing at the installed major's
 # bindir. Verified in a systemd container on AlmaLinux 9 (RHEL-compatible):
-# `pg_dump` resolves to /usr/pgsql-15/bin/pg_dump via
+# `pg_dump` resolves to /usr/pgsql-<major>/bin/pg_dump via
 # /etc/alternatives/pgsql-pg_dump and dumps a live database with no help.
 #
 # So this only CHECKS the link. Do NOT symlink these into /usr/local/bin --
@@ -558,6 +558,26 @@ cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.targ
 info "Installing polaris-web's Wants=nginx drop-in..."
 mkdir -p "$NGINX_DROPIN_DIR"
 cp "$APP_DIR/deploy/nginx/polaris-nginx-dependency.conf" "$NGINX_DROPIN_DIR/nginx-dependency.conf"
+
+# ─── The PostgreSQL ordering dependency, as a drop-in ───────────────────────
+# The shipped units do not name a PostgreSQL unit: the name is a host fact
+# ($PG_SERVICE here, postgresql.service on Debian/Ubuntu, nothing at all for an
+# external DB), and every update overwrites the main unit files verbatim. A
+# major written into a unit therefore survives only until the next update, and
+# a host handed a Requires= for a unit it does not have fails to start.
+# Drop-ins survive both sync paths, so it lives here instead. Reference copy:
+# deploy/dropins/20-postgres.conf.example.
+info "Installing the PostgreSQL dependency drop-in (${PG_SERVICE}.service)..."
+for unit in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
+  mkdir -p "/etc/systemd/system/${unit}.service.d"
+  cat > "/etc/systemd/system/${unit}.service.d/20-postgres.conf" <<DROPIN
+# Written by deploy/setup-rhel.sh. Survives updates — the main unit file does
+# not. Change the unit name here if the database moves to another major.
+[Unit]
+After=${PG_SERVICE}.service
+Requires=${PG_SERVICE}.service
+DROPIN
+done
 
 systemctl daemon-reload
 

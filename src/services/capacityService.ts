@@ -1444,7 +1444,7 @@ function computeReasons(
     const suggestion = !ctx.dbIsLocal
       ? "Ask your database administrator to install the timescaledb extension on the polaris database. Some managed services (RDS for Postgres) don't support it; Timescale Cloud and Azure Postgres Flexible Server do."
       : ctx.runtimeIsContainer
-        ? "Switch your Postgres container to the timescale/timescaledb:latest-pg15 image. Existing data is preserved on the volume."
+        ? "Switch your Postgres container to the timescale/timescaledb:latest-pg<major> image, matching the major your volume already holds (latest-pg17 for a fresh install). Existing data is preserved on the volume."
         : "Install TimescaleDB on this server. See docs/INSTALL.md → Recommended: TimescaleDB.";
     reasons.push({
       severity: "watch",

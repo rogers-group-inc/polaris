@@ -1352,6 +1352,28 @@ export async function restartService() {
       `  name="$(basename "$f")"`,
       `  target="/etc/systemd/system/$name"`,
       `  if [ ! -f "$target" ] || ! cmp -s "$f" "$target"; then`,
+      // Carry an installed unit's local-PostgreSQL dependency into a drop-in
+      // before overwriting it. Units shipped before 2026-09-09 named it inline
+      // (Requires=postgresql-15.service); the shipped units no longer do,
+      // because the unit name is a host fact and this file is overwritten
+      // verbatim. Without this the first update after that change silently
+      // drops the ordering, and polaris-migrate racing PostgreSQL at boot
+      // takes the whole target down. Never overwrites an existing drop-in, so
+      // an operator-set name wins. Lockstep with
+      // deploy/update-linux.sh -> preserve_postgres_dependency().
+      // Never on an HA node: 10-ha.conf resets After=/Requires= to
+      // patroni.service, and drop-ins apply in lexical order, so a 20- file
+      // would re-add postgres after that reset and race Patroni for the data
+      // directory. The inline dependency was neutralized by the same reset.
+      `    if [ -f "$target" ] && [ ! -f "/etc/systemd/system/$name.d/20-postgres.conf" ] \\`,
+      `       && [ ! -f /etc/polaris/ha-node ] && [ ! -f "/etc/systemd/system/$name.d/10-ha.conf" ]; then`,
+      `      pgunit="$(sed -nE 's/^Requires=.*\\b(postgresql[^[:space:]]*)\\.service.*/\\1/p' "$target" | head -1)"`,
+      `      if [ -n "$pgunit" ]; then`,
+      `        mkdir -p "/etc/systemd/system/$name.d"`,
+      `        printf '[Unit]\\nAfter=%s.service\\nRequires=%s.service\\n' "$pgunit" "$pgunit" > "/etc/systemd/system/$name.d/20-postgres.conf"`,
+      `        logger -t polaris-updater "Preserved $name's PostgreSQL dependency ($pgunit.service) as a drop-in"`,
+      `      fi`,
+      `    fi`,
       `    cp -f "$f" "$target"`,
       `    logger -t polaris-updater "Synced unit file: $name (operator edits to the main unit file are clobbered; use $name.d/*.conf drop-ins for customization)"`,
       `  fi`,

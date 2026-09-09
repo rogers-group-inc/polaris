@@ -32,8 +32,8 @@
 #   --witness-addr / --witness-name  the witness member
 #   --standby-addr / --standby-name  WITNESS ONLY: the standby database node
 #   --extra-san ADDR                 repeatable; extra SAN already in the cert
-#   --pg-bin DIR                     default /usr/pgsql-15/bin
-#   --pgdata DIR                     default /var/lib/pgsql/15/data
+#   --pg-bin DIR                     default /usr/pgsql-17/bin
+#   --pgdata DIR                     default /var/lib/pgsql/17/data
 #   --polaris-uid N                  create the polaris user with this uid
 #                                    (standby: use the primary's, see below)
 #   --tsdb-version V                 pin timescaledb to the primary's version
@@ -58,8 +58,11 @@ WITNESS_NAME=""
 STANDBY_NAME_ARG=""
 STANDBY_ADDR_ARG=""
 EXTRA_SANS=()
-PG_BIN="/usr/pgsql-15/bin"
-PGDATA="/var/lib/pgsql/15/data"
+# The PostgreSQL major this node provisions for Patroni. It MUST match the
+# primary's: a replica cannot replay WAL from a different major.
+PG_MAJOR=17
+PG_BIN="/usr/pgsql-${PG_MAJOR}/bin"
+PGDATA="/var/lib/pgsql/${PG_MAJOR}/data"
 POLARIS_UID=""
 TSDB_VERSION=""
 ADOPT=0
@@ -325,20 +328,20 @@ REPO
   # PostgreSQL from PGDG, matching docs/INSTALL.md — and NO initdb. Patroni
   # clones this node from the primary; an initialised cluster here would be a
   # different database with the same name.
-  if ! rpm -q postgresql15-server >/dev/null 2>&1; then
+  if ! rpm -q "postgresql${PG_MAJOR}-server" >/dev/null 2>&1; then
     dnf install -y "https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm" >/dev/null 2>&1 || true
     dnf -qy module disable postgresql >/dev/null 2>&1 || true
-    dnf install -y postgresql15 postgresql15-server postgresql15-contrib
+    dnf install -y "postgresql${PG_MAJOR}" "postgresql${PG_MAJOR}-server" "postgresql${PG_MAJOR}-contrib"
   fi
   info "PostgreSQL $("$PG_BIN/pg_config" --version 2>/dev/null || echo '(pg_config not found)')"
   # The stock unit must never start PostgreSQL on an HA node: Patroni owns it.
-  systemctl disable postgresql-15 >/dev/null 2>&1 || true
-  systemctl mask postgresql-15 >/dev/null 2>&1 || true
-  info "postgresql-15.service masked (Patroni starts PostgreSQL)"
+  systemctl disable "postgresql-${PG_MAJOR}" >/dev/null 2>&1 || true
+  systemctl mask "postgresql-${PG_MAJOR}" >/dev/null 2>&1 || true
+  info "postgresql-${PG_MAJOR}.service masked (Patroni starts PostgreSQL)"
 
   if [[ -n "$TSDB_VERSION" ]]; then
     step "TimescaleDB $TSDB_VERSION"
-    if ! rpm -q timescaledb-2-postgresql-15 >/dev/null 2>&1; then
+    if ! rpm -q timescaledb-2-postgresql-${PG_MAJOR} >/dev/null 2>&1; then
       cat > /etc/yum.repos.d/timescale_timescaledb.repo <<'REPO'
 [timescale_timescaledb]
 name=timescale_timescaledb
@@ -351,19 +354,19 @@ sslverify=1
 sslcacert=/etc/pki/tls/certs/ca-bundle.crt
 metadata_expire=300
 REPO
-      dnf install -y "timescaledb-2-postgresql-15-$TSDB_VERSION" \
-        || dnf install -y timescaledb-2-postgresql-15 \
+      dnf install -y "timescaledb-2-postgresql-${PG_MAJOR}-$TSDB_VERSION" \
+        || dnf install -y timescaledb-2-postgresql-${PG_MAJOR} \
         || warn "TimescaleDB install failed — the standby MUST match the primary's version before it can replay its WAL"
     fi
     # The loaded library must match the catalogue version on both nodes, so
     # pin it: an unattended dnf upgrade on one node only is a broken failover.
     dnf install -y python3-dnf-plugin-versionlock >/dev/null 2>&1 || true
-    dnf versionlock add timescaledb-2-postgresql-15 timescaledb-2-loader-postgresql-15 >/dev/null 2>&1 \
+    dnf versionlock add timescaledb-2-postgresql-${PG_MAJOR} timescaledb-2-loader-postgresql-${PG_MAJOR} >/dev/null 2>&1 \
       || warn "could not versionlock timescaledb — upgrade both nodes together by hand"
-    info "TimescaleDB $(rpm -q --qf '%{VERSION}' timescaledb-2-postgresql-15 2>/dev/null) installed and pinned"
+    info "TimescaleDB $(rpm -q --qf '%{VERSION}' timescaledb-2-postgresql-${PG_MAJOR} 2>/dev/null) installed and pinned"
   else
     warn "no --tsdb-version given. If the primary has TimescaleDB, this node needs the SAME version"
-    warn "before it can replay the primary's WAL. Check with: rpm -q timescaledb-2-postgresql-15"
+    warn "before it can replay the primary's WAL. Check with: rpm -q timescaledb-2-postgresql-${PG_MAJOR}"
   fi
 
   # The polaris user, ideally with the primary's uid. rsync maps ownership by
@@ -626,6 +629,11 @@ EOF
     unit="$(basename "$d")"
     mkdir -p "/etc/systemd/system/$unit"
     install -o root -g root -m 0644 "$d/10-ha.conf" "/etc/systemd/system/$unit/10-ha.conf"
+    # A stock (non-HA) install writes 20-postgres.conf with the local
+    # PostgreSQL unit in it. Drop-ins apply in LEXICAL order, so that file
+    # would re-add the dependency after 10-ha.conf's reset cleared it — the
+    # exact failure the reset exists to prevent. Patroni owns PostgreSQL here.
+    rm -f "/etc/systemd/system/$unit/20-postgres.conf"
   done
   info "installed the HA drop-ins for all five Polaris units"
 
@@ -637,10 +645,13 @@ EOF
 
   # Prove the reset worked. A leftover reference would mean the app could pull
   # the masked stock unit in, or fail to start with a confusing message.
-  if systemctl show -p Requires -p After polaris-web.service 2>/dev/null | grep -q 'postgresql-15'; then
-    warn "polaris-web.service still references postgresql-15.service — check /etc/systemd/system/polaris-web.service.d/10-ha.conf ordering"
+  # Matches any stock PostgreSQL unit name, not one major: the local major is a
+  # host fact and moves, and a check that only knew "15" would go quiet on a
+  # host running 17 while the dependency was still there.
+  if systemctl show -p Requires -p After polaris-web.service 2>/dev/null | grep -qE 'postgresql[^[:space:]]*\.service'; then
+    warn "polaris-web.service still references a stock postgresql unit — check the drop-in ordering in /etc/systemd/system/polaris-web.service.d/ (10-ha.conf must sort first, and 20-postgres.conf must not exist)"
   else
-    info "verified: no Polaris unit depends on postgresql-15.service any more"
+    info "verified: no Polaris unit depends on a stock postgresql unit any more"
   fi
 
   echo
@@ -658,11 +669,11 @@ adopt_primary() {
   echo
   echo "Rollback, if adoption goes wrong (full steps in docs/HA.md):"
   echo "  systemctl stop patroni"
-  echo "  systemctl unmask postgresql-15 && systemctl enable postgresql-15"
+  echo "  systemctl unmask postgresql-${PG_MAJOR} && systemctl enable postgresql-${PG_MAJOR}"
   echo "  cd $PGDATA && mv postgresql.base.conf postgresql.conf   # if Patroni renamed it"
   echo "  cp $PGDATA/pg_hba.conf.polaris-pre-ha $PGDATA/pg_hba.conf"
   echo "  rm -f /etc/systemd/system/polaris-*.service.d/10-ha.conf && systemctl daemon-reload"
-  echo "  systemctl enable --now postgresql-15 && systemctl enable --now polaris.target"
+  echo "  systemctl enable --now postgresql-${PG_MAJOR} && systemctl enable --now polaris.target"
   echo
   read -r -p "Type ADOPT to continue: " confirm
   [[ "$confirm" == "ADOPT" ]] || error "aborted at the confirmation prompt"
@@ -675,10 +686,10 @@ adopt_primary() {
   info "stopping polaris.target"
   systemctl stop polaris.target || warn "polaris.target stop returned non-zero"
 
-  info "stopping and masking postgresql-15.service"
-  systemctl stop postgresql-15 || warn "postgresql-15 stop returned non-zero"
-  systemctl disable postgresql-15 >/dev/null 2>&1 || true
-  systemctl mask postgresql-15 >/dev/null 2>&1 || true
+  info "stopping and masking postgresql-${PG_MAJOR}.service"
+  systemctl stop "postgresql-${PG_MAJOR}" || warn "postgresql-${PG_MAJOR} stop returned non-zero"
+  systemctl disable "postgresql-${PG_MAJOR}" >/dev/null 2>&1 || true
+  systemctl mask "postgresql-${PG_MAJOR}" >/dev/null 2>&1 || true
 
   info "starting patroni (it will start PostgreSQL and take the leader lease)"
   systemctl enable --now patroni

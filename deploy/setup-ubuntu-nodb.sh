@@ -463,9 +463,11 @@ cp "$APP_DIR/deploy/polaris-discovery.service"  /etc/systemd/system/polaris-disc
 cp "$APP_DIR/deploy/polaris-dash.service"       /etc/systemd/system/polaris-dash.service
 cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.target
 
+# The DB is remote, so no local-postgres dependency drop-in is written. The
+# shipped units name no PostgreSQL unit, so there is nothing to strip; clear a
+# stale drop-in in case this host used to run its database locally.
 for unit in polaris-migrate polaris-web polaris-monitor@ polaris-discovery polaris-dash; do
-  sed -i -E "s/(After=.*)postgresql-15\\.service\\s*/\\1/" "/etc/systemd/system/${unit}.service"
-  sed -i "/^Requires=postgresql-15\\.service\\s*$/d"        "/etc/systemd/system/${unit}.service"
+  rm -f "/etc/systemd/system/${unit}.service.d/20-postgres.conf"
 done
 
 mkdir -p "$NGINX_DROPIN_DIR"

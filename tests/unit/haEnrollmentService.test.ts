@@ -138,8 +138,24 @@ describe("renderTeardownScript", () => {
     const { script, filename } = await renderTeardownScript();
     expect(filename).toBe("polaris-ha-teardown.sh");
     expect(script).toContain("TEARDOWN");
+    // The unit name is derived from THIS host's recorded paths (15 in the
+    // fixture), not from whatever major the setup scripts currently install.
+    // A teardown naming the wrong unit leaves a database that never starts.
     expect(script).toContain("systemctl unmask postgresql-15");
     expect(script).toContain("/var/lib/pgsql/15/data");
+  });
+
+  it("follows the host's PostgreSQL major rather than the shipped default", async () => {
+    const original = CONFIG.hostFacts;
+    CONFIG.hostFacts = { ...original, pgBinDir: "/usr/pgsql-17/bin", pgdata: "/var/lib/pgsql/17/data" };
+    try {
+      const { script } = await renderTeardownScript();
+      expect(script).toContain("systemctl unmask postgresql-17");
+      expect(script).toContain("systemctl start postgresql-17");
+      expect(script).not.toContain("postgresql-15");
+    } finally {
+      CONFIG.hostFacts = original;
+    }
   });
 
   it("restores the configuration Patroni took over", async () => {

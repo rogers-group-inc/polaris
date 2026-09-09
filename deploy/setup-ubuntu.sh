@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, nginx (stable ≥1.30)
+#   1. Installs Node.js 24, PostgreSQL 17, Go 1.22+, nginx (stable ≥1.30)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -183,16 +183,37 @@ else
   warn "  interval to suit. To fix later:  apt-get install -y fping"
 fi
 
-# ─── 2. Install PostgreSQL 15 ────────────────────────────────────────────────
-if command -v psql &>/dev/null; then
-  info "PostgreSQL already installed"
+# ─── 2. Install PostgreSQL 17 (PGDG, not the distro metapackage) ─────────────
+# This used to be `apt-get install -y postgresql postgresql-contrib` — the
+# distro metapackage, whose major is whatever the release froze on: PostgreSQL
+# 14 on Ubuntu 22.04 and 16 on 24.04. Neither is the major every other site
+# here names, 14 is BELOW the stated minimum, and there is no number in the
+# package name for the pin check to disagree with, so the drift was invisible.
+# Same shape as the RHEL AppStream bug fixed on 2026-09-09, one archive along.
+#
+# PGDG also matters for the extension: the TimescaleDB package depends on
+# `postgresql-17` by name, and the distro metapackage cannot satisfy it.
+PG_MAJOR=17
+if [[ -x "/usr/lib/postgresql/${PG_MAJOR}/bin/psql" ]]; then
+  info "PostgreSQL ${PG_MAJOR} (PGDG) already installed"
 else
-  info "Installing PostgreSQL..."
-  apt-get install -y postgresql postgresql-contrib
-  info "PostgreSQL installed"
+  info "Installing PostgreSQL ${PG_MAJOR} from PGDG..."
+  apt-get install -y curl ca-certificates gnupg
+  install -d /usr/share/postgresql-common/pgdg
+  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+  echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list
+  apt-get update -qq
+  # No postgresql-contrib-<major> here: Debian packaging folded contrib into
+  # postgresql-<major> at PostgreSQL 10, and PGDG only still publishes the
+  # split package for 9.x. Asking for it fails the install outright.
+  apt-get install -y "postgresql-${PG_MAJOR}"
+  info "PostgreSQL ${PG_MAJOR} installed"
 fi
 
-# Enable and start PostgreSQL
+# Enable and start PostgreSQL. Debian's postgresql.service is a wrapper that
+# starts every configured cluster; the per-cluster unit is postgresql@N-main.
 systemctl enable --now postgresql
 info "PostgreSQL is running"
 
@@ -448,12 +469,23 @@ cp "$APP_DIR/deploy/polaris-discovery.service"  /etc/systemd/system/polaris-disc
 cp "$APP_DIR/deploy/polaris-dash.service"       /etc/systemd/system/polaris-dash.service
 cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.target
 
-# Ubuntu/Debian's PostgreSQL service is just `postgresql` (not the
-# `postgresql-15` RHEL uses); strip the RHEL-specific version suffix from
-# the shipped units' After= / Requires= lines so systemd doesn't fail to
-# resolve the dependency.
+# Ubuntu/Debian's PostgreSQL service is just `postgresql` (the wrapper over
+# postgresql@<major>-main), not the versioned unit RHEL/PGDG uses. The shipped
+# units name NO PostgreSQL unit at all, so this is a drop-in rather than the
+# in-place rewrite it used to be — and that rewrite was load-bearing and wrong:
+# every update overwrites the main unit files verbatim, so the RHEL name came
+# straight back and the host was left requiring a unit Debian does not have.
+# Drop-ins survive both sync paths. Reference: deploy/dropins/20-postgres.conf.example.
+info "Installing the PostgreSQL dependency drop-in (postgresql.service)..."
 for unit in polaris-migrate polaris-web polaris-monitor@ polaris-discovery polaris-dash; do
-  sed -i -E 's/postgresql-15\.service/postgresql.service/g' "/etc/systemd/system/${unit}.service"
+  mkdir -p "/etc/systemd/system/${unit}.service.d"
+  cat > "/etc/systemd/system/${unit}.service.d/20-postgres.conf" <<'DROPIN'
+# Written by deploy/setup-ubuntu.sh. Survives updates — the main unit file
+# does not. postgresql.service is Debian's wrapper over postgresql@<major>-main.
+[Unit]
+After=postgresql.service
+Requires=postgresql.service
+DROPIN
 done
 
 info "Installing polaris-web's Wants=nginx drop-in..."

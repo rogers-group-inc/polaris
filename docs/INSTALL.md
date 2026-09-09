@@ -16,8 +16,8 @@ states a floor, it states the same one as this table.
 | Component | Minimum | Polaris targets | Upstream end of life | Notes |
 |---|---|---|---|---|
 | **Node.js** | 22 | **24** | 22 → 2027-04-30 · 24 → 2028-04-30 | LTS lines only. The minimum is the dependency tree's floor (`engines.node` is `>=22.12.0`); every install script provisions **24**. `engines.node` is advisory — npm warns and installs anyway — so the scripts' accept-checks are the real gate. A host left on 22 has under a year of runway. |
-| **PostgreSQL** | 15 | **17** | 15 → 2027-11-11 · 16 → 2028-11-09 · 17 → 2029-11-08 | Five-year policy; a major dies each November. Target is 17 because TimescaleDB 2.29 dropped 15. |
-| **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date: **2.28.x is the last line supporting PostgreSQL 15**, and 2.29+ supports only 16/17/18. |
+| **PostgreSQL** | 17 | **17** | 17 → 2029-11-08 · 18 → 2030-11-14 | Five-year policy; a major dies each November. Every install path provisions 17 from PGDG (RHEL *and* Debian/Ubuntu — the distro metapackages are 14/16 and were never the stated major). An existing 15 install keeps working, but it caps TimescaleDB at the 2.28.x line and is below this minimum; see *Moving an existing install to PostgreSQL 17*. |
+| **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date. 2.28.x was the last line supporting PostgreSQL 15, which is what capped the extension before the move to 17; 2.29+ supports 16/17/18, and 2.30 is current on both PGDG-supported majors. |
 | **Go** (agent build only) | 1.22 | **1.26** | 1.22 → 2025-02-11 · 1.25 → 2026-08-19 | Go supports only the two most recent majors, so this ages faster than anything else here. Needed only to build agent binaries in-app. |
 | **nginx** | 1.30 | **1.30** | 1.28 → 2026-04-14 · 1.30 → current | Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. The setup scripts install the **stable** branch from nginx.org, and 1.30 is the oldest branch still receiving fixes. HTTP/3 needs 1.25 at minimum, so the floor is a support statement now rather than a feature one. |
 | **Java** (agent signing only) | 17 | 17 | 17 → 2027-09-30 · 21 → 2028-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. Target is deliberately the same as the minimum — nothing here needs 21, and naming it would report a behind-target JDK on every healthy install. Move to 21 when 17 nears its date, not before. |
@@ -174,10 +174,10 @@ says so. It fires when the only `pg_dump` on the host is an older major — and 
 a specific way that happens.
 
 **How a RHEL host gets here.** RHEL 9's base `postgresql` / `postgresql-server` packages (the
-*unversioned* names) are **PostgreSQL 13**. Installed beside PGDG's `postgresql15*`, they put a
-13 `pg_dump` at `/usr/bin/pg_dump` as a regular file, overwriting the alternatives symlink PGDG
-registered — and `alternatives --display pgsql-pg_dump` keeps reporting the link it *believes*
-it manages, pointing at 15. Only the binary tells the truth:
+*unversioned* names) are **PostgreSQL 13**. Installed beside PGDG's `postgresql<major>*`, they
+put a 13 `pg_dump` at `/usr/bin/pg_dump` as a regular file, overwriting the alternatives symlink
+PGDG registered — and `alternatives --display pgsql-pg_dump` keeps reporting the link it
+*believes* it manages, pointing at the PGDG major. Only the binary tells the truth:
 
 ```bash
 pg_dump --version                 # the truth
@@ -193,14 +193,14 @@ installers now install PGDG's versioned client and check the major, not just the
 
 ```bash
 systemctl is-active postgresql                      # confirm no PG13 instance is running
-dnf remove --assumeno postgresql postgresql-server  # dry run — abort if any postgresql15-* is listed
+dnf remove --assumeno postgresql postgresql-server  # dry run — abort if any postgresql1?-* is listed
 dnf remove postgresql postgresql-server
 alternatives --auto pgsql-pg_dump; alternatives --auto pgsql-psql
 pg_dump --version && psql --version                 # both must report the server's major
 ```
 
-Package removal leaves data directories alone — a PG15 cluster under `/var/lib/pgsql/15/data`
-is untouched. Then re-enable the pre-update backup if it was switched off to get past this
+Package removal leaves data directories alone — the PGDG cluster under
+`/var/lib/pgsql/<major>/data` is untouched. Then re-enable the pre-update backup if it was switched off to get past this
 (Server Settings → Maintenance → Updates), and take a manual backup to confirm.
 
 Do **not** work around it with a symlink in `/usr/local/bin`; the comment in
@@ -311,7 +311,7 @@ step 3; nothing else in the sequence needs repeating.
 
 ## RHEL / Rocky / AlmaLinux 9
 
-> **Note:** This walkthrough installs PostgreSQL from PGDG (the official PostgreSQL Global Development Group repo), not the RHEL AppStream module. PGDG matches upstream within days, supports the full Postgres extension ecosystem (TimescaleDB, PostGIS, etc.), and supports side-by-side major versions. AppStream's module ships a curated subset and lags upstream; in particular, **the TimescaleDB package targets PGDG only** — the AppStream `postgresql:15` module's package names (`postgresql-server`) don't satisfy `timescaledb-2-postgresql-15`'s requirement on `postgresql15-server`. If you have an existing AppStream install you want to migrate from, see *Migrating from AppStream to PGDG* below.
+> **Note:** This walkthrough installs PostgreSQL from PGDG (the official PostgreSQL Global Development Group repo), not the RHEL AppStream module. PGDG matches upstream within days, supports the full Postgres extension ecosystem (TimescaleDB, PostGIS, etc.), and supports side-by-side major versions. AppStream's module ships a curated subset and lags upstream; in particular, **the TimescaleDB package targets PGDG only** — the AppStream `postgresql:15` module's package names (`postgresql-server`) don't satisfy `timescaledb-2-postgresql-17`'s requirement on `postgresql17-server`. If you have an existing AppStream install you want to migrate from, see *Migrating from AppStream to PGDG* below.
 
 ### 1. PostgreSQL (PGDG)
 
@@ -323,14 +323,14 @@ sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-
 sudo dnf -qy module disable postgresql
 
 # Install Postgres 15 + contrib (needed for various Polaris features)
-sudo dnf install -y postgresql15 postgresql15-server postgresql15-contrib
+sudo dnf install -y postgresql17 postgresql17-server postgresql17-contrib
 
 # Initialize PGDATA and start the service
-sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
-sudo systemctl enable --now postgresql-15
+sudo /usr/pgsql-17/bin/postgresql-17-setup initdb
+sudo systemctl enable --now postgresql-17
 ```
 
-PGDATA lands at `/var/lib/pgsql/15/data`. Verify the disk holding `/var/lib/pgsql` has at least 50 GB free:
+PGDATA lands at `/var/lib/pgsql/17/data`. Verify the disk holding `/var/lib/pgsql` has at least 50 GB free:
 
 ```bash
 df -h /var/lib/pgsql
@@ -368,10 +368,10 @@ The `pg_read_all_settings` grant lets Polaris read `SHOW data_directory` so the 
 
 The `pgboss` schema grants are required for pg-boss queue mode (operators with thousands of monitored assets). Without them, "permission denied for schema pgboss" appears in `journalctl -u polaris` and Polaris falls back to in-process cursor mode — fine for small/medium fleets, won't keep up at thousands. The scripted installs (`deploy/setup-rhel.sh`, `deploy/setup-ubuntu.sh`) run these grants for you; manual or remote-DB installs need to run them once. **Remote/managed PostgreSQL (RDS, Cloud SQL, Neon, etc.):** hand the `\c polaris ... ALTER DEFAULT PRIVILEGES ...` block to your DBA to run on the polaris database.
 
-Allow the postgres directory to be traversed by the polaris OS user (needed for the same disk-space check — `statfs` on `/var/lib/pgsql/15/data` requires search permission on every ancestor directory). The PostgreSQL startup scripts reset these directories to `700` on every restart, so persist via a systemd override rather than a one-off chmod:
+Allow the postgres directory to be traversed by the polaris OS user (needed for the same disk-space check — `statfs` on `/var/lib/pgsql/17/data` requires search permission on every ancestor directory). The PostgreSQL startup scripts reset these directories to `700` on every restart, so persist via a systemd override rather than a one-off chmod:
 
 ```bash
-sudo systemctl edit postgresql-15
+sudo systemctl edit postgresql-17
 ```
 
 Add the following and save:
@@ -379,17 +379,17 @@ Add the following and save:
 ```ini
 [Service]
 ExecStartPost=/bin/chmod o+x /var/lib/pgsql
-ExecStartPost=/bin/chmod o+x /var/lib/pgsql/15
+ExecStartPost=/bin/chmod o+x /var/lib/pgsql/17
 ```
 
 Then reload and apply immediately:
 
 ```bash
 sudo systemctl daemon-reload
-sudo chmod o+x /var/lib/pgsql /var/lib/pgsql/15
+sudo chmod o+x /var/lib/pgsql /var/lib/pgsql/17
 ```
 
-Edit `/var/lib/pgsql/15/data/pg_hba.conf` and add a line for the polaris user (typically `host polaris polaris 127.0.0.1/32 scram-sha-256`), then `sudo systemctl reload postgresql-15`.
+Edit `/var/lib/pgsql/17/data/pg_hba.conf` and add a line for the polaris user (typically `host polaris polaris 127.0.0.1/32 scram-sha-256`), then `sudo systemctl reload postgresql-17`.
 
 ### 3. Node.js 24 (LTS)
 
@@ -473,7 +473,7 @@ sudo lvextend -r -L +20G /dev/vg1/var
 df -h /var
 ```
 
-If you can't grow `/var`, the alternative is to relocate PGDATA to `/opt` (which usually has ample space): stop postgres, `rsync -aHAX /var/lib/pgsql/15/ /opt/pgsql/`, set `Environment=PGDATA=/opt/pgsql/data` via a systemd drop-in, fix SELinux contexts with `sudo semanage fcontext -a -e /var/lib/pgsql /opt/pgsql && sudo restorecon -R /opt/pgsql`, then daemon-reload and start postgres.
+If you can't grow `/var`, the alternative is to relocate PGDATA to `/opt` (which usually has ample space): stop postgres, `rsync -aHAX /var/lib/pgsql/17/ /opt/pgsql/`, set `Environment=PGDATA=/opt/pgsql/data` via a systemd drop-in, fix SELinux contexts with `sudo semanage fcontext -a -e /var/lib/pgsql /opt/pgsql && sudo restorecon -R /opt/pgsql`, then daemon-reload and start postgres.
 
 ### Migrating from AppStream Postgres to PGDG
 
@@ -495,20 +495,20 @@ sudo systemctl stop postgresql
 # 2. Install PGDG, disable the AppStream module
 sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
 sudo dnf -qy module disable postgresql
-sudo dnf install -y postgresql15 postgresql15-server postgresql15-contrib
-sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
+sudo dnf install -y postgresql17 postgresql17-server postgresql17-contrib
+sudo /usr/pgsql-17/bin/postgresql-17-setup initdb
 
 # 3. Verify pg_hba.conf uses scram-sha-256 (default on PGDG; check anyway)
-sudo grep -E '^(local|host)' /var/lib/pgsql/15/data/pg_hba.conf | head -5
+sudo grep -E '^(local|host)' /var/lib/pgsql/17/data/pg_hba.conf | head -5
 # If you see ident/md5 on the 127.0.0.1 lines, edit to scram-sha-256
 
 # 4. Apply the chmod-traversable override (see step 2 above) BEFORE starting,
 #    then start the new instance
-sudo systemctl edit postgresql-15  # add the [Service] block from above
+sudo systemctl edit postgresql-17  # add the [Service] block from above
 sudo systemctl daemon-reload
-sudo chmod o+x /var/lib/pgsql /var/lib/pgsql/15
+sudo chmod o+x /var/lib/pgsql /var/lib/pgsql/17
 sudo systemctl disable postgresql
-sudo systemctl enable --now postgresql-15
+sudo systemctl enable --now postgresql-17
 
 # 5. Recreate the polaris role + database
 PWORD=$(sudo grep -oP 'polaris:\K[^@]+' /opt/polaris/.env)
@@ -543,7 +543,7 @@ GRANT USAGE, CREATE ON SCHEMA public TO polaris;
 SQL
 
 # 8. Re-run the install script — it'll re-stage the split-role units against
-#    postgresql-15.service and bring polaris.target back up against the
+#    postgresql-17.service and bring polaris.target back up against the
 #    migrated DB.
 sudo bash deploy/setup-rhel.sh --public-url https://polaris.example.com
 
@@ -563,12 +563,12 @@ If `/var` filled and postgres is now crash-looping with `PANIC: could not write 
 
 ```bash
 # Free space safely first
-sudo rm /var/lib/pgsql/15/data/log/postgresql-Wed.log    # rotator overwrites next week
+sudo rm /var/lib/pgsql/17/data/log/postgresql-Wed.log    # rotator overwrites next week
 sudo dnf clean all
 sudo journalctl --vacuum-size=50M
 
 # Then start postgres
-sudo systemctl start postgresql-15
+sudo systemctl start postgresql-17
 ```
 
 Watch for `database system is ready to accept connections`. Once recovery completes, `pg_wal` segments get recycled and free a few hundred MB. Then start polaris.
@@ -668,8 +668,9 @@ sudo bash deploy/setup-ubuntu.sh --public-url https://polaris.example.com
 
 The script installs nginx stable from nginx.org's Debian/Ubuntu repo
 (distro nginx is too old for HTTP/3), generates a self-signed cert, drops
-the split-role units (rewritten to depend on Ubuntu/Debian's
-`postgresql.service` meta-service instead of RHEL's `postgresql-15.service`),
+the split-role units (with a `20-postgres.conf` drop-in pointing at
+Ubuntu/Debian's `postgresql.service` meta-service rather than the versioned
+unit RHEL/PGDG uses — see *The PostgreSQL dependency*),
 opens TCP+UDP/443 in ufw, and starts `polaris.target`. Browse to
 `https://<your-hostname>/` to run the first-run setup wizard.
 
@@ -893,10 +894,15 @@ sudo cp deploy/polaris-migrate.service deploy/polaris-web.service \
         deploy/polaris-dash.service \
         deploy/polaris.target /etc/systemd/system/
 
-# Ubuntu/Debian: rewrite postgresql-15.service → postgresql.service
-# (the meta-service that resolves to the version-specific cluster unit).
-# RHEL/Rocky/Alma: leave as-is.
-# sudo sed -i 's/postgresql-15\.service/postgresql.service/g' /etc/systemd/system/polaris-*.service
+# The local PostgreSQL dependency is a DROP-IN, not a line in the units —
+# see "The PostgreSQL dependency" below. RHEL/PGDG:
+for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
+  sudo install -d -m 0755 "/etc/systemd/system/$u.service.d"
+  printf '[Unit]\nAfter=postgresql-17.service\nRequires=postgresql-17.service\n' \
+    | sudo tee "/etc/systemd/system/$u.service.d/20-postgres.conf" >/dev/null
+done
+# Ubuntu/Debian: use postgresql.service instead. External database: skip this
+# block entirely.
 
 sudo systemctl daemon-reload
 
@@ -908,6 +914,133 @@ sudo systemctl enable --now polaris.target     # "Start Everything"
 
 `systemctl start polaris.target` brings up migrate → web → monitor@1..N →
 discovery; `systemctl stop polaris.target` stops the group.
+
+### The PostgreSQL dependency
+
+**The shipped units do not name a PostgreSQL unit.** They can't: the name is a
+fact about your host, not about Polaris —
+
+| Host | Unit name |
+|---|---|
+| RHEL / Rocky / Alma, PGDG packages | `postgresql-17.service` (the major is in the name) |
+| Debian / Ubuntu | `postgresql.service` — the wrapper over `postgresql@17-main` |
+| External database (`-nodb` installs) | *no dependency at all* |
+| Patroni-managed HA | *no dependency* — Patroni starts and stops PostgreSQL |
+
+— and **every update overwrites the main unit files verbatim**, in-app and via
+`deploy/update-linux.sh` alike. A version written into a unit therefore survives
+only until the next update, at which point the host can be handed a `Requires=`
+for a unit it doesn't have, and the start fails.
+
+So the dependency lives in a drop-in, which neither sync path touches:
+
+```
+/etc/systemd/system/polaris-web.service.d/20-postgres.conf
+/etc/systemd/system/polaris-monitor@.service.d/20-postgres.conf
+/etc/systemd/system/polaris-discovery.service.d/20-postgres.conf
+/etc/systemd/system/polaris-dash.service.d/20-postgres.conf
+/etc/systemd/system/polaris-migrate.service.d/20-postgres.conf
+```
+
+Each holds two lines pointing at whatever your host calls PostgreSQL:
+
+```ini
+[Unit]
+After=postgresql-17.service
+Requires=postgresql-17.service
+```
+
+The setup scripts write these for you with the right name filled in; the
+reference copy is `deploy/dropins/20-postgres.conf.example`.
+
+**When your database moves to a new major**, edit these five files (or re-run
+the setup script) and `systemctl daemon-reload`. Nothing else in Polaris needs
+to know the major — the backup path resolves `pg_dump` and `psql` from the
+*server's* reported version at run time.
+
+**Upgrading from a pre-2026-09-09 install:** your units named the dependency
+inline. The first update after this change migrates it for you — both updaters
+read the installed unit, write the name they find into a `20-postgres.conf`,
+and only then overwrite the unit. They never touch an existing drop-in, and
+they skip the migration entirely on an HA node, where `10-ha.conf` has already
+redirected the dependency to `patroni.service` and a `20-` file would sort
+after it and undo that. Verify with:
+
+```bash
+systemctl show -p Requires polaris-web.service | tr ' ' '\n' | grep postgres
+```
+
+### Moving an existing install to PostgreSQL 17
+
+Installs provisioned before 2026-09-09 are on **PostgreSQL 15** (RHEL), or on whatever major
+the distro froze on (**14** on Ubuntu 22.04, **16** on 24.04 — the old script installed the
+unversioned metapackage). None of them stop working, and **nothing in Polaris forces this
+move**: the backup path resolves `pg_dump`/`psql` from the *server's* reported version, and the
+unit dependency is a per-host drop-in. What you get by moving is TimescaleDB past the 2.28.x
+line — 2.29 dropped PostgreSQL 15 — and a major with four more years of upstream support.
+
+This is an operator task in a maintenance window, not something the in-app updater can do: it
+runs as the unprivileged app user and cannot install packages.
+
+**Before anything else,** confirm the extension exists for the target major on your platform.
+`timescaledb-2-postgresql-17` is published for EL 9 and for Debian/Ubuntu; if it were not, the
+rest of this is moot.
+
+```bash
+# 1. Back up, and REHEARSE THE RESTORE into a scratch database. The restore path
+#    is the only code that calls timescaledb_pre_restore()/post_restore(), so it
+#    is the step most likely to surprise you. Do not skip the rehearsal.
+sudo systemctl stop polaris.target
+
+# 2. Install 17 SIDE BY SIDE. Do not remove 15 — it is the rollback.
+sudo dnf install -y postgresql17 postgresql17-server postgresql17-contrib
+sudo dnf install -y timescaledb-2-postgresql-17
+sudo /usr/pgsql-17/bin/postgresql-17-setup initdb
+
+# 3. Match the extension version across the two clusters first. pg_upgrade
+#    refuses to carry a library the new cluster does not have, and TimescaleDB
+#    must be in shared_preload_libraries on BOTH.
+sudo timescaledb-tune --pg-config=/usr/pgsql-17/bin/pg_config --quiet --yes
+
+# 4. Upgrade. --check first; it changes nothing and reports what would fail.
+sudo -u postgres /usr/pgsql-17/bin/pg_upgrade \
+  --old-bindir=/usr/pgsql-15/bin --new-bindir=/usr/pgsql-17/bin \
+  --old-datadir=/var/lib/pgsql/15/data --new-datadir=/var/lib/pgsql/17/data --check
+# then re-run without --check
+
+# 5. Point the units at the new service. This is the drop-in, NOT the unit file.
+for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
+  printf '[Unit]\nAfter=postgresql-17.service\nRequires=postgresql-17.service\n' \
+    | sudo tee "/etc/systemd/system/$u.service.d/20-postgres.conf" >/dev/null
+done
+sudo systemctl daemon-reload
+sudo systemctl disable --now postgresql-15
+sudo systemctl enable --now postgresql-17
+sudo systemctl start polaris.target
+```
+
+Then, in order:
+
+1. **Update the extension** — `ALTER EXTENSION timescaledb UPDATE;` against the polaris
+   database, then restart PostgreSQL so the new library is the one loaded.
+2. **Count what survived.** Hypertables, chunks, chunk intervals and retention policies, before
+   and after. Server Settings → **Maintenance** shows the capacity snapshot; compare it against
+   the figure you wrote down before the window. CI cannot help here — its Postgres has no
+   TimescaleDB, so a green test suite proves nothing about this step.
+3. **Take a real backup through Polaris** and restore it into a scratch database. That exercises
+   the version-sensitive restore gates against the new major, which is the part no dry run covers.
+4. **Only then remove the old major's packages** (`postgresql15*`) and the old data directory.
+   Until you do, `/usr/bin/pg_dump` may still be the 15 binary — `pg_dump --version` is the
+   check, and `alternatives --display` will not tell you the truth. See *Backups: "pg_dump is
+   PostgreSQL N but the server is PostgreSQL M"* above.
+
+**Rollback** is "point the drop-ins back at `postgresql-15.service`, re-enable it, restart the
+target" — which works for exactly as long as you keep the old cluster and its packages. Keep
+both until the new major has run a full retention cycle.
+
+On **Ubuntu/Debian**, the same shape with `pg_upgradecluster 15 main` after installing
+`postgresql-17` from PGDG, and the drop-in stays `postgresql.service` throughout — Debian's
+wrapper follows whichever cluster is configured.
 
 ### Upgrading a legacy single-process install
 
@@ -1316,9 +1449,9 @@ sslcacert=/etc/pki/tls/certs/ca-bundle.crt
 metadata_expire=300
 EOF
 
-sudo dnf install -y timescaledb-2-postgresql-15
-sudo timescaledb-tune --pg-config=/usr/pgsql-15/bin/pg_config --quiet --yes
-sudo systemctl restart postgresql-15
+sudo dnf install -y timescaledb-2-postgresql-17
+sudo timescaledb-tune --pg-config=/usr/pgsql-17/bin/pg_config --quiet --yes
+sudo systemctl restart postgresql-17
 sudo -u postgres psql -d polaris -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
 ```
 
@@ -1333,7 +1466,7 @@ echo "deb https://packagecloud.io/timescale/timescaledb/ubuntu/ $(lsb_release -c
   | sudo tee /etc/apt/sources.list.d/timescaledb.list
 wget --quiet -O - https://packagecloud.io/timescale/timescaledb/gpgkey | sudo apt-key add -
 sudo apt update
-sudo apt install -y timescaledb-2-postgresql-15
+sudo apt install -y timescaledb-2-postgresql-17
 sudo timescaledb-tune --quiet --yes
 sudo systemctl restart postgresql
 sudo -u postgres psql -d polaris -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
@@ -1346,7 +1479,7 @@ Use the official Timescale image instead of vanilla Postgres in your compose fil
 ```yaml
 services:
   postgres:
-    image: timescale/timescaledb:latest-pg15   # was: postgres:15
+    image: timescale/timescaledb:latest-pg17   # was: postgres:17
     # REQUIRED when swapping the image on an EXISTING volume. The TimescaleDB
     # entrypoint only writes shared_preload_libraries into postgresql.conf
     # during initdb, and initdb does not re-run on an already-initialized data
@@ -1368,7 +1501,7 @@ services:
       POSTGRES_DB: polaris
 ```
 
-Match the PostgreSQL major version your volume already holds (`latest-pg15` for a PG 15 data directory). Existing data is preserved across the image swap. After bringing the new container up, confirm the library actually loaded, then enable the extension once:
+Match the PostgreSQL major version your volume already holds (`latest-pg17` for a PG 15 data directory). Existing data is preserved across the image swap. After bringing the new container up, confirm the library actually loaded, then enable the extension once:
 
 ```bash
 docker exec -it <postgres-container> psql -U polaris -d polaris \
@@ -1386,7 +1519,7 @@ docker exec -it <postgres-container> psql -U polaris -d polaris \
 
 ### Windows Server
 
-The official Timescale Windows installer is bundled with the EnterpriseDB Postgres installer. Run the EDB installer with the timescaledb extension checked, or download `timescaledb_x.y.z_pg15_windows_amd64.zip` from packagecloud, copy `timescaledb*.dll` into `C:\Program Files\PostgreSQL\15\lib`, copy `timescaledb*.sql` and the control file into `C:\Program Files\PostgreSQL\15\share\extension`, then add `timescaledb` to `shared_preload_libraries` in `postgresql.conf`, restart the Windows service, and run `CREATE EXTENSION timescaledb` against the polaris database.
+The official Timescale Windows installer is bundled with the EnterpriseDB Postgres installer. Run the EDB installer with the timescaledb extension checked, or download `timescaledb_x.y.z_pg17_windows_amd64.zip` from packagecloud, copy `timescaledb*.dll` into `C:\Program Files\PostgreSQL\17\lib`, copy `timescaledb*.sql` and the control file into `C:\Program Files\PostgreSQL\17\share\extension`, then add `timescaledb` to `shared_preload_libraries` in `postgresql.conf`, restart the Windows service, and run `CREATE EXTENSION timescaledb` against the polaris database.
 
 ### Managed / remote Postgres
 

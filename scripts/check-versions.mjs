@@ -235,8 +235,23 @@ const FAMILIES = [
     agree: "major",
     minSites: 8,
     sites: [
-      { files: UNITS, label: "unit After=/Requires=", kind: "pin",
+      // NOT the shipped units. They named postgresql-<major>.service until
+      // 2026-09-09; the dependency is a per-host drop-in now, because the unit
+      // name is a host fact and an update overwrites the unit files verbatim.
+      // `checkUnitsNameNoPostgres` below asserts the major stays out of them.
+      { file: "deploy/dropins/20-postgres.conf.example", label: "drop-in example", kind: "pin",
         re: /postgresql-(\d+)\.service/g, pick: (m) => m[1] },
+      // The RHEL install's own majors. Unchecked until 2026-09-09, which is
+      // how PG_CLIENT_MAJOR could have drifted from the units in silence.
+      { file: "deploy/setup-rhel.sh", label: "PG_MAJOR", kind: "pin",
+        re: /^PG_MAJOR=(\d+)/gm, pick: (m) => m[1] },
+      { file: "deploy/setup-rhel-nodb.sh", label: "PG_CLIENT_MAJOR", kind: "pin",
+        re: /^PG_CLIENT_MAJOR=(\d+)/gm, pick: (m) => m[1] },
+      // The HA install provisions its own PostgreSQL for Patroni. A node that
+      // came up on a different major than the stock scripts install cannot
+      // replicate from the primary at all.
+      { file: "deploy/ha/setup-rhel-ha.sh", label: "PG_MAJOR", kind: "pin",
+        re: /^PG_MAJOR=(\d+)/gm, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
         re: /PostgreSQL\.PostgreSQL\.(\d+)/g, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "installer URL", kind: "pin",
@@ -247,6 +262,13 @@ const FAMILIES = [
         re: /timescaledb:latest-pg(\d+)/g, pick: (m) => m[1] },
       { files: WORKFLOWS, label: "CI service image", kind: "pin",
         re: /image:\s*postgres:(\d+)-/g, pick: (m) => m[1] },
+      // The in-container client. Unversioned (`postgresql-client`) until
+      // 2026-09-09, so it silently WAS whatever the base image shipped and
+      // agreed with the pin only by luck of Debian's release. pgClientTools
+      // resolves by the SERVER's major (rule 47), so a mismatch here fails
+      // every in-container backup.
+      { files: ["Dockerfile", "Dockerfile.dev"], label: "postgresql-client", kind: "pin",
+        re: /postgresql-client-(\d+)/g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md"], label: "timescaledb package", kind: "pin",
         re: /timescaledb-2-postgresql-(\d+)/g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md"], label: "pg_config path", kind: "pin",
@@ -526,6 +548,37 @@ function checkUnversionedInstalls() {
   return out;
 }
 
+/**
+ * units-name-no-postgres — a hard gate, not a pin check.
+ *
+ * The shipped units named postgresql-<major>.service until 2026-09-09. That was
+ * wrong in a way no equality check could see: both update paths overwrite the
+ * main unit files verbatim, so the major in a unit is re-asserted onto every
+ * host at every update — including hosts where that unit does not exist
+ * (Debian's is postgresql.service, an external-DB install has none, a Patroni
+ * node has it masked). setup-ubuntu.sh rewrote the name in place at install
+ * time and the next update put the RHEL name straight back.
+ *
+ * The dependency is a per-host drop-in now (deploy/dropins/20-postgres.conf.example).
+ * This fails if a major finds its way back into a shipped unit.
+ */
+function checkUnitsNameNoPostgres() {
+  const out = [];
+  for (const rel of UNITS()) {
+    const src = readCode(rel) ?? "";
+    for (const m of src.matchAll(/^(?:After|Requires|Wants|BindsTo)=.*?(postgresql[^\s]*\.service)/gm)) {
+      out.push(
+        `${rel} names ${m[1]} in a [Unit] dependency. The PostgreSQL unit name is a HOST fact — ` +
+          `postgresql-<major>.service on RHEL/PGDG, postgresql.service on Debian, absent for an external ` +
+          `database, masked under Patroni — and both update paths overwrite this file verbatim, so the name ` +
+          `would be re-asserted onto every host on every update. Put it in a 20-postgres.conf drop-in ` +
+          `instead (deploy/dropins/20-postgres.conf.example); drop-ins survive the sync.`,
+      );
+    }
+  }
+  return out;
+}
+for (const msg of checkUnitsNameNoPostgres()) failures.push({ check: "units-name-no-postgres", msg });
 for (const msg of checkPostgresSource()) warnings.push({ check: "postgres-source", msg });
 for (const msg of checkUnversionedInstalls()) warnings.push({ check: "unversioned-install", msg });
 

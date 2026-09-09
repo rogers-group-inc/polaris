@@ -34,20 +34,20 @@
       "trackGranularity": "major",
       "policy": "dated",
       "securityExposed": true,
-      "polarisMinimum": "15",
+      "polarisMinimum": "17",
       "polarisTarget": "17",
-      "polarisMaximumTested": "15",
+      "polarisMaximumTested": "17",
       "upgradePlaybook": "postgres-major",
-      "source": "https://endoflife.date/api/postgresql.json",
-      "sourceCheckedOn": "2026-09-08",
-      "confidence": "aggregator",
-      "notes": "Five-year support policy; a major dies in the November of its fifth year. Polaris targets 17 because TimescaleDB 2.29 dropped PostgreSQL 15 (see the timescaledb entry) - staying on 15 caps the extension at the 2.28.x line.",
+      "source": "https://www.postgresql.org/versions.json",
+      "sourceCheckedOn": "2026-09-09",
+      "confidence": "vendor",
+      "notes": "Five-year support policy; a major dies in the November of its fifth year. Moved 15 -> 17 on 2026-09-09: TimescaleDB 2.29 dropped PostgreSQL 15, so staying on 15 capped the extension at the 2.28.x line. 17 rather than 18 because 17 is what the Debian trixie image base ships as postgresql-client-17, so the container needs no PGDG apt repo of its own; TimescaleDB 2.30 is packaged for both. Every install path now provisions it from PGDG on Debian/Ubuntu too - the distro metapackage was 14 on 22.04 and 16 on 24.04, never the stated major, and had no number in its name for the pin check to catch.",
       "tracks": [
         { "track": "13", "released": "2020-09-24", "eol": "2025-11-13" },
         { "track": "14", "released": "2021-09-30", "eol": "2026-11-12" },
-        { "track": "15", "released": "2022-10-13", "eol": "2027-11-11", "note": "Last major supported by the TimescaleDB 2.28.x line." },
+        { "track": "15", "released": "2022-10-13", "eol": "2027-11-11", "note": "Polaris's major until 2026-09-09; last one supported by the TimescaleDB 2.28.x line." },
         { "track": "16", "released": "2023-09-14", "eol": "2028-11-09" },
-        { "track": "17", "released": "2024-09-26", "eol": "2029-11-08" },
+        { "track": "17", "released": "2024-09-26", "eol": "2029-11-08", "note": "Polaris's minimum and target. Debian 13 (trixie) ships this major, which is what the container image uses as its client." },
         { "track": "18", "released": "2025-09-25", "eol": "2030-11-14" }
       ]
     },
@@ -64,7 +64,7 @@
       "source": "https://docs.timescale.com/self-hosted/latest/upgrades/upgrade-pg/",
       "sourceCheckedOn": "2026-09-08",
       "confidence": "vendor",
-      "notes": "TimescaleDB publishes no dated end-of-life for its own minors. Its lifecycle is a PostgreSQL-compatibility horizon instead: 2.28.x is the last line supporting PostgreSQL 15, and 2.29.0 supports only 16/17/18. Graded informational - the actionable fact lives on the PostgreSQL row and in the postgres-major playbook.",
+      "notes": "TimescaleDB publishes no dated end-of-life for its own minors. Its lifecycle is a PostgreSQL-compatibility horizon instead: 2.28.x is the last line supporting PostgreSQL 15, and 2.29.0 supports only 16/17/18. That horizon is what drove the PostgreSQL 15 -> 17 move on 2026-09-09; 2.30.0 is the current line and is packaged for 17. Graded informational - the actionable fact lives on the PostgreSQL row and in the postgres-major playbook.",
       "tracks": []
     },
     {
@@ -186,17 +186,17 @@
       "trackGranularity": "major",
       "policy": "dated",
       "securityExposed": true,
-      "polarisMinimum": "12",
+      "polarisMinimum": "13",
       "polarisTarget": "13",
       "upgradePlaybook": "os-major",
       "source": "https://endoflife.date/api/debian.json",
       "sourceCheckedOn": "2026-09-08",
       "confidence": "aggregator",
-      "notes": "Reported as \"Container base image\" rather than a host OS when Polaris runs in a container - the Dockerfile is built FROM node:20-bookworm, which is Debian 12. extendedSupport is the volunteer LTS project, not the Debian security team.",
+      "notes": "Reported as \"Container base image\" rather than a host OS when Polaris runs in a container - the Dockerfile is built FROM node:24-trixie, which is Debian 13 (moved from bookworm on 2026-09-09: trixie ships the PostgreSQL 17 client and openjdk-25, so neither needs a third-party repo inside the image). extendedSupport is the volunteer LTS project, not the Debian security team.",
       "tracks": [
         { "track": "11", "released": "2021-08-14", "eol": "2026-08-31", "extendedSupport": "2031-06-30" },
-        { "track": "12", "released": "2023-06-10", "eol": "2028-06-30", "extendedSupport": "2033-06-30", "note": "bookworm - the Docker base image." },
-        { "track": "13", "released": "2025-08-09", "eol": "2030-06-30", "extendedSupport": "2035-06-30" }
+        { "track": "12", "released": "2023-06-10", "eol": "2028-06-30", "extendedSupport": "2033-06-30", "note": "bookworm - the Docker base image until 2026-09-09." },
+        { "track": "13", "released": "2025-08-09", "eol": "2030-06-30", "extendedSupport": "2035-06-30", "note": "trixie - the Docker base image." }
       ]
     },
     {

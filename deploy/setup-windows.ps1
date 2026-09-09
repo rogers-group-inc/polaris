@@ -4,14 +4,14 @@
     Polaris deployment script for Windows Server 2019/2022.
 
 .DESCRIPTION
-    Installs Node.js 24, PostgreSQL 15, and deploys Polaris as a Windows Service.
+    Installs Node.js 24, PostgreSQL 17, and deploys Polaris as a Windows Service.
 
     Run as Administrator:
         powershell -ExecutionPolicy Bypass -File deploy\setup-windows.ps1
 
     What this script does:
       1. Installs Node.js 24 LTS (via winget or direct MSI)
-      2. Installs PostgreSQL 15 (via winget or direct installer)
+      2. Installs PostgreSQL 17 (via winget or direct installer)
       3. Creates the PostgreSQL database and role
       4. Clones or copies the application to C:\polaris
       5. Installs dependencies and runs migrations
@@ -161,28 +161,31 @@ if (Test-Command "java") {
     }
 }
 
-# ─── 2. Install PostgreSQL 15 ────────────────────────────────────────────────
+# ─── 2. Install PostgreSQL 17 ────────────────────────────────────────────────
+# Newest first: this list is also what an ALREADY-installed host is detected
+# by, and the first hit wins. A box carrying both 15 and 17 should be driven
+# from the 17 bindir, not the one that happens to sort lowest.
 $pgBinDirs = @(
-    "C:\Program Files\PostgreSQL\15\bin",
+    "C:\Program Files\PostgreSQL\17\bin",
     "C:\Program Files\PostgreSQL\16\bin",
-    "C:\Program Files\PostgreSQL\17\bin"
+    "C:\Program Files\PostgreSQL\15\bin"
 )
 $pgBin = $pgBinDirs | Where-Object { Test-Path "$_\psql.exe" } | Select-Object -First 1
 
 if ($pgBin) {
     Write-Info "PostgreSQL already installed at $pgBin"
 } else {
-    Write-Info "Installing PostgreSQL 15..."
+    Write-Info "Installing PostgreSQL 17..."
     if ($hasWinget) {
-        winget install --id PostgreSQL.PostgreSQL.15 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id PostgreSQL.PostgreSQL.17 --accept-source-agreements --accept-package-agreements --silent
     } else {
-        $pgUrl = "https://get.enterprisedb.com/postgresql/postgresql-15.13-1-windows-x64.exe"
-        $pgInstaller = "$env:TEMP\postgresql-15-installer.exe"
+        $pgUrl = "https://get.enterprisedb.com/postgresql/postgresql-17.11-1-windows-x64.exe"
+        $pgInstaller = "$env:TEMP\postgresql-17-installer.exe"
         Write-Info "Downloading PostgreSQL installer..."
         Invoke-WebRequest -Uri $pgUrl -OutFile $pgInstaller -UseBasicParsing
         Write-Info "Running PostgreSQL installer (this may take a few minutes)..."
         Start-Process $pgInstaller -ArgumentList `
-            "--mode unattended --superpassword postgres --servicename postgresql-15 --servicepassword postgres --serverport 5432" `
+            "--mode unattended --superpassword postgres --servicename postgresql-17 --servicepassword postgres --serverport 5432" `
             -Wait -NoNewWindow
         Remove-Item $pgInstaller -Force -ErrorAction SilentlyContinue
     }

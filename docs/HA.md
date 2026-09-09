@@ -20,7 +20,7 @@ DC-A (active)                            DC-B (standby)
 ┌────────────────────────────┐           ┌────────────────────────────┐
 │ nginx :443  (same cert)    │◄── GSLB ──►│ nginx :443  (same cert)   │
 │ polaris.target   RUNNING   │           │ polaris.target   STOPPED   │
-│ PostgreSQL 15    primary   │──stream──►│ PostgreSQL 15    replica   │
+│ PostgreSQL 17    primary   │──stream──►│ PostgreSQL 17    replica   │
 │ Patroni :8008              │◄─────────►│ Patroni :8008              │
 │ etcd member 1              │           │ etcd member 2              │
 │ polaris-ha-role (60s)      │◄── rsync ─│ polaris-ha-role (60s)      │
@@ -165,14 +165,14 @@ Run all of this on the existing production host. Nothing here changes anything.
 
 ```bash
 # PostgreSQL: this design assumes the PGDG layout docs/INSTALL.md prescribes.
-systemctl status postgresql-15
-/usr/pgsql-15/bin/pg_config --version
+systemctl status postgresql-17
+/usr/pgsql-17/bin/pg_config --version
 sudo -u postgres psql -tAc "SHOW data_directory"
 
 # pg_rewind prerequisites. If BOTH data checksums are off AND wal_log_hints is
 # off, a failed-over node cannot rejoin without a full re-clone. patroni.yml
 # turns wal_log_hints on, which takes effect at the adoption restart.
-/usr/pgsql-15/bin/pg_controldata /var/lib/pgsql/15/data | grep -iE 'checksum|wal_log_hints'
+/usr/pgsql-17/bin/pg_controldata /var/lib/pgsql/17/data | grep -iE 'checksum|wal_log_hints'
 
 # Everything Patroni is about to take ownership of. Carry these into
 # patroni.yml or they silently revert to Patroni's defaults.
@@ -181,7 +181,7 @@ sudo -u postgres psql -c "SELECT name, setting, source FROM pg_settings
 sudo -u postgres psql -tAc "SHOW hba_file"    # copy its polaris lines too
 
 # Versions and identities the standby must match.
-node -v; id -u polaris; rpm -q timescaledb-2-postgresql-15
+node -v; id -u polaris; rpm -q timescaledb-2-postgresql-17
 openssl x509 -in /etc/polaris-nginx/cert.pem -noout -fingerprint -sha256
 
 # Space, for sizing max_slot_wal_keep_size.
@@ -478,7 +478,7 @@ bash /opt/polaris/deploy/ha/setup-rhel-ha.sh --role primary --adopt \
 
 It prints the settings and `pg_hba` lines Patroni is taking over, waits for you
 to confirm the rendered `/etc/patroni/patroni.yml` reflects them, then stops
-Polaris, masks `postgresql-15`, starts Patroni, creates the replication roles
+Polaris, masks `postgresql-17`, starts Patroni, creates the replication roles
 and hands the application back to the reconciler.
 
 Accept the window when all of these hold:
@@ -487,7 +487,8 @@ Accept the window when all of these hold:
 patronictl -c /etc/patroni/patroni.yml list      # one Leader, running
 polaris-ha-role role                              # primary
 systemctl is-enabled polaris.target               # disabled
-systemctl show -p Requires polaris-web.service | grep -c postgresql-15   # 0
+systemctl show -p Requires polaris-web.service | grep -cE 'postgresql[^ ]*\.service'  # 0
+ls /etc/systemd/system/polaris-*.service.d/20-postgres.conf 2>/dev/null              # nothing
 curl -sk https://localhost/health/ready           # 200 {"status":"ready"}
 ```
 
@@ -584,9 +585,9 @@ packages with `dnf versionlock`. To upgrade:
 
 ```bash
 # both nodes
-dnf versionlock delete timescaledb-2-postgresql-15 timescaledb-2-loader-postgresql-15
-dnf install -y timescaledb-2-postgresql-15-<new>
-dnf versionlock add timescaledb-2-postgresql-15 timescaledb-2-loader-postgresql-15
+dnf versionlock delete timescaledb-2-postgresql-17 timescaledb-2-loader-postgresql-17
+dnf install -y timescaledb-2-postgresql-17-<new>
+dnf versionlock add timescaledb-2-postgresql-17 timescaledb-2-loader-postgresql-17
 # then, in order
 patronictl -c /etc/patroni/patroni.yml restart <cluster> <standby>
 patronictl -c /etc/patroni/patroni.yml switchover        # standby becomes primary
@@ -662,8 +663,8 @@ the database:
 
 ```bash
 systemctl stop patroni && systemctl disable patroni
-systemctl unmask postgresql-15 && systemctl enable postgresql-15
-cd /var/lib/pgsql/15/data
+systemctl unmask postgresql-17 && systemctl enable postgresql-17
+cd /var/lib/pgsql/17/data
 # Patroni renamed the original config and includes it; restore the plain file.
 [ -f postgresql.base.conf ] && mv postgresql.base.conf postgresql.conf
 cp pg_hba.conf.polaris-pre-ha pg_hba.conf        # saved by --adopt
@@ -671,7 +672,7 @@ rm -f /etc/systemd/system/polaris-*.service.d/10-ha.conf
 rm -f /etc/polaris/ha-node
 systemctl disable --now polaris-ha-role.timer
 systemctl daemon-reload
-systemctl start postgresql-15
+systemctl start postgresql-17
 systemctl enable --now polaris.target
 ```
 
