@@ -194,14 +194,54 @@ else
   warn "  interval to suit. To fix later:  dnf install -y epel-release fping"
 fi
 
-# ─── 2. Install PostgreSQL 15 ────────────────────────────────────────────────
-if command -v psql &>/dev/null; then
-  info "PostgreSQL already installed"
+# ─── 2. Install PostgreSQL 15 (PGDG, not AppStream) ─────────────────────────
+# PGDG rather than RHEL's AppStream module, and the reason is load-bearing
+# rather than preference: the TimescaleDB package requires `postgresql15-server`,
+# a PGDG package name. AppStream's postgresql:15 module ships
+# `postgresql-server` instead and cannot satisfy it, so an AppStream install can
+# never gain the extension that every sample table in Polaris wants.
+#
+# This block used to install AppStream's `postgresql-server` and run
+# `postgresql-setup --initdb`, which produces an unversioned
+# `postgresql.service` -- while the units this same script goes on to install
+# declare `Requires=postgresql-15.service`. The install could not satisfy its
+# own units, and docs/INSTALL.md documented the PGDG path all along.
+PG_MAJOR=15
+PG_SERVICE="postgresql-${PG_MAJOR}"
+PG_BINDIR="/usr/pgsql-${PG_MAJOR}/bin"
+PG_DATADIR="/var/lib/pgsql/${PG_MAJOR}/data"
+
+if [[ -x "$PG_BINDIR/psql" ]]; then
+  info "PostgreSQL ${PG_MAJOR} (PGDG) already installed"
 else
-  info "Installing PostgreSQL..."
-  dnf install -y postgresql-server postgresql
-  postgresql-setup --initdb
-  info "PostgreSQL installed"
+  info "Installing PostgreSQL ${PG_MAJOR} from PGDG..."
+  dnf install -y "https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+  # Without this the AppStream module's packages shadow PGDG's.
+  dnf -qy module disable postgresql
+  dnf install -y "postgresql${PG_MAJOR}" "postgresql${PG_MAJOR}-server" "postgresql${PG_MAJOR}-contrib"
+  info "PostgreSQL ${PG_MAJOR} installed"
+fi
+
+# PGDG keeps its binaries in $PG_BINDIR and puts nothing on PATH. Polaris spawns
+# `pg_dump` and `psql` by BARE NAME for backup and restore
+# (src/services/backupService.ts), so without these symlinks every backup on a
+# fresh install fails with ENOENT -- and a backup you find out about only when
+# you need it is the worst kind. Just these two, into /usr/local/bin which is on
+# the default systemd PATH: symlinking the whole bindir would shadow tools an
+# operator may have pinned on purpose.
+for _pgtool in pg_dump psql; do
+  if [[ -x "$PG_BINDIR/$_pgtool" ]]; then
+    ln -sf "$PG_BINDIR/$_pgtool" "/usr/local/bin/$_pgtool"
+  fi
+done
+
+# Idempotent: postgresql-N-setup refuses to run over an existing PGDATA, and
+# re-running this script on a live host must not be a destructive act.
+if [[ ! -s "$PG_DATADIR/PG_VERSION" ]]; then
+  info "Initializing PGDATA at $PG_DATADIR..."
+  "$PG_BINDIR/postgresql-${PG_MAJOR}-setup" initdb
+else
+  info "PGDATA already initialized at $PG_DATADIR"
 fi
 
 # ─── 2b. Install git ────────────────────────────────────────────────────────
@@ -214,7 +254,7 @@ else
 fi
 
 # Enable and start PostgreSQL
-systemctl enable --now postgresql
+systemctl enable --now "$PG_SERVICE"
 info "PostgreSQL is running"
 
 # ─── 3. Create system user ───────────────────────────────────────────────────
@@ -269,16 +309,16 @@ fi
 # ─── 4. Create database and role ─────────────────────────────────────────────
 info "Setting up PostgreSQL database..."
 pushd /tmp >/dev/null
-sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';"
+sudo -u postgres "$PG_BINDIR/psql" -tc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1 || \
+  sudo -u postgres "$PG_BINDIR/psql" -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';"
 
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+sudo -u postgres "$PG_BINDIR/psql" -tc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || \
+  sudo -u postgres "$PG_BINDIR/psql" -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
 
 # pg-boss (queue runtime for monitor cadences at scale) lives in its own
 # `pgboss` schema. Make sure the polaris role owns it so pg-boss can create
 # its tables and the workers can boot. Idempotent — safe to re-run.
-sudo -u postgres psql -d "$DB_NAME" <<SQL
+sudo -u postgres "$PG_BINDIR/psql" -d "$DB_NAME" <<SQL
 CREATE SCHEMA IF NOT EXISTS pgboss;
 ALTER SCHEMA pgboss OWNER TO $DB_USER;
 GRANT ALL ON SCHEMA pgboss TO $DB_USER;
@@ -293,11 +333,11 @@ SQL
 info "Database '$DB_NAME' ready"
 
 # Ensure pg_hba.conf allows password auth for the polaris user
-PG_HBA=$(sudo -u postgres psql -tc "SHOW hba_file;" | tr -d ' ')
+PG_HBA=$(sudo -u postgres "$PG_BINDIR/psql" -tc "SHOW hba_file;" | tr -d ' ')
 if ! grep -q "$DB_USER" "$PG_HBA" 2>/dev/null; then
   warn "Adding md5 auth entry for '$DB_USER' to pg_hba.conf"
   sed -i "/^# TYPE/a local   $DB_NAME   $DB_USER   md5\nhost    $DB_NAME   $DB_USER   127.0.0.1/32   md5\nhost    $DB_NAME   $DB_USER   ::1/128        md5" "$PG_HBA"
-  systemctl reload postgresql
+  systemctl reload "$PG_SERVICE"
 fi
 popd >/dev/null
 
@@ -438,7 +478,7 @@ info "Running database migrations..."
 sudo -u "$APP_USER" npx prisma migrate deploy
 
 # Only seed on first deploy (skip if users table already has rows)
-HAS_USERS=$(cd /tmp && sudo -u postgres psql -tc "SELECT count(*) FROM ${DB_NAME}.public.users" 2>/dev/null | tr -d ' ') || HAS_USERS=""
+HAS_USERS=$(cd /tmp && sudo -u postgres "$PG_BINDIR/psql" -tc "SELECT count(*) FROM ${DB_NAME}.public.users" 2>/dev/null | tr -d ' ') || HAS_USERS=""
 if [[ "$HAS_USERS" == "" || "$HAS_USERS" == "0" ]]; then
   info "Seeding default admin (skipped in production — use the first-run wizard or restore from backup)..."
   sudo -u "$APP_USER" node --env-file=.env --import tsx/esm prisma/seed.ts || true

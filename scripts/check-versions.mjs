@@ -477,13 +477,32 @@ for (const family of FAMILIES) {
 // are excluded on purpose: a checker that cries wolf gets ignored, which is the
 // failure this whole guard exists to prevent.
 const UNVERSIONED = [
-  { re: /apt-get install -y default-jre-headless/g, what: "Java", pinned: "java-17-openjdk-headless (RHEL) / Microsoft.OpenJDK.17 (Windows)" },
+  {
+    re: /apt-get install -y default-jre-headless/g,
+    what: "Java",
+    pinned: "java-17-openjdk-headless (RHEL) / Microsoft.OpenJDK.17 (Windows)",
+    // A versioned install of the same technology in the SAME file means the
+    // unversioned one is a deliberate fallback, not the primary path — the pin
+    // check works, and the degradation is logged at install time. Only an
+    // unpaired unversioned install is invisible.
+    // Matches the INSTALL COMMAND, not the package name. A bare-name regex went
+    // quiet twice on a host with no pin at all: first on the comment explaining
+    // the fallback, then on the `info` line that reports it. What matters is
+    // whether the script actually installs a versioned JDK.
+    pairedWith: /(?:apt-get|dnf) install -y (?:openjdk-\d+-jre-headless|java-\d+-openjdk)/,
+  },
 ];
 function checkUnversionedInstalls() {
   const out = [];
   for (const rel of ALL_SETUP()) {
-    const src = read(rel) ?? "";
+    // readCode, not read: the pairing test must look at what the script RUNS,
+    // not what it says. The comment explaining why the fallback exists names
+    // `openjdk-17-jre-headless`, which made this check see a versioned install
+    // that was not there and go quiet on a genuinely unpinned host. Same trap
+    // as reading a pin out of a comment, one function along.
+    const src = readCode(rel) ?? "";
     for (const u of UNVERSIONED) {
+      if (u.pairedWith && u.pairedWith.test(src)) continue;
       for (const m of src.matchAll(u.re)) {
         out.push(
           `${rel} installs ${u.what} unversioned (\`${m[0]}\`) — whatever the distro default is — while other ` +
