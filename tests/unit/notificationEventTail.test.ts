@@ -280,3 +280,61 @@ describe("event-tail counterpart reset", () => {
     expect(db.updateManyCalls).toHaveLength(0);
   });
 });
+
+/**
+ * The event tail writes `metric` / `dimension` null by construction — nothing
+ * fired as a metric — which is why an SD-WAN failover alert used to mail an
+ * hour of the FortiGate's CPU under "Branch-to-DC: wan1 → wan2". One change
+ * type knows exactly which sub-asset it is about, and stamps the two columns
+ * the delivery-time charts resolve a path from.
+ */
+describe("chart keys on a change alert", () => {
+  function failoverRule(overrides: Record<string, unknown> = {}) {
+    return eventRule({
+      id: "r-sdwan",
+      name: "SD-WAN failover",
+      trigger: { type: "change", changeType: "sdwan_failover" },
+      cooldownSec: null,
+      ...overrides,
+    });
+  }
+  function failoverEvent(details: unknown, action = "change.sdwan.failover") {
+    return {
+      id: "e-fo",
+      timestamp: new Date(NOW - 60_000),
+      action,
+      resourceType: "asset",
+      resourceId: "a-fgt-1",
+      resourceName: "FGT-BRANCH-01",
+      level: "info",
+      message: "change.sdwan.failover: Branch-to-DC: wan1 → wan2",
+      details,
+      actor: "system:change-detector",
+    };
+  }
+
+  it("stamps a failover with the field that changed and the member it LEFT", async () => {
+    db.rules.push(failoverRule());
+    db.events.push(failoverEvent({ ruleName: "Branch-to-DC", from: "wan1", to: "wan2", change: "change.sdwan.failover" }));
+    await evaluateAllNotificationRules();
+    expect(db.created).toHaveLength(1);
+    expect(db.created[0]).toMatchObject({ metric: "sdwanSelectedMember", dimension: "Branch-to-DC|wan1" });
+  });
+
+  it("leaves every other change alert's columns alone", async () => {
+    db.rules.push(eventRule({ id: "r-lldp", trigger: { type: "change", changeType: "lldp_neighbor_removed" }, cooldownSec: null }));
+    db.events.push(failoverEvent({ ruleName: "Branch-to-DC", from: "wan1" }, "change.lldp.neighbor_removed"));
+    await evaluateAllNotificationRules();
+    expect(db.created).toHaveLength(1);
+    expect(db.created[0].metric).toBeUndefined();
+    expect(db.created[0].dimension).toBeUndefined();
+  });
+
+  it("stamps nothing when the event carries no rule name to look a health check up by", async () => {
+    db.rules.push(failoverRule());
+    db.events.push(failoverEvent({ from: "wan1", to: "wan2" }));
+    await evaluateAllNotificationRules();
+    expect(db.created).toHaveLength(1);
+    expect(db.created[0].metric).toBeUndefined();
+  });
+});

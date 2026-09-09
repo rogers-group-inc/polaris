@@ -60,9 +60,11 @@ vi.mock("../../src/services/downDetectionService.js", () => ({
 
 import {
   buildAlertCharts,
+  chartKeysForChangeEvent,
   chartTokenForMetric,
   isSdwanScopedAlert,
   parseSdwanDimension,
+  resolveSdwanTarget,
   sdwanSeriesFrom,
   sdwanChartLabel,
   type SdwanSampleRow,
@@ -237,6 +239,56 @@ describe("what an SD-WAN chart calls itself", () => {
 
   it("drops the separator when no member was resolved", () => {
     expect(sdwanChartLabel("SD-WAN jitter", "VPN-SLA", "")).toBe("SD-WAN jitter — VPN-SLA");
+  });
+});
+
+describe("a failover event, which fires no metric at all", () => {
+  beforeEach(() => { calls.length = 0; sdwanRule.row = null; });
+
+  it("stamps the field that actually changed, and the member the rule LEFT", () => {
+    // The event path writes metric/dimension null by construction, so a
+    // failover email fell through to the firewall's own charts. These two
+    // columns are what let the delivery-time charts resolve the path.
+    expect(chartKeysForChangeEvent("change.sdwan.failover", { ruleName: "Branch-to-DC", from: "wan1", to: "wan2" }))
+      .toEqual({ metric: "sdwanSelectedMember", dimension: "Branch-to-DC|wan1" });
+  });
+
+  it("falls back to the rule alone when the event named no previous member", () => {
+    expect(chartKeysForChangeEvent("change.sdwan.failover", { ruleName: "Branch-to-DC", to: "wan2" }))
+      .toEqual({ metric: "sdwanSelectedMember", dimension: "Branch-to-DC" });
+  });
+
+  it("leaves every other event alert exactly as it was", () => {
+    expect(chartKeysForChangeEvent("change.lldp.neighbor_removed", { ruleName: "x" })).toBeNull();
+    expect(chartKeysForChangeEvent("integration.discover.error", { ruleName: "x" })).toBeNull();
+    // Without a rule name there is nothing to look a health check up by.
+    expect(chartKeysForChangeEvent("change.sdwan.failover", { from: "wan1" })).toBeNull();
+    expect(chartKeysForChangeEvent("change.sdwan.failover", null)).toBeNull();
+    expect(chartKeysForChangeEvent("change.sdwan.failover", "not an object")).toBeNull();
+  });
+
+  it("charts the member traffic left, not the one it moved to", async () => {
+    // THE POINT OF THE STAMP. AssetSdwanRule is delete-replaced per scrape, so
+    // by delivery time it says only where the traffic went — and wan2 is the
+    // healthy link, which explains nothing. wan1 is the one whose SLA broke.
+    sdwanRule.row = { healthChecks: ["VPN-SLA"], selectedMember: "wan2" };
+    const target = await resolveSdwanTarget("a1", "sdwanSelectedMember", "Branch-to-DC|wan1");
+    expect(target).toEqual({ healthChecks: ["VPN-SLA"], link: "wan1" });
+  });
+
+  it("keeps the rule's current member for a plain rule-state alert", async () => {
+    sdwanRule.row = { healthChecks: ["VPN-SLA"], selectedMember: "wan2" };
+    expect(await resolveSdwanTarget("a1", "sdwanRuleStatus", "Branch-to-DC")).toEqual({
+      healthChecks: ["VPN-SLA"], link: "wan2",
+    });
+  });
+
+  it("looks the rule up by its NAME half, never the whole dimension", async () => {
+    sdwanRule.row = { healthChecks: ["VPN-SLA"], selectedMember: "wan2" };
+    await resolveSdwanTarget("a1", "sdwanSelectedMember", "Branch-to-DC|wan1");
+    const { prisma } = await import("../../src/db.js");
+    expect((prisma.assetSdwanRule.findUnique as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0])
+      .toMatchObject({ where: { assetId_ruleName: { assetId: "a1", ruleName: "Branch-to-DC" } } });
   });
 });
 

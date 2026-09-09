@@ -379,8 +379,17 @@ export function parseSdwanDimension(dimension: string | null | undefined): Sdwan
  * member — because a rule alert's dimension is the rule NAME and nothing in the
  * notification says which health check sits under it. That table is
  * delete-replaced per scrape rather than a time series, so what comes back is
- * the rule as it stands at DELIVERY time; on a failover that is the member it
- * moved TO, which is the right default for "is the new path any good".
+ * the rule as it stands at DELIVERY time.
+ *
+ * A rule dimension may name a MEMBER as well, as `"<ruleName>|<member>"`, and
+ * that member wins over the rule's current selection. It is what a FAILOVER
+ * alert stamps (`chartKeysForChangeEvent`), and it is the difference between an
+ * email that explains itself and one that doesn't: the rule has already moved
+ * by delivery time, so charting its current member draws the healthy link
+ * traffic was moved ONTO, while the member it LEFT is the one whose latency
+ * climbed through the SLA and made the gate act. Pipe-separated for the same
+ * reason and on the same assumption as the metric dimension — FortiOS object
+ * names admit no `|` — and a dimension without one keeps the current member.
  */
 export async function resolveSdwanTarget(
   assetId: string,
@@ -389,9 +398,13 @@ export async function resolveSdwanTarget(
 ): Promise<SdwanTarget | null> {
   if (metric === "sdwanRuleStatus" || metric === "sdwanSelectedMember") {
     if (!dimension) return null;
+    const i = dimension.indexOf("|");
+    const ruleName = i < 0 ? dimension : dimension.slice(0, i);
+    const namedMember = i < 0 ? "" : dimension.slice(i + 1);
+    if (!ruleName) return null;
     try {
       const rule = await prisma.assetSdwanRule.findUnique({
-        where: { assetId_ruleName: { assetId, ruleName: dimension } },
+        where: { assetId_ruleName: { assetId, ruleName } },
         select: { healthChecks: true, selectedMember: true },
       });
       const healthChecks = (rule?.healthChecks ?? []).filter((h) => !!h);
@@ -399,13 +412,48 @@ export async function resolveSdwanTarget(
       // has no health check to chart. Nothing is drawn rather than a graph of
       // some unrelated check that happens to exist on the gate.
       if (healthChecks.length === 0) return null;
-      return { healthChecks, link: rule?.selectedMember ?? null };
+      return { healthChecks, link: namedMember || rule?.selectedMember || null };
     } catch (err) {
-      logger.debug({ err: (err as Error)?.message, assetId, rule: dimension }, "SD-WAN rule lookup failed — no SD-WAN chart");
+      logger.debug({ err: (err as Error)?.message, assetId, rule: ruleName }, "SD-WAN rule lookup failed — no SD-WAN chart");
       return null;
     }
   }
   return parseSdwanDimension(dimension);
+}
+
+/**
+ * The `metric` / `dimension` an EVENT-triggered alert must carry for its charts
+ * to resolve — or null for the ~all change events that have no chart.
+ *
+ * The event path is otherwise chart-blind by construction: it writes
+ * `Notification.metric = null` and `dimension = null` (nothing "fired" as a
+ * metric), so `chartTokenForMetric` answers nothing and the body falls through
+ * to the device charts. On an SD-WAN failover that is the exact complaint this
+ * feature exists to fix — the alert says "Branch-to-DC: wan1 → wan2" over an
+ * hour of the firewall's CPU.
+ *
+ * `sdwanSelectedMember` is not a stand-in here: a failover IS that field
+ * changing, so the stamped metric is the true one and every downstream reader
+ * (the charts, the asset page's alert tooltip, the acknowledge page) says
+ * something accurate. The member the rule LEFT rides the dimension because the
+ * event details are the only place it exists — `AssetSdwanRule` is
+ * delete-replaced and by delivery time holds only where the traffic went.
+ *
+ * Pure, and deliberately narrow: an action with no chart behind it returns null
+ * and that alert is unchanged.
+ */
+export function chartKeysForChangeEvent(
+  action: string,
+  details: unknown,
+): { metric: string; dimension: string } | null {
+  if (action !== "change.sdwan.failover") return null;
+  const d = details && typeof details === "object" ? (details as Record<string, unknown>) : null;
+  const ruleName = typeof d?.ruleName === "string" ? d.ruleName.trim() : "";
+  // The rule name is the only part that is load-bearing — without it there is
+  // nothing to look the health check up by.
+  if (!ruleName) return null;
+  const from = typeof d?.from === "string" ? d.from.trim() : "";
+  return { metric: "sdwanSelectedMember", dimension: from ? `${ruleName}|${from}` : ruleName };
 }
 
 /** One `AssetPerfSlaSample` row, as the fold below reads it. */

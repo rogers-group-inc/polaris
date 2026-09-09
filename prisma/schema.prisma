@@ -4624,16 +4624,26 @@ model Notification {
 
   // The sub-asset dimension this alert is ABOUT, exactly as the engine keyed
   // its state row (NotificationRuleState.dimensionKey): a hardware sensor's
-  // name, an interface, a mount, a tunnel. NULL for whole-device alerts,
-  // composites (which fire per asset at dimensionKey "") and event/change
-  // rules. Persisted because the alert email is rendered at DELIVERY time,
-  // long after the reading is gone — without it the sensor chart could not
-  // know which of a firewall's dozen sensors the alert was raised for.
+  // name, an interface, a mount, a tunnel, an SD-WAN "<healthCheck>|<link>"
+  // pair. NULL for whole-device alerts, composites (which fire per asset at
+  // dimensionKey "") and ~all event/change rules. Persisted because the alert
+  // email is rendered at DELIVERY time, long after the reading is gone —
+  // without it the sensor chart could not know which of a firewall's dozen
+  // sensors the alert was raised for.
+  //
+  // The one event/change exception is the SD-WAN failover
+  // (alertChartService.chartKeysForChangeEvent), which stamps
+  // "<ruleName>|<member it left>": that member exists only in the Event's
+  // details, since AssetSdwanRule is delete-replaced and by delivery time holds
+  // only where the traffic went.
   dimension String?
 
   // The metric that fired ("responseTimeMs", "hwSensorValue", …). Read at
   // DELIVERY time so the chart explaining THIS alert leads the email — the
-  // body is rendered long after the rule that produced it was in hand.
+  // body is rendered long after the rule that produced it was in hand. NULL on
+  // event/change alerts, where nothing fired as a metric — except the SD-WAN
+  // failover, which stamps the field that genuinely changed
+  // ("sdwanSelectedMember") so its charts resolve.
   metric String?
 
   deliveries NotificationDelivery[]
