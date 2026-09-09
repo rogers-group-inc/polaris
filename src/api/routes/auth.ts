@@ -15,6 +15,12 @@ import {
   generateBackupCodes,
   buildEnrollment,
 } from "../../services/totpService.js";
+// User.totpSecret is a scalar column, so it sits OUTSIDE the JSON-blob
+// seal-on-write/open-on-read extension in db.ts — sealing is explicit at the
+// four sites below. openValue passes an unsealed value straight through, which
+// is what lets enrollments predating this change keep verifying while
+// backfillSecretEncryption converts them.
+import { sealValue, openValue } from "../../utils/secretBox.js";
 import { AppError } from "../../utils/errors.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePermission, snapshotFromRole } from "../middleware/permissions.js";
@@ -323,7 +329,7 @@ router.post("/login/totp", async (req, res, next) => {
         remainingBackupCodes = remaining;
       }
     } else {
-      verified = verifyTotpCode(user.totpSecret, code);
+      verified = verifyTotpCode(openValue(user.totpSecret), code);
     }
 
     if (!verified) {
@@ -954,7 +960,7 @@ router.post("/totp/enroll", requireAuth, async (req, res, next) => {
 
     const secret = generateTotpSecret();
     const { otpauthUri, qrSvg } = await buildEnrollment(secret, user.username);
-    await prisma.user.update({ where: { id: userId }, data: { totpSecret: secret } });
+    await prisma.user.update({ where: { id: userId }, data: { totpSecret: sealValue(secret) } });
 
     res.json({ secret, otpauthUri, qrSvg });
   } catch (err) {
@@ -975,7 +981,7 @@ router.post("/totp/confirm", requireAuth, totpCodeLimiter, async (req, res, next
     if (user.totpEnabledAt) {
       throw new AppError(409, "Two-factor auth is already enabled.");
     }
-    if (!verifyTotpCode(user.totpSecret, code)) {
+    if (!verifyTotpCode(openValue(user.totpSecret), code)) {
       throw new AppError(401, "Invalid code. Try again with a fresh value from your authenticator app.");
     }
 
@@ -1021,7 +1027,7 @@ router.delete("/totp", requireAuth, totpCodeLimiter, async (req, res, next) => {
       const remaining = await consumeBackupCode(user.totpBackupCodes, code);
       verified = remaining !== null;
     } else {
-      verified = verifyTotpCode(user.totpSecret, code);
+      verified = verifyTotpCode(openValue(user.totpSecret), code);
     }
     if (!verified) throw new AppError(401, "Invalid code.");
 

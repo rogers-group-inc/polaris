@@ -32,7 +32,7 @@ import { prisma, prismaBase } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "../services/eventLogService.js";
 import { runInstrumentedJob } from "./_metrics.js";
-import { secretEncryptionEnabled, isSealed } from "../utils/secretBox.js";
+import { secretEncryptionEnabled, isSealed, sealValue } from "../utils/secretBox.js";
 import { SECRET_CONFIG_KEYS } from "../utils/configSecretFields.js";
 
 /**
@@ -118,11 +118,32 @@ async function backfillSecretEncryption(): Promise<void> {
         (key, blob) => prisma.setting.update({ where: { key }, data: { value: blob as never } }),
       );
 
-      const total = credentials + integrations + channels + settings;
+      // User.totpSecret is a SCALAR column, not one of the four JSON blobs, so
+      // it has no seal-on-write hook in db.ts and no blob to walk — auth.ts
+      // seals it explicitly on enrollment and this pass converts the rows
+      // enrolled before that. A TOTP secret is a password equivalent: anyone
+      // holding it can mint the second factor forever, and it was landing in
+      // every pg_dump in the clear.
+      const totpRows = await prismaBase.user.findMany({
+        where: { totpSecret: { not: null } },
+        select: { id: true, totpSecret: true },
+      });
+      let totpSecrets = 0;
+      for (const row of totpRows) {
+        if (!row.totpSecret || isSealed(row.totpSecret)) continue;
+        try {
+          await prisma.user.update({ where: { id: row.id }, data: { totpSecret: sealValue(row.totpSecret) } });
+          totpSecrets++;
+        } catch (err) {
+          logger.error({ err, table: "users", id: row.id }, "backfillSecretEncryption: could not seal a row");
+        }
+      }
+
+      const total = credentials + integrations + channels + settings + totpSecrets;
       if (total === 0) return;
 
       logger.info(
-        { credentials, integrations, channels, settings },
+        { credentials, integrations, channels, settings, totpSecrets },
         "backfillSecretEncryption: encrypted previously-plaintext secrets at rest",
       );
       await logEvent({
@@ -130,8 +151,8 @@ async function backfillSecretEncryption(): Promise<void> {
         action: "server.secrets.encrypted_at_rest",
         resourceType: "setting",
         actor: "system:backfill-secret-encryption",
-        message: `Encrypted ${total} previously-plaintext secret-bearing row(s) at rest (credentials: ${credentials}, integrations: ${integrations}, delivery channels: ${channels}, settings: ${settings})`,
-        details: { credentials, integrations, channels, settings },
+        message: `Encrypted ${total} previously-plaintext secret-bearing row(s) at rest (credentials: ${credentials}, integrations: ${integrations}, delivery channels: ${channels}, settings: ${settings}, TOTP secrets: ${totpSecrets})`,
+        details: { credentials, integrations, channels, settings, totpSecrets },
       });
     });
   } catch (err) {
