@@ -20,7 +20,7 @@ states a floor, it states the same one as this table.
 | **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date: **2.28.x is the last line supporting PostgreSQL 15**, and 2.29+ supports only 16/17/18. |
 | **Go** (agent build only) | 1.22 | **1.26** | 1.22 → 2025-02-11 · 1.25 → 2026-08-19 | Go supports only the two most recent majors, so this ages faster than anything else here. Needed only to build agent binaries in-app. |
 | **nginx** | 1.25 | **1.30** | 1.25 → 2024-05-29 · 1.29 → 2026-05-13 | The 1.25 floor is the HTTP/3 requirement, not a support statement. The setup scripts install from the nginx.org **mainline** repo, so a scripted install lands on a current branch. |
-| **Java** (agent signing only) | 17 | **21** | 17 → 2027-09-30 · 21 → 2028-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. |
+| **Java** (agent signing only) | 17 | 17 | 17 → 2027-09-30 · 21 → 2028-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. Target is deliberately the same as the minimum — nothing here needs 21, and naming it would report a behind-target JDK on every healthy install. Move to 21 when 17 nears its date, not before. |
 | **RHEL / Rocky / AlmaLinux** | 9 | 9 | 9 → 2032-05-31 (full support ends 2027-05-31) | |
 | **Ubuntu** | 22.04 LTS | **24.04 LTS** | 22.04 → 2027-06-01 · 24.04 → 2029-05-31 | LTS only. Extended dates require Ubuntu Pro; don't treat them as free runway. |
 | **Windows Server** | 2019 | 2022 | see Microsoft's product lifecycle | |
