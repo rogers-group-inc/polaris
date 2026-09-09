@@ -246,9 +246,93 @@
       "confidence": "vendor",
       "notes": "PgBouncer publishes no dated lifecycle. Polaris also cannot detect its version: that needs SHOW VERSION on the admin console (port 6432, pgbouncer database, an admin user) with credentials Polaris does not hold. Presence is detected; the version is reported undetectable and the operator is asked to confirm the 1.21+ floor by hand.",
       "tracks": []
+    },
+    {
+      "id": "etcd",
+      "label": "etcd (HA only)",
+      "kind": "database",
+      "trackGranularity": "major.minor",
+      "policy": "compat",
+      "securityExposed": false,
+      "polarisMinimum": "3.5",
+      "polarisTarget": "3.5",
+      "polarisMaximumTested": "3.5",
+      "upgradePlaybook": "ha-cluster",
+      "source": "https://etcd.io/docs/v3.5/op-guide/versioning/",
+      "sourceCheckedOn": "2026-09-09",
+      "confidence": "aggregator",
+      "notes": "Present only on an active/standby HA install (docs/HA.md); a single-node Polaris has no etcd. The VENDOR page states a rule, not dates: 'The etcd project maintains release branches for the current version and previous release. For example, when v3.5 is the current version, v3.4 is supported. When v3.6 is released, v3.4 goes out of support.' That is why policy is compat - a track can fall out of support because something NEW shipped, with no date announced in advance, so this entry cannot warn ahead of time the way a dated family does. The per-track dates below come from endoflife.date, not from etcd, hence confidence aggregator. Polaris pins no etcd version anywhere: deploy/ha/setup-rhel-ha.sh runs `dnf --enablerepo=pgdg-rhel9-extras install -y etcd`, so the version is whatever PGDG ships and it can change under a fresh standby build. The 3.5 floor is the etcd3 API the Patroni template targets (deploy/ha/patroni.yml.example, etcd3.hosts), and target equals minimum deliberately: nothing about a newer etcd is needed, and 3.5 has the longest announced support of any current track. maximumTested 3.5 is generous - NO etcd version has been exercised on real hardware, because deploy/ha has never run on a real pair. DRAFT: polarisMinimum/Target need a human decision, per the skill's human-review rule.",
+      "tracks": [
+        {
+          "track": "3.3",
+          "released": "2018-02-01",
+          "eol": "2021-10-15"
+        },
+        {
+          "track": "3.4",
+          "released": "2019-08-30",
+          "eol": "2026-06-01",
+          "note": "Went out of support when 3.6 shipped. Date is endoflife.date's, not an etcd announcement."
+        },
+        {
+          "track": "3.5",
+          "released": "2021-06-15",
+          "eol": "2027-07-08",
+          "note": "Kept alive well past the two-branch rule - endoflife.date shows support to 2027-07-08 and a 3.5.33 patch. Recorded as a plain eol, not extendedSupport: that field takes the date an extended phase ENDS, and no separate date for the end of 3.5's normal support was published to put in eol alongside it. Polaris's floor."
+        },
+        {
+          "track": "3.6",
+          "released": "2025-05-15",
+          "eol": null
+        },
+        {
+          "track": "3.7",
+          "released": "2026-07-08",
+          "eol": null,
+          "note": "Current branch, so 3.5 is now the older of the two supported ones only by virtue of its extended support."
+        }
+      ]
+    },
+    {
+      "id": "patroni",
+      "label": "Patroni (HA only)",
+      "kind": "runtime",
+      "trackGranularity": "major",
+      "policy": "none",
+      "securityExposed": false,
+      "polarisMinimum": "3",
+      "polarisTarget": "3",
+      "upgradePlaybook": "ha-cluster",
+      "source": "https://patroni.readthedocs.io/en/latest/releases.html",
+      "sourceCheckedOn": "2026-09-09",
+      "confidence": "aggregator",
+      "notes": "Present only on an active/standby HA install (docs/HA.md). Patroni publishes NO dated lifecycle: its docs and GitHub carry release notes and a supported-PostgreSQL matrix, but no supported-version or end-of-life policy, and a search on 2026-09-09 found none - hence policy none and confidence aggregator rather than a vendor read of a policy that does not exist. In practice only the newest release gets fixes. Polaris pins no version: deploy/ha/setup-rhel-ha.sh runs `dnf install -y patroni patroni-etcd` from PGDG, so a standby built today can land on a different major than the primary. The 3 floor is what deploy/ha/patroni.yml.example was written against; 4.x is ANTICIPATED rather than unsupported - the on_role_change callback ignores the role Patroni passes and re-derives it from the REST API precisely because the role vocabulary changed between 3.x and 4.x. Upstream is 4.1.5 as of 2026-09. No Patroni version has run on real hardware. DRAFT: the floor and whether to state a 4.x target need a human decision.",
+      "tracks": []
     }
   ],
   "playbooks": [
+    {
+      "id": "ha-cluster",
+      "title": "Move etcd or Patroni on an HA pair",
+      "docAnchor": "docs/HA.md#8-day-to-day-operations",
+      "risk": "high",
+      "steps": [
+        "Neither is pinned by this repo: both come unversioned from PGDG, so decide the target version first and install it explicitly rather than letting `dnf install` choose per host.",
+        "Both nodes must match. A version skew between primary and standby is the failure this pair is most likely to hit, because a standby rebuilt months later gets whatever PGDG ships that day.",
+        "Patroni first or etcd first is not arbitrary: upgrade etcd across all THREE members (both database nodes and the witness) one at a time, confirming quorum between each, before touching Patroni.",
+        "etcd supports only the current and previous release branch, so plan a move before the branch in use falls out of support - there is no announced date to wait for.",
+        "Re-check the role callback after any Patroni major: it re-derives the role from the REST API because the vocabulary changed in 4.x, and that is the seam a major would break.",
+        "Rehearse a switchover before trusting the pair again, per the drills in docs/HA.md."
+      ],
+      "files": [
+        "deploy/ha/setup-rhel-ha.sh",
+        "deploy/ha/patroni.yml.example",
+        "deploy/ha/etcd.conf.example",
+        "deploy/ha/polaris-ha-role.sh",
+        "deploy/ha/patroni-callback.sh",
+        "docs/HA.md"
+      ]
+    },
     {
       "id": "node-major",
       "title": "Move Polaris to a new Node major",

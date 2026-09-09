@@ -520,10 +520,39 @@ const UNVERSIONED = [
     // whether the script actually installs a versioned JDK.
     pairedWith: /(?:apt-get|dnf) install -y (?:openjdk-\d+-jre-headless|java-\d+-openjdk)/,
   },
+  // The HA cluster's two dependencies are unversioned everywhere, and unlike
+  // Java there is no pin ANYWHERE to compare them against — so `pinned` is null
+  // and the message says what is actually true instead of naming a pin that
+  // does not exist. They are still worth a line every run: an operator building
+  // a standby months after the primary gets whatever PGDG ships that day, and a
+  // version skew across the pair is the likeliest way this design breaks.
+  {
+    re: /dnf(?: --enablerepo=\S+)? install -y etcd\b/g,
+    what: "etcd",
+    pinned: null,
+    note:
+      "so the version is whatever the PGDG repo ships on the day each node is built. Nothing in this repo names an " +
+      "etcd version, so there is nothing to cross-check; its lifecycle is tracked in src/data/platformEol.json instead. " +
+      "Note etcd supports only the current and previous release branch, so a host can fall out of support because " +
+      "something newer shipped, with no date announced ahead of time.",
+  },
+  {
+    re: /dnf install -y patroni patroni-etcd\b/g,
+    what: "Patroni",
+    pinned: null,
+    note:
+      "so the version is whatever PGDG ships per host. deploy/ha/patroni.yml.example was written against 3.x while " +
+      "upstream is 4.1.5 (2026-09); 4.x is anticipated rather than unsupported — the role callback re-derives the role " +
+      "from the REST API because the vocabulary changed in 4.x — but a primary and a standby built months apart can " +
+      "still land on different majors. Tracked in src/data/platformEol.json; Patroni publishes no dated lifecycle.",
+  },
 ];
 function checkUnversionedInstalls() {
   const out = [];
-  for (const rel of ALL_SETUP()) {
+  // HA_DEPLOY as well as the base scripts: setup-rhel-ha.sh is where etcd and
+  // Patroni are installed, and it matched none of the globs this checker used
+  // to read.
+  for (const rel of [...ALL_SETUP(), ...HA_DEPLOY()]) {
     // readCode, not read: the pairing test must look at what the script RUNS,
     // not what it says. The comment explaining why the fallback exists names
     // `openjdk-17-jre-headless`, which made this check see a versioned install
@@ -534,8 +563,10 @@ function checkUnversionedInstalls() {
       if (u.pairedWith && u.pairedWith.test(src)) continue;
       for (const m of src.matchAll(u.re)) {
         out.push(
-          `${rel} installs ${u.what} unversioned (\`${m[0]}\`) — whatever the distro default is — while other ` +
-            `sites pin ${u.pinned}. Nothing here can disagree, so nothing here can be checked; the host decides.`,
+          u.pinned
+            ? `${rel} installs ${u.what} unversioned (\`${m[0]}\`) — whatever the distro default is — while other ` +
+              `sites pin ${u.pinned}. Nothing here can disagree, so nothing here can be checked; the host decides.`
+            : `${rel} installs ${u.what} unversioned (\`${m[0]}\`) — ${u.note}`,
         );
       }
     }
