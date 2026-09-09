@@ -45,6 +45,14 @@ out of its next update via npm's engine warning, and claiming 20 would be a lie 
 dependency tree needs. A checker that forces a choice between lying in `engines.node` and lying
 in the Dockerfile is worse than no checker, because the way out is to disable it.
 
+**The operator-facing table is a declaration site too.** `docs/INSTALL.md`'s *Supported platform
+versions* table is the canonical list humans read, and nothing kept it in step with the dataset
+until `dataset-docs-mirror` existed. That gap produced the same bug twice in one day: the table
+went on saying Node's minimum was 20 after the bump to 22, and went on saying Java targeted 21
+after that target was dropped to 17. Both were caught by someone reading carefully, which is not
+a mechanism. Only `dated` technologies are compared — TimescaleDB, Windows Server and PgBouncer
+state prose in those columns deliberately, having no dated lifecycle to mirror.
+
 **A comment is not a declaration site.** Whole-line comments are stripped before matching.
 `setup-rhel.sh` explains its module reset with "nodejs:20 fails with cannot enable multiple
 streams otherwise" directly above `dnf module enable -y nodejs:24`, and matching that comment
@@ -62,6 +70,7 @@ declaration are kept, so `node-version: 24  # bumped 2026-09` still reads as 24.
 | `java-major` | the JDK major agrees across the Dockerfile, the RHEL package and the Windows winget id and MSI URL | fail |
 | `jsign-pin` | the jsign version agrees across the Dockerfile URL and every setup script's `JSIGN_VERSION` | fail |
 | `dataset-shape` | `src/data/platformEol.json` parses; every technology has `source` and `sourceCheckedOn`; every `upgradePlaybook` resolves; every playbook `files[]` entry exists on disk; every checked family has a dataset entry | fail |
+| `dataset-docs-mirror` | the **Supported platform versions** table in `docs/INSTALL.md` states the same minimum and target as the dataset, for every `dated` technology, and has a row for each of them | fail |
 
 Two structural guards that matter as much as the equality check:
 

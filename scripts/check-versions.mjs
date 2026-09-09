@@ -546,6 +546,76 @@ if (rawDataset === null) {
       }
     }
 
+    // ── dataset-docs-mirror ────────────────────────────────────────────────
+    // The "Supported platform versions" table in docs/INSTALL.md is the
+    // operator-facing mirror of this dataset, and nothing kept the two in step.
+    // That gap produced the same bug twice in one day: the table went on saying
+    // Node's minimum was 20 after the bump to 22, and went on saying Java
+    // targeted 21 after that target was dropped to 17. Both were caught by
+    // reading, which is not a mechanism.
+    //
+    // Only `dated` technologies are compared. TimescaleDB ("2.x" / "current"),
+    // Windows Server and PgBouncer state prose in those columns on purpose,
+    // because they have no dated lifecycle to mirror.
+    const INSTALL_DOC = "docs/INSTALL.md";
+    const ROW_TO_TECH = {
+      "Node.js": "node",
+      "PostgreSQL": "postgres",
+      "Go": "go",
+      "nginx": "nginx",
+      "Java": "java",
+      "RHEL / Rocky / AlmaLinux": "os:rhel",
+      "Ubuntu": "os:ubuntu",
+    };
+    const installDoc = read(INSTALL_DOC);
+    if (installDoc === null) {
+      failures.push({ check: "dataset-docs-mirror", msg: `${INSTALL_DOC} is missing — the canonical supported-versions table cannot be checked.` });
+    } else {
+      // Pull "| **Node.js** | 22 | **24** | …" into { label, min, target }.
+      const seenRows = new Set();
+      for (const line of installDoc.split("\n")) {
+        if (!line.startsWith("|")) continue;
+        const cells = line.split("|").map((c) => c.trim());
+        if (cells.length < 5) continue;
+        // Strip bold, parenthetical scoping, and an "LTS" suffix.
+        const label = cells[1].replace(/\*\*/g, "").replace(/\s*\([^)]*\)\s*/g, "").trim();
+        const techId = ROW_TO_TECH[label];
+        if (!techId) continue;
+        const tech = (data.technologies ?? []).find((t) => t.id === techId);
+        if (!tech || tech.policy !== "dated") continue;
+        seenRows.add(techId);
+        const cell = (raw) => {
+          const m = raw.replace(/\*\*/g, "").trim().match(/^(\d+(?:\.\d+)*)/);
+          return m ? m[1] : null;
+        };
+        const docMin = cell(cells[2]);
+        const docTarget = cell(cells[3]);
+        if (docMin !== null && tech.polarisMinimum && docMin !== tech.polarisMinimum) {
+          failures.push({
+            check: "dataset-docs-mirror",
+            msg: `${INSTALL_DOC} says ${label} minimum is ${docMin}, but ${DATASET} says ${tech.polarisMinimum}. The table is what operators read; keep it in step with the dataset in the same commit.`,
+          });
+        }
+        if (docTarget !== null && tech.polarisTarget && docTarget !== tech.polarisTarget) {
+          failures.push({
+            check: "dataset-docs-mirror",
+            msg: `${INSTALL_DOC} says ${label} targets ${docTarget}, but ${DATASET} says ${tech.polarisTarget}. The table is what operators read; keep it in step with the dataset in the same commit.`,
+          });
+        }
+      }
+      // A row that vanished from the table is drift too — silently dropping a
+      // technology from the operator-facing list is worse than a wrong number.
+      for (const [label, techId] of Object.entries(ROW_TO_TECH)) {
+        const tech = (data.technologies ?? []).find((t) => t.id === techId);
+        if (tech && tech.policy === "dated" && !seenRows.has(techId)) {
+          failures.push({
+            check: "dataset-docs-mirror",
+            msg: `${INSTALL_DOC}'s supported-versions table has no row for ${label} (dataset id "${techId}"), which the dataset grades on real dates. Add it, or drop the technology from the dataset.`,
+          });
+        }
+      }
+    }
+
     const reviewed = Date.parse(`${data.reviewedAt}T00:00:00Z`);
     if (Number.isNaN(reviewed)) {
       failures.push({ check: "dataset-shape", msg: `${DATASET}: reviewedAt "${data.reviewedAt}" is not an ISO date.` });
