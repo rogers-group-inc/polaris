@@ -487,8 +487,10 @@ If you already have a working Polaris install on AppStream Postgres and want to 
 > the reverse is not), so nothing extra is needed, but know what you are starting from.
 
 ```bash
-# 1. Dump the existing database (run as postgres OS user — peer auth)
-sudo systemctl stop polaris
+# 1. Dump the existing database (run as postgres OS user — peer auth).
+#    polaris.target is the process group on every split-role install; only a
+#    legacy single-process install still has a bare polaris.service.
+sudo systemctl stop polaris.target 2>/dev/null || sudo systemctl stop polaris
 sudo -u postgres pg_dump polaris --clean --if-exists --no-owner --no-acl > /tmp/polaris.sql
 sudo systemctl stop postgresql
 
@@ -547,12 +549,22 @@ SQL
 #    migrated DB.
 sudo bash deploy/setup-rhel.sh --public-url https://polaris.example.com
 
-# 9. Optionally remove the abandoned AppStream PGDATA
+# 9. Remove the AppStream PACKAGES, not just the data directory. This step is
+#    not optional. Disabling the module (step 2) and the service (step 4) leaves
+#    the 13 client installed, and its /usr/bin/pg_dump is a regular file that
+#    overwrote the alternatives symlink PGDG registered — `alternatives --display`
+#    keeps saying 15 while pg_dump is 13, and pg_dump refuses a newer server, so
+#    every Polaris backup fails from here on. That is how prod ended up in the
+#    state described under "pg_dump: server version mismatch" (2026-09-09).
 sudo test -f /var/lib/pgsql/data/PG_VERSION && echo "OLD DATA STILL EXISTS — DO NOT DELETE" || sudo rm -rf /var/lib/pgsql/data
+sudo dnf remove --assumeno postgresql postgresql-server   # dry run: abort if any postgresql15-* is listed
+sudo dnf remove -y postgresql postgresql-server
+sudo alternatives --auto pgsql-pg_dump; sudo alternatives --auto pgsql-psql
+pg_dump --version && psql --version                     # both MUST report 15.x before you continue
 
-# 10. Start Polaris and watch the boot
-sudo systemctl start polaris
-sudo journalctl -u polaris -f --no-pager
+# 10. Start Polaris and watch the boot (polaris-web is the HTTP face of the group)
+sudo systemctl start polaris.target 2>/dev/null || sudo systemctl start polaris
+sudo journalctl -u polaris-web -f --no-pager
 ```
 
 After step 10 succeeds, follow *Recommended: TimescaleDB* below to install the extension. On the first restart afterward, Polaris detects the extension and converts the twenty-eight monitoring sample tables to hypertables — eight source tables, sixteen `*_hourly` / `*_daily` rollup tables produced by the tiered-retention rollup job, and four detail-only standalone tables (~5-15 min for a fleet that's been running for weeks; no operator action required, just patience as conversions log in the journal).
