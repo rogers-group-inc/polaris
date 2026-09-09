@@ -30,7 +30,13 @@ set -euo pipefail
 APP_DIR="/opt/polaris"
 APP_USER="polaris"
 DB_NAME="polaris"
-BACKUP_DIR="/opt/polaris/backups"
+# Beside the app's own backups (src/utils/paths.ts BACKUP_DIR = <state>/data/
+# backups), not a directory of this script's own. Two directories with two
+# retention rules that could not see each other cost real time on 2026-09-09,
+# when the empty root-owned /opt/polaris/backups this script had just created
+# read as "prod has no backups". The script's files are still not registered in
+# backup_history, so the Maintenance tab lists only the app's own.
+BACKUP_DIR="/opt/polaris/data/backups"
 
 # Proceed even if the pre-update backup can't be taken. OFF by default: step 5
 # runs `prisma migrate deploy`, which is irreversible, so an update with no
@@ -292,7 +298,9 @@ fi
 # ─── 2. Pre-update database backup ──────────────────────────────────────────
 step "2/9  Creating pre-update database backup..."
 
-mkdir -p "$BACKUP_DIR"
+# install -d, not mkdir -p: this runs as root, and a root-owned data/backups
+# would stop the app (running as $APP_USER) writing its own backups there.
+install -d -o "$APP_USER" -g "$APP_USER" "$BACKUP_DIR"
 BACKUP_FILE="${BACKUP_DIR}/polaris-pre-update-${OLD_VERSION}-$(date +%Y%m%d-%H%M%S).sql.gz"
 
 backup_unavailable() {

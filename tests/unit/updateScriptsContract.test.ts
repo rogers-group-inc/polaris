@@ -93,6 +93,19 @@ describe("update-linux.sh resolves pg_dump / psql by the server's major", () => 
   });
 });
 
+// One backup directory — the app's (<state>/data/backups). Two directories with
+// two retention rules cost real time on 2026-09-09.
+describe("both scripts write pre-update backups beside the app's own", () => {
+  it("linux: data/backups, created owned by the app user", () => {
+    expect(linux).toMatch(/^BACKUP_DIR="\/opt\/polaris\/data\/backups"/m);
+    expect(linux).toMatch(/install -d -o "\$APP_USER" -g "\$APP_USER" "\$BACKUP_DIR"/);
+  });
+
+  it("windows: data\\backups", () => {
+    expect(windows).toMatch(/\$backupDir = Join-Path \$AppDir "data\\backups"/);
+  });
+});
+
 // `npx prisma` falls through to the registry when the local binary is missing,
 // and in a non-TTY it installs without asking. On 2026-09-09 an operator in the
 // wrong directory was offered prisma@8.0.0-rc.13 against a Prisma 7 database;

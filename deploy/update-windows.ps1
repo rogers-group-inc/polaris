@@ -233,7 +233,11 @@ function Stop-WithoutBackup {
 
 Write-Step "2/8  Creating pre-update database backup..."
 
-$backupDir = Join-Path $AppDir "backups"
+# Beside the app's own backups (src/utils/paths.ts BACKUP_DIR = <state>\data\backups),
+# not a directory of this script's own — mirrors deploy/update-linux.sh. The
+# script's files are not registered in backup_history, so the Maintenance tab
+# lists only the app's own.
+$backupDir = Join-Path $AppDir "data\backups"
 if (-not (Test-Path $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
 
 if (Test-Command "pg_dump") {
