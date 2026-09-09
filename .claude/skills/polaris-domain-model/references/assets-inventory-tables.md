@@ -265,7 +265,7 @@ AssetSdwanRule                 -- SD-WAN service-rule CURRENT-STATE (plain table
 
 #### AssetSdwanRule
 
-**AssetSdwanRule** — CURRENT-STATE SD-WAN service rules (one row per `(asset, ruleName)`, plain table `asset_sdwan_rules`), replaced in full per scrape by `persistSdwanRules` — exactly like `AssetLldpNeighbor` / `AssetWirelessStation`. Carries each rule + its currently-selected member (+ criteria / health-checks / destination / enabled config / zone preference). FortiOS only, gated by `Integration.config.pullSdwan`. NOT a hypertable and NOT a retention entity — no history/timeline (dropped 2026-06; the SD-WAN SLA-metrics stream `AssetPerfSlaSample` remains the only SD-WAN time-series).
+**AssetSdwanRule** — CURRENT-STATE SD-WAN service rules (one row per `(asset, ruleName)`, plain table `asset_sdwan_rules`), replaced in full per scrape by `persistSdwanRules` — exactly like `AssetLldpNeighbor` / `AssetWirelessStation`. Carries each rule + its currently-selected member (+ criteria / health-checks / destination / enabled config / zone preference). FortiOS only, gated by `Integration.config.pullSdwan`. NOT a hypertable and NOT a retention entity — no history/timeline (dropped 2026-06; the SD-WAN SLA-metrics stream `AssetPerfSlaSample` remains the only SD-WAN time-series). **Delete-replace means a reader arriving LATE sees only the present**, which is why an SD-WAN failover alert carries the member it left on the Notification itself (`alertChartService.chartKeysForChangeEvent` stamps `"<ruleName>|<member>"` from the Event's details): by the time the email is composed this table says only where the traffic went, so a chart resolved from it alone draws the healthy link.
 
 #### AssetProcess
 
