@@ -84,11 +84,13 @@ and lying in the Dockerfile.
 
 ## PostgreSQL
 
-Currently **15** across 12 checked sites.
+Currently **15** across 19 checked sites.
 
 | Site | Form | Kind |
 |---|---|---|
 | `deploy/polaris-web.service` and the other shipped units | `After=` / `Requires=postgresql-15.service` | pin |
+| `deploy/ha/setup-rhel-ha.sh` | 20 × `postgresql-15` / `postgresql15-server` package + service names, `timescaledb-2-postgresql-15`, `/usr/pgsql-15/` | pin |
+| `deploy/ha/polaris-ha-role.sh` | `postgresql-15` / `timescaledb-2` in the reconciler's version-lock and upgrade guards | pin |
 | `deploy/setup-ubuntu.sh` | rewrites `postgresql-15.service` → `postgresql.service` in the units | pin |
 | `deploy/setup-rhel-nodb.sh`, `deploy/setup-ubuntu-nodb.sh` | strip the `postgresql-15.service` dependency for the external-DB variant | pin |
 | two Windows setup scripts | `winget install --id PostgreSQL.PostgreSQL.15` | pin |

@@ -85,6 +85,26 @@ function glob(dir, re) {
     .map((n) => `${dir}/${n}`);
 }
 
+/**
+ * Everything shipped under `deploy/ha/`, globbed.
+ *
+ * `glob` above is deliberately non-recursive, and the setup/unit globs match on
+ * basename, so `deploy/ha/setup-rhel-ha.sh` matched none of them and the entire
+ * HA install path sat outside this checker: 20 `postgresql-15` declarations, 8
+ * `timescaledb-2-postgresql-15` and a `/usr/pgsql-15/` path, none of them
+ * checked, while the header of this file promised a new deploy script is "in
+ * scope the moment it lands". A PostgreSQL major bump would have moved every
+ * other install path and left HA hosts provisioning 15 against units that
+ * require the new one.
+ *
+ * Globbed rather than enumerated for the same reason as the others: a file
+ * added under `deploy/ha/` later is scanned without anyone remembering to come
+ * back here. HA is NOT added to LINUX_SETUP — those scripts are the Node-floor
+ * family and `setup-rhel-ha.sh` installs no Node, so widening that glob would
+ * fail `minSites` on a script that has nothing to declare.
+ */
+const HA_DEPLOY = () => glob("deploy/ha", /\.(sh|service|timer|conf|example)$/);
+
 const LINUX_SETUP = () => glob("deploy", /^setup-(rhel|ubuntu)(-nodb)?\.sh$/);
 const WINDOWS_SETUP = () => glob("deploy", /^setup-windows(-nodb)?\.ps1$/);
 const ALL_SETUP = () => [...LINUX_SETUP(), ...WINDOWS_SETUP()];
@@ -255,6 +275,15 @@ const FAMILIES = [
         re: /\*\*PostgreSQL\*\*\s*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
       { file: "README.md", label: "system-requirements table", kind: "prose",
         re: /\|\s*PostgreSQL\s*\|\s*(\d+)\+/g, pick: (m) => m[1] },
+      // The HA install path (see HA_DEPLOY). Its packages, service names and
+      // pg_config paths are pins exactly like the base scripts' — they decide
+      // what a standby and a witness provision.
+      { files: HA_DEPLOY, label: "HA package/service name", kind: "pin",
+        re: /postgresql-?(\d\d)(?:-server|\.service)?\b/g, pick: (m) => m[1] },
+      { files: HA_DEPLOY, label: "HA timescaledb package", kind: "pin",
+        re: /timescaledb-2-postgresql-(\d+)/g, pick: (m) => m[1] },
+      { files: HA_DEPLOY, label: "HA pg_config path", kind: "pin",
+        re: /\/usr\/pgsql-(\d+)\//g, pick: (m) => m[1] },
     ],
   },
 
