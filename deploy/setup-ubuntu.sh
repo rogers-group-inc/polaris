@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, nginx (mainline ≥1.25)
+#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, nginx (stable ≥1.30)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -127,13 +127,13 @@ else
   fi
 fi
 
-# ─── 1c. Install nginx mainline (HTTP/3 ≥ 1.25 required) ─────────────────────
-# Ubuntu/Debian's default nginx is too old for HTTP/3; pull mainline from
+# ─── 1c. Install nginx stable (HTTP/3 ≥ 1.30 required) ─────────────────────
+# Ubuntu/Debian's default nginx is too old for HTTP/3; pull the STABLE branch from
 # nginx.org's official Debian/Ubuntu repo.
-if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(2[5-9]|[3-9][0-9])'; then
+if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])'; then
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
 else
-  info "Installing nginx mainline from nginx.org..."
+  info "Installing nginx stable from nginx.org..."
   apt-get install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring 2>/dev/null || \
     apt-get install -y curl gnupg2 ca-certificates lsb-release debian-archive-keyring
   curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
@@ -144,10 +144,10 @@ else
     NGINX_DISTRO=debian
   fi
   CODENAME=$(lsb_release -cs)
-  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/${NGINX_DISTRO} ${CODENAME} nginx" \
+  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/${NGINX_DISTRO} ${CODENAME} nginx" \
     > /etc/apt/sources.list.d/nginx.list
   # Pin nginx.org over distro nginx (prevents unattended upgrades from
-  # replacing mainline with the older distro version).
+  # replacing the nginx.org build with the older distro version).
   cat > /etc/apt/preferences.d/99nginx <<'PREF'
 Package: *
 Pin: origin nginx.org

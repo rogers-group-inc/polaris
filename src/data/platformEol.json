@@ -98,13 +98,13 @@
       "trackGranularity": "major.minor",
       "policy": "dated",
       "securityExposed": true,
-      "polarisMinimum": "1.25",
+      "polarisMinimum": "1.30",
       "polarisTarget": "1.30",
       "upgradePlaybook": "nginx",
-      "source": "https://endoflife.date/api/nginx.json",
-      "sourceCheckedOn": "2026-09-08",
-      "confidence": "aggregator",
-      "notes": "Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. Polaris's 1.25 floor is the HTTP/3 requirement, not a support statement - 1.25 itself went EOL 2024-05-29. The Linux setup scripts install from the nginx.org mainline repository, so a scripted install lands on a current branch even though the documented floor is old.",
+      "source": "https://nginx.org/en/download.html",
+      "sourceCheckedOn": "2026-09-09",
+      "confidence": "vendor",
+      "notes": "Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. The floor was 1.25 for a long time because that is the first branch with stable HTTP/3 - a FEATURE requirement, and 1.25 itself went EOL 2024-05-29. On 2026-09-09 the Linux setup scripts moved from the nginx.org mainline repository to the STABLE one and the floor became 1.30, the oldest branch still receiving fixes, so the number is now a support statement. The mainline stanza is still written into the repo file at enabled=0 for anyone who needs a newer feature.",
       "tracks": [
         { "track": "1.24", "released": "2023-04-11", "eol": "2024-04-23" },
         { "track": "1.25", "released": "2023-05-23", "eol": "2024-05-29", "note": "First branch with stable HTTP/3; Polaris's documented floor." },
@@ -112,8 +112,8 @@
         { "track": "1.27", "released": "2024-05-28", "eol": "2025-06-24" },
         { "track": "1.28", "released": "2025-04-23", "eol": "2026-04-14" },
         { "track": "1.29", "released": "2025-06-24", "eol": "2026-05-13" },
-        { "track": "1.30", "released": "2026-04-14", "eol": null, "note": "Current stable." },
-        { "track": "1.31", "released": "2026-05-13", "eol": null, "note": "Current mainline; what nginx:mainline and the nginx.org repository resolve to." }
+        { "track": "1.30", "released": "2026-04-14", "eol": null, "note": "Current stable - Polaris's floor and what the setup scripts install (1.30.4 on 2026-09-09)." },
+        { "track": "1.31", "released": "2026-05-13", "eol": null, "note": "Current mainline; what the disabled mainline stanza and nginx:mainline resolve to." }
       ]
     },
     {

@@ -196,21 +196,33 @@ rebuild contract lives in `polaris-agent` → cross-cutting-polaris-agent.md; do
 
 ## nginx
 
-Floor **1.25** across 5 sites — and 1.25 itself went EOL in May 2024.
+Floor **1.30** across 6 sites, installed from the nginx.org **stable** branch.
 
 | Site | Form | Kind |
 |---|---|---|
-| four Linux setup scripts | `nginx -v 2>&1 \| grep -qE '1\.(2[5-9]\|[3-9][0-9])'` | accept-range |
-| `deploy/setup-rhel.sh` etc. | nginx.org **mainline** repo, `baseurl` encoding the OS release | pin (repo) |
-| `deploy/migrate-to-nginx.sh` | parses the running version for its own gate | accept-range |
-| `docker-compose.yml` | `image: nginx:mainline` | floating |
-| `docs/INSTALL.md` | "nginx ≥ 1.25", "mainline from nginx.org for HTTP/3" — three occurrences | prose |
-| `public/js/server-settings.js` | "Requires nginx 1.25+" help text beside the HTTP/3 toggle | prose |
+| four Linux setup scripts | `nginx -v 2>&1 \| grep -qE '1\.(3[0-9]\|[4-9][0-9])'` | accept-range |
+| `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh`, `deploy/migrate-to-nginx.sh` | a two-stanza `nginx.repo` — `[nginx-stable]` `enabled=1`, `[nginx-mainline]` `enabled=0`, both `baseurl`s encoding the OS release | pin (repo) |
+| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `deb … nginx.org/packages/${NGINX_DISTRO} ${CODENAME} nginx` (no `/mainline` path segment) | pin (repo) |
+| `deploy/ha/setup-rhel-ha.sh` | its own single-stanza copy of the same repo file | pin (repo) |
+| `deploy/migrate-to-nginx.sh` | parses the running version for its own gate (`$NGINX_MINOR -lt 30`) | accept-range |
+| `docker-compose.yml` | `image: nginx:stable` | floating |
+| `docs/INSTALL.md` | "nginx ≥ 1.30" and the stable-branch phrasing — five occurrences plus the table row | prose |
+| `public/js/server-settings.js` | "Requires nginx 1.30+" help text beside the HTTP/3 toggle | prose |
 
-The 1.25 floor is a **feature** requirement (first branch with stable HTTP/3), not a support
-statement. Because the scripts install from the mainline repo, a scripted install lands on a
-current branch anyway — so the stale floor is a documentation problem, not a provisioning one.
-That is the opposite of the Node situation, and worth keeping straight.
+**The floor changed meaning on 2026-09-09.** It used to be a **feature** requirement — 1.25 is
+the first branch with stable HTTP/3 — which is why it sat two years past that branch's own EOL
+without anyone being wrong. Now the scripts install the stable branch and the floor is 1.30, the
+oldest branch still receiving fixes, so it is a **support** statement like every other floor
+here. HTTP/3 still only needs 1.25; nothing in the app requires 1.30 specifically.
+
+**Both stanzas stay in the RHEL repo file** — mainline is written at `enabled=0`, so an operator
+who needs a mainline-only feature flips two flags rather than hand-writing a repo. The Ubuntu
+scripts have no such spare: stable is the path segment's absence, and mainline is adding
+`/mainline` back.
+
+The two branches are one number apart and move on the same day: 1.30 (stable) and 1.31
+(mainline) both shipped in 2026. Do not read `nginx:stable` in `docker-compose.yml` as a pin —
+it is a floating tag, listed as such by `check:versions`.
 
 `nginx -v` writes to **stderr**, and the version there is the only place the app can read it.
 
@@ -298,7 +310,7 @@ not as a figure to keep in step by hand — `npm run check:versions` prints the 
 |---|---|---|---|
 | `node-major` | major | 22 → 24 | — (the accept-range gap closed when 24 became the pin) |
 | `go-pin` | major.minor | 1.22 | — |
-| `nginx-floor` | major.minor | 1.25 | — |
+| `nginx-floor` | major.minor | 1.30 | — |
 | `postgres-major` | major | 15 | `postgres-source` — quiet since setup-rhel.sh moved to PGDG |
 | `java-major` | major | 17 | `unversioned-install` — quiet since the Ubuntu scripts pinned 17 |
 | `jsign-pin` | major.minor | 7.4 | — |

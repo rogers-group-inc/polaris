@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, git, nginx (mainline ≥1.25)
+#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, git, nginx (stable ≥1.30)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -135,20 +135,25 @@ else
   info "Go $(go version | awk '{print $3}') installed"
 fi
 
-# ─── 1c. Install nginx mainline (HTTP/3 ≥ 1.25 required) ─────────────────────
-# RHEL 9's AppStream nginx is too old for HTTP/3, so always pull mainline from
-# nginx.org. The repo file pins enabled=1 so unattended `dnf upgrade` keeps
-# the mainline version instead of replacing with AppStream.
-if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(2[5-9]|[3-9][0-9])'; then
+# ─── 1c. Install nginx stable (HTTP/3 ≥ 1.30 required) ─────────────────────
+# RHEL 9's AppStream nginx is too old for HTTP/3, so always pull from nginx.org.
+# The STABLE branch (even minors) is what we install: 1.30 is the oldest branch
+# still receiving fixes, and a branch that only takes patch releases is the
+# right shape for a box an operator is not watching. The mainline stanza stays
+# in the repo file at enabled=0 for anyone who needs a newer feature — flip the
+# two enabled= flags. The repo file pins enabled=1 on stable so unattended
+# `dnf upgrade` keeps the nginx.org build instead of replacing it with
+# AppStream's.
+if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])'; then
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
 else
-  info "Installing nginx mainline from nginx.org..."
+  info "Installing nginx stable from nginx.org..."
   cat > /etc/yum.repos.d/nginx.repo <<'REPO'
 [nginx-stable]
 name=nginx stable repo
 baseurl=http://nginx.org/packages/centos/9/$basearch/
 gpgcheck=1
-enabled=0
+enabled=1
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 
@@ -156,7 +161,7 @@ module_hotfixes=true
 name=nginx mainline repo
 baseurl=http://nginx.org/packages/mainline/centos/9/$basearch/
 gpgcheck=1
-enabled=1
+enabled=0
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 REPO

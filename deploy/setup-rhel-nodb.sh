@@ -387,7 +387,7 @@ else
   info "Database already seeded ($HAS_USERS users) — skipping"
 fi
 
-# ─── 9. Install nginx mainline + self-signed cert + split-role units ────────
+# ─── 9. Install nginx stable + self-signed cert + split-role units ────────
 # Identical to setup-rhel.sh from this point on — see that script's
 # corresponding section comments. We don't share via a sourced library
 # because operators run these scripts via `bash deploy/setup-rhel-nodb.sh`
@@ -404,17 +404,17 @@ info "Public URL:        $PUBLIC_URL"
 info "Cert hostname:     $HOSTNAME_FROM_URL"
 info "Monitor replicas:  $MONITOR_REPLICAS"
 
-# Install nginx mainline from nginx.org (RHEL AppStream is too old for HTTP/3)
-if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(2[5-9]|[3-9][0-9])'; then
+# Install nginx stable from nginx.org (RHEL AppStream is too old for HTTP/3)
+if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])'; then
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
 else
-  info "Installing nginx mainline from nginx.org..."
+  info "Installing nginx stable from nginx.org..."
   cat > /etc/yum.repos.d/nginx.repo <<'REPO'
 [nginx-stable]
 name=nginx stable repo
 baseurl=http://nginx.org/packages/centos/9/$basearch/
 gpgcheck=1
-enabled=0
+enabled=1
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 
@@ -422,7 +422,7 @@ module_hotfixes=true
 name=nginx mainline repo
 baseurl=http://nginx.org/packages/mainline/centos/9/$basearch/
 gpgcheck=1
-enabled=1
+enabled=0
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 REPO

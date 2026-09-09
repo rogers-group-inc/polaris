@@ -342,7 +342,7 @@ function checkPostgresSource() {
 // the checker is blind to.
 const FLOATING = [
   { file: "compose.dev.yml", re: /timescale\/timescaledb:latest-pg\d+/g },
-  { file: "docker-compose.yml", re: /nginx:mainline/g },
+  { file: "docker-compose.yml", re: /nginx:stable/g },
   { file: "docker-compose.yml", re: /polaris:latest/g },
 ];
 

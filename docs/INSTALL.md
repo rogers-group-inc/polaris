@@ -19,7 +19,7 @@ states a floor, it states the same one as this table.
 | **PostgreSQL** | 15 | **17** | 15 → 2027-11-11 · 16 → 2028-11-09 · 17 → 2029-11-08 | Five-year policy; a major dies each November. Target is 17 because TimescaleDB 2.29 dropped 15. |
 | **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date: **2.28.x is the last line supporting PostgreSQL 15**, and 2.29+ supports only 16/17/18. |
 | **Go** (agent build only) | 1.22 | **1.26** | 1.22 → 2025-02-11 · 1.25 → 2026-08-19 | Go supports only the two most recent majors, so this ages faster than anything else here. Needed only to build agent binaries in-app. |
-| **nginx** | 1.25 | **1.30** | 1.25 → 2024-05-29 · 1.29 → 2026-05-13 | The 1.25 floor is the HTTP/3 requirement, not a support statement. The setup scripts install from the nginx.org **mainline** repo, so a scripted install lands on a current branch. |
+| **nginx** | 1.30 | **1.30** | 1.28 → 2026-04-14 · 1.30 → current | Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. The setup scripts install the **stable** branch from nginx.org, and 1.30 is the oldest branch still receiving fixes. HTTP/3 needs 1.25 at minimum, so the floor is a support statement now rather than a feature one. |
 | **Java** (agent signing only) | 17 | 17 | 17 → 2027-09-30 · 21 → 2028-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. Target is deliberately the same as the minimum — nothing here needs 21, and naming it would report a behind-target JDK on every healthy install. Move to 21 when 17 nears its date, not before. |
 | **RHEL / Rocky / AlmaLinux** | 9 | 9 | 9 → 2032-05-31 (full support ends 2027-05-31) | |
 | **Ubuntu** | 22.04 LTS | **24.04 LTS** | 22.04 → 2027-06-01 · 24.04 → 2029-05-31 | LTS only. Extended dates require Ubuntu Pro; don't treat them as free runway. |
@@ -429,7 +429,7 @@ sudo bash deploy/setup-rhel.sh --public-url https://polaris.example.com
 ```
 
 What the script does, in order: installs Node + Postgres + Go + nginx
-(mainline from nginx.org for HTTP/3 ≥ 1.25), creates the `polaris` system
+(the nginx.org stable branch for HTTP/3 ≥ 1.30), creates the `polaris` system
 user + DB + role, clones the repo, builds, runs migrations, generates a
 self-signed cert for the supplied hostname under `/etc/polaris-nginx/`,
 installs the split-role systemd units + a `Wants=nginx` drop-in on
@@ -666,7 +666,7 @@ systemd layout + nginx-fronted HTTPS in one command (same as RHEL):
 sudo bash deploy/setup-ubuntu.sh --public-url https://polaris.example.com
 ```
 
-The script installs nginx mainline from nginx.org's Debian/Ubuntu repo
+The script installs nginx stable from nginx.org's Debian/Ubuntu repo
 (distro nginx is too old for HTTP/3), generates a self-signed cert, drops
 the split-role units (rewritten to depend on Ubuntu/Debian's
 `postgresql.service` meta-service instead of RHEL's `postgresql-15.service`),
@@ -1124,8 +1124,8 @@ nginx-front cutover. The script only supports the split-role layout
 ### Prerequisites
 
 - The split-role layout (above) must be enabled.
-- nginx ≥ 1.25 (HTTP/3 stable). The migration script installs from
-  `nginx.org`'s mainline repo if your system nginx is older or missing.
+- nginx ≥ 1.30 (HTTP/3 stable). The migration script installs from
+  `nginx.org`'s stable repo if your system nginx is older or missing.
 - A working server cert + key already loaded in Polaris's `Setting.certificates`
   (the script extracts the active leaf pair from the DB and hands it to nginx).
 - UDP/443 reachable from clients you want to serve HTTP/3 to. The script opens
@@ -1153,8 +1153,8 @@ idempotent: re-running detects the migrated state and exits cleanly.
 What it does in order:
 
 1. Confirms `polaris.target` is enabled.
-2. Ensures nginx ≥ 1.25 is installed (replaces older RHEL AppStream nginx
-   with `nginx.org`'s mainline if needed).
+2. Ensures nginx ≥ 1.30 is installed (replaces older RHEL AppStream nginx
+   with `nginx.org`'s stable branch if needed).
 3. Extracts the active `category="server"` cert + key from
    `Setting.certificates` via Prisma and writes
    `/etc/polaris-nginx/{cert,key}.pem` with `0640 root:nginx` permissions

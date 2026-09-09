@@ -378,7 +378,7 @@ else
   info "Database already seeded ($HAS_USERS users) — skipping"
 fi
 
-# ─── 9. Install nginx mainline + self-signed cert + split-role units ────────
+# ─── 9. Install nginx stable + self-signed cert + split-role units ────────
 # Same as setup-ubuntu.sh from here — see that script's comments for the
 # rationale on each step. Duplicated rather than sourced so operators can
 # run setup-ubuntu-nodb.sh standalone from a fresh git clone.
@@ -394,11 +394,11 @@ info "Public URL:        $PUBLIC_URL"
 info "Cert hostname:     $HOSTNAME_FROM_URL"
 info "Monitor replicas:  $MONITOR_REPLICAS"
 
-# Install nginx mainline (HTTP/3 ≥ 1.25)
-if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(2[5-9]|[3-9][0-9])'; then
+# Install nginx stable (HTTP/3 ≥ 1.30)
+if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])'; then
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
 else
-  info "Installing nginx mainline from nginx.org..."
+  info "Installing nginx stable from nginx.org..."
   apt-get install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring 2>/dev/null || \
     apt-get install -y curl gnupg2 ca-certificates lsb-release debian-archive-keyring
   curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
@@ -408,7 +408,7 @@ else
     NGINX_DISTRO=debian
   fi
   CODENAME=$(lsb_release -cs)
-  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/${NGINX_DISTRO} ${CODENAME} nginx" \
+  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/${NGINX_DISTRO} ${CODENAME} nginx" \
     > /etc/apt/sources.list.d/nginx.list
   cat > /etc/apt/preferences.d/99nginx <<'PREF'
 Package: *

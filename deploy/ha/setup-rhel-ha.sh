@@ -297,12 +297,12 @@ prepare_standby_host() {
 
   dnf install -y git rsync openssl >/dev/null
 
-  # nginx mainline, same repo pin as setup-rhel.sh (HTTP/3 needs >= 1.25).
+  # nginx stable, same repo pin as setup-rhel.sh (HTTP/3 needs >= 1.30).
   if ! rpm -q nginx >/dev/null 2>&1; then
     cat > /etc/yum.repos.d/nginx.repo <<'REPO'
-[nginx-mainline]
-name=nginx mainline repo
-baseurl=http://nginx.org/packages/mainline/centos/9/$basearch/
+[nginx-stable]
+name=nginx stable repo
+baseurl=http://nginx.org/packages/centos/9/$basearch/
 gpgcheck=1
 enabled=1
 gpgkey=https://nginx.org/keys/nginx_signing.key
