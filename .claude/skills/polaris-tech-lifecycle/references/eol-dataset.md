@@ -49,7 +49,7 @@ Each technology:
 | `policy` | `dated` (real EOL dates), `compat` (a compatibility horizon, no dates), `none` (vendor publishes nothing) |
 | `securityExposed` | true for network-reachable, unpatchable surfaces. Drives whether an EOL grades critical or warning |
 | `polarisMinimum` | below this, the install is misconfigured — always critical |
-| `polarisTarget` | what Polaris wants you on |
+| `polarisTarget` | what Polaris wants you on. **Needs an operational reason to sit above `polarisMinimum`** — a newer version merely existing is not one. Anything below it grades `behind_target` on every install, forever, so an unjustified target is permanent noise. Set it equal to the minimum when the honest answer is "stay put"; the EOL clock will raise `aging` on its own when the time comes. Java briefly targeted 21 on no better grounds than 21 being newer, and made every healthy install report a behind-target JDK |
 | `polarisMaximumTested` | above this, `ahead_of_tested` (a watch, not a problem) |
 | `upgradePlaybook` | id into `playbooks[]` |
 | `source` / `sourceCheckedOn` / `confidence` | the provenance a human recorded |

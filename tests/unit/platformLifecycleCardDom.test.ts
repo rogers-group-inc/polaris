@@ -159,6 +159,7 @@ describe("row rendering", () => {
       eol_extended: "EOL (extended support)",
       approaching_eol: "Approaching EOL",
       aging: "Aging",
+      behind_target: "Behind target",
       ahead_of_tested: "Ahead of tested",
       current: "Current",
       not_installed: "Not installed",
