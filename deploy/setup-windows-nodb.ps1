@@ -297,7 +297,7 @@ POLARIS_SECRET_KEY=$polarisSecretKey
 Push-Location $AppDir
 
 Write-Info "Installing dependencies..."
-& npm ci --production=false
+& npm ci --include=dev
 if ($LASTEXITCODE -ne 0) { Write-Err "npm ci failed" }
 
 Write-Info "Building TypeScript..."

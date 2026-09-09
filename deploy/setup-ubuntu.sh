@@ -387,7 +387,7 @@ fi
 
 # ─── 7. Install dependencies & build ─────────────────────────────────────────
 info "Installing dependencies..."
-sudo -u "$APP_USER" npm ci --production=false
+sudo -u "$APP_USER" npm ci --include=dev
 
 info "Building TypeScript..."
 # `npm run build` (not bare tsc) so scripts/copy-build-assets.mjs runs and the

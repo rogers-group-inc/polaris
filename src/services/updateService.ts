@@ -66,6 +66,12 @@ const STEP_ERROR_CHARS = 1500;
  *  failure message can never drift apart. A step that overruns is reported as a
  *  timeout, never as a command failure. */
 const NPM_CI_TIMEOUT_MS = 15 * 60_000;
+/**
+ * Registry reachability preflight. Short on purpose: this only has to answer
+ * "can npm talk to the registry at all", and a hung proxy should not add
+ * minutes to an update that is about to fail anyway.
+ */
+const NPM_PING_TIMEOUT_MS = 45_000;
 const PRISMA_GENERATE_TIMEOUT_MS = 2 * 60_000;
 const BUILD_TIMEOUT_MS = 5 * 60_000;
 const MIGRATE_TIMEOUT_MS = 5 * 60_000;
@@ -787,8 +793,53 @@ export async function applyUpdate(
 
     // ── Step 3: Install dependencies ──
     setStep(2, "running");
+
+    // PREFLIGHT, and the ordering is the whole point. `npm ci` deletes
+    // node_modules BEFORE it installs, so it destroys a working dependency tree
+    // and only then discovers it cannot reach the registry. That is how a
+    // config problem becomes an availability problem: on 2026-09-09 a corporate
+    // TLS-inspecting proxy made npm fail UNABLE_TO_GET_ISSUER_CERT_LOCALLY, and
+    // prod was left serving from modules already in memory, unable to survive a
+    // restart, until an install succeeded. Nothing was wrong with the host, the
+    // code, or the update — only with what npm trusted.
+    //
+    // `npm ping` and not a raw fetch: it goes through npm's own config, so it
+    // exercises the same registry URL, proxy settings and cafile that `npm ci`
+    // is about to use. A fetch from this process would test Node's TLS but miss
+    // an npmrc-level registry or proxy override.
+    //
+    // The trade-off, stated so nobody has to rediscover it: an install whose
+    // npm cache already satisfies the whole lockfile could have completed with
+    // no network at all, and this preflight now blocks it. That is deliberate.
+    // Whether the cache can satisfy the lockfile is not knowable cheaply, so the
+    // choice is between occasionally refusing an update that would have worked
+    // and occasionally leaving a host that cannot restart. The first is a
+    // message; the second is an outage.
     try {
-      await execAsync("npm ci --production=false", {
+      await execAsync("npm ping", {
+        cwd: APP_DIR,
+        timeout: NPM_PING_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
+    } catch (err: any) {
+      failUpdate(
+        2,
+        "Cannot reach the npm registry: " + stepFailureDetail(err, NPM_PING_TIMEOUT_MS) +
+          " — stopped BEFORE installing, so this host's dependencies are untouched and it is" +
+          " safe to restart. Usual causes: a TLS-inspecting proxy (npm fails" +
+          " UNABLE_TO_GET_ISSUER_CERT_LOCALLY because Node ignores the OS trust store — set" +
+          " NODE_EXTRA_CA_CERTS, see docs/INSTALL.md → \"Networks that inspect TLS\"), an" +
+          " outbound firewall rule, or no internet on this host. Fix the cause and re-run;" +
+          " nothing needs undoing.",
+      );
+      return;
+    }
+
+    try {
+      // --include=dev, not the deprecated --production=false: npm 11 warns
+      // "Use `--omit=dev` instead" on every run, which lands in the operator's
+      // error output and reads like part of the failure.
+      await execAsync("npm ci --include=dev", {
         cwd: APP_DIR,
         // 15 min, not 5. `npm ci` always deletes node_modules and reinstalls
         // every package (~615 here), so a COLD npm cache means downloading the
