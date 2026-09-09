@@ -222,16 +222,28 @@ else
   info "PostgreSQL ${PG_MAJOR} installed"
 fi
 
-# PGDG keeps its binaries in $PG_BINDIR and puts nothing on PATH. Polaris spawns
-# `pg_dump` and `psql` by BARE NAME for backup and restore
-# (src/services/backupService.ts), so without these symlinks every backup on a
-# fresh install fails with ENOENT -- and a backup you find out about only when
-# you need it is the worst kind. Just these two, into /usr/local/bin which is on
-# the default systemd PATH: symlinking the whole bindir would shadow tools an
-# operator may have pinned on purpose.
-for _pgtool in pg_dump psql; do
-  if [[ -x "$PG_BINDIR/$_pgtool" ]]; then
-    ln -sf "$PG_BINDIR/$_pgtool" "/usr/local/bin/$_pgtool"
+# Polaris spawns `psql` and `pg_dump` by BARE NAME for backup and restore
+# (src/services/backupService.ts), so they have to be on the service's PATH.
+# PGDG handles that itself: its packages register /usr/bin/psql and
+# /usr/bin/pg_dump through `alternatives`, pointing at the installed major's
+# bindir. Verified in a systemd container on AlmaLinux 9 (RHEL-compatible):
+# `pg_dump` resolves to /usr/pgsql-15/bin/pg_dump via
+# /etc/alternatives/pgsql-pg_dump and dumps a live database with no help.
+#
+# So this only CHECKS the link. Do NOT symlink these into /usr/local/bin --
+# an earlier version of this script did, on the false assumption that PGDG put
+# nothing on PATH. /usr/local/bin PRECEDES /usr/bin, so a hardcoded link there
+# silently shadows the alternatives entry and would keep resolving to 15 after
+# an operator moved to a newer major side by side
+# (`alternatives --set pgsql-psql /usr/pgsql-NN/bin/psql`). Side-by-side majors
+# are one of the reasons PGDG was chosen over AppStream, so shadowing them
+# would defeat the point -- and it would fail the way that costs most, with
+# backups quietly using the old client while everything looked fine.
+for _pgtool in psql pg_dump; do
+  if ! command -v "$_pgtool" >/dev/null 2>&1; then
+    warn "$_pgtool is not on PATH after installing PostgreSQL ${PG_MAJOR}."
+    warn "  Polaris spawns it by name for backup/restore, so BACKUPS WILL FAIL until this is fixed."
+    warn "  Diagnose with: alternatives --display pgsql-${_pgtool}"
   fi
 done
 

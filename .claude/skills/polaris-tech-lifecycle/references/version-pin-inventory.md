@@ -109,15 +109,24 @@ follows the documented path: PGDG repo, `dnf -qy module disable postgresql`, the
 `postgresql15*` packages, `/usr/pgsql-15/bin/postgresql-15-setup initdb`, and the
 `postgresql-15` service.
 
-**The non-obvious part of that move, worth keeping in mind for a major bump.** PGDG puts its
-binaries in `/usr/pgsql-<major>/bin` and nothing on `PATH`, and Polaris spawns `pg_dump` and
-`psql` by BARE NAME for backup and restore (`src/services/backupService.ts`). The script
-therefore symlinks exactly those two into `/usr/local/bin`, which is on the default systemd
-`PATH`; without them every backup on a fresh install fails with ENOENT, and a backup you
-discover is missing only when you need it is the worst kind. Just those two — symlinking the
-whole bindir would shadow tools an operator may have pinned deliberately. The script's own
-`psql` calls use the absolute path instead, rather than trusting `sudo`'s `secure_path` to
-include `/usr/local/bin`.
+**The non-obvious part of that move, and a wrong turn worth not repeating.** Polaris spawns
+`psql` and `pg_dump` by BARE NAME for backup and restore (`src/services/backupService.ts`), so
+they must be on the service's `PATH`. PGDG installs into `/usr/pgsql-<major>/bin`, which looks
+like it would break that — and the first version of this change therefore symlinked both into
+`/usr/local/bin`.
+
+**That was wrong, and testing it in a container is what caught it.** PGDG registers
+`/usr/bin/psql` and `/usr/bin/pg_dump` itself, through `alternatives`, pointing at the installed
+major's bindir; a bare-name `pg_dump` resolves and dumps a live database with no help at all.
+Worse, `/usr/local/bin` *precedes* `/usr/bin`, so the hardcoded links would have silently
+shadowed the alternatives entry and kept resolving to 15 after an operator moved to a newer
+major side by side (`alternatives --set pgsql-psql …`) — and side-by-side majors are one of the
+stated reasons for preferring PGDG. It would have failed in the most expensive way available:
+backups quietly using the old client while everything looked healthy.
+
+The script now only *checks* that both resolve, and warns loudly that backups will fail if they
+do not. Its own `psql` calls still use the absolute `$PG_BINDIR/psql` rather than trusting
+`sudo`'s `secure_path`.
 
 **TimescaleDB compatibility caps the PostgreSQL major from the other side.** TimescaleDB 2.29
 dropped PostgreSQL 15; 2.28.x is the last line that supports it. Staying on 15 pins the
