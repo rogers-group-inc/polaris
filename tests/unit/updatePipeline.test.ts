@@ -221,7 +221,7 @@ d("applyUpdate — step sequencing", () => {
     expect(createBackup).toHaveBeenCalled();
     const firstGit = calls.findIndex((c) => c.includes("git"));
     const npmCi = calls.findIndex((c) => c.includes("npm ci"));
-    const generate = calls.findIndex((c) => c.includes("prisma generate"));
+    const generate = calls.findIndex((c) => c.includes("index.js generate"));
     const build = calls.findIndex((c) => c.includes("npm run build"));
     const migrate = calls.findIndex((c) => c.includes("migrate deploy"));
     expect(firstGit).toBeGreaterThanOrEqual(0);

@@ -164,7 +164,7 @@ function Invoke-Rollback {
     # comes up with a client matching the rolled-back schema. Same rationale
     # as the forward-update path below; both are documented in
     # cross-cutting/schema-migrations-and-prisma-client-lifecycle in the polaris-change-impact skill.
-    & npx prisma generate 2>$null
+    & node node_modules/prisma/build/index.js generate 2>$null
     if (Test-Path (Join-Path $AppDir "dist")) {
         Remove-Item -Recurse -Force (Join-Path $AppDir "dist") -ErrorAction SilentlyContinue
     }
@@ -368,7 +368,7 @@ if ($auditOutput -match "critical|high") {
 # cross-cutting/schema-migrations-and-prisma-client-lifecycle in the polaris-change-impact skill.
 Write-Step "5/8  Generating Prisma client..."
 
-& npx prisma generate
+& node node_modules/prisma/build/index.js generate
 if ($LASTEXITCODE -ne 0) { Invoke-Rollback "prisma generate" }
 
 # ─── 6. Build TypeScript ────────────────────────────────────────────────────
@@ -397,7 +397,7 @@ Write-Step "7/8  Running database migrations..."
 & $nssmExe stop $ServiceName 2>$null
 Start-Sleep -Seconds 3
 
-& npx prisma migrate deploy
+& node node_modules/prisma/build/index.js migrate deploy
 if ($LASTEXITCODE -ne 0) { Invoke-Rollback "database migration" }
 
 Write-Info "Migrations complete — starting service"

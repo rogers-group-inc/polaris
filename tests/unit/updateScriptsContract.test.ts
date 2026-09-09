@@ -93,6 +93,25 @@ describe("update-linux.sh resolves pg_dump / psql by the server's major", () => 
   });
 });
 
+// `npx prisma` falls through to the registry when the local binary is missing,
+// and in a non-TTY it installs without asking. On 2026-09-09 an operator in the
+// wrong directory was offered prisma@8.0.0-rc.13 against a Prisma 7 database;
+// only the prompt stood in the way. The updaters call the project's own CLI by
+// path so a half-populated node_modules fails with ENOENT instead.
+describe("both scripts run the project's own Prisma CLI, never npx", () => {
+  it("linux", () => {
+    expect(codeLines(linux).filter((l) => /npx prisma/.test(l))).toEqual([]);
+    expect(linux).toMatch(/node node_modules\/prisma\/build\/index\.js generate/);
+    expect(linux).toMatch(/node node_modules\/prisma\/build\/index\.js migrate deploy/);
+  });
+
+  it("windows", () => {
+    expect(codeLines(windows).filter((l) => /npx prisma/.test(l))).toEqual([]);
+    expect(windows).toMatch(/node node_modules\/prisma\/build\/index\.js generate/);
+    expect(windows).toMatch(/node node_modules\/prisma\/build\/index\.js migrate deploy/);
+  });
+});
+
 // A Polaris database with TimescaleDB must be restored between
 // timescaledb_pre_restore() and timescaledb_post_restore(), each in its own
 // psql session. The in-app restore learned this in 2026-08; both scripts kept a

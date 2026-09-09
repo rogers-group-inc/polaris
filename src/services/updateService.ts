@@ -87,6 +87,18 @@ const NPM_PING_CMD = "npm ping --fetch-retries=0 --fetch-timeout=15000";
 const NPM_PING_ATTEMPTS = 2;
 const NPM_PING_RETRY_DELAY_MS = 3_000;
 const PRISMA_GENERATE_TIMEOUT_MS = 2 * 60_000;
+/**
+ * The project's OWN Prisma CLI, never `npx prisma`. npx falls through to the
+ * registry when it cannot find the binary locally, and in a non-TTY (this
+ * process) it does not ask — it installs. An operator running `npx prisma
+ * migrate deploy` from the wrong directory on 2026-09-09 was offered
+ * prisma@8.0.0-rc.13 against a Prisma 7 production database and only a prompt
+ * stood in the way; here there would be no prompt. If node_modules lost the
+ * Prisma CLI (a failed `npm ci` that got past the guard, a future
+ * --ignore-scripts), `npx` would fetch a different major and run it against
+ * the schema with no log line saying so. A direct path fails with ENOENT.
+ */
+const PRISMA_CLI = "node node_modules/prisma/build/index.js";
 const BUILD_TIMEOUT_MS = 5 * 60_000;
 const MIGRATE_TIMEOUT_MS = 5 * 60_000;
 
@@ -1053,7 +1065,7 @@ export async function applyUpdate(
     // crashes with `column "<name>" does not exist`.
     setStep(3, "running");
     try {
-      await execAsync("npx prisma generate", { cwd: APP_DIR, timeout: PRISMA_GENERATE_TIMEOUT_MS });
+      await execAsync(`${PRISMA_CLI} generate`, { cwd: APP_DIR, timeout: PRISMA_GENERATE_TIMEOUT_MS });
       setStep(3, "done");
     } catch (err: any) {
       failUpdate(3, "Prisma generate failed: " + stepFailureDetail(err, { timeoutMs: PRISMA_GENERATE_TIMEOUT_MS, elapsedMs: elapsed(3) }));
@@ -1098,7 +1110,7 @@ export async function applyUpdate(
     // ── Step 6: Run migrations ──
     setStep(5, "running");
     try {
-      await execAsync("npx prisma migrate deploy", {
+      await execAsync(`${PRISMA_CLI} migrate deploy`, {
         cwd: APP_DIR,
         timeout: MIGRATE_TIMEOUT_MS,
       });
