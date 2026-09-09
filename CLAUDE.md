@@ -10,7 +10,7 @@ Version policy: `<major>.<minor>` lives in `package.json` and is the single sour
 
 ## Skills — where the project memory lives
 
-This file is the always-loaded floor. Everything deeper lives in ten project skills under
+This file is the always-loaded floor. Everything deeper lives in eleven project skills under
 `.claude/skills/` and loads on demand — each `SKILL.md` routes to its `references/` with
 "read X when Y" tables. **Load the skill before you design, not at commit time**: the
 invariants and "when changing this" checklists are what make a change land right the first time.
@@ -24,6 +24,7 @@ invariants and "when changing this" checklists are what make a change land right
 | `polaris-ui-canon` | any change under `public/`; HTML/CSS/JS/theme/widget/chart/mobile/Dash work | auto |
 | `polaris-monitoring-discovery` | probes, cadence, collectors, MIBs, discovery phases, integrations, background jobs, metrics, runbooks | auto |
 | `polaris-agent` | anything under `agent/`, agent install/build/upgrade, cert pins, `ManagedAgent`, sample streams | auto |
+| `polaris-tech-lifecycle` | EOL dates, a version pin or minimum version, bumping Node / Postgres / Go / a dependency major, `npm audit`, Dependabot | auto |
 | `polaris-worktree-workflow` | the start of every coding task; "worktree", "lock", "dev environment", "merge", "push" | auto + `/polaris-worktree-workflow` |
 | `polaris-deploy` | env vars, systemd/nginx/Docker, the updater, before any push | `/polaris-deploy` only |
 | `polaris-docs-sync` | before every commit; after `check:docs` fails | `/polaris-docs-sync` only |
@@ -90,6 +91,9 @@ Code lives in `src/` (`api/routes/`, `api/middleware/`, `services/`, `jobs/`, `u
 | Testing | Vitest + Supertest |
 | Frontend | Vanilla JavaScript + HTML (served from /public) |
 
+> Each version above is one of many declaration sites (a Node major lives in 23). Never bump one
+> alone — `polaris-tech-lifecycle` owns the lockstep list, EOL dates and `check:versions`.
+
 ---
 
 ## Getting Started
@@ -116,9 +120,10 @@ npm run build && npm start
 # Test FortiManager connectivity
 npm run test:fmg
 
-# Type check / lint
+# Type check / lint / structural guards (the checks also run in CI + pre-commit)
 npm run typecheck
 npm run lint
+npm run check:docs && npm run check:versions && npm run check:deps
 ```
 
 ---
@@ -138,7 +143,7 @@ npm run lint
 - **Run `/polaris-docs-sync` before the end-of-work commit.** It names the skill reference entries each kind of change must refresh (models, services, jobs, routes, rules, UI canonicals, env vars, metrics) and runs `npm run check:docs`, which enforces the structural half (every model / service / job / route named, no `file:line` refs, every service has a touches entry, every referenced path exists). Anything the change moved, broke or invalidated gets refreshed in the same commit — the indexes only stay trustworthy if they are reviewed every commit.
 - **Never push without the user's explicit go-ahead.** "push" runs `/polaris-deploy`'s deployment-surface audit (README, `docs/INSTALL.md`, `deploy/` scripts, Dockerfile / compose) first, then the push protocol in `/polaris-worktree-workflow`.
 - **Production is updated through the in-app updater** (Server Settings → Maintenance), which also syncs the shipped systemd units and nginx config. Do not suggest `git pull` or manual restart steps unless asked.
-- **Version is automatic.** The patch is computed by `src/utils/version.ts` (Docker: baked-in `POLARIS_BUILD_COMMIT_COUNT`, otherwise `git rev-list --count HEAD`). Do not touch `package.json` version for patch increments — it stays `<major>.<minor>.0`. Bump the minor (e.g. `0.9.0` → `0.10.0`) only when cutting a named release.
+- **Version is automatic** — never edit the patch in `package.json`. See the version policy above.
 - **FortiManager ↔ standalone FortiGate parity.** Treat the FortiManager and standalone FortiGate integrations as paired surfaces. Whenever you add or change a FortiManager-side feature — new tab, config field, toggle, push pathway, monitoring stream, filter, etc. — evaluate whether the same change applies to the standalone FortiGate path and, if so, ship both in the same change. The two integrations talk to the same FortiOS device fleet via different transports (FMG proxy/direct vs. direct REST), so most user-visible features make sense on both. Only skip parity when the feature is structurally FMG-only (multi-FortiGate device filter, ADOM scoping, FMG-proxy concurrency tuning). UI: the Add/Edit modal tab layouts (`General` / `Filters` / `Monitoring` / `DHCP Push` / `Quarantine Push` / `Description Sync` / `SD-WAN` / `Geographic Location`) should look identical between the two types — diverge only on the tab content where the integrations genuinely differ. Backend: prefer `buildTransportForIntegration()`-style helpers that dispatch on integration type so push/quarantine/lease-release pathways stay generic instead of hardcoding `type === "fortimanager"` checks.
 - **Scale-check every change at 100 and 2000 monitored assets.** Before shipping any code that touches background jobs, discovery phases, monitor passes, or per-asset DB queries, explicitly reason through its behaviour at both ends of the fleet-size range. At 100 assets, correctness matters most; at 2000, sequential-await-per-row loops, large IN clauses, repeated findMany calls inside ticking jobs, and DB connection churn become the dominant failure modes. The specific anti-patterns to flag: `for...of rows { await prisma...update() }` (should be `$transaction([...])` or batched `Promise.all`), `for...of items { await someDbCall() }` in a reconciler or job tick (parallelize with `Promise.all` when order doesn't matter), and queries that load all monitored assets without a tight `select` (every extra column at 2000 assets adds memory and serialization cost on the hot 5s/30s ticking loops).
 

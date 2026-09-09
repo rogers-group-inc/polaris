@@ -6,13 +6,14 @@
  * the server reads at runtime *relative to its own compiled location*
  * (import.meta.url) must be copied into dist/ by hand after the compile.
  *
- * Today that's exactly the bundled standard-MIB text files consumed by
+ * Today that's the bundled standard-MIB text files consumed by
  * src/services/stdMibLibrary.ts (STD_MIBS_DIR resolves to
  * dist/services/stdMibs/ in a built install). Without this step every "std"
  * SNMP-walk on a built/production install — including LLDP-MIB — fails with
  * `Standard MIB "<NAME>" is not installed on the server`, because the .txt
  * files never made it into dist/. Dev (`npm run dev` via tsx) reads straight
- * from src/, which is why the gap is invisible until you ship.
+ * from src/, which is why the gap is invisible until you ship. The platform
+ * end-of-life dataset under src/data/ is here for the same reason.
  *
  * This runs as the second half of `npm run build` (tsc && node <this>). Every
  * build site — Dockerfile, deploy/setup-*, deploy/update-*, and the in-app
@@ -31,7 +32,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Asset groups to mirror from src/<dir> into dist/<dir>, filtered by extension. */
-const ASSETS = [{ dir: "services/stdMibs", exts: [".txt"] }];
+const ASSETS = [
+  { dir: "services/stdMibs", exts: [".txt"] },
+  // src/data/platformEol.json — the committed platform end-of-life dataset read by
+  // src/services/platformLifecycleService.ts. Same dist-relative story as the MIBs:
+  // without this entry the Platform Lifecycle card is empty in a container and on
+  // any built install, while dev (tsx, reading from src/) looks fine.
+  { dir: "data", exts: [".json"] },
+];
 
 let copied = 0;
 for (const { dir, exts } of ASSETS) {

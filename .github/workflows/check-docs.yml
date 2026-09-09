@@ -1,10 +1,27 @@
 name: Check docs
 
-# Structural doc-drift guard for the project memory (CLAUDE.md + every Markdown
-# file under .claude/skills/**). Enforces coverage + reference hygiene even when a
-# local clone hasn't activated the pre-commit hook. design/ is deliberately out of scope — it is a drop-in
-# snapshot of the external UI kit, not a doc this repo maintains.
-# Pure file reads — no DB, no npm install, no prisma generate needed.
+# Structural guards for the repo, all pure file reads — no DB, no npm install, no
+# prisma generate needed, which is why they share one fast job:
+#
+#   check-docs      doc-drift over the project memory (CLAUDE.md + every Markdown
+#                   file under .claude/skills/**): coverage and reference hygiene,
+#                   enforced even when a local clone hasn't activated the
+#                   pre-commit hook. design/ is deliberately out of scope — it is
+#                   a drop-in snapshot of the external UI kit, not a doc this repo
+#                   maintains.
+#   check-versions  every version pin agrees across its declaration sites, so a
+#                   bump can't land in nine of twelve and leave the tenth
+#                   provisioning the old runtime on fresh hosts.
+#   check-deps      installed dependency majors match the recorded targets, and
+#                   the hand-maintained overrides block still has a reason for
+#                   every entry. Fails here, warns in the pre-commit hook.
+#
+# The workflow name and job id stay "Check docs" / check-docs on purpose: they are
+# the status-check name any branch protection rule refers to, and renaming a
+# required check makes it look permanently pending instead of failing loudly.
+#
+# Each step runs even if an earlier one failed, so one push reports every problem
+# instead of hiding the second behind the first.
 
 on:
   push:
@@ -29,3 +46,11 @@ jobs:
 
       - name: Structural doc-drift check
         run: node scripts/check-docs.mjs
+
+      - name: Version-pin consistency check
+        if: ${{ !cancelled() }}
+        run: node scripts/check-versions.mjs
+
+      - name: Dependency-target check
+        if: ${{ !cancelled() }}
+        run: node scripts/check-deps.mjs

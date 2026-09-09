@@ -93,12 +93,21 @@ export type ManagedHypertableName = typeof ALL_HYPERTABLE_CANDIDATES[number];
 
 interface DetectionState {
   extensionInstalled: boolean;
+  /**
+   * The installed extension version, e.g. "2.17.2". Null when the extension
+   * is absent or the probe predates this field. Read by the platform
+   * lifecycle card — TimescaleDB publishes no dated end-of-life, but the
+   * version still decides which PostgreSQL majors are reachable (2.29 dropped
+   * PostgreSQL 15), so it belongs on the stack inventory.
+   */
+  extensionVersion: string | null;
   hypertables: Set<string>;
   detectedAt: number;
 }
 
 let state: DetectionState = {
   extensionInstalled: false,
+  extensionVersion: null,
   hypertables: new Set(),
   detectedAt: 0,
 };
@@ -110,10 +119,12 @@ let state: DetectionState = {
  */
 export async function detectTimescale(): Promise<DetectionState> {
   try {
-    const ext = await prisma.$queryRawUnsafe<{ extname: string }[]>(
-      `SELECT extname FROM pg_extension WHERE extname = 'timescaledb'`,
+    // extversion comes along for free — same row, same query.
+    const ext = await prisma.$queryRawUnsafe<{ extname: string; extversion: string | null }[]>(
+      `SELECT extname, extversion FROM pg_extension WHERE extname = 'timescaledb'`,
     );
     const installed = ext.length > 0;
+    const extensionVersion = ext[0]?.extversion ?? null;
     const hypertables = new Set<string>();
     if (installed) {
       // Hypertable inventory. `timescaledb_information.hypertables` only lists
@@ -137,14 +148,14 @@ export async function detectTimescale(): Promise<DetectionState> {
         logger.debug({ err }, "timescaledb_information schema unreadable; treating sample tables as plain");
       }
     }
-    state = { extensionInstalled: installed, hypertables, detectedAt: Date.now() };
+    state = { extensionInstalled: installed, extensionVersion, hypertables, detectedAt: Date.now() };
     logger.info(
-      { installed, hypertables: [...hypertables] },
+      { installed, extensionVersion, hypertables: [...hypertables] },
       "TimescaleDB detection complete",
     );
   } catch (err) {
     logger.warn({ err }, "TimescaleDB detection failed; treating as not available");
-    state = { extensionInstalled: false, hypertables: new Set(), detectedAt: Date.now() };
+    state = { extensionInstalled: false, extensionVersion: null, hypertables: new Set(), detectedAt: Date.now() };
   }
   return state;
 }

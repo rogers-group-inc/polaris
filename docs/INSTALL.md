@@ -8,6 +8,36 @@ If you're upgrading an existing install rather than installing fresh, use the in
 
 ---
 
+## Supported platform versions
+
+The canonical list. Every per-platform section below installs these versions; where a section
+states a floor, it states the same one as this table.
+
+| Component | Minimum | Polaris targets | Upstream end of life | Notes |
+|---|---|---|---|---|
+| **Node.js** | 20 | **24** | 20 → 2026-04-30 · 22 → 2027-04-30 · 24 → 2028-04-30 | LTS lines only. `engines.node` is advisory — npm warns and installs anyway — so the install scripts' checks are the real gate. |
+| **PostgreSQL** | 15 | **17** | 15 → 2027-11-11 · 16 → 2028-11-09 · 17 → 2029-11-08 | Five-year policy; a major dies each November. Target is 17 because TimescaleDB 2.29 dropped 15. |
+| **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date: **2.28.x is the last line supporting PostgreSQL 15**, and 2.29+ supports only 16/17/18. |
+| **Go** (agent build only) | 1.22 | **1.26** | 1.22 → 2025-02-11 · 1.25 → 2026-08-19 | Go supports only the two most recent majors, so this ages faster than anything else here. Needed only to build agent binaries in-app. |
+| **nginx** | 1.25 | **1.30** | 1.25 → 2024-05-29 · 1.29 → 2026-05-13 | The 1.25 floor is the HTTP/3 requirement, not a support statement. The setup scripts install from the nginx.org **mainline** repo, so a scripted install lands on a current branch. |
+| **Java** (agent signing only) | 17 | **21** | 17 → 2027-09-30 · 21 → 2028-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. |
+| **RHEL / Rocky / AlmaLinux** | 9 | 9 | 9 → 2032-05-31 (full support ends 2027-05-31) | |
+| **Ubuntu** | 22.04 LTS | **24.04 LTS** | 22.04 → 2027-06-01 · 24.04 → 2029-05-31 | LTS only. Extended dates require Ubuntu Pro; don't treat them as free runway. |
+| **Windows Server** | 2019 | 2022 | see Microsoft's product lifecycle | |
+| **PgBouncer** (optional) | 1.21 | 1.21 | no published date | Polaris cannot read its version — confirm the floor by hand. |
+
+**Polaris warns you about this itself.** Server Settings → **Maintenance → Platform Lifecycle**
+shows what this host is actually running, grades it against these dates, and links the upgrade
+steps for anything past or approaching end of life. A component below the minimum above is
+flagged critical; an upstream end-of-life is flagged and emailed but deliberately does not hold
+a permanent banner open, since it clears only in a maintenance window.
+
+> Dates last reviewed 2026-09-08 against upstream sources. They live in
+> `src/data/platformEol.json`, which is what the in-app card reads; `npm run check:versions`
+> asserts the version pins across the repo agree with each other.
+
+---
+
 ## Disk sizing — read this first
 
 The single most common operational footgun on a fresh Polaris install is undersized `/var` (Linux) or undersized `C:` (Windows) — both are where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.

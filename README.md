@@ -88,6 +88,9 @@ A built-in alias map collapses IEEE legal forms (`Fortinet, Inc.`) into marketin
 ### Capacity grading
 Server Settings → Maintenance shows host CPU/RAM/disk, database size with sample-table breakdown and dead-tuple ratios, monitoring workload (asset count, pinned-interface count incl. IPsec tunnels, pinned storage-mount count, cadences, retention), and a steady-state size projection. Critical conditions (disk free <10%, projected DB > 8× host RAM, autovacuum stale on a populated *and bloated* table) drive a non-dismissible sidebar alert; amber and watch conditions render as card-only reason rows.
 
+### Platform lifecycle
+Server Settings → Maintenance → **Platform Lifecycle** reports the version of every stack component this host is actually running — Node, PostgreSQL, TimescaleDB, Go, Java, nginx, the OS, PgBouncer, Prisma — and grades each against a committed, human-reviewed end-of-life dataset, with the ordered upgrade steps and the full list of files that must move together for anything past or approaching its end of life. Two states are kept distinct because they need different responses: a component **below Polaris's supported minimum** is a misconfiguration of that install, is critical, and reaches the sidebar alert; an **upstream end-of-life** is flagged red on the card and emailed once via a baseline automation, but deliberately does not hold a permanent banner open, since it clears only in a maintenance window. Supported versions and their dates are in [docs/INSTALL.md](docs/INSTALL.md) → "Supported platform versions"; the dataset is refreshed by a human, never fetched at runtime, so an air-gapped install still warns correctly.
+
 ### Authentication & RBAC
 - **Local accounts** — argon2id-hashed passwords with strength rules and per-account temporary lockout.
 - **TOTP second factor** — RFC 6238 enrollment via QR code, single-use backup codes, admin reset for lost devices. Local accounts enroll themselves from the account menu behind the page-header user badge, on any page — no admin involvement and no Users-page access needed.
@@ -103,6 +106,7 @@ Server Settings → Maintenance shows host CPU/RAM/disk, database size with samp
 - **Helmet CSP / HSTS / CSRF** synchronizer-token (`polaris_csrf` cookie + `X-CSRF-Token` header).
 - **Encrypted backups** with versioned magic header (`POLARIS\0`), retained on disk and surfaced for in-app restore.
 - **In-app updates** from Server Settings → Maintenance, with automatic rollback if any step fails.
+- **Platform end-of-life warnings** — the running stack graded against a committed EOL dataset, with upgrade playbooks; see "Platform lifecycle" above.
 - **PDF / CSV export** for assets, networks, events, and IP panel data.
 - **Prometheus `/metrics` + Grafana dashboard** — every `polaris_*` metric (monitor pass + work duration, probe latency by transport, FMG dual-lane worker, DB pool, capacity severity, discovery phases, sample rollups, HTTP, job health) graphed in `docs/grafana/polaris-monitoring-dashboard.json`. Bearer-token gated via `METRICS_TOKEN`. See `docs/INSTALL.md` → "Optional: Prometheus + Grafana."
 
@@ -114,9 +118,14 @@ Server Settings → Maintenance shows host CPU/RAM/disk, database size with samp
 | RAM | 4 GB | 8 GB |
 | DB data volume | 50 GB SSD | 100 GB+ SSD |
 | App / state volume | 5 GB | 20 GB |
-| OS | Windows Server 2019+, RHEL 9, Ubuntu 22.04+ | Windows Server 2022, RHEL 9, Ubuntu 22.04+ |
-| PostgreSQL | 15+ | 15+ |
-| Node.js | 20 LTS | 20 LTS |
+| OS | Windows Server 2019+, RHEL 9, Ubuntu 22.04+ | Windows Server 2022, RHEL 9, Ubuntu 24.04 LTS |
+| PostgreSQL | 15+ | 17 |
+| Node.js | 20+ | 24 LTS |
+
+> **These are floors, and some of them are already past upstream end of life** — Node 20 ended
+> 2026-04-30. [docs/INSTALL.md](docs/INSTALL.md) → "Supported platform versions" is the canonical
+> table: minimum, what Polaris targets, and every upstream EOL date. A running install grades
+> itself against it under Server Settings → Maintenance → Platform Lifecycle.
 
 Discovery pre-loads subnets, reservations, and assets for O(1) lookups; peak memory is ~200–400 MB on top of the Node.js base. Monitoring sample tables grow proportionally with monitored asset count × cadence × retention; the Capacity card on Server Settings → Maintenance projects this at runtime. The **DB data volume** (where PostgreSQL stores its `data_directory`) is the number that matters most — Postgres degrades hard when its volume hits 100%. See [docs/INSTALL.md](docs/INSTALL.md) → "Disk sizing — read this first" for the authoritative per-volume sizing table and platform-specific data-directory paths.
 
