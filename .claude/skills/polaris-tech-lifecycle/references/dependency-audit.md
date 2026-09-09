@@ -52,7 +52,8 @@ tree is shaped, not a point-in-time count — check the reasoning still holds, b
 - **`ip-address` (via `ip-cidr`)** — an XSS in `Address6`'s HTML-emitting methods. Polaris uses
   `ip-cidr` for IP math only and never for HTML emission, so it is not reachable.
 - **`hono` / `@hono/node-server`** — Prisma 7's dev-only bundled dev server. Polaris does not use
-  Hono at runtime.
+  Hono at runtime. **Gone as of Prisma 7.10** (2026-09): zero paths to it remain in the lockfile
+  and its override was deleted. If it reappears, it is Prisma tooling again, not a new exposure.
 
 The pattern is worth naming: **most of what `npm audit` reports here is Prisma dev tooling**, and
 because `prisma` is a direct dependency the aggregate makes the ORM look like the problem. That
@@ -68,7 +69,7 @@ transitive advisory:
 
 | Override | Why |
 |---|---|
-| `@hono/node-server` | Prisma 7 dev-server tooling; floored rather than downgrading Prisma |
+| `dompurify` | XSS in the sanitizer reached through `jspdf`, which asks for `^3.3.1` so only a floor moves it (browser-side PDF export) |
 | `qs` | `qs.stringify` DoS, reached through Express |
 | `fflate` | transitive advisory |
 | `@xmldom/xmldom` | reached through the SAML stack — this one is in a runtime auth path |
@@ -99,6 +100,10 @@ agent report sane values before shipping.
 ## Dependabot
 
 `.github/dependabot.yml`, four ecosystems.
+
+**A full PR cap silently blocks SECURITY updates too.** npm is `open-pull-requests-limit: 5`, and on 2026-09-09 all five slots were held by open version-update PRs — so `nodemailer` (4 alerts, one high) and `js-yaml` (1 high) had open Dependabot **alerts with no PR attached**, which reads exactly like Dependabot having nothing to say about them. If an alert has no PR, count the open PRs before concluding anything. Merging the backlog is what unblocks it; hand-bumping is faster.
+
+**Dependabot is not a superset of the other scanner, and vice versa.** Aikido's SCA findings carry `AIKIDO-*` ids from its own advisory database rather than GHSA/CVE, so Dependabot reports none of them (in that same pass: `ws`, `pg`, `pg-connection-string`, `jose`, `zod`, `undici`, `dompurify`, `fast-copy`, `raw-body`). Aikido was in turn silent on the dev-only ones Dependabot caught. Read both feeds.
 
 **npm at `/`**, weekly, grouped:
 
