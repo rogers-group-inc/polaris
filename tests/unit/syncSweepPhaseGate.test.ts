@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { sweepPhaseEnabled, cascadeControllerOf, isVouchedManagedDevice, type SyncMode, type ManagedDeviceSightings } from "../../src/services/discovery/discoveryEngine.js";
+import { sweepPhaseEnabled, assetOnlyPostSyncPassesEnabled, vcenterPassEnabled, cascadeControllerOf, isVouchedManagedDevice, type SyncMode, type ManagedDeviceSightings } from "../../src/services/discovery/discoveryEngine.js";
+import { vcenterSweepBlockedReason } from "../../src/services/vcenterService.js";
 
 // The mode→sweep-phase matrix behind syncDhcpSubnets' destructive phases.
 // Getting this wrong on a scoped run mass-deprecates subnets (Phase 2) or
@@ -110,5 +111,89 @@ describe("isVouchedManagedDevice — Phase 2b stale switch/AP sighting decision"
   it("does not vouch for a serial-less, hostname-less asset (decommission proceeds)", () => {
     const s = sightings({ seenHostnamesByController: new Map([["riverbend-112f-1", new Set(["RIVERBEND-112F-7"])]]) });
     expect(isVouchedManagedDevice({ serialNumber: null, hostname: null }, "RIVERBEND-112F-1", s)).toBe(false);
+  });
+});
+
+// The three vCenter passes that read "absent from the result" as "gone from
+// vCenter". On a one-device result each is catastrophically wrong in its own
+// way: dependency-edges delete-replaces edges across EVERY VM the integration
+// owns (wiping VM→host suppression fleet-wide), datastores is a delete-replace
+// keyed on the integration (emptying the table), and stale-sweep deletes
+// source rows and decommissions the assets left without one.
+describe("vcenterPassEnabled", () => {
+  const PASSES = ["dependency-edges", "datastores", "stale-sweep"] as const;
+
+  it("runs every pass on a full run", () => {
+    for (const p of PASSES) expect(vcenterPassEnabled("full", p)).toBe(true);
+  });
+
+  it("runs NO pass on a scoped run", () => {
+    for (const p of PASSES) expect(vcenterPassEnabled("scoped", p)).toBe(false);
+  });
+});
+
+// The stale sweep's SECOND, independent guard — derived from the result itself
+// rather than the caller's mode. Two guards because this pass decommissions
+// assets and fails silently.
+describe("vcenterSweepBlockedReason — the result-derived guard", () => {
+  const healthy = { hosts: [{}] as any[], vms: [{}] as any[], inventoryComplete: true };
+
+  it("permits the sweep on a complete, non-empty, unscoped read", () => {
+    expect(vcenterSweepBlockedReason(healthy as any)).toBeNull();
+  });
+
+  it("blocks a scoped result even when it otherwise looks healthy", () => {
+    // The belt: the mode said scoped.
+    expect(vcenterSweepBlockedReason({ ...healthy, scoped: true } as any))
+      .toBe("the run was scoped to a single device");
+  });
+
+  it("blocks on inventoryComplete:false — the braces, which a scoped run also sets", () => {
+    // discoverInventory marks scoped results incomplete too, so removing the
+    // `scoped` check above would still not let a one-device result sweep.
+    expect(vcenterSweepBlockedReason({ ...healthy, inventoryComplete: false } as any))
+      .toMatch(/incomplete/);
+  });
+
+  it("names the scoped reason rather than the misleading partial-read one", () => {
+    // A scoped result sets BOTH flags; the operator must be told which is true.
+    const reason = vcenterSweepBlockedReason({ ...healthy, inventoryComplete: false, scoped: true } as any);
+    expect(reason).toBe("the run was scoped to a single device");
+    expect(reason).not.toMatch(/VM list failed/);
+  });
+
+  it("still blocks an empty read (the pre-existing credential/permission guard)", () => {
+    expect(vcenterSweepBlockedReason({ hosts: [], vms: [], inventoryComplete: true } as any))
+      .toMatch(/empty/);
+  });
+});
+
+// The asset-only (Entra / AD / vCenter / Arc) post-sync passes: agent
+// auto-deploy, interface+storage auto-monitor, presence verification, GAL sync.
+// All four read the DB fleet-wide rather than the run's result, so a SCOPED
+// single-device run must skip them. Auto-deploy is the expensive one to get
+// wrong — a scoped run that ran it would start agent installs across every
+// agent-less device in the fleet because one operator clicked Discover Now on
+// one workstation.
+describe("assetOnlyPostSyncPassesEnabled", () => {
+  it("runs the passes on a full, un-aborted asset-only run", () => {
+    expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: true, scoped: false, aborted: false })).toBe(true);
+  });
+
+  it("SKIPS every pass on a scoped run", () => {
+    expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: true, scoped: true, aborted: false })).toBe(false);
+  });
+
+  it("skips on an aborted run, scoped or not", () => {
+    expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: true, scoped: false, aborted: true })).toBe(false);
+    expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: true, scoped: true, aborted: true })).toBe(false);
+  });
+
+  it("never runs for a non-asset-only (Fortinet) integration", () => {
+    for (const scoped of [false, true]) {
+      for (const aborted of [false, true]) {
+        expect(assetOnlyPostSyncPassesEnabled({ assetsOnly: false, scoped, aborted })).toBe(false);
+      }
+    }
   });
 });

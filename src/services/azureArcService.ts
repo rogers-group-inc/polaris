@@ -1447,6 +1447,19 @@ export async function discoverMachines(
   config: AzureArcConfig,
   signal?: AbortSignal,
   onProgress?: ArcDiscoveryProgressCallback,
+  /**
+   * Narrow the run to ONE Arc machine, by ARM resource id. Backs the asset
+   * slide-in's "Discover Now".
+   *
+   * Applied CLIENT-SIDE, beside the resource-group/name/tag filters, and
+   * deliberately not pushed into the Resource Graph query: only GUID-validated
+   * subscription ids are ever interpolated into that KQL, and a resource id is
+   * free-form operator-adjacent text. There is nothing to gain by pushing it
+   * down either — Arc discovery is a fixed ~3 queries regardless of fleet size
+   * (no per-machine fan-out), so the value of scoping here is that only this
+   * asset gets written, not fewer API calls.
+   */
+  scope?: { resourceId: string },
 ): Promise<ArcDiscoveryResult> {
   const log = onProgress || (() => {});
 
@@ -1515,6 +1528,15 @@ export async function discoverMachines(
 
   // 4. Filter (resource group / display name / tags — all client-side).
   let machines = filterArcMachines(normalized, config);
+  if (scope) {
+    // ARM resource ids are case-insensitive.
+    // `armId` is already lowercased at normalization; ARM ids are
+    // case-insensitive, so lowercase the wanted value to match.
+    const want = scope.resourceId.trim().toLowerCase();
+    machines = machines.filter((m) => m.armId === want);
+    log("discover.arc.scope", "info",
+      `Azure Arc: scoped to one machine — ${machines.length} match(es) for ${scope.resourceId}`);
+  }
   const dropped = normalized.length - machines.length;
   if (dropped > 0) {
     log("discover.filter", "info", `Azure Arc filter: ${machines.length} included, ${dropped} excluded`);
@@ -1554,8 +1576,11 @@ export async function discoverMachines(
   // 8. Phase 4 — connected Kubernetes clusters. These DO become assets, so
   //    unlike the phase 2/3 enrichment they're returned as their own list.
   //    Resource-Graph-only for the same cost reason.
+  //    Skipped entirely on a scoped run: clusters are separate assets from the
+  //    machine being refreshed, so a "refresh this server" click has no business
+  //    creating or updating them.
   const clusters: DiscoveredArcCluster[] = [];
-  if (config.enableKubernetes && !signal?.aborted) {
+  if (config.enableKubernetes && !scope && !signal?.aborted) {
     if (usedFallback || !wantsArg) {
       log("discover.arc.clusters_skipped", "info",
         "Azure Arc: skipping connected Kubernetes clusters — they need Resource Graph, "

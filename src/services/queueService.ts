@@ -42,6 +42,7 @@ import {
   type WorkerSlotPool,
 } from "../utils/workerSlotPool.js";
 import { setPgbossQueueJobs, setPgbossJobAge, recordQueueMode, setMonitorWorkers } from "../metrics.js";
+import type { DiscoveryScope } from "./discovery/discoveryScope.js";
 import {
   runProbeFor,
   runProbeBatchFor,
@@ -255,12 +256,19 @@ export type ScanJobHandler = (runId: string, actor: string) => Promise<void>;
 export interface DiscoveryJobPayload {
   integrationId: string;
   actor: string;
-  // Single-FortiGate scoped re-discovery (FMG only). Absent = full run.
-  scopeDeviceName?: string;
+  /**
+   * Single-device scoped discovery. Absent = full run.
+   *
+   * A structured union rather than the old `scopeDeviceName` string, because
+   * the kinds identify devices in incompatible ways (an FMG roster name, an
+   * Entra deviceId GUID, an AD objectGUID) and the consumer must branch on
+   * which. The run row still carries a flat display label — see `scopeLabel`.
+   */
+  scope?: DiscoveryScope;
 }
 
 /** Signature of the discovery executor injected by the boot path (app.ts). */
-export type DiscoveryJobHandler = (integrationId: string, actor: string, scopeDeviceName?: string) => Promise<void>;
+export type DiscoveryJobHandler = (integrationId: string, actor: string, scope?: DiscoveryScope) => Promise<void>;
 
 let bossInstance: PgBossType | null = null;
 let metricsRefreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -751,8 +759,8 @@ export async function startDiscoveryWorker(handler: DiscoveryJobHandler): Promis
   await boss.work<DiscoveryJobPayload>(DISCOVERY_QUEUE_NAME, {
     localConcurrency: discoveryWorkers, batchSize: 1, pollingIntervalSeconds: 5,
   }, async (jobs: PgBossJob<DiscoveryJobPayload>[]) => {
-    const { integrationId, actor, scopeDeviceName } = jobs[0].data;
-    await handler(integrationId, actor, scopeDeviceName);
+    const { integrationId, actor, scope } = jobs[0].data;
+    await handler(integrationId, actor, scope);
   });
   discoveryWorkerStarted = true;
   ensureMetricsRefresh();
@@ -1222,11 +1230,11 @@ export async function publishMonitorSweepJob(
  * manual trigger that races the scheduler — only one queued-or-active run per
  * integration exists at a time.
  */
-export async function publishDiscoveryJob(integrationId: string, actor: string, scopeDeviceName?: string): Promise<boolean> {
+export async function publishDiscoveryJob(integrationId: string, actor: string, scope?: DiscoveryScope): Promise<boolean> {
   if (!bossInstance) return false;
   await bossInstance.send(
     DISCOVERY_QUEUE_NAME,
-    { integrationId, actor, ...(scopeDeviceName ? { scopeDeviceName } : {}) } as DiscoveryJobPayload,
+    { integrationId, actor, ...(scope ? { scope } : {}) } as DiscoveryJobPayload,
     { singletonKey: integrationId },
   );
   return true;

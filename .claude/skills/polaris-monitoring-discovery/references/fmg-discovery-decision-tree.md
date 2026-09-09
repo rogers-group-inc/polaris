@@ -257,13 +257,13 @@ FMG Integration Discovery
 | `autoReserveFortinetInfra` | `false` | Writes a real MAC→IP reserved-address entry for managed FortiSwitches/FortiAPs that hold their address by dynamic lease — the FortiLink case, where the gate otherwise reports the address "Not Reserved". Requires `pushReservations` and is ignored without it. Pins addresses the devices already hold, so the pool's occupancy doesn't change. Unlike every other DHCP write, this one runs on a schedule rather than on an operator action: it is bounded per cycle, uses only the MAC the gate saw requesting the address, verifies each write by read-back, and never re-attempts a row a gate has refused. Turning it off stops new entries but does not remove existing ones — release those reservations to do that. Confirm the behaviour on one gate before enabling fleet-wide. |
 | `syncDescriptions` | `false` | Description writeback (Polaris-primary). Polaris descriptions overwrite the device; device values are only imported where Polaris has none. Needs the same Manage Device Configurations RW (proxy mode) / per-FG REST write access (direct mode) as DHCP push. Enable only once Polaris is where your team edits descriptions — device-side edits get reverted. |
 
-## Re-discovering a single FortiGate
+## Discovering a single FortiGate (and its switches/APs)
 
-The **Re-discover** button on a FortiGate firewall asset's details panel (System tab, next to Poll Now; requires assets write access) re-runs discovery for **that one gate only** — useful after changing DHCP scopes, switch/AP membership, or VIPs on a single site without waiting for (or paying the cost of) a full FMG sweep.
+The **Discover Now** button on a FortiGate firewall asset's details panel (System tab, where Poll Now used to sit; requires assets write access) re-runs discovery for **that one gate only** — useful after changing DHCP scopes, switch/AP membership, or VIPs on a single site without waiting for (or paying the cost of) a full FMG sweep.
 
 What it does:
 - Runs the normal per-device pipeline for the one gate: subnets, static reservations, leases, interface IPs, VIPs, FortiSwitch/FortiAP sync, endpoint enrichment, stale VIP/reservation release for that gate.
-- Runs the **per-controller switch/AP decommission** for that gate (a FortiSwitch/FortiAP that vanished from behind it is decommissioned — only when the gate's inventory query succeeded, same protection as a full run). This makes Re-discover a per-gate ghost-switch/AP cleanup tool.
+- Runs the **per-controller switch/AP decommission** for that gate (a FortiSwitch/FortiAP that vanished from behind it is decommissioned — only when the gate's inventory query succeeded, same protection as a full run). This makes Discover Now a per-gate ghost-switch/AP cleanup tool.
 - Shows on the Integrations page as "Discovering \<device\>…" with the normal abort button; a scoped run and a full run never overlap (whichever is running wins; the other request is refused with a clear message).
 
 What it deliberately does NOT do (these wait for the next full discovery):
@@ -272,10 +272,12 @@ What it deliberately does NOT do (these wait for the next full discovery):
 - Advance the integration's `lastDiscoveryAt` — the next scheduled full run happens exactly when it would have anyway.
 
 Notes:
-- A gate excluded by `deviceInclude`/`deviceExclude` refuses to re-discover (same rule as Poll Now).
+- A gate excluded by `deviceInclude`/`deviceExclude` refuses to run (the same filter re-check the probe endpoint applies).
 - If the gate is offline in FMG, the run pulls FMG's cached CMDB config only (additive refresh, no decommissions) — same offline semantics as a full run.
 - For an HA cluster, re-discovering any member's asset re-discovers the cluster (the FMG device).
 - On a standalone FortiGate integration the button simply runs that integration's normal discovery — it already is a single gate.
+- **Discover Now on a FortiSwitch or FortiAP** scopes the run to that device's CONTROLLER gate (resolved through `src/utils/fortinetParentKey.ts`, never by hostname match) — a switch is only ever discovered as a by-product of its controller's pass, and the per-controller decommission above is exactly what a stale switch needs. The response carries `viaController: true` and the gate's name so the UI can say which device is actually being discovered.
+- **Directory assets scope too** (Entra/Intune by `deviceId`, AD by `objectGUID`) — see polaris-monitoring-discovery → discovery-overview.md. Only vCenter and Arc assets render the button DISABLED with the reason in its title rather than hidden; the route returns the same reason as a 400, and they are told to run their integration from the Integrations page.
 
 ## Direct mode vs the probe path — same strict behavior
 

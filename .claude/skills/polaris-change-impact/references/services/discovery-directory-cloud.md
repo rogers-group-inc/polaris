@@ -8,6 +8,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** testConnection, proxyQuery (REST surface only — rejects non-`/api/` paths), discoverInventory, fetchVcenterQuickStats, fetchVcenterHostSnapshot, pickVmExternalId, hostExternalId, buildClusterHostMap, buildVcenterDependencyEdges, vcenterSweepBlockedReason, partitionStaleVcenterSources, matchesVmWildcard, filterVms, vendorFromNaa, backingLabelFor, extractObjectBlocks / parseObjRef / parsePropValue / parseQuickStatsBlock / parseGuestDisks / parseGuestNics / parseHostPnics / parseHostVnics / parseHostVswitches / parseHostProxySwitches / parseHostPortgroups / parseHostStatsBlock / parseDatastoreBlock (SOAP parsers), parseVmDetail, VcenterConfig + Discovered* + VcenterHost* types.
 
+**Scoped (single-device) discovery:** `discoverInventory` takes a 4th arg `scope?: { kind: "vm" | "host"; moref }` — the asset slide-in's Discover Now. The moref comes from `Asset.virtualization` (`vmMoref` / `hostMoref`), NOT from the source row, whose externalId is the instanceUuid. It keeps Phases 1/2/5/6 (bounded by HOST count) and drops the expensive part — Phase 4's 3–4 REST calls PER VM. Phase 1 is NOT optional on a VM scope: placement is derived from the per-host listing and a VM written without its host would clobber `virtualization.hostAssetId`, so a VM-scoped run still asks each host for that one moref (`vms=` filter → 0 or 1 rows). A host-scoped run skips VM listing and returns only the target host. The result is marked `scoped: true` AND `inventoryComplete: false`, and `vcenterSweepBlockedReason` refuses on either — `scoped` first, so the reason is accurate rather than the misleading "a per-host VM list failed".
+
 **Cross-service deps:** dnsService.getConfiguredResolver (host FQDN → resolvedIp; REST exposes no host mgmt IP).
 
 **Used by:** src/api/routes/integrations.ts — test connection (create-form), Query API proxy branch. src/services/discovery/discoveryEngine.ts — preflight test + discovery dispatch (`discoverInventory` → `syncVcenterDevices`). src/services/monitoringService.ts — `fetchVcenterQuickStats` and `fetchVcenterHostSnapshot` behind two per-integration warm caches (`fetchVcenterQuickStatsCached` / `fetchVcenterHostSnapshotCached`, 30s TTL + promise-singleton each) that back the "vcenter" polling method's FOUR streams (response-time, cpuMemory, interfaces, storage) for VMs and ESXi hosts alike.
@@ -44,7 +46,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** testConnection, proxyQuery, discoverDevices, ActiveDirectoryConfig, DiscoveredAdDevice, AdDiscoveryResult, AdDiscoveryProgressCallback.
 
-**Cross-service deps:** None (pure LDAP client; no service-to-service calls).
+**Scoped (single-object) discovery:** `discoverDevices` takes a 4th arg `scope?: { objectGuid }` — the asset slide-in's Discover Now. It ANDs `(objectGUID=\xx\xx…)` into the computer-object filter, still searching from `config.baseDn` at the configured scope (so an object moved out of the base DN correctly returns nothing — the same answer a full run gives). Keyed on the GUID, NOT the DN: a computer object that moves OU keeps its GUID and changes its DN, so a DN-based search would silently find nothing for exactly the machines most likely to need a refresh. The escaped-byte form comes from `ldapGuidFilterValue` (`src/services/discovery/discoveryScope.ts`), which is the exact inverse of `decodeObjectGuid` — both are wire-order, no byte-swapping — and a malformed GUID throws 400 rather than building a filter that matches the wrong object.
+
+**Cross-service deps:** `src/services/discovery/discoveryScope.ts -> ldapGuidFilterValue` (pure). Otherwise a pure LDAP client; no service-to-service calls.
 
 **Used by:** src/api/routes/integrations.ts — discovery trigger, test connection, manual LDAP proxy query. src/services/discovery/discoveryEngine.ts — sync path syncActiveDirectoryDevices.
 
@@ -148,6 +152,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** testConnection, proxyQuery, discoverDevices, EntraIdConfig, DiscoveredEntraDevice, EntraDiscoveryResult, EntraDiscoveryProgressCallback.
 
+**Scoped (single-device) discovery:** `discoverDevices` takes a 4th arg `scope?: { deviceId }` — the asset slide-in's Discover Now (see `discovery/discoveryScope.ts` for the scope union and `assetDiscoveryScope.ts` for how an asset resolves to one). It swaps `$top=999` for `$filter=deviceId eq '<guid>'` on `/devices` and `$filter=azureADDeviceId eq '<guid>'` on `/deviceManagement/managedDevices`; the deviceId is GUID-validated before interpolation and a malformed one throws 400 rather than reaching an OData string. Everything downstream is untouched — the Intune merge, deviceInclude/deviceExclude and includeDisabled all still apply, so a scoped run on an excluded device correctly returns zero devices instead of smuggling one past the filter.
+
 **Cross-service deps:** None (pure Graph API client; no service-to-service calls).
 
 **Used by:** src/api/routes/integrations.ts — discovery trigger, test connection, manual Graph proxy query. src/services/discovery/discoveryEngine.ts — sync path syncEntraDevices.
@@ -164,6 +170,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - proxyQuery is read-only Graph API pass-through (GET only, /v1.0/ or /beta/ prefix required).
 
 **When changing this:**
+- A scoped run must stay a strict SUBSET of a full run's behavior for that device. If you add a phase that reads the whole tenant, gate it on the scope being absent.
 - Test OAuth2 token caching + refresh 60s before expiry; verify no mid-request expirations, and that the 401/403 re-mint paths still retry exactly once.
 - Verify Intune merge logic on shared fields (Intune data must win over Entra).
 - Check hybrid-join SID cross-link still tags assets correctly for AD ↔ Entra matching.
@@ -176,7 +183,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Azure Arc (Arc-enabled servers) discovery via Azure Resource Manager — `Microsoft.HybridCompute/machines`. The Connected Machine agent runs in the guest, so this source carries host truth (running OS SKU, real FQDN, live SMBIOS data, heartbeat status) rather than a directory record.
 
-**Public API:** `testConnection(config)`, `proxyQuery(config, method, path, query?, body?)`, `discoverMachines(config, signal?, onProgress?)`, plus the pure helpers the unit tests drive: `normalizeSubscriptionId`, `buildArcMachinesQuery`, `buildArcVmInstancesQuery`, `buildArcSqlInstancesQuery`, `buildArcClustersQuery`, `normalizeArcCluster`, `buildArcClusterObservedBlob`, `normalizeVmUuid`, `swapVmUuidEndianness`, `parseArmResourceId`, `parentMachineIdFromExtensionId`, `normalizeArcMachine`, `normalizeArcVmInstance`, `normalizeArcSqlInstance`, `extractIpAddresses`, `inferArcAssetType`, `arcStatusIsConnected`, `matchesTagFilter`, `filterArcMachines`, `arcHostnameCandidates`, `buildArcObservedBlob`, `describeAadTokenError`, `extractArmError`, `throttleDelayMs`. Types `AzureArcConfig` / `DiscoveredArcMachine` / `ArcVmInstance` / `ArcSqlInstance` / `ArcDiscoveryResult`.
+**Scoped (single-machine) discovery:** `discoverMachines` takes a 4th arg `scope?: { resourceId }` (the `arc` source's externalId — an ARM resource id). Applied CLIENT-SIDE beside the resource-group/name/tag filters, deliberately NOT pushed into the Resource Graph KQL: only GUID-validated subscription ids are ever interpolated there, and there is nothing to gain — Arc discovery is a fixed ~3 queries regardless of fleet size, so scoping buys "only this asset is written", not fewer calls. A scoped run also skips the connected-Kubernetes cluster query (clusters are separate assets). No sync-side mode is needed: `syncArcDevices` has NO fleet-absence passes — it never writes `status` and issues no bulk delete/update (audited 2026-09-08).
+
+**Public API:** `testConnection(config)`, `proxyQuery(config, method, path, query?, body?)`, `discoverMachines(config, signal?, onProgress?, scope?)`, plus the pure helpers the unit tests drive: `normalizeSubscriptionId`, `buildArcMachinesQuery`, `buildArcVmInstancesQuery`, `buildArcSqlInstancesQuery`, `buildArcClustersQuery`, `normalizeArcCluster`, `buildArcClusterObservedBlob`, `normalizeVmUuid`, `swapVmUuidEndianness`, `parseArmResourceId`, `parentMachineIdFromExtensionId`, `normalizeArcMachine`, `normalizeArcVmInstance`, `normalizeArcSqlInstance`, `extractIpAddresses`, `inferArcAssetType`, `arcStatusIsConnected`, `matchesTagFilter`, `filterArcMachines`, `arcHostnameCandidates`, `buildArcObservedBlob`, `describeAadTokenError`, `extractArmError`, `throttleDelayMs`. Types `AzureArcConfig` / `DiscoveredArcMachine` / `ArcVmInstance` / `ArcSqlInstance` / `ArcDiscoveryResult`.
 
 **Cross-service deps:** `src/utils/entraClientCredentials.ts` (the SAME token-request builder the Graph client uses — only the scope differs, at `https://management.azure.com/.default`; do not fork it), `src/utils/integrationFilter.ts -> matchesWildcard`, `src/utils/errors.ts -> AppError`.
 
