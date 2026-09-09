@@ -13,7 +13,11 @@
  *     stuck-running sweep (running > timeout + 60s ⇒ status "timeout").
  *   - execute: the script body is written to a 0600 temp file under the state
  *     dir and passed to the interpreter via execFile — the args string is a
- *     SINGLE argv entry, never shell-interpolated; the interpreter itself
+ *     SINGLE argv entry, never shell-interpolated, EXCEPT for the `cmd`
+ *     interpreter, which has no argv: `cmd /c` re-parses the raw command line
+ *     with its own grammar, so that one path is escaped by
+ *     buildCmdCommandLine and sent with windowsVerbatimArguments; the
+ *     interpreter itself
  *     resolves to a known absolute path where one exists rather than to
  *     whatever the inherited PATH names first; alert context rides env vars
  *     (POLARIS_ALERT_ID / POLARIS_RULE / POLARIS_ASSET) over an environment
@@ -79,9 +83,65 @@ function resolveInterpreterBin(name: string): string {
   return name;
 }
 
-/** Interpreter → [binary, argv prefix]. The temp file path + rendered args are
- *  appended as discrete argv entries — no shell ever parses them. */
-function interpreterArgv(interpreter: string, scriptPath: string, args: string | null): { bin: string; argv: string[] } | null {
+/**
+ * Characters that cannot be delivered to a cmd.exe command line safely.
+ *
+ * `"` ends the quoted token (cmd has no in-quote escape for it) and `%` / `!`
+ * are expanded by the parser before the script ever sees them. Control
+ * characters are rejected wholesale: CR and LF end the command line, NUL
+ * truncates it, and 0x1A is still end-of-file to cmd.exe. A `^` prefix helps
+ * with none of these, so such an argument is refused rather than mangled.
+ */
+const CMD_UNREPRESENTABLE = /["%!]|\p{Cc}/u;
+
+/** cmd.exe metacharacters, all of which `^` does neutralise. */
+const CMD_METACHARACTERS = /[()<>&|^]/g;
+
+/**
+ * The single command-line string for `cmd.exe`, or null if `args` cannot be
+ * represented safely.
+ *
+ * cmd.exe is the one interpreter here that re-parses its own command line, so
+ * it is the one that needs escaping (see the note in interpreterArgv). Three
+ * things have to be true at once and each was verified empirically against
+ * cmd.exe, not reasoned about:
+ *
+ *   1. Every metacharacter is `^`-escaped. Quoting ALONE is not enough — with
+ *      `/s`, `"x | echo INJECTED"` still pipes.
+ *   2. The whole command is wrapped in one further pair of quotes, because
+ *      `/s` strips the first and last character of the remainder when both are
+ *      quotes and uses the rest verbatim. Without the outer pair, `/s` eats the
+ *      quotes around the script path instead.
+ *   3. The caller passes `windowsVerbatimArguments`, or Node re-quotes this
+ *      string with C-runtime rules that cmd.exe does not implement — which is
+ *      the original bug: Node emitted `\"` for an embedded quote and cmd.exe
+ *      read the `\` as an ordinary character and the `"` as end-of-quote.
+ */
+export function buildCmdCommandLine(scriptPath: string, args: string | null): string | null {
+  if (args !== null && args !== "" && CMD_UNREPRESENTABLE.test(args)) return null;
+  const escaped = args === null || args === "" ? null : args.replace(CMD_METACHARACTERS, (c) => `^${c}`);
+  const inner = escaped === null ? `"${scriptPath}"` : `"${scriptPath}" "${escaped}"`;
+  return `/d /s /c "${inner}"`;
+}
+
+/**
+ * Interpreter → binary + argv. The temp file path and the rendered args are
+ * discrete argv entries, so for bash/sh/python3/powershell no shell parses
+ * them: each receives its argument vector directly from CreateProcess/execve.
+ *
+ * cmd.exe is the exception, and the reason `verbatim` exists. `cmd /c` does not
+ * consume an argv — it re-parses the raw command line with its own grammar, in
+ * which `&`, `|`, `<`, `>`, `(`, `)` and `^` are operators. Handing it a
+ * Node-quoted argv therefore executed whatever an argument chose to inject, and
+ * args are a rendered template of alert context (renderNotificationTemplate),
+ * so the injected text can come from a device's own hostname. Everything cmd
+ * touches goes through buildCmdCommandLine.
+ */
+function interpreterArgv(
+  interpreter: string,
+  scriptPath: string,
+  args: string | null,
+): { bin: string; argv: string[]; verbatim?: boolean; rejected?: string } | null {
   const tail = args !== null && args !== "" ? [args] : [];
   switch (interpreter) {
     case "bash": return { bin: resolveInterpreterBin("bash"), argv: [scriptPath, ...tail] };
@@ -91,9 +151,19 @@ function interpreterArgv(interpreter: string, scriptPath: string, args: string |
       const bin = resolveInterpreterBin(process.platform === "win32" ? "powershell.exe" : "pwsh");
       return { bin, argv: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, ...tail] };
     }
-    case "cmd":
+    case "cmd": {
       if (process.platform !== "win32") return null;
-      return { bin: resolveInterpreterBin("cmd.exe"), argv: ["/d", "/s", "/c", scriptPath, ...tail] };
+      const line = buildCmdCommandLine(scriptPath, args);
+      if (line === null) {
+        return {
+          bin: "", argv: [],
+          rejected: 'arguments for the cmd interpreter cannot contain " % ! or a line break — '
+            + "cmd.exe expands or re-parses those before the script sees them. "
+            + "Use the POLARIS_ALERT_ID / POLARIS_RULE / POLARIS_ASSET environment variables instead.",
+        };
+      }
+      return { bin: resolveInterpreterBin("cmd.exe"), argv: [line], verbatim: true };
+    }
     default:
       return null;
   }
@@ -162,6 +232,9 @@ export async function executeServerScript(run: {
   const scriptPath = resolve(SCRIPT_TMP_DIR, `run-${run.id}-${randomUUID().slice(0, 8)}${scriptFileExtension(script.interpreter)}`);
   const spec = interpreterArgv(script.interpreter, scriptPath, run.args);
   if (!spec) return { status: "failed", exitCode: null, stdout: "", stderr: `interpreter "${script.interpreter}" is not available on this platform` };
+  // Refusing the run is the point: the alternative is silently delivering a
+  // mangled argument, or delivering it faithfully to cmd.exe's parser.
+  if (spec.rejected) return { status: "failed", exitCode: null, stdout: "", stderr: spec.rejected };
 
   try {
     await writeFile(scriptPath, script.body, { encoding: "utf8", mode: 0o600 });
@@ -179,6 +252,10 @@ export async function executeServerScript(run: {
             POLARIS_ASSET: run.assetId ?? "",
           }),
           windowsHide: true,
+          // cmd only. buildCmdCommandLine has already applied cmd.exe's own
+          // escaping rules; letting Node re-quote with C-runtime rules on top
+          // is what made the argument injectable in the first place.
+          windowsVerbatimArguments: spec.verbatim === true,
         },
         (err, stdout, stderr) => {
           const out = String(stdout ?? "").slice(0, OUTPUT_CAP_BYTES);
