@@ -30,6 +30,10 @@ let toastErrors: string[];
 const savedPayloads: Record<string, unknown>[] = [];
 /** Export writes through downloadJson; captured rather than downloaded. */
 const downloads: { obj: unknown; filename: string }[] = [];
+/** What POST /automations/preview answers — mutable so a test can hand the
+ *  Devices step a carve-out picture without re-standing the whole harness. */
+const DEFAULT_PREVIEW: Record<string, unknown> = { supported: true, totalEvaluated: 3, meetsCount: 0, matches: [] };
+let previewResponse: Record<string, unknown> = DEFAULT_PREVIEW;
 
 beforeAll(() => {
   const win = new Window();
@@ -82,7 +86,7 @@ beforeAll(() => {
         models: ["FGT-60F"],
         subnets: [{ id: "s1", name: "Mgmt", cidr: "10.20.0.0/24" }],
       }),
-      preview: async () => ({ supported: true, totalEvaluated: 3, matches: [] }),
+      preview: async () => previewResponse,
       // The cadence the poll-counted hold + window fields convert through.
       // 120s with a spread, so a caption that quietly assumed 60 is visible.
       pollCadence: async () => ({ stream: "cpuMemory", mode: 120, min: 60, max: 300, timeoutMs: 5000, assetCount: 7 }),
@@ -474,6 +478,47 @@ describe("automation wizard DOM render", () => {
     const affected = doc.querySelector("#aw-affected")!;
     expect(affected.textContent).toContain("3"); // stubbed preview totalEvaluated
     expect(toastErrors).toEqual([]);
+  });
+
+  it("step 6 lists the devices this automation WILL cover, never the carved-out ones", async () => {
+    // The prod shape this exists for: an all-assets draft over a fleet whose
+    // per-type automations already cover nearly all of it. Listing the
+    // carved-out rows filled the window with devices the draft can never fire
+    // about; the covered handful — the answer to "who does this alert on" —
+    // was nowhere on screen.
+    previewResponse = {
+      supported: true,
+      totalEvaluated: 4,
+      totalAssets: 4,
+      meetsCount: 0,
+      coveredEvaluated: 1,
+      coveredAssets: 1,
+      specificity: { rank: 0, label: "All assets" },
+      carveOut: { carvedOut: { count: 3, byRule: [{ ruleId: "ap", ruleName: "FortiAP Asset down", count: 3 }] } },
+      matches: [
+        { assetId: "k1", hostname: "kept-switch", dimension: "", value: null, meets: false },
+        { assetId: "c1", hostname: "carved-ap-1", dimension: "", value: null, meets: false, excludedBy: { ruleId: "ap", ruleName: "FortiAP Asset down" } },
+        { assetId: "c2", hostname: "carved-ap-2", dimension: "", value: null, meets: false, excludedBy: { ruleId: "ap", ruleName: "FortiAP Asset down" } },
+        { assetId: "c3", hostname: "carved-ap-3", dimension: "", value: null, meets: false, excludedBy: { ruleId: "ap", ruleName: "FortiAP Asset down" } },
+      ],
+    };
+    // Re-enter step 6 so renderAffectedDevices runs against the new answer.
+    (doc.querySelector("#aw-back") as unknown as { click: () => void }).click();
+    (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const affected = doc.querySelector("#aw-affected")!;
+    const rows = Array.from(affected.querySelectorAll("tbody tr")).map((tr) => tr.textContent);
+    expect(rows).toEqual(["kept-switch"]);
+    // The carved-out devices are COUNTED (that part the operator liked) and
+    // named by rule, but never listed row by row.
+    expect(affected.textContent).toContain("4 device(s) match the filter");
+    expect(affected.textContent).toContain("3 matched device(s) are already covered");
+    expect(affected.textContent).toContain("will alert on the remaining 1 device(s)");
+    expect(affected.textContent).not.toContain("carved-ap-1");
+    expect(rows.join(" ")).not.toContain("covered by"); // the per-row annotation is gone with the rows
+
+    previewResponse = DEFAULT_PREVIEW;
   });
 
   it("step 6 offers one send-to-me test per delivery, with no way to reach real recipients", async () => {
