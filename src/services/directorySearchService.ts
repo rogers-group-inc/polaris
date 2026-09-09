@@ -60,14 +60,88 @@ interface DirectoryIntegration {
   config: Record<string, unknown>;
 }
 
-async function enabledDirectoryIntegrations(): Promise<DirectoryIntegration[]> {
+/**
+ * The two directory backends, keyed by integration type.
+ *
+ * `kind` is the value that travels as a search entry's `source` AND as a synced
+ * `Contact.origin` — one vocabulary for "which directory said so", so a row can
+ * be traced back to its backend whether it was fetched live or stored by the
+ * sync. `product` is the fallback label when the integrations' own names can't
+ * speak for the kind.
+ */
+const DIRECTORY_TYPES: Record<string, { kind: DirectorySourceKind; product: string }> = {
+  entraid: { kind: "entra", product: "Entra ID" },
+  activedirectory: { kind: "ad", product: "Active Directory" },
+};
+
+export type DirectorySourceKind = "entra" | "ad";
+
+/** One directory backend, as a surface that routes BY SOURCE needs it. */
+export interface DirectorySource {
+  kind: DirectorySourceKind;
+  /** What to call it: the operator's integration name where that is
+   *  unambiguous, else the product name. */
+  label: string;
+  /** At least one integration of this kind answers the live typeahead. */
+  search: boolean;
+  /** At least one integration of this kind materializes Contact rows. */
+  sync: boolean;
+}
+
+async function directoryIntegrations(): Promise<DirectoryIntegration[]> {
   const rows = await prisma.integration.findMany({
-    where: { enabled: true, type: { in: ["entraid", "activedirectory"] } },
+    where: { enabled: true, type: { in: Object.keys(DIRECTORY_TYPES) } },
     select: { id: true, name: true, type: true, config: true },
   });
-  return rows
-    .map((r) => ({ ...r, config: (r.config ?? {}) as Record<string, unknown> }))
-    .filter((r) => r.config.enableDirectorySearch === true);
+  return rows.map((r) => ({ ...r, config: (r.config ?? {}) as Record<string, unknown> }));
+}
+
+async function enabledDirectoryIntegrations(): Promise<DirectoryIntegration[]> {
+  return (await directoryIntegrations()).filter((r) => r.config.enableDirectorySearch === true);
+}
+
+/**
+ * Which directories feed the address book, and what to call each one.
+ *
+ * Grouped by KIND rather than listed per integration because that is the
+ * granularity everything downstream has: a stored row records `origin: "entra"`,
+ * not which of two Entra integrations produced it, so a per-integration tab
+ * would promise a split the data cannot honour.
+ *
+ * Reports the SYNC opt-in as well as the search one, despite that flag belonging
+ * to directorySyncService: this module already owns the "which integrations are
+ * directories" query, and the sync service imports contactService, which imports
+ * this one — so the enumeration cannot live on that side without a cycle.
+ */
+export async function listDirectorySources(): Promise<DirectorySource[]> {
+  const rows = await directoryIntegrations();
+  const byKind = new Map<DirectorySourceKind, { names: string[]; product: string; search: boolean; sync: boolean }>();
+
+  for (const r of rows) {
+    const meta = DIRECTORY_TYPES[r.type];
+    if (!meta) continue;
+    const search = r.config.enableDirectorySearch === true;
+    const sync = r.config.enableDirectorySync === true;
+    // An integration that opted into neither is a device-discovery integration
+    // that happens to point at a directory: it puts nothing in the address book.
+    if (!search && !sync) continue;
+    const acc = byKind.get(meta.kind) ?? { names: [], product: meta.product, search: false, sync: false };
+    acc.names.push(r.name);
+    acc.search = acc.search || search;
+    acc.sync = acc.sync || sync;
+    byKind.set(meta.kind, acc);
+  }
+
+  // Entra before AD — the priority order projectContactFromSources ranks by.
+  const order: DirectorySourceKind[] = ["entra", "ad"];
+  return order.flatMap((kind) => {
+    const acc = byKind.get(kind);
+    if (!acc) return [];
+    // The operator's own name for it wins while it is unambiguous; two
+    // integrations of one kind share an `origin`, so neither name may claim the
+    // rows and the product name is the only honest label.
+    return [{ kind, label: acc.names.length === 1 ? acc.names[0] : acc.product, search: acc.search, sync: acc.sync }];
+  });
 }
 
 /** True when at least one integration has directory search switched on — lets

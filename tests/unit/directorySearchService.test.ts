@@ -26,6 +26,7 @@ vi.mock("../../src/services/activeDirectoryService.js", () => ({ searchDirectory
 import {
   searchDirectory,
   directorySearchAvailable,
+  listDirectorySources,
   bumpDirectoryCache,
 } from "../../src/services/directorySearchService.js";
 
@@ -153,5 +154,48 @@ describe("caching", () => {
     await searchDirectory("jane");
     await searchDirectory("john");
     expect(entraSearch).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * The directories that feed the address book, as its source tabs need them:
+ * one entry per BACKEND (a stored contact records "entra", not which of two
+ * Entra integrations produced it), labelled for a human.
+ */
+describe("listDirectorySources", () => {
+  it("ignores an integration that opted into neither search nor sync", async () => {
+    // A device-discovery integration that happens to point at a directory puts
+    // nothing in the address book, so it gets no tab.
+    integrations.push({ id: "i1", name: "Corp AD", type: "activedirectory", config: {} });
+    expect(await listDirectorySources()).toEqual([]);
+  });
+
+  it("reports each opt-in separately", async () => {
+    // search-only means the tab has no stored rows at all — it only answers
+    // while something is typed — so the two flags cannot be collapsed into one.
+    integrations.push({ id: "i1", name: "Corp Entra", type: "entraid", config: { enableDirectorySearch: true } });
+    integrations.push({ id: "i2", name: "Corp AD", type: "activedirectory", config: { enableDirectorySync: true } });
+    expect(await listDirectorySources()).toEqual([
+      { kind: "entra", label: "Corp Entra", search: true, sync: false },
+      { kind: "ad", label: "Corp AD", search: false, sync: true },
+    ]);
+  });
+
+  it("falls back to the product name when two integrations share a backend", async () => {
+    // They share one `Contact.origin`, so neither name may claim the rows.
+    integrations.push({ id: "i1", name: "Tenant A", type: "entraid", config: { enableDirectorySync: true } });
+    integrations.push({ id: "i2", name: "Tenant B", type: "entraid", config: { enableDirectorySearch: true } });
+    expect(await listDirectorySources()).toEqual([
+      { kind: "entra", label: "Entra ID", search: true, sync: true },
+    ]);
+  });
+
+  it("skips a disabled integration", async () => {
+    // The query itself filters on `enabled`; this asserts the tab strip inherits
+    // that rather than naming a directory nothing will ever ask.
+    prismaMock.integration.findMany.mockImplementation(async ({ where }: { where: { enabled: boolean } }) =>
+      integrations.filter((i) => where.enabled !== true || (i as { enabled?: boolean }).enabled !== false));
+    integrations.push({ id: "i1", name: "Old AD", type: "activedirectory", enabled: false, config: { enableDirectorySync: true } } as never);
+    expect(await listDirectorySources()).toEqual([]);
   });
 });

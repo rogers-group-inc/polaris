@@ -40,8 +40,7 @@ import { assertOwnership, hasPermission, requireOwnership, requirePermission } f
 import { requestActor } from "../middleware/auth.js";
 import { AppError } from "../../utils/errors.js";
 import { contactSearchLimiter } from "../middleware/rateLimits.js";
-import { directorySearchAvailable } from "../../services/directorySearchService.js";
-import { directorySyncAvailable } from "../../services/directorySyncService.js";
+import { directorySearchAvailable, listDirectorySources } from "../../services/directorySearchService.js";
 import { DEVICE_FILTER_FIELD_OPS, scopeConditionMeta } from "../../services/notificationTypes.js";
 import { listScopeOptions } from "../../services/notificationRuleService.js";
 import { listAssetTypes } from "../../services/assetTypeService.js";
@@ -91,7 +90,9 @@ const previewInputSchema = z.object(filterInputFields);
 // how a paginated endpoint quietly becomes an unpaginated one again.
 const listQuerySchema = z.object({
   q: z.string().max(200).optional(),
-  origin: z.enum(["manual", "directory", "all"]).optional().default("all"),
+  // "entra" / "ad" are the per-directory narrowing behind the address book's
+  // source tabs; the visibility gate applies to them exactly as to "directory".
+  origin: z.enum(["manual", "directory", "entra", "ad", "all"]).optional().default("all"),
   limit: z.coerce.number().int().min(1).max(CONTACT_PAGE_MAX).optional().default(CONTACT_PAGE_DEFAULT),
   offset: z.coerce.number().int().min(0).optional().default(0),
 });
@@ -122,7 +123,12 @@ contactsRouter.get("/", requirePermission("contacts", "read"), async (req, res, 
   try {
     const query = listQuerySchema.parse(req.query);
     const directoryVisible = canSeeDirectory(req);
-    const page = await listContacts({ ...query, includeDirectorySynced: directoryVisible });
+    const [page, sources] = await Promise.all([
+      listContacts({ ...query, includeDirectorySynced: directoryVisible }),
+      // Withheld wholesale from a caller who may not see synced rows — the tab
+      // strip must not name a directory whose rows it will then refuse.
+      directoryVisible ? listDirectorySources() : Promise.resolve([]),
+    ]);
     res.json({
       contacts: page.contacts,
       total: page.total,
@@ -133,7 +139,13 @@ contactsRouter.get("/", requirePermission("contacts", "read"), async (req, res, 
       // filter when the answer to either is no is a control that silently
       // returns nothing.
       directoryVisible,
-      directorySyncAvailable: directoryVisible ? await directorySyncAvailable() : false,
+      directorySyncAvailable: sources.some((s) => s.sync),
+      // The directories that feed this address book, one entry per BACKEND
+      // (`Contact.origin` records the backend, not the integration), each
+      // labelled for its own tab. `search: true` with `sync: false` means the
+      // tab's rows only exist while a search term is typed — nothing of that
+      // directory is stored.
+      directorySources: sources,
     });
   } catch (err) { next(err); }
 });

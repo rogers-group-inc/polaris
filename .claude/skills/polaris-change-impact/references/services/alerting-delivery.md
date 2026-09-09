@@ -48,6 +48,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The address book — `Contact` CRUD, the unified recipient search that backs both the address-book picker and the wizard's typeahead, and the fire-time "who is responsible for this device?" lookup.
 
+`listContacts`'s `origin` selects `manual` / `directory` / `all` **or one backend** (`entra` / `ad`, the address book's per-directory tab). A named backend is a narrowing of `directory` and takes the same visibility gate: asked for by a caller who may not see synced rows it yields an empty page, never the manual ones. `searchAddressBook` carries `pushDevices` on `source: "user"` entries — the count `listRecipientUsers` already computes and this used to discard, which is why the address book could not say that a recipient has no enrolled browser.
+
 **Public API:** `listContacts` (PAGED — `{ contacts, total }`, not an array)/`getContact`/`createContact`/`updateContact`/`deleteContact`, `normalizeContactEmail`, `normalizeContactCondition`, `conditionMeansAllDevices`, `contactFilterOf`, `previewContactAssets`, `searchAddressBook`, `resolveContactsForAsset`/`resolveContactEmailsForAsset`, `bumpContactCache`.
 
 **Cross-service deps:** `prisma`, `eventLogService` (`logEvent`), `notificationTypes` (`deviceFilterConditionSchema`, `evaluateScopeCondition`, `conditionFields`, `scopeConditionStats` + the depth/rule caps), `utils/criteriaToCondition`, `tagAssignmentService` (`normalizeCriteria`, `resolveMatchingAssetIds`, `assetMatchesCriteria`, `collectCidrs`, `cidrsContainingIp`, `SINGLE_ASSET_CANDIDATE_SELECT` — all now only for LEGACY rows), `notificationRecipientService` (`listRecipientUsers`), `utils/ttlCache`, `utils/logger`.
@@ -114,9 +116,13 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 
 **What it owns:** The address book's live lookup into the organization's directory (GAL) — fanning one typeahead query across every opted-in AD / Entra integration and merging the hits.
 
-**Public API:** `searchDirectory(query, limit)`, `directorySearchAvailable()`, `bumpDirectoryCache()`, `MIN_DIRECTORY_QUERY`, `DirectorySearchEntry`.
+**Public API:** `searchDirectory(query, limit)`, `directorySearchAvailable()`, `listDirectorySources()`, `bumpDirectoryCache()`, `MIN_DIRECTORY_QUERY`, `DirectorySearchEntry`, `DirectorySource` / `DirectorySourceKind`.
+
+`listDirectorySources()` is the enumeration BOTH directory opt-ins are read through — it reports one entry per BACKEND (`entra` / `ad`) with a label and its `search` / `sync` flags, and `directorySyncService.directorySyncAvailable()` delegates to it. It lives here rather than beside the sync it also reports because this module already owns the "which integrations are directories" query and the sync service imports `contactService`, which imports this one. Grouped by backend, never per integration: a stored row records `origin: "entra"`, not which of two Entra integrations produced it, so a per-integration split would promise something the data cannot honour — two integrations of one kind fall back to the product name.
 
 **Cross-service deps:** `prisma` (integration rows only), `entraIdService.searchDirectoryEntra`, `activeDirectoryService.searchDirectoryAd`, `utils/ttlCache`, `utils/logger`.
+
+**Used by (the source list):** `src/api/routes/contacts.ts` (`directorySources` on the list payload, which the address book's tab strip is built from) and `directorySyncService.directorySyncAvailable`.
 
 **Used by:** `contactService.searchAddressBook` (when `includeDirectory`), which is reached from `GET /contacts/search?directory=1`.
 

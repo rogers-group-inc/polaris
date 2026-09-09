@@ -145,6 +145,40 @@ d("GET /contacts — directory visibility gate", () => {
     const res = await agent.get(`/api/v1/contacts?q=${PFX}&origin=manual&limit=200`);
     expect(emailsOf(res.body)).toEqual([MANUAL_EMAIL]);
   });
+
+  it("gates ONE named backend exactly as it gates 'directory'", async () => {
+    // The address book's per-directory tab asks for `origin=entra`. That is a
+    // narrowing of "directory", not a second door into it: a caller who may not
+    // see synced rows gets an empty page, not the manual ones.
+    const gated = await loginAs(gatedUser);
+    const ok = await gated.get(`/api/v1/contacts?q=${PFX}&origin=entra&limit=200`);
+    expect(emailsOf(ok.body)).toEqual([SYNCED_EMAIL]);
+
+    const ungated = await loginAs(ungatedUser);
+    const denied = await ungated.get(`/api/v1/contacts?q=${PFX}&origin=entra&limit=200`);
+    expect(denied.status).toBe(200);
+    expect(denied.body.contacts).toEqual([]);
+    expect(denied.body.total).toBe(0);
+  });
+
+  it("names the directories that feed the book — to a gated caller only", async () => {
+    // The tab strip is built from this. Naming a directory to a caller whose
+    // rows are then withheld would advertise a tab that is always empty.
+    const ungated = await loginAs(ungatedUser);
+    expect((await ungated.get(`/api/v1/contacts?q=${PFX}`)).body.directorySources).toEqual([]);
+
+    const gated = await loginAs(gatedUser);
+    const res = await gated.get(`/api/v1/contacts?q=${PFX}`);
+    expect(Array.isArray(res.body.directorySources)).toBe(true);
+    // Whatever this install has configured, every entry is one backend with a
+    // label and its two opt-ins — the shape the strip renders from.
+    for (const s of res.body.directorySources) {
+      expect(["entra", "ad"]).toContain(s.kind);
+      expect(typeof s.label).toBe("string");
+      expect(typeof s.sync).toBe("boolean");
+      expect(typeof s.search).toBe("boolean");
+    }
+  });
 });
 
 d("GET /contacts/search — the same gate covers the live fan-out", () => {

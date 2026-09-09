@@ -39,7 +39,15 @@ let adopted: string[] = [];
 /** Every `origin` the tab asked the server for, in order. */
 let listOrigins: string[] = [];
 let directoryVisible = false;
-let directorySyncAvailable = false;
+/**
+ * What the list endpoint reports as feeding this address book — one entry per
+ * BACKEND, each labelled for its own tab. `directorySyncAvailable` is derived
+ * from it exactly as the route derives it, so the two can't disagree here in a
+ * way they couldn't in production.
+ */
+let directorySources: { kind: string; label: string; sync: boolean; search: boolean }[] = [];
+/** How many searches the tab issued, and whether each asked for the live GAL. */
+let searchCalls: { q: string; directory: boolean }[] = [];
 let previewed: Record<string, unknown>[];
 let confirmAnswer = true;
 let level = "fullwrite";
@@ -115,16 +123,24 @@ beforeAll(() => {
               String(c.email ?? "").toLowerCase().includes(term) ||
               String(c.name ?? "").toLowerCase().includes(term))
           : contacts;
-        const scoped = params?.origin === "manual"
+        const origin = params?.origin ?? "all";
+        // The server's own origin vocabulary: "all", "manual", "directory" —
+        // and one BACKEND ("entra" / "ad"), which is what a directory tab asks
+        // for. Mirrored here so a tab that asks for the wrong slice fails.
+        const scoped = origin === "manual"
           ? matched.filter((c) => (c.origin ?? "manual") === "manual")
-          : params?.origin === "directory"
+          : origin === "directory"
             ? matched.filter((c) => (c.origin ?? "manual") !== "manual")
-            : matched;
-        listOrigins.push(params?.origin ?? "all");
+            : origin === "all"
+              ? matched
+              : matched.filter((c) => c.origin === origin);
+        listOrigins.push(origin);
         const limit = params?.limit ?? 50;
         return {
           contacts: scoped.slice(0, limit), total: scoped.length, limit, offset: 0,
-          directoryVisible, directorySyncAvailable,
+          directoryVisible,
+          directorySyncAvailable: directorySources.some((s) => s.sync),
+          directorySources: directoryVisible ? directorySources : [],
         };
       },
       get: async (id: string) => ({ contact: contacts.find((c) => c.id === id) ?? null }),
@@ -132,8 +148,8 @@ beforeAll(() => {
       // Filters on the query the way searchAddressBook does (email or name
       // contains), so a test can tell the users/directory half of the tab's
       // results from the contacts half.
-      search: async (q: string) => ({
-        entries: searchEntries.filter((e) => {
+      search: async (q: string, directory?: boolean) => ({
+        entries: (searchCalls.push({ q: String(q ?? ""), directory: !!directory }), searchEntries).filter((e) => {
           const term = String(q ?? "").toLowerCase();
           if (!term) return true;
           return String(e.email ?? "").toLowerCase().includes(term) ||
@@ -201,8 +217,9 @@ beforeEach(() => {
   updated = [];
   adopted = [];
   listOrigins = [];
+  searchCalls = [];
   directoryVisible = false;
-  directorySyncAvailable = false;
+  directorySources = [];
   toasts = [];
   previewed = [];
   confirmAnswer = true;
@@ -788,16 +805,17 @@ describe("picker selection", () => {
   });
 });
 
+/** A contact row the directory sync owns: createdBy null, origin the backend. */
+const SYNCED = {
+  id: "c9", email: "synced@example.com", name: "Synced Person", description: null,
+  jobTitle: "Foreman", department: "Quarry Ops", phone: "555-1000",
+  origin: "entra", kind: "person",
+  assetCondition: null, assetConditionEffective: null, assetFilterUnconvertible: [],
+  assetIds: [], createdBy: null,
+};
+
 describe("directory-synced rows", () => {
   /** A row the sync owns: createdBy is null and origin names the backend. */
-  const SYNCED = {
-    id: "c9", email: "synced@example.com", name: "Synced Person", description: null,
-    jobTitle: "Foreman", department: "Quarry Ops", phone: "555-1000",
-    origin: "entra", kind: "person",
-    assetCondition: null, assetConditionEffective: null, assetFilterUnconvertible: [],
-    assetIds: [], createdBy: null,
-  };
-
   function peopleRows() {
     return Array.from(doc.querySelectorAll("#ab-tab-results tbody tr"));
   }
@@ -853,40 +871,150 @@ describe("directory-synced rows", () => {
   });
 });
 
-describe("the origin filter", () => {
+/**
+ * The source tabs over the People table. Each tab is its own QUERY, not a
+ * client-side slice of one merged list — the contacts half is paginated, so
+ * filtering 50 mixed rows down to the synced ones would show a fraction of
+ * them and call it the directory.
+ */
+describe("the source tabs", () => {
   const render = () =>
     (window as unknown as { PolarisAddressBook: { renderTab: () => Promise<void> } }).PolarisAddressBook.renderTab();
 
-  it("stays hidden when nothing is syncing, or when the caller can't see it", async () => {
-    // Otherwise it is a control whose "From the directory" option is always
-    // empty, which reads as a broken filter.
-    directoryVisible = true;
-    directorySyncAvailable = false;
+  function tabLabels() {
+    return Array.from(doc.querySelectorAll("#ab-tab-sources [data-ab-source]"))
+      .map((b) => (b as unknown as { textContent: string }).textContent.trim());
+  }
+  function tab(key: string) {
+    return doc.querySelector('#ab-tab-sources [data-ab-source="' + key + '"]');
+  }
+  function rowText() {
+    return (doc.getElementById("ab-tab-results") as unknown as { textContent: string }).textContent;
+  }
+
+  it("always offers All / Polaris users / Manual, and no directory tab without one", async () => {
     await render();
     await flush();
-    expect((doc.getElementById("ab-tab-origin") as unknown as HTMLElement).style.display).toBe("none");
+    expect(tabLabels()).toEqual(["All", "Polaris users", "Manual"]);
   });
 
-  it("appears once a directory is syncing and the caller may see it", async () => {
+  it("names a directory tab after the integration that feeds it", async () => {
+    // "the directory" is not what an operator calls it — the tab carries the
+    // integration's own name, and only once the server says the caller may see
+    // its rows at all.
     directoryVisible = true;
-    directorySyncAvailable = true;
+    directorySources = [{ kind: "entra", label: "Corp Entra", sync: true, search: true }];
     await render();
     await flush();
-    expect((doc.getElementById("ab-tab-origin") as unknown as HTMLElement).style.display).not.toBe("none");
+    expect(tabLabels()).toEqual(["All", "Polaris users", "Corp Entra directory", "Manual"]);
   });
 
-  it("asks the SERVER for the chosen slice rather than filtering what it has", async () => {
+  it("withholds the directory tab from a caller who may not see synced rows", async () => {
+    // The visibility gate is business rule 35: a tab naming a directory whose
+    // rows are then withheld reads as a broken page.
+    directoryVisible = false;
+    directorySources = [{ kind: "entra", label: "Corp Entra", sync: true, search: true }];
+    await render();
+    await flush();
+    expect(tabLabels()).not.toContain("Corp Entra directory");
+  });
+
+  it("asks the SERVER for one backend's rows on a directory tab", async () => {
     directoryVisible = true;
-    directorySyncAvailable = true;
+    directorySources = [{ kind: "entra", label: "Entra ID", sync: true, search: true }];
+    contacts.push(SYNCED as never);
     await render();
     await flush();
 
-    click(doc.querySelector('[data-ab-origin="directory"]'));
+    click(tab("entra"));
     await flush();
-    expect(listOrigins.at(-1)).toBe("directory");
+    expect(listOrigins.at(-1)).toBe("entra");
+    // Only that directory's rows: the Polaris account in searchEntries is not
+    // an Entra hit and must not ride along under the directory's name.
+    expect(rowText()).toContain("Synced Person");
+    expect(rowText()).not.toContain("Jane Doe");
 
-    click(doc.querySelector('[data-ab-origin="manual"]'));
+    click(tab("manual"));
     await flush();
     expect(listOrigins.at(-1)).toBe("manual");
+    expect(rowText()).not.toContain("Synced Person");
+  });
+
+  it("skips the halves a tab cannot need", async () => {
+    // Polaris users asks the contacts endpoint nothing (no account is a
+    // contact row) and never fans the query out to the GAL; Manual asks the
+    // search endpoint nothing.
+    await render();
+    await flush();
+    listOrigins = [];
+    searchCalls = [];
+
+    click(tab("user"));
+    await flush();
+    expect(listOrigins).toEqual([]);
+    expect(searchCalls.map((c) => c.directory)).toEqual([false]);
+    expect(rowText()).toContain("Jane Doe");
+    expect(rowText()).not.toContain("Theirs");
+
+    searchCalls = [];
+    click(tab("manual"));
+    await flush();
+    expect(listOrigins).toEqual(["manual"]);
+    expect(searchCalls).toEqual([]);
+  });
+
+  it("falls back to All when the active directory tab goes away", async () => {
+    // The integration was disabled (or the caller lost the gate) between
+    // loads: the rows on screen belong to a tab that no longer exists.
+    directoryVisible = true;
+    directorySources = [{ kind: "entra", label: "Entra ID", sync: true, search: true }];
+    await render();
+    await flush();
+    click(tab("entra"));
+    await flush();
+
+    directorySources = [];
+    await render();
+    await flush();
+    expect(tabLabels()).toEqual(["All", "Polaris users", "Manual"]);
+    expect((tab("all") as unknown as { className: string }).className).toContain("active");
+    expect(listOrigins.at(-1)).toBe("all");
+  });
+});
+
+/**
+ * Push is opt-in PER BROWSER, so a Polaris account that looks like a perfectly
+ * good recipient can be unreachable. The column that says so is the same one
+ * the wizard's push picker renders — and it is a different question from the
+ * device FILTER beside it, which is why that one no longer says "Devices".
+ */
+describe("the Push devices column", () => {
+  const render = () =>
+    (window as unknown as { PolarisAddressBook: { renderTab: () => Promise<void> } }).PolarisAddressBook.renderTab();
+
+  it("counts a user's enrolled browsers and calls out zero", async () => {
+    searchEntries = [
+      { source: "user", id: "u1", email: "jane@example.com", name: "Jane Doe", description: "Polaris user account", kind: "person", pushDevices: 2 },
+      { source: "user", id: "u2", email: "sam@example.com", name: "Sam Roe", description: "Polaris user account", kind: "person", pushDevices: 0 },
+    ];
+    await render();
+    await flush();
+    const rows = Array.from(doc.querySelectorAll("#ab-tab-results tbody tr"))
+      .map((r) => (r as unknown as { textContent: string }).textContent);
+    expect(rows.find((t) => t.includes("Jane Doe"))).toContain("2 devices");
+    expect(rows.find((t) => t.includes("Sam Roe"))).toContain("none");
+    // A contact is an ADDRESS: it has no account, so no number of enrolled
+    // browsers exists for it to have and "0" would be a claim about a person.
+    expect(rows.find((t) => t.includes("Theirs"))).toContain("no Polaris account");
+  });
+
+  it("keeps the device FILTER under its own heading", async () => {
+    await render();
+    await flush();
+    const heads = Array.from(doc.querySelectorAll("#ab-tab-results thead th"))
+      .map((h) => (h as unknown as { textContent: string }).textContent.trim());
+    expect(heads).toContain("Responsible for");
+    expect(heads).toContain("Push devices");
+    expect(heads).not.toContain("Devices");
   });
 });
