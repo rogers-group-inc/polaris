@@ -59,6 +59,57 @@ export function _setExecRunnerForTests(fn: ExecRunner | null): void {
   _execRunner = fn ?? _realExec;
 }
 
+/** How much command output a failed step keeps for the operator. */
+const STEP_ERROR_CHARS = 1500;
+
+/** Per-step ceilings. Named so the enforced limit and the limit quoted in the
+ *  failure message can never drift apart. A step that overruns is reported as a
+ *  timeout, never as a command failure. */
+const NPM_CI_TIMEOUT_MS = 15 * 60_000;
+const PRISMA_GENERATE_TIMEOUT_MS = 2 * 60_000;
+const BUILD_TIMEOUT_MS = 5 * 60_000;
+const MIGRATE_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Turn a rejected `execAsync` into the line an operator can actually act on.
+ *
+ * Two things this fixes, both learned from a prod update that failed
+ * undiagnosably on 2026-09-08:
+ *
+ * 1. **Keep the TAIL, not the head.** Every step used
+ *    `(err.stderr || err.message).slice(0, 500)`. npm writes its config and
+ *    EBADENGINE warnings FIRST and its actual `npm error` lines LAST, so a
+ *    500-char head is reliably all warnings and none of the cause — the failed
+ *    step reported four `EBADENGINE` notices about Node versions and cut off
+ *    mid-sentence, while the real reason was never shown. `npm ci` on that host
+ *    then succeeded by hand, which is the signature of a timeout rather than a
+ *    dependency problem.
+ * 2. **Name a timeout as a timeout.** `child_process.exec` enforces `timeout`
+ *    by SIGTERMing the child and rejecting with whatever output had accumulated
+ *    — no error text of its own. The step therefore looked like a command
+ *    failure with a confusing message instead of "this took longer than the
+ *    limit". `npm ci` wipes node_modules before it installs, so a timeout kill
+ *    leaves the host with NO dependencies while the running process keeps
+ *    serving from already-loaded modules: the install is fine until the next
+ *    restart, which then fails to boot. An operator has to be told that plainly.
+ */
+function stepFailureDetail(err: any, timeoutMs?: number): string {
+  const killedByTimeout =
+    err?.killed === true || err?.signal === "SIGTERM" || err?.code === "ETIMEDOUT";
+  const out = String(err?.stderr || err?.stdout || err?.message || err || "").trim();
+  const tail = out.length > STEP_ERROR_CHARS ? "…" + out.slice(-STEP_ERROR_CHARS) : out;
+  if (killedByTimeout) {
+    const secs = timeoutMs ? Math.round(timeoutMs / 1000) : null;
+    return (
+      `timed out${secs ? ` after ${secs}s` : ""} and was terminated` +
+      ` — the command did not fail, it ran out of time. Re-running the update is safe and` +
+      ` is usually faster (a warm npm cache turns a multi-minute install into seconds).` +
+      (tail ? ` Last output: ${tail}` : "")
+    );
+  }
+  return tail || "no output captured";
+}
+
 /**
  * Test seam: clear the in-flight guard.
  *
@@ -739,12 +790,25 @@ export async function applyUpdate(
     try {
       await execAsync("npm ci --production=false", {
         cwd: APP_DIR,
-        timeout: 300000,
+        // 15 min, not 5. `npm ci` always deletes node_modules and reinstalls
+        // every package (~615 here), so a COLD npm cache means downloading the
+        // whole tree — minutes on a modest host, and the 5-minute ceiling
+        // SIGTERMed it mid-install on prod (2026-09-08), leaving that host with
+        // no node_modules at all. The step is idempotent and the pipeline stops
+        // on failure either way, so a generous ceiling costs nothing; a tight
+        // one costs an install.
+        timeout: NPM_CI_TIMEOUT_MS,
         maxBuffer: 10 * 1024 * 1024,
       });
       setStep(2, "done");
     } catch (err: any) {
-      failUpdate(2, "npm ci failed: " + (err.stderr || err.message).slice(0, 500));
+      failUpdate(
+        2,
+        "npm ci failed: " + stepFailureDetail(err, NPM_CI_TIMEOUT_MS) +
+          " — dependencies on this host are now INCOMPLETE (npm ci removes node_modules" +
+          " before installing). The running service keeps working from modules already" +
+          " loaded in memory, but do not restart it until an install succeeds.",
+      );
       return;
     }
 
@@ -756,10 +820,10 @@ export async function applyUpdate(
     // crashes with `column "<name>" does not exist`.
     setStep(3, "running");
     try {
-      await execAsync("npx prisma generate", { cwd: APP_DIR, timeout: 60000 });
+      await execAsync("npx prisma generate", { cwd: APP_DIR, timeout: PRISMA_GENERATE_TIMEOUT_MS });
       setStep(3, "done");
     } catch (err: any) {
-      failUpdate(3, "Prisma generate failed: " + (err.stderr || err.message).slice(0, 500));
+      failUpdate(3, "Prisma generate failed: " + stepFailureDetail(err, PRISMA_GENERATE_TIMEOUT_MS));
       return;
     }
 
@@ -791,10 +855,10 @@ export async function applyUpdate(
           );
         });
       }
-      await execAsync("npm run build", { cwd: APP_DIR, timeout: 120000 });
+      await execAsync("npm run build", { cwd: APP_DIR, timeout: BUILD_TIMEOUT_MS });
       setStep(4, "done");
     } catch (err: any) {
-      failUpdate(4, "TypeScript build failed: " + (err.stderr || err.message).slice(0, 500));
+      failUpdate(4, "TypeScript build failed: " + stepFailureDetail(err, BUILD_TIMEOUT_MS));
       return;
     }
 
@@ -803,11 +867,11 @@ export async function applyUpdate(
     try {
       await execAsync("npx prisma migrate deploy", {
         cwd: APP_DIR,
-        timeout: 120000,
+        timeout: MIGRATE_TIMEOUT_MS,
       });
       setStep(5, "done");
     } catch (err: any) {
-      failUpdate(5, "Migration failed: " + (err.stderr || err.message).slice(0, 500));
+      failUpdate(5, "Migration failed: " + stepFailureDetail(err, MIGRATE_TIMEOUT_MS));
       return;
     }
 

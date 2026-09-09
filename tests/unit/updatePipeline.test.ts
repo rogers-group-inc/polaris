@@ -267,6 +267,93 @@ d("applyUpdate — train selection", () => {
     expect(calls.some((c) => c.includes("git pull --ff-only"))).toBe(false);
   });
 
+
+  /**
+   * Regression cover for the 2026-09-08 prod update that failed
+   * undiagnosably. `npm ci` was SIGTERMed by the step's 5-minute ceiling on a
+   * cold npm cache; the operator saw four EBADENGINE warnings about Node
+   * versions, cut off mid-sentence, and no cause — because the step kept the
+   * first 500 chars of npm's stderr, and npm writes warnings first and its real
+   * errors last. Running `npm ci` by hand on that host then succeeded, which is
+   * the signature of a timeout rather than a dependency problem.
+   */
+  describe("failure reporting", () => {
+    /** exec rejects the way child_process does on a timeout kill: SIGTERM,
+     *  killed=true, and whatever output had accumulated — no error text. */
+    function stubTimeoutOn(needle: string, stderr: string) {
+      _setExecRunnerForTests(async (cmd: string) => {
+        if (cmd.includes(needle)) {
+          throw Object.assign(new Error("Command failed"), {
+            killed: true,
+            signal: "SIGTERM",
+            code: null,
+            stdout: "",
+            stderr,
+          });
+        }
+        return { stdout: "", stderr: "" };
+      });
+    }
+
+    it("names a timeout as a timeout, with the limit, instead of as a command failure", async () => {
+      stubTimeoutOn("npm ci", "npm warn EBADENGINE Unsupported engine {\n");
+
+      await runUpdate();
+
+      const msg = steps()[STEP.DEPS]?.message ?? "";
+      expect(getUpdateStatus().state).toBe("failed");
+      expect(msg).toContain("timed out");
+      expect(msg).toContain("900s"); // the named NPM_CI_TIMEOUT_MS, 15 min
+      expect(msg).toContain("did not fail, it ran out of time");
+    });
+
+    it("warns that a failed npm ci left the host without dependencies", async () => {
+      // npm ci deletes node_modules BEFORE installing, so a killed install
+      // leaves nothing on disk while the running process serves from modules
+      // already in memory. The next restart is what breaks, so the message has
+      // to say so — that is the difference between a calm retry and an outage.
+      stubTimeoutOn("npm ci", "npm warn EBADENGINE\n");
+
+      await runUpdate();
+
+      const msg = steps()[STEP.DEPS]?.message ?? "";
+      expect(msg).toContain("INCOMPLETE");
+      expect(msg).toContain("do not restart");
+    });
+
+    it("keeps the TAIL of stderr, where npm puts the actual error", async () => {
+      // Head-truncation is the bug: 40 warning lines then the real cause.
+      const warnings = Array.from(
+        { length: 40 },
+        (_, i) => `npm warn EBADENGINE Unsupported engine ${i} padding padding padding padding`,
+      ).join("\n");
+      const cause = "npm error code ENOSPC\nnpm error nospc ENOSPC: no space left on device";
+      _setExecRunnerForTests(async (cmd: string) => {
+        if (cmd.includes("npm ci")) {
+          throw Object.assign(new Error("Command failed"), { stderr: `${warnings}\n${cause}` });
+        }
+        return { stdout: "", stderr: "" };
+      });
+
+      await runUpdate();
+
+      const msg = steps()[STEP.DEPS]?.message ?? "";
+      expect(msg).toContain("ENOSPC");
+      expect(msg).toContain("no space left on device");
+    });
+
+    it("still reports a plain command failure without calling it a timeout", async () => {
+      stubExec({ failOn: "npm run build" });
+
+      await runUpdate();
+
+      const msg = steps()[STEP.BUILD]?.message ?? "";
+      expect(msg).toContain("TypeScript build failed");
+      expect(msg).toContain("stub stderr");
+      expect(msg).not.toContain("timed out");
+    });
+  });
+
   it("fails the pull step when the release train has no tags", async () => {
     settingRows.set("update.train", "release");
     stubExec({ stdout: { "git tag --list": "\n" } });
