@@ -8,13 +8,23 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import helmet from "helmet";
 import setupRoutes from "./setupRoutes.js";
 import { makeRateLimiter } from "../api/middleware/rateLimits.js";
+import { buildHelmetOptions } from "../utils/securityHeaders.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function startSetupServer(): void {
   const app = express();
+
+  // The same CSP/HSTS/referrer policy the main listener and the Dash listener
+  // send. This surface is the one that most needs it: it is unauthenticated,
+  // it renders operator-typed database credentials back into a form, and it is
+  // the only listener a fresh host exposes. setup.html loads no inline
+  // <script>, so the shared `scriptSrc: 'self'` policy fits it unmodified.
+  app.use(helmet(buildHelmetOptions()));
+
   app.use(express.json());
 
   // The setup server is unauthenticated and single-operator — a generous
