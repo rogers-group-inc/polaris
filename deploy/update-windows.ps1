@@ -32,7 +32,13 @@ param(
     # unrecoverable one. Mirrors applyUpdate(password, allowWithoutBackup) in
     # src/services/updateService.ts and --allow-without-backup in
     # deploy/update-linux.sh -- keep all three in lockstep.
-    [switch]$AllowWithoutBackup
+    [switch]$AllowWithoutBackup,
+    # Finish an update whose code pull already happened (the in-app updater
+    # pulled, then failed at npm ci; or this script was interrupted after the
+    # pull). Without it the "already up to date" check sees a no-op pull and
+    # stops, leaving node_modules, dist\ and the schema at the OLD commit under
+    # NEW source. Mirrors --force in deploy/update-linux.sh.
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,6 +51,61 @@ function Write-Step  { param([string]$Msg) Write-Host "[STEP]  $Msg" -Foreground
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 function Test-Command { param([string]$Name) return [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
+
+# Restore a gzipped plain-SQL pg_dump into $DbName. TimescaleDB-aware: a
+# database with the extension must be restored between timescaledb_pre_restore()
+# and timescaledb_post_restore(), each in its OWN psql session (pre_restore sets
+# a database-level flag that only affects sessions opened after it). Skipping
+# the pair restores hypertable metadata in the wrong order and leaves chunks
+# invisible. post_restore runs even when the dump fails -- a database left in
+# restoring mode rejects hypertable writes, which is worse than the failed
+# restore. Errors are shown and the result is real; the old one-liner discarded
+# stderr and then reported success unconditionally. Mirrors restore_database()
+# in deploy/update-linux.sh and docs/INSTALL.md -> Backups -> Restoring.
+function Restore-Database {
+    param([string]$DumpFile)
+    # 0 = extension absent, 1 = present, 2 = could not tell. Fail toward running
+    # the gates: on a database WITHOUT the extension they are a clean, visible
+    # error; on one WITH it, leaving them out corrupts the restore.
+    $probe = (& psql -U postgres -tAX -d $DbName -c "SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'" 2>$null | Out-String).Trim()
+    $probeOk = ($LASTEXITCODE -eq 0)
+    if ($probeOk -and $probe -eq "0") { $gates = 0; Write-Info "timescaledb is not installed -- plain restore" }
+    elseif ($probeOk -and $probe -eq "1") { $gates = 1; Write-Info "timescaledb is installed -- restoring between timescaledb_pre_restore() and timescaledb_post_restore()" }
+    else { $gates = 2; Write-Warn "Could not determine whether timescaledb is installed -- running the pre/post restore gates anyway" }
+
+    if ($gates -ge 1) {
+        & psql -U postgres -qX -v ON_ERROR_STOP=1 -d $DbName -c "SELECT timescaledb_pre_restore();"
+        if ($LASTEXITCODE -ne 0) {
+            if ($gates -eq 1) {
+                Write-Err "timescaledb_pre_restore() failed -- not restoring over a live TimescaleDB catalog without it."
+                return $false
+            }
+            Write-Warn "timescaledb_pre_restore() failed -- the extension is probably absent; continuing with a plain restore"
+            $gates = 0
+        }
+    }
+
+    $tempSql = Join-Path $env:TEMP "polaris-restore.sql"
+    $fs = [System.IO.File]::OpenRead($DumpFile)
+    $gz = New-Object System.IO.Compression.GzipStream($fs, [System.IO.Compression.CompressionMode]::Decompress)
+    $out = [System.IO.File]::Create($tempSql)
+    $gz.CopyTo($out)
+    $out.Close(); $gz.Close(); $fs.Close()
+    & psql -U postgres -qX -v ON_ERROR_STOP=1 --single-transaction -d $DbName -f $tempSql
+    $ok = ($LASTEXITCODE -eq 0)
+    Remove-Item $tempSql -Force -ErrorAction SilentlyContinue
+    if (-not $ok) { Write-Err "psql reported errors while restoring $DumpFile (see above)" }
+
+    if ($gates -ge 1) {
+        & psql -U postgres -qX -v ON_ERROR_STOP=1 -d $DbName -c "SELECT timescaledb_post_restore();"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "timescaledb_post_restore() FAILED -- the database is still in restoring mode and will reject hypertable writes."
+            Write-Err "Run it by hand:  psql -U postgres -d $DbName -c 'SELECT timescaledb_post_restore();'"
+            $ok = $false
+        }
+    }
+    return $ok
+}
 
 # Find pg_dump
 $pgBinDirs = @(
@@ -103,7 +164,7 @@ function Invoke-Rollback {
     # comes up with a client matching the rolled-back schema. Same rationale
     # as the forward-update path below; both are documented in
     # cross-cutting/schema-migrations-and-prisma-client-lifecycle in the polaris-change-impact skill.
-    & npx prisma generate 2>$null
+    & node node_modules/prisma/build/index.js generate 2>$null
     if (Test-Path (Join-Path $AppDir "dist")) {
         Remove-Item -Recurse -Force (Join-Path $AppDir "dist") -ErrorAction SilentlyContinue
     }
@@ -115,18 +176,12 @@ function Invoke-Rollback {
     # Restore database if migration failed
     if ($FailedAt -match "migration" -and $BackupFile -and (Test-Path $BackupFile)) {
         Write-Warn "Restoring database from backup..."
-        $sql = & "C:\Program Files\PostgreSQL\15\bin\pg_restore.exe" 2>$null  # just to check
-        # Use psql to restore the SQL dump
-        $tempSql = "$env:TEMP\polaris-restore.sql"
-        # Decompress .gz to temp file
-        $fs = [System.IO.File]::OpenRead($BackupFile)
-        $gz = New-Object System.IO.Compression.GzipStream($fs, [System.IO.Compression.CompressionMode]::Decompress)
-        $out = [System.IO.File]::Create($tempSql)
-        $gz.CopyTo($out)
-        $out.Close(); $gz.Close(); $fs.Close()
-        & psql -U postgres --single-transaction -d $DbName -f $tempSql 2>$null
-        Remove-Item $tempSql -Force -ErrorAction SilentlyContinue
-        Write-Info "Database restored from backup"
+        if (Restore-Database -DumpFile $BackupFile) {
+            Write-Info "Database restored from backup"
+        } else {
+            Write-Err "DATABASE RESTORE FAILED -- the database may be partially restored. The backup is retained at: $BackupFile"
+            Write-Err "Restore it by hand: docs/INSTALL.md -> Backups -> Restoring (the TimescaleDB pre/post gates are required)."
+        }
     }
 
     & $nssmExe restart $ServiceName 2>$null
@@ -145,9 +200,18 @@ function Invoke-Rollback {
 Write-Step "1/8  Recording current version..."
 
 try { $OldVersion = (node -e "console.log(require('./package.json').version)") } catch {}
-try { $OldCommit = (git rev-parse --short HEAD) } catch {}
+try { $OldCommit = (git rev-parse --short HEAD 2>$null) } catch {}
+# A native-command failure does not throw here — it leaves $OldCommit empty.
+# Normalise to a sentinel so the up-to-date check below can refuse to compare
+# two unknowns as equal (the Linux script did exactly that on prod 2026-09-09,
+# when git refused the checkout's ownership, and exited 0 having updated
+# nothing).
+if (-not $OldCommit) { $OldCommit = "unknown" }
 
 Write-Info "Current version: v${OldVersion} (${OldCommit})"
+if ($OldCommit -eq "unknown") {
+    Write-Warn "Could not read the current git commit in $AppDir. The rollback target for this run is unknown."
+}
 
 # ─── 2. Pre-update database backup ──────────────────────────────────────────
 # Same contract as the in-app updater: abort unless the operator explicitly
@@ -169,7 +233,11 @@ function Stop-WithoutBackup {
 
 Write-Step "2/8  Creating pre-update database backup..."
 
-$backupDir = Join-Path $AppDir "backups"
+# Beside the app's own backups (src/utils/paths.ts BACKUP_DIR = <state>\data\backups),
+# not a directory of this script's own — mirrors deploy/update-linux.sh. The
+# script's files are not registered in backup_history, so the Maintenance tab
+# lists only the app's own.
+$backupDir = Join-Path $AppDir "data\backups"
 if (-not (Test-Path $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
 
 if (Test-Command "pg_dump") {
@@ -251,10 +319,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 try { $NewVersion = (node -e "console.log(require('./package.json').version)") } catch {}
-try { $NewCommit = (git rev-parse --short HEAD) } catch {}
+try { $NewCommit = (git rev-parse --short HEAD 2>$null) } catch {}
+if (-not $NewCommit) { $NewCommit = "unknown" }
 
-if ($OldCommit -eq $NewCommit) {
+# "Already up to date" is only a safe reason to stop when BOTH commits are
+# known AND the operator has not asked to finish an interrupted run. An unknown
+# commit is a reason to keep going and say so, never a reason to declare
+# success; and "the pull moved nothing" is not "the install is current" — the
+# in-app updater may have pulled and then failed before installing. Same
+# contract as deploy/update-linux.sh.
+if ($OldCommit -eq "unknown" -or $NewCommit -eq "unknown") {
+    Write-Warn "Could not read the git commit before and after the pull — running the full pipeline rather than guessing that nothing changed."
+}
+elseif ($OldCommit -eq $NewCommit -and -not $Force) {
     Write-Info "Already up to date — v${OldVersion} (${OldCommit})"
+    Write-Info "If an earlier update was interrupted after its code pull (dependencies, build or migrations still pending), re-run with -Force to finish it."
     # Clean up unnecessary backup
     if ($BackupFile -and (Test-Path $BackupFile)) {
         Remove-Item $BackupFile -Force
@@ -262,6 +341,10 @@ if ($OldCommit -eq $NewCommit) {
     }
     Pop-Location
     exit 0
+}
+elseif ($OldCommit -eq $NewCommit) {
+    Write-Info "Code already at ${NewCommit} — -Force set, finishing the install / build / migrate steps"
+    Write-Warn "The code rollback for this run is a no-op: the checkout was already at this commit before it started."
 }
 
 Write-Info "Updating: v${OldVersion} (${OldCommit}) -> v${NewVersion} (${NewCommit})"
@@ -289,7 +372,7 @@ if ($auditOutput -match "critical|high") {
 # cross-cutting/schema-migrations-and-prisma-client-lifecycle in the polaris-change-impact skill.
 Write-Step "5/8  Generating Prisma client..."
 
-& npx prisma generate
+& node node_modules/prisma/build/index.js generate
 if ($LASTEXITCODE -ne 0) { Invoke-Rollback "prisma generate" }
 
 # ─── 6. Build TypeScript ────────────────────────────────────────────────────
@@ -318,7 +401,7 @@ Write-Step "7/8  Running database migrations..."
 & $nssmExe stop $ServiceName 2>$null
 Start-Sleep -Seconds 3
 
-& npx prisma migrate deploy
+& node node_modules/prisma/build/index.js migrate deploy
 if ($LASTEXITCODE -ne 0) { Invoke-Rollback "database migration" }
 
 Write-Info "Migrations complete — starting service"

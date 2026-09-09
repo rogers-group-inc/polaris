@@ -46,6 +46,14 @@ ENV NODE_ENV=production \
 # per-host bursts and stretches the sweep interval to whatever the host can
 # finish — but a container is a controlled environment with no reason to make
 # it take the slow path. ~100 KB.
+#
+# postgresql-client is deliberately the distro package: on bookworm that is
+# PostgreSQL 15, at /usr/lib/postgresql/15/bin, which is exactly where
+# src/utils/pgClientTools.ts looks for a 15 server (rule 47). It only agrees
+# with the PostgreSQL pin because bookworm ships 15 — bumping the server major
+# means `postgresql-client-<N>` from the PGDG apt repo here, or every
+# in-container backup refuses with "pg_dump is PostgreSQL 15 but the server is
+# PostgreSQL <N>". Listed in the PostgreSQL-major playbook for that reason.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       postgresql-client \

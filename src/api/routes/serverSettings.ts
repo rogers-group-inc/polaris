@@ -51,6 +51,7 @@ import {
   deleteBackup,
   getBackupRecord,
   backupFilePath,
+  getBackupToolingStatus,
 } from "../../services/backupService.js";
 import {
   getBackupScheduleMasked,
@@ -464,6 +465,19 @@ router.post("/database/restore", maintenanceLimiter, requirePermission("serverSe
 router.get("/database/backups", maintenanceLimiter, async (_req, res, next) => {
   try {
     res.json(await listBackups());
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Can this host back itself up right now? The resolved pg_dump / psql, their
+// majors against the server's, and the operator sentence when one cannot work.
+// Rendered on the Backups card so a PostgreSQL 13 client in front of a 15
+// server (prod, 2026-09-09 — months of silently failing backups) is visible
+// the day it becomes true, not the day someone needs a restore. Rule 47.
+router.get("/database/backup-tooling", maintenanceLimiter, async (_req, res, next) => {
+  try {
+    res.json(await getBackupToolingStatus());
   } catch (err) {
     next(err);
   }
@@ -1975,8 +1989,9 @@ router.post("/updates/apply", requirePermission("serverSettingsData", "fullwrite
         message: "Update started with 'proceed without a backup' confirmed — a failed pre-update backup will not abort the update",
       });
     }
-    // Start the update in the background
-    applyUpdate(password, allowWithoutBackup).catch((err) => {
+    // Start the update in the background. The actor rides into the
+    // server.update.* Events the pipeline writes.
+    applyUpdate(password, allowWithoutBackup, requestActor(req)).catch((err) => {
       logger.error({ err }, "Update failed");
     });
     // Return immediately — client should poll /updates/status
@@ -1986,8 +2001,22 @@ router.post("/updates/apply", requirePermission("serverSettingsData", "fullwrite
   }
 });
 
-router.post("/updates/dismiss", requirePermission("serverSettingsData", "fullwrite"), (_req, res) => {
+router.post("/updates/dismiss", requirePermission("serverSettingsData", "fullwrite"), async (req, res) => {
+  // Dismiss deletes .update-status.json — until 2026-09-09 the ONLY record of
+  // a failed update. The pipeline now writes Events, and so does this, so the
+  // audit log says who cleared what.
+  const prev = getUpdateStatus();
   clearUpdateStatus();
+  if (prev.state === "failed" || prev.state === "complete") {
+    await logEvent({
+      level: "info",
+      action: "server.update.dismissed",
+      resourceType: "server",
+      actor: requestActor(req),
+      message: `Update status dismissed (was: ${prev.state}${prev.error ? ` — ${prev.error.slice(0, 200)}` : ""})`,
+      details: { state: prev.state, error: prev.error ?? null, startedAt: prev.startedAt ?? null, completedAt: prev.completedAt ?? null },
+    });
+  }
   res.json({ ok: true });
 });
 

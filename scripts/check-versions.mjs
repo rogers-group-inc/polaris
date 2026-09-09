@@ -491,6 +491,18 @@ const UNVERSIONED = [
     // whether the script actually installs a versioned JDK.
     pairedWith: /(?:apt-get|dnf) install -y (?:openjdk-\d+-jre-headless|java-\d+-openjdk)/,
   },
+  {
+    // Bare `postgresql` — not postgresql15, not "postgresql${PG_MAJOR}", not
+    // postgresql-server (that one is postgres-source's job). On RHEL 9 the
+    // unversioned AppStream client is PostgreSQL 13, and pg_dump refuses a
+    // server newer than itself: setup-rhel-nodb.sh installed exactly this and
+    // every backup on such a host failed with "server version mismatch" while
+    // `command -v pg_dump` said all was well (prod, 2026-09-09).
+    re: /dnf install -y postgresql(?![0-9"${}\w-])/g,
+    what: "the PostgreSQL client tools",
+    pinned: "postgresql15 from PGDG — RHEL 9's unversioned AppStream package is PostgreSQL 13, which cannot dump a 15+ server",
+    pairedWith: /dnf install -y "?postgresql(?:\$\{PG_(?:CLIENT_)?MAJOR\}|1\d)\b/,
+  },
 ];
 function checkUnversionedInstalls() {
   const out = [];

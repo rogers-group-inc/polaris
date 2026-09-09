@@ -91,11 +91,13 @@ Currently **15** across 12 checked sites.
 | `deploy/polaris-web.service` and the other shipped units | `After=` / `Requires=postgresql-15.service` | pin |
 | `deploy/setup-ubuntu.sh` | rewrites `postgresql-15.service` → `postgresql.service` in the units | pin |
 | `deploy/setup-rhel-nodb.sh`, `deploy/setup-ubuntu-nodb.sh` | strip the `postgresql-15.service` dependency for the external-DB variant | pin |
+| `deploy/setup-rhel-nodb.sh` | `PG_CLIENT_MAJOR=15` → `dnf install -y "postgresql${PG_CLIENT_MAJOR}"` from PGDG (was an unversioned `dnf install -y postgresql`, which is PostgreSQL 13 on RHEL 9 and cannot dump a 15 server — rule 47) | pin |
 | two Windows setup scripts | `winget install --id PostgreSQL.PostgreSQL.15` | pin |
 | two Windows setup scripts | `postgresql-15.13-1-windows-x64.exe` fallback URL | pin |
 | two Windows setup scripts | `--servicename postgresql-15`, the `C:\Program Files\PostgreSQL\15\bin` candidate, NSSM `DependOnService` | pin |
 | `compose.dev.yml` | `timescale/timescaledb:latest-pg15` | pin (floating patch) |
 | `.github/workflows/docker-publish.yml` | `image: postgres:15-alpine` service container | pin |
+| `Dockerfile`, `Dockerfile.dev` | `postgresql-client` — unversioned, resolves to 15 only because the base is bookworm; must become `postgresql-client-<N>` (PGDG apt) when the major moves, or in-container backups fail rule 47's check | implicit pin |
 | `docs/INSTALL.md` | `timescaledb-2-postgresql-15`, `/usr/pgsql-15/bin/`, `postgresql15-server` | pin |
 | `README.md`, `CONTRIBUTING.md`, `CLAUDE.md` | "PostgreSQL 15+", `postgres:15` | prose |
 

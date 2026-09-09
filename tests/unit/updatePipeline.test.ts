@@ -51,6 +51,11 @@ const createBackup = vi.fn(async () => ({
 }));
 vi.mock("../../src/services/backupService.js", () => ({ createBackup }));
 
+// The audit trail. Recorded rather than swallowed so the tests can assert that
+// an update leaves Events behind — the 2026-09-09 gap.
+const logEvent = vi.fn(async () => {});
+vi.mock("../../src/services/eventLogService.js", () => ({ logEvent }));
+
 // nginx/proxy config sync runs late in the pipeline; stub it so the test does
 // not depend on /etc being writable.
 vi.mock("../../src/services/proxyConfigService.js", () => ({
@@ -81,13 +86,24 @@ const STEP = {
   RESTART: 6,
 } as const;
 
-/** A recording exec stub. `failOn` matches a substring of the command. */
-function stubExec(opts: { failOn?: string; stdout?: Record<string, string> } = {}) {
+/**
+ * A recording exec stub. `failOn` matches a substring of the command and fails
+ * every time; `failOnce` fails only the first matching call (a transient
+ * blip); `errorProps` is merged into the thrown error (e.g. `{ killed: true }`
+ * to look like exec's SIGTERM on timeout, or a `stderr` carrying E404).
+ */
+function stubExec(
+  opts: { failOn?: string; failOnce?: string; stdout?: Record<string, string>; errorProps?: Record<string, unknown> } = {},
+) {
   const calls: string[] = [];
+  let onceFired = false;
   _setExecRunnerForTests(async (cmd: string) => {
     calls.push(cmd);
-    if (opts.failOn && cmd.includes(opts.failOn)) {
-      throw Object.assign(new Error(`stub failure: ${cmd}`), { stderr: `stub stderr for ${cmd}` });
+    const failNow =
+      (opts.failOn && cmd.includes(opts.failOn)) ||
+      (opts.failOnce && !onceFired && cmd.includes(opts.failOnce) && (onceFired = true));
+    if (failNow) {
+      throw Object.assign(new Error(`stub failure: ${cmd}`), { stderr: `stub stderr for ${cmd}` }, opts.errorProps ?? {});
     }
     for (const [needle, out] of Object.entries(opts.stdout ?? {})) {
       if (cmd.includes(needle)) return { stdout: out, stderr: "" };
@@ -98,9 +114,17 @@ function stubExec(opts: { failOn?: string; stdout?: Record<string, string> } = {
 }
 
 /** applyUpdate is fire-and-forget internally; await it then flush microtasks. */
-async function runUpdate(password?: string | null, allowWithoutBackup?: boolean) {
-  await applyUpdate(password ?? null, allowWithoutBackup ?? false);
+async function runUpdate(password?: string | null, allowWithoutBackup?: boolean, actor?: string) {
+  await applyUpdate(password ?? null, allowWithoutBackup ?? false, actor);
   await Promise.resolve();
+}
+
+/** Actions of every Event the run wrote, in order. */
+function eventActions(): string[] {
+  return logEvent.mock.calls.map((c: any[]) => c[0]?.action);
+}
+function eventNamed(action: string): any {
+  return logEvent.mock.calls.map((c: any[]) => c[0]).find((e: any) => e?.action === action);
 }
 
 function steps() {
@@ -197,7 +221,7 @@ d("applyUpdate — step sequencing", () => {
     expect(createBackup).toHaveBeenCalled();
     const firstGit = calls.findIndex((c) => c.includes("git"));
     const npmCi = calls.findIndex((c) => c.includes("npm ci"));
-    const generate = calls.findIndex((c) => c.includes("prisma generate"));
+    const generate = calls.findIndex((c) => c.includes("index.js generate"));
     const build = calls.findIndex((c) => c.includes("npm run build"));
     const migrate = calls.findIndex((c) => c.includes("migrate deploy"));
     expect(firstGit).toBeGreaterThanOrEqual(0);
@@ -242,6 +266,140 @@ d("applyUpdate — step sequencing", () => {
     await runUpdate();
     expect(createBackup).not.toHaveBeenCalled();
     expect(getUpdateStatus().startedAt).toBe(first);
+  });
+});
+
+// Until 2026-09-09 the updater wrote no Event rows at all; its only durable
+// record was .update-status.json, which Dismiss deletes. These pin the trail
+// and the per-step clock that the timeout message now quotes.
+d("applyUpdate — audit trail and per-step timing", () => {
+  it("a clean run writes started then applied, naming the actor and the train", async () => {
+    settingRows.set("update.train", "nightly");
+    stubExec();
+
+    await runUpdate(null, false, "dmoore");
+
+    expect(eventActions()).toEqual(["server.update.started", "server.update.applied"]);
+    const started = eventNamed("server.update.started");
+    expect(started.actor).toBe("dmoore");
+    expect(started.details.train).toBe("nightly");
+    const applied = eventNamed("server.update.applied");
+    expect(applied.actor).toBe("dmoore");
+    expect(typeof applied.details.pipelineDurationMs).toBe("number");
+    // Every finished step reports how long it took.
+    expect(applied.details.steps.slice(0, 6).every((s: any) => typeof s.durationMs === "number")).toBe(true);
+  });
+
+  it("a failure writes started then failed, naming the step and its measured duration", async () => {
+    stubExec({ failOn: "npm ci" });
+
+    await runUpdate();
+
+    expect(eventActions()).toEqual(["server.update.started", "server.update.failed"]);
+    const failed = eventNamed("server.update.failed");
+    expect(failed.level).toBe("error");
+    expect(failed.details.step).toBe("Install dependencies");
+    expect(failed.details.stepIndex).toBe(STEP.DEPS);
+    expect(typeof failed.details.stepDurationMs).toBe("number");
+    expect(failed.message).toContain('failed at "Install dependencies"');
+    // Nothing claimed the update was applied.
+    expect(eventNamed("server.update.applied")).toBeUndefined();
+  });
+
+  it("the actor defaults to system:update when the caller has none", async () => {
+    stubExec();
+    await runUpdate();
+    expect(eventNamed("server.update.started").actor).toBe("system:update");
+  });
+
+  it("every step that ran carries startedAt and durationMs; pending ones carry neither", async () => {
+    stubExec({ failOn: "npm run build" });
+
+    await runUpdate();
+
+    const s = steps();
+    for (let i = 0; i <= STEP.BUILD; i++) {
+      expect(s[i].startedAt, `step ${i} startedAt`).toBeTruthy();
+      expect(typeof s[i].durationMs, `step ${i} durationMs`).toBe("number");
+    }
+    expect(s[STEP.MIGRATE].startedAt).toBeUndefined();
+    expect(s[STEP.MIGRATE].durationMs).toBeUndefined();
+  });
+});
+
+// The registry preflight. It shipped on 2026-09-09 and failed a prod update the
+// same day on a host whose registry was fine: one connection stalled, npm's
+// default 5-minute fetch-timeout meant it could not emit its own error inside
+// the 45 s ceiling, and the message then gave `npm ci`'s warm-cache advice and
+// blamed TLS for what was a hang. Every run here fails at the build step so the
+// restart timer is never scheduled while fake timers are being advanced.
+d("applyUpdate — registry preflight", () => {
+  const RETRY_MS = 3_000;
+
+  it("tells npm to fail fast so its own error fits inside the ceiling", async () => {
+    const calls = stubExec({ failOn: "npm run build" });
+    await runUpdate();
+    const ping = calls.find((c) => c.startsWith("npm ping"));
+    expect(ping).toContain("--fetch-retries=0");
+    expect(ping).toMatch(/--fetch-timeout=\d+/);
+  });
+
+  it("retries once after a transient failure and proceeds to the install", async () => {
+    const calls = stubExec({ failOnce: "npm ping", failOn: "npm run build", errorProps: { killed: true } });
+
+    const run = runUpdate();
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    await run;
+
+    expect(calls.filter((c) => c.startsWith("npm ping")).length).toBe(2);
+    expect(calls.some((c) => c.includes("npm ci"))).toBe(true);
+    expect(steps()[STEP.DEPS]?.status).toBe("done");
+  });
+
+  it("a hang (two timeouts) fails the step with hang advice, not TLS advice or warm-cache advice", async () => {
+    const calls = stubExec({ failOn: "npm ping", errorProps: { killed: true } });
+
+    const run = runUpdate();
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    await run;
+
+    expect(calls.filter((c) => c.startsWith("npm ping")).length).toBe(2);
+    expect(calls.some((c) => c.includes("npm ci"))).toBe(false);
+    const msg = steps()[STEP.DEPS]?.message ?? "";
+    expect(getUpdateStatus().state).toBe("failed");
+    expect(msg).toContain("a hang, not a refusal");
+    expect(msg).toContain("dependencies are untouched");
+    expect(msg).not.toContain("warm npm cache");
+    // The cause list for a hang must not lead with the certificate story.
+    expect(msg.indexOf("DROPPING")).toBeGreaterThan(-1);
+  });
+
+  it("a refusal (fast error) fails the step with the TLS/firewall cause list", async () => {
+    stubExec({ failOn: "npm ping", errorProps: { stderr: "npm error code UNABLE_TO_GET_ISSUER_CERT_LOCALLY" } });
+
+    const run = runUpdate();
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    await run;
+
+    const msg = steps()[STEP.DEPS]?.message ?? "";
+    expect(msg).toContain("NODE_EXTRA_CA_CERTS");
+    expect(msg).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+    expect(msg).not.toContain("a hang, not a refusal");
+  });
+
+  it("a 404 from a private mirror counts as reachable and does not block the install", async () => {
+    // The ping fails with a 404 (failOnce, so the stub's errorProps describe
+    // THAT failure); the build failure keeps the restart timer unscheduled.
+    const calls = stubExec({
+      failOnce: "npm ping",
+      failOn: "npm run build",
+      errorProps: { stderr: "npm error code E404\nnpm error 404 Not Found - GET https://nexus.example/repository/npm/-/ping" },
+    });
+
+    await runUpdate();
+
+    expect(calls.filter((c) => c.startsWith("npm ping")).length).toBe(1);
+    expect(calls.some((c) => c.includes("npm ci"))).toBe(true);
   });
 });
 
@@ -342,12 +500,17 @@ d("applyUpdate — train selection", () => {
       // hand-repair a host that was never broken.
       const calls = stubExec({ failOn: "npm ping" });
 
-      await runUpdate();
+      // The preflight retries once, 3 s apart, before giving up — advance the
+      // fake clock through that sleep or the run never resolves.
+      const run = runUpdate();
+      await vi.advanceTimersByTimeAsync(3_000);
+      await run;
 
       expect(calls.some((c) => c.includes("npm ci"))).toBe(false);
       const msg = steps()[STEP.DEPS]?.message ?? "";
       expect(msg).toContain("Cannot reach the npm registry");
       expect(msg).toContain("safe to restart");
+      // A fast error (no timeout kill) keeps the TLS cause list.
       expect(msg).toContain("NODE_EXTRA_CA_CERTS");
       // And it must NOT claim the host is now broken — that text belongs to the
       // post-wipe failure, and reading it here would cause the wrong response.

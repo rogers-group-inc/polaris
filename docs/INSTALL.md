@@ -120,8 +120,10 @@ restart or a reboot until an install succeeds.** Treat it as urgent, and do not 
 first to "see if it's fine".
 
 Apply the fix above, then re-run the update (Server Settings → Maintenance → Updates, or
-`sudo bash deploy/update-linux.sh`). If you need to repair the dependency tree without a full
-update:
+`sudo bash deploy/update-linux.sh`). If the in-app updater already pulled the new code before
+it failed, the script's `git pull` is a no-op and it will report "Already up to date" — pass
+`--force` (`-Force` on Windows) so it finishes the install, build and migration steps anyway.
+If you need to repair the dependency tree without a full update:
 
 ```bash
 cd /opt/polaris
@@ -155,6 +157,54 @@ The Windows setup scripts do not detect this automatically — there is no singl
 point at.
 
 ---
+
+## `pg_dump`: server version mismatch
+
+```
+pg_dump: error: server version: 15.18; pg_dump version: 13.23
+pg_dump: error: aborting because of server version mismatch
+```
+
+`pg_dump` refuses to dump a server newer than itself, and it is the one PostgreSQL client
+Polaris cannot do without — every backup (manual, scheduled, pre-update) goes through it.
+Polaris resolves `/usr/pgsql-<server major>/bin/pg_dump` (PGDG) or
+`/usr/lib/postgresql/<major>/bin/pg_dump` (Debian/Ubuntu) directly and checks `--version`
+before every backup, so on a correctly installed host this never fires and the Maintenance tab
+says so. It fires when the only `pg_dump` on the host is an older major — and on RHEL 9 there is
+a specific way that happens.
+
+**How a RHEL host gets here.** RHEL 9's base `postgresql` / `postgresql-server` packages (the
+*unversioned* names) are **PostgreSQL 13**. Installed beside PGDG's `postgresql15*`, they put a
+13 `pg_dump` at `/usr/bin/pg_dump` as a regular file, overwriting the alternatives symlink PGDG
+registered — and `alternatives --display pgsql-pg_dump` keeps reporting the link it *believes*
+it manages, pointing at 15. Only the binary tells the truth:
+
+```bash
+pg_dump --version                 # the truth
+readlink -f /usr/bin/pg_dump      # a regular file, not a symlink into /etc/alternatives
+rpm -qf /usr/bin/pg_dump          # postgresql-13.x — the AppStream package owns it
+```
+
+Hosts built by a pre-2026-09 `deploy/setup-rhel.sh` (which installed AppStream Postgres) or
+`deploy/setup-rhel-nodb.sh` (which installed the unversioned client) are the usual case. Both
+installers now install PGDG's versioned client and check the major, not just the presence.
+
+### Fix
+
+```bash
+systemctl is-active postgresql                      # confirm no PG13 instance is running
+dnf remove --assumeno postgresql postgresql-server  # dry run — abort if any postgresql15-* is listed
+dnf remove postgresql postgresql-server
+alternatives --auto pgsql-pg_dump; alternatives --auto pgsql-psql
+pg_dump --version && psql --version                 # both must report the server's major
+```
+
+Package removal leaves data directories alone — a PG15 cluster under `/var/lib/pgsql/15/data`
+is untouched. Then re-enable the pre-update backup if it was switched off to get past this
+(Server Settings → Maintenance → Updates), and take a manual backup to confirm.
+
+Do **not** work around it with a symlink in `/usr/local/bin`; the comment in
+`deploy/setup-rhel.sh` explains how that shadows the alternatives system on the next major.
 
 ## Disk sizing — read this first
 

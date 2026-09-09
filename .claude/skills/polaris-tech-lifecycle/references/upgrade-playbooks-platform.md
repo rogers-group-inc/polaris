@@ -60,16 +60,28 @@ version-sensitive hooks.
    survived — count them before and after.
 6. Rename the `After=` / `Requires=` dependency in the shipped units; on Windows the service
    name, the NSSM `DependOnService`, and the `bin` path candidate all move.
-7. The package names, `pg_config` path and installer pin in every setup script; the image tags in
-   `compose.dev.yml` and the CI service container.
+7. The package names, `pg_config` path and installer pin in every setup script (`PG_MAJOR` in
+   `setup-rhel.sh`, `PG_CLIENT_MAJOR` in `setup-rhel-nodb.sh`); the image tags in
+   `compose.dev.yml` and the CI service container; **and the `postgresql-client` in
+   `Dockerfile` / `Dockerfile.dev`** — unversioned, so it is whatever Debian bookworm ships (15,
+   which is why it agrees with the pin today). A 16+ server needs `postgresql-client-16` from
+   the PGDG apt repo in the image, or every in-container backup fails the rule-47 check.
+8. **Remove the old major's client packages once the switch is final**, and any unversioned
+   AppStream `postgresql` / `postgresql-server` left on the host. The app and
+   `deploy/update-linux.sh` pick `pg_dump` / `psql` by the SERVER's major (rule 47 —
+   `utils/pgClientTools.ts`, `resolve_pg_tool`), so backups follow the new server with no config
+   change; but an older client owning `/usr/bin/pg_dump` still breaks every human and script that
+   calls the tool by name, and `alternatives --display` will not tell you (it reports its own
+   bookkeeping, not the file). `pg_dump --version` is the check.
 
 ### Blast radius
 The unit dependency is easy to miss and fails *late* — the app starts before Postgres is ready
 and the first queries fail. The `-nodb` script variants strip that dependency, so they need
 their `sed` patterns updated too, not just the units.
 
-Note the pre-existing inconsistency in the RHEL path (AppStream vs PGDG) documented in the
-inventory — decide it deliberately as part of this work rather than inheriting it.
+The RHEL AppStream-vs-PGDG inconsistency the inventory used to document was resolved on
+2026-09-09 (server packages earlier, client packages that day); a host built before then may
+still carry the AppStream 13 packages — step 8 is where that gets cleaned up.
 
 ### Verification
 Restore a production-sized backup onto the new major and compare the capacity snapshot
