@@ -6,7 +6,11 @@
 //   - the payload's sha256 must match the body (a tampered/truncated payload
 //     is refused before anything touches disk),
 //   - the body is written to a 0700 temp file that is ALWAYS removed,
-//   - the args string travels as ONE argv entry — never shell-interpolated,
+//   - the args string travels as ONE argv entry — never shell-interpolated —
+//     EXCEPT for the "cmd" interpreter, which has no argv to travel in:
+//     `cmd /c` re-parses the raw command line with its own grammar, so that
+//     one path is escaped by cmdCommandLine() and handed to CreateProcess
+//     verbatim (see the comment there),
 //   - execution is bounded by the payload's timeout (process killed) and
 //     stdout/stderr are capped at 64 KB each,
 //   - unknown interpreters are refused (the list mirrors
@@ -26,9 +30,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Payload mirrors the server's AgentCommand.payload for action="run_script".
@@ -81,9 +87,57 @@ func extensionFor(interpreter string) string {
 	}
 }
 
-// argvFor resolves the interpreter invocation for this OS. The script path
-// and the args string are appended as discrete argv entries.
-func argvFor(interpreter, scriptPath, args string) (bin string, argv []string, err error) {
+// cmdMetaRe are the cmd.exe metacharacters, all of which "^" neutralises.
+var cmdMetaRe = regexp.MustCompile(`[()<>&|^]`)
+
+// cmdArgRepresentable reports whether args can be handed to cmd.exe literally.
+// A quote ends the quoted token (cmd has no in-quote escape for one) and % / !
+// are expanded by the parser before the script sees them; control characters
+// end the command line (CR, LF), truncate it (NUL) or are still end-of-file to
+// cmd (0x1A). "^" helps with none of these.
+func cmdArgRepresentable(args string) bool {
+	if strings.ContainsAny(args, "\"%!") {
+		return false
+	}
+	for _, r := range args {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// cmdCommandLine builds the whole command line for cmd.exe, which is the one
+// interpreter here with no argv: `cmd /c` re-parses the raw command line, so
+// passing it a Go-quoted argument vector executed whatever an argument chose
+// to inject. Args reach the agent from the server's rendered argsTemplate,
+// which interpolates alert context — a device's own hostname can land here.
+//
+// Three things have to hold at once, each verified against a real cmd.exe:
+//  1. every metacharacter is "^"-escaped — quoting ALONE does not stop a pipe,
+//  2. the whole command is wrapped in one further quote pair, because /s strips
+//     the first and last character of the remainder when both are quotes,
+//  3. the caller passes this to CreateProcess VERBATIM (SysProcAttr.CmdLine on
+//     Windows). Letting Go re-quote it with the C-runtime rules that cmd.exe
+//     does not implement is the original bug.
+//
+// Keep in lockstep with buildCmdCommandLine() in automationScriptRunner.ts.
+func cmdCommandLine(scriptPath, args string) (string, error) {
+	if args != "" && !cmdArgRepresentable(args) {
+		return "", fmt.Errorf(`arguments for the cmd interpreter cannot contain " %% ! or a control character — cmd.exe expands or re-parses those before the script sees them`)
+	}
+	inner := `"` + scriptPath + `"`
+	if args != "" {
+		esc := cmdMetaRe.ReplaceAllStringFunc(args, func(s string) string { return "^" + s })
+		inner += ` "` + esc + `"`
+	}
+	return `/d /s /c "` + inner + `"`, nil
+}
+
+// argvFor resolves the interpreter invocation for this OS. The script path and
+// the args string are appended as discrete argv entries — except for "cmd",
+// which returns a non-empty cmdLine instead, to be passed through verbatim.
+func argvFor(interpreter, scriptPath, args string) (bin string, argv []string, cmdLine string, err error) {
 	tail := []string{}
 	if args != "" {
 		tail = append(tail, args)
@@ -91,22 +145,26 @@ func argvFor(interpreter, scriptPath, args string) (bin string, argv []string, e
 	switch interpreter {
 	case "bash", "sh", "python3":
 		if runtime.GOOS == "windows" {
-			return "", nil, fmt.Errorf("interpreter %q is not supported on Windows agents", interpreter)
+			return "", nil, "", fmt.Errorf("interpreter %q is not supported on Windows agents", interpreter)
 		}
-		return interpreter, append([]string{scriptPath}, tail...), nil
+		return interpreter, append([]string{scriptPath}, tail...), "", nil
 	case "powershell":
 		bin = "pwsh"
 		if runtime.GOOS == "windows" {
 			bin = "powershell.exe"
 		}
-		return bin, append([]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath}, tail...), nil
+		return bin, append([]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath}, tail...), "", nil
 	case "cmd":
 		if runtime.GOOS != "windows" {
-			return "", nil, fmt.Errorf("interpreter \"cmd\" is only supported on Windows agents")
+			return "", nil, "", fmt.Errorf("interpreter \"cmd\" is only supported on Windows agents")
 		}
-		return "cmd.exe", append([]string{"/d", "/s", "/c", scriptPath}, tail...), nil
+		line, cerr := cmdCommandLine(scriptPath, args)
+		if cerr != nil {
+			return "", nil, "", cerr
+		}
+		return "cmd.exe", append([]string{"/d", "/s", "/c", scriptPath}, tail...), line, nil
 	default:
-		return "", nil, fmt.Errorf("unknown interpreter %q — refusing to execute", interpreter)
+		return "", nil, "", fmt.Errorf("unknown interpreter %q — refusing to execute", interpreter)
 	}
 }
 
@@ -144,7 +202,7 @@ func Run(p *Payload) Result {
 		return Result{Status: "failed", ExitCode: -1, Stderr: fmt.Sprintf("write script: %v", err)}
 	}
 
-	bin, argv, err := argvFor(p.Interpreter, scriptPath, p.Args)
+	bin, argv, cmdLine, err := argvFor(p.Interpreter, scriptPath, p.Args)
 	if err != nil {
 		return Result{Status: "failed", ExitCode: -1, Stderr: err.Error()}
 	}
@@ -152,6 +210,12 @@ func Run(p *Payload) Result {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, argv...)
+	// cmd.exe only: hand CreateProcess the line cmdCommandLine already escaped,
+	// instead of letting Go re-quote argv with C-runtime rules cmd.exe does not
+	// implement. No-op off Windows, where nothing reaches this with a cmdLine.
+	if cmdLine != "" {
+		useRawCommandLine(cmd, cmdLine)
+	}
 	cmd.Env = append(os.Environ(), "POLARIS_RUN_ID="+p.RunID)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &limitedWriter{buf: &stdout}
