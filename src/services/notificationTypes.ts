@@ -3266,7 +3266,16 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
 // operator select: the engine's compareValue can only answer == / != about a
 // non-numeric string, so offering ">=" there builds a rule that is silently
 // false forever.
-export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" | "number" | "dynamic"; values?: string[]; placeholder?: string; equalityOnly?: boolean }> = {
+//
+// `integralDimension` names the dimension a reading of this field IS ABOUT,
+// as opposed to one that narrows a set of them: the builder keeps that
+// dimension's picker on the condition row itself (and never lifts it out into
+// a group filter row), so the operator can say WHICH component the comparison
+// names. Everything else in FIELD_DIMENSIONS is offered as a filter row —
+// which is the right shape for "narrow every condition in this group", and the
+// wrong one for a field whose reading is meaningless until one component is
+// named.
+export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" | "number" | "dynamic"; values?: string[]; placeholder?: string; equalityOnly?: boolean; integralDimension?: string }> = {
   // "passive" = no down-detection automation covers the device, so Polaris
   // renders no verdict for it. It is still polled and still charted — the
   // counters keep advancing, they are simply never compared to a threshold.
@@ -3290,7 +3299,14 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   // and that is the underlay's outage to alert about, not the overlay's. The
   // engine normalizes both sides through `bareInterfaceIp`, so the mask-
   // carrying shapes ("0.0.0.0 0.0.0.0") compare equal to the bare address.
-  ifIpAddress: { label: "Interface IP address", kind: "dynamic", placeholder: "e.g. 0.0.0.0", equalityOnly: true },
+  //
+  // The interface is INTEGRAL here (see the header): a comparison against an
+  // address is about one port, and with no port named the leaf reads "any
+  // monitored interface" — which a composite folds per device through the
+  // engine's ANY fold (leafTruthByAsset), so `!= 0.0.0.0` would be true of
+  // every addressed device and the gate this field exists to be would gate
+  // nothing.
+  ifIpAddress: { label: "Interface IP address", kind: "dynamic", placeholder: "e.g. 0.0.0.0", equalityOnly: true, integralDimension: "ifNamePattern" },
   // Closed enum rather than "dynamic" (which ifOperStatus uses): every value
   // POWER-ETHERNET-MIB can report is known up front, so the wizard offers a
   // picker and a typo cannot silently produce a rule that never matches.

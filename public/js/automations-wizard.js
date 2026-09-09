@@ -1537,6 +1537,10 @@ async function openAutomationWizard(existing, opts) {
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
   var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter" };
+  // The same placeholders when the dimension is INTEGRAL to the condition (see
+  // tgIntegralDimOf): the row is about ONE component, so the hint asks which
+  // and says what blank does instead of describing an optional narrowing.
+  var DIM_INTEGRAL_PLACEHOLDER = { ifNamePattern: "which interface — click to pick (blank compares every monitored interface)" };
   // Dimension VALUE pickers. The server says which dimensionFilter fields it can
   // populate and whether each is a closed enum (`strict` → select-only, e.g.
   // sensorClass) or a substring match (→ suggestions, typing still allowed);
@@ -1565,6 +1569,25 @@ async function openAutomationWizard(existing, opts) {
     sdwanRulePattern: { label: "SD-WAN rule name", rep: "sdwanRuleStatus" },
   };
   function tgFilterLabel(dim) { return (TG_FILTER_META[dim] && TG_FILTER_META[dim].label) || dim; }
+  /**
+   * The dimension a field's reading IS ABOUT rather than one that narrows a set
+   * of them (`fieldMeta.integralDimension` — the interface an "Interface IP
+   * address" comparison names). Such a dimension stays INLINE on the condition
+   * row even though it is also a filter-row dimension, and is never lifted out
+   * into a row: a filter row reads as "narrow every condition in this group",
+   * which is the wrong sentence for the one control that says which reading the
+   * comparison is about. Leaving it to the filter row is how the Interface IP
+   * address condition shipped with no way to name the port from the row at all.
+   * Filter rows still COMPILE into these leaves (tgSupportsDim is unchanged), so
+   * a rule authored that way keeps its value and simply renders it on the row.
+   */
+  function tgIntegralDimOf(key) {
+    var meta = key && s.fieldMeta && s.fieldMeta[key];
+    return (meta && meta.integralDimension) || "";
+  }
+  function tgLeafIntegralDim(leaf) {
+    return leaf && leaf.type === "asset_state" ? tgIntegralDimOf(leaf.field) : "";
+  }
   /** Filter rows are offered only when the server publishes the device dims —
    *  one gate for the whole surface, so a pre-upgrade server keeps the old UI. */
   function tgFiltersAvailable() { return TG_DEVICE_DIMS.length > 0; }
@@ -1589,7 +1612,13 @@ async function openAutomationWizard(existing, opts) {
    *  for rendering. Skipped wholesale on a pre-upgrade server (no rows offered
    *  → nothing may be lifted into a shape the operator can't re-create). */
   function tgLift(tree) {
-    return tgFiltersAvailable() ? tgFilterLift(tree, tgSupportsDim, tgLiftableDims()) : tree;
+    // A leaf's INTEGRAL dimension is invisible to the lift, so it is neither
+    // raised into a filter row nor stripped off the leaf — it renders on the
+    // row, which is where it says what it means (see tgIntegralDimOf). Its
+    // siblings still lift: a group holding an oper-status and an IP condition on
+    // the same port shows the row for the former and the picker for the latter.
+    var liftSupports = function (leaf, d) { return tgSupportsDim(leaf, d) && tgLeafIntegralDim(leaf) !== d; };
+    return tgFiltersAvailable() ? tgFilterLift(tree, liftSupports, tgLiftableDims()) : tree;
   }
   /** Which dimension inputs render INLINE on a condition row: everything that
    *  is integral to the metric (sensor class/name, health-check, probe rows…)
@@ -1597,10 +1626,13 @@ async function openAutomationWizard(existing, opts) {
    *  a stored value tgFilterLift couldn't raise because siblings disagree —
    *  since dropping it from the row would hide a filter that still evaluates.
    *  On a pre-upgrade server (no filter rows) everything renders inline as
-   *  before. */
-  function tgInlineDims(baseDims, df) {
+   *  before. The leaf's own INTEGRAL dimension always renders inline, filled or
+   *  not — it is the control that says which reading the comparison names. */
+  function tgInlineDims(baseDims, df, leaf) {
+    var integral = tgLeafIntegralDim(leaf);
     var out = (baseDims || []).filter(function (d) {
       if (!tgFiltersAvailable() || !TG_FILTER_META[d]) return true;
+      if (d === integral) return true;
       return !!(df && df[d]);
     });
     TG_DEVICE_DIMS.forEach(function (d) {
@@ -2573,7 +2605,11 @@ async function openAutomationWizard(existing, opts) {
   function dimControlHtml(d, df, metric) {
     var value = (df && df[d]) || "";
     var meta = DIM_PICKERS[d];
-    var placeholder = escapeHtml(DIM_PLACEHOLDER[d] || d);
+    // An INTEGRAL dimension's hint says what the row is about and what leaving
+    // it blank means, rather than the generic "any interface" a filter row's
+    // own picker reads with — blank here widens the comparison to every
+    // monitored component, which is rarely what a per-component gate wants.
+    var placeholder = escapeHtml((d === tgIntegralDimOf(metric) && DIM_INTEGRAL_PLACEHOLDER[d]) || DIM_PLACEHOLDER[d] || d);
     if (!meta) {
       return '<input type="text" class="tgl-dim" data-dim="' + escapeHtml(d) + '" placeholder="' + placeholder + '" value="' + escapeHtml(value) + '" style="flex:1;min-width:120px">';
     }
@@ -2884,7 +2920,7 @@ async function openAutomationWizard(existing, opts) {
       // current-state comparison has no use for. With filter rows available,
       // the liftable dims render inline only as UNLIFTED LEFTOVERS (a stored
       // value tgFilterLift couldn't raise into a row) — see tgInlineDims.
-      var fDims = kind === "host" ? [] : tgInlineDims((s.fieldDimensions && s.fieldDimensions[leaf.field]) || [], leaf.dimensionFilter);
+      var fDims = kind === "host" ? [] : tgInlineDims((s.fieldDimensions && s.fieldDimensions[leaf.field]) || [], leaf.dimensionFilter, leaf);
       var isDD = ddMeta && isDownDetectionLeaf(leaf);
       if (fDims.length || isDD) {
         var fDf = leaf.dimensionFilter || {};
@@ -2903,7 +2939,7 @@ async function openAutomationWizard(existing, opts) {
       }
     }
     if (!isState) {
-      var dims = kind === "host" ? [] : tgInlineDims((s.metricDimensions && s.metricDimensions[leaf.metric]) || [], leaf.dimensionFilter);
+      var dims = kind === "host" ? [] : tgInlineDims((s.metricDimensions && s.metricDimensions[leaf.metric]) || [], leaf.dimensionFilter, leaf);
       var df = leaf.dimensionFilter || {};
       var dimInputs = dims.map(function (d) { return dimControlHtml(d, df, leaf.metric); }).join("");
       // Averaging a flag would produce a duty cycle rather than a state, so a
