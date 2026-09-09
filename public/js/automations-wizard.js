@@ -6700,7 +6700,8 @@ async function openAutomationWizard(existing, opts) {
           '<div class="na-comp-body"' + (customEmail ? "" : ' style="display:none"') + '>' +
             '<p class="hint" style="margin:0 0 6px">This is the email Polaris sends. Edit it freely — ' +
               '<code>{ack}</code> becomes the recipient’s one-click acknowledge link, <code>{asset.link}</code> opens the device, and ' +
-              '<code>{chart.cpu}</code> / <code>{chart.memory}</code> / <code>{chart.responseTime}</code> embed the last hour as charts, and ' +
+              '<code>{chart.cpu}</code> / <code>{chart.memory}</code> / <code>{chart.responseTime}</code> embed the last hour as charts, ' +
+              '<code>{chart.sdwanLatency}</code> / <code>{chart.sdwanJitter}</code> / <code>{chart.sdwanLoss}</code> chart the SD-WAN health check an SD-WAN alert fired on (and replace the three above on one), and ' +
               '<code>{interface.lldp}</code> lists what LLDP saw on the port an interface alert fired on. ' +
               '<button type="button" class="na-comp-reset" style="background:none;border:0;padding:0;color:var(--color-primary);cursor:pointer;font:inherit;text-decoration:underline">Reset to the default</button></p>' +
             '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">Subject</label><input type="text" class="na-subject tpl-field" value="' + escapeHtml(compValue(comp, "subjectTemplate")) + '" placeholder="[{severity.upper}] {asset} — {metric} = {value}"></div>' +

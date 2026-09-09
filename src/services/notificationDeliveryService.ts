@@ -169,6 +169,12 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
             async () =>
               buildAlertCharts(assetId, wanted, {
                 sensorName: d.notification.dimension,
+                // The same column under both names: for a sensor alert the
+                // dimension IS the sensor, for an SD-WAN alert it is the
+                // health-check/member pair or the service rule. Passing it
+                // twice keeps each chart's contract readable at the call site
+                // instead of making `sensorName` mean four things.
+                dimension: d.notification.dimension,
                 metric: d.notification.metric,
                 // The loss chart follows the automation's own History window; only
                 // resolved when the body embeds one, and only meaningful there.

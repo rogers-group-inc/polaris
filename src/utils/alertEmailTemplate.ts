@@ -91,6 +91,15 @@ export const DEFAULT_ALERT_TEXT = [
   "{chart.trigger}",
   "{chart.sensor}",
   "{chart.probeLoss}",
+  // The SD-WAN trio, above the device charts because on a path alert those are
+  // dropped (alertChartService's SDWAN_SCOPED_METRICS) and these three ARE the
+  // email: latency, jitter and loss on the health check and WAN member that
+  // fired. All three ride together — an operator whose automation watches
+  // latency still needs to see whether loss moved with it — and all three
+  // render away on every alert that isn't about SD-WAN.
+  "{chart.sdwanLatency}",
+  "{chart.sdwanJitter}",
+  "{chart.sdwanLoss}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
@@ -241,6 +250,11 @@ export const DEFAULT_ALERT_HTML = [
   "{chart.trigger}",
   "{chart.sensor}",
   "{chart.probeLoss}",
+  // See the text body: on an SD-WAN alert these three replace the device
+  // charts below rather than joining them.
+  "{chart.sdwanLatency}",
+  "{chart.sdwanJitter}",
+  "{chart.sdwanLoss}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",

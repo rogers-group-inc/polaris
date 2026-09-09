@@ -41,7 +41,11 @@ import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
  * email for is the first one they see. A chart emitted through it is skipped
  * when its own token comes up later, so the body never repeats one.
  */
-export const CHART_TOKENS = ["chart.trigger", "chart.sensor", "chart.probeLoss", "chart.cpu", "chart.memory", "chart.responseTime"] as const;
+export const CHART_TOKENS = [
+  "chart.trigger", "chart.sensor", "chart.probeLoss",
+  "chart.sdwanLatency", "chart.sdwanJitter", "chart.sdwanLoss",
+  "chart.cpu", "chart.memory", "chart.responseTime",
+] as const;
 export type ChartToken = (typeof CHART_TOKENS)[number];
 
 /** The metric an automation triggers on → the chart that explains it. */
@@ -66,10 +70,24 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
     case "monitorStatus":
     case "consecutiveFailures":
       return "chart.responseTime";
+    case "sdwanLatencyMs":
+      return "chart.sdwanLatency";
+    case "sdwanJitterMs":
+      return "chart.sdwanJitter";
+    case "sdwanPacketLoss":
+      return "chart.sdwanLoss";
+    // The SD-WAN state fields lead with LATENCY, which is the one health-check
+    // gauge FortiOS always populates for a member that is answering at all, and
+    // the default `link-cost-factor` a service rule selects on. A rule that
+    // failed over because loss or jitter breached still shows both underneath —
+    // the three SD-WAN charts always render as a set.
+    case "sdwanRuleStatus":
+    case "sdwanSelectedMember":
+      return "chart.sdwanLatency";
     default:
-      // Storage, interface counters, SD-WAN … have no chart of their own yet,
-      // so the trigger token renders away and the generic charts below it
-      // still tell the device's story.
+      // Storage and interface counters have no chart of their own yet, so the
+      // trigger token renders away and the generic charts below it still tell
+      // the device's story.
       return null;
   }
 }
@@ -95,6 +113,43 @@ const PORT_SCOPED_METRICS: ReadonlySet<string> = new Set(["ifOperStatus", "ifAdm
 export function isPortScopedAlert(metric: string | null | undefined): boolean {
   return !!metric && PORT_SCOPED_METRICS.has(metric);
 }
+
+/**
+ * Metrics whose alert is about a PATH, not the device — the SD-WAN triggers.
+ *
+ * Same argument as PORT_SCOPED_METRICS, one layer out: a FortiGate whose
+ * VPN-SLA health check is losing 40% to wan1 is answering its own probes
+ * perfectly, so its CPU, memory, response-time and packet-loss graphs are the
+ * story of a healthy firewall printed under "SD-WAN packet loss on VPN-SLA /
+ * wan1 is 41%". Operators read that as Polaris not knowing what the alert was
+ * about (reported 2026-09-09), and they were right — the last hour of the
+ * HEALTH CHECK is the graph being asked for.
+ *
+ * So these four device charts are dropped and the SD-WAN trio (latency, jitter,
+ * loss for the health check + member the alert is keyed on) takes their place.
+ * Unlike the port case the alert is not left graphless: there is a real
+ * time-series behind it, `AssetPerfSlaSample`.
+ *
+ * BOTH the metric triggers and the two state fields are here. A failover
+ * (`sdwanSelectedMember`) or a rule going down (`sdwanRuleStatus`) is a
+ * statement about the paths under that service rule, and the SLA metrics of the
+ * health check it selects on are what say why it moved.
+ */
+const SDWAN_SCOPED_METRICS: ReadonlySet<string> = new Set([
+  "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "sdwanRuleStatus", "sdwanSelectedMember",
+]);
+
+export function isSdwanScopedAlert(metric: string | null | undefined): boolean {
+  return !!metric && SDWAN_SCOPED_METRICS.has(metric);
+}
+
+/** The SD-WAN health-check charts. The default body asks for all three, so a
+ *  failover email shows every side of the SLA rather than whichever one the
+ *  automation happened to watch; they all read one loaded `SdwanSeries`. */
+const SDWAN_CHART_TOKENS: readonly ChartToken[] = ["chart.sdwanLatency", "chart.sdwanJitter", "chart.sdwanLoss"];
+
+/** The device-story charts an SD-WAN alert replaces. */
+const DEVICE_CHART_TOKENS: readonly ChartToken[] = ["chart.cpu", "chart.memory", "chart.responseTime", "chart.probeLoss"];
 
 export const CHART_WINDOW_MS = 60 * 60 * 1000;
 
@@ -131,6 +186,19 @@ const META: Record<ChartToken, { label: string; unit: string; color: string; per
   // themes' --color-success, because the email card is white.
   "chart.responseTime": { label: "Response time", unit: " ms", color: "#2e7d32", percent: false },
   "chart.probeLoss": { label: "Packet loss", unit: "%", color: "#dc2626", percent: true },
+  // The SD-WAN trio. Three colours nothing else in an email uses, so a reader
+  // scanning a failover email can tell the three SLA gauges apart at a glance;
+  // the health check and member ride in each label (see sdwanChartLabel).
+  //
+  // NONE of them pins its axis, packet loss included — and that is the one
+  // place they diverge from `chart.probeLoss` on purpose. An SD-WAN SLA
+  // threshold is typically 1–2%, so a 0–100 axis draws a breach of it as a flat
+  // line on the floor with the dashed threshold sitting on top of it. These
+  // charts exist to show a breach, so they self-scale and the SLA line is
+  // always inside the plot (sparklineSvg folds `threshold` into the range).
+  "chart.sdwanLatency": { label: "SD-WAN latency", unit: " ms", color: "#0e7490", percent: false },
+  "chart.sdwanJitter": { label: "SD-WAN jitter", unit: " ms", color: "#b45309", percent: false },
+  "chart.sdwanLoss": { label: "SD-WAN packet loss", unit: "%", color: "#be123c", percent: false },
 };
 
 /** Even-ish downsample that always keeps the newest point (the alerting one). */
@@ -263,6 +331,293 @@ export async function sensorReadingDisplay(
     // Never block an alert on a unit lookup.
     return { value: rawValue, unit: "" };
   }
+}
+
+/**
+ * Which SD-WAN path an alert is about.
+ *
+ * `healthChecks` is a LIST because the two shapes of SD-WAN alert name the path
+ * differently. A metric alert (`sdwanLatencyMs` and friends) is keyed on one
+ * exact pair — the engine's dimension is `"<healthCheck>|<link>"` — while a
+ * rule alert (`sdwanRuleStatus` / `sdwanSelectedMember`) is keyed on the SERVICE
+ * RULE, which references health checks by name and may reference several. Both
+ * resolve to one charted pair; the difference is only whether the samples get a
+ * say in which.
+ */
+export interface SdwanTarget {
+  /** Health-check name(s) to chart, best first. */
+  healthChecks: string[];
+  /** The WAN member the alert names, when it names one. Null = whichever member
+   *  of these health checks reported most recently. */
+  link: string | null;
+}
+
+/**
+ * `Notification.dimension` for an SD-WAN METRIC alert → the pair it names.
+ *
+ * The engine writes `${healthCheck}|${link}` (resolveAssetMetricReadings), and
+ * FortiOS object names admit no `|`, so the FIRST separator splits it. A stored
+ * dimension with no separator at all — a hand-written test alert, a row from
+ * before the metric existed — is read as the health check with no member
+ * preference rather than discarded, which is the same "chart what we can"
+ * posture the rest of this file takes.
+ */
+export function parseSdwanDimension(dimension: string | null | undefined): SdwanTarget | null {
+  if (!dimension) return null;
+  const i = dimension.indexOf("|");
+  const healthCheck = i < 0 ? dimension : dimension.slice(0, i);
+  if (!healthCheck) return null;
+  const link = i < 0 ? "" : dimension.slice(i + 1);
+  return { healthChecks: [healthCheck], link: link || null };
+}
+
+/**
+ * The SD-WAN path an alert is about, resolved from what the Notification kept.
+ *
+ * The metric half is pure string work. The rule half costs ONE indexed read of
+ * `AssetSdwanRule` — the rule's `healthChecks` and its currently selected
+ * member — because a rule alert's dimension is the rule NAME and nothing in the
+ * notification says which health check sits under it. That table is
+ * delete-replaced per scrape rather than a time series, so what comes back is
+ * the rule as it stands at DELIVERY time.
+ *
+ * A rule dimension may name a MEMBER as well, as `"<ruleName>|<member>"`, and
+ * that member wins over the rule's current selection. It is what a FAILOVER
+ * alert stamps (`chartKeysForChangeEvent`), and it is the difference between an
+ * email that explains itself and one that doesn't: the rule has already moved
+ * by delivery time, so charting its current member draws the healthy link
+ * traffic was moved ONTO, while the member it LEFT is the one whose latency
+ * climbed through the SLA and made the gate act. Pipe-separated for the same
+ * reason and on the same assumption as the metric dimension — FortiOS object
+ * names admit no `|` — and a dimension without one keeps the current member.
+ */
+export async function resolveSdwanTarget(
+  assetId: string,
+  metric: string | null | undefined,
+  dimension: string | null | undefined,
+): Promise<SdwanTarget | null> {
+  if (metric === "sdwanRuleStatus" || metric === "sdwanSelectedMember") {
+    if (!dimension) return null;
+    const i = dimension.indexOf("|");
+    const ruleName = i < 0 ? dimension : dimension.slice(0, i);
+    const namedMember = i < 0 ? "" : dimension.slice(i + 1);
+    if (!ruleName) return null;
+    try {
+      const rule = await prisma.assetSdwanRule.findUnique({
+        where: { assetId_ruleName: { assetId, ruleName } },
+        select: { healthChecks: true, selectedMember: true },
+      });
+      const healthChecks = (rule?.healthChecks ?? []).filter((h) => !!h);
+      // A rule with no performance SLA behind it (mode "priority" / "manual")
+      // has no health check to chart. Nothing is drawn rather than a graph of
+      // some unrelated check that happens to exist on the gate.
+      if (healthChecks.length === 0) return null;
+      return { healthChecks, link: namedMember || rule?.selectedMember || null };
+    } catch (err) {
+      logger.debug({ err: (err as Error)?.message, assetId, rule: ruleName }, "SD-WAN rule lookup failed — no SD-WAN chart");
+      return null;
+    }
+  }
+  return parseSdwanDimension(dimension);
+}
+
+/**
+ * The `metric` / `dimension` an EVENT-triggered alert must carry for its charts
+ * to resolve — or null for the ~all change events that have no chart.
+ *
+ * The event path is otherwise chart-blind by construction: it writes
+ * `Notification.metric = null` and `dimension = null` (nothing "fired" as a
+ * metric), so `chartTokenForMetric` answers nothing and the body falls through
+ * to the device charts. On an SD-WAN failover that is the exact complaint this
+ * feature exists to fix — the alert says "Branch-to-DC: wan1 → wan2" over an
+ * hour of the firewall's CPU.
+ *
+ * `sdwanSelectedMember` is not a stand-in here: a failover IS that field
+ * changing, so the stamped metric is the true one and every downstream reader
+ * (the charts, the asset page's alert tooltip, the acknowledge page) says
+ * something accurate. The member the rule LEFT rides the dimension because the
+ * event details are the only place it exists — `AssetSdwanRule` is
+ * delete-replaced and by delivery time holds only where the traffic went.
+ *
+ * Pure, and deliberately narrow: an action with no chart behind it returns null
+ * and that alert is unchanged.
+ */
+export function chartKeysForChangeEvent(
+  action: string,
+  details: unknown,
+): { metric: string; dimension: string } | null {
+  if (action !== "change.sdwan.failover") return null;
+  const d = details && typeof details === "object" ? (details as Record<string, unknown>) : null;
+  const ruleName = typeof d?.ruleName === "string" ? d.ruleName.trim() : "";
+  // The rule name is the only part that is load-bearing — without it there is
+  // nothing to look the health check up by.
+  if (!ruleName) return null;
+  const from = typeof d?.from === "string" ? d.from.trim() : "";
+  return { metric: "sdwanSelectedMember", dimension: from ? `${ruleName}|${from}` : ruleName };
+}
+
+/** One `AssetPerfSlaSample` row, as the fold below reads it. */
+export interface SdwanSampleRow {
+  timestamp: Date;
+  healthCheck: string;
+  link: string;
+  state: string;
+  latencyMs: number | null;
+  jitterMs: number | null;
+  packetLoss: number | null;
+  latencyThresholdMs: number | null;
+  jitterThresholdMs: number | null;
+  packetLossThreshold: number | null;
+}
+
+export interface SdwanSeries {
+  /** The pair actually charted — it rides into every label, because "SD-WAN
+   *  latency" alone on a gate with four WAN members says nothing. */
+  healthCheck: string;
+  link: string;
+  latency: SparkPoint[];
+  jitter: SparkPoint[];
+  loss: SparkPoint[];
+  /** The health check's own SLA targets, drawn as each chart's dashed rule.
+   *  Null where the health check configures no target for that metric. */
+  latencyThresholdMs: number | null;
+  jitterThresholdMs: number | null;
+  packetLossThreshold: number | null;
+  /** Spans where the health check reported this member DOWN. */
+  downSpans: Array<{ from: number; to: number }>;
+}
+
+/**
+ * Fold health-check samples into the three charted series. Pure; `rows` must be
+ * ascending by timestamp.
+ *
+ * THE PICK IS THE INTERESTING PART. The rows may cover several members (and,
+ * for a rule alert, several health checks), and these charts are single-series,
+ * so exactly one pair gets drawn:
+ *
+ *   1. the pair the alert NAMES, when the alert names one and it reported in
+ *      the window — a `sdwanPacketLoss` alert on VPN-SLA / wan1 must chart
+ *      wan1, whatever the other members did;
+ *   2. otherwise the freshest-reporting member, health checks tried in the
+ *      order the target lists them. That is the fallback for a rule alert whose
+ *      selected member has no SLA rows (FortiOS omits a member it could not
+ *      probe at all), and drawing a sibling member of the same health check is
+ *      still a picture of the path the rule is choosing between.
+ *
+ * The SLA thresholds come off the samples themselves rather than from the
+ * automation: they are the FortiGate's own targets for that health check, which
+ * is what the operator configured the failover on, and an automation watching
+ * "latency > 150" would otherwise draw its own line over a link whose SLA
+ * target is 80.
+ */
+export function sdwanSeriesFrom(rows: SdwanSampleRow[], target: SdwanTarget): SdwanSeries | null {
+  if (rows.length === 0) return null;
+  const groups = new Map<string, SdwanSampleRow[]>();
+  for (const r of rows) {
+    const key = `${r.healthCheck}|${r.link}`;
+    const g = groups.get(key);
+    if (g) g.push(r);
+    else groups.set(key, [r]);
+  }
+
+  let chosen: SdwanSampleRow[] | undefined;
+  if (target.link) {
+    for (const hc of target.healthChecks) {
+      chosen = groups.get(`${hc}|${target.link}`);
+      if (chosen) break;
+    }
+  }
+  if (!chosen) {
+    for (const hc of target.healthChecks) {
+      let freshest: SdwanSampleRow[] | undefined;
+      for (const g of groups.values()) {
+        if (g[0]!.healthCheck !== hc) continue;
+        const last = g[g.length - 1]!.timestamp.getTime();
+        if (!freshest || last > freshest[freshest.length - 1]!.timestamp.getTime()) freshest = g;
+      }
+      if (freshest) { chosen = freshest; break; }
+    }
+  }
+  // Rows came back for some other health check entirely — nothing here is about
+  // the alert, so nothing is drawn.
+  if (!chosen || chosen.length === 0) return null;
+
+  const latency: SparkPoint[] = [];
+  const jitter: SparkPoint[] = [];
+  const loss: SparkPoint[] = [];
+  const downSpans: Array<{ from: number; to: number }> = [];
+  let latencyThresholdMs: number | null = null;
+  let jitterThresholdMs: number | null = null;
+  let packetLossThreshold: number | null = null;
+  let openDown: { from: number; to: number } | null = null;
+
+  for (const r of chosen) {
+    const t = r.timestamp.getTime();
+    if (r.latencyMs != null) latency.push({ t, v: r.latencyMs });
+    if (r.jitterMs != null) jitter.push({ t, v: r.jitterMs });
+    if (r.packetLoss != null) loss.push({ t, v: r.packetLoss });
+    // Last non-null wins: the targets are constant across a health check's
+    // members, but an operator can retune them mid-window and the chart should
+    // draw the line the alert fired against.
+    if (r.latencyThresholdMs != null) latencyThresholdMs = r.latencyThresholdMs;
+    if (r.jitterThresholdMs != null) jitterThresholdMs = r.jitterThresholdMs;
+    if (r.packetLossThreshold != null) packetLossThreshold = r.packetLossThreshold;
+    // Consecutive down samples merge into one band rather than a sliver each —
+    // same treatment, and the same reason, as the sensor chart's alarm bands.
+    if (r.state !== "up") {
+      if (openDown) openDown.to = t;
+      else openDown = { from: t, to: t };
+    } else if (openDown) {
+      downSpans.push(openDown);
+      openDown = null;
+    }
+  }
+  if (openDown) downSpans.push(openDown);
+
+  return {
+    healthCheck: chosen[0]!.healthCheck,
+    link: chosen[0]!.link,
+    latency: thin(latency),
+    jitter: thin(jitter),
+    loss: thin(loss),
+    latencyThresholdMs,
+    jitterThresholdMs,
+    packetLossThreshold,
+    downSpans,
+  };
+}
+
+/**
+ * The DB half of the above. One indexed read on
+ * `(assetId, healthCheck, link, timestamp)` — the health-check names are known,
+ * so the member is deliberately NOT filtered: the fold needs the siblings to
+ * fall back to when the named member reported nothing.
+ */
+async function loadSdwanSeries(assetId: string, target: SdwanTarget, since: Date): Promise<SdwanSeries | null> {
+  const rows = await prisma.assetPerfSlaSample.findMany({
+    where: { assetId, healthCheck: { in: target.healthChecks }, timestamp: { gte: since } },
+    orderBy: { timestamp: "asc" },
+    select: {
+      timestamp: true, healthCheck: true, link: true, state: true,
+      latencyMs: true, jitterMs: true, packetLoss: true,
+      latencyThresholdMs: true, jitterThresholdMs: true, packetLossThreshold: true,
+    },
+  });
+  return sdwanSeriesFrom(rows, target);
+}
+
+/**
+ * What an SD-WAN chart CALLS itself: the metric, then the path.
+ *
+ * The label is drawn at a fixed position beside the now/avg/peak caption (no
+ * text measurement is available to resvg here), so the path half is budgeted
+ * and truncated rather than allowed to run under the caption.
+ */
+export function sdwanChartLabel(metricLabel: string, healthCheck: string, link: string): string {
+  const path = link ? `${healthCheck} / ${link}` : healthCheck;
+  const budget = 44 - metricLabel.length;
+  const shown = path.length > budget ? `${path.slice(0, Math.max(4, budget - 1))}…` : path;
+  return `${metricLabel} — ${shown}`;
 }
 
 async function loadResponseTimes(assetId: string, since: Date): Promise<SparkPoint[]> {
@@ -692,6 +1047,13 @@ export async function buildAlertCharts(
      */
     sensorName?: string | null;
     /**
+     * `Notification.dimension` verbatim — the same string `sensorName` carries,
+     * under the name the SD-WAN charts read it by, since for them it is a
+     * `"<healthCheck>|<link>"` pair or a service-rule name rather than a sensor.
+     * Defaults to `sensorName` so an existing caller keeps working.
+     */
+    dimension?: string | null;
+    /**
      * The metric the automation fired on (`Notification.metric`). Resolves the
      * `chart.trigger` alias so the graph that explains THIS alert leads the
      * email — a response-time automation shows response time first.
@@ -725,6 +1087,18 @@ export async function buildAlertCharts(
   // than rendering "no data") is what keeps the token invisible on the ~all
   // alerts that aren't about a hardware sensor.
   if (!opts?.sensorName) wanted.delete("chart.sensor");
+  // The SD-WAN swap (see SDWAN_SCOPED_METRICS): a path alert charts the health
+  // check and NOT the firewall, so the four device charts come out of the token
+  // set even though the body asked for them. Every other alert loses the SD-WAN
+  // tokens the same way the sensor token goes: no query, and nothing rendered.
+  //
+  // Nothing is force-ADDED. The default body carries all three SD-WAN tokens
+  // (latency, jitter and loss are one picture of a link), and a body customized
+  // before they existed still leads with the right graph through
+  // `{chart.trigger}` — which is what the alias is for — rather than having
+  // charts it never asked for stitched into it.
+  const sdwanScoped = isSdwanScopedAlert(opts?.metric);
+  for (const t of sdwanScoped ? DEVICE_CHART_TOKENS : SDWAN_CHART_TOKENS) wanted.delete(t);
   if (wanted.size === 0) return out;
 
   const now = opts?.now ?? new Date();
@@ -741,15 +1115,17 @@ export async function buildAlertCharts(
   let loss: ProbeLossSeries = { points: [], ratioPct: null };
   let sensor: SensorSeries = { points: [], alarmSpans: [], unit: "", sensorClass: null };
   let fail: FailSpanSeries = { spans: [], recoverySpans: [], failedCount: 0 };
+  let sdwan: SdwanSeries | null = null;
   try {
     const needTelemetry = wanted.has("chart.cpu") || wanted.has("chart.memory");
     const needFailSpans = [...wanted].some((t) => FAIL_SPAN_TOKENS.has(t));
+    const needSdwan = SDWAN_CHART_TOKENS.some((t) => wanted.has(t));
     // The display unit is install-wide branding, not per-user: an alert email
     // has no session behind it. Read once, only when a sensor is charted.
     const displayUnit = wanted.has("chart.sensor")
       ? await getBranding().then((b) => b.temperatureUnit).catch(() => "c" as const)
       : ("c" as const);
-    const [tel, rtRows, sensorRows, lossRows, failRows] = await Promise.all([
+    const [tel, rtRows, sensorRows, lossRows, failRows, sdwanRows] = await Promise.all([
       needTelemetry ? loadTelemetry(assetId, since) : Promise.resolve({ cpu: [], mem: [] }),
       wanted.has("chart.responseTime") ? loadResponseTimes(assetId, since) : Promise.resolve([]),
       wanted.has("chart.sensor")
@@ -757,6 +1133,14 @@ export async function buildAlertCharts(
         : Promise.resolve(sensor),
       wanted.has("chart.probeLoss") ? loadProbeLoss(assetId, lossSince, lossBucketMs(lossWindowMs)) : Promise.resolve(loss),
       needFailSpans ? loadFailSpans(assetId, since, now) : Promise.resolve(fail),
+      // Two reads at most, and only for a path alert: the rule → health-check
+      // lookup, then the health check's samples. An unresolvable path (a rule
+      // with no performance SLA, a dimension from before the metric existed)
+      // yields null and every SD-WAN token renders away.
+      needSdwan
+        ? resolveSdwanTarget(assetId, opts?.metric, opts?.dimension ?? opts?.sensorName ?? null)
+            .then((target) => (target ? loadSdwanSeries(assetId, target, since) : null))
+        : Promise.resolve(null),
     ]);
     cpu = tel.cpu;
     mem = tel.mem;
@@ -764,6 +1148,7 @@ export async function buildAlertCharts(
     sensor = sensorRows;
     loss = lossRows;
     fail = failRows;
+    sdwan = sdwanRows;
   } catch (err) {
     logger.warn({ err: (err as Error)?.message, assetId }, "alert chart sample load failed — sending without charts");
   }
@@ -774,10 +1159,20 @@ export async function buildAlertCharts(
     "chart.trigger": [],
     "chart.sensor": sensor.points,
     "chart.probeLoss": loss.points,
+    "chart.sdwanLatency": sdwan?.latency ?? [],
+    "chart.sdwanJitter": sdwan?.jitter ?? [],
+    "chart.sdwanLoss": sdwan?.loss ?? [],
     "chart.cpu": cpu,
     "chart.memory": mem,
     "chart.responseTime": rt,
   };
+
+  /** The health check's own SLA target for a chart, when it configures one. */
+  const slaThresholdFor = (token: ChartToken): number | null =>
+    token === "chart.sdwanLatency" ? sdwan?.latencyThresholdMs ?? null
+    : token === "chart.sdwanJitter" ? sdwan?.jitterThresholdMs ?? null
+    : token === "chart.sdwanLoss" ? sdwan?.packetLossThreshold ?? null
+    : null;
 
   for (const token of wanted) {
     const meta = META[token];
@@ -787,7 +1182,14 @@ export async function buildAlertCharts(
     // after the display-unit swap.
     const isSensor = token === "chart.sensor";
     const isLoss = token === "chart.probeLoss";
-    const label = isSensor ? opts!.sensorName! : meta.label;
+    // An SD-WAN chart names its PATH, not just its metric: on a gate with four
+    // WAN members "SD-WAN latency" alone doesn't say which link degraded, and
+    // the pair drawn may not even be the one the alert named (see
+    // sdwanSeriesFrom's fallback), so the label has to state what was charted.
+    const isSdwan = sdwan !== null && SDWAN_CHART_TOKENS.includes(token);
+    const label = isSensor ? opts!.sensorName!
+      : isSdwan ? sdwanChartLabel(meta.label, sdwan!.healthCheck, sdwan!.link)
+      : meta.label;
     const unit = isSensor ? (sensor.unit ? ` ${sensor.unit}` : "") : meta.unit;
     // The loss chart's caption quotes the window's PROBE ratio, not the mean of
     // its buckets — the number the automation actually fired on. See
@@ -800,8 +1202,16 @@ export async function buildAlertCharts(
       unit,
       color: meta.color,
       ...(meta.percent ? { yMin: 0, yMax: 100 } : {}),
-      threshold: opts?.thresholds?.[token] ?? null,
+      // An explicit threshold from the caller still wins; the SD-WAN charts are
+      // the only ones that carry a line of their own, the FortiGate's own SLA
+      // target for that health check.
+      threshold: opts?.thresholds?.[token] ?? slaThresholdFor(token),
       ...(isSensor && sensor.alarmSpans.length ? { alarmSpans: sensor.alarmSpans } : {}),
+      // The stretches the health check called this member DOWN, banded like a
+      // sensor's own alarm and for the same reason: it is the DEVICE's verdict
+      // about a reading, not Polaris's, and on a failover email it is usually
+      // the answer — the member the rule left was declared dead here.
+      ...(isSdwan && sdwan!.downSpans.length ? { alarmSpans: sdwan!.downSpans } : {}),
       ...(withFailSpans ? { failSpans: fail.spans } : {}),
       // The severity colour for the "outage" kind only — "missed" stays amber
       // (not a verdict yet) and "dependency" stays grey (not this device's
@@ -823,6 +1233,9 @@ export async function buildAlertCharts(
         // automation fired on, so the text has to carry it too — image blocking
         // is on by default in plenty of clients.
         (isSensor && sensor.alarmSpans.length ? " — the device raised its own alarm during this window" : "") +
+        // Same reason, for the SD-WAN band: with images blocked the band is
+        // invisible, and "the member was down" is the whole finding.
+        (isSdwan && sdwan!.downSpans.length ? " — the health check reported this member down during this window" : "") +
         // Same reason: the red bands are the only thing saying the flat stretch
         // is missing data rather than a steady reading, so a text reader needs
         // the count.

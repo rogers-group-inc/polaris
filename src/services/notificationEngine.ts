@@ -28,7 +28,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { logEvent } from "./eventLogService.js";
 import { triggerSummary } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
-import { sensorReadingDisplay } from "./alertChartService.js";
+import { sensorReadingDisplay, chartKeysForChangeEvent } from "./alertChartService.js";
 import { REGION_TAG_PREFIX } from "./notificationService.js";
 import {
   type Trigger,
@@ -3208,6 +3208,14 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
       if (hasActions && id) {
         deliverAfter.push({ id, rule: c.rule, assetId, ctx, assetRegionTags: regionSnapshot(tags) });
       }
+      // Almost every event alert is chart-blind, and rightly so: nothing fired
+      // as a metric, so metric/dimension stay null and the email's charts fall
+      // through to the device's own story. A few change events ARE about one
+      // sub-asset and know which — an SD-WAN failover names the service rule
+      // and the member it left — and for those the columns are stamped so the
+      // delivery-time charts can resolve the path (alertChartService). Null for
+      // everything else, which leaves those alerts exactly as they were.
+      const chartKeys = chartKeysForChangeEvent(ev.action, ev.details);
       toCreate.push({
         ...(id ? { id } : {}),
         ruleId: c.rule.id,
@@ -3218,6 +3226,7 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
         severity: c.rule.severity,
         message,
         regionTags: regionSnapshot(tags),
+        ...(chartKeys ? { metric: chartKeys.metric, dimension: chartKeys.dimension } : {}),
         ...(ruleWantsContext(c.rule) ? { templateCtx: ctx } : {}),
       });
     }
