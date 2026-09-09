@@ -176,6 +176,16 @@ POLARIS_STATE_DIR=
 # The Application Updates card surfaces the active repo + its source
 # (GET /server-settings/updates/repo). The deploy/update-{linux.sh,windows.ps1}
 # fallback scripts read the same var and repoint origin in lockstep.
+#
+# Charset-restricted to [A-Za-z0-9._~:/@+-] (isSafeRepoUrl in updateService).
+# Anything else is IGNORED in favour of the existing origin, with an error
+# logged naming the value. The in-app updater interpolates this into a SHELL
+# command, and $(...) / backticks expand inside the double quotes it lands in,
+# so the quoting that looks like it handles this does not. The two fallback
+# SCRIPTS are unaffected either way — bash "$ENV_REPO" and PowerShell
+# $UpdateRepo pass already-expanded data as one argument, never a string the
+# shell re-parses. That difference is the whole reason only the Node path
+# needed a guard.
 POLARIS_UPDATE_REPO=
 
 # PEM bundle of extra CAs Node should trust, for networks that re-sign HTTPS
