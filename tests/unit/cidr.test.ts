@@ -25,6 +25,8 @@ import {
   isRfc1918Cidr,
   normalizeAllowlistCidr,
   buildCidrMatcher,
+  bareInterfaceIp,
+  interfaceIpIsUnaddressed,
 } from "../../src/utils/cidr.js";
 
 describe("normalizeCidr", () => {
@@ -442,5 +444,34 @@ describe("compareIpv4", () => {
     const sorted = ["fe80::1", "10.0.0.1", "not-an-ip"].sort(compareIpv4);
     expect(sorted[0]).toBe("10.0.0.1");
     expect(sorted.slice(1).sort()).toEqual(["fe80::1", "not-an-ip"]);
+  });
+});
+
+describe("bareInterfaceIp / interfaceIpIsUnaddressed", () => {
+  it("takes the address out of every shape a transport reports it in", () => {
+    // SNMP ipAddrTable / FortiOS monitor: bare. FortiOS CMDB: address + mask.
+    // An agent may report a prefix. All three name the same interface address.
+    expect(bareInterfaceIp("10.4.1.1")).toBe("10.4.1.1");
+    expect(bareInterfaceIp("10.4.1.1 255.255.255.0")).toBe("10.4.1.1");
+    expect(bareInterfaceIp("10.4.1.1/24")).toBe("10.4.1.1");
+    expect(bareInterfaceIp("  10.4.1.1  ")).toBe("10.4.1.1");
+  });
+
+  it("is the empty string for no address at all", () => {
+    expect(bareInterfaceIp(null)).toBe("");
+    expect(bareInterfaceIp(undefined)).toBe("");
+    expect(bareInterfaceIp("   ")).toBe("");
+  });
+
+  it("calls 0.0.0.0 unaddressed in every shape, and a real address addressed", () => {
+    // The whole point: an operator's `!= 0.0.0.0` automation and the
+    // auto-monitor dead-parent check must agree about the mask-carrying form.
+    expect(interfaceIpIsUnaddressed("0.0.0.0")).toBe(true);
+    expect(interfaceIpIsUnaddressed("0.0.0.0 0.0.0.0")).toBe(true);
+    expect(interfaceIpIsUnaddressed("0.0.0.0/0")).toBe(true);
+    expect(interfaceIpIsUnaddressed(null)).toBe(true);
+    expect(interfaceIpIsUnaddressed("")).toBe(true);
+    expect(interfaceIpIsUnaddressed("10.4.1.1")).toBe(false);
+    expect(interfaceIpIsUnaddressed("10.4.1.1 255.255.255.0")).toBe(false);
   });
 });

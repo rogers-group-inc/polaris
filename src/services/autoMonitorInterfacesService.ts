@@ -55,6 +55,7 @@ import { prisma } from "../db.js";
 import { normalizeFortiapInterfaceName } from "../utils/fortiapInterfaceAlias.js";
 import { readFirewallDeviceName } from "../utils/fortinetParentKey.js";
 import { compilePattern } from "../utils/wildcard.js";
+import { interfaceIpIsUnaddressed } from "../utils/cidr.js";
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -305,12 +306,13 @@ export interface TunnelObservation {
  * True when a sampled interface IP gives no evidence of a usable address:
  * never sampled (null), empty, or the FortiOS "unaddressed" placeholder
  * 0.0.0.0 (with or without a trailing mask, e.g. "0.0.0.0 0.0.0.0").
+ *
+ * The address-shape parsing lives in `utils/cidr.ts` with the rest of the IP
+ * math, shared with the `ifIpAddress` automation reading — an operator's
+ * `!= 0.0.0.0` rule and this dead-parent check must agree on what counts as
+ * unaddressed, or the same interface reads dead to one and alive to the other.
  */
-function hasNoUsableIp(ip: string | null | undefined): boolean {
-  if (ip == null) return true;
-  const first = ip.trim().split(/[\s/]/)[0];
-  return first === "" || first === "0.0.0.0";
-}
+const hasNoUsableIp = interfaceIpIsUnaddressed;
 
 /**
  * Append IPsec tunnels to each asset's interface list as synthetic
