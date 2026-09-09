@@ -5,7 +5,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
@@ -405,7 +405,21 @@ router.post("/finalize", setupActionLimiter, async (req, res) => {
     ].join("\n");
 
     mkdirSync(dirname(ENV_FILE), { recursive: true });
-    writeFileSync(ENV_FILE, envContent, "utf-8");
+    // 0600, not the umask default. This file is the install's whole secret
+    // store in one place — SESSION_SECRET, POLARIS_SECRET_KEY (which decrypts
+    // every credential in the database), HEALTH_TOKEN, METRICS_TOKEN, and the
+    // Postgres password inside DATABASE_URL — and at the usual 0644 every
+    // local account on the host could read it.
+    writeFileSync(ENV_FILE, envContent, { encoding: "utf-8", mode: 0o600 });
+    // `mode` on writeFileSync only applies when it CREATES the file, so an
+    // .env left behind by an earlier attempt would keep its old permissions.
+    // Best-effort: on Windows this is a near-no-op (ACLs, not mode bits), and
+    // a failure here must not abort a finalize that has already written.
+    try {
+      chmodSync(ENV_FILE, 0o600);
+    } catch (err) {
+      console.warn(`[setup] could not restrict permissions on ${ENV_FILE}:`, (err as Error).message);
+    }
 
     // Step 3: Set DATABASE_URL in current process so Prisma can use it.
     // Also stamp the auto-generated bearer tokens so the gates take effect

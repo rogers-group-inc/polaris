@@ -119,3 +119,63 @@ func TestOutputCap(t *testing.T) {
 		t.Fatalf("stdout exceeds cap: %d bytes", len(res.Stdout))
 	}
 }
+
+// cmdCommandLine is the escaping for the ONE interpreter with no argv:
+// `cmd /c` re-parses its raw command line. Args reach the agent from the
+// server's rendered argsTemplate, so the text below can come from a device's
+// own hostname. Mirrors buildCmdCommandLine in automationScriptRunner.ts.
+func TestCmdCommandLineEscapesMetacharacters(t *testing.T) {
+	const s = `C:\state\run.cmd`
+	cases := []struct{ in, want string }{
+		{"", `/d /s /c ""` + s + `""`},
+		{"hello", `/d /s /c ""` + s + `" "hello""`},
+		{"a & b", `/d /s /c ""` + s + `" "a ^& b""`},
+		{"a | b", `/d /s /c ""` + s + `" "a ^| b""`},
+		{"a > b", `/d /s /c ""` + s + `" "a ^> b""`},
+		{"a ( b )", `/d /s /c ""` + s + `" "a ^( b ^)""`},
+		{"a ^ b", `/d /s /c ""` + s + `" "a ^^ b""`},
+		// Ordinary operator input must survive byte-for-byte.
+		{"AP-1234.example.local", `/d /s /c ""` + s + `" "AP-1234.example.local""`},
+	}
+	for _, c := range cases {
+		got, err := cmdCommandLine(s, c.in)
+		if err != nil {
+			t.Fatalf("cmdCommandLine(%q) errored: %v", c.in, err)
+		}
+		if got != c.want {
+			t.Errorf("cmdCommandLine(%q)\n got %q\nwant %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestCmdCommandLineRefusesUnrepresentable(t *testing.T) {
+	// cmd has no in-quote escape for a quote, expands % and ! at parse time,
+	// and treats control characters as line/file enders. Refuse, never mangle.
+	bad := []string{`x" & rem `, "x %USERNAME%", "x !DELAYED!", "x\r\ny", "x\x1ay", string([]byte{'x', 0, 'y'})}
+	for _, b := range bad {
+		if _, err := cmdCommandLine(`C:\state\run.cmd`, b); err == nil {
+			t.Errorf("cmdCommandLine(%q) should have been refused", b)
+		}
+	}
+}
+
+// The end-to-end proof, on a real cmd.exe: a crafted arg must arrive as one
+// literal argument and must not run a second command.
+func TestRunCmdArgInjection(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("cmd interpreter is Windows-only")
+	}
+	p := shellPayload(t, "@echo ARG=[%~1]", `echo "arg=$1"`, 10, "safe ( a ) & echo INJECTED | echo NOPE")
+	res := Run(p)
+	if res.Status != "succeeded" {
+		t.Fatalf("expected success, got %+v", res)
+	}
+	if !strings.Contains(res.Stdout, "ARG=[safe ( a ) & echo INJECTED | echo NOPE]") {
+		t.Fatalf("arg was not delivered verbatim: %q", res.Stdout)
+	}
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "ARG=") {
+			t.Fatalf("a second command ran: %q", line)
+		}
+	}
+}

@@ -257,18 +257,27 @@ move is a project, not a dependency bump, so they are listed here and ignored in
 - **the Prisma family** — `prisma`, `@prisma/client` and `@prisma/adapter-pg` are **one
   version** and must move together. Driver-adapter setup, and the generated client is
   gitignored so every checkout regenerates via `postinstall`.
-- **zod 3**, **typescript 6**, **eslint 9** + `typescript-eslint 8`, **vitest 4** +
+- **zod 3**, **typescript 6**, **eslint 10** + `typescript-eslint 8`, **vitest 4** +
   `@vitest/coverage-v8` (versions must match), **pg 8**, **pg-boss 12**, **pino 10**,
   **undici 6**, **multer 2**, **happy-dom 20**.
+  - eslint went 9 → 10 in 2026-09 as the fix for a `js-yaml` advisory: eslint 10 drops
+    `@eslint/eslintrc`, which was the only thing pulling it, so the vulnerable package left
+    the tree rather than being bumped. Clean on this codebase (0 errors).
+  - **TypeScript 6 → 7 was deliberately declined in the same pass.** Dependabot bundles it
+    into the `typescript-toolchain` group with the eslint bump, which makes a compiler major
+    look like a lint bump. Take eslint and `typescript-eslint` from that PR and leave
+    `typescript` behind; TS 7 is a project of its own.
 - **the vendored frontend set** — Leaflet, leaflet.markercluster, leaflet-draw, Cytoscape,
   dagre, html-to-image. These ship as files under `public/`, so a bump is a file copy, not an
   npm operation. See `polaris-ui-canon` → tech-stack-frontend.md.
 
 ## The overrides block
 
-`package.json` carries five `overrides` entries — `@hono/node-server`, `qs`, `fflate`,
+`package.json` carries five `overrides` entries — `dompurify`, `qs`, `fflate`,
 `@xmldom/xmldom`, `fast-uri` — each a hand-placed floor patching a reachable transitive
-advisory. Dependabot does not know the block exists. A parent bump can make an override
+advisory. (`@hono/node-server` was removed in 2026-09: Prisma 7.10 stopped shipping the Hono
+dev server, so zero paths to it remained and the floor was protecting nothing. That is the
+"redundant" case below, and the reason to re-check the block on every Prisma bump.) Dependabot does not know the block exists. A parent bump can make an override
 redundant (harmless but misleading) or insufficient (a real hole). Re-verify with
 `npm ls <pkg>` before deleting one, and never `npm audit fix --force`. Details:
 [dependency-audit.md](dependency-audit.md).

@@ -260,6 +260,45 @@ export function isAdminEquivalentPermissions(perms: Record<string, AccessLevel>)
   return perms.users === "fullwrite" && perms.roles === "fullwrite";
 }
 
+/**
+ * True when the CALLER's own role is admin-equivalent. Reads the snapshot the
+ * request already carries (bearer token first, then session), so it is only
+ * meaningful after requirePermission / ensureRoleSnapshot has run.
+ */
+export function callerIsAdminEquivalent(req: Request): boolean {
+  const snap = req.roleSnapshot ?? req.session?.roleSnapshot;
+  if (!snap) return false;
+  return isAdminEquivalentPermissions(normalizePermissions(snap.permissions));
+}
+
+/**
+ * Business rule 48 — nobody may hand out authority they do not hold.
+ *
+ * `users:write` and `roles:write` are both a rung BELOW admin-equivalent
+ * (users=fullwrite AND roles=fullwrite), and both used to be enough to
+ * manufacture an admin: `users:write` could create an account on an
+ * admin-equivalent role, or promote an existing one into it; `roles:write`
+ * could simply add the two fullwrite grants to a role the holder already had.
+ * Either route turned a delegated permission into full control of the install,
+ * so the write/fullwrite distinction on those two keys meant nothing.
+ *
+ * The existing lastAdminEquivalent guard is the mirror of this one and does
+ * not overlap: it stops the last admin being DEMOTED, this stops a non-admin
+ * PROMOTING. Both must stay.
+ *
+ * Callers that already hold admin-equivalence are unaffected — this is not a
+ * four-eyes rule, only a no-escalation one.
+ */
+export function assertNoPrivilegeEscalation(req: Request, targetPermissions: unknown, subject: string): void {
+  if (!isAdminEquivalentPermissions(normalizePermissions(targetPermissions))) return;
+  if (callerIsAdminEquivalent(req)) return;
+  throw new AppError(
+    403,
+    `Forbidden — ${subject} carries admin-equivalent control (Full RW on both users and roles), `
+    + "which your own role does not hold. Ask an administrator to make this change.",
+  );
+}
+
 /** Numeric privilege rank for a permissions matrix. Higher = more privilege. */
 export function rankRole(permissions: unknown): number {
   const perms = normalizePermissions(permissions);
