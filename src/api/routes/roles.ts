@@ -17,6 +17,7 @@ import {
   FUNCTION_KEYS,
   ACCESS_LEVELS,
   requirePermission,
+  assertNoPrivilegeEscalation,
 } from "../middleware/permissions.js";
 
 const router = Router();
@@ -74,6 +75,8 @@ router.get("/:id", requirePermission("roles", "read"), async (req, res, next) =>
 router.post("/", requirePermission("roles", "write"), async (req, res, next) => {
   try {
     const input = CreateRoleSchema.parse(req.body);
+    // Rule 47: roles:write must not be able to mint an admin-equivalent role.
+    assertNoPrivilegeEscalation(req, input.permissions, `the role "${input.name}"`);
     const created = await roleService.createRole(
       {
         name:        input.name,
@@ -91,6 +94,11 @@ router.post("/", requirePermission("roles", "write"), async (req, res, next) => 
 router.put("/:id", requirePermission("roles", "write"), async (req, res, next) => {
   try {
     const input = UpdateRoleSchema.parse(req.body);
+    // Rule 47: nor to promote an existing role — including the caller's own —
+    // into one. A partial update that leaves `permissions` alone is untouched.
+    if (input.permissions !== undefined) {
+      assertNoPrivilegeEscalation(req, input.permissions, "this permission set");
+    }
     const updated = await roleService.updateRole(
       req.params.id as string,
       {

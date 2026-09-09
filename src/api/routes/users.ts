@@ -23,7 +23,7 @@ import {
   countAdminEquivalentUsers,
   isAdminEquivalentRole,
 } from "../../services/roleService.js";
-import { requirePermission } from "../middleware/permissions.js";
+import { requirePermission, assertNoPrivilegeEscalation } from "../middleware/permissions.js";
 import { normalizeTags } from "../../utils/tagNormalize.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import { logEvent } from "./events.js";
@@ -161,6 +161,10 @@ router.post("/", requirePermission("users", "write"), async (req, res, next) => 
     ]);
     if (existing) throw new AppError(409, `User "${username}" already exists`);
     if (!role) throw new AppError(400, `Role ${roleId} not found`);
+    // Rule 47: creating an account on an admin-equivalent role — with a
+    // password the creator chooses — is the shortest path from users:write to
+    // full control of the install.
+    assertNoPrivilegeEscalation(req, role.permissions, `the role "${role.name}"`);
 
     const passwordHash = await hashPassword(password);
     const user = await prisma.user.create({
@@ -237,6 +241,11 @@ router.put("/:id/role", requirePermission("users", "write"), async (req, res, ne
     if (req.session?.userId === user.id) {
       throw new AppError(400, "You cannot change your own role");
     }
+
+    // Rule 47: the self-check above is not an escalation guard — it only stops
+    // you editing your OWN row. Promoting somebody else into an
+    // admin-equivalent role is the same escalation by one extra step.
+    assertNoPrivilegeEscalation(req, role.permissions, `the role "${role.name}"`);
 
     // lastAdminEquivalent invariant: refuse to move the last admin-equiv
     // user into a non-admin-equiv role.

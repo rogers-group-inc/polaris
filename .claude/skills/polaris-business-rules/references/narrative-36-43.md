@@ -520,3 +520,35 @@ The original reasoning for `scoped: false` was sound as far as it went: an audit
 ### Cost at fleet scale
 
 The scope test is in memory against the row the tail already primed for the alert text (`primeAssetDetailCache` — one `findMany` for the whole batch, added when a site-wide outage was serializing one point read per asset). "Does this scope constrain anything" is computed once per rule when the matchers compile, not once per event, so a 1000-event batch does not re-walk the same scope object a thousand times. Relation-backed filter leaves — interface name, SSID, FortiGate sighting — resolve through `decorateRelationLeafHits`, one query per distinct leaf for the whole batch and no query at all when no filter asks for one, the same contract the threshold path and `downDetectionService` use. The one new column on the primed select is `discoveredByIntegrationId`, which `scopeMatchesAsset` needs and the template fields did not already cover.
+
+---
+
+## Rule 47 — Nobody hands out authority they do not hold
+
+**The invariant.** Admin-equivalence is `users=fullwrite AND roles=fullwrite`. A caller who does not hold it may not create it — not on a role, not on a user. `assertNoPrivilegeEscalation` refuses with a 403 at `POST /roles`, `PUT /roles/:id`, `POST /users` and `PUT /users/:id/role` whenever the target permission set is admin-equivalent and the caller's own is not.
+
+### How it was found
+
+Aikido's AI pentest reported it twice from two directions — "Users write permission allows arbitrary assignment of an admin-equivalent role" (sev 86) and "Users with `roles=write` can grant themselves admin-equivalent permissions" (sev 82) — which is the useful shape of the finding: they are one hole with two doors, and fixing either alone leaves the install exactly as open.
+
+### Why the existing guards did not cover it
+
+Three things looked like they were already guarding this, and none of them were.
+
+`requirePermission("users", "write")` gates the user routes, and `write` sits a rung below `fullwrite` — so the ladder *described* a lesser grant while the route behind it could mint the greater one. The whole point of rule 43's ladder narrowing is that a grant is only as narrow as the act it names, and here the act was "create an administrator".
+
+The **lastAdminEquivalent** guard reads like an admin-tier guard and is the one thing in the file that already called `isAdminEquivalentRole`. But it only fires when a user is moving *out* of the tier, and only to protect the last one: it is a guard against locking yourself out, not against letting yourself in. It has to stay, and it covers none of this.
+
+The **self-edit checks** — "You cannot delete your own account", "You cannot change your own role" — look like escalation guards and are the easiest of the three to over-trust. They only constrain the actor's own row, and the escalation does not go through it. With `users:write` the shortest path was `POST /users`: create a brand-new account on the Administrator role with a password of your choosing, then log in as it. No existing account is touched, so no self-check is consulted, and the audit trail records an ordinary user creation.
+
+### Why the predicate is shared rather than re-stated
+
+`isAdminEquivalentPermissions` already existed in `permissions.ts`, where it ranks roles for the group-mapping "highest privilege wins" tie-break, and `roleService.isAdminEquivalentRole` is the same test against a stored row. Adding a third spelling of "users and roles at Full RW" would have meant that the answer to *which role wins an SSO mapping* and the answer to *who may grant that role* could drift apart, and a drift in that direction is silent. So the caller-side check reuses the same function, and the difference between the two is only where the permissions come from — a stored `Role` for the target, the request's role snapshot for the caller.
+
+### The snapshot, and failing closed
+
+The caller's level is read from `req.roleSnapshot` first and `req.session.roleSnapshot` second — the same order `hasPermission` uses — so a role-bound bearer token is held to the same bar as a browser session rather than sliding past a session-only check. A request that has resolved no snapshot at all is treated as **not** admin-equivalent. That is the direction to fail in: the cost of failing closed is a 403 an administrator can explain, and the cost of failing open is the entire finding, reintroduced by any future path that reaches these handlers without `requirePermission` having run.
+
+### What it deliberately does not do
+
+It is not a four-eyes rule. An administrator granting administrator is the normal way an install gets its second admin, and blocking it would be a different (and much more disruptive) policy than the one the finding asks for. It also does not touch server-side provisioning: `ssoProvisioning` maps an IdP group onto a role with no human actor in the request to test, and the seed creates the first administrator before anyone exists to be escalated. Both are outside the rule by construction, not by exemption.
