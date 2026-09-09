@@ -81,7 +81,20 @@ shadowed the alternatives entry (`/usr/local/bin` precedes `/usr/bin`) and kept 
 old client after a side-by-side major upgrade. A silent wrong-version bug in the backup path,
 found in about ten minutes, on a machine with no RHEL host.
 
-**What it still cannot tell you:** SELinux behaviour, firewalld, the nginx front end, real disk
+**A RHEL DVD ISO answers packaging questions outright**, without a VM and without a container.
+Mount it read-only (`Mount-DiskImage` on Windows) and read `AppStream/Packages/` and
+`AppStream/repodata/*-modules.yaml.gz`. That is how the PG-13 finding was established: the
+`postgresql` module's defaults document lists profiles for 15 and 16 but declares **no default
+stream**, and the non-modular default on the 9.5 media is `postgresql-server-13.16-1.el9` — so
+`dnf install postgresql-server` with no module enabled got PostgreSQL 13. No `postgresql15-*`
+package exists on the media at all, which settles why AppStream cannot satisfy
+`timescaledb-2-postgresql-15`. Dismount when done.
+
+Use it for: which package names exist, which are modular vs not, what a module's default stream
+is, and which version a bare `dnf install <pkg>` would land on. All of those are claims that get
+guessed at otherwise.
+
+**What none of this can tell you:** SELinux behaviour, firewalld, the nginx front end, real disk
 layout, or anything about an upgrade of an existing host. A scratch VM is still the only way to
 sign off a full fresh install.
 

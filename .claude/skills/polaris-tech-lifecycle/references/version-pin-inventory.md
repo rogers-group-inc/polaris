@@ -99,15 +99,26 @@ Currently **15** across 12 checked sites.
 | `docs/INSTALL.md` | `timescaledb-2-postgresql-15`, `/usr/pgsql-15/bin/`, `postgresql15-server` | pin |
 | `README.md`, `CONTRIBUTING.md`, `CLAUDE.md` | "PostgreSQL 15+", `postgres:15` | prose |
 
-**RESOLVED 2026-09-09 — the RHEL install path used not to satisfy its own units.**
-`deploy/setup-rhel.sh` installed `postgresql-server postgresql` from AppStream and ran
-`postgresql-setup --initdb`, which yields an unversioned `postgresql.service` — while the units
-the same script goes on to install declare `Requires=postgresql-15.service`. It could not
-satisfy itself, and `docs/INSTALL.md` had documented the PGDG path all along, noting that
-AppStream's package names also cannot satisfy `timescaledb-2-postgresql-15`. The script now
-follows the documented path: PGDG repo, `dnf -qy module disable postgresql`, the
-`postgresql15*` packages, `/usr/pgsql-15/bin/postgresql-15-setup initdb`, and the
-`postgresql-15` service.
+**RESOLVED 2026-09-09 — and the bug was bigger than "the service name was wrong".**
+`deploy/setup-rhel.sh` ran `dnf install -y postgresql-server postgresql` with no module
+enabled, then `postgresql-setup --initdb`. Checked against the **RHEL 9.5 DVD** rather than
+assumed:
+
+- the AppStream `postgresql` module declares **no default stream** — its defaults document
+  lists profiles for 15 and 16 and nothing else — so the modular packages stay hidden until a
+  stream is explicitly enabled;
+- the non-modular default in AppStream is **`postgresql-server-13.16-1.el9`**;
+- **no `postgresql15-*` package exists anywhere on the media**, which is why AppStream can
+  never satisfy `timescaledb-2-postgresql-15`.
+
+So a fresh RHEL install got **PostgreSQL 13** — two majors below the 15 Polaris states as its
+minimum, TimescaleDB-incapable, and producing an unversioned `postgresql.service` while the
+units the same script installs declare `Requires=postgresql-15.service`. It could not satisfy
+its own units *and* it was installing the wrong major. `docs/INSTALL.md` had documented the
+PGDG path all along.
+
+The script now follows it: PGDG repo, `dnf -qy module disable postgresql`, the `postgresql15*`
+packages, `/usr/pgsql-15/bin/postgresql-15-setup initdb`, and the `postgresql-15` service.
 
 **The non-obvious part of that move, and a wrong turn worth not repeating.** Polaris spawns
 `psql` and `pg_dump` by BARE NAME for backup and restore (`src/services/backupService.ts`), so

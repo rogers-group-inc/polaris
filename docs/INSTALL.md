@@ -311,6 +311,13 @@ If you can't grow `/var`, the alternative is to relocate PGDATA to `/opt` (which
 
 If you already have a working Polaris install on AppStream Postgres and want to switch to PGDG (typically because you want TimescaleDB), the migration is a dump → install PGDG → restore cycle. Plan ~15-30 min of downtime; the dump itself is the bottleneck and scales with your fleet's data volume.
 
+> **Check which major you are actually on first — `psql --version`.** RHEL 9's AppStream
+> `postgresql` module sets no default stream, so its non-modular default is **PostgreSQL 13**.
+> Installs made by `deploy/setup-rhel.sh` before 2026-09-09 took that path and are on 13, not
+> 15 — below the minimum in *Supported platform versions*, and one reason to do this migration
+> rather than leave it. The dump → restore below handles 13 → 15 fine (forwards is supported;
+> the reverse is not), so nothing extra is needed, but know what you are starting from.
+
 ```bash
 # 1. Dump the existing database (run as postgres OS user — peer auth)
 sudo systemctl stop polaris

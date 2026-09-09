@@ -197,15 +197,24 @@ fi
 # ─── 2. Install PostgreSQL 15 (PGDG, not AppStream) ─────────────────────────
 # PGDG rather than RHEL's AppStream module, and the reason is load-bearing
 # rather than preference: the TimescaleDB package requires `postgresql15-server`,
-# a PGDG package name. AppStream's postgresql:15 module ships
-# `postgresql-server` instead and cannot satisfy it, so an AppStream install can
-# never gain the extension that every sample table in Polaris wants.
+# a PGDG package name. AppStream has no package by that name at all, so an
+# AppStream install can never gain the extension every sample table wants.
 #
-# This block used to install AppStream's `postgresql-server` and run
-# `postgresql-setup --initdb`, which produces an unversioned
-# `postgresql.service` -- while the units this same script goes on to install
-# declare `Requires=postgresql-15.service`. The install could not satisfy its
-# own units, and docs/INSTALL.md documented the PGDG path all along.
+# What this block used to do was worse than it looked. It ran
+# `dnf install -y postgresql-server postgresql` with no module enabled, then
+# `postgresql-setup --initdb`. Verified against the RHEL 9.5 DVD:
+#
+#   * the AppStream `postgresql` module declares NO default stream (its defaults
+#     document lists profiles for 15 and 16 and nothing else), so the modular
+#     packages stay hidden until a stream is explicitly enabled;
+#   * the non-modular default in AppStream is `postgresql-server-13.16-1.el9`.
+#
+# So a fresh install got **PostgreSQL 13** -- two majors below the 15 Polaris
+# states as its minimum, incapable of TimescaleDB, and producing an unversioned
+# `postgresql.service` while the units this same script installs declare
+# `Requires=postgresql-15.service`. It could not satisfy its own units and it
+# was not even installing the right major. docs/INSTALL.md documented the PGDG
+# path all along.
 PG_MAJOR=15
 PG_SERVICE="postgresql-${PG_MAJOR}"
 PG_BINDIR="/usr/pgsql-${PG_MAJOR}/bin"
