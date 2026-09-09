@@ -1,0 +1,24 @@
+[Unit]
+Description=Polaris HA — reconcile the app with this node's PostgreSQL role
+Documentation=https://github.com/rogers-group-inc/polaris
+# Patroni must be up before the role question can be answered at all; when it
+# is not, `reconcile` logs "unknown" and deliberately does nothing.
+After=network-online.target patroni.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Idempotent by construction: start the group where PostgreSQL is primary, stop
+# it and pull file state where it is a replica, do nothing when Patroni cannot
+# be reached. Safe to run as often as you like.
+ExecStart=/usr/local/sbin/polaris-ha-role reconcile
+# The sync pass copies the whole application tree over a WAN link on a freshly
+# built standby; give it room but never let it wedge forever.
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=polaris-ha
+
+# No [Install] section on purpose: this unit is started by
+# polaris-ha-role.timer and by Patroni's callbacks, never enabled on its own.
+# Enable the TIMER, not the service.

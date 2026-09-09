@@ -342,6 +342,18 @@ const jobTotal = new Counter({
 // `increase(polaris_process_crash_total[1h])` across a role's instances turns
 // an invisible systemd Restart=on-failure loop into a graph.
 
+// Active-instance heartbeat conflict (active/standby HA, docs/HA.md).
+// Incremented when a booting web role finds a FRESH heartbeat written by a
+// different hostname — i.e. two hosts believe they are the active instance
+// against one database. The process then refuses to start, so like the crash
+// counter above the operational signal is the increase(), not the value.
+const haActiveInstanceConflictTotal = new Counter({
+  name: "polaris_ha_active_instance_conflict_total",
+  help: "Boots refused because another hostname held a fresh active-instance heartbeat on the same database. Any non-zero increase() means two app instances were pointed at one database — see docs/HA.md.",
+  labelNames: ["holder"] as const,
+  registers: [registry],
+});
+
 const processCrashTotal = new Counter({
   name: "polaris_process_crash_total",
   help: "Process terminations caused by an unhandled promise rejection or uncaught exception, labelled by role and kind. Scraped as 0 in a healthy process; a non-zero increase() over time means a role is crash-looping.",
@@ -621,6 +633,10 @@ export function recordJobOutcome(job: string, outcome: JobOutcome): void {
 }
 
 export type CrashKind = "unhandled_rejection" | "uncaught_exception";
+
+export function recordActiveInstanceConflict(holder: string): void {
+  haActiveInstanceConflictTotal.inc({ holder });
+}
 
 export function recordProcessCrash(role: string, kind: CrashKind): void {
   processCrashTotal.inc({ role, kind });

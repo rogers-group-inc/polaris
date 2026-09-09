@@ -1,0 +1,14 @@
+# Polaris HA — narrow sudo grant for Patroni's role-change callbacks.
+#
+# Patroni runs as the postgres user; the reconciler that starts and stops
+# polaris.target must run as root. Rather than granting postgres anything
+# resembling general privilege, it may run exactly one subcommand of one
+# script: `trigger`, which does nothing but `systemctl start --no-block
+# polaris-ha-role.service`.
+#
+# Every decision about what to start or stop is then made by the root-run
+# reconciler from Patroni's own REST API — the postgres user cannot influence
+# it by passing arguments, because there are none to pass.
+#
+# Same posture as deploy/sudoers.d/polaris-nginx: one command, no wildcards.
+postgres ALL=(root) NOPASSWD: /usr/local/sbin/polaris-ha-role trigger

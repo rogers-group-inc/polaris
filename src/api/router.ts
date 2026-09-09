@@ -46,6 +46,7 @@ import tableTabsRouter from "./routes/tableTabs.js";
 import notificationPreferenceRouter from "./routes/notificationPreference.js";
 import userTimezoneRouter from "./routes/userTimezone.js";
 import { agentsEnrollRouter, agentsRouter, agentsBinaryRouter } from "./routes/agents.js";
+import { haRouter, haEnrollRouter } from "./routes/ha.js";
 import rolesRouter from "./routes/roles.js";
 import groupMappingsRouter from "./routes/groupMappings.js";
 import { requireAuth, attachApiToken } from "./middleware/auth.js";
@@ -110,11 +111,25 @@ router.use("/agents/binary", agentsBinaryRouter);
 router.use("/agents/enroll", agentsEnrollRouter);
 router.use("/agents", agentsRouter);
 
+// HA node enrollment — a node being built has no session and no bearer;
+// it presents a single-use token in the body, exactly like /agents/enroll,
+// so it mounts here above requireAuth. Redeeming the token only registers
+// a PENDING request: an operator has to approve the node in the UI before
+// any bundle is released, so this surface cannot hand out secrets on its
+// own. The gated half of the feature is mounted after requireAuth below.
+router.use("/ha/enroll", haEnrollRouter);
+
 // Everything below requires an active session OR a valid bearer token.
 // Both caller kinds pass the same requirePermission(...) gates: sessions
 // resolve their login-stamped role snapshot, tokens resolve the Role they
 // were bound to at mint time. A token reaches exactly what its role grants.
 router.use(requireAuth);
+// HA operator surface. Gates are per-route inside the file: reads at
+// serverSettingsSystem=read, and anything that mints a token, approves a
+// node or changes the cluster at fullwrite — those hand over the keys to
+// the install. Mounted before /server-settings so "ha" is never captured
+// as a settings sub-path.
+router.use("/ha", haRouter);
 router.use("/blocks", blocksRouter);
 router.use("/subnets", subnetsRouter);
 router.use("/allocation-templates", allocationTemplatesRouter);

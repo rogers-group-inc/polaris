@@ -2763,6 +2763,126 @@
       ],
       "title": "Process crashes (24h)",
       "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 171
+      },
+      "id": 117,
+      "panels": [],
+      "title": "Active-instance guard (active/standby HA)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Boots REFUSED because a different hostname held a fresh (younger than 90s) active-instance heartbeat on the same database — two app instances pointed at one database, which double-polls every device and duplicates every alert. `holder` is the hostname that owned the stamp. Read a bar as the guard working: the second instance was stopped, not admitted. The refusing process exits immediately, so a scrape can miss the increment altogether — a non-zero increase() is definitive, the absence of one is inconclusive, and the durable record is the fatal log line plus the Event. Steady state is a flat zero; a bar means someone pointed a second app host at this database, so find out which and why (see docs/HA.md, and note POLARIS_HA_HEARTBEAT=off disables the guard entirely).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 172
+      },
+      "id": 118,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (holder) (increase(polaris_ha_active_instance_conflict_total[1h]))",
+          "legendFormat": "held by {{holder}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Refused boots by heartbeat holder (1h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Total boots refused by the active-instance heartbeat in the last 24h. Should be 0. Anything above 0 means a second app instance tried to come up against this database and was stopped — the guard held, but the topology is wrong until you know which host it was. See docs/HA.md.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 172
+      },
+      "id": 119,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(polaris_ha_active_instance_conflict_total[24h]))",
+          "legendFormat": "refused boots",
+          "refId": "A"
+        }
+      ],
+      "title": "Refused boots (24h)",
+      "type": "stat"
     }
   ],
   "refresh": "30s",

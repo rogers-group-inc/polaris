@@ -6,7 +6,8 @@
  * here and adapts the result to its ProbeResult shape.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 
 export interface IcmpPingResult {
   success: boolean;
@@ -20,7 +21,18 @@ export async function pingHost(host: string, timeoutMs: number): Promise<IcmpPin
     const args = isWindows
       ? ["-n", "1", "-w", String(timeoutMs), host]
       : ["-c", "1", "-W", String(Math.ceil(timeoutMs / 1000)), host];
-    const child = spawn("ping", args, { stdio: ["ignore", "pipe", "pipe"] });
+    // A synchronous spawn throw is the same failure as the "error" event: on
+    // Debian `ping` is cap_net_raw=ep, so a process without CAP_NET_RAW cannot
+    // execve it and Node throws EPERM from the spawn call. Report it the way an
+    // async spawn error is reported rather than letting it escape this executor
+    // and reject the promise. See burstPing.detectFping for the full story.
+    let child: ChildProcess;
+    try {
+      child = spawn("ping", args, { stdio: ["ignore", "pipe", "pipe"] });
+    } catch (err) {
+      resolve({ success: false, error: (err as Error).message });
+      return;
+    }
     let resolved = false;
     const timer = setTimeout(() => {
       if (resolved) return;
@@ -134,7 +146,16 @@ export async function burstPingHost(
   const paceMs = isWindows ? 1000 : Math.max(200, intervalMs);
   const hardLimitMs = count * paceMs + timeoutMs + 3_000;
   return await new Promise<BurstPingResult>((resolve) => {
-    const child = spawn("ping", args, { stdio: ["ignore", "pipe", "pipe"] });
+    // Synchronous spawn failure means we never reached the network, exactly as
+    // the "error" event below: nothing sent, so the caller drops the host from
+    // the ratio instead of inventing 100% loss for every asset at once.
+    let child: ChildProcessByStdio<null, Readable, Readable>;
+    try {
+      child = spawn("ping", args, { stdio: ["ignore", "pipe", "pipe"] });
+    } catch {
+      resolve({ sent: 0, received: 0, avgRttMs: null });
+      return;
+    }
     let out = "";
     let done = false;
     const finish = (r: BurstPingResult): void => {

@@ -1,0 +1,204 @@
+# deploy/ha/patroni.yml.example — rendered to /etc/patroni/patroni.yml (0600, postgres:postgres)
+#
+# Placeholders are substituted by deploy/ha/setup-rhel-ha.sh:
+#   {{NODE_NAME}}   this node's Patroni member name (e.g. polaris-a)
+#   {{THIS_ADDR}}   this node's cluster address (IP or FQDN reachable from the peers)
+#   {{PEER_ADDR}}   the other database node's cluster address
+#   {{WITNESS_ADDR}} the witness node's address (etcd only, no PostgreSQL)
+#   {{PG_BIN}}      e.g. /usr/pgsql-15/bin
+#   {{PGDATA}}      e.g. /var/lib/pgsql/15/data
+#   {{NOFAILOVER}}  true on the standby until the switchover rehearsal passes
+#   {{*_PASSWORD}}  generated once, kept in the HA config (sealed) and in your vault
+#   {{WAL_KEEP}}    max_slot_wal_keep_size, sized from the WAL measurement (docs/HA.md)
+#   {{MAX_CONNECTIONS}} and friends: COPIED FROM THE EXISTING PRIMARY, see below
+#
+# READ THIS BEFORE ADOPTING A RUNNING CLUSTER. Patroni takes ownership of
+# postgresql.conf (it renames the existing file to postgresql.base.conf and
+# includes it) and REGENERATES pg_hba.conf from the `pg_hba` list below. Any
+# parameter Patroni manages that you do not set here silently reverts to
+# Patroni's default — a Capacity-Advisor-tuned max_connections would drop to
+# 100, and the app would lose its pg_hba entry. So before adoption, run on the
+# primary:
+#
+#   SELECT name, setting, source FROM pg_settings
+#    WHERE source NOT IN ('default','override') ORDER BY name;
+#   SHOW hba_file;   -- then copy its polaris lines into pg_hba below
+#
+# and carry both into this file. The setup script prints them for you.
+
+scope: polaris
+name: {{NODE_NAME}}
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: {{THIS_ADDR}}:8008
+  # GET endpoints stay open: the systemd ExecStartPre guard, the reconciler and
+  # the HA status card all read /primary and /cluster over loopback, and the
+  # firewall already limits 8008 to the peer nodes. Writes (switchover,
+  # restart, reinit) require these credentials.
+  authentication:
+    username: patroni
+    password: {{RESTAPI_PASSWORD}}
+
+etcd3:
+  hosts:
+    - {{THIS_ADDR}}:2379
+    - {{PEER_ADDR}}:2379
+    - {{WITNESS_ADDR}}:2379
+  # Mutual TLS on every etcd conversation. This is what makes it safe to put
+  # the witness on a public address (a cloud micro-VM, a VPS): the CA is ours
+  # alone, and client-cert auth means a reachable port is not an open door.
+  protocol: https
+  cacert: /etc/polaris/etcd-ca/ca.crt
+  cert: /etc/polaris/etcd-ca/{{NODE_NAME}}.crt
+  key: /etc/polaris/etcd-ca/{{NODE_NAME}}.key
+
+bootstrap:
+  dcs:
+    # ttl >= loop_wait + 2*retry_timeout. This is the split-brain timing
+    # invariant: a leader that cannot renew demotes ITSELF before the lease can
+    # expire, so the standby can never promote while the old primary is still
+    # writable. Do not shorten ttl without shortening the other two.
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    # Async replication across a WAN: never make a commit on the primary wait
+    # for the standby. The cost is an RPO equal to the replication lag.
+    synchronous_mode: false
+    # How far behind the standby may be and still be promoted automatically.
+    # Patroni's default is 1MB, which is far too tight here: Polaris writes
+    # sample hypertables continuously and TimescaleDB compression rewrites
+    # whole chunks, so the standby routinely sits further behind than that over
+    # a WAN link. At the default, a real primary failure would find the standby
+    # "too far behind" and refuse to promote, turning an automatic failover
+    # into a 3am phone call. Sized here to accept a bounded amount of WAL loss
+    # in exchange for the failover actually happening.
+    maximum_lag_on_failover: 268435456   # 256 MiB
+    # Keep the primary alive when etcd is unreachable but every Patroni member
+    # can still be reached over REST and confirms it will not promote. Covers
+    # "the DCS broke", not "the standby is gone" — see the witness placement
+    # matrix in docs/HA.md for the case this does NOT cover.
+    failsafe_mode: true
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      # After a failover the old primary usually holds a few WAL records the
+      # new one never saw. pg_rewind copies back only the diverged blocks
+      # instead of a full base backup. If it cannot (see the wal_log_hints note
+      # below) these two make the rejoin automatic rather than manual, at the
+      # cost of re-cloning.
+      remove_data_directory_on_rewind_failure: true
+      remove_data_directory_on_diverged_timelines: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        # REQUIRED for pg_rewind unless the cluster was initdb'd with data
+        # checksums. Check the existing cluster with:
+        #   pg_controldata {{PGDATA}} | grep -E 'checksum|wal_log_hints'
+        # Turning it on needs a PostgreSQL restart, which the adoption step
+        # performs anyway.
+        wal_log_hints: "on"
+        # Shrinks full-page images before they cross the WAN.
+        wal_compression: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        # Ceiling on WAL retained for a disconnected standby. Below the cap the
+        # standby catches up from retained deltas; above it, Patroni re-clones.
+        # Uncapped, a standby that is down for a weekend fills the primary's
+        # /var and takes production with it.
+        max_slot_wal_keep_size: {{WAL_KEEP}}
+        # Replication traffic is TLS; the app keeps talking to localhost.
+        ssl: "on"
+        ssl_cert_file: /etc/polaris/pg-tls/server.crt
+        ssl_key_file: /etc/polaris/pg-tls/server.key
+        # ── TimescaleDB ──────────────────────────────────────────────────────
+        # Declared here so BOTH nodes load the same library set by
+        # construction. The loaded .so must match the extension version in the
+        # catalogue, so pin the package with dnf versionlock on both nodes and
+        # upgrade them in lockstep (docs/HA.md).
+        shared_preload_libraries: timescaledb
+        timescaledb.max_background_workers: 8
+        # ── COPY FROM THE EXISTING PRIMARY ───────────────────────────────────
+        # These are the ones that bite. Replace every value with what
+        # pg_settings reported before adoption; the numbers below are only
+        # shaped like plausible answers.
+        max_connections: {{MAX_CONNECTIONS}}
+        shared_buffers: {{SHARED_BUFFERS}}
+        effective_cache_size: {{EFFECTIVE_CACHE_SIZE}}
+        work_mem: {{WORK_MEM}}
+        maintenance_work_mem: {{MAINTENANCE_WORK_MEM}}
+        max_worker_processes: {{MAX_WORKER_PROCESSES}}
+        max_locks_per_transaction: {{MAX_LOCKS_PER_TRANSACTION}}
+
+  # NO initdb / post_bootstrap section, deliberately.
+  #
+  # This cluster is ADOPTED, never created: the primary keeps the data
+  # directory it already had, and the standby is cloned from it by
+  # pg_basebackup. Without a bootstrap.initdb block, a node that somehow starts
+  # with an empty data directory and no reachable leader cannot quietly
+  # initialise a brand-new empty cluster and offer it up as the truth.
+
+postgresql:
+  listen: {{THIS_ADDR}},127.0.0.1:5432
+  connect_address: {{THIS_ADDR}}:5432
+  data_dir: {{PGDATA}}
+  bin_dir: {{PG_BIN}}
+  use_unix_socket: true
+  # pgpass is written by Patroni; it must be somewhere postgres can write.
+  pgpass: /var/lib/pgsql/.pgpass_patroni
+  authentication:
+    superuser:
+      username: postgres
+      password: {{SUPERUSER_PASSWORD}}
+    replication:
+      username: replicator
+      password: {{REPLICATOR_PASSWORD}}
+    rewind:
+      username: rewind_user
+      password: {{REWIND_PASSWORD}}
+  # Patroni REGENERATES pg_hba.conf from this list. The polaris lines must be
+  # here or the application loses database access at the next reload.
+  pg_hba:
+    - local   all             all                                     peer
+    - host    all             all             127.0.0.1/32            scram-sha-256
+    - host    all             all             ::1/128                 scram-sha-256
+    # The application: local socket + loopback only, exactly as the
+    # single-node install had it. DATABASE_URL stays localhost on both nodes,
+    # which is also why an app can never reach the other node's database.
+    - local   polaris         polaris                                 scram-sha-256
+    - host    polaris         polaris         127.0.0.1/32            scram-sha-256
+    - host    polaris         polaris         ::1/128                 scram-sha-256
+    # Streaming replication and pg_rewind, TLS-only, peer address only.
+    - hostssl replication     replicator      {{PEER_ADDR}}/32        scram-sha-256
+    - hostssl all             rewind_user     {{PEER_ADDR}}/32        scram-sha-256
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    checkpoint: fast
+    # Uncomment and size to protect the WAN link when cloning the standby:
+    # max-rate: 50M
+  callbacks:
+    # Make the application follow the database within seconds instead of
+    # waiting for the 60s reconcile timer. The script ignores the role argument
+    # Patroni passes and re-derives it from the REST API — the role vocabulary
+    # changed between Patroni 3.x and 4.x.
+    on_start: /usr/local/sbin/polaris-patroni-callback
+    on_stop: /usr/local/sbin/polaris-patroni-callback
+    on_role_change: /usr/local/sbin/polaris-patroni-callback
+
+tags:
+  noloadbalance: false
+  clonefrom: false
+  # Set true on the standby until the switchover rehearsal has passed
+  # (docs/HA.md phase 6). Removing this tag is the deliberate act that turns
+  # automatic failover on.
+  nofailover: {{NOFAILOVER}}
+
+# Fencing. With only two database nodes this is the one mechanism that covers a
+# frozen Patroni holding a valid lease and thawing after the standby promoted.
+# Requires the softdog module (setup script loads it) and a device the postgres
+# user can open. safety_margin keeps the watchdog reset ahead of lease expiry.
+watchdog:
+  mode: automatic
+  device: /dev/watchdog
+  safety_margin: 5

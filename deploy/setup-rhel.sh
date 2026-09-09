@@ -568,6 +568,21 @@ if ! id -nG "$APP_USER" 2>/dev/null | grep -qw nginx; then
   info "Added $APP_USER to the nginx group (cert file readability)"
 fi
 
+# The in-app updater restarts the whole process group, not just its own
+# process: the web role migrates the database, so monitor and discovery must
+# not keep running the previous release against the new schema. That group
+# restart needs a polkit grant for the polaris user. Without it the updater
+# quietly falls back to restarting only the web process, and the update looks
+# like it worked. Documented in docs/INSTALL.md since the split-role layout
+# shipped, and installed by no script until now.
+if [[ -f "$APP_DIR/deploy/polkit/49-polaris.rules" ]]; then
+  mkdir -p /etc/polkit-1/rules.d
+  install -o root -g root -m 0644 "$APP_DIR/deploy/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules
+  info "Installed the polkit rule for the in-app updater group restart"
+else
+  warn "deploy/polkit/49-polaris.rules not found — the in-app updater will only be able to restart the web role"
+fi
+
 # ─── 11. Firewall ───────────────────────────────────────────────────────────
 if command -v firewall-cmd &>/dev/null; then
   info "Opening TCP+UDP/443 in firewalld..."

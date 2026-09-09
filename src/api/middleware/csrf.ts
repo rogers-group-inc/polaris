@@ -35,7 +35,40 @@ const EXEMPT_PATH_PREFIXES = [
                                 //   * /binary/<name> is a public GET (whitelist-checked against manifest.json)
                                 // None of these have a session to carry a CSRF token in. Same security
                                 // model as /auth/login above — token-based auth is the CSRF defense.
+  "/api/v1/ha/enroll",         // HA node enrollment — a node being built has no browser session.
+                                // It presents a single-use token in the request body, and redeeming
+                                // it only registers a request an operator must then APPROVE in the
+                                // UI, so the endpoint cannot release anything by itself. Same
+                                // token-is-the-defense model as /agents/ above.
+                                // NOTE: this entry covers /ha/enroll and paths nested under it,
+                                // NOT the operator surface at /api/v1/ha/* — those are session
+                                // routes and keep CSRF. What enforces that is the segment-boundary
+                                // match in isExemptPath below; with a bare startsWith this entry
+                                // also exempted /ha/enrollments/:id/approve. Do not go back.
 ];
+
+/**
+ * An exempt entry matches a WHOLE path segment, never a bare string prefix.
+ *
+ * A plain `startsWith` silently exempts any longer route that merely begins
+ * with the same letters, and that is not a hypothetical: `/api/v1/ha/enroll`
+ * (the node-registration endpoint, whose defense is the one-shot token in its
+ * body) also matched the OPERATOR routes at `/api/v1/ha/enrollments/:id/approve`
+ * and `/reject` — "enrollments" starts with "enroll". Approving is the step that
+ * releases a bundle carrying `.env` (so POLARIS_SECRET_KEY), the nginx private
+ * key and the DB passwords, so it is the last route that should lose CSRF.
+ *
+ * Matching on a segment boundary keeps every legitimate exemption — the entry
+ * itself (`POST /api/v1/ha/enroll`, `POST /api/v1/auth/login`) and anything
+ * genuinely nested under it (`GET /api/v1/ha/enroll/:requestId`,
+ * `POST /api/v1/auth/login/totp`, `/api/v1/agents/*`) — while a sibling route
+ * that shares a prefix but not a segment stays protected. Entries may be
+ * written with or without a trailing slash; both behave the same.
+ */
+function isExemptPath(path: string, prefix: string): boolean {
+  const base = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  return path === base || path.startsWith(`${base}/`);
+}
 
 export function csrfMiddleware(req: Request, res: Response, next: NextFunction) {
   // Always ensure the cookie reflects the current session's token — the
@@ -65,7 +98,7 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction) 
   }
 
   if (SAFE_METHODS.has(req.method)) return next();
-  if (EXEMPT_PATH_PREFIXES.some((prefix) => req.path.startsWith(prefix))) return next();
+  if (EXEMPT_PATH_PREFIXES.some((prefix) => isExemptPath(req.path, prefix))) return next();
 
   // Requests carrying an `Authorization: Bearer` header are exempt: CSRF is a
   // cookie-borne-credential attack, and a cross-site attacker cannot attach a

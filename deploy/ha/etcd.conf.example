@@ -1,0 +1,64 @@
+# deploy/ha/etcd.conf.example — rendered to the etcd unit's EnvironmentFile
+# (RHEL/PGDG package: /etc/etcd/etcd.conf. Confirm with `systemctl cat etcd`.)
+#
+# Three voting members: the two database nodes and one witness. Two nodes alone
+# cannot form a quorum of three, which is the whole reason the witness exists —
+# it decides which node may hold the leader lease when the two cannot see each
+# other. It stores only Patroni's cluster state (leader key, member addresses,
+# dynamic PostgreSQL parameters): no database data, no application secrets.
+#
+# Placeholders substituted by deploy/ha/setup-rhel-ha.sh:
+#   {{NODE_NAME}}       this member's name (must match the Patroni member name
+#                       on the database nodes; the witness uses its own)
+#   {{THIS_ADDR}}       this member's address, reachable from the other two
+#   {{INITIAL_CLUSTER}} name=https://addr:2380 for all three, comma-separated
+#   {{CLUSTER_TOKEN}}   a random string, identical on all three members
+#
+# Bring the members up in this order the first time, all with STATE=new:
+# witness, then the primary, then the standby.
+
+ETCD_NAME={{NODE_NAME}}
+ETCD_DATA_DIR=/var/lib/etcd/{{NODE_NAME}}.etcd
+
+ETCD_LISTEN_PEER_URLS=https://{{THIS_ADDR}}:2380
+ETCD_LISTEN_CLIENT_URLS=https://{{THIS_ADDR}}:2379,https://127.0.0.1:2379
+ETCD_INITIAL_ADVERTISE_PEER_URLS=https://{{THIS_ADDR}}:2380
+ETCD_ADVERTISE_CLIENT_URLS=https://{{THIS_ADDR}}:2379
+
+ETCD_INITIAL_CLUSTER={{INITIAL_CLUSTER}}
+ETCD_INITIAL_CLUSTER_TOKEN={{CLUSTER_TOKEN}}
+# Change to "existing" when adding a member to a cluster that already runs
+# (for example when relocating the witness). Leaving it at "new" on a member
+# that rejoins an existing cluster is how people accidentally create a second,
+# empty cluster.
+ETCD_INITIAL_CLUSTER_STATE=new
+
+# ─── TLS: mutual, on both the client and peer channels ───────────────────────
+# Certificates come from deploy/ha/etcd-ca.sh. Client-cert auth is what lets
+# the witness sit on a routable address safely: an open port is useless without
+# a certificate signed by our CA.
+ETCD_CERT_FILE=/etc/polaris/etcd-ca/{{NODE_NAME}}.crt
+ETCD_KEY_FILE=/etc/polaris/etcd-ca/{{NODE_NAME}}.key
+ETCD_TRUSTED_CA_FILE=/etc/polaris/etcd-ca/ca.crt
+ETCD_CLIENT_CERT_AUTH=true
+ETCD_PEER_CERT_FILE=/etc/polaris/etcd-ca/{{NODE_NAME}}.crt
+ETCD_PEER_KEY_FILE=/etc/polaris/etcd-ca/{{NODE_NAME}}.key
+ETCD_PEER_TRUSTED_CA_FILE=/etc/polaris/etcd-ca/ca.crt
+ETCD_PEER_CLIENT_CERT_AUTH=true
+
+# ─── WAN tuning ──────────────────────────────────────────────────────────────
+# etcd's defaults assume a datacenter LAN (100ms election timeout). Across
+# sites that produces constant leader churn. These values tolerate a
+# round-trip in the tens of milliseconds; keep election_timeout at roughly
+# 10x heartbeat_interval, and node-to-node RTT well under it.
+ETCD_HEARTBEAT_INTERVAL=250
+ETCD_ELECTION_TIMEOUT=2500
+
+# Patroni writes frequently and never reads history; without compaction the
+# keyspace grows until etcd refuses writes.
+ETCD_AUTO_COMPACTION_MODE=periodic
+ETCD_AUTO_COMPACTION_RETENTION=1
+
+# Patroni uses the v3 API. The v2 API is deprecated and only widens the
+# surface.
+ETCD_ENABLE_V2=false

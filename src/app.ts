@@ -38,6 +38,7 @@ import {
   incHttpInFlight,
   decHttpInFlight,
   statusToClass,
+  recordActiveInstanceConflict,
 } from "./metrics.js";
 // Background jobs are NOT statically imported here — importing a job module
 // runs its self-start side effect, which must be gated by process role. They
@@ -54,6 +55,8 @@ import { startProbePatchBuffer, shutdownFlushProbePatchBuffer } from "./services
 import { runStartupDiskCheck } from "./utils/startupDiskCheck.js";
 import { runSchemaSanityCheck } from "./utils/schemaSanityCheck.js";
 import { getDbConnectionMode } from "./utils/dbConnections.js";
+import { checkReadiness } from "./utils/readinessCheck.js";
+import { checkActiveInstanceConflict } from "./services/haHeartbeatService.js";
 import { startMetricsOnlyServer } from "./utils/metricsServer.js";
 import { recordDbConnectionMode, setDbPoolRoleCapacity } from "./metrics.js";
 import { startFmgActivityHeartbeat } from "./services/fmgActivityService.js";
@@ -369,11 +372,12 @@ app.use(csrfMiddleware);
 // ─── HTTP request metrics ────────────────────────────────────────────────────
 // Tracks `polaris_http_request_duration_seconds` (by method/route/status_class)
 // and `polaris_http_in_flight`. Skips /metrics and /health to avoid scrape
-// requests showing up as application traffic. The matched Express route
+// requests showing up as application traffic (/health covers the readiness
+// probe too, which a load balancer scrapes every few seconds). The matched Express route
 // template is captured at response-finish time so cardinality stays bounded
 // — unmatched paths roll up to "unmatched" instead of one series per URL.
 app.use((req, res, next) => {
-  if (req.path === "/metrics" || req.path === "/health") return next();
+  if (req.path === "/metrics" || req.path.startsWith("/health")) return next();
   incHttpInFlight();
   const stopTimer = startHttpRequestTimer();
   let observed = false;
@@ -766,21 +770,49 @@ app.use(pwaRouter);
 app.use("/uploads", express.static(UPLOADS_DIR));
 app.use(express.static(path.resolve(__dirname, "..", "public")));
 
-// Health check. Open by default because the first-run setup wizard polls
-// this endpoint (from localhost) to detect when the main app has come up.
+// Bearer gate shared by /health, /health/ready and /metrics: each endpoint is
+// open by default and becomes token-gated the moment its env var is set. No
+// token configured means no check, which is what keeps the first-run wizard
+// (and a bare `npm run dev`) able to poll /health before .env exists.
+function bearerOk(req: express.Request, expected: string | undefined): boolean {
+  if (!expected) return true;
+  const auth = req.get("authorization") || "";
+  const supplied = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  return supplied === expected;
+}
+
+// Liveness. Open by default because the first-run setup wizard polls this
+// endpoint (from localhost) to detect when the main app has come up.
 // Set HEALTH_TOKEN=<string> in .env to require `Authorization: Bearer <token>`
 // on the endpoint — useful when Polaris is public-facing and you want to
 // limit health pings to your own monitoring system.
+//
+// Deliberately checks NOTHING: it answers "the event loop is alive". Do not
+// add a database check here — use /health/ready below, which exists because
+// the two questions have different right answers on a standby node.
 app.get("/health", (req, res) => {
-  const expected = process.env.HEALTH_TOKEN;
-  if (expected) {
-    const auth = req.get("authorization") || "";
-    const supplied = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-    if (supplied !== expected) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+  if (!bearerOk(req, process.env.HEALTH_TOKEN)) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
   res.json({ status: "ok" });
+});
+
+// Readiness — the endpoint a load balancer should monitor. 200 only when the
+// local PostgreSQL is a writable primary; 503 with a reason when it is a hot
+// standby ("in-recovery"), unreachable ("db-error") or too slow ("timeout").
+//
+// In the active/standby HA topology (docs/HA.md) both sites run nginx on 443
+// and both answer /health, so liveness alone would keep a demoted node in the
+// pool. This route is what takes it out. Same HEALTH_TOKEN convention, and
+// never cached — a stale 200 is exactly the answer that must not be reused.
+app.get("/health/ready", async (req, res) => {
+  if (!bearerOk(req, process.env.HEALTH_TOKEN)) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  const result = await checkReadiness();
+  if (result.ready) return res.json({ status: "ready" });
+  res.status(503).json({ status: "not-ready", reason: result.reason });
 });
 
 // Prometheus metrics endpoint. Same Bearer-token convention as /health: open
@@ -788,13 +820,8 @@ app.get("/health", (req, res) => {
 // process / event-loop metrics plus Polaris-specific monitor / probe
 // histograms and counters defined in src/metrics.ts.
 app.get("/metrics", async (req, res) => {
-  const expected = process.env.METRICS_TOKEN;
-  if (expected) {
-    const auth = req.get("authorization") || "";
-    const supplied = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-    if (supplied !== expected) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+  if (!bearerOk(req, process.env.METRICS_TOKEN)) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
   const { contentType, body } = await renderMetrics();
   res.setHeader("Content-Type", contentType);
@@ -819,6 +846,29 @@ export async function startApp(): Promise<void> {
   // database doesn't have (or vice versa). Runs before listen() in EVERY role
   // so a broken deploy doesn't run workers against a mismatched schema either.
   await runSchemaSanityCheck();
+
+  // Two app instances against one database double every poll, every alert
+  // email and every state transition (nothing in the app coordinates across
+  // hosts). In the active/standby HA topology three layers already prevent
+  // it — the Patroni leader lease, the systemd role guard, and a localhost
+  // DATABASE_URL on both nodes; this catches the case they cannot see, two
+  // hosts deliberately pointed at ONE database. Refuse rather than join.
+  // Not a lock: a stale stamp expires in 90s, so a legitimate failover is
+  // delayed by at most one systemd restart, never blocked. See docs/HA.md.
+  if (cfg.runsSchedulers) {
+    const verdict = await checkActiveInstanceConflict();
+    if (verdict.conflict) {
+      recordActiveInstanceConflict(verdict.holder ?? "unknown");
+      logger.fatal(
+        { holder: verdict.holder, stampAgeMs: verdict.ageMs },
+        "Refusing to start: another host holds a fresh active-instance heartbeat on this database. " +
+        "Two Polaris instances on one database double-poll every device and duplicate every alert. " +
+        "Stop the other host, or point this one at its own database (docs/HA.md). " +
+        "Set POLARIS_HA_HEARTBEAT=off to override.",
+      );
+      process.exit(1);
+    }
+  }
 
   // Dash wallboard listener (its own small Express app on POLARIS_DASH_PORT).
   // Boots for the dedicated dash role AND under "all" so `npm run dev` serves
@@ -987,6 +1037,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/capacityWatch.js",
       "./jobs/platformLifecycleWatch.js",
       "./jobs/hostMetricsCollector.js",
+      // Names this host as the active instance in the DB every 30s, and
+      // samples the WAL position for HA sizing. Scheduler role only — the
+      // stamp asserts the single-instance invariant this role IS.
+      "./jobs/activeInstanceHeartbeat.js",
       "./jobs/evaluateNotificationRules.js",
       "./jobs/escalateNotifications.js",
       "./jobs/deliverNotifications.js",

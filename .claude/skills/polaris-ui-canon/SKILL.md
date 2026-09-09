@@ -52,6 +52,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | Events | `events.html` | `events:read` |
 | Users | `users.html` | `users:read` |
 | Server Settings | `server-settings.html` | `serverSettingsSystem:read` floor |
+| Server Settings → High Availability | `public/js/server-settings-ha.js` (own module) | `serverSettingsSystem:read` to see, `fullwrite` to act |
 | Dash wallboard | `dash.html` | unauthenticated, source-IP scoped |
 | Acknowledge alert | `alert-ack.html` | `alerts:read` |
 | Signed out | `signed-out.html` | unauthenticated (the desktop logout landing — no form; its Sign in button opens the bare `/login.html`) |

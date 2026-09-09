@@ -3490,6 +3490,77 @@ model GroupMapping {
   @@map("group_mappings")
 }
 
+// One node joining an HA cluster (docs/HA.md).
+//
+// The Server Settings -> High Availability tab mints a single-use token per
+// node and hands the operator a thin bootstrap script carrying it. The node
+// runs that script, which REGISTERS here (status pending) and then polls until
+// an operator approves it in the UI, at which point it downloads the real
+// bundle: the rendered Patroni/etcd config, that member's etcd certificate and
+// key, the sync keypair, .env, and the nginx cert+key.
+//
+// Redeeming the token is therefore not enough to receive anything. That is the
+// whole point of the two-step: a leaked token produces a PENDING row naming the
+// source address and the host keys it presented, which an operator can look at
+// and reject, instead of silently handing over every secret the install has.
+model HaEnrollment {
+  id   String @id @default(uuid())
+  // "primary" | "standby" | "witness". The witness bundle carries etcd material
+  // only — no .env, no application secrets, no database credentials.
+  role String
+
+  // What the operator TYPED in the tab when minting (the intended member name
+  // and cluster address) — kept so the pending row can be compared against what
+  // actually connected.
+  nodeName String
+  nodeAddr String
+
+  // Single-use token, same wire format and argon2id hashing as ManagedAgent's
+  // enrollment token (`polaris_<32-char-base62>`, prefix-indexed for lookup).
+  // Consumed at REGISTRATION, before approval — so a second attempt with the
+  // same token is refused and is itself visible as a rejected registration.
+  tokenHash   String
+  tokenPrefix String
+  expiresAt   DateTime
+
+  // Opaque 32-byte handle the bootstrap script polls with. Separate from the
+  // token because the token is spent by then, and a poll must not carry a
+  // credential that is still worth stealing.
+  requestId String? @unique
+
+  // Lifecycle:
+  //   issued    — token minted, nothing has connected yet
+  //   pending   — a node registered and is waiting for an operator
+  //   approved  — operator said yes; the bundle may be downloaded ONCE
+  //   delivered — the bundle was downloaded (terminal, and the audit trail)
+  //   rejected  — operator said no (terminal)
+  //   expired   — the token aged out before anything registered (terminal)
+  status String @default("issued")
+
+  // Recorded at registration so the operator approves against evidence rather
+  // than a name the requester chose. The SSH host key fingerprints are also
+  // what later lets the reconciler connect with StrictHostKeyChecking=yes
+  // instead of trusting on first use.
+  registeredFromIp       String?
+  registeredNodeName     String?
+  sshHostKeyFingerprints String[] @default([])
+  registeredAt           DateTime?
+
+  approvedBy  String?
+  approvedAt  DateTime?
+  rejectedBy  String?
+  rejectedAt  DateTime?
+  deliveredAt DateTime?
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tokenPrefix])
+  @@index([status])
+  @@map("ha_enrollments")
+}
+
 model Setting {
   key       String   @id
   value     Json     @default("{}")

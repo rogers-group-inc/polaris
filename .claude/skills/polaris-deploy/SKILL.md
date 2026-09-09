@@ -22,6 +22,7 @@ manual restart unless asked.
 | the updater, update trains, unit/nginx sync on restart, the nginx front-end and in-app GUI, `migrate-to-nginx.sh`, disk-space monitoring, the first-run setup lock | [references/deployment-updates.md](references/deployment-updates.md) |
 | systemd deployment of the roles, per-role `/metrics` listeners, nginx-front HTTPS, the in-app nginx GUI | [references/multi-process-deployment.md](references/multi-process-deployment.md) |
 | the deployment lockstep checklist — Dockerfile, `deploy/setup-*`, `deploy/update-*`, `docs/INSTALL.md`, `copy-build-assets.mjs`, Go pin, disk-sizing table | [references/cross-cutting-deployment.md](references/cross-cutting-deployment.md) |
+| active/standby HA — Patroni + etcd, the role reconciler, the systemd drop-ins, `/health/ready`, the file state PostgreSQL does not replicate, the update window | [references/high-availability.md](references/high-availability.md) (operator-facing walkthrough: `docs/HA.md`) |
 | the operator install guide (RHEL/Rocky/Alma 9, Ubuntu/Debian, Windows Server) and the disk-sizing source of truth | `docs/INSTALL.md` |
 | the local dev stack (podman/docker compose, host-native, DB reset) | `DEVELOPMENT.md` |
 | the shipped units, nginx template, sudo wrapper, update scripts | `deploy/` |

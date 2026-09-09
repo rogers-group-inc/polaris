@@ -40,7 +40,8 @@
  * burst can inform a ratio and must never move monitorStatus.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import { burstPingHost, type BurstPingResult } from "./icmpPing.js";
 import { logger } from "./logger.js";
 
@@ -135,7 +136,25 @@ let fpingAvailable: Promise<boolean> | null = null;
 export function detectFping(): Promise<boolean> {
   if (fpingAvailable) return fpingAvailable;
   fpingAvailable = new Promise<boolean>((resolve) => {
-    const child = spawn("fping", ["-v"], { stdio: ["ignore", "pipe", "pipe"] });
+    // `spawn` can fail SYNCHRONOUSLY, not only through the "error" event. A
+    // binary carrying file capabilities the process cannot be granted — Debian
+    // ships `fping` and `ping` as cap_net_raw=ep, and a container or a hardened
+    // systemd unit whose CapabilityBoundingSet omits CAP_NET_RAW cannot execve
+    // them — fails with EPERM, which Node throws from the spawn call itself.
+    //
+    // Uncaught inside this executor that REJECTS the promise, and because the
+    // answer is memoized below the rejection is cached for the life of the
+    // process: every later `await detectFping()` rejects, so runMonitorPass
+    // dies on EVERY tick instead of falling back to per-host ping. Monitoring
+    // stops altogether rather than degrading. So treat a synchronous failure as
+    // exactly what the "error" event means — no usable fping.
+    let child: ChildProcess;
+    try {
+      child = spawn("fping", ["-v"], { stdio: ["ignore", "pipe", "pipe"] });
+    } catch {
+      resolve(false);
+      return;
+    }
     const timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch { /* already exited */ }
       resolve(false);
@@ -209,7 +228,16 @@ async function runFpingChunk(
   // that sends it to stdout parses identically.
   const hardLimitMs = opts.count * opts.periodMs + opts.timeoutMs + 15_000;
   return await new Promise<Map<string, BurstPingResult>>((resolve) => {
-    const child = spawn("fping", args, { stdio: ["ignore", "pipe", "pipe"] });
+    // Synchronous spawn failure (EPERM on a cap_net_raw binary) is not loss,
+    // the same as the "error" event below: hand back an empty map so the caller
+    // falls back instead of recording a fleet-wide outage. See detectFping.
+    let child: ChildProcessByStdio<null, Readable, Readable>;
+    try {
+      child = spawn("fping", args, { stdio: ["ignore", "pipe", "pipe"] });
+    } catch {
+      resolve(new Map());
+      return;
+    }
     let out = "";
     let done = false;
     const finish = (m: Map<string, BurstPingResult>): void => {

@@ -16,13 +16,16 @@ import ssh2 from "ssh2";
 const sshUtils = ssh2.utils;
 
 import { validateConfig, stripSecrets } from "../../src/services/credentialService.js";
+import { generateEd25519Keypair, generateEncryptedEd25519Keypair } from "../../src/utils/sshKeygen.js";
 
 const PASSPHRASE = "correct horse battery staple";
-const ENCRYPTED = sshUtils.generateKeyPairSync("ed25519", {
-  passphrase: PASSPHRASE,
-  cipher: "aes256-cbc",
-});
-const PLAIN = sshUtils.generateKeyPairSync("ed25519", {});
+// Through the shared helper, not ssh2 directly: its ed25519 generator emits an
+// unparseable private key about one call in three, which made this file flake
+// at module load. See src/utils/sshKeygen.ts.
+const ENCRYPTED_PAIR = generateEncryptedEd25519Keypair(PASSPHRASE);
+const PLAIN_PAIR = generateEd25519Keypair("");
+const ENCRYPTED = { private: ENCRYPTED_PAIR.privateKey, public: ENCRYPTED_PAIR.publicKey };
+const PLAIN = { private: PLAIN_PAIR.privateKey, public: PLAIN_PAIR.publicKey };
 
 describe("ssh2 encrypted-key behaviour (the reason this feature exists)", () => {
   it("refuses an encrypted key with no passphrase, and accepts it with one", () => {

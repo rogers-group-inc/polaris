@@ -1,0 +1,24 @@
+// deploy/polkit/49-polaris.rules
+// Installed to /etc/polkit-1/rules.d/49-polaris.rules by deploy/setup-rhel.sh
+// and deploy/ha/setup-rhel-ha.sh.
+//
+// The in-app updater (Server Settings -> Maintenance -> Update) runs as the
+// polaris user. Its last step restarts the WHOLE process group rather than
+// just itself: the web role has already migrated the database, so the monitor
+// and discovery units must not keep running the previous release against the
+// new schema. That group restart is `systemctl restart polaris.target`, issued
+// from a transient systemd-run unit, and it needs this grant.
+//
+// Without the rule the updater falls back to exiting so that systemd restarts
+// the web process alone — the update appears to succeed while the other roles
+// stay on the old code. That failure is quiet, which is why the rule ships as
+// a file the setup scripts install rather than as a step in the docs.
+//
+// Scope: unit management only, only for the polaris user. It does not grant
+// package management, shutdown, or any other polkit action.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "polaris") {
+        return polkit.Result.YES;
+    }
+});
