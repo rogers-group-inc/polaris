@@ -3445,6 +3445,12 @@ async function applyUpdateUI() {
     await api.serverSettings.applyUpdate(password, allowWithoutBackup);
     renderUpdateProgress();
     startUpdatePolling();
+    // Kick the sidebar's own update-progress panel (app.js). It self-paces at
+    // 60 s while idle and 5 s only once it has SEEN an update in flight, so
+    // without this nudge it can sleep clean through the applying phase and
+    // never render — the panel is the only progress the operator has once they
+    // navigate off this page.
+    if (typeof window._pollUpdateProgress === "function") window._pollUpdateProgress();
   } catch (err) {
     showToast("Failed to start update: " + err.message, "error");
     btn.disabled = false;
