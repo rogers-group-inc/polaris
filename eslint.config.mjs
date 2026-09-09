@@ -54,6 +54,13 @@ export default tseslint.config(
       //   class for readability; rewriting working MAC/CIDR regexes to satisfy
       //   a cosmetic rule isn't worth the risk.
       "no-useless-escape": "off",
+      // - new to @eslint/js 10's recommended set (2026-09), and it lands on 31
+      //   pre-existing sites across ~20 files, nearly all of them the
+      //   declare-then-assign-in-a-branch shape. It is a hygiene rule rather
+      //   than a correctness one, and the premise of this config (see the
+      //   header) is rules that pass clean on the current tree. Clearing those
+      //   31 sites is a change of its own, not a rider on a security fix.
+      "no-useless-assignment": "off",
     },
   },
 );
