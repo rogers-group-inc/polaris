@@ -107,7 +107,17 @@ COPY agent ./agent
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
- && mkdir -p /app/state/data/backups /app/state/public/uploads /app/state/data/agents /app/state/.cache/go-build
+ && mkdir -p /app/state/data/backups /app/state/public/uploads /app/state/data/agents /app/state/.cache/go-build \
+ && chown -R node:node /app/state
+# The application runs as the image's unprivileged `node` user (uid 1000) —
+# docker-entrypoint.sh reconciles the /app/state bind mount and then drops to
+# it with setpriv. See the block at the top of that script for why the drop
+# lives there and not in a `USER` line here.
+#
+# /app itself stays root-owned and is never written to at runtime: dist/,
+# node_modules/ and agent/ are read-only to the process, and every mutable
+# artefact (backups, uploads, built agent binaries, GOCACHE) lands under
+# /app/state. That is deliberate — the app cannot rewrite its own code.
 # /app/state/data/agents holds Polaris Agent binaries (per-version subdir
 # + manifest.json). With Go now pre-installed in the image, operators
 # can click Build agent binaries on Server Settings → Maintenance and

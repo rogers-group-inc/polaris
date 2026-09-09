@@ -6,6 +6,33 @@ cd /app
 STATE_DIR="${POLARIS_STATE_DIR:-/app/state}"
 ENV_FILE="$STATE_DIR/.env"
 
+# Drop root before running any application code. Everything below this block —
+# the migration, and the Node process that parses every untrusted input this
+# container ever sees — runs as uid 1000 (node).
+#
+# Why this is done here and not with a `USER node` line in the Dockerfile:
+# /app/state is a BIND MOUNT (`./state:/app/state` in docker-compose.yml), so
+# its ownership comes from the HOST directory, not from the image. On every
+# install that predates this change that directory is root-owned, and a
+# non-root entrypoint would die on the first mkdir below. So we keep just
+# enough privilege to reconcile the mount, then hand off.
+#
+# The chown is guarded on the top-level owner: a recursive chown of a state dir
+# holding backups and per-version agent binaries is not something to repeat on
+# every boot.
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p "$STATE_DIR"
+  if [ "$(stat -c %u "$STATE_DIR")" != "1000" ]; then
+    echo "[entrypoint] Taking ownership of $STATE_DIR for the unprivileged runtime user..."
+    chown -R node:node "$STATE_DIR"
+  fi
+  # HOME must move with the uid: the Go toolchain used by the in-app agent
+  # build and npx's cache both write under it.
+  HOME=/home/node
+  export HOME
+  exec setpriv --reuid=node --regid=node --init-groups "$0" "$@"
+fi
+
 mkdir -p "$STATE_DIR/data/backups" "$STATE_DIR/public/uploads"
 touch "$ENV_FILE"
 
