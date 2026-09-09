@@ -1989,8 +1989,9 @@ router.post("/updates/apply", requirePermission("serverSettingsData", "fullwrite
         message: "Update started with 'proceed without a backup' confirmed — a failed pre-update backup will not abort the update",
       });
     }
-    // Start the update in the background
-    applyUpdate(password, allowWithoutBackup).catch((err) => {
+    // Start the update in the background. The actor rides into the
+    // server.update.* Events the pipeline writes.
+    applyUpdate(password, allowWithoutBackup, requestActor(req)).catch((err) => {
       logger.error({ err }, "Update failed");
     });
     // Return immediately — client should poll /updates/status
@@ -2000,8 +2001,22 @@ router.post("/updates/apply", requirePermission("serverSettingsData", "fullwrite
   }
 });
 
-router.post("/updates/dismiss", requirePermission("serverSettingsData", "fullwrite"), (_req, res) => {
+router.post("/updates/dismiss", requirePermission("serverSettingsData", "fullwrite"), async (req, res) => {
+  // Dismiss deletes .update-status.json — until 2026-09-09 the ONLY record of
+  // a failed update. The pipeline now writes Events, and so does this, so the
+  // audit log says who cleared what.
+  const prev = getUpdateStatus();
   clearUpdateStatus();
+  if (prev.state === "failed" || prev.state === "complete") {
+    await logEvent({
+      level: "info",
+      action: "server.update.dismissed",
+      resourceType: "server",
+      actor: requestActor(req),
+      message: `Update status dismissed (was: ${prev.state}${prev.error ? ` — ${prev.error.slice(0, 200)}` : ""})`,
+      details: { state: prev.state, error: prev.error ?? null, startedAt: prev.startedAt ?? null, completedAt: prev.completedAt ?? null },
+    });
+  }
   res.json({ ok: true });
 });
 

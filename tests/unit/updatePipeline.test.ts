@@ -51,6 +51,11 @@ const createBackup = vi.fn(async () => ({
 }));
 vi.mock("../../src/services/backupService.js", () => ({ createBackup }));
 
+// The audit trail. Recorded rather than swallowed so the tests can assert that
+// an update leaves Events behind — the 2026-09-09 gap.
+const logEvent = vi.fn(async () => {});
+vi.mock("../../src/services/eventLogService.js", () => ({ logEvent }));
+
 // nginx/proxy config sync runs late in the pipeline; stub it so the test does
 // not depend on /etc being writable.
 vi.mock("../../src/services/proxyConfigService.js", () => ({
@@ -98,9 +103,17 @@ function stubExec(opts: { failOn?: string; stdout?: Record<string, string> } = {
 }
 
 /** applyUpdate is fire-and-forget internally; await it then flush microtasks. */
-async function runUpdate(password?: string | null, allowWithoutBackup?: boolean) {
-  await applyUpdate(password ?? null, allowWithoutBackup ?? false);
+async function runUpdate(password?: string | null, allowWithoutBackup?: boolean, actor?: string) {
+  await applyUpdate(password ?? null, allowWithoutBackup ?? false, actor);
   await Promise.resolve();
+}
+
+/** Actions of every Event the run wrote, in order. */
+function eventActions(): string[] {
+  return logEvent.mock.calls.map((c: any[]) => c[0]?.action);
+}
+function eventNamed(action: string): any {
+  return logEvent.mock.calls.map((c: any[]) => c[0]).find((e: any) => e?.action === action);
 }
 
 function steps() {
@@ -242,6 +255,64 @@ d("applyUpdate — step sequencing", () => {
     await runUpdate();
     expect(createBackup).not.toHaveBeenCalled();
     expect(getUpdateStatus().startedAt).toBe(first);
+  });
+});
+
+// Until 2026-09-09 the updater wrote no Event rows at all; its only durable
+// record was .update-status.json, which Dismiss deletes. These pin the trail
+// and the per-step clock that the timeout message now quotes.
+d("applyUpdate — audit trail and per-step timing", () => {
+  it("a clean run writes started then applied, naming the actor and the train", async () => {
+    settingRows.set("update.train", "nightly");
+    stubExec();
+
+    await runUpdate(null, false, "dmoore");
+
+    expect(eventActions()).toEqual(["server.update.started", "server.update.applied"]);
+    const started = eventNamed("server.update.started");
+    expect(started.actor).toBe("dmoore");
+    expect(started.details.train).toBe("nightly");
+    const applied = eventNamed("server.update.applied");
+    expect(applied.actor).toBe("dmoore");
+    expect(typeof applied.details.pipelineDurationMs).toBe("number");
+    // Every finished step reports how long it took.
+    expect(applied.details.steps.slice(0, 6).every((s: any) => typeof s.durationMs === "number")).toBe(true);
+  });
+
+  it("a failure writes started then failed, naming the step and its measured duration", async () => {
+    stubExec({ failOn: "npm ci" });
+
+    await runUpdate();
+
+    expect(eventActions()).toEqual(["server.update.started", "server.update.failed"]);
+    const failed = eventNamed("server.update.failed");
+    expect(failed.level).toBe("error");
+    expect(failed.details.step).toBe("Install dependencies");
+    expect(failed.details.stepIndex).toBe(STEP.DEPS);
+    expect(typeof failed.details.stepDurationMs).toBe("number");
+    expect(failed.message).toContain('failed at "Install dependencies"');
+    // Nothing claimed the update was applied.
+    expect(eventNamed("server.update.applied")).toBeUndefined();
+  });
+
+  it("the actor defaults to system:update when the caller has none", async () => {
+    stubExec();
+    await runUpdate();
+    expect(eventNamed("server.update.started").actor).toBe("system:update");
+  });
+
+  it("every step that ran carries startedAt and durationMs; pending ones carry neither", async () => {
+    stubExec({ failOn: "npm run build" });
+
+    await runUpdate();
+
+    const s = steps();
+    for (let i = 0; i <= STEP.BUILD; i++) {
+      expect(s[i].startedAt, `step ${i} startedAt`).toBeTruthy();
+      expect(typeof s[i].durationMs, `step ${i} durationMs`).toBe("number");
+    }
+    expect(s[STEP.MIGRATE].startedAt).toBeUndefined();
+    expect(s[STEP.MIGRATE].durationMs).toBeUndefined();
   });
 });
 

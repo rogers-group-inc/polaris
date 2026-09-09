@@ -32,6 +32,7 @@ import {
 } from "./apiDocsAccessService.js";
 import { resolveDashPort } from "../utils/dashConfig.js";
 import { createBackup } from "./backupService.js";
+import { logEvent } from "./eventLogService.js";
 
 /**
  * Every shell-out in this file goes through `execAsync`, which is a thin
@@ -99,15 +100,23 @@ const MIGRATE_TIMEOUT_MS = 5 * 60_000;
  *    serving from already-loaded modules: the install is fine until the next
  *    restart, which then fails to boot. An operator has to be told that plainly.
  */
-function stepFailureDetail(err: any, timeoutMs?: number): string {
+function stepFailureDetail(err: any, opts: { timeoutMs?: number; elapsedMs?: number } = {}): string {
   const killedByTimeout =
     err?.killed === true || err?.signal === "SIGTERM" || err?.code === "ETIMEDOUT";
   const out = String(err?.stderr || err?.stdout || err?.message || err || "").trim();
   const tail = out.length > STEP_ERROR_CHARS ? "…" + out.slice(-STEP_ERROR_CHARS) : out;
   if (killedByTimeout) {
-    const secs = timeoutMs ? Math.round(timeoutMs / 1000) : null;
+    // Quote the MEASURED time when the step was timed, and the limit beside
+    // it. The old text quoted only the constant, so "timed out after 45s" was
+    // an assertion about the config, not an observation about the run.
+    const limit = opts.timeoutMs ? Math.round(opts.timeoutMs / 1000) : null;
+    const measured = opts.elapsedMs != null ? Math.round(opts.elapsedMs / 1000) : null;
+    const when =
+      measured != null && limit != null ? ` after ${measured}s (limit ${limit}s)`
+      : limit != null ? ` after ${limit}s`
+      : "";
     return (
-      `timed out${secs ? ` after ${secs}s` : ""} and was terminated` +
+      `timed out${when} and was terminated` +
       ` — the command did not fail, it ran out of time. Re-running the update is safe and` +
       ` is usually faster (a warm npm cache turns a multi-minute install into seconds).` +
       (tail ? ` Last output: ${tail}` : "")
@@ -224,7 +233,17 @@ export interface UpdateStatus {
     | "restarting"
     | "disabled";
   step?: string;
-  steps?: { name: string; status: "pending" | "running" | "done" | "failed"; message?: string }[];
+  steps?: {
+    name: string;
+    status: "pending" | "running" | "done" | "failed";
+    message?: string;
+    /** Stamped when the step starts; durationMs when it ends. Without these a
+     *  "timed out after 45s" could only ever quote the constant, never the
+     *  clock — and after a Dismiss the only record of how long anything took
+     *  was gone (2026-09-09). */
+    startedAt?: string;
+    durationMs?: number;
+  }[];
   error?: string;
   currentVersion?: string;
   latestVersion?: string;
@@ -503,6 +522,24 @@ export function initUpdateStatus() {
       { from: saved.currentVersion, to: saved.latestVersion },
       "Update completed after restart"
     );
+    // The other half of server.update.applied: the new code booted. Fire-and-
+    // forget — this runs during startup and must not gate it.
+    void logEvent({
+      level: "info",
+      action: "server.update.completed",
+      resourceType: "server",
+      actor: "system:update",
+      message: `Update completed: v${saved.currentVersion ?? "?"} → v${saved.latestVersion ?? "?"} is running`,
+      details: {
+        fromVersion: saved.currentVersion ?? null,
+        toVersion: saved.latestVersion ?? null,
+        fromCommit: saved.currentCommit ?? null,
+        toCommit: saved.latestCommit ?? null,
+        startedAt: saved.startedAt ?? null,
+        completedAt: saved.completedAt ?? null,
+        train: saved.train ?? null,
+      },
+    });
   } else if (saved && (saved.state === "complete" || saved.state === "failed")) {
     _status = saved;
   }
@@ -653,6 +690,7 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
 export async function applyUpdate(
   password?: string | null,
   allowWithoutBackup = false,
+  actor: string = "system:update",
 ): Promise<void> {
   if (!_updateEnvironment.available) {
     _status = disabledStatus();
@@ -662,6 +700,23 @@ export async function applyUpdate(
   _applying = true;
 
   const train = await getUpdateTrain();
+
+  // Audit trail. Until 2026-09-09 the updater wrote NO Event rows: its only
+  // durable record was .update-status.json, which the Dismiss button deletes.
+  // A prod failure that afternoon left nothing to answer "how long did the
+  // step take", "has this happened before" or "what commit were we on" — the
+  // forensics were done off a screenshot. CLAUDE.md's rule that every
+  // audit-worthy mutation writes an Event applies to a git pull onto a
+  // production host at least as much as to anything else.
+  const audit = {
+    train,
+    fromVersion: readCurrentVersion(),
+    fromCommit: _status.currentCommit ?? null,
+    toVersion: _status.latestVersion ?? null,
+    toCommit: _status.latestCommit ?? null,
+    allowWithoutBackup,
+  };
+  const pipelineStartedAt = Date.now();
 
   const steps: NonNullable<UpdateStatus["steps"]> = [
     { name: "Backup database", status: "pending", message: "" },
@@ -686,11 +741,37 @@ export async function applyUpdate(
   };
   saveStatus();
 
+  await logEvent({
+    level: "info",
+    action: "server.update.started",
+    resourceType: "server",
+    actor,
+    message:
+      `Update started (${train} train): v${audit.fromVersion}` +
+      (audit.fromCommit ? ` @ ${audit.fromCommit}` : "") +
+      (audit.toVersion ? ` → v${audit.toVersion}` : "") +
+      (audit.toCommit ? ` @ ${audit.toCommit}` : "") +
+      (allowWithoutBackup ? " (proceed-without-backup confirmed)" : ""),
+    details: audit,
+  });
+
   function setStep(idx: number, status: "running" | "done" | "failed", message?: string) {
+    const now = Date.now();
     steps[idx].status = status;
     if (message) steps[idx].message = message;
+    if (status === "running") {
+      steps[idx].startedAt = new Date(now).toISOString();
+    } else if (steps[idx].startedAt) {
+      steps[idx].durationMs = Math.max(0, now - Date.parse(steps[idx].startedAt!));
+    }
     _status.steps = steps;
     saveStatus();
+  }
+
+  /** Milliseconds since the step started; undefined when it never ran. */
+  function elapsed(idx: number): number | undefined {
+    const s = steps[idx].startedAt;
+    return s ? Math.max(0, Date.now() - Date.parse(s)) : undefined;
   }
 
   function failUpdate(idx: number, error: string) {
@@ -699,6 +780,27 @@ export async function applyUpdate(
     _status.error = error;
     saveStatus();
     _applying = false;
+    const stepMs = steps[idx].durationMs;
+    // Fire-and-forget: logEvent never throws, and the caller is already on the
+    // failure path — nothing here should be able to make it worse.
+    void logEvent({
+      level: "error",
+      action: "server.update.failed",
+      resourceType: "server",
+      actor,
+      message:
+        `Update failed at "${steps[idx].name}"` +
+        (stepMs != null ? ` after ${Math.round(stepMs / 1000)}s` : "") +
+        ` (${Math.round((Date.now() - pipelineStartedAt) / 1000)}s into the update): ${error}`,
+      details: {
+        ...audit,
+        step: steps[idx].name,
+        stepIndex: idx,
+        stepDurationMs: stepMs ?? null,
+        pipelineDurationMs: Date.now() - pipelineStartedAt,
+        steps: steps.map((s) => ({ name: s.name, status: s.status, durationMs: s.durationMs ?? null })),
+      },
+    });
   }
 
   try {
@@ -824,7 +926,7 @@ export async function applyUpdate(
     } catch (err: any) {
       failUpdate(
         2,
-        "Cannot reach the npm registry: " + stepFailureDetail(err, NPM_PING_TIMEOUT_MS) +
+        "Cannot reach the npm registry: " + stepFailureDetail(err, { timeoutMs: NPM_PING_TIMEOUT_MS, elapsedMs: elapsed(2) }) +
           " — stopped BEFORE installing, so this host's dependencies are untouched and it is" +
           " safe to restart. Usual causes: a TLS-inspecting proxy (npm fails" +
           " UNABLE_TO_GET_ISSUER_CERT_LOCALLY because Node ignores the OS trust store — set" +
@@ -855,7 +957,7 @@ export async function applyUpdate(
     } catch (err: any) {
       failUpdate(
         2,
-        "npm ci failed: " + stepFailureDetail(err, NPM_CI_TIMEOUT_MS) +
+        "npm ci failed: " + stepFailureDetail(err, { timeoutMs: NPM_CI_TIMEOUT_MS, elapsedMs: elapsed(2) }) +
           " — dependencies on this host are now INCOMPLETE (npm ci removes node_modules" +
           " before installing). The running service keeps working from modules already" +
           " loaded in memory, but do not restart it until an install succeeds.",
@@ -874,7 +976,7 @@ export async function applyUpdate(
       await execAsync("npx prisma generate", { cwd: APP_DIR, timeout: PRISMA_GENERATE_TIMEOUT_MS });
       setStep(3, "done");
     } catch (err: any) {
-      failUpdate(3, "Prisma generate failed: " + stepFailureDetail(err, PRISMA_GENERATE_TIMEOUT_MS));
+      failUpdate(3, "Prisma generate failed: " + stepFailureDetail(err, { timeoutMs: PRISMA_GENERATE_TIMEOUT_MS, elapsedMs: elapsed(3) }));
       return;
     }
 
@@ -909,7 +1011,7 @@ export async function applyUpdate(
       await execAsync("npm run build", { cwd: APP_DIR, timeout: BUILD_TIMEOUT_MS });
       setStep(4, "done");
     } catch (err: any) {
-      failUpdate(4, "TypeScript build failed: " + stepFailureDetail(err, BUILD_TIMEOUT_MS));
+      failUpdate(4, "TypeScript build failed: " + stepFailureDetail(err, { timeoutMs: BUILD_TIMEOUT_MS, elapsedMs: elapsed(4) }));
       return;
     }
 
@@ -922,7 +1024,7 @@ export async function applyUpdate(
       });
       setStep(5, "done");
     } catch (err: any) {
-      failUpdate(5, "Migration failed: " + stepFailureDetail(err, MIGRATE_TIMEOUT_MS));
+      failUpdate(5, "Migration failed: " + stepFailureDetail(err, { timeoutMs: MIGRATE_TIMEOUT_MS, elapsedMs: elapsed(5) }));
       return;
     }
 
@@ -934,6 +1036,25 @@ export async function applyUpdate(
 
     logger.info("Update applied — restarting service...");
 
+    // Awaited, not fire-and-forget: the process exits in 1.5s and this row is
+    // the record that the update reached the restart. "completed" is written
+    // by initUpdateStatus() on the other side of it.
+    await logEvent({
+      level: "info",
+      action: "server.update.applied",
+      resourceType: "server",
+      actor,
+      message:
+        `Update applied in ${Math.round((Date.now() - pipelineStartedAt) / 1000)}s — restarting` +
+        ` (v${audit.fromVersion} → v${_status.latestVersion ?? "?"})`,
+      details: {
+        ...audit,
+        toVersion: _status.latestVersion ?? audit.toVersion,
+        pipelineDurationMs: Date.now() - pipelineStartedAt,
+        steps: steps.map((s) => ({ name: s.name, status: s.status, durationMs: s.durationMs ?? null })),
+      },
+    });
+
     // Schedule restart after response is sent
     setTimeout(() => {
       restartService();
@@ -943,6 +1064,14 @@ export async function applyUpdate(
     _status.error = "Unexpected error: " + (err.message || String(err));
     saveStatus();
     _applying = false;
+    void logEvent({
+      level: "error",
+      action: "server.update.failed",
+      resourceType: "server",
+      actor,
+      message: `Update failed with an unexpected error ${Math.round((Date.now() - pipelineStartedAt) / 1000)}s in: ${err?.message || String(err)}`,
+      details: { ...audit, pipelineDurationMs: Date.now() - pipelineStartedAt },
+    });
   }
 }
 
