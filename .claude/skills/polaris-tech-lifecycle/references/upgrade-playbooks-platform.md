@@ -62,7 +62,10 @@ version-sensitive hooks.
    name, the NSSM `DependOnService`, and the `bin` path candidate all move.
 7. The package names, `pg_config` path and installer pin in every setup script (`PG_MAJOR` in
    `setup-rhel.sh`, `PG_CLIENT_MAJOR` in `setup-rhel-nodb.sh`); the image tags in
-   `compose.dev.yml` and the CI service container.
+   `compose.dev.yml` and the CI service container; **and the `postgresql-client` in
+   `Dockerfile` / `Dockerfile.dev`** — unversioned, so it is whatever Debian bookworm ships (15,
+   which is why it agrees with the pin today). A 16+ server needs `postgresql-client-16` from
+   the PGDG apt repo in the image, or every in-container backup fails the rule-47 check.
 8. **Remove the old major's client packages once the switch is final**, and any unversioned
    AppStream `postgresql` / `postgresql-server` left on the host. The app and
    `deploy/update-linux.sh` pick `pg_dump` / `psql` by the SERVER's major (rule 47 —

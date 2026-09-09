@@ -97,6 +97,7 @@ Currently **15** across 12 checked sites.
 | two Windows setup scripts | `--servicename postgresql-15`, the `C:\Program Files\PostgreSQL\15\bin` candidate, NSSM `DependOnService` | pin |
 | `compose.dev.yml` | `timescale/timescaledb:latest-pg15` | pin (floating patch) |
 | `.github/workflows/docker-publish.yml` | `image: postgres:15-alpine` service container | pin |
+| `Dockerfile`, `Dockerfile.dev` | `postgresql-client` — unversioned, resolves to 15 only because the base is bookworm; must become `postgresql-client-<N>` (PGDG apt) when the major moves, or in-container backups fail rule 47's check | implicit pin |
 | `docs/INSTALL.md` | `timescaledb-2-postgresql-15`, `/usr/pgsql-15/bin/`, `postgresql15-server` | pin |
 | `README.md`, `CONTRIBUTING.md`, `CLAUDE.md` | "PostgreSQL 15+", `postgres:15` | prose |
 
