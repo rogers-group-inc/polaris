@@ -230,6 +230,16 @@ info "Testing database connectivity..."
 if command -v psql &>/dev/null; then
   if psql "$DATABASE_URL" -c "SELECT 1" &>/dev/null; then
     info "Database connection successful"
+    # pg_dump must be at least the server's major — it refuses a newer server.
+    # The distro's postgresql-client is whatever the release ships; a remote
+    # server on a newer major than that fails every backup while `command -v`
+    # reports success (the RHEL variant of this bit prod on 2026-09-09).
+    _srv_major=$(psql "$DATABASE_URL" -tAX -c "SHOW server_version_num" 2>/dev/null | tr -d '[:space:]' | sed -E 's/^([0-9]{2})[0-9]{4}$/\1/')
+    _dump_major=$(pg_dump --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+    if [[ -n "$_srv_major" && -n "$_dump_major" && "$_dump_major" -lt "$_srv_major" ]]; then
+      warn "pg_dump on PATH is PostgreSQL ${_dump_major} but the server is PostgreSQL ${_srv_major} — pg_dump refuses a newer server, so BACKUPS WILL FAIL."
+      warn "  Fix: apt-get install -y postgresql-client-${_srv_major} (add the PGDG apt repo if the distro does not carry it)."
+    fi
     # pg-boss (queue runtime for monitor cadences at scale) lives in its own
     # `pgboss` schema. Try to create it as the connecting role; if the role
     # doesn't have CREATE on the database, surface what the DBA needs to run.

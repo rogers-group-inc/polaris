@@ -64,6 +64,35 @@ describe("the 'already up to date' exit is guarded in both scripts", () => {
   });
 });
 
+// pg_dump refuses a server newer than itself. On 2026-09-09 prod's /usr/bin/pg_dump
+// was a PostgreSQL 13 client in front of a 15 server, and `command -v` was
+// satisfied. The script must resolve both tools by the server's major (mirroring
+// src/utils/pgClientTools.ts) and never call them by bare name for the dump or
+// the restore.
+describe("update-linux.sh resolves pg_dump / psql by the server's major", () => {
+  it("defines the resolver and uses its answers for the dump and every restore call", () => {
+    expect(linux).toMatch(/^resolve_pg_tool\(\) \{/m);
+    expect(linux).toMatch(/^PG_DUMP=\$\(resolve_pg_tool pg_dump/m);
+    expect(linux).toMatch(/^PSQL=\$\(resolve_pg_tool psql/m);
+    expect(linux).toMatch(/sudo -u postgres "\$PG_DUMP" --clean --if-exists/);
+    // Command lines only. The server-major probe may use any psql (it is asking,
+    // not dumping), and an operator-facing `error "Run it by hand: … psql …"`
+    // message is text a human will type, not a spawn.
+    const bare = codeLines(linux).filter(
+      (l) =>
+        /sudo -u postgres (pg_dump|psql) /.test(l) &&
+        !/SHOW server_version_num/.test(l) &&
+        !/^\s*(error|warn|info) "/.test(l),
+    );
+    expect(bare).toEqual([]);
+  });
+
+  it("refuses the dump with the versions and the fix when the client is older than the server", () => {
+    expect(linux).toMatch(/"\$PG_DUMP_MAJOR" -lt "\$PG_SERVER_MAJOR"/);
+    expect(linux).toMatch(/pg_dump is PostgreSQL \$\{PG_DUMP_MAJOR\}.*server is PostgreSQL \$\{PG_SERVER_MAJOR\}/);
+  });
+});
+
 // A Polaris database with TimescaleDB must be restored between
 // timescaledb_pre_restore() and timescaledb_post_restore(), each in its own
 // psql session. The in-app restore learned this in 2026-08; both scripts kept a

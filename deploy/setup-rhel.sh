@@ -248,11 +248,28 @@ fi
 # are one of the reasons PGDG was chosen over AppStream, so shadowing them
 # would defeat the point -- and it would fail the way that costs most, with
 # backups quietly using the old client while everything looked fine.
+#
+# Presence is not enough — check the MAJOR. On 2026-09-09 prod's /usr/bin/pg_dump
+# passed `command -v` and `alternatives --display` said it pointed at 15, but the
+# file on disk was a regular binary owned by the AppStream 13 package (a leftover
+# of the pre-PGDG version of this script), and pg_dump refuses a server newer
+# than itself. Only `--version` tells the truth. Polaris itself now resolves
+# /usr/pgsql-${PG_MAJOR}/bin/<tool> directly (src/utils/pgClientTools.ts), but
+# deploy/update-linux.sh's fallback path and every human at a shell get PATH.
 for _pgtool in psql pg_dump; do
   if ! command -v "$_pgtool" >/dev/null 2>&1; then
     warn "$_pgtool is not on PATH after installing PostgreSQL ${PG_MAJOR}."
     warn "  Polaris spawns it by name for backup/restore, so BACKUPS WILL FAIL until this is fixed."
     warn "  Diagnose with: alternatives --display pgsql-${_pgtool}"
+    continue
+  fi
+  _pgtool_path=$(command -v "$_pgtool")
+  _pgtool_major=$("$_pgtool_path" --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+  if [[ -n "$_pgtool_major" && "$_pgtool_major" -lt "$PG_MAJOR" ]]; then
+    warn "$_pgtool on PATH is PostgreSQL ${_pgtool_major}, not ${PG_MAJOR}: ${_pgtool_path} is probably RHEL's AppStream package"
+    warn "  shadowing PGDG's alternatives link (check: rpm -qf ${_pgtool_path}). pg_dump refuses a server newer than itself,"
+    warn "  so backups taken by name WILL FAIL. Fix: dnf remove postgresql postgresql-server (the unversioned packages),"
+    warn "  then: alternatives --auto pgsql-${_pgtool}  and confirm with: ${_pgtool} --version"
   fi
 done
 

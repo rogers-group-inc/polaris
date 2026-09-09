@@ -136,6 +136,36 @@ app_node() {
   fi
 }
 
+# ─── PostgreSQL client tools, matched to the SERVER's major ─────────────────
+# pg_dump refuses a server newer than itself. On 2026-09-09 prod's
+# /usr/bin/pg_dump was RHEL's AppStream PostgreSQL 13 client — a leftover of an
+# earlier installer — in front of a PGDG 15 server: `alternatives --display`
+# said 15, `rpm -qf` said 13, `command -v` was satisfied, and every backup on
+# the host (this script's and the app's) failed with "server version mismatch".
+# So: resolve by the server's major in the layouts PGDG (RHEL) and Debian/
+# Ubuntu use, accept a newer major, and fall back to PATH only when nothing
+# versioned exists. Mirrors src/utils/pgClientTools.ts, which the app uses for
+# the same decision.
+pg_server_major() {
+  sudo -u postgres psql --tuples-only --no-align --no-psqlrc -c "SHOW server_version_num" 2>/dev/null \
+    | tr -d '[:space:]' | sed -E 's/^([0-9]{2})[0-9]{4}$/\1/'
+}
+resolve_pg_tool() {
+  local tool="$1" major="$2" m d
+  if [[ -n "$major" ]]; then
+    for m in $(seq "$major" $((major + 5))); do
+      for d in "/usr/pgsql-${m}/bin" "/usr/lib/postgresql/${m}/bin"; do
+        if [[ -x "$d/$tool" ]]; then echo "$d/$tool"; return 0; fi
+      done
+    done
+  fi
+  command -v "$tool" 2>/dev/null || echo "$tool"
+}
+pg_tool_major() { "$1" --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true; }
+PG_SERVER_MAJOR=$(pg_server_major || true)
+PG_DUMP=$(resolve_pg_tool pg_dump "$PG_SERVER_MAJOR")
+PSQL=$(resolve_pg_tool psql "$PG_SERVER_MAJOR")
+
 # Sync shipped unit files from $APP_DIR/deploy/ into /etc/systemd/system/.
 # install-if-missing + overwrite-on-change: a no-op when nothing changed,
 # AND a unit shipping for the first time in an update (e.g. polaris-dash)
@@ -281,16 +311,22 @@ backup_unavailable() {
   exit 1
 }
 
-if command -v pg_dump &>/dev/null; then
-  if sudo -u postgres pg_dump --clean --if-exists "$DB_NAME" | gzip > "$BACKUP_FILE"; then
+PG_DUMP_MAJOR=$(pg_tool_major "$PG_DUMP")
+if ! command -v "$PG_DUMP" &>/dev/null; then
+  backup_unavailable "pg_dump not found (looked for a PostgreSQL ${PG_SERVER_MAJOR:-?} install and on PATH)"
+elif [[ -n "$PG_SERVER_MAJOR" && -n "$PG_DUMP_MAJOR" && "$PG_DUMP_MAJOR" -lt "$PG_SERVER_MAJOR" ]]; then
+  # Say the actual problem, with the fix, BEFORE pg_dump says "server version
+  # mismatch" — that line alone cost an afternoon on 2026-09-09.
+  backup_unavailable "pg_dump is PostgreSQL ${PG_DUMP_MAJOR} (${PG_DUMP}) but the server is PostgreSQL ${PG_SERVER_MAJOR}, and pg_dump refuses a newer server. Install postgresql${PG_SERVER_MAJOR} (PGDG) and check that $(command -v "$PG_DUMP") is not RHEL's AppStream package (rpm -qf) — docs/INSTALL.md → 'pg_dump: server version mismatch'"
+else
+  info "Using $PG_DUMP (PostgreSQL ${PG_DUMP_MAJOR:-?}) against server PostgreSQL ${PG_SERVER_MAJOR:-?}"
+  if sudo -u postgres "$PG_DUMP" --clean --if-exists "$DB_NAME" | gzip > "$BACKUP_FILE"; then
     BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
     info "Backup created: $BACKUP_FILE ($BACKUP_SIZE)"
   else
     rm -f "$BACKUP_FILE"
     backup_unavailable "pg_dump failed"
   fi
-else
-  backup_unavailable "pg_dump not found"
 fi
 
 # ─── 3. Pull latest code ────────────────────────────────────────────────────
@@ -368,7 +404,7 @@ info "Updating: v${OLD_VERSION} (${OLD_COMMIT}) → v${NEW_VERSION} (${NEW_COMMI
 restore_database() {
   local dump="$1"
   local probe rc gates
-  probe=$(sudo -u postgres psql -tAX -d "$DB_NAME" -c "SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'" 2>&1); rc=$?
+  probe=$(sudo -u postgres "$PSQL" -tAX -d "$DB_NAME" -c "SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'" 2>&1); rc=$?
   probe=$(echo "$probe" | tr -d '[:space:]')
   # 0 = extension absent, 1 = present, 2 = could not tell. Fail toward running
   # the gates: on a database WITHOUT the extension they are a clean error we can
@@ -382,7 +418,7 @@ restore_database() {
   fi
 
   if [[ $gates -ge 1 ]]; then
-    if ! sudo -u postgres psql -qX -v ON_ERROR_STOP=1 -d "$DB_NAME" -c "SELECT timescaledb_pre_restore();"; then
+    if ! sudo -u postgres "$PSQL" -qX -v ON_ERROR_STOP=1 -d "$DB_NAME" -c "SELECT timescaledb_pre_restore();"; then
       if [[ $gates -eq 1 ]]; then
         error "timescaledb_pre_restore() failed — not restoring over a live TimescaleDB catalog without it."
         return 1
@@ -393,14 +429,14 @@ restore_database() {
   fi
 
   local ok=0
-  if gunzip -c "$dump" | sudo -u postgres psql -qX -v ON_ERROR_STOP=1 --single-transaction -d "$DB_NAME"; then
+  if gunzip -c "$dump" | sudo -u postgres "$PSQL" -qX -v ON_ERROR_STOP=1 --single-transaction -d "$DB_NAME"; then
     ok=1
   else
     error "psql reported errors while restoring $dump (see above)"
   fi
 
   if [[ $gates -ge 1 ]]; then
-    if ! sudo -u postgres psql -qX -v ON_ERROR_STOP=1 -d "$DB_NAME" -c "SELECT timescaledb_post_restore();"; then
+    if ! sudo -u postgres "$PSQL" -qX -v ON_ERROR_STOP=1 -d "$DB_NAME" -c "SELECT timescaledb_post_restore();"; then
       error "timescaledb_post_restore() FAILED — the database is still in restoring mode and will reject hypertable writes."
       error "Run it by hand:  sudo -u postgres psql -d $DB_NAME -c 'SELECT timescaledb_post_restore();'"
       ok=0

@@ -520,3 +520,53 @@ The original reasoning for `scoped: false` was sound as far as it went: an audit
 ### Cost at fleet scale
 
 The scope test is in memory against the row the tail already primed for the alert text (`primeAssetDetailCache` — one `findMany` for the whole batch, added when a site-wide outage was serializing one point read per asset). "Does this scope constrain anything" is computed once per rule when the matchers compile, not once per event, so a 1000-event batch does not re-walk the same scope object a thousand times. Relation-backed filter leaves — interface name, SSID, FortiGate sighting — resolve through `decorateRelationLeafHits`, one query per distinct leaf for the whole batch and no query at all when no filter asks for one, the same contract the threshold path and `downDetectionService` use. The one new column on the primed select is `discoveredByIntegrationId`, which `scopeMatchesAsset` needs and the template fields did not already cover.
+
+---
+
+## Rule 47 — A PostgreSQL client is chosen by the server's major and verified before it is trusted, never spawned by bare name
+
+**The invariant.** `pg_dump` refuses a server newer than itself. Anything in Polaris that spawns `pg_dump` or `psql` — `backupService` in the app, `deploy/update-linux.sh` in the fallback updater — resolves the binary by the server's MAJOR (`SHOW server_version_num` → `/usr/pgsql-<N>/bin`, `/usr/lib/postgresql/<N>/bin`, `C:\Program Files\PostgreSQL\<N>\bin`; a newer major accepted, an older one never; PATH last), runs `--version` on what it picked, and compares. A `pg_dump` behind the server refuses the backup with the sentence the operator needs — both versions, the path, the fix — as the error itself. `psql` restores across majors and only warns, so for it only "cannot be run" is fatal. The installers install PGDG's versioned client and check the major, `check:versions` flags a bare `dnf install -y postgresql`, and the Maintenance tab shows the resolved tools. `src/utils/pgClientTools.ts` is the pure implementation; `tests/unit/pgClientTools.test.ts` and `tests/unit/updateScriptsContract.test.ts` pin it.
+
+### The report
+
+"Update Failed — Cannot reach the npm registry: timed out after 45s." A screenshot of the Application Updates card, 2026-09-09, prod. The registry was fine (`npm ping`, 199 ms, from the exact systemd sandbox the updater runs in). The host was fine. The update was finished by hand through `deploy/update-linux.sh`, and the second thing that script does is take a backup:
+
+```
+pg_dump: error: server version: 15.18; pg_dump version: 13.23
+pg_dump: error: aborting because of server version mismatch
+```
+
+Nothing about the update caused that. It had been true for months.
+
+### What the host looked like
+
+The server was PGDG PostgreSQL 15.18 with TimescaleDB 2.28 for PG15 — the stated minimum, the documented install, every declaration site consistent. Also installed: `postgresql-13.23` and `postgresql-server-13.23`, RHEL 9's *unversioned* AppStream packages, with an April `initdb_postgresql.log` next to an empty `data/` — the fossil of a pre-PGDG `setup-rhel.sh` that had installed AppStream Postgres, failed, and been superseded in May by PGDG 15 alongside it. The 13 packages were never removed, and the base `postgresql` package owned `/usr/bin/pg_dump` as a regular file — overwriting the alternatives symlink PGDG had registered.
+
+`alternatives --display pgsql-pg_dump` said: *link currently points to /usr/pgsql-15/bin/pg_dump, priority 1500, best version*. `readlink -f /usr/bin/pg_dump` said `/usr/bin/pg_dump` — not a symlink at all. `rpm -qf` said `postgresql-13.23`. The alternatives system was reporting the state it believed it managed, and that report was false about the file on disk.
+
+### Why four guards missed it
+
+The PG15 floor was asserted in fourteen declaration sites and enforced by three mechanisms, and every one of them looked at either the server or a declaration:
+
+- **The Platform Lifecycle card** reads `SHOW server_version` and grades it against `polarisMinimum`, with a real `below_minimum` state. It said 15.18. Correctly. The client binary is outside its field of view.
+- **`check:versions`** reported "PostgreSQL 15 — 14 sites consistent". It validates declared pins, and `dnf install -y postgresql` in `setup-rhel-nodb.sh` declares nothing. The check's own warning text names the blind spot: *"Nothing here can disagree, so nothing here can be checked; the host decides."*
+- **The installer guard** in `setup-rhel.sh` tested `command -v pg_dump`. Presence. A PostgreSQL 13 client satisfies it perfectly. The comment above the guard even said *"BACKUPS WILL FAIL until this is fixed"* — the right worry, tested against the wrong property.
+- **`alternatives`**, as above.
+
+And `backupService` spawned `"pg_dump"` by bare name, so the version that governed backups was whatever PATH resolved — a completely separate question from what version the server was, and one nobody had a reason to ask.
+
+### Why nobody knew
+
+A failing dump threw `"Database backup failed — see the server log for details"`. That is a defensible choice for a tool whose stderr can carry connection details — `pgEnv.ts` exists because the old backup route leaked the password through exactly that channel. But the one line `pg_dump` prints in this case names both versions and implies the fix, and it went only to the journal. The Application Updates card on prod showed *"Backup skipped (disabled in settings)"*: `update.skip_backup` was on, in front of a step the code itself calls irreversible. Whether it was switched off because backups kept failing or because an enterprise product covers the database, the effect was the same — prod had been taking updates with no recovery point Polaris could see, and the mechanism that would have said so was the one that was broken.
+
+### The rule's three parts
+
+**Resolve by major, not by name.** `resolvePgToolPath` walks the per-major install directories for the server's major and the five above it. Newer is fine — `pg_dump` dumps servers back to 9.2 — older is never a candidate. The bare name is the last resort and is flagged `source: "path"` so the caller knows the next step is load-bearing.
+
+**Verify before trusting.** The choice is only as good as the file behind it, and this incident is the proof: a versioned path can be right while PATH lies, and PATH can be a 13 binary while every index says 15. So `--version` runs on whatever was chosen, `parsePgToolMajor` reads it, and `pgClientCompatible` applies the asymmetry — `pg_dump` needs client ≥ server, `psql` does not.
+
+**Say the specific thing.** `describePgClientMismatch` is the sentence that would have ended this in a minute: *pg_dump is PostgreSQL 13 (/usr/bin/pg_dump) but the server is PostgreSQL 15 … dnf install postgresql15 … rpm -qf /usr/bin/pg_dump*. It is the AppError, not a log line behind a generic one. The version mismatch carries no credential and no connection detail, so the reason for the generic message does not apply to it.
+
+### The same lesson, four files late
+
+`setup-rhel.sh` had already learned the versioned-package lesson for the *server* — its comment says a fresh install used to get PostgreSQL 13 and "was not even installing the right major". `setup-rhel-nodb.sh`, its sibling for external databases, still ran `dnf install -y postgresql` for the client. The updater script's rollback restored a Timescale database without the gates `backupService` had learned to run in 2026-08. The updater's `git rev-parse` ran as root and had been silently returning "unknown" since it was written. The pattern of the afternoon was a lesson learned in one file and never carried to the file next to it, and this rule exists so that the next place that spawns a PostgreSQL client has something to cite.

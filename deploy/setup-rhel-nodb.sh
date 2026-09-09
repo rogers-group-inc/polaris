@@ -166,12 +166,24 @@ else
 fi
 
 # ─── 3. Install PostgreSQL client tools (for pg_dump backups) ────────────────
-if command -v pg_dump &>/dev/null; then
-  info "PostgreSQL client tools already installed"
+# From PGDG and VERSIONED, never `dnf install -y postgresql`. On RHEL 9 the
+# unversioned AppStream package is PostgreSQL 13, and pg_dump refuses to dump a
+# server newer than itself — so a 13 client in front of the 15+ server this
+# variant connects to failed every backup with "server version mismatch", while
+# the old guard here (`command -v pg_dump`) reported success because a binary
+# existed. Prod, 2026-09-09. The same lesson setup-rhel.sh learned for the
+# SERVER packages, applied to the client. Step 5 checks the installed major
+# against the actual server once the connection string is known to work.
+PG_CLIENT_MAJOR=15
+if [[ -x "/usr/pgsql-${PG_CLIENT_MAJOR}/bin/pg_dump" ]]; then
+  info "PostgreSQL ${PG_CLIENT_MAJOR} client tools already installed"
 else
-  info "Installing PostgreSQL client tools..."
-  dnf install -y postgresql
-  info "PostgreSQL client tools installed"
+  info "Installing PostgreSQL ${PG_CLIENT_MAJOR} client tools from PGDG..."
+  dnf install -y "https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm" 2>/dev/null || true
+  # Without this the AppStream module's packages shadow PGDG's.
+  dnf -qy module disable postgresql
+  dnf install -y "postgresql${PG_CLIENT_MAJOR}"
+  info "PostgreSQL ${PG_CLIENT_MAJOR} client tools installed"
 fi
 
 # ─── 4. Create system user ───────────────────────────────────────────────────
@@ -227,6 +239,15 @@ info "Testing database connectivity..."
 if command -v psql &>/dev/null; then
   if psql "$DATABASE_URL" -c "SELECT 1" &>/dev/null; then
     info "Database connection successful"
+    # pg_dump must be at least the server's major — it refuses a newer server.
+    # Presence (`command -v`) said nothing about this on prod 2026-09-09, when a
+    # PostgreSQL 13 client sat in front of a 15 server for months.
+    _srv_major=$(psql "$DATABASE_URL" -tAX -c "SHOW server_version_num" 2>/dev/null | tr -d '[:space:]' | sed -E 's/^([0-9]{2})[0-9]{4}$/\1/')
+    _dump_major=$(pg_dump --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+    if [[ -n "$_srv_major" && -n "$_dump_major" && "$_dump_major" -lt "$_srv_major" ]]; then
+      warn "pg_dump on PATH is PostgreSQL ${_dump_major} but the server is PostgreSQL ${_srv_major} — pg_dump refuses a newer server, so BACKUPS WILL FAIL."
+      warn "  Fix: dnf install -y postgresql${_srv_major} (PGDG), then check that $(command -v pg_dump) is not the AppStream package: rpm -qf $(command -v pg_dump)"
+    fi
     # pg-boss (queue runtime for monitor cadences at scale) lives in its own
     # `pgboss` schema. The role we're connecting as needs to own that schema
     # — try the grants ourselves; if our role isn't the schema owner / a

@@ -33,7 +33,8 @@
  *   encrypted:   "POLARIS\0" | salt(32) | iv(16) | authTag(16) | gzip(sql) ciphertext
  */
 
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createGzip, createGunzip } from "node:zlib";
 import {
   createCipheriv,
@@ -63,6 +64,16 @@ import { BACKUP_DIR } from "../utils/paths.js";
 import { getAppVersion } from "../utils/version.js";
 import { getDirectDatabaseUrl } from "../utils/dbConnections.js";
 import { pgChildEnv } from "../utils/pgEnv.js";
+import {
+  type PgTool,
+  parsePgToolMajor,
+  pgMajorFromServerVersion,
+  resolvePgToolPath,
+  pgClientCompatible,
+  describePgClientMismatch,
+} from "../utils/pgClientTools.js";
+
+const execFileAsync = promisify(execFile);
 
 // ─── Format constants ──────────────────────────────────────────────────────
 
@@ -192,11 +203,15 @@ interface ChildResult {
  * below, which log the detail and return a fixed string.
  */
 function runPgTool(
-  bin: "pg_dump" | "psql",
+  bin: PgTool,
   args: string[],
-  opts: { connUrl: string; onStdout?: (stdout: NodeJS.ReadableStream) => void; stdinFrom?: NodeJS.ReadableStream },
+  opts: { connUrl: string; binPath?: string; onStdout?: (stdout: NodeJS.ReadableStream) => void; stdinFrom?: NodeJS.ReadableStream },
 ): { child: ReturnType<typeof spawn>; done: Promise<ChildResult> } {
-  const child = spawn(bin, args, {
+  // binPath is resolvePgTool()'s answer — a per-major install dir, or the bare
+  // name when nothing versioned exists. Spawning the bare name unverified is
+  // the trust-PATH behaviour that failed prod on 2026-09-09 (a PostgreSQL 13
+  // pg_dump in front of a 15 server), so callers go through the resolver first.
+  const child = spawn(opts.binPath ?? bin, args, {
     env: pgChildEnv(opts.connUrl),
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -250,9 +265,84 @@ function runPgTool(
 }
 
 /** Run one short `psql -c "<sql>"` statement. Used for the Timescale gates. */
-async function psqlCommand(connUrl: string, sql: string): Promise<void> {
-  const { done } = runPgTool("psql", ["--no-psqlrc", "--quiet", "-v", "ON_ERROR_STOP=1", "-c", sql], { connUrl });
+async function psqlCommand(connUrl: string, sql: string, binPath?: string): Promise<void> {
+  const { done } = runPgTool("psql", ["--no-psqlrc", "--quiet", "-v", "ON_ERROR_STOP=1", "-c", sql], { connUrl, binPath });
   await done;
+}
+
+// ─── Client tool resolution ────────────────────────────────────────────────
+
+export interface PgToolResolution {
+  tool: PgTool;
+  /** What will be spawned. */
+  path: string;
+  /** "versioned-dir" = found under a per-major install dir; "path" = the bare name, whatever PATH gives. */
+  source: "versioned-dir" | "path";
+  clientMajor: number | null;
+  serverMajor: number | null;
+  /** False when the client cannot work against this server, or could not be run at all. */
+  compatible: boolean;
+  /** The operator-facing explanation when !compatible. */
+  problem: string | null;
+}
+
+async function readServerMajor(): Promise<number | null> {
+  try {
+    // A GUC read, like platformLifecycleService's SHOW server_version.
+    const rows = await prisma.$queryRawUnsafe<{ server_version_num: string }[]>("SHOW server_version_num");
+    return pgMajorFromServerVersion(rows[0]?.server_version_num);
+  } catch (err) {
+    logger.warn({ err }, "backup: could not read server_version_num; resolving client tools from PATH");
+    return null;
+  }
+}
+
+/**
+ * Which `pg_dump` / `psql` to run, and whether it can talk to this server.
+ *
+ * Resolution is by the server's MAJOR through src/utils/pgClientTools.ts —
+ * /usr/pgsql-<N>/bin, /usr/lib/postgresql/<N>/bin, the Windows install dir,
+ * newer majors accepted — with PATH as the last resort. Then `--version` is run
+ * on whatever was chosen, because the choice is only as good as the file behind
+ * it: on 2026-09-09 prod's /usr/bin/pg_dump was a PostgreSQL 13 binary that
+ * `alternatives` swore was 15, and every backup on the host failed with a
+ * message the operator only ever saw as "see the server log". pg_dump refuses a
+ * server newer than itself; psql only warns, so for psql `compatible` is false
+ * only when it cannot be run at all.
+ */
+export async function resolvePgTool(tool: PgTool): Promise<PgToolResolution> {
+  const serverMajor = await readServerMajor();
+  const { path, source } = resolvePgToolPath(tool, serverMajor, existsSync);
+
+  let clientMajor: number | null = null;
+  let problem: string | null = null;
+  try {
+    const { stdout } = await execFileAsync(path, ["--version"], { timeout: 10_000, windowsHide: true });
+    clientMajor = parsePgToolMajor(stdout);
+    if (clientMajor == null) {
+      problem = `${tool} --version returned something unrecognisable: ${String(stdout).trim().slice(0, 120) || "no output"}`;
+    }
+  } catch (err: any) {
+    problem = err?.code === "ENOENT"
+      ? `${tool} was not found on this host (looked for a PostgreSQL ${serverMajor ?? "?"} install and on PATH) — install the PostgreSQL client tools`
+      : `${tool} --version failed: ${err?.message ?? String(err)}`;
+  }
+  if (problem == null && clientMajor != null && serverMajor != null && !pgClientCompatible(tool, clientMajor, serverMajor)) {
+    problem = describePgClientMismatch(tool, clientMajor, serverMajor, path);
+  }
+  return { tool, path, source, clientMajor, serverMajor, compatible: problem == null, problem };
+}
+
+/**
+ * For the Maintenance tab: can this host back itself up right now? Cheap — two
+ * `--version` spawns and one GUC read — so it is safe to render on every load.
+ * This is the check that would have said "your pg_dump is 13, your server is
+ * 15" on the day it started being true, instead of on the day someone needed a
+ * backup.
+ */
+export async function getBackupToolingStatus(): Promise<{ ok: boolean; pgDump: PgToolResolution; psql: PgToolResolution }> {
+  const [pgDump, psql] = await Promise.all([resolvePgTool("pg_dump"), resolvePgTool("psql")]);
+  return { ok: pgDump.compatible && psql.compatible, pgDump, psql };
 }
 
 // ─── Timescale awareness ───────────────────────────────────────────────────
@@ -304,6 +394,15 @@ export async function createBackup(input: CreateBackupInput): Promise<CreateBack
   const connUrl = getDirectDatabaseUrl();
   mkdirSync(BACKUP_DIR, { recursive: true });
 
+  // Resolve and verify the client FIRST. When it cannot work, that specific
+  // sentence is the error — not "see the server log", which is what hid a
+  // 13-vs-15 mismatch on prod for months.
+  const pgDump = await resolvePgTool("pg_dump");
+  if (!pgDump.compatible) {
+    logger.error({ pgDump }, "Database backup refused: pg_dump cannot work against this server");
+    throw new AppError(500, pgDump.problem!);
+  }
+
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const prefix = input.kind === "pre-update" ? "polaris-pre-update" : "polaris-backup";
   const idPrefix = input.kind === "pre-update" ? "bk-pre-update" : input.kind === "scheduled" ? "bk-scheduled" : "bk";
@@ -315,7 +414,7 @@ export async function createBackup(input: CreateBackupInput): Promise<CreateBack
   const { child, done } = runPgTool(
     "pg_dump",
     ["--no-owner", "--no-acl", "--clean", "--if-exists"],
-    { connUrl },
+    { connUrl, binPath: pgDump.path },
   );
 
   try {
@@ -385,7 +484,7 @@ export async function createBackup(input: CreateBackupInput): Promise<CreateBack
     resourceName: filename,
     actor: input.actor,
     message: `Database backup created: ${filename} (${size} bytes${encrypted ? ", encrypted" : ""}, ${input.kind})`,
-    details: { kind: input.kind, size, encrypted },
+    details: { kind: input.kind, size, encrypted, pgDump: pgDump.path, pgDumpMajor: pgDump.clientMajor },
   });
 
   return { record, path: backupFile };
@@ -440,6 +539,14 @@ export async function restoreBackup(input: RestoreBackupInput): Promise<void> {
 
   const useTimescaleGates = await timescaleInstalled();
 
+  // psql restores across majors (it only warns), so only "cannot run it" is
+  // fatal; a major behind the server is logged and the restore proceeds.
+  const psql = await resolvePgTool("psql");
+  if (!psql.compatible) throw new AppError(500, psql.problem!);
+  if (psql.clientMajor != null && psql.serverMajor != null && psql.clientMajor < psql.serverMajor) {
+    logger.warn({ psql: psql.path, clientMajor: psql.clientMajor, serverMajor: psql.serverMajor }, "restore: psql is older than the server; continuing");
+  }
+
   // Decrypt to a temp gzip file when needed. The cipher is a stream transform,
   // so this stays O(1) in memory even for a multi-gigabyte backup — the old
   // implementation readFileSync'd the whole ciphertext.
@@ -481,7 +588,7 @@ export async function restoreBackup(input: RestoreBackupInput): Promise<void> {
   try {
     if (useTimescaleGates) {
       try {
-        await psqlCommand(connUrl, "SELECT timescaledb_pre_restore();");
+        await psqlCommand(connUrl, "SELECT timescaledb_pre_restore();", psql.path);
       } catch (err: any) {
         // timescaleInstalled() fails toward true, so a database without the
         // extension lands here. That is benign: proceed with a plain restore.
@@ -493,7 +600,7 @@ export async function restoreBackup(input: RestoreBackupInput): Promise<void> {
       const { child, done } = runPgTool(
         "psql",
         ["--no-psqlrc", "--quiet", "--single-transaction", "-v", "ON_ERROR_STOP=1"],
-        { connUrl },
+        { connUrl, binPath: psql.path },
       );
       // gzip file → gunzip → psql stdin. No decompressed-size cap: a restore is
       // an explicit operator action on a file they supplied, and capping it
@@ -512,7 +619,7 @@ export async function restoreBackup(input: RestoreBackupInput): Promise<void> {
       // MUST run even on failure: a database left with timescaledb.restoring on
       // rejects normal hypertable writes.
       try {
-        await psqlCommand(connUrl, "SELECT timescaledb_post_restore();");
+        await psqlCommand(connUrl, "SELECT timescaledb_post_restore();", psql.path);
       } catch (err: any) {
         logger.error(
           { err: err?.message },
