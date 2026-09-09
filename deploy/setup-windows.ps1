@@ -343,6 +343,19 @@ SESSION_SECRET=$sessionSecret
 # pg_dump. KEEP A COPY OFF THIS HOST: sealed secrets cannot be recovered
 # without this key.
 POLARIS_SECRET_KEY=$polarisSecretKey
+
+# Extra CA bundle for Node's TLS. Set this when the network re-signs HTTPS with
+# an internal CA: Node ships its OWN CA store and ignores the Windows
+# certificate store, so a root this machine trusts is still rejected inside
+# Polaris and inside npm - the symptom is npm failing
+# UNABLE_TO_GET_ISSUER_CERT_LOCALLY on an update while the code pull in the same
+# update succeeds.
+#
+# Left commented because Windows has no system PEM bundle to point at: the root
+# lives in the certificate store and has to be exported to a file first. The
+# Linux setup scripts CAN autodetect this and do; Windows cannot.
+# See docs/INSTALL.md -> "Networks that inspect TLS" for the export command.
+# NODE_EXTRA_CA_CERTS=C:\polaris\internal-root.pem
 "@ | Set-Content $envFile -Encoding UTF8
     Write-Info ".env created with generated SESSION_SECRET + POLARIS_SECRET_KEY"
 } else {

@@ -157,6 +157,33 @@ POLARIS_STATE_DIR=
 # fallback scripts read the same var and repoint origin in lockstep.
 POLARIS_UPDATE_REPO=
 
+# PEM bundle of extra CAs Node should trust, for networks that re-sign HTTPS
+# with an internal CA. Node ships its OWN CA store and ignores the OS one, so a
+# root the whole host trusts is still rejected inside Polaris and inside npm —
+# the fingerprint is npm failing UNABLE_TO_GET_ISSUER_CERT_LOCALLY while the
+# code-pull step of the same update succeeds (that path is OpenSSL, which does
+# read the system store).
+#
+# Read by NODE ITSELF at process start, not by the app, so it only works as a
+# real environment variable: it takes effect from .env because the shipped units
+# load that file with systemd's EnvironmentFile=, which exports it before node
+# execs. A value the app merely parses later would be too late. `sudo` scrubs
+# it, so deploy/update-linux.sh reads it back out of .env and re-supplies it to
+# every npm/npx call (its app_node helper).
+#
+# EXTENDS the built-in roots rather than replacing them, so it is safe to leave
+# set on a network that does not intercept — which is why deploy/setup-*.sh
+# detect the host's bundle and write it on fresh installs
+# (/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem on RHEL,
+# /etc/ssl/certs/ca-certificates.crt on Debian). Windows has no system PEM: the
+# root must be exported from the certificate store to a file.
+#
+# Also covers the app's own egress once running — Entra/Graph, Azure Arc, the
+# IEEE OUI refresh, weather/map tiles, webhook delivery. Operator runbook,
+# including how to recover an install whose update already failed this way:
+# docs/INSTALL.md → "Networks that inspect TLS".
+NODE_EXTRA_CA_CERTS=
+
 # Public hostname the agent embeds in agent.conf when POLARIS_PUBLIC_URL isn't
 # set (no scheme/port override). POLARIS_PUBLIC_URL wins when both are set.
 POLARIS_PUBLIC_HOST=

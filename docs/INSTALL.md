@@ -38,6 +38,124 @@ a permanent banner open, since it clears only in a maintenance window.
 
 ---
 
+## Networks that inspect TLS
+
+Skip this unless your network re-signs HTTPS with an internal CA (Zscaler, Palo Alto,
+Netskope and similar). If it does, read it before installing or updating — it is the one
+environment problem that can leave an install unable to update.
+
+**Why it bites Polaris specifically.** Node ships its *own* bundled CA store and ignores the
+operating system's. So a root certificate the entire host trusts — one you added with
+`update-ca-trust` and that `curl` and the browser accept — is still rejected inside Polaris
+and inside `npm`.
+
+**The fingerprint.** `npm` fails with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` while the code-pull
+step in the very same update succeeds. That asymmetry is the tell: the pull goes through
+OpenSSL, which reads the system store; `npm` is Node, which does not.
+
+It usually surfaces at the **Install dependencies** step of an update rather than at install
+time, and often long after the network changed. `npm ci` only needs the registry for packages
+that are not already in the local cache, so an install whose cache was warmed by an earlier
+successful run keeps working until one dependency version changes. The first package that
+misses the cache is the first to fail.
+
+The same trust gap affects the app's own outbound calls once it is running: Entra/Graph and
+Azure Arc discovery, the weekly IEEE OUI refresh, weather and map tiles, and webhook delivery.
+
+### Fix
+
+1. Add your internal root to the **operating system** trust store, if it is not already there:
+
+   ```bash
+   # RHEL / Rocky / AlmaLinux
+   sudo cp internal-root.crt /etc/pki/ca-trust/source/anchors/
+   sudo update-ca-trust
+
+   # Ubuntu / Debian
+   sudo cp internal-root.crt /usr/local/share/ca-certificates/internal-root.crt
+   sudo update-ca-certificates
+   ```
+
+2. Point Node at that bundle in `/opt/polaris/.env`:
+
+   ```bash
+   # RHEL / Rocky / AlmaLinux
+   NODE_EXTRA_CA_CERTS=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+
+   # Ubuntu / Debian
+   NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+   ```
+
+   `NODE_EXTRA_CA_CERTS` **extends** Node's built-in roots rather than replacing them, so it is
+   safe to leave set even if the network stops intercepting. Fresh installs from
+   `deploy/setup-*.sh` detect the bundle and write this line for you.
+
+3. Restart so the units pick it up:
+
+   ```bash
+   sudo systemctl restart polaris.target
+   ```
+
+   The value has to be a real environment variable, not just a line the app parses — Node reads
+   it before any JavaScript runs. It works from `.env` because the shipped units load that file
+   with systemd's `EnvironmentFile=`, which exports it before `node` starts.
+
+4. Confirm the toolchain can reach the registry as the app user:
+
+   ```bash
+   sudo -u polaris env NODE_EXTRA_CA_CERTS=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+     npm ping
+   ```
+
+**Do not** use `npm config set strict-ssl false`. It clears the error by disabling verification
+of every package download on a host that installs 600+ packages — a supply-chain hole in place
+of a configuration gap.
+
+### Recovering an install whose update already failed here
+
+`npm ci` deletes `node_modules` **before** it installs, so an update that failed at Install
+dependencies leaves the on-disk dependency tree incomplete. The service keeps running from
+modules already loaded in memory, so the app looks healthy — but **it will not survive a
+restart or a reboot until an install succeeds.** Treat it as urgent, and do not restart it
+first to "see if it's fine".
+
+Apply the fix above, then re-run the update (Server Settings → Maintenance → Updates, or
+`sudo bash deploy/update-linux.sh`). If you need to repair the dependency tree without a full
+update:
+
+```bash
+cd /opt/polaris
+sudo -u polaris env NODE_EXTRA_CA_CERTS=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+  npm ci --production=false
+sudo -u polaris npm run build
+sudo systemctl restart polaris.target
+```
+
+`deploy/update-linux.sh` reads `NODE_EXTRA_CA_CERTS` out of `.env` and re-supplies it to every
+`npm` call itself, because `sudo` scrubs the environment — which is why the manual commands
+above pass it explicitly too.
+
+### Windows
+
+Windows has no PEM bundle: the internal root lives in the certificate store, so export it to a
+file and point `NODE_EXTRA_CA_CERTS` at that file in `C:\polaris\.env`.
+
+```powershell
+# Export the internal root (adjust the thumbprint / subject to match yours)
+Get-ChildItem Cert:\LocalMachine\Root |
+  Where-Object { $_.Subject -like "*YourInternalCA*" } |
+  ForEach-Object { [IO.File]::WriteAllText("C:\polaris\internal-root.pem",
+    "-----BEGIN CERTIFICATE-----`n" +
+    [Convert]::ToBase64String($_.RawData, 'InsertLineBreaks') +
+    "`n-----END CERTIFICATE-----`n") }
+```
+
+Then set `NODE_EXTRA_CA_CERTS=C:\polaris\internal-root.pem` and restart the Polaris service.
+The Windows setup scripts do not detect this automatically — there is no single system PEM to
+point at.
+
+---
+
 ## Disk sizing — read this first
 
 The single most common operational footgun on a fresh Polaris install is undersized `/var` (Linux) or undersized `C:` (Windows) — both are where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.

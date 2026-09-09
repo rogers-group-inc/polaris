@@ -211,6 +211,29 @@ if (Test-Path $EnvFile) {
         $UpdateRepo = ($envLine.Line -replace '^\s*POLARIS_UPDATE_REPO=', '').Trim().Trim('"').Trim("'")
     }
 }
+
+# Carry NODE_EXTRA_CA_CERTS from .env into this process, so the `npm ci` below
+# trusts the same extra roots the service does. Node ignores the OS trust store
+# and reads this var at process start, so on a network that re-signs HTTPS with
+# an internal CA every npm call fails UNABLE_TO_GET_ISSUER_CERT_LOCALLY while
+# the pull above succeeds (that path is OpenSSL, which does read the store).
+#
+# The service gets it from .env via NSSM's environment; this script runs as
+# Administrator and would not otherwise see it — which would make the
+# "put it in .env" instruction in docs/INSTALL.md silently untrue here.
+# An already-set machine-level variable wins, so an operator can override.
+if ((Test-Path $EnvFile) -and -not $env:NODE_EXTRA_CA_CERTS) {
+    $caLine = Select-String -Path $EnvFile -Pattern '^\s*NODE_EXTRA_CA_CERTS=' | Select-Object -Last 1
+    if ($caLine) {
+        $caPath = ($caLine.Line -replace '^\s*NODE_EXTRA_CA_CERTS=', '').Trim().Trim('"').Trim("'")
+        if ($caPath -and (Test-Path $caPath)) {
+            $env:NODE_EXTRA_CA_CERTS = $caPath
+            Write-Info "Using extra CA bundle for npm TLS: $caPath"
+        } elseif ($caPath) {
+            Write-Warn "NODE_EXTRA_CA_CERTS in .env points at '$caPath', which does not exist - ignoring it."
+        }
+    }
+}
 if ($UpdateRepo) {
     $CurrentRepo = (& git remote get-url origin 2>$null)
     if ($CurrentRepo -ne $UpdateRepo) {
