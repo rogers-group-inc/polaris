@@ -600,8 +600,10 @@ EOF
   # Marker: what makes update-linux.sh and the in-app updater behave as HA.
   cat > "$MARKER_FILE_PATH" <<EOF
 # This host is a Polaris HA node (docs/HA.md).
-# Presence of this file makes the updaters require Patroni primary status and
-# notify the peer afterwards, and tells the reconciler it owns polaris.target.
+# Presence of this file makes the updaters require Patroni primary status,
+# refresh the HA files installed outside /opt/polaris (the reconciler script,
+# its unit and timer, and the systemd drop-ins), and notify the peer
+# afterwards; it also tells the reconciler it owns polaris.target.
 role=$ROLE
 node=$NODE_NAME
 configured=$(date -Is)
