@@ -55,6 +55,40 @@ let _execRunner: ExecRunner = _realExec;
 
 const execAsync: ExecRunner = (cmd, opts) => _execRunner(cmd, opts);
 
+/**
+ * Values that reach a shell in this file, and why they are validated rather
+ * than quoted.
+ *
+ * `execAsync` runs through a SHELL. Git's own `check-ref-format` permits plenty
+ * of characters the shell then acts on — `;`, `&`, `|`, `$`, a backtick and
+ * both quote characters are all legal in a branch or tag name — so a ref is not
+ * safe to interpolate merely because git accepted it. And the refs here are not
+ * ours: `latestReleaseTag()` reads tag names OUT OF THE UPDATE REPOSITORY, and
+ * that repository is whatever `POLARIS_UPDATE_REPO` names — the feature exists
+ * so an install can follow a fork or an internal mirror. A tag named
+ * ``v1.0.0`id` `` previously reached `git checkout --detach <tag>` during an
+ * operator-triggered update, on the highest-blast-radius path in the repo.
+ *
+ * Double-quoting is NOT the fix: `$(…)` and backticks are still expanded inside
+ * double quotes on /bin/sh. An allowlist is, and it costs nothing — no real
+ * branch, tag or clone URL needs a character outside these sets.
+ */
+const SAFE_GIT_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/;
+const SAFE_REPO_URL = /^[A-Za-z0-9._~:/@+-]{1,500}$/;
+
+/** A ref safe to hand to the shell: allowlisted charset, and no `..`, which
+ *  would also change the meaning of the `HEAD..<ref>` range commands. */
+export function isSafeGitRef(ref: string): boolean {
+  return SAFE_GIT_REF.test(ref) && !ref.includes("..");
+}
+
+/** A clone URL safe to hand to the shell. Covers https://, ssh://, git:// and
+ *  the scp-like `git@host:owner/repo.git` form; rejects everything the shell
+ *  would act on inside the double quotes it gets interpolated into. */
+export function isSafeRepoUrl(url: string): boolean {
+  return SAFE_REPO_URL.test(url);
+}
+
 /** Test seam. Pass null to restore the real `exec`. */
 export function _setExecRunnerForTests(fn: ExecRunner | null): void {
   _execRunner = fn ?? _realExec;
@@ -198,9 +232,21 @@ const STATUS_FILE = join(APP_DIR, ".update-status.json");
 // i.e. it updates from whatever it was cloned from (the canonical upstream for
 // a normal install, or a fork's own origin for a fork-based install).
 
-/** The configured override, or null when POLARIS_UPDATE_REPO is unset/empty. */
+/** The configured override, or null when POLARIS_UPDATE_REPO is unset/empty.
+ *  A value the shell would act on is REFUSED rather than used: falling back to
+ *  the install's existing origin is the safe outcome, and it is logged so the
+ *  operator can see why their override did not take. */
 function configuredUpdateRepo(): string | null {
-  return (process.env.POLARIS_UPDATE_REPO || "").trim() || null;
+  const raw = (process.env.POLARIS_UPDATE_REPO || "").trim();
+  if (!raw) return null;
+  if (!isSafeRepoUrl(raw)) {
+    logger.error(
+      { value: raw },
+      "POLARIS_UPDATE_REPO contains characters that are not valid in a clone URL — ignoring it and updating from the existing origin remote.",
+    );
+    return null;
+  }
+  return raw;
 }
 
 /** Read the install's current `origin` remote URL (null if none / git fails). */
@@ -368,7 +414,19 @@ async function latestReleaseTag(): Promise<string | null> {
       { cwd: APP_DIR, timeout: 10000 },
     );
     const tags = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-    return tags[0] || null;
+    // These names come from the update repository, so they are untrusted input
+    // to every command that interpolates them (`git checkout --detach <tag>`,
+    // `git show <tag>:package.json`, the HEAD..<tag> range reads). Skip a tag
+    // the shell would act on and fall through to the next highest, loudly —
+    // silently returning null would read to an operator as "no releases yet".
+    for (const tag of tags) {
+      if (isSafeGitRef(tag)) return tag;
+      logger.error(
+        { tag },
+        "Ignoring a release tag from the update repository whose name is not a plain git ref — refusing to pass it to a shell.",
+      );
+    }
+    return null;
   } catch {
     return null;
   }
@@ -396,7 +454,15 @@ async function resolveDefaultBranch(): Promise<string> {
       timeout: 10000,
     });
     const branch = stdout.trim().replace(/^origin\//, "");
-    if (branch && branch !== "HEAD") return branch;
+    // origin/HEAD is set from the remote, so this name is the update
+    // repository's to choose and reaches `git checkout <branch>`.
+    if (branch && branch !== "HEAD" && isSafeGitRef(branch)) return branch;
+    if (branch && branch !== "HEAD") {
+      logger.error(
+        { branch },
+        "The update repository's default branch name is not a plain git ref — falling back to main/master rather than passing it to a shell.",
+      );
+    }
   } catch {
     // fall through to the fixed candidates
   }
