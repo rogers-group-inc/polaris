@@ -88,9 +88,19 @@ describe("the committed platform EOL dataset", () => {
     // A target that is itself nearly end-of-life is a dataset bug: it would
     // send an operator through a maintenance window onto a version they have
     // to leave again next year.
+    //
+    // Only applies to a target that is a MIGRATION DESTINATION. When the target
+    // equals the minimum, the dataset is saying "stay where you are" and nobody
+    // is being sent anywhere, so the horizon is irrelevant — and asserting it
+    // anyway makes this a time bomb: Java targets 17 with ~386 days left, which
+    // would start failing CI within the month on no code change at all. When 17
+    // does get close, gradeComponent's own clock reports `aging` with the date
+    // attached, which is the mechanism that should raise it — and once the
+    // target moves to 21 this guard covers the new destination again.
     const horizon = Date.now() + 365 * 86_400_000;
     for (const t of data.technologies) {
       if (t.policy !== "dated" || !t.polarisTarget) continue;
+      if (t.polarisTarget === t.polarisMinimum) continue;
       const row = t.tracks.find((x) => x.track === t.polarisTarget);
       if (!row?.eol) continue; // null eol = no announced end, which is fine
       expect(

@@ -169,14 +169,43 @@ describe("gradeComponent — states", () => {
     expect(g.state).toBe("eol");
   });
 
-  it("grades a supported-but-behind-target track as aging", () => {
+  it("grades a supported-but-behind-target track as behind_target, not aging", () => {
+    // 600 days of life left, so nothing about this is a clock — the only thing
+    // true of it is that the dataset names a newer track. Reporting it as
+    // "aging" alongside a genuine 120-days-to-EOL row is what made a Java 17
+    // with 386 days left read as overdue.
     const g = gradeComponent(
       tech({ polarisTarget: "24", polarisMaximumTested: "24", tracks: [{ track: "22", eol: isoIn(600) }] }),
       "22.1.0",
       NOW,
     );
+    expect(g.state).toBe("behind_target");
+    expect(g.severity).toBe("watch");
+  });
+
+  it("prefers aging over behind_target when the EOL clock is also running", () => {
+    // Both conditions true at once: below target AND inside the watch window.
+    // The date is the more urgent fact, so it wins and the operator sees a
+    // clock rather than a preference.
+    const g = gradeComponent(
+      tech({ polarisTarget: "24", polarisMaximumTested: "24", tracks: [{ track: "22", eol: isoIn(120) }] }),
+      "22.1.0",
+      NOW,
+    );
     expect(g.state).toBe("aging");
     expect(g.severity).toBe("watch");
+  });
+
+  it("grades a track equal to its target as current", () => {
+    // The Java case: target deliberately equals the minimum, so a healthy
+    // install must read Current rather than nagging forever.
+    const g = gradeComponent(
+      tech({ polarisMinimum: "17", polarisTarget: "17", polarisMaximumTested: "17", tracks: [{ track: "17", eol: isoIn(386) }] }),
+      "17.0.19",
+      NOW,
+    );
+    expect(g.state).toBe("current");
+    expect(g.severity).toBe("none");
   });
 
   it("grades the target track with a distant EOL as current", () => {

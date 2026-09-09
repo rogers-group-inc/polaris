@@ -96,8 +96,23 @@ export type LifecycleState =
   | "ahead_of_tested"
   /** Supported, and not near its end. */
   | "current"
-  /** Supported, but either nearing EOL or behind Polaris's target. */
+  /**
+   * Supported, but its end of life is within LIFECYCLE_WATCH_DAYS. A CLOCK:
+   * the date is doing the talking, and it only moves one way.
+   */
   | "aging"
+  /**
+   * Supported and not near its end, but below `polarisTarget`. A PREFERENCE,
+   * not a deadline — deliberately a separate state from `aging`.
+   *
+   * These were one state at first, and that was a mistake caught in the field:
+   * a card showing "Aging" for a Java 17 with 386 days of support left was read
+   * as "needs upgrading", when the only thing true of it was that the dataset
+   * named a newer version. Same severity, very different meaning, so they get
+   * different labels. If a component genuinely nears its end, `aging` above
+   * says so on its own with a date attached.
+   */
+  | "behind_target"
   /** EOL within LIFECYCLE_WARNING_DAYS. */
   | "approaching_eol"
   /** Past EOL but inside a paid/volunteer extension. */
@@ -254,9 +269,13 @@ export function gradeComponent(
     return withDates({ state: "aging", severity: "watch" });
   }
 
-  // Supported and not near its end, but behind where Polaris wants to be.
+  // Supported, not near its end, but below the track Polaris names as its
+  // target. Reported as `behind_target`, NOT `aging`: there is no clock on this
+  // one, and conflating the two made a component with over a year of support
+  // read as overdue. Same watch severity either way, so nothing about alerting
+  // changes — only what the operator is told.
   if (tech.polarisTarget && compareTracks(track, tech.polarisTarget) < 0) {
-    return withDates({ state: "aging", severity: "watch" });
+    return withDates({ state: "behind_target", severity: "watch" });
   }
 
   return withDates({ state: "current", severity: "none" });

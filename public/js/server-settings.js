@@ -1819,6 +1819,10 @@ function _lifecycleStateLabel(state) {
   if (state === "eol_extended") return "EOL (extended support)";
   if (state === "approaching_eol") return "Approaching EOL";
   if (state === "aging") return "Aging";
+  // Distinct from "Aging" on purpose: this row is below the version Polaris
+  // targets, which is a preference and not a date. "Aging" here was misread as
+  // "needs upgrading" for a component with 386 days of support left.
+  if (state === "behind_target") return "Behind target";
   if (state === "ahead_of_tested") return "Ahead of tested";
   if (state === "current") return "Current";
   if (state === "not_installed") return "Not installed";
