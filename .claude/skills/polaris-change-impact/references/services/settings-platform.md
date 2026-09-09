@@ -502,7 +502,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **Public API:** `initUpdateStatus`, `getUpdateStatus`, `isUpdateMechanismAvailable`, `clearUpdateStatus`, `checkForUpdates`, `applyUpdate`, `getRecentCommits`, `restartService`.
 
-**Cross-service deps:** none (spawns git/npm/prisma, reads/writes .update-status.json, creates DB backup).
+**Cross-service deps:** `services/backupService.ts` (`createBackup` for the pre-update dump), `services/eventLogService.ts` (the `server.update.*` audit trail). Spawns git / npm / the project's own Prisma CLI by path (`PRISMA_CLI`, never `npx`), reads/writes `.update-status.json`.
 
 **Used by:** `src/api/routes/serverSettings.ts,1143,1151,1159 — Application Updates card endpoints`; `src/api/routes/serverSettings.ts — POST /restart` (Capacity Advisor "Restart Polaris to apply" button uses `restartService` standalone, without the update pipeline); `src/jobs/updateCheck.ts,31 — hourly check job`. ~7 call sites.
 
@@ -536,9 +536,9 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** The whole database backup + restore mechanism. Extracted from `src/api/routes/serverSettings.ts` (2026-08) so the routes are thin and the pipeline is testable.
 
-**Public API:** `createBackup({password, kind, actor}) -> {record, path}`, `restoreBackup({filePath, password})`, `listBackups`, `getBackupRecord`, `deleteBackup`, `backupFilePath`, `isEncryptedBackupFile`, `timescaleInstalled`, plus the format constants `BACKUP_MAGIC` / `ENCRYPTED_HEADER_LEN`.
+**Public API:** `createBackup({password, kind, actor}) -> {record, path}`, `restoreBackup({filePath, password})`, `listBackups`, `getBackupRecord`, `deleteBackup`, `backupFilePath`, `isEncryptedBackupFile`, `timescaleInstalled`, `resolvePgTool(tool) -> PgToolResolution` (the chosen binary, its major vs the server's, and the operator sentence when it cannot work), `getBackupToolingStatus()` (both tools, for `GET /database/backup-tooling`), plus the format constants `BACKUP_MAGIC` / `ENCRYPTED_HEADER_LEN`.
 
-**Cross-service deps:** `utils/pgEnv.ts` (libpq PG* env), `utils/dbConnections.ts` (`getDirectDatabaseUrl`), `utils/paths.ts` (`BACKUP_DIR`), `utils/version.ts`, `services/eventLogService.ts`. Spawns `pg_dump` / `psql`.
+**Cross-service deps:** `utils/pgEnv.ts` (libpq PG* env), `utils/pgClientTools.ts` (candidate paths by server major, `--version` parsing, the compatibility rule — rule 47), `utils/dbConnections.ts` (`getDirectDatabaseUrl`), `utils/paths.ts` (`BACKUP_DIR`), `utils/version.ts`, `services/eventLogService.ts`. Spawns `pg_dump` / `psql` by the RESOLVED path, never by bare name.
 
 **Used by:** `src/api/routes/serverSettings.ts — POST /database/backup, POST /database/restore, GET /database/backups, DELETE /database/backups/:id, GET /database/backups/:id/download`; `src/services/updateService.ts — the pre-update backup step`; `src/jobs/scheduledBackup.ts — the automatic-backup cadence`. Three writers of `backup_history`, all through this service.
 
