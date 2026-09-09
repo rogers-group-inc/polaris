@@ -86,13 +86,24 @@ const STEP = {
   RESTART: 6,
 } as const;
 
-/** A recording exec stub. `failOn` matches a substring of the command. */
-function stubExec(opts: { failOn?: string; stdout?: Record<string, string> } = {}) {
+/**
+ * A recording exec stub. `failOn` matches a substring of the command and fails
+ * every time; `failOnce` fails only the first matching call (a transient
+ * blip); `errorProps` is merged into the thrown error (e.g. `{ killed: true }`
+ * to look like exec's SIGTERM on timeout, or a `stderr` carrying E404).
+ */
+function stubExec(
+  opts: { failOn?: string; failOnce?: string; stdout?: Record<string, string>; errorProps?: Record<string, unknown> } = {},
+) {
   const calls: string[] = [];
+  let onceFired = false;
   _setExecRunnerForTests(async (cmd: string) => {
     calls.push(cmd);
-    if (opts.failOn && cmd.includes(opts.failOn)) {
-      throw Object.assign(new Error(`stub failure: ${cmd}`), { stderr: `stub stderr for ${cmd}` });
+    const failNow =
+      (opts.failOn && cmd.includes(opts.failOn)) ||
+      (opts.failOnce && !onceFired && cmd.includes(opts.failOnce) && (onceFired = true));
+    if (failNow) {
+      throw Object.assign(new Error(`stub failure: ${cmd}`), { stderr: `stub stderr for ${cmd}` }, opts.errorProps ?? {});
     }
     for (const [needle, out] of Object.entries(opts.stdout ?? {})) {
       if (cmd.includes(needle)) return { stdout: out, stderr: "" };
@@ -316,6 +327,82 @@ d("applyUpdate — audit trail and per-step timing", () => {
   });
 });
 
+// The registry preflight. It shipped on 2026-09-09 and failed a prod update the
+// same day on a host whose registry was fine: one connection stalled, npm's
+// default 5-minute fetch-timeout meant it could not emit its own error inside
+// the 45 s ceiling, and the message then gave `npm ci`'s warm-cache advice and
+// blamed TLS for what was a hang. Every run here fails at the build step so the
+// restart timer is never scheduled while fake timers are being advanced.
+d("applyUpdate — registry preflight", () => {
+  const RETRY_MS = 3_000;
+
+  it("tells npm to fail fast so its own error fits inside the ceiling", async () => {
+    const calls = stubExec({ failOn: "npm run build" });
+    await runUpdate();
+    const ping = calls.find((c) => c.startsWith("npm ping"));
+    expect(ping).toContain("--fetch-retries=0");
+    expect(ping).toMatch(/--fetch-timeout=\d+/);
+  });
+
+  it("retries once after a transient failure and proceeds to the install", async () => {
+    const calls = stubExec({ failOnce: "npm ping", failOn: "npm run build", errorProps: { killed: true } });
+
+    const run = runUpdate();
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    await run;
+
+    expect(calls.filter((c) => c.startsWith("npm ping")).length).toBe(2);
+    expect(calls.some((c) => c.includes("npm ci"))).toBe(true);
+    expect(steps()[STEP.DEPS]?.status).toBe("done");
+  });
+
+  it("a hang (two timeouts) fails the step with hang advice, not TLS advice or warm-cache advice", async () => {
+    const calls = stubExec({ failOn: "npm ping", errorProps: { killed: true } });
+
+    const run = runUpdate();
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    await run;
+
+    expect(calls.filter((c) => c.startsWith("npm ping")).length).toBe(2);
+    expect(calls.some((c) => c.includes("npm ci"))).toBe(false);
+    const msg = steps()[STEP.DEPS]?.message ?? "";
+    expect(getUpdateStatus().state).toBe("failed");
+    expect(msg).toContain("a hang, not a refusal");
+    expect(msg).toContain("dependencies are untouched");
+    expect(msg).not.toContain("warm npm cache");
+    // The cause list for a hang must not lead with the certificate story.
+    expect(msg.indexOf("DROPPING")).toBeGreaterThan(-1);
+  });
+
+  it("a refusal (fast error) fails the step with the TLS/firewall cause list", async () => {
+    stubExec({ failOn: "npm ping", errorProps: { stderr: "npm error code UNABLE_TO_GET_ISSUER_CERT_LOCALLY" } });
+
+    const run = runUpdate();
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    await run;
+
+    const msg = steps()[STEP.DEPS]?.message ?? "";
+    expect(msg).toContain("NODE_EXTRA_CA_CERTS");
+    expect(msg).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+    expect(msg).not.toContain("a hang, not a refusal");
+  });
+
+  it("a 404 from a private mirror counts as reachable and does not block the install", async () => {
+    // The ping fails with a 404 (failOnce, so the stub's errorProps describe
+    // THAT failure); the build failure keeps the restart timer unscheduled.
+    const calls = stubExec({
+      failOnce: "npm ping",
+      failOn: "npm run build",
+      errorProps: { stderr: "npm error code E404\nnpm error 404 Not Found - GET https://nexus.example/repository/npm/-/ping" },
+    });
+
+    await runUpdate();
+
+    expect(calls.filter((c) => c.startsWith("npm ping")).length).toBe(1);
+    expect(calls.some((c) => c.includes("npm ci"))).toBe(true);
+  });
+});
+
 d("applyUpdate — train selection", () => {
   it("nightly fast-forwards the branch", async () => {
     settingRows.set("update.train", "nightly");
@@ -413,12 +500,17 @@ d("applyUpdate — train selection", () => {
       // hand-repair a host that was never broken.
       const calls = stubExec({ failOn: "npm ping" });
 
-      await runUpdate();
+      // The preflight retries once, 3 s apart, before giving up — advance the
+      // fake clock through that sleep or the run never resolves.
+      const run = runUpdate();
+      await vi.advanceTimersByTimeAsync(3_000);
+      await run;
 
       expect(calls.some((c) => c.includes("npm ci"))).toBe(false);
       const msg = steps()[STEP.DEPS]?.message ?? "";
       expect(msg).toContain("Cannot reach the npm registry");
       expect(msg).toContain("safe to restart");
+      // A fast error (no timeout kill) keeps the TLS cause list.
       expect(msg).toContain("NODE_EXTRA_CA_CERTS");
       // And it must NOT claim the host is now broken — that text belongs to the
       // post-wipe failure, and reading it here would cause the wrong response.

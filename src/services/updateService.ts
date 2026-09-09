@@ -73,6 +73,19 @@ const NPM_CI_TIMEOUT_MS = 15 * 60_000;
  * minutes to an update that is about to fail anyway.
  */
 const NPM_PING_TIMEOUT_MS = 45_000;
+/**
+ * The ping itself, with npm told to fail FAST. npm's defaults are
+ * fetch-timeout=300000 (5 min per attempt) and fetch-retries=2, so on a
+ * connection that drops rather than refuses, npm cannot produce a single line
+ * of its own diagnostic inside a 45 s ceiling — the preflight would always be
+ * SIGTERMed first and report "timed out" with nothing else, which is exactly
+ * what prod showed on 2026-09-09. With these flags a hang surfaces in 15 s as
+ * npm's own ETIMEDOUT/ECONNRESET/UNABLE_TO_GET_ISSUER_CERT_LOCALLY, and there is
+ * room for a second attempt (below) so a transient stall is not a failed update.
+ */
+const NPM_PING_CMD = "npm ping --fetch-retries=0 --fetch-timeout=15000";
+const NPM_PING_ATTEMPTS = 2;
+const NPM_PING_RETRY_DELAY_MS = 3_000;
 const PRISMA_GENERATE_TIMEOUT_MS = 2 * 60_000;
 const BUILD_TIMEOUT_MS = 5 * 60_000;
 const MIGRATE_TIMEOUT_MS = 5 * 60_000;
@@ -100,9 +113,31 @@ const MIGRATE_TIMEOUT_MS = 5 * 60_000;
  *    serving from already-loaded modules: the install is fine until the next
  *    restart, which then fails to boot. An operator has to be told that plainly.
  */
-function stepFailureDetail(err: any, opts: { timeoutMs?: number; elapsedMs?: number } = {}): string {
-  const killedByTimeout =
-    err?.killed === true || err?.signal === "SIGTERM" || err?.code === "ETIMEDOUT";
+/** child_process.exec enforces `timeout` by SIGTERM and rejects with no text of its own. */
+function isTimeoutKill(err: any): boolean {
+  return err?.killed === true || err?.signal === "SIGTERM" || err?.code === "ETIMEDOUT";
+}
+
+/**
+ * `npm ping` hits `/-/ping`, which Nexus, Artifactory and Verdaccio mirrors do
+ * not all implement. A 404 means the registry ANSWERED — transport and TLS are
+ * fine — so it must not block an install that `npm ci` would complete.
+ */
+function registryAnsweredWith404(err: any): boolean {
+  return /\bE404\b|404 Not Found/i.test(String(err?.stderr || err?.stdout || err?.message || ""));
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** The default re-run advice is written for `npm ci`; steps with different economics pass their own. */
+const WARM_CACHE_ADVICE =
+  "Re-running the update is safe and is usually faster (a warm npm cache turns a multi-minute install into seconds).";
+
+function stepFailureDetail(
+  err: any,
+  opts: { timeoutMs?: number; elapsedMs?: number; retryAdvice?: string } = {},
+): string {
+  const killedByTimeout = isTimeoutKill(err);
   const out = String(err?.stderr || err?.stdout || err?.message || err || "").trim();
   const tail = out.length > STEP_ERROR_CHARS ? "…" + out.slice(-STEP_ERROR_CHARS) : out;
   if (killedByTimeout) {
@@ -117,8 +152,7 @@ function stepFailureDetail(err: any, opts: { timeoutMs?: number; elapsedMs?: num
       : "";
     return (
       `timed out${when} and was terminated` +
-      ` — the command did not fail, it ran out of time. Re-running the update is safe and` +
-      ` is usually faster (a warm npm cache turns a multi-minute install into seconds).` +
+      ` — the command did not fail, it ran out of time. ${opts.retryAdvice ?? WARM_CACHE_ADVICE}` +
       (tail ? ` Last output: ${tail}` : "")
     );
   }
@@ -917,22 +951,68 @@ export async function applyUpdate(
     // choice is between occasionally refusing an update that would have worked
     // and occasionally leaving a host that cannot restart. The first is a
     // message; the second is an outage.
-    try {
-      await execAsync("npm ping", {
-        cwd: APP_DIR,
-        timeout: NPM_PING_TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
+    //
+    // Two attempts, fast-fail each (NPM_PING_CMD), 3 s apart. The day this
+    // preflight shipped it failed a prod update on a host whose registry access
+    // was fine — one outbound connection stalled for 45 s and never recovered,
+    // and with npm's default 5-minute fetch-timeout the only output was the
+    // PING notice. A single fast-fail attempt would have turned that blip into
+    // a fast failure, which is no better; two attempts tell a stall from a
+    // block. A 404 counts as reachable: the registry answered.
+    let pingErr: any = null;
+    for (let attempt = 1; attempt <= NPM_PING_ATTEMPTS; attempt++) {
+      try {
+        await execAsync(NPM_PING_CMD, {
+          cwd: APP_DIR,
+          timeout: NPM_PING_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024,
+        });
+        pingErr = null;
+        break;
+      } catch (err: any) {
+        if (registryAnsweredWith404(err)) {
+          logger.warn(
+            { stderr: String(err?.stderr || "").trim().slice(-300) },
+            "npm ping got a 404 — the registry answered but has no /-/ping (private mirror?); proceeding",
+          );
+          pingErr = null;
+          break;
+        }
+        pingErr = err;
+        if (attempt < NPM_PING_ATTEMPTS) {
+          logger.warn(
+            { attempt, timedOut: isTimeoutKill(err), err: String(err?.stderr || err?.message || "").trim().slice(-300) },
+            "npm ping failed; retrying once",
+          );
+          await sleep(NPM_PING_RETRY_DELAY_MS);
+        }
+      }
+    }
+    if (pingErr) {
+      // A hang and a refusal have different causes, and the message used to
+      // name only the refusal's. A TLS-inspection failure is FAST and LOUD
+      // (UNABLE_TO_GET_ISSUER_CERT_LOCALLY within a second); a connection that
+      // sits silent for the whole window is being dropped — firewall, proxy or
+      // DNS — and telling the operator to set NODE_EXTRA_CA_CERTS sends them
+      // the wrong way.
+      const detail = stepFailureDetail(pingErr, {
+        timeoutMs: NPM_PING_TIMEOUT_MS,
+        elapsedMs: elapsed(2),
+        retryAdvice: "Re-running will fail the same way until the cause is fixed.",
       });
-    } catch (err: any) {
+      const causes = isTimeoutKill(pingErr)
+        ? ` The registry did not answer at all (${NPM_PING_ATTEMPTS} attempts, ${NPM_PING_RETRY_DELAY_MS / 1000}s apart) — a hang, not a refusal.` +
+          " A TLS-inspecting proxy fails fast with UNABLE_TO_GET_ISSUER_CERT_LOCALLY, so this points at an outbound firewall" +
+          " or proxy DROPPING the connection, or DNS. Reproduce from this host as the service user:" +
+          ` cd ${APP_DIR} && ${NPM_PING_CMD}.`
+        : " Usual causes: a TLS-inspecting proxy (npm fails UNABLE_TO_GET_ISSUER_CERT_LOCALLY because Node ignores" +
+          " the OS trust store — set NODE_EXTRA_CA_CERTS, see docs/INSTALL.md → \"Networks that inspect TLS\")," +
+          " an outbound firewall rule, or no internet on this host.";
       failUpdate(
         2,
-        "Cannot reach the npm registry: " + stepFailureDetail(err, { timeoutMs: NPM_PING_TIMEOUT_MS, elapsedMs: elapsed(2) }) +
-          " — stopped BEFORE installing, so this host's dependencies are untouched and it is" +
-          " safe to restart. Usual causes: a TLS-inspecting proxy (npm fails" +
-          " UNABLE_TO_GET_ISSUER_CERT_LOCALLY because Node ignores the OS trust store — set" +
-          " NODE_EXTRA_CA_CERTS, see docs/INSTALL.md → \"Networks that inspect TLS\"), an" +
-          " outbound firewall rule, or no internet on this host. Fix the cause and re-run;" +
-          " nothing needs undoing.",
+        "Cannot reach the npm registry: " + detail +
+          " — stopped BEFORE installing, so this host's dependencies are untouched and it is safe to restart." +
+          causes + " Fix the cause and re-run; nothing needs undoing.",
       );
       return;
     }
