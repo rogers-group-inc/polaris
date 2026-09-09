@@ -41,6 +41,63 @@
 - Bumping the disk-sizing recommendation: change `RECOMMENDED_DB_FREE_GB` and the `docs/INSTALL.md` table in the same commit.
 - Renaming or moving a state directory under `POLARIS_STATE_DIR`: search Dockerfile (pinned to `/app/state`), every `deploy/setup-*.{sh,ps1}` (paths under `/opt/polaris/state` on Linux), `docs/INSTALL.md`, and the encrypted-backup restore path. The Docker pin is the load-bearing one — break it and container restarts lose state.
 
+### Testing a Linux install path from this Windows dev box
+
+`deploy/setup-*.sh` cannot be run end to end here — they want `useradd`, firewalld, nginx and
+systemd — but the *risky* parts of one are testable in podman, and doing so has already caught a
+shipped-code error that reading could not.
+
+The pattern: extract just the block under change into a script, then
+
+```
+podman run --rm -i docker.io/library/almalinux:9 bash < /path/to/test.sh
+```
+
+AlmaLinux 9 is binary-compatible with RHEL 9 and carries the same module streams, so package
+names, repository availability, installed file locations and unit-file names are all real
+answers. This is enough to verify the claims most likely to be wrong: does
+`dnf install postgresql15-server` resolve, is the binary where the script says, does
+`postgresql-15.service` exist so the shipped units' `Requires=` is satisfiable.
+
+**When the step needs systemd** — `postgresql-15-setup initdb` reads PGDATA out of the unit via
+`systemctl`, and `systemctl enable --now` obviously does — build an image that installs systemd
+and run it as PID 1:
+
+```
+# Containerfile:  FROM almalinux:9 / RUN dnf -y install systemd / CMD ["/sbin/init"]
+podman run -d --name pgtest --systemd=always localhost/pgtest:local
+podman exec -i pgtest bash < /path/to/test.sh
+```
+
+`--systemd=always` sets up the cgroup and tmpfs mounts; no `--privileged` needed. With that,
+`initdb`, `systemctl enable --now`, `systemctl reload`, a real `psql` session and an actual
+`pg_dump` of a live database all run.
+
+**What it caught, as the argument for bothering.** The PGDG move was first written to symlink
+`psql` and `pg_dump` into `/usr/local/bin`, on the reasonable-sounding assumption that PGDG puts
+nothing on `PATH`. The container showed PGDG registers `/usr/bin/psql` and `/usr/bin/pg_dump`
+through `alternatives` on its own — so the symlinks were not only unnecessary, they would have
+shadowed the alternatives entry (`/usr/local/bin` precedes `/usr/bin`) and kept backups on the
+old client after a side-by-side major upgrade. A silent wrong-version bug in the backup path,
+found in about ten minutes, on a machine with no RHEL host.
+
+**A RHEL DVD ISO answers packaging questions outright**, without a VM and without a container.
+Mount it read-only (`Mount-DiskImage` on Windows) and read `AppStream/Packages/` and
+`AppStream/repodata/*-modules.yaml.gz`. That is how the PG-13 finding was established: the
+`postgresql` module's defaults document lists profiles for 15 and 16 but declares **no default
+stream**, and the non-modular default on the 9.5 media is `postgresql-server-13.16-1.el9` — so
+`dnf install postgresql-server` with no module enabled got PostgreSQL 13. No `postgresql15-*`
+package exists on the media at all, which settles why AppStream cannot satisfy
+`timescaledb-2-postgresql-15`. Dismount when done.
+
+Use it for: which package names exist, which are modular vs not, what a module's default stream
+is, and which version a bare `dnf install <pkg>` would land on. All of those are claims that get
+guessed at otherwise.
+
+**What none of this can tell you:** SELinux behaviour, firewalld, the nginx front end, real disk
+layout, or anything about an upgrade of an existing host. A scratch VM is still the only way to
+sign off a full fresh install.
+
 **Related:** `cross-cutting/polaris-agent` (Go-version pin, agent binary distribution path under `data/agents/<version>/`).
 
 ---

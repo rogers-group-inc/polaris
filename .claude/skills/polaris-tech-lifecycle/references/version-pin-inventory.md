@@ -99,15 +99,45 @@ Currently **15** across 12 checked sites.
 | `docs/INSTALL.md` | `timescaledb-2-postgresql-15`, `/usr/pgsql-15/bin/`, `postgresql15-server` | pin |
 | `README.md`, `CONTRIBUTING.md`, `CLAUDE.md` | "PostgreSQL 15+", `postgres:15` | prose |
 
-**Live divergence — the RHEL install path cannot satisfy its own units.**
-`deploy/setup-rhel.sh` installs `postgresql-server postgresql` from AppStream and runs
-`postgresql-setup --initdb`, which yields an unversioned `postgresql.service`. The units the
-same script then installs declare `Requires=postgresql-15.service`, and `docs/INSTALL.md`
-documents the PGDG packages instead — explicitly noting that AppStream's package names cannot
-satisfy `timescaledb-2-postgresql-15`. So the scripted install and the documented install are
-not the same install, and the scripted one is internally inconsistent. `check:versions` reports
-this as a warning rather than a failure because fixing it changes the RHEL install path, which
-is a decision for a human.
+**RESOLVED 2026-09-09 — and the bug was bigger than "the service name was wrong".**
+`deploy/setup-rhel.sh` ran `dnf install -y postgresql-server postgresql` with no module
+enabled, then `postgresql-setup --initdb`. Checked against the **RHEL 9.5 DVD** rather than
+assumed:
+
+- the AppStream `postgresql` module declares **no default stream** — its defaults document
+  lists profiles for 15 and 16 and nothing else — so the modular packages stay hidden until a
+  stream is explicitly enabled;
+- the non-modular default in AppStream is **`postgresql-server-13.16-1.el9`**;
+- **no `postgresql15-*` package exists anywhere on the media**, which is why AppStream can
+  never satisfy `timescaledb-2-postgresql-15`.
+
+So a fresh RHEL install got **PostgreSQL 13** — two majors below the 15 Polaris states as its
+minimum, TimescaleDB-incapable, and producing an unversioned `postgresql.service` while the
+units the same script installs declare `Requires=postgresql-15.service`. It could not satisfy
+its own units *and* it was installing the wrong major. `docs/INSTALL.md` had documented the
+PGDG path all along.
+
+The script now follows it: PGDG repo, `dnf -qy module disable postgresql`, the `postgresql15*`
+packages, `/usr/pgsql-15/bin/postgresql-15-setup initdb`, and the `postgresql-15` service.
+
+**The non-obvious part of that move, and a wrong turn worth not repeating.** Polaris spawns
+`psql` and `pg_dump` by BARE NAME for backup and restore (`src/services/backupService.ts`), so
+they must be on the service's `PATH`. PGDG installs into `/usr/pgsql-<major>/bin`, which looks
+like it would break that — and the first version of this change therefore symlinked both into
+`/usr/local/bin`.
+
+**That was wrong, and testing it in a container is what caught it.** PGDG registers
+`/usr/bin/psql` and `/usr/bin/pg_dump` itself, through `alternatives`, pointing at the installed
+major's bindir; a bare-name `pg_dump` resolves and dumps a live database with no help at all.
+Worse, `/usr/local/bin` *precedes* `/usr/bin`, so the hardcoded links would have silently
+shadowed the alternatives entry and kept resolving to 15 after an operator moved to a newer
+major side by side (`alternatives --set pgsql-psql …`) — and side-by-side majors are one of the
+stated reasons for preferring PGDG. It would have failed in the most expensive way available:
+backups quietly using the old client while everything looked healthy.
+
+The script now only *checks* that both resolve, and warns loudly that backups will fail if they
+do not. Its own `psql` calls still use the absolute `$PG_BINDIR/psql` rather than trusting
+`sudo`'s `secure_path`.
 
 **TimescaleDB compatibility caps the PostgreSQL major from the other side.** TimescaleDB 2.29
 dropped PostgreSQL 15; 2.28.x is the last line that supports it. Staying on 15 pins the
@@ -185,15 +215,19 @@ Java **17**, jsign **7.4**.
 |---|---|---|
 | `Dockerfile` | Java 17 headless, plus a SHA-256-pinned `jsign-7.4.jar` fetched by digest | pin |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `java-17-openjdk-headless` | pin |
-| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | **`default-jre-headless`** — unversioned | none |
+| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `openjdk-17-jre-headless`, falling back to `default-jre-headless` | pin |
 | two Windows setup scripts | `Microsoft.OpenJDK.17` + `aka.ms/download-jdk/microsoft-jdk-17-windows-x64.msi` | pin |
 | all six setup scripts | `JSIGN_VERSION="7.4"` + `JSIGN_SHA256` | pin |
 
-**Live divergence.** The Ubuntu scripts install the distro default JRE, which is Java 17 on
-22.04 and Java 21 on 24.04. Two supported Polaris hosts therefore sign agent binaries with
-different JDK majors, and only one of them matches what every other site pins. There is no
-number in `default-jre-headless` to disagree with, so the equality check cannot see it —
-`check:versions` reports it as an `unversioned-install` warning instead.
+**RESOLVED 2026-09-09.** The Ubuntu scripts installed `default-jre-headless`, the distro
+default — Java 17 on 22.04 and Java 21 on 24.04. Two supported Polaris hosts therefore signed
+agent binaries with different JDK majors, and only one matched the 17 every other site pins.
+There was no number in the package name for the equality check to compare, so the drift was
+invisible to the pin check as well as to the operator. Both scripts now install
+`openjdk-17-jre-headless` by name, falling back to the distro default only if that package is
+unavailable on the release — signing with the wrong major beats not signing at all, and the log
+says which happened. `check:versions` skips `unversioned-install` when a file also runs a
+versioned install, so a guarded fallback is not reported as a silent default.
 
 Both are build-time only (jsign signs the Windows agent binaries) and the feature is opt-in, so
 a missing or mismatched JDK degrades signing rather than breaking the app.
@@ -249,8 +283,8 @@ not as a figure to keep in step by hand — `npm run check:versions` prints the 
 | `node-major` | major | 22 → 24 | — (the accept-range gap closed when 24 became the pin) |
 | `go-pin` | major.minor | 1.22 | — |
 | `nginx-floor` | major.minor | 1.25 | — |
-| `postgres-major` | major | 15 | `postgres-source` (RHEL AppStream vs PGDG) |
-| `java-major` | major | 17 | `unversioned-install` (Ubuntu `default-jre-headless`) |
+| `postgres-major` | major | 15 | `postgres-source` — quiet since setup-rhel.sh moved to PGDG |
+| `java-major` | major | 17 | `unversioned-install` — quiet since the Ubuntu scripts pinned 17 |
 | `jsign-pin` | major.minor | 7.4 | — |
 | `dataset-shape` | n/a | n/a | dataset older than 120 days |
 

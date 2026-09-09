@@ -98,7 +98,7 @@ function Invoke-Rollback {
     Push-Location $AppDir
     & git checkout $OldCommit -- . 2>$null
     if ($LASTEXITCODE -ne 0) { & git reset --hard $OldCommit 2>$null }
-    & npm ci --production=false 2>$null
+    & npm ci --include=dev 2>$null
     # Regenerate Prisma client + wipe stale dist so the rolled-back process
     # comes up with a client matching the rolled-back schema. Same rationale
     # as the forward-update path below; both are documented in
@@ -269,7 +269,7 @@ Write-Info "Updating: v${OldVersion} (${OldCommit}) -> v${NewVersion} (${NewComm
 # ─── 4. Install dependencies ────────────────────────────────────────────────
 Write-Step "4/8  Installing dependencies..."
 
-& npm ci --production=false
+& npm ci --include=dev
 if ($LASTEXITCODE -ne 0) { Invoke-Rollback "npm ci" }
 
 # Check for security vulnerabilities

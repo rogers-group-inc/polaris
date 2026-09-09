@@ -298,7 +298,7 @@ rollback() {
 
   cd "$APP_DIR"
   sudo -u "$APP_USER" git checkout "$OLD_COMMIT" -- . 2>/dev/null || sudo -u "$APP_USER" git reset --hard "$OLD_COMMIT"
-  app_node npm ci --production=false 2>/dev/null
+  app_node npm ci --include=dev 2>/dev/null
   # Regenerate Prisma client + wipe stale dist so the rolled-back process
   # comes up with a client matching the rolled-back schema. Same rationale
   # as the forward-update path below; both are documented in
@@ -341,7 +341,7 @@ step "4/9  Installing dependencies..."
 # Ensure Node.js can bind to privileged ports (80, 443) without root
 setcap cap_net_bind_service=+ep "$(which node)" 2>/dev/null || true
 
-app_node npm ci --production=false || rollback "npm ci"
+app_node npm ci --include=dev || rollback "npm ci"
 
 # Check for security vulnerabilities
 AUDIT_OUTPUT=$(app_node npm audit --production 2>/dev/null || true)

@@ -256,8 +256,8 @@ info "No timeout here — a cold npm cache can take several minutes. Let it fini
 # -H sets HOME so the app user's npm cache is actually used; without it npm
 # falls back to a cold cache and downloads the whole tree every time.
 if [[ $DRY_RUN -eq 1 ]]; then
-  echo -e "         ${YELLOW}would run:${NC} sudo -u $APP_USER -H npm ci --production=false  (in $APP_DIR)"
-elif ! sudo -u "$APP_USER" -H bash -c "cd '$APP_DIR' && npm ci --production=false"; then
+  echo -e "         ${YELLOW}would run:${NC} sudo -u $APP_USER -H npm ci --include=dev  (in $APP_DIR)"
+elif ! sudo -u "$APP_USER" -H bash -c "cd '$APP_DIR' && npm ci --include=dev"; then
   error "npm ci FAILED."
   error "node_modules is now empty or incomplete. Polaris is stopped and MUST STAY stopped."
   error "Fix the error above, then re-run this script (it will resume from a clean state)."

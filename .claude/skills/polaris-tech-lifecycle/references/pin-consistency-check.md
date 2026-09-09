@@ -87,8 +87,8 @@ a checker should force. Warning keeps them visible without making the gate un-pa
 | Check | What it reports |
 |---|---|
 | `node-major` extra | The install scripts accept a Node major that nothing installs, so a host that already has it is accepted and never tested. Quiet since the 2026-09 bump made 24 both the accepted ceiling and the pin; it fired for the whole time the scripts accepted 22 while every pin was 20. |
-| `postgres-source` | `deploy/setup-rhel.sh` installs unversioned AppStream `postgresql-server` and runs `postgresql-setup --initdb`, yielding `postgresql.service` — while the units the same script installs require `postgresql-15.service` and `docs/INSTALL.md` documents PGDG. The script cannot satisfy its own units. |
-| `unversioned-install` | A site that installs a distro default instead of a named version, so there is no number for the equality check to compare. Today: both Ubuntu scripts' `default-jre-headless`. |
+| `postgres-source` | A RHEL setup script installing unversioned AppStream `postgresql-server`, which yields `postgresql.service` while the units the same script installs require `postgresql-15.service`. **Quiet since 2026-09-09**, when setup-rhel.sh moved to the PGDG path `docs/INSTALL.md` had documented all along — AppStream package names also cannot satisfy `timescaledb-2-postgresql-15`. |
+| `unversioned-install` | A site that installs a distro default instead of a named version, so there is no number for the equality check to compare. **Quiet since 2026-09-09**, when both Ubuntu scripts moved to `openjdk-17-jre-headless` (`default-jre-headless` is Java 17 on 22.04 and 21 on 24.04, so two supported hosts signed agent binaries with different majors). Skipped when the same file also runs a versioned install: that makes the unversioned one a deliberate fallback, which is logged at install time rather than silent. That pairing test matches the install COMMAND, not the package name — a bare-name regex went quiet twice on a host with no pin, first on the comment explaining the fallback and then on the `info` line reporting it. |
 | `dataset-shape` staleness | `src/data/platformEol.json` last reviewed over 120 days ago. |
 | floating tags | Informational list of tags that move under you (`latest-pg15`, `nginx:mainline`, `:latest`) and therefore cannot be pin-checked. |
 
@@ -97,6 +97,8 @@ but are deliberately guarded — RHEL enables the `go-toolset` module stream fir
 re-verifies `go version` and falls back to snap. They are excluded from `unversioned-install` by
 name and with a reason, because a checker that cries wolf gets ignored, which is the exact
 failure this guard exists to prevent.
+
+Two of these checks have now gone *quiet* wrongly rather than loud wrongly, both by matching a package name in prose — once in a comment, once inside a log string. A false silence is the worse failure of the two: a warning you can dismiss, but a check that reports success while the thing it guards is broken actively misleads. When adding a rule, match the command, not the noun.
 
 ## Deliberately not rules
 

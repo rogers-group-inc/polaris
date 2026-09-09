@@ -321,6 +321,54 @@ d("applyUpdate — train selection", () => {
       expect(msg).toContain("do not restart");
     });
 
+    it("pings the registry BEFORE npm ci, so a dead registry cannot wipe node_modules", async () => {
+      // The ordering IS the fix. npm ci deletes node_modules before it installs,
+      // so without a preflight an unreachable registry destroys a working
+      // dependency tree and only then fails — which is how a TLS-inspecting
+      // proxy left prod unable to survive a restart on 2026-09-09.
+      const calls = stubExec();
+
+      await runUpdate();
+
+      const ping = calls.findIndex((c) => c.includes("npm ping"));
+      const npmCi = calls.findIndex((c) => c.includes("npm ci"));
+      expect(ping).toBeGreaterThanOrEqual(0);
+      expect(npmCi).toBeGreaterThan(ping);
+    });
+
+    it("stops before installing when the registry is unreachable, and says it is safe to restart", async () => {
+      // The whole value of the preflight is the operator being told they need
+      // do nothing to recover. If this message ever loses that, someone will
+      // hand-repair a host that was never broken.
+      const calls = stubExec({ failOn: "npm ping" });
+
+      await runUpdate();
+
+      expect(calls.some((c) => c.includes("npm ci"))).toBe(false);
+      const msg = steps()[STEP.DEPS]?.message ?? "";
+      expect(msg).toContain("Cannot reach the npm registry");
+      expect(msg).toContain("safe to restart");
+      expect(msg).toContain("NODE_EXTRA_CA_CERTS");
+      // And it must NOT claim the host is now broken — that text belongs to the
+      // post-wipe failure, and reading it here would cause the wrong response.
+      expect(msg).not.toContain("INCOMPLETE");
+      expect(getUpdateStatus().state).toBe("failed");
+    });
+
+    it("installs devDependencies explicitly, not via the deprecated production flag", async () => {
+      // Prod sets NODE_ENV=production, which makes npm omit dev deps — and the
+      // build needs TypeScript. --include=dev clears `omit` the same way
+      // --production=false did, without npm 11's deprecation notice landing in
+      // the operator's error output.
+      const calls = stubExec();
+
+      await runUpdate();
+
+      const npmCi = calls.find((c) => c.includes("npm ci")) ?? "";
+      expect(npmCi).toContain("--include=dev");
+      expect(npmCi).not.toContain("--production");
+    });
+
     it("keeps the TAIL of stderr, where npm puts the actual error", async () => {
       // Head-truncation is the bug: 40 warning lines then the real cause.
       const warnings = Array.from(

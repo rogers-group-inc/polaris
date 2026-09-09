@@ -190,8 +190,23 @@ if command -v java &>/dev/null; then
   info "Java already installed"
 else
   info "Installing Java 17 (headless, for agent code signing)..."
-  apt-get install -y default-jre-headless || \
+  # openjdk-17-jre-headless by NAME, not default-jre-headless. The distro
+  # default is Java 17 on Ubuntu 22.04 and Java 21 on 24.04, so
+  # `default-jre-headless` made two supported Polaris hosts sign agent binaries
+  # with different JDK majors -- and only one of them matched the 17 that the
+  # Dockerfile, the RHEL script and both Windows scripts all pin. There is no
+  # version in `default-jre-headless` for check:versions to compare, so the
+  # drift was invisible to the pin check as well as to the operator.
+  # Fall back to the distro default rather than leaving the host with no JVM:
+  # signing with the wrong major beats not signing at all, and the log says
+  # which happened.
+  if apt-get install -y openjdk-17-jre-headless; then
+    info "Java 17 (openjdk-17-jre-headless) installed"
+  elif apt-get install -y default-jre-headless; then
+    info "WARNING: openjdk-17-jre-headless unavailable on this release — installed default-jre-headless ($(java -version 2>&1 | head -1)). Agent signing will use this JVM; pin 17 if signatures must match other hosts."
+  else
     info "WARNING: Java install failed — agent code signing stays unavailable until Java is installed manually"
+  fi
 fi
 if [ -f "$APP_DIR/tools/jsign.jar" ]; then
   info "jsign already present at $APP_DIR/tools/jsign.jar"
@@ -328,7 +343,7 @@ fi
 
 # ─── 8. Install dependencies & build ─────────────────────────────────────────
 info "Installing dependencies..."
-sudo -u "$APP_USER" npm ci --production=false
+sudo -u "$APP_USER" npm ci --include=dev
 
 info "Building TypeScript..."
 # `npm run build` (not bare tsc) so scripts/copy-build-assets.mjs runs and the
