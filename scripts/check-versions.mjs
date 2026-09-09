@@ -192,23 +192,32 @@ const FAMILIES = [
     agree: "major.minor",
     minSites: 8,
     sites: [
-      { file: "agent/go.mod", label: "go directive", kind: "pin",
+      // FLOOR, not pin. The go directive is a MINIMUM toolchain — the same
+      // shape as engines.node — and from 2026-09-09 the family has two numbers
+      // like Node's: 1.26 required, 1.27 pinned on Windows. Demanding one
+      // number would force a lie, because no Linux path can install 1.27 (the
+      // RHEL go-toolset module and the Go snap both stop at 1.26).
+      { file: "agent/go.mod", label: "go directive", kind: "pin", role: "floor",
         re: /^go (\d+\.\d+)/gm, pick: (m) => m[1] },
       { files: LINUX_SETUP, label: "go version accept floor", kind: "accept-range",
         re: /go1\\\.\((\d)\[(\d)-9\]/g, pick: (m) => `1.${m[1]}${m[2]}` },
       { files: WINDOWS_SETUP, label: "go accept floor", kind: "accept-range",
         re: /go1\\\.\((\d)\[(\d)-9\]/g, pick: (m) => `1.${m[1]}${m[2]}` },
-      { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
-        re: /GoLang\.Go\.(\d+\.\d+)/g, pick: (m) => m[1] },
+      // `--id GoLang.Go --version N`, not `--id GoLang.Go.N`: winget publishes
+      // ONE GoLang.Go package with per-version manifests. The old form named a
+      // package that does not exist, so the install failed on every host that
+      // HAS winget — and silently, since the MSI fallback is the else branch.
+      { files: WINDOWS_SETUP, label: "winget version", kind: "pin",
+        re: /GoLang\.Go --version (\d+\.\d+)/g, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "MSI fallback URL", kind: "pin",
         re: /go\.dev\/dl\/go(\d+\.\d+)\./g, pick: (m) => m[1] },
-      { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose",
+      { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose", role: "floor",
         re: /Go (\d+\.\d+)\+/g, pick: (m) => m[1] },
       // The minimum the app enforces at the agent-build preflight, and the
       // number every operator-facing "install Go N+" string interpolates.
-      { file: "src/services/agentBuildService.ts", label: "GO_MINIMUM", kind: "pin",
+      { file: "src/services/agentBuildService.ts", label: "GO_MINIMUM", kind: "pin", role: "floor",
         re: /GO_MINIMUM = "(\d+\.\d+)"/g, pick: (m) => m[1] },
-      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
+      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose", role: "floor",
         re: /\*\*Go\*\*[^|\n]*\|\s*(\d+\.\d+)\s*\|/g, pick: (m) => m[1] },
     ],
   },

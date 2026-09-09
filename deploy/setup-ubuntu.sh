@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 24, PostgreSQL 17, Go 1.22+, nginx (stable ≥1.30)
+#   1. Installs Node.js 24, PostgreSQL 17, Go 1.26+, nginx (stable ≥1.30)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -109,20 +109,22 @@ fi
 # Phase 3+: Polaris no longer binds privileged ports — nginx terminates TLS
 # on 443 and proxies HTTP-only to 127.0.0.1:3000. No setcap on node needed.
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). Ubuntu 24.04 LTS ships golang-go 1.22 in main;
-# 22.04 LTS ships 1.18 which is too old for the agent's go.mod, so fall back
-# to the official Go snap channel when the apt package is too old.
-if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+# → Polaris Agent → Build). NEITHER Ubuntu LTS can satisfy the 1.26 floor from
+# the archive — 24.04 ships golang-go 1.22 and 22.04 ships 1.18 — so on a
+# supported release the snap branch below is the one that runs. The apt attempt
+# stays because it is cheap, it is correct on a newer Debian, and the version
+# re-check after it is what decides.
+if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go..."
-  if apt-get install -y golang-go && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+  if apt-get install -y golang-go && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
     info "Go $(go version | awk '{print $3}') installed via apt"
   else
-    info "Default apt golang-go is too old (<1.22); installing via snap..."
-    snap install --classic --channel=1.22/stable go
+    info "Default apt golang-go is too old (<1.26); installing via snap..."
+    snap install --classic --channel=1.26/stable go
     info "Go $(go version | awk '{print $3}') installed via snap"
   fi
 fi

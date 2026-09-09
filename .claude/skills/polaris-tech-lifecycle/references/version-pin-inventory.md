@@ -198,21 +198,22 @@ first: an extension move and a chunk-interval change must not land together.
 
 ## Go (agent toolchain)
 
-Currently **1.22** across 12 sites — and 1.22 is past upstream support (Go keeps only the two
-most recent majors alive).
+**Floor 1.26, pinned 1.27** across 14 sites — two numbers, the same arrangement as Node and for
+a similar reason. Was 1.22 until 2026-09-09, by then two years past upstream support: Go keeps
+only the two most recent majors alive.
 
 | Site | Form | Kind |
 |---|---|---|
-| `agent/go.mod` | `go 1.22` directive | pin |
-| four Linux setup scripts | `go version \| grep -qE 'go1\.(2[2-9]\|[3-9][0-9])'` | accept-range |
+| `agent/go.mod` | `go 1.26` directive | floor |
+| four Linux setup scripts | `go version \| grep -qE 'go1\.(2[6-9]\|[3-9][0-9])'` | accept-range |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y go-toolset` then `dnf install -y golang` | pin (module stream) |
-| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `golang-go`, re-verified against the same regex, snap fallback when too old | accept-range |
-| two Windows setup scripts | `(go version) -match "go1\.(2[2-9]\|[3-9][0-9])"` | accept-range |
-| two Windows setup scripts | `winget install --id GoLang.Go.1.22` | pin |
-| two Windows setup scripts | `go.dev/dl/go1.22.7.windows-amd64.msi` fallback | pin |
+| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `golang-go`, re-verified against the same regex, then `snap install --channel=1.26/stable go` — which is the branch that actually runs, since neither LTS archive reaches 1.26 | accept-range |
+| two Windows setup scripts | `(go version) -match "go1\.(2[6-9]\|[3-9][0-9])"` | accept-range |
+| two Windows setup scripts | `winget install --id GoLang.Go --version 1.27.0` | pin |
+| two Windows setup scripts | `go.dev/dl/go1.27.0.windows-amd64.msi` fallback | pin |
 | `Dockerfile` | `golang-go` from `trixie-backports`, because trixie ships 1.24. The backports SUITE must track the base image — a `bookworm-backports` line on a trixie base resolves to nothing and the build fails at `apt-get install` | pin (suite) |
 | `agent/Makefile` | `go-winres@v0.3.3` for the Windows resource files | pin |
-| `docs/INSTALL.md` | "Go 1.22+" — three occurrences | prose |
+| `docs/INSTALL.md` | "Go 1.26+" — three occurrences, plus the supported-versions row | prose (floor) |
 
 **The app-side preflight.** `GO_MINIMUM` in `src/services/agentBuildService.ts` is the single
 source of truth for the number the running app requires, and every operator-facing copy string
@@ -221,8 +222,27 @@ interpolates it. Historically the check only confirmed `go version` *ran*, so a 
 which is what "missing go.sum entry" or a bare compiler error from the in-app build means on a
 fresh host.
 
+**Why the floor and the pin differ, as of 2026-09-09.** 1.26 and 1.27 are the two supported
+majors, and **no Linux path can install 1.27**: the RHEL `go-toolset` module carries 1.26.7 and
+the Go snap's newest channel is `1.26/stable`. So the floor is 1.26 — what every platform can
+actually meet — and the Windows scripts pin 1.27.0, the newest winget has a manifest for.
+Neither Ubuntu LTS reaches the floor from its own archive (24.04 ships 1.22, 22.04 ships 1.18),
+so on a supported Ubuntu the **snap branch is the one that runs**; the apt attempt stays because
+it is cheap and correct on a newer Debian, and the version re-check after it is what decides.
+
+**The Windows winget id was wrong, and silently.** It read `--id GoLang.Go.1.22`. winget
+publishes ONE `GoLang.Go` package with per-version manifests — there is no `GoLang.Go.1.22`
+package — so on any host that HAS winget the install failed, and because the MSI download is the
+`else` branch of `if ($hasWinget)`, the fallback never ran. The host ended up with no Go at all
+and the in-app agent Build failing at the compiler, which reads as a Go problem rather than an
+install-script problem. It is `--id GoLang.Go --version 1.27.0` now, and `check:versions` reads
+that form.
+
 Bumping the pin also moves `agent/VERSION` and the committed Windows resource files. That
 rebuild contract lives in `polaris-agent` → cross-cutting-polaris-agent.md; do not restate it.
+The 2026-09-09 floor move deliberately did **not** touch `agent/VERSION`: a toolchain bump is
+not an agent release, and bumping the version would tell every enrolled agent an upgrade is
+available. Rebuild the binaries in-app when you want them rebuilt.
 
 ## nginx
 
@@ -353,7 +373,7 @@ not as a figure to keep in step by hand — `npm run check:versions` prints the 
 | Family | Agree on | Floor → pin | Warn-only companion |
 |---|---|---|---|
 | `node-major` | major | 22 → 24 | — (the accept-range gap closed when 24 became the pin) |
-| `go-pin` | major.minor | 1.22 | — |
+| `go-pin` | major.minor | 1.26 → 1.27 | — |
 | `nginx-floor` | major.minor | 1.30 | — |
 | `postgres-major` | major | 17 | `postgres-source` — quiet since setup-rhel.sh moved to PGDG; plus `units-name-no-postgres`, a hard gate |
 | `java-major` | major | 25 | `unversioned-install` — quiet since the Ubuntu scripts named a major |

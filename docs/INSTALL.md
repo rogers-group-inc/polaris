@@ -18,7 +18,7 @@ states a floor, it states the same one as this table.
 | **Node.js** | 22 | **24** | 22 → 2027-04-30 · 24 → 2028-04-30 | LTS lines only. The minimum is the dependency tree's floor (`engines.node` is `>=22.12.0`); every install script provisions **24**. `engines.node` is advisory — npm warns and installs anyway — so the scripts' accept-checks are the real gate. A host left on 22 has under a year of runway. |
 | **PostgreSQL** | 17 | **17** | 17 → 2029-11-08 · 18 → 2030-11-14 | Five-year policy; a major dies each November. Every install path provisions 17 from PGDG (RHEL *and* Debian/Ubuntu — the distro metapackages are 14/16 and were never the stated major). An existing 15 install keeps working, but it caps TimescaleDB at the 2.28.x line and is below this minimum; see *Moving an existing install to PostgreSQL 17*. |
 | **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date. 2.28.x was the last line supporting PostgreSQL 15, which is what capped the extension before the move to 17; 2.29+ supports 16/17/18, and 2.30 is current on both PGDG-supported majors. |
-| **Go** (agent build only) | 1.22 | **1.26** | 1.22 → 2025-02-11 · 1.25 → 2026-08-19 | Go supports only the two most recent majors, so this ages faster than anything else here. Needed only to build agent binaries in-app. |
+| **Go** (agent build only) | 1.26 | **1.27** | 1.25 → 2026-08-19 · 1.26 and 1.27 → current | Go supports only the two most recent majors, so this ages faster than anything else here — the floor is the older of the two supported majors. Needed only to build agent binaries in-app. The Windows scripts install 1.27; on Linux the RHEL go-toolset module and the Go snap both carry 1.26, which is why the floor and the pin differ. |
 | **nginx** | 1.30 | **1.30** | 1.28 → 2026-04-14 · 1.30 → current | Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. The setup scripts install the **stable** branch from nginx.org, and 1.30 is the oldest branch still receiving fixes. HTTP/3 needs 1.25 at minimum, so the floor is a support statement now rather than a feature one. |
 | **Java** (agent signing only) | 25 | 25 | 21 → 2028-09-30 · 25 → 2030-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. Target equals the minimum on purpose — a target above what every install path provisions reports a behind-target JDK on every healthy host, which teaches operators to ignore this card. Moved 17 → 25 on 2026-09-09, the current LTS: jsign is Java 8 bytecode and needs none of it, but 25 is available on every supported platform and buys three more years before this row moves again. |
 | **RHEL / Rocky / AlmaLinux** | 9 | 9 | 9 → 2032-05-31 (full support ends 2027-05-31) | |
@@ -1717,13 +1717,13 @@ The Polaris Agent is a small Go binary you can install on Linux / macOS / Window
 
 ### Build the binaries
 
-**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.22+ alongside Node 24, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
+**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.26+ alongside Node 24, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
 
 1. Sign in as admin
 2. Integrations → **Polaris Agents** tab → **Polaris Agent** card → **Build agent binaries (vX.Y.Z)**
 3. Watch the progress strip; all six platforms reach ✓ within ~90 s on a 2-vCPU host
 
-The button is hidden + replaced by a yellow notice ("install Go 1.22+ and reload") when Go isn't on the server's PATH. The card also shows a per-platform inventory grid and surfaces a drift hint when `agent/VERSION` has moved past `manifest.json` (the auto-build job fires this build for you on the next boot if you don't click it sooner).
+The button is hidden + replaced by a yellow notice ("install Go 1.26+ and reload") when Go isn't on the server's PATH. The card also shows a per-platform inventory grid and surfaces a drift hint when `agent/VERSION` has moved past `manifest.json` (the auto-build job fires this build for you on the next boot if you don't click it sooner).
 
 **Build queueing + cancellation:** A second click while a build is running enqueues (FIFO depth 3); the 4th simultaneous click gets a "queue full" 409. Each build's row carries a × button that cancels (SIGTERM with SIGKILL 5s grace for the active build; splice-from-queue for queued ones). The on-disk manifest only updates after all six platforms succeed, so a cancelled build leaves no operator-visible artifact.
 
@@ -1736,7 +1736,7 @@ The button is hidden + replaced by a yellow notice ("install Go 1.22+ and reload
 When Polaris itself runs on a host that can't have Go installed (strict supply chain, air-gapped CI, etc.), build on a separate host and copy the artifacts in:
 
 ```sh
-# On any host with Go 1.22+ installed
+# On any host with Go 1.26+ installed
 cd /path/to/polaris/agent
 go mod tidy
 make all                        # → dist/<version>/polaris-agent-*

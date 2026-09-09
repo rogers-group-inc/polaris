@@ -100,20 +100,20 @@ if ((Test-Command "node") -and ((node -v) -match "^v(22|24)\.")) {
     Write-Info "Node.js $(node -v) installed"
 }
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
 # → Polaris Agent → Build). winget installs to C:\Program Files\Go\bin; we
 # add it to Machine PATH so the NSSM service user sees it.
 Refresh-Path
-if ((Test-Command "go") -and ((go version) -match "go1\.(2[2-9]|[3-9][0-9])")) {
+if ((Test-Command "go") -and ((go version) -match "go1\.(2[6-9]|[3-9][0-9])")) {
     Write-Info "Go $(go version) already installed"
 } else {
-    Write-Info "Installing Go 1.22..."
+    Write-Info "Installing Go 1.27..."
     if ($hasWinget) {
-        winget install --id GoLang.Go.1.22 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id GoLang.Go --version 1.27.0 --accept-source-agreements --accept-package-agreements --silent
     } else {
-        $goUrl = "https://go.dev/dl/go1.22.7.windows-amd64.msi"
-        $goMsi = "$env:TEMP\go-1.22.7.windows-amd64.msi"
+        $goUrl = "https://go.dev/dl/go1.27.0.windows-amd64.msi"
+        $goMsi = "$env:TEMP\go-1.27.0.windows-amd64.msi"
         Write-Info "Downloading Go installer..."
         Invoke-WebRequest -Uri $goUrl -OutFile $goMsi -UseBasicParsing
         Write-Info "Running Go installer..."

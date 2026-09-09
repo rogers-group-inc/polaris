@@ -112,12 +112,12 @@ fi
 info "Granting Node.js low-port binding capability..."
 setcap cap_net_bind_service=+ep "$(which node)"
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). The agent's go.mod pins go 1.22 as the minimum;
-# RHEL 9's default golang AppStream module ships 1.21.x which is too old,
-# so pull from the go-toolset module instead.
-if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+# → Polaris Agent → Build). The agent's go.mod pins go 1.26 as the minimum;
+# RHEL 9's default golang AppStream module is older, so pull from the
+# go-toolset module instead — it carries 1.26 (1.26.7 on 9.6).
+if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go (go-toolset)..."

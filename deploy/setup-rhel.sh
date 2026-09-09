@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 24, PostgreSQL 17, Go 1.22+, git, nginx (stable ≥1.30)
+#   1. Installs Node.js 24, PostgreSQL 17, Go 1.26+, git, nginx (stable ≥1.30)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -121,12 +121,12 @@ else
   info "Node.js $(node -v) installed"
 fi
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). The agent's go.mod pins go 1.22 as the minimum;
-# RHEL 9's default golang AppStream module ships 1.21.x which is too old,
-# so pull from the go-toolset module instead.
-if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+# → Polaris Agent → Build). The agent's go.mod pins go 1.26 as the minimum;
+# RHEL 9's default golang AppStream module is older, so pull from the
+# go-toolset module instead — it carries 1.26 (1.26.7 on 9.6).
+if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go (go-toolset)..."

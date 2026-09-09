@@ -74,21 +74,21 @@
       "trackGranularity": "major.minor",
       "policy": "dated",
       "securityExposed": false,
-      "polarisMinimum": "1.22",
-      "polarisTarget": "1.26",
+      "polarisMinimum": "1.26",
+      "polarisTarget": "1.27",
       "upgradePlaybook": "go-pin",
-      "source": "https://endoflife.date/api/go.json",
-      "sourceCheckedOn": "2026-09-08",
-      "confidence": "aggregator",
-      "notes": "Go supports only the two most recent majors: a release dies the day the major two ahead of it ships. Build-time only on a Polaris host (the in-app agent build), never in the serving path, so an EOL toolchain grades warning rather than critical.",
+      "source": "https://go.dev/dl/",
+      "sourceCheckedOn": "2026-09-09",
+      "confidence": "vendor",
+      "notes": "Go supports only the two most recent majors: a release dies the day the major two ahead of it ships. Build-time only on a Polaris host (the in-app agent build), never in the serving path, so an EOL toolchain grades warning rather than critical. Moved off the long-EOL 1.22 floor on 2026-09-09. Minimum 1.26 and target 1.27 are two numbers on purpose, the same arrangement as Node: 1.26 and 1.27 are the two supported majors, and no Linux path can install 1.27 today - the RHEL go-toolset module carries 1.26.7 and the Go snap's newest channel is 1.26/stable - while the Windows scripts pin 1.27.0, the newest winget has a manifest for. Neither Ubuntu LTS can satisfy the floor from its archive at all (24.04 ships 1.22, 22.04 ships 1.18), so the snap fallback is the branch that runs there.",
       "tracks": [
         { "track": "1.21", "released": "2023-08-08", "eol": "2024-08-13" },
-        { "track": "1.22", "released": "2024-02-06", "eol": "2025-02-11", "note": "Polaris's current floor, and past upstream support." },
+        { "track": "1.22", "released": "2024-02-06", "eol": "2025-02-11", "note": "Polaris's floor until 2026-09-09, long past upstream support by then." },
         { "track": "1.23", "released": "2024-08-13", "eol": "2025-08-12" },
         { "track": "1.24", "released": "2025-02-11", "eol": "2026-02-10" },
         { "track": "1.25", "released": "2025-08-12", "eol": "2026-08-19" },
-        { "track": "1.26", "released": "2026-02-10", "eol": null },
-        { "track": "1.27", "released": "2026-08-19", "eol": null }
+        { "track": "1.26", "released": "2026-02-10", "eol": null, "note": "Polaris's floor - the older of the two supported majors, and the newest the RHEL go-toolset module and the Go snap carry." },
+        { "track": "1.27", "released": "2026-08-19", "eol": null, "note": "Current release; what the Windows scripts pin (1.27.0, the newest winget manifest)." }
       ]
     },
     {
