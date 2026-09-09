@@ -23,7 +23,7 @@ import {
 
 /** Newest-first, the order the resolver groups rows in. */
 const row = (o: Partial<InterfaceStateRow> = {}): InterfaceStateRow => ({
-  operStatus: null, adminStatus: null, poeStatus: null, ...o,
+  operStatus: null, adminStatus: null, poeStatus: null, ipAddress: null, ...o,
 });
 
 describe("interfaceSampleCarries", () => {
@@ -51,6 +51,16 @@ describe("interfaceSampleCarries", () => {
   it("ifAdminStatus needs only adminStatus", () => {
     expect(interfaceSampleCarries("ifAdminStatus", row({ adminStatus: "down" }))).toBe(true);
     expect(interfaceSampleCarries("ifAdminStatus", row({ operStatus: "up" }))).toBe(false);
+  });
+
+  it("ifIpAddress: a null address is no reading, never 'unaddressed'", () => {
+    // The device says unaddressed with 0.0.0.0. Null is a port that reported no
+    // L3 address at all — every access port on a switch — and mapping it to a
+    // value would make all of them satisfy `!= 0.0.0.0`.
+    expect(interfaceSampleCarries("ifIpAddress", row({ ipAddress: "10.4.1.1" }))).toBe(true);
+    expect(interfaceSampleCarries("ifIpAddress", row({ ipAddress: "0.0.0.0" }))).toBe(true);
+    expect(interfaceSampleCarries("ifIpAddress", row({ ipAddress: null }))).toBe(false);
+    expect(interfaceSampleCarries("ifIpAddress", row({ operStatus: "up", adminStatus: "up" }))).toBe(false);
   });
 });
 
@@ -94,10 +104,20 @@ describe("interfaceStateSeries", () => {
   });
 
   it("projects the field's own column, not another", () => {
-    const g = [row({ operStatus: "down", adminStatus: "up", poeStatus: "fault" })];
+    const g = [row({ operStatus: "down", adminStatus: "up", poeStatus: "fault", ipAddress: "10.4.1.1" })];
     expect(interfaceStateSeries("ifOperStatus", g)?.series).toEqual(["down"]);
     expect(interfaceStateSeries("ifAdminStatus", g)?.series).toEqual(["up"]);
     expect(interfaceStateSeries("poeStatus", g)?.series).toEqual(["fault"]);
+    expect(interfaceStateSeries("ifIpAddress", g)?.series).toEqual(["10.4.1.1"]);
+  });
+
+  it("ifIpAddress reads through a tick that collected no address", () => {
+    // Same gap rule as PoE: an address-less tick is a gap, not a port that
+    // lost its address — the run a poll-counted hold counts must skip it.
+    const g = [row({ operStatus: "up" }), row({ ipAddress: "0.0.0.0" }), row({ ipAddress: "0.0.0.0" })];
+    const picked = interfaceStateSeries("ifIpAddress", g);
+    expect(picked?.row.ipAddress).toBe("0.0.0.0");
+    expect(picked?.series).toEqual(["0.0.0.0", "0.0.0.0"]);
   });
 
   it("an admin-down port still produces a readable ifOperStatus row", () => {

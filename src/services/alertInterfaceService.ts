@@ -53,7 +53,7 @@ export type InterfaceToken = (typeof INTERFACE_TOKENS)[number];
 
 /**
  * Metrics whose `dimension` IS an interface name — the ones for which asking
- * "what is on this port" is a coherent question. The state trio comes from
+ * "what is on this port" is a coherent question. The state quartet comes from
  * ASSET_STATE_FIELDS, the rate quartet from ASSET_METRICS; both are keyed on
  * ifName by their resolvers in notificationEngine.
  *
@@ -63,6 +63,7 @@ export type InterfaceToken = (typeof INTERFACE_TOKENS)[number];
 export const INTERFACE_DIMENSION_METRICS: ReadonlySet<string> = new Set([
   "ifOperStatus",
   "ifAdminStatus",
+  "ifIpAddress",
   "poeStatus",
   "ifInBps",
   "ifOutBps",

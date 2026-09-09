@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import { compareNum, compareValue, globToRegExp, readingMeets, interfaceIsPinned, interfaceDimLabel, tunnelIsPinned, applyDeviceFilters } from "../../src/services/notificationEngine.js";
 import { scopeMatchesAsset, type ScopeAsset } from "../../src/services/notificationRuleService.js";
 import { stripRegionPrefix } from "../../src/services/notificationService.js";
+import { bareInterfaceIp } from "../../src/utils/cidr.js";
 import { ruleInputSchema, buildSchemaCatalog, triggerDimensionApplicable } from "../../src/services/notificationTypes.js";
 
 describe("compareNum", () => {
@@ -296,6 +297,7 @@ describe("trigger dimension vocabulary (identifier + state-field dims)", () => {
     // finally offers them (interface on the state trio, tunnel on ipsecStatus).
     expect(fd.ifOperStatus).toEqual(["ifNamePattern"]);
     expect(fd.ifAdminStatus).toEqual(["ifNamePattern"]);
+    expect(fd.ifIpAddress).toEqual(["ifNamePattern"]);
     expect(fd.poeStatus).toEqual(["ifNamePattern"]);
     expect(fd.ipsecStatus).toEqual(["tunnelName"]);
     // The SD-WAN pair alerts per ruleName — this narrows to the named rule(s).
@@ -334,5 +336,40 @@ describe("trigger dimension vocabulary (identifier + state-field dims)", () => {
       ...base,
       trigger: { type: "asset_state", field: "sdwanSelectedMember", operator: "!=", value: "wan1", dimensionFilter: { sdwanRulePattern: "Internet", hostnamePattern: "BRANCH" } },
     })).not.toThrow();
+  });
+});
+
+describe("ifIpAddress (interface IP address state field)", () => {
+  const base = { name: "t", severity: "warning", scope: { allAssets: true }, messageTemplate: "{message}" };
+
+  it("is authorable as a per-interface condition", () => {
+    // The shape the SD-WAN case needs: the underlay port names itself through
+    // the interface dimension, and the gate is the negative comparison.
+    expect(() => ruleInputSchema.parse({
+      ...base,
+      trigger: { type: "asset_state", field: "ifIpAddress", operator: "!=", value: "0.0.0.0", dimensionFilter: { ifNamePattern: "wan1" } },
+    })).not.toThrow();
+    expect(triggerDimensionApplicable("ifIpAddress", "ifNamePattern")).toBe(true);
+    expect(triggerDimensionApplicable("ifIpAddress", "tunnelName")).toBe(false);
+  });
+
+  it("publishes a label, an address placeholder and equality-only operators", () => {
+    // The builder renders the operator select and the value box off these: the
+    // default hint ("e.g. up / down") is wrong for an address, and an ordered
+    // comparator over one can only ever read false (compareValue).
+    const meta = (buildSchemaCatalog().fieldMeta as Record<string, { label: string; kind: string; placeholder?: string; equalityOnly?: boolean }>).ifIpAddress;
+    expect(meta.label).toBe("Interface IP address");
+    expect(meta.kind).toBe("dynamic");
+    expect(meta.placeholder).toBe("e.g. 0.0.0.0");
+    expect(meta.equalityOnly).toBe(true);
+  });
+
+  it("compares an address the way the resolver hands it over", () => {
+    // The resolver normalizes the reading through bareInterfaceIp, so what
+    // reaches compareValue is the bare address on both sides.
+    expect(compareValue(bareInterfaceIp("0.0.0.0 0.0.0.0"), "!=", "0.0.0.0")).toBe(false);
+    expect(compareValue(bareInterfaceIp("10.4.1.1 255.255.255.0"), "!=", "0.0.0.0")).toBe(true);
+    // No reading is not "has an address" — a null never satisfies anything.
+    expect(compareValue(null, "!=", "0.0.0.0")).toBe(false);
   });
 });

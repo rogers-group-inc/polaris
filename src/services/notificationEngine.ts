@@ -84,7 +84,7 @@ import {
 } from "./notificationTypes.js";
 import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
-import { ipInCidr } from "../utils/cidr.js";
+import { ipInCidr, bareInterfaceIp } from "../utils/cidr.js";
 import { computeStorageForecast } from "./storageForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
@@ -495,8 +495,8 @@ function triggerNeedsAnsweringDevice(trigger: Trigger): boolean {
  * about enough to alert on is one they pinned, and un-pinning is how alerting
  * stops (the vanished-state sweep then clears the alert).
  *
- * The interface STATE trio (ifOperStatus / ifAdminStatus / poeStatus) has
- * always gated here. The four COUNTER metrics did not: they read
+ * The interface STATE fields (ifOperStatus / ifAdminStatus / ifIpAddress /
+ * poeStatus) have always gated here. The four COUNTER metrics did not: they read
  * `AssetInterfaceSample`, which became pinned-only in the 2026-08 cutover, so
  * they were gated incidentally by what the sampler writes rather than by any
  * rule of their own — which leaves the window between un-pinning an interface
@@ -564,7 +564,7 @@ function pinTestForTrigger(trigger: Trigger): ((asset: ScopeAssetRow, dimKey: st
     if (trigger.metric === "ifInBps" || trigger.metric === "ifOutBps" || trigger.metric === "ifInErrorRate" || trigger.metric === "ifOutErrorRate") return interfaceIsPinned;
     if (trigger.metric === "ipsecThroughputBps") return tunnelIsPinned;
   } else if (trigger.type === "asset_state") {
-    if (trigger.field === "ifOperStatus" || trigger.field === "ifAdminStatus" || trigger.field === "poeStatus") return interfaceIsPinned;
+    if (trigger.field === "ifOperStatus" || trigger.field === "ifAdminStatus" || trigger.field === "ifIpAddress" || trigger.field === "poeStatus") return interfaceIsPinned;
     if (trigger.field === "ipsecStatus") return tunnelIsPinned;
   }
   return null;
@@ -859,7 +859,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       const mult = trigger.metric === "ifInBps" || trigger.metric === "ifOutBps" ? 8 : 1; // octets→bits
       const rows = await prisma.assetInterfaceSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, orderBy: { timestamp: "desc" }, select: { assetId: true, timestamp: true, ifName: true, alias: true, inOctets: true, outOctets: true, inErrors: true, outErrors: true } });
       // Pinned interfaces only (interfaceIsPinned) — the same default the
-      // ifOperStatus/ifAdminStatus/poeStatus resolvers apply. See its header for
+      // ifOperStatus/ifAdminStatus/ifIpAddress/poeStatus resolvers apply. See its header for
       // why the pinned-only sample table isn't a gate by itself.
       const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && substringMatch(r.ifName, df.ifNamePattern));
       return rateReadings(filtered, index, (r) => r.ifName, (r) => interfaceDimLabel(r.ifName, r.alias), (r) => num((r as any)[col]), mult);
@@ -929,16 +929,18 @@ function groupSeries<T>(rows: T[], keyOf: (r: T) => string): T[][] {
 const INTERFACE_STATE_COLUMN = {
   ifOperStatus:  "operStatus",
   ifAdminStatus: "adminStatus",
+  ifIpAddress:   "ipAddress",
   poeStatus:     "poeStatus",
 } as const;
 
 export type InterfaceStateField = keyof typeof INTERFACE_STATE_COLUMN;
 
-/** The three status columns of one interface sample row. */
+/** The columns of one interface sample row the state fields read. */
 export interface InterfaceStateRow {
   operStatus:  string | null;
   adminStatus: string | null;
   poeStatus:   string | null;
+  ipAddress:   string | null;
 }
 
 /**
@@ -962,6 +964,11 @@ export function interfaceSampleCarries(field: InterfaceStateField, r: InterfaceS
   // ifOperStatus is gated on adminStatus === "up" downstream, so a row missing
   // THAT is no more usable here than one missing operStatus itself.
   if (field === "ifOperStatus") return r.operStatus != null && r.adminStatus != null;
+  // A null ipAddress is "this tick collected no address for the port", never
+  // "the port is unaddressed" — the device says the latter with 0.0.0.0, and
+  // most L2 ports simply have no L3 address to report, so mapping null to a
+  // value would make every access port on a switch satisfy `!= 0.0.0.0`.
+  if (field === "ifIpAddress") return r.ipAddress != null;
   return r.adminStatus != null;
 }
 
@@ -1023,12 +1030,12 @@ async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asse
     case "consecutiveFailures": return assets.map((a) => ({ ...mk(a, "", "", a.consecutiveFailures), readingAt: probeAt(a) }));
     case "dependencySuppressed": return assets.map((a) => ({ ...mk(a, "", "", a.dependencySuppressed), readingAt: probeAt(a) }));
     case "quarantined": return assets.map((a) => ({ ...mk(a, "", "", a.quarantinedAt !== null || a.status === "quarantined"), readingAt: probeAt(a) }));
-    case "ifOperStatus": case "ifAdminStatus": case "poeStatus": {
+    case "ifOperStatus": case "ifAdminStatus": case "ifIpAddress": case "poeStatus": {
       const col = INTERFACE_STATE_COLUMN[trigger.field];
       const since = new Date(Date.now() - lookbackMsFor(trigger));
       // No `distinct` any more: a poll-counted hold needs the RUN of readings
       // per port, so the rows are grouped here (newest first).
-      const rows = await prisma.assetInterfaceSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, orderBy: [{ assetId: "asc" }, { ifName: "asc" }, { timestamp: "desc" }], select: { assetId: true, ifName: true, alias: true, timestamp: true, operStatus: true, adminStatus: true, poeStatus: true } });
+      const rows = await prisma.assetInterfaceSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, orderBy: [{ assetId: "asc" }, { ifName: "asc" }, { timestamp: "desc" }], select: { assetId: true, ifName: true, alias: true, timestamp: true, operStatus: true, adminStatus: true, poeStatus: true, ipAddress: true } });
       // Only PINNED interfaces produce readings (Asset.monitoredInterfaces —
       // the same join the Down Interfaces widget uses): the interfaces stream
       // samples every port a device reports, and an unpinned port is usually
@@ -1055,7 +1062,14 @@ async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asse
         // is unaffected: a disabled port reports "disabled", never "fault".
         if (trigger.field === "poeStatus" && r.poeStatus === "disabled") continue;
         if (!substringMatch(r.ifName, df.ifNamePattern)) continue;
-        out.push({ ...mk(a!, r.ifName, interfaceDimLabel(r.ifName, r.alias), r[col]), series, readingAt: r.timestamp });
+        // An address is compared as its BARE form on both the reading and the
+        // series, so the shape a transport happened to report it in ("0.0.0.0"
+        // vs the CMDB pair "0.0.0.0 0.0.0.0") can't decide whether an operator's
+        // `== 0.0.0.0` matches. Every other state column is passed through.
+        const norm = trigger.field === "ifIpAddress"
+          ? (v: string | null) => (v == null ? null : bareInterfaceIp(v))
+          : (v: string | null) => v;
+        out.push({ ...mk(a!, r.ifName, interfaceDimLabel(r.ifName, r.alias), norm(r[col])), series: series.map(norm), readingAt: r.timestamp });
       }
       return out;
     }
