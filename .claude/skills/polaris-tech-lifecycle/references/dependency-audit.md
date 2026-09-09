@@ -140,6 +140,29 @@ Everything else: read the changelog, check it is not in the ignored architectura
 run, and merge. `npm run check:versions` and `npm run check:deps` both run in CI, so a PR that
 breaks a family or drops a major below its recorded target fails there.
 
+## A major an `npm outdated` row cannot actually deliver: the vendored set
+
+`cytoscape-dagre` sits in `devDependencies` at **2.5.0** while the registry is on **4.0.1**, and
+that is not neglect. The file that runs is `public/js/vendor/cytoscape-dagre.js` — a byte copy of
+`node_modules/cytoscape-dagre/cytoscape-dagre.js`. Bumping the npm range alone changes **nothing
+at runtime**; it only makes the recorded version disagree with the file, which is worse than
+being behind.
+
+Doing it properly means copying the new dist into `public/js/vendor/` and re-checking the page,
+and for this package v4 also changes the wiring: 2.5.0's UMD takes `dagre` as a factory argument
+(hence the separate `public/js/vendor/dagre.min.js` global), while 4.x bundles it and its factory
+takes none. So `dagre.min.js` stops being cytoscape-dagre's dependency, and whether it can be
+deleted depends on who else reads that global.
+
+It was left at 2.5.0 in the 2026-09-09 pass for that reason: the layout it drives is the
+Application Map (`public/js/appmap.js` runs `layout({ name: "dagre", … })`), which is a real page
+whose output has to be *looked at*, not a fallback that can be reasoned about. Do it as a UI
+change with the page open — `polaris-ui-canon` → tech-stack-frontend.md — not as part of a
+dependency sweep.
+
+The same holds for the rest of the vendored set: Leaflet, leaflet.markercluster, leaflet-draw,
+Cytoscape, dagre, html-to-image.
+
 ## What is deliberately not automated
 
 - **No scheduled `npm audit` workflow.** It would be red on day one and stay red, owned by
