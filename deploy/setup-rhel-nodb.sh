@@ -5,7 +5,7 @@
 # Run as root:  bash deploy/setup-rhel-nodb.sh --db-url "postgresql://user:pass@db-host:5432/polaris"
 #
 # What this script does:
-#   1. Installs Node.js 20, git, and PostgreSQL client tools (no server)
+#   1. Installs Node.js 24, git, and PostgreSQL client tools (no server)
 #   2. Creates a dedicated 'polaris' system user
 #   3. Clones or copies the application to /opt/polaris
 #   4. Configures .env with the provided DATABASE_URL
@@ -88,12 +88,22 @@ fi
 
 info "Starting Polaris deployment on $(hostname) (remote database mode)"
 
-# ─── 1. Install Node.js 20 ───────────────────────────────────────────────────
-if command -v node &>/dev/null && [[ "$(node -v)" == v20* || "$(node -v)" == v22* ]]; then
+# ─── 1. Install Node.js 24 (LTS) ─────────────────────────────────────────────
+# 22.12 is the hard floor (pg-boss declares >=22.12.0, @prisma/streams-local
+# >=22), so v20 is no longer merely old — it is below what the dependency tree
+# supports, and it went EOL in April 2026. RHEL 9 AppStream carries a nodejs:24
+# module stream, so this stays on vendor-packaged Node.
+#
+# An existing v22 install is accepted rather than forced up: it satisfies the
+# floor and is supported until ~April 2027. v20 and below are replaced.
+if command -v node &>/dev/null && [[ "$(node -v)" == v24* || "$(node -v)" == v22* ]]; then
   info "Node.js $(node -v) already installed"
 else
-  info "Installing Node.js 20..."
-  dnf module enable -y nodejs:20
+  info "Installing Node.js 24..."
+  # `module reset` first: enabling a second stream on a host already pinned to
+  # nodejs:20 fails with "cannot enable multiple streams" otherwise.
+  dnf module reset -y nodejs
+  dnf module enable -y nodejs:24
   dnf install -y nodejs npm
   info "Node.js $(node -v) installed"
 fi

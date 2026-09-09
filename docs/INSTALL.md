@@ -15,7 +15,7 @@ states a floor, it states the same one as this table.
 
 | Component | Minimum | Polaris targets | Upstream end of life | Notes |
 |---|---|---|---|---|
-| **Node.js** | 20 | **24** | 20 → 2026-04-30 · 22 → 2027-04-30 · 24 → 2028-04-30 | LTS lines only. `engines.node` is advisory — npm warns and installs anyway — so the install scripts' checks are the real gate. |
+| **Node.js** | 22 | **24** | 22 → 2027-04-30 · 24 → 2028-04-30 | LTS lines only. The minimum is the dependency tree's floor (`engines.node` is `>=22.12.0`); every install script provisions **24**. `engines.node` is advisory — npm warns and installs anyway — so the scripts' accept-checks are the real gate. A host left on 22 has under a year of runway. |
 | **PostgreSQL** | 15 | **17** | 15 → 2027-11-11 · 16 → 2028-11-09 · 17 → 2029-11-08 | Five-year policy; a major dies each November. Target is 17 because TimescaleDB 2.29 dropped 15. |
 | **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date: **2.28.x is the last line supporting PostgreSQL 15**, and 2.29+ supports only 16/17/18. |
 | **Go** (agent build only) | 1.22 | **1.26** | 1.22 → 2025-02-11 · 1.25 → 2026-08-19 | Go supports only the two most recent majors, so this ages faster than anything else here. Needed only to build agent binaries in-app. |
@@ -56,6 +56,88 @@ The largest single driver is usually **how many interfaces operators pin** for f
 The **DB volume number is the one that matters most.** Aim high; Postgres degrades hard when its volume hits 100% (postmaster will crash on WAL writes during recovery, see *Recovery* below).
 
 The setup wizard runs a preflight check that statfs's the conventional PGDATA paths after you click **Test Connection** and surfaces a warning if free space is below the recommended minimum. The runtime check (Server Settings → Maintenance) then watches the actual `SHOW data_directory` value across all volumes.
+
+---
+
+## Upgrading Node on an existing install
+
+**The in-app updater cannot do this, by design.** It runs as the unprivileged
+`polaris` user, whose only root grant is the nginx apply wrapper
+(`deploy/sudoers.d/polaris-nginx`) — installing a system package is not something
+the web application is allowed to do, and giving it that power to save a
+once-every-two-years operation would be a poor trade. Node upgrades are an
+operator (or configuration-management) task.
+
+Order matters. Native modules are compiled against the Node headers present at
+install time, so **`node_modules` must be rebuilt after the runtime changes** —
+and `npm ci` deletes `node_modules` before it installs, so the service must be
+down for the whole window rather than restarted at the end.
+
+### The scripted path
+
+`deploy/upgrade-node.sh` performs the whole sequence with preflight checks, a
+pre-migration `pg_dump`, and a fail-safe: if `npm ci` fails it leaves the service
+stopped rather than starting a host with no dependencies.
+
+```bash
+cd /opt/polaris
+
+# See exactly what it would do; changes nothing.
+sudo bash deploy/upgrade-node.sh --dry-run
+
+# Do it.
+sudo bash deploy/upgrade-node.sh
+```
+
+Useful flags: `--target 22` (Node 22 LTS instead of 24), `--skip-backup` (no
+`pg_dump` first), `--pull` (fast-forward the checkout before rebuilding).
+`POLARIS_APP_DIR` and `POLARIS_APP_USER` override the `/opt/polaris` + `polaris`
+defaults, and `POLARIS_UPGRADE_BACKUP_DIR` moves the `pg_dump` off `/var/tmp`.
+All three are read from the invoking environment, not from `.env` — they are
+script arguments, not Polaris runtime settings.
+
+The script is idempotent: on a host that already meets the floor with a current
+build it reports that and exits without stopping anything.
+
+### The manual path
+
+Equivalent to the above, if you would rather run each step yourself:
+
+```bash
+# 1. Stop Polaris (all roles).
+sudo systemctl stop polaris.target
+
+# 2. Replace the runtime. RHEL 9 AppStream carries a nodejs:24 stream; the reset
+#    is required because a host pinned to nodejs:20 refuses a second stream.
+sudo dnf module reset nodejs -y
+sudo dnf module enable nodejs:24 -y
+sudo dnf install -y nodejs
+node -v        # expect v24.x
+
+#    Ubuntu/Debian instead:
+#    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+#    sudo apt install -y nodejs
+
+# 3. Rebuild dependencies against the new ABI, then rebuild the app.
+cd /opt/polaris
+sudo -u polaris npm ci --production=false
+sudo -u polaris npm run build
+
+# 4. Start, then confirm.
+sudo systemctl start polaris.target
+systemctl status 'polaris-*' --no-pager
+journalctl -u polaris-web -n 50 --no-pager
+```
+
+Two things to check afterwards. `npm ci` should no longer print `EBADENGINE`
+warnings for `pg-boss` or `@prisma/streams-local` — those warnings were the
+symptom of running below the floor. And if the install uses pg-boss queue mode,
+confirm it still comes up (Server Settings → Maintenance → Database → *Monitor
+queue*), since pg-boss was the package demanding `>=22.12` in the first place.
+
+If step 3 fails, **do not start the service** — `npm ci` will have left
+`node_modules` empty and the process cannot boot. Fix the install error and re-run
+step 3; nothing else in the sequence needs repeating.
 
 ---
 
@@ -141,13 +223,19 @@ sudo chmod o+x /var/lib/pgsql /var/lib/pgsql/15
 
 Edit `/var/lib/pgsql/15/data/pg_hba.conf` and add a line for the polaris user (typically `host polaris polaris 127.0.0.1/32 scram-sha-256`), then `sudo systemctl reload postgresql-15`.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
 ```bash
 sudo dnf module reset nodejs -y
-sudo dnf module enable nodejs:20 -y
+sudo dnf module enable nodejs:24 -y
 sudo dnf install -y nodejs
 ```
+
+Node **22.12 is the hard floor** — `pg-boss` declares `>=22.12.0` and
+`@prisma/streams-local` declares `>=22`. Node 20 reached end-of-life in April 2026
+and is below that floor; installs still on it should follow *Upgrading Node on an
+existing install* below. Node 22 is also supported (to ~April 2027) if you are
+already on it.
 
 ### 4. Polaris
 
@@ -380,12 +468,15 @@ sudo chmod o+x /var/lib/postgresql
 
 Edit `/etc/postgresql/<version>/main/pg_hba.conf` to add the polaris user, then `sudo systemctl reload postgresql`.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
+
+Node **22.12 is the hard floor** (`pg-boss` requires `>=22.12.0`). Node 20 is
+end-of-life as of April 2026 — see *Upgrading Node on an existing install* below.
 
 ### 4. Polaris
 
@@ -453,9 +544,11 @@ Edit `pg_hba.conf` (in the data directory) to add a line for the polaris user, t
 
 The `pgboss` schema grants are required for pg-boss queue mode (operators with thousands of monitored assets). Without them Polaris falls back to in-process cursor mode — fine for small/medium fleets, won't keep up at thousands.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
-Download the LTS installer from <https://nodejs.org/> and run it.
+Download the **24.x LTS** installer from <https://nodejs.org/> and run it. Node
+**22.12 is the hard floor** (`pg-boss` requires `>=22.12.0`); Node 20 is
+end-of-life as of April 2026.
 
 ### 4. Polaris
 
@@ -1245,7 +1338,7 @@ The Polaris Agent is a small Go binary you can install on Linux / macOS / Window
 
 ### Build the binaries
 
-**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.22+ alongside Node 20+, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
+**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.22+ alongside Node 24, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
 
 1. Sign in as admin
 2. Integrations → **Polaris Agents** tab → **Polaris Agent** card → **Build agent binaries (vX.Y.Z)**

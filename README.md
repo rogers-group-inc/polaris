@@ -120,12 +120,13 @@ Server Settings → Maintenance → **Platform Lifecycle** reports the version o
 | App / state volume | 5 GB | 20 GB |
 | OS | Windows Server 2019+, RHEL 9, Ubuntu 22.04+ | Windows Server 2022, RHEL 9, Ubuntu 24.04 LTS |
 | PostgreSQL | 15+ | 17 |
-| Node.js | 20+ | 24 LTS |
+| Node.js | 22.12 (hard floor) | 24 LTS |
 
-> **These are floors, and some of them are already past upstream end of life** — Node 20 ended
-> 2026-04-30. [docs/INSTALL.md](docs/INSTALL.md) → "Supported platform versions" is the canonical
-> table: minimum, what Polaris targets, and every upstream EOL date. A running install grades
-> itself against it under Server Settings → Maintenance → Platform Lifecycle.
+> **The minimum column is a floor, not a recommendation, and one of these is close to end of
+> life** — Node 22 ends 2027-04-30, so a host on the floor has under a year of runway.
+> [docs/INSTALL.md](docs/INSTALL.md) → "Supported platform versions" is the canonical table:
+> minimum, what Polaris targets, and every upstream EOL date. A running install grades itself
+> against it under Server Settings → Maintenance → Platform Lifecycle.
 
 Discovery pre-loads subnets, reservations, and assets for O(1) lookups; peak memory is ~200–400 MB on top of the Node.js base. Monitoring sample tables grow proportionally with monitored asset count × cadence × retention; the Capacity card on Server Settings → Maintenance projects this at runtime. The **DB data volume** (where PostgreSQL stores its `data_directory`) is the number that matters most — Postgres degrades hard when its volume hits 100%. See [docs/INSTALL.md](docs/INSTALL.md) → "Disk sizing — read this first" for the authoritative per-volume sizing table and platform-specific data-directory paths.
 
@@ -140,7 +141,7 @@ Discovery pre-loads subnets, reservations, and assets for O(1) lookups; peak mem
    CREATE DATABASE polaris OWNER polaris;
    ```
 
-2. **Install Node.js 20+** (https://nodejs.org).
+2. **Install Node.js 24 LTS** (https://nodejs.org) — 22.12 is the hard floor.
 
 3. **Clone, configure, run:**
 
@@ -156,7 +157,7 @@ The dashboard is at `http://localhost:3000`; the API at `http://localhost:3000/a
 
 ## Production deployment
 
-Automated scripts install Node.js 20, PostgreSQL 15, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
+Automated scripts install Node.js 24, PostgreSQL 15, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
 
 **RHEL / Rocky / Alma 9:**
 
@@ -326,7 +327,7 @@ npm run test:coverage     # with coverage report
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js 20+ / TypeScript (ESM) |
+| Runtime | Node.js 24 LTS / TypeScript (ESM) — floor is 22.12 |
 | Framework | Express 5 |
 | ORM | Prisma 7 (driver-adapter via `@prisma/adapter-pg`) |
 | Database | PostgreSQL 15 |

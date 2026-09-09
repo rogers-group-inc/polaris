@@ -1,7 +1,7 @@
 /**
  * src/utils/crashHandlers.ts — process-level last-resort crash handlers
  *
- * Node 20 defaults to `--unhandled-rejections=throw`, and the units run a
+ * Node 20+ defaults to `--unhandled-rejections=throw`, and the units run a
  * bare `node dist/index.js`, so any promise rejection that escapes its own
  * handling terminates the process. The codebase is disciplined about this
  * (logEvent swallows internally, every job tick is wrapped, the fire-and-forget

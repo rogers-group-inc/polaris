@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import {
   deriveTrack,
@@ -206,7 +207,14 @@ describe("checkNodeVersionAtBoot", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  // Derive the expected value from package.json rather than restating it. The
+  // hardcoded copy of this assertion went stale the moment engines.node moved
+  // to >=22.12.0 — a test that duplicates the number it is guarding fails for
+  // the wrong reason and teaches you to edit the test instead of the code.
   it("declares a minimum matching package.json engines.node", () => {
-    expect(NODE_MINIMUM_MAJOR).toBe("20");
+    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+    const enginesFloor = String(pkg.engines.node).match(/(\d+)\./)?.[1];
+    expect(enginesFloor).toBeDefined();
+    expect(NODE_MINIMUM_MAJOR).toBe(enginesFloor);
   });
 });

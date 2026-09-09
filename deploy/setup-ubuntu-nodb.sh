@@ -5,7 +5,7 @@
 # Run as root:  bash deploy/setup-ubuntu-nodb.sh --db-url "postgresql://user:pass@db-host:5432/polaris"
 #
 # What this script does:
-#   1. Installs Node.js 20, git, and PostgreSQL client tools (no server)
+#   1. Installs Node.js 24, git, and PostgreSQL client tools (no server)
 #   2. Creates a dedicated 'polaris' system user
 #   3. Clones or copies the application to /opt/polaris
 #   4. Configures .env with the provided DATABASE_URL
@@ -86,15 +86,18 @@ info "Starting Polaris deployment on $(hostname) (remote database mode)"
 info "Updating package lists..."
 apt-get update -qq
 
-# ─── 1. Install Node.js 20 ───────────────────────────────────────────────────
-if command -v node &>/dev/null && [[ "$(node -v)" == v20* || "$(node -v)" == v22* ]]; then
+# ─── 1. Install Node.js 24 (LTS) ─────────────────────────────────────────────
+# 22.12 is the hard floor (pg-boss declares >=22.12.0, @prisma/streams-local
+# >=22) and v20 went EOL in April 2026. An existing v22 is accepted; v20 and
+# below are replaced.
+if command -v node &>/dev/null && [[ "$(node -v)" == v24* || "$(node -v)" == v22* ]]; then
   info "Node.js $(node -v) already installed"
 else
-  info "Installing Node.js 20 via NodeSource..."
+  info "Installing Node.js 24 via NodeSource..."
   apt-get install -y ca-certificates curl gnupg
   mkdir -p /etc/apt/keyrings
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
   apt-get update -qq
   apt-get install -y nodejs
   info "Node.js $(node -v) installed"

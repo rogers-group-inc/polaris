@@ -8,8 +8,15 @@
  * could land in nine of twelve sites and the tenth would keep provisioning the
  * old runtime on every fresh host — silently, until someone rebuilt a box.
  *
- * This script reads every declaration site and asserts the family agrees. It is
- * pure file reads: no npm, no network, no database, so it runs in CI with no
+ * This script reads every declaration site and asserts each family is
+ * internally consistent. A family has TWO numbers, not one: the FLOOR it
+ * requires (engines.node, the scripts' accept-checks, the docs' minimum column)
+ * and the PIN it installs (the Dockerfiles, winget/MSI, the module stream, CI).
+ * Those are allowed to differ — Node is 22-floor / 24-pinned on purpose — so
+ * what is checked is that the floors agree with each other, the pins agree with
+ * each other, and the floor is not above what any install path provisions.
+ *
+ * Pure file reads: no npm, no network, no database, so it runs in CI with no
  * install (the same discipline as check-docs.mjs) and finishes in milliseconds.
  *
  * It also sanity-checks src/data/platformEol.json — every family here must have
@@ -44,6 +51,28 @@ function read(rel) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Same, with whole-line comments blanked out.
+ *
+ * A comment is not a declaration site, and reading one as a pin produces a
+ * false failure that is worse than no check: setup-rhel.sh explains its module
+ * reset with "nodejs:20 fails with cannot enable multiple streams otherwise"
+ * right above `dnf module enable -y nodejs:24`, and matching the comment made
+ * the family look like it disagreed with itself.
+ *
+ * Only FULL-line comments are removed. A trailing comment on a line that also
+ * carries a real declaration is left alone, so `foo: 24  # bumped 2026-09` is
+ * still read as 24, and lines are preserved so nothing else shifts.
+ */
+function readCode(rel) {
+  const src = read(rel);
+  if (src === null) return null;
+  return src
+    .split("\n")
+    .map((line) => (/^\s*(#|\/\/|--)/.test(line) ? "" : line))
+    .join("\n");
 }
 
 /** Repo-relative paths in `dir` whose basename matches `re`, sorted. */
@@ -95,7 +124,7 @@ const FAMILIES = [
     sites: [
       { file: "package.json", label: "engines.node", kind: "accept-range",
         re: /"node":\s*">=\s*(\d+)\./g, pick: (m) => m[1] },
-      { file: "package.json", label: "@types/node", kind: "pin",
+      { file: "package.json", label: "@types/node", kind: "pin", role: "floor",
         re: /"@types\/node":\s*"[\^~]?(\d+)\./g, pick: (m) => m[1] },
       { files: ["Dockerfile", "Dockerfile.dev"], label: "FROM node", kind: "pin",
         re: /^FROM node:(\d+)-/gm, pick: (m) => m[1] },
@@ -111,23 +140,23 @@ const FAMILIES = [
         re: /nodejs\.org\/dist\/v(\d+)\./g, pick: (m) => m[1] },
       { files: WORKFLOWS, label: "node-version", kind: "pin",
         re: /node-version:\s*(\d+)/g, pick: (m) => m[1] },
-      { files: ["docs/INSTALL.md", "README.md", "CLAUDE.md"], label: "prose floor", kind: "prose",
+      { files: ["docs/INSTALL.md", "README.md", "CLAUDE.md"], label: "prose floor", kind: "prose", role: "floor",
         re: /Node\.js (\d+)\+/g, pick: (m) => m[1] },
       // The minimum the app itself enforces at boot. Without this site the
       // code constant could drift from engines.node and the boot advisory
       // would police a number nothing else agrees with.
-      { file: "src/utils/platformVersions.ts", label: "NODE_MINIMUM_MAJOR", kind: "pin",
+      { file: "src/utils/platformVersions.ts", label: "NODE_MINIMUM_MAJOR", kind: "pin", role: "floor",
         re: /NODE_MINIMUM_MAJOR = "(\d+)"/g, pick: (m) => m[1] },
       // The canonical supported-versions table in the install guide. It is the
       // operator-facing mirror of these pins, so it gets policed like one — an
       // unchecked canonical list is the most confident way to be wrong.
-      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
+      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose", role: "floor",
         re: /\*\*Node\.js\*\*\s*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
       // README's system-requirements table. Its own row format, so the prose
       // regex above misses it — and it said "20 LTS" for both minimum and
       // recommended long after Node 20 went EOL, which is precisely the drift
       // an unchecked site accumulates.
-      { file: "README.md", label: "system-requirements table", kind: "prose",
+      { file: "README.md", label: "system-requirements table", kind: "prose", role: "floor",
         re: /\|\s*Node\.js\s*\|\s*(\d+)\+/g, pick: (m) => m[1] },
     ],
     // The Linux scripts accept a *range* (v20 or v22) while Windows pins one
@@ -336,7 +365,7 @@ function collect(family) {
   const filesSeen = new Set();
   for (const site of family.sites) {
     for (const rel of resolveFiles(site)) {
-      const src = read(rel);
+      const src = readCode(rel);
       if (src === null) continue;
       filesSeen.add(rel);
       let values = [];
@@ -351,8 +380,12 @@ function collect(family) {
       if (site.kind === "accept-range" && values.length > 1) {
         values = [values.sort(compareTracks)[0]];
       }
+      // A site is either a FLOOR (the minimum this repo requires) or a PIN
+      // (the version it actually installs). They are allowed to differ — see
+      // the two-number model in the family loop below.
+      const role = site.role ?? (site.kind === "accept-range" ? "floor" : "pin");
       for (const value of new Set(values)) {
-        found.push({ file: rel, label: site.label, kind: site.kind, value });
+        found.push({ file: rel, label: site.label, kind: site.kind, role, value });
       }
     }
   }
@@ -380,19 +413,46 @@ for (const family of FAMILIES) {
 
   const allowed = new Set(ALLOW.filter((a) => a.family === family.id).map((a) => a.file));
   const considered = found.filter((f) => !allowed.has(f.file));
-  const distinct = [...new Set(considered.map((f) => f.value))].sort();
 
-  report.push({ family: family.id, label: family.label, sites: found.length, agreed: distinct, found });
+  // A family has TWO numbers, not one, and conflating them was wrong.
+  //
+  //   FLOOR — the minimum this repo requires: engines.node, the scripts'
+  //           accept-checks, NODE_MINIMUM_MAJOR, the docs' minimum column.
+  //   PIN   — what it actually installs: the Dockerfiles, the winget/MSI
+  //           versions, the module stream, node-version in CI.
+  //
+  // Node is legitimately 22-floor / 24-pinned: the dependency tree needs
+  // >=22.12 but every install path provisions 24, so an install already on a
+  // runnable major is not locked out of an update. Demanding all sites be one
+  // number would force a false choice between lying in engines and lying in
+  // the Dockerfile. What must hold is that each GROUP is internally
+  // consistent, and that the floor is not above what we install.
+  const floors = [...new Set(considered.filter((f) => f.role === "floor").map((f) => f.value))].sort(compareTracks);
+  const pins = [...new Set(considered.filter((f) => f.role === "pin").map((f) => f.value))].sort(compareTracks);
 
-  if (distinct.length > 1) {
-    const lines = considered
-      .map((f) => `      ${f.value.padEnd(8)} ${f.file} (${f.label}, ${f.kind})`)
-      .sort();
+  const describe = (f) => `      ${f.value.padEnd(8)} ${f.role.padEnd(6)} ${f.file} (${f.label})`;
+  const lines = (role) => [...new Set(considered.filter((f) => f.role === role).map(describe))].sort();
+
+  report.push({ family: family.id, label: family.label, sites: found.length, floors, pins, found });
+
+  if (floors.length > 1) {
+    failures.push({
+      check: family.id,
+      msg: `${family.label}: the MINIMUM disagrees across sites — found ${floors.join(", ")}.\n` + lines("floor").join("\n"),
+    });
+  }
+  if (pins.length > 1) {
+    failures.push({
+      check: family.id,
+      msg: `${family.label}: the INSTALLED version disagrees across sites — found ${pins.join(", ")}.\n` + lines("pin").join("\n"),
+    });
+  }
+  if (floors.length === 1 && pins.length === 1 && compareTracks(floors[0], pins[0]) > 0) {
     failures.push({
       check: family.id,
       msg:
-        `${family.label}: declaration sites disagree — found ${distinct.join(", ")}.\n` +
-        [...new Set(lines)].join("\n"),
+        `${family.label}: the minimum (${floors[0]}) is ABOVE what every install path provisions (${pins[0]}). ` +
+        `A fresh install would fail its own requirement.`,
     });
   }
 
@@ -533,7 +593,14 @@ if (failures.length > 0) {
 
 const totalSites = report.reduce((n, r) => n + r.sites, 0);
 console.log(`✓ check-versions: ${report.length} families consistent (${totalSites} declaration sites).`);
-for (const r of report) console.log(`      ${r.label.padEnd(22)} ${r.agreed.join(", ").padEnd(8)} (${r.sites} sites)`);
+for (const r of report) {
+  // Show floor→pin when they differ, so "22 → 24" reads as the deliberate
+  // arrangement it is rather than looking like unresolved drift.
+  const f = r.floors.join("/");
+  const p = r.pins.join("/");
+  const shape = f === p ? p : !f ? p : !p ? f : `${f} → ${p}`;
+  console.log(`      ${r.label.padEnd(22)} ${shape.padEnd(12)} (${r.sites} sites)`);
+}
 if (ALLOW.length > 0) {
   console.log(`\n  ${ALLOW.length} allow-listed divergence(s) excluded from the equality check:`);
   for (const a of ALLOW) console.log(`      [${a.family}] ${a.file}`);

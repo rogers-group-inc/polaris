@@ -130,11 +130,13 @@ export function parseOsRelease(raw: string): { id: string | null; versionId: str
 }
 
 /**
- * The Node major Polaris supports. Mirrors `engines.node` in package.json,
- * which npm only warns about, and is one of 23 Node declaration sites — see
+ * The Node major Polaris supports — the dependency tree's actual FLOOR, which
+ * is not what the install scripts provision (they install 24). Mirrors
+ * `engines.node` in package.json, which npm only warns about, and is one of
+ * many Node declaration sites — see
  * .claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md.
  */
-export const NODE_MINIMUM_MAJOR = "20";
+export const NODE_MINIMUM_MAJOR = "22";
 
 /**
  * The running Node major, from the process itself.

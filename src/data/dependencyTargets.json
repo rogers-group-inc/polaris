@@ -23,7 +23,7 @@
     { "name": "express-session", "targetMajor": 1, "architectural": false },
     { "name": "express-rate-limit", "targetMajor": 8, "architectural": false, "note": "Backs the login limiter." },
     { "name": "happy-dom", "targetMajor": 20, "architectural": false, "note": "Mis-parses <option selected>; DOM tests must set selection in JS after insertion." },
-    { "name": "@types/node", "targetMajor": 20, "architectural": true, "pinFamily": "node-major", "note": "A Node-pin family member. Moves with engines.node and every other Node declaration site, NOT on Dependabot's schedule." }
+    { "name": "@types/node", "targetMajor": 22, "architectural": true, "pinFamily": "node-major", "note": "A Node-pin family member. Moves with engines.node and every other Node declaration site, NOT on Dependabot's schedule." }
   ],
   "go": [
     { "name": "github.com/gorilla/websocket", "target": "v1.5.3", "note": "The agent command channel." },
