@@ -146,6 +146,15 @@ Caveat on Windows hosts: some native deps (argon2, net-snmp) need a working
 build toolchain; if `npm install` fights you, use the containerized app path
 instead.
 
+Caveat on a corporate network that inspects TLS: `npm install` fails with
+`UNABLE_TO_GET_ISSUER_CERT_LOCALLY` because Node ships its own CA store and
+ignores the OS one, so the internal root your machine already trusts is
+rejected. Point Node at your system bundle for the shell you develop in —
+`export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` on Linux, or the
+exported PEM on Windows. Same root cause, and the same fix, as the operator-side
+runbook in `docs/INSTALL.md` → "Networks that inspect TLS". Do not reach for
+`npm config set strict-ssl false`.
+
 ---
 
 ## Day-to-day commands

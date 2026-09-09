@@ -47,6 +47,16 @@ x-polaris-common: &polaris-common
     # role for env parity even though only web binds.
     POLARIS_PROXY_CERT_PATH: /app/state/nginx/cert.pem
     POLARIS_PUBLIC_URL:      ${POLARIS_PUBLIC_URL:-https://localhost}
+    # On a network that re-signs HTTPS with an internal CA, add to ./state/.env:
+    #   NODE_EXTRA_CA_CERTS=/app/state/internal-root.pem
+    # and drop that PEM into ./state/ — already mounted, so no extra volume.
+    # Node ships its own CA store and ignores the image's, so without this the
+    # app's outbound calls fail UNABLE_TO_GET_ISSUER_CERT_LOCALLY: Entra/Graph
+    # and Azure Arc discovery, the weekly IEEE OUI refresh, weather and map
+    # tiles, webhook delivery. Unlike a script install there is no `npm ci`
+    # here — the image is prebuilt — so updates are unaffected either way.
+    # Set it via env_file, not as a default here: Node reads it before any
+    # JavaScript runs, and a default would point it at a nonexistent path.
 
 services:
   nginx:
