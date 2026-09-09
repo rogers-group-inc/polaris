@@ -32,7 +32,8 @@ Reference files (all verbatim):
 - [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–48 (the filename keeps its original range: the reference is cited from code and the other skills)
 - [references/narrative-12-24.md](references/narrative-12-24.md) — full narrative, rules 12–24
 - [references/narrative-25-35.md](references/narrative-25-35.md) — full narrative, rules 25–35
-- [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–48
+- [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–43 (the filename is a stable citation key — see the numbering note)
+- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–48 (split out 2026-09-09 when the 36–43 file passed 100 KB)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -87,11 +88,11 @@ before changing anything the invariant constrains.
 | 41 | A subnet dies with its FortiGate; the chassis, not the name, says which gate | invariants-30-43 | narrative-36-43 |
 | 42 | Some address space is not one network; the way to say so is to exclude it | invariants-30-43 | narrative-36-43 |
 | 43 | A grant is only as narrow as the act it names | invariants-30-43 | narrative-36-43 |
-| 44 | A quiet window withholds the reminder, not the alert, and the reminder that follows says how long | invariants-30-43 | narrative-36-43 |
-| 45 | An address places a device only through the gate that owns it, and only a device nothing else can place | invariants-30-43 | narrative-36-43 |
-| 46 | A device filter on an event automation filters the event's subject | invariants-30-43 | narrative-36-43 |
-| 47 | A PostgreSQL client is chosen by the server's major and verified, never spawned by bare name | invariants-30-43 | narrative-36-43 |
-| 48 | Nobody hands out authority they do not hold | invariants-30-43 | narrative-36-43 |
+| 44 | A quiet window withholds the reminder, not the alert, and the reminder that follows says how long | invariants-30-43 | narrative-44-48 |
+| 45 | An address places a device only through the gate that owns it, and only a device nothing else can place | invariants-30-43 | narrative-44-48 |
+| 46 | A device filter on an event automation filters the event's subject | invariants-30-43 | narrative-44-48 |
+| 47 | A PostgreSQL client is chosen by the server's major and verified, never spawned by bare name | invariants-30-43 | narrative-44-48 |
+| 48 | Nobody hands out authority they do not hold | invariants-30-43 | narrative-44-48 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),
