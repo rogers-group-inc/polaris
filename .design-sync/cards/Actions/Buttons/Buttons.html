@@ -1,0 +1,83 @@
+<!-- @dsCard group="Actions" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Buttons</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 24px; }
+  /* Buttons are demonstrated on the PAGE ground (--color-bg-secondary), which is
+     where toolbars actually live. .btn-secondary is filled with
+     --color-bg-primary, so on a .card of the same colour it would disappear. */
+  .demo { padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--color-border); }
+  .demo:last-of-type { border-bottom: none; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Buttons</h2></div>
+
+  <div class="demo">
+    <div class="card-title">Variants</div>
+    <div class="row">
+      <button class="btn btn-primary">+ Add Thing</button>
+      <button class="btn btn-secondary">Secondary</button>
+      <button class="btn btn-danger">Delete</button>
+      <button class="btn btn-warning">Quarantine</button>
+      <button class="btn btn-success">Approve</button>
+    </div>
+    <p class="hint">
+      <code>.btn-primary</code> is an accent fill with dark text — one per header, at the far
+      right of <code>.page-header-actions</code>. <code>.btn-secondary</code> is the default for
+      everything else: a <code>--color-bg-primary</code> fill with a <code>--color-border</code>
+      edge, so it reads on the page ground but deliberately recedes inside a
+      <code>.card</code> or a table row. Danger, warning and success are tinted, not solid.
+    </p>
+  </div>
+
+  <div class="demo">
+    <div class="card-title">Small — table rows, bulk bars, pagination</div>
+    <div class="row">
+      <button class="btn btn-sm btn-primary">Save</button>
+      <button class="btn btn-sm btn-secondary">Edit</button>
+      <button class="btn btn-sm btn-danger">Delete selected</button>
+      <button class="btn-icon">&#8942;</button>
+    </div>
+  </div>
+
+  <div class="demo">
+    <div class="card-title">Dropdown</div>
+    <div class="row">
+      <div class="btn-dropdown-wrap">
+        <button class="btn btn-secondary">Export &#9662;</button>
+        <div class="btn-dropdown-menu" style="display:block; position:static; margin-top:6px">
+          <div class="dropdown-heading">Export &mdash; CSV</div>
+          <button>Current page</button>
+          <button>All filtered results</button>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-heading">Export &mdash; PDF</div>
+          <button>Summary report</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">
+      The menu is normally absolutely positioned and hidden; it is pinned open here so the card
+      shows its contents. Structure is
+      <code>.btn-dropdown-wrap &gt; button + .btn-dropdown-menu</code>, with
+      <code>.dropdown-heading</code> and <code>.dropdown-divider</code> grouping the items.
+    </p>
+  </div>
+
+  <div class="demo">
+    <div class="card-title">In a page header</div>
+    <div class="page-header" style="margin:0">
+      <h2>Assets</h2>
+      <div class="page-header-actions">
+        <button class="btn btn-secondary">Import</button>
+        <button class="btn btn-primary">+ Add Asset</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

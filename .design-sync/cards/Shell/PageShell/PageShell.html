@@ -1,0 +1,55 @@
+<!-- @dsCard group="Shell" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Page shell</title>
+<link rel="stylesheet" href="../../../styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <p style="font-size:0.7rem; text-transform:uppercase; letter-spacing:1px; color:var(--color-text-tertiary)">Your App</p>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="active">Dashboard</a>
+        <a href="#">Assets</a>
+        <a href="#">Subnets</a>
+        <a href="#">Events</a>
+        <a href="#">Settings</a>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <div class="page-header">
+        <h2>Dashboard</h2>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary">Export &#9662;</button>
+          <button class="btn btn-primary">+ Add Thing</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid" style="margin-bottom:18px">
+        <div class="kpi-card"><div class="kpi-label">Monitored</div><div class="kpi-value">1,284</div></div>
+        <div class="kpi-card"><div class="kpi-label">Down</div><div class="kpi-value">7</div></div>
+        <div class="kpi-card"><div class="kpi-label">Utilisation</div><div class="kpi-value">61%</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Recent activity</div>
+        <p style="font-size:0.85rem; color:var(--color-text-secondary)">
+          Content sits inside <code>.main</code>, which supplies its own 2rem 2.5rem padding.
+        </p>
+      </div>
+
+      <p class="hint" style="margin-top:16px">
+        <code>.layout</code> centres the whole app in a 16:9 column
+        (<code>max-width: calc(100vh*16/9)</code>) — never full-bleed on an ultrawide monitor.
+        Do not add your own page-level max-width or centring wrapper. The sidebar is 220px
+        (<code>--sidebar-width</code>), sticky and full height.
+      </p>
+    </main>
+  </div>
+</body>
+</html>

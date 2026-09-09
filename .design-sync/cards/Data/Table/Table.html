@@ -1,0 +1,104 @@
+<!-- @dsCard group="Data" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Table</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>body { padding: 24px; }</style>
+</head>
+<body>
+  <div class="page-header">
+    <h2>Things</h2>
+    <div class="page-header-actions">
+      <button class="btn btn-secondary">Export &#9662;</button>
+      <button class="btn btn-primary">+ Add Thing</button>
+    </div>
+  </div>
+
+  <div class="table-tabs">
+    <div class="table-tabs-list">
+      <div class="table-tab active"><span class="table-tab-name">All</span></div>
+      <div class="table-tab"><span class="table-tab-name">Monitored</span></div>
+      <div class="table-tab"><span class="table-tab-name">Down</span></div>
+    </div>
+  </div>
+
+  <div class="bulk-bar bulk-bar-idle">
+    <span class="bulk-bar-count">No things selected</span>
+    <button class="btn btn-sm btn-secondary">Deselect All</button>
+    <button class="btn btn-sm btn-danger" style="margin-left:auto">Delete selected</button>
+  </div>
+
+  <div class="table-wrapper table-wrapper-sticky">
+    <table>
+      <thead>
+        <tr>
+          <th class="cb-col"><input type="checkbox"></th>
+          <th>Name</th>
+          <th style="width:150px">Address</th>
+          <th style="width:130px">Status</th>
+          <th style="width:110px">Type</th>
+          <th style="width:140px">Updated</th>
+          <th style="width:90px">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><input type="checkbox"></td>
+          <td><a href="#">core-switch-01</a></td>
+          <td class="mono">192.0.2.11</td>
+          <td><span class="badge badge-active">Active</span></td>
+          <td>Switch</td>
+          <td>2 min ago</td>
+          <td class="actions"><button class="btn btn-sm btn-secondary">Edit</button></td>
+        </tr>
+        <tr class="row-panel-active">
+          <td><input type="checkbox" checked></td>
+          <td><a href="#">edge-router-04</a></td>
+          <td class="mono">192.0.2.24</td>
+          <td><span class="badge badge-maintenance">Maintenance</span></td>
+          <td>Router</td>
+          <td>14 min ago</td>
+          <td class="actions"><button class="btn btn-sm btn-secondary">Edit</button></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox"></td>
+          <td><a href="#">ap-warehouse-12</a></td>
+          <td class="mono">198.51.100.7</td>
+          <td><span class="badge badge-level-error">Down</span></td>
+          <td>Access point</td>
+          <td>1 hr ago</td>
+          <td class="actions"><button class="btn btn-sm btn-secondary">Edit</button></td>
+        </tr>
+        <tr>
+          <td><input type="checkbox"></td>
+          <td><a href="#">sensor-yard-03</a></td>
+          <td class="mono">198.51.100.52</td>
+          <td><span class="badge badge-passive">Passive</span></td>
+          <td>Sensor</td>
+          <td>3 hr ago</td>
+          <td class="actions"><button class="btn btn-sm btn-secondary">Edit</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:20px">
+    <div class="card-title">Empty state</div>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Name</th><th>Address</th><th>Status</th></tr></thead>
+        <tbody><tr><td colspan="3" class="empty-state">No things match these filters.</td></tr></tbody>
+      </table>
+    </div>
+    <p class="hint" style="margin-top:10px">
+      The <code>&lt;table&gt;</code> itself carries <strong>no class</strong> — it is styled by
+      element selector inside <code>.table-wrapper</code>. Loading and empty states are a single
+      row of <code>&lt;td colspan="N" class="empty-state"&gt;</code>. Identifiers get
+      <code>.mono</code>; a row tied to an open slide-over gets
+      <code>tr.row-panel-active</code>.
+    </p>
+  </div>
+</body>
+</html>

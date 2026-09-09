@@ -1,0 +1,68 @@
+<!-- @dsCard group="Foundations" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Themes</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 24px; }
+  .theme-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  /* Each pane re-declares the theme on a wrapper, so all three render at once.
+     In a real page the attribute lives on <html>. */
+  .theme-pane { background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 16px; }
+  .theme-pane-name { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--color-text-tertiary); margin-bottom: 10px; }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Themes</h2></div>
+  <p class="hint" style="margin-bottom:16px">
+    Three themes, set as <code>data-theme</code> on the root element. The kit never renders
+    unthemed — always pick one. <code>nightfall</code> is the default.
+  </p>
+
+  <div class="theme-grid">
+    <div class="theme-pane" data-theme="morning">
+      <div class="theme-pane-name">morning</div>
+      <div class="card">
+        <div class="card-title">Warm parchment</div>
+        <p style="font-size:0.82rem; color:var(--color-text-secondary); margin-bottom:10px">Gilt sun on aged paper — softened for long reading in a bright room.</p>
+        <span class="badge badge-active">Active</span>
+        <span class="badge badge-expired">Expired</span>
+        <div style="margin-top:12px; display:flex; gap:8px">
+          <button class="btn btn-primary">Save</button>
+          <button class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="theme-pane" data-theme="noon">
+      <div class="theme-pane-name">noon</div>
+      <div class="card">
+        <div class="card-title">Near-white</div>
+        <p style="font-size:0.82rem; color:var(--color-text-secondary); margin-bottom:10px">Highest text contrast of any theme. Reach for it on a projector or in direct sun.</p>
+        <span class="badge badge-active">Active</span>
+        <span class="badge badge-expired">Expired</span>
+        <div style="margin-top:12px; display:flex; gap:8px">
+          <button class="btn btn-primary">Save</button>
+          <button class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="theme-pane" data-theme="nightfall">
+      <div class="theme-pane-name">nightfall</div>
+      <div class="card">
+        <div class="card-title">Dark default</div>
+        <p style="font-size:0.82rem; color:var(--color-text-secondary); margin-bottom:10px">The base the other two are measured against. Ships as the default.</p>
+        <span class="badge badge-active">Active</span>
+        <span class="badge badge-expired">Expired</span>
+        <div style="margin-top:12px; display:flex; gap:8px">
+          <button class="btn btn-primary">Save</button>
+          <button class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
