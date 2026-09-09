@@ -81,6 +81,7 @@ import {
   leadingRun,
   advanceRun,
   sustainedSeverityByRun,
+  scopeIsUnconstrained,
 } from "./notificationTypes.js";
 import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
@@ -3020,14 +3021,19 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
     rule: DbRule;
     re: RegExp;
     trigger: Extract<Trigger, { type: "event" }> | Extract<Trigger, { type: "change" }>;
+    /** Does this rule's scope name devices? Precomputed per rule, not per
+     *  event: a 1000-event batch would otherwise re-walk the same scope object
+     *  a thousand times. See business rule 46. */
+    scoped: boolean;
   };
   const compiled: CompiledMatcher[] = eventRules.flatMap((r): CompiledMatcher[] => {
+    const scoped = !scopeIsUnconstrained(r.scope);
     if (r.trigger.type === "event") {
-      return [{ rule: r, re: globToRegExp(r.trigger.actionPattern), trigger: r.trigger }];
+      return [{ rule: r, re: globToRegExp(r.trigger.actionPattern), trigger: r.trigger, scoped }];
     }
     if (r.trigger.type === "change") {
       const action = CHANGE_TYPE_ACTIONS[r.trigger.changeType];
-      return [{ rule: r, re: globToRegExp(action), trigger: r.trigger }];
+      return [{ rule: r, re: globToRegExp(action), trigger: r.trigger, scoped }];
     }
     return [];
   });
@@ -3052,7 +3058,19 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
   // reads it per matched event, and the miss-per-distinct-asset pattern is at
   // its worst exactly when a broad outage fills the batch with asset events.
   if (compiled.length > 0) {
-    await primeAssetDetailCache(events.flatMap((ev) => (ev.resourceType === "asset" && ev.resourceId ? [ev.resourceId] : [])));
+    const eventAssetIds = [...new Set(events.flatMap((ev) => (ev.resourceType === "asset" && ev.resourceId ? [ev.resourceId] : [])))];
+    await primeAssetDetailCache(eventAssetIds);
+    // Relation-backed device-filter leaves (interface name, SSID, FortiGate
+    // sighting) resolve in SQL for the whole batch — one query per DISTINCT
+    // leaf, and no query at all when no filter asks for one — instead of
+    // joining those relations onto every primed row. Same contract the
+    // threshold path and downDetectionService use, for the same reason: at
+    // 2000 assets the relations dwarf the rows they hang off.
+    const scopedTrees = compiled.filter((c) => c.scoped).map((c) => c.rule.scope?.condition);
+    if (scopedTrees.length > 0) {
+      const rows = eventAssetIds.map((id) => _assetDetailCache.get(id)).filter((r): r is AssetDetailRow => !!r);
+      await decorateRelationLeafHits(rows, scopedTrees);
+    }
   }
   for (const ev of events) {
     // Which rules this same event FIRED — a rule whose trigger and reset globs
@@ -3077,20 +3095,30 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
         if (c.trigger.minLevel && (LEVEL_RANK[ev.level] ?? 0) < (LEVEL_RANK[c.trigger.minLevel] ?? 0)) continue;
         if (c.trigger.detailsMatch && !detailsMatch(ev.details, c.trigger.detailsMatch)) continue;
       }
+      const assetId = ev.resourceType === "asset" ? ev.resourceId ?? null : null;
+      const detail = assetId ? await assetDetail(assetId) : null;
+      // Device filter (business rule 46). Read BEFORE the fired stamp below,
+      // not with the state gates further down: an automation whose filter
+      // doesn't name this device isn't watching this event at all, so it must
+      // not suppress its own reset either. An event that names no asset — an
+      // integration, a user, the host — cannot satisfy a device filter and is
+      // therefore not a match for a filtered automation; nor is one whose
+      // asset row is already gone (`asset.deleted`), because there is nothing
+      // left to test the filter against. Unfiltered automations (`{}` or
+      // "All assets") take neither branch and behave exactly as before.
+      if (c.scoped && (!detail || !scopeMatchesAsset(c.rule.scope, detail))) continue;
       // Stamped as soon as the TRIGGER matches, ahead of the gate and the
       // cooldown: "this event raises this automation" is a property of the two
       // globs overlapping, and a cooldown-suppressed fire must block the reset
       // exactly the same way — otherwise a wide glob clears the alert the
       // cooldown was protecting.
       firedThisEvent.add(c.rule.id);
-      const assetId = ev.resourceType === "asset" ? ev.resourceId ?? null : null;
       // What this alert is ABOUT, as a label. A system-scoped Event (capacity,
       // backups, updates) names no resource because the resource IS this
       // install, so without the fallback the alert had no subject at all. Used
       // for every field that has to agree on it: {asset}, the stored
       // assetHostname, and the cooldown key below.
       const subjectLabel = eventSubjectLabel(ev.resourceType, ev.resourceName);
-      const detail = assetId ? await assetDetail(assetId) : null;
       // Event/change rules honor the SAME trigger gate as threshold rules
       // (assetCanTrigger): no notifications about an asset Polaris isn't
       // polling — unmonitored, or one of the four statuses that can't be
@@ -3253,9 +3281,23 @@ const ASSET_DETAIL_SELECT = {
   // The event/change tail's trigger gate (assetCanTrigger) reads it off this
   // same row rather than paying a second point read per matched event.
   monitored: true,
+  // The last column scopeMatchesAsset needs that the template fields don't
+  // already cover, so the event tail can test a device filter (business rule
+  // 46) against the row it primed for the alert text.
+  discoveredByIntegrationId: true,
 } as const;
 
-type AssetDetailRow = AssetTemplateDetail & { hostname: string | null; status: string; tags: string[]; dependencySuppressed: boolean; monitored: boolean };
+/** Also a `ScopeAsset`: the event tail evaluates device filters against it, and
+ *  `relationLeafHits` is where decorateRelationLeafHits stamps the SQL-resolved
+ *  verdict for a relation-backed leaf. */
+type AssetDetailRow = AssetTemplateDetail & {
+  hostname: string | null; status: string; tags: string[]; dependencySuppressed: boolean; monitored: boolean;
+  // Optional on AssetTemplateDetail (a template context may have no asset at
+  // all); always selected here, and required by ScopeAsset/RelationDecoratable.
+  id: string; assetType: string | null;
+  discoveredByIntegrationId: string | null;
+  relationLeafHits?: ReadonlyMap<string, boolean>;
+};
 
 const _assetDetailCache = new Map<string, AssetDetailRow | null>();
 export function clearAssetDetailCache(): void {
@@ -3608,7 +3650,18 @@ export async function previewRule(input: PreviewRuleInput): Promise<PreviewResul
     scopeAssets = await loadScopeAssets(input.scope, { monitoredOnly: true });
     readings = await resolveAssetStateReadings(trigger, scopeAssets);
   } else {
-    return { supported: false, note: "Event and change rules fire on new audit events; there's nothing to preview against current data.", totalEvaluated: 0, matches: [] };
+    // Event / change drafts have nothing to evaluate against current data —
+    // they fire on new audit events. What they DO have, once the operator
+    // narrows them (business rule 46), is a device filter with a definite
+    // membership right now, and that is the half the Devices step is asking
+    // about. So: list it, and say plainly that the list is who it would fire
+    // ABOUT rather than who is currently triggering it.
+    const eventNote = "Event and change automations fire on new audit events, so there's nothing to evaluate against current data.";
+    if (scopeIsUnconstrained(input.scope)) {
+      return { supported: false, note: eventNote, totalEvaluated: 0, matches: [] };
+    }
+    const listed = await previewRule({ ...input, trigger: undefined });
+    return { ...listed, note: eventNote + " These are the devices the filter selects — the automation only fires about these." };
   }
 
   // Severity bands: the tier a value lands in (numeric triggers only).

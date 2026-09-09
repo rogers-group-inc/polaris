@@ -11,7 +11,7 @@ import { describe, it, expect } from "vitest";
 import { compareNum, compareValue, globToRegExp, readingMeets, interfaceIsPinned, interfaceDimLabel, tunnelIsPinned, applyDeviceFilters } from "../../src/services/notificationEngine.js";
 import { scopeMatchesAsset, type ScopeAsset } from "../../src/services/notificationRuleService.js";
 import { stripRegionPrefix } from "../../src/services/notificationService.js";
-import { ruleInputSchema, buildSchemaCatalog, triggerDimensionApplicable } from "../../src/services/notificationTypes.js";
+import { ruleInputSchema, buildSchemaCatalog, triggerDimensionApplicable, scopeIsUnconstrained } from "../../src/services/notificationTypes.js";
 
 describe("compareNum", () => {
   it("evaluates every operator", () => {
@@ -149,6 +149,35 @@ describe("tunnelIsPinned", () => {
   });
 });
 
+describe("scopeIsUnconstrained", () => {
+  // The distinction scopeMatchesAsset cannot make: `{}` means "nothing" to the
+  // matcher and "everything" to an automation saved before device filters
+  // reached event triggers (business rule 46). Every caller that FILTERS on a
+  // scope has to ask this first.
+  it("allAssets and an absent/empty scope are both unconstrained", () => {
+    expect(scopeIsUnconstrained({ allAssets: true })).toBe(true);
+    expect(scopeIsUnconstrained({})).toBe(true);
+    expect(scopeIsUnconstrained(null)).toBe(true);
+    expect(scopeIsUnconstrained(undefined)).toBe(true);
+  });
+  it("an empty condition tree selects nothing either (it ANDs to true)", () => {
+    expect(scopeIsUnconstrained({ condition: { op: "and", children: [] } })).toBe(true);
+  });
+  it("any populated dimension, or any tree with a rule in it, constrains", () => {
+    expect(scopeIsUnconstrained({ assetTypes: ["switch"] })).toBe(false);
+    expect(scopeIsUnconstrained({ tags: ["prod"] })).toBe(false);
+    expect(scopeIsUnconstrained({ assetIds: ["a1"] })).toBe(false);
+    expect(scopeIsUnconstrained({ integrationIds: ["i1"] })).toBe(false);
+    expect(scopeIsUnconstrained({ manufacturers: ["Fortinet"] })).toBe(false);
+    expect(scopeIsUnconstrained({ models: ["FGT-60F"] })).toBe(false);
+    expect(scopeIsUnconstrained({ subnetCidrs: ["10.0.0.0/8"] })).toBe(false);
+    expect(scopeIsUnconstrained({ condition: { op: "and", children: [{ field: "hostname", operator: "contains", value: "fw" }] } })).toBe(false);
+  });
+  it("an empty LIST is not a constraint (the matcher ignores it too)", () => {
+    expect(scopeIsUnconstrained({ assetTypes: [], tags: [] })).toBe(true);
+  });
+});
+
 describe("scopeMatchesAsset", () => {
   const asset: ScopeAsset = {
     id: "a1", assetType: "server", tags: ["region:Atlanta", "prod"], discoveredByIntegrationId: "i1",
@@ -241,7 +270,10 @@ describe("buildSchemaCatalog", () => {
     const types = cat.triggerTypes.map((t) => t.type);
     expect(types).toEqual(["asset_metric", "asset_state", "host_metric", "event", "change", "composite"]);
     const scoped = cat.triggerTypes.filter((t) => t.scoped).map((t) => t.type);
-    expect(scoped).toEqual(["asset_metric", "asset_state", "change", "composite"]);
+    // `event` joined the scoped list in 2026-09 (business rule 46) — the flag is
+    // what makes the wizard SAVE the Devices step instead of discarding it.
+    // `host_metric` is the only one left that genuinely ignores a device filter.
+    expect(scoped).toEqual(["asset_metric", "asset_state", "event", "change", "composite"]);
   });
 });
 

@@ -488,3 +488,35 @@ Every writer of the two "last seen" columns was keyed by MAC. Discovery Phase 7.
 ### What it gives the form
 
 The same change taught the Add Asset IP cross-reference the station table, with the two ways in that the sweep uses: by the resolved MAC, or by the address the AP itself recorded for the station. The switch-port line can only ever follow a MAC; the Wireless AP line is the one source on that panel that can place a device nothing wired has ever seen, and it says which path found it.
+
+## Rule 46 — A device filter on an event automation filters the event's subject
+
+**The invariant.** An `event` or `change` automation's `scope` decides which devices it fires about. `runEventTail` tests the Event's asset against `scopeMatchesAsset` for every rule whose scope names devices, ahead of the fired-this-event stamp; an event naming no asset, or one whose asset row is gone, is not a match for a filtered rule. An unconstrained scope (`scopeIsUnconstrained`: `{allAssets:true}`, `{}`, or an empty tree) fires about everything, exactly as before.
+
+### The report
+
+"The reboot event automation — I need to alert only for specific devices. When I change it to only be for specific devices and click save, there's no error message, but when I re-open it, it's back to all assets."
+
+Both halves of that were true, and the silence was the design working as written. The wizard's Devices step rendered for every trigger, the condition builder accepted the filter, and its live preview obligingly listed the devices it selected — that preview asks the scope-only endpoint, which has never cared what the trigger is. Then `buildPayload` wrote `scope: isTriggerScoped(draft.trigger) ? draft.scope : {}`, and the trigger catalog said `{ type: "event", scoped: false }`. So the save posted `{}`, the server stored `{}` as a perfectly valid scope, and reopening the automation ran `Object.keys(scope).length === 0` → "All assets", checked. Nothing to error about: every layer agreed with itself, and the only thing that disagreed was the operator's intent, which had been dropped at the payload boundary.
+
+### The second half nobody had reported
+
+`change` triggers had carried `scoped: true` from the start, so the wizard saved their device filters faithfully — and the event tail ignored them just as completely, because it never consulted `scope` at all. A change automation narrowed to firewalls fired for every asset in the fleet. The two bugs are one missing test in one loop, which is why the fix is one predicate applied to both trigger kinds rather than a special case for events.
+
+### Why an event automation is allowed to be about devices at all
+
+The original reasoning for `scoped: false` was sound as far as it went: an audit event is not a reading, it has no asset scope to evaluate against, and many event automations watch things that are not assets — an integration's discovery run, a user's login, a backup, the host's disk. But "the trigger has no scope" and "the operator may not narrow it" are different claims, and only the first one was true. Most Event rows in this install DO name an asset (`resourceType: "asset"`), which is precisely why several of the twelve seeded event automations read as device alerts; `asset.rebooted` is one of them. Once an operator wants that alert for the core switches and not for 900 access points, the device filter is the only vocabulary in the product that says so, and it was already sitting on screen.
+
+### The two refusals
+
+**An event with no asset cannot pass a device filter.** `integration.discover.error` names an integration; a failed login names a user; capacity and backup events name this install. A filter that says "asset type is firewall" has nothing to compare those against, and the honest reading of "only these devices" is that a subject which is not a device is not one of them. So a filtered automation skips them, and an operator who wants both keeps the automation on All assets — which the Devices step now says out loud, because the surprise is real and the alternative is a filtered automation that silently keeps firing about things its filter never mentioned.
+
+**A deleted asset is not tested.** The tail deliberately does not treat a null asset row as a skip — that is how `asset.deleted` reaches an alert at all, and swallowing it would silence the deletion audit trail. But a filter cannot be evaluated against a row that no longer exists, and guessing is worse than not firing: the alternative is a filtered automation firing about a device it may well have excluded. Filtered rules therefore lose the deletion event; unfiltered ones — including every seeded one — keep it.
+
+### Why `{}` had to become its own question
+
+`scopeMatchesAsset({}, asset)` is `false`, and correctly so: a scope the builder wrote with no dimensions and `allAssets` unchecked selects nothing, and the wizard refuses to save one for exactly that reason. But `{}` is also what the wizard wrote for **every event automation ever saved** before this change, and there it means the opposite — the operator picked All assets (or never touched the step) and the payload discarded the flag. Filtering the event tail on `scopeMatchesAsset` alone would therefore have silenced every existing event automation in the install, seeded and hand-written alike, the moment the code shipped. Hence `scopeIsUnconstrained` as a separate, first question, and hence its place in this rule: the next caller that filters on a scope has the same trap waiting for it.
+
+### Cost at fleet scale
+
+The scope test is in memory against the row the tail already primed for the alert text (`primeAssetDetailCache` — one `findMany` for the whole batch, added when a site-wide outage was serializing one point read per asset). "Does this scope constrain anything" is computed once per rule when the matchers compile, not once per event, so a 1000-event batch does not re-walk the same scope object a thousand times. Relation-backed filter leaves — interface name, SSID, FortiGate sighting — resolve through `decorateRelationLeafHits`, one query per distinct leaf for the whole batch and no query at all when no filter asks for one, the same contract the threshold path and `downDetectionService` use. The one new column on the primed select is `discoveredByIntegrationId`, which `scopeMatchesAsset` needs and the template fields did not already cover.
