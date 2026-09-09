@@ -925,11 +925,22 @@ function renderNav() {
   }
   if (isAdmin()) {
     pollUpdateProgress().then(_scheduleUpdatePoll, _scheduleUpdatePoll);
+    // Same immediate re-read every pollVisible() poller gets on un-hiding: an
+    // update that started while the tab was in the background is already
+    // several steps in, and the panel exists to be seen — waiting out the
+    // remaining 60 s idle interval can outlast the whole applying phase.
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) window._pollUpdateProgress();
+    });
   }
   // Callers that just kicked an update (or want the panel fresh now) get an
   // immediate read AND a re-paced loop — without this an Apply click could
-  // sit up to a minute before the sidebar panel showed progress.
+  // sit up to a minute before the sidebar panel showed progress. The Apply
+  // button in server-settings.js is the one caller that MUST use this: with
+  // the idle poll at 60 s and a short applying phase, the sidebar otherwise
+  // slept through the entire update and the panel never appeared at all.
   window._pollUpdateProgress = function () {
+    if (!isAdmin()) return Promise.resolve(null);
     return pollUpdateProgress().then(function (r) { _scheduleUpdatePoll(); return r; }, function (e) { _scheduleUpdatePoll(); throw e; });
   };
   window._getUpdateStatus = function () { return _updateStatus; };
