@@ -120,7 +120,7 @@ node -v        # expect v24.x
 
 # 3. Rebuild dependencies against the new ABI, then rebuild the app.
 cd /opt/polaris
-sudo -u polaris npm ci --production=false
+sudo -u polaris npm ci --include=dev
 sudo -u polaris npm run build
 
 # 4. Start, then confirm.
