@@ -166,6 +166,49 @@ sync_unit_files() {
   return 1
 }
 
+# Refresh the HA artifacts that live OUTSIDE the tree once installed (docs/HA.md):
+# polaris-ha-role.sh is installed to /usr/local/sbin/polaris-ha-role, its unit +
+# timer to /etc/systemd/system, and the drop-ins to <unit>.d/. Nothing here used
+# to be re-synced, so an update that changed any of them never reached an HA
+# host. The reconciler SCRIPT was the sharp end: the standby pulls the new tree,
+# but the tree copy is not what runs.
+#
+# REFRESH-ONLY-IF-PRESENT, deliberately unlike sync_unit_files above.
+# setup-rhel-ha.sh owns installation because it knows the node's role — a
+# witness has no polaris-* drop-ins and must not grow them, and a non-HA host
+# (no /etc/polaris/ha-node marker) must not grow HA units at all. The cost: a
+# genuinely NEW HA artifact in a future release needs setup-rhel-ha.sh re-run
+# to land the first time.
+# Lockstep: the same block is built into src/services/updateService.ts.
+sync_ha_artifacts() {
+  [[ -f /etc/polaris/ha-node ]] || return 1
+  local synced=0
+  sync_one() {
+    local src="$1" dst="$2" mode="$3"
+    [[ -f "$src" && -f "$dst" ]] || return 0
+    cmp -s "$src" "$dst" && return 0
+    install -o root -g root -m "$mode" "$src" "$dst"
+    info "Synced HA artifact: $dst"
+    synced=$((synced + 1))
+  }
+  sync_one "$APP_DIR/deploy/ha/polaris-ha-role.sh"  /usr/local/sbin/polaris-ha-role 0755
+  sync_one "$APP_DIR/deploy/ha/polaris-ha-role.service" /etc/systemd/system/polaris-ha-role.service 0644
+  sync_one "$APP_DIR/deploy/ha/polaris-ha-role.timer"   /etc/systemd/system/polaris-ha-role.timer 0644
+  sync_one "$APP_DIR/deploy/ha/patroni.service.d/10-polaris.conf" \
+           /etc/systemd/system/patroni.service.d/10-polaris.conf 0644
+  local u
+  for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
+    sync_one "$APP_DIR/deploy/ha/dropins/$u.service.d/10-ha.conf" \
+             "/etc/systemd/system/$u.service.d/10-ha.conf" 0644
+  done
+  if [[ $synced -gt 0 ]]; then
+    info "Reloading systemd daemon ($synced HA artifact(s) updated)..."
+    systemctl daemon-reload
+    return 0
+  fi
+  return 1
+}
+
 # Sync the shipped nginx config from $APP_DIR/deploy/nginx/polaris.conf to
 # /etc/nginx/conf.d/polaris.conf when proxy mode is active. Mirrors the
 # in-app updater's behavior in src/services/updateService.ts so manual + in-
@@ -349,6 +392,7 @@ rollback() {
   # /etc/systemd/system/ — sync the now-rolled-back deploy/ files back into
   # place so systemd reflects the rolled-back code/units pair.
   sync_unit_files || true
+  sync_ha_artifacts || true
   sync_nginx_config || true
 
   systemctl restart "$SYSTEMD_UNIT" 2>/dev/null
@@ -427,6 +471,7 @@ info "Migrations complete"
 step "8/9  Syncing systemd unit files..."
 
 sync_unit_files || info "No unit file changes to sync"
+sync_ha_artifacts || info "No HA artifact changes to sync (or not an HA node)"
 
 # Sync the shipped nginx config in proxy mode. Runs BEFORE the polaris.target
 # restart so any new location blocks / proxy_set_header changes are live in

@@ -56,6 +56,17 @@ what the load balancer monitors.
 - **`polaris.target` must stay disabled.** `reconcile` re-disables it every
   tick if something enabled it, because an enabled target starts the app at boot
   before Patroni has decided anything.
+- **An HA artifact that ships in an update reaches the host only through the
+  `/etc/polaris/ha-node` refresh.** Everything HA is installed OUT of the tree —
+  `polaris-ha-role.sh` becomes `/usr/local/sbin/polaris-ha-role`, the unit and
+  timer land in `/etc/systemd/system`, the drop-ins in `<unit>.d/` — so for its
+  first release none of it was updatable: the standby faithfully pulled a new
+  tree whose reconciler copy nothing executed. Both updater paths now refresh
+  those files when the marker is present, **refresh-only-if-present** so a
+  witness never grows `polaris-*` drop-ins and a non-HA host never grows HA
+  units. Consequence to remember: a brand-new HA artifact needs
+  `setup-rhel-ha.sh` re-run to appear the first time; only already-installed
+  ones are kept current.
 - **The updater runs on the active node only.** It calls
   `polaris-ha-role notify-peer` at the end (in the `systemd-run` script in
   `restartService`), and `deploy/update-linux.sh` does the same — **lockstep,
@@ -89,6 +100,7 @@ what the load balancer monitors.
 |---|---|
 | a package/user/directory in `deploy/setup-rhel.sh` | `prepare_standby_host` in `deploy/ha/setup-rhel-ha.sh` |
 | the notify-peer hook | both `updateService.ts` `restartService` and `deploy/update-linux.sh` |
+| an artifact `setup-rhel-ha.sh` installs outside the tree | the refresh list in BOTH `updateService.ts` `restartService` and `deploy/update-linux.sh → sync_ha_artifacts()`, or updates never reach it |
 | a new shipped systemd unit | a matching `deploy/ha/dropins/<unit>.service.d/10-ha.conf` |
 | what lives under `/opt/polaris` at runtime | `deploy/ha/ha-rsync-exclude` (default is SYNCED) |
 | the heartbeat window or interval | `haHeartbeatService.test.ts` assertions + docs/HA.md §5 |
