@@ -80,6 +80,12 @@ updates:
 
   # The pinned actions/* set rots invisibly. This will NOT bump `node-version:`
   # in a workflow — that is a Node pin and belongs to check:versions.
+  #
+  # Every `uses:` is pinned to a commit SHA with the version in a trailing
+  # comment, never to a tag: a tag is mutable, and docker-publish.yml's build
+  # job holds packages:write + id-token:write. Dependabot understands that form
+  # and rewrites both the SHA and the comment, so KEEP IT — a PR here that
+  # replaces a SHA with a bare tag is a regression, not an update.
   - package-ecosystem: github-actions
     directory: /
     schedule:
