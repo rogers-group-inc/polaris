@@ -258,25 +258,39 @@ it is a floating tag, listed as such by `check:versions`.
 
 ## Java and jsign
 
-Java **17**, jsign **7.4**.
+Java **25**, jsign **7.5**.
 
 | Site | Form | Kind |
 |---|---|---|
-| `Dockerfile` | Java 17 headless, plus a SHA-256-pinned `jsign-7.4.jar` fetched by digest | pin |
-| `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `java-17-openjdk-headless` | pin |
-| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `openjdk-17-jre-headless`, falling back to `default-jre-headless` | pin |
-| two Windows setup scripts | `Microsoft.OpenJDK.17` + `aka.ms/download-jdk/microsoft-jdk-17-windows-x64.msi` | pin |
-| all six setup scripts | `JSIGN_VERSION="7.4"` + `JSIGN_SHA256` | pin |
+| `Dockerfile` | `openjdk-25-jre-headless`, plus a SHA-256-pinned `jsign-7.5.jar` fetched by digest | pin |
+| `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `java-25-openjdk-headless` | pin |
+| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `openjdk-25-jre-headless`, falling back to `default-jre-headless` | pin |
+| two Windows setup scripts | `Microsoft.OpenJDK.25` + `aka.ms/download-jdk/microsoft-jdk-25-windows-x64.msi` | pin |
+| all six setup scripts | `JSIGN_VERSION="7.5"` + `JSIGN_SHA256` | pin |
 
 **RESOLVED 2026-09-09.** The Ubuntu scripts installed `default-jre-headless`, the distro
 default — Java 17 on 22.04 and Java 21 on 24.04. Two supported Polaris hosts therefore signed
 agent binaries with different JDK majors, and only one matched the 17 every other site pins.
 There was no number in the package name for the equality check to compare, so the drift was
-invisible to the pin check as well as to the operator. Both scripts now install
-`openjdk-17-jre-headless` by name, falling back to the distro default only if that package is
-unavailable on the release — signing with the wrong major beats not signing at all, and the log
-says which happened. `check:versions` skips `unversioned-install` when a file also runs a
-versioned install, so a guarded fallback is not reported as a silent default.
+invisible to the pin check as well as to the operator. Both scripts now install a JDK **by
+name**, falling back to the distro default only if that package is unavailable on the release —
+signing with the wrong major beats not signing at all, and the log says which happened.
+`check:versions` skips `unversioned-install` when a file also runs a versioned install, so a
+guarded fallback is not reported as a silent default. The Dockerfile had the same unversioned
+install and was fixed on the same day the major moved: `default-jre-headless` on a trixie base
+is 21, so it would have drifted under the image at the next base bump.
+
+**Moved 17 → 25 on 2026-09-09.** jsign 7.5 is Java 8 bytecode (class file major 52, confirmed
+by unpacking the jar), so nothing here *needs* a newer JDK — the move buys runway, 2030-09-30
+instead of 2027-09-30, and one fewer edit later. Availability was checked on every path first,
+because one platform without the package splits the fleet's signing JDK all over again: RHEL 9
+AppStream (`java-25-openjdk-headless`), Debian trixie and Ubuntu 22.04 *and* 24.04
+(`openjdk-25-jre-headless`), winget (`Microsoft.OpenJDK.25`) and the `aka.ms` MSI all carry it.
+
+**Target always equals minimum in the dataset for this row.** A target above what the install
+paths provision makes every healthy install report a behind-target JDK forever, which is the
+noise that teaches operators to ignore the Platform Lifecycle card. The row was briefly
+21-target/17-minimum and that was the mistake; the 25 move kept the two together.
 
 Both are build-time only (jsign signs the Windows agent binaries) and the feature is opt-in, so
 a missing or mismatched JDK degrades signing rather than breaking the app.
@@ -342,8 +356,8 @@ not as a figure to keep in step by hand — `npm run check:versions` prints the 
 | `go-pin` | major.minor | 1.22 | — |
 | `nginx-floor` | major.minor | 1.30 | — |
 | `postgres-major` | major | 17 | `postgres-source` — quiet since setup-rhel.sh moved to PGDG; plus `units-name-no-postgres`, a hard gate |
-| `java-major` | major | 17 | `unversioned-install` — quiet since the Ubuntu scripts pinned 17 |
-| `jsign-pin` | major.minor | 7.4 | — |
+| `java-major` | major | 25 | `unversioned-install` — quiet since the Ubuntu scripts named a major |
+| `jsign-pin` | major.minor | 7.5 | — |
 | `dataset-shape` | n/a | n/a | dataset older than 120 days |
 
 Not families, on purpose: the CI-has-no-TimescaleDB gap (a standing truth, not drift — a check

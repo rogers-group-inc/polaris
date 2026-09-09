@@ -123,18 +123,18 @@
       "trackGranularity": "major",
       "policy": "dated",
       "securityExposed": false,
-      "polarisMinimum": "17",
-      "polarisTarget": "17",
+      "polarisMinimum": "25",
+      "polarisTarget": "25",
       "upgradePlaybook": "java-major",
       "source": "https://endoflife.date/api/microsoft-build-of-openjdk.json",
-      "sourceCheckedOn": "2026-09-08",
+      "sourceCheckedOn": "2026-09-09",
       "confidence": "aggregator",
-      "notes": "Only needed to run jsign for agent code signing, so build-time only. The deploy scripts install Microsoft.OpenJDK.17; these dates are Microsoft's build, which can differ from Oracle's and Temurin's for the same major. Target is deliberately 17, the same as the minimum - do NOT raise it to 21 just because 21 is newer. This was 21 briefly and it was wrong: nothing here needs 21, so it made every healthy install report a behind-target Java forever, which is noise that teaches operators to ignore this card. 17 is supported to 2027-09-30; when that gets close the grader's own clock reports `aging` with the date attached, and THAT is when to move the target to 21 (or whatever LTS is current then).",
+      "notes": "Only needed to run jsign for agent code signing, so build-time only. The deploy scripts install Microsoft.OpenJDK.25 on Windows, java-25-openjdk-headless on RHEL and openjdk-25-jre-headless on Debian/Ubuntu and in the container image; these dates are Microsoft's build, which can differ from Oracle's and Temurin's for the same major. TARGET ALWAYS EQUALS MINIMUM here, and that rule survived the move: a target above what every install path provisions makes every healthy install report a behind-target Java forever, which is noise that teaches operators to ignore this card. It was 21-with-a-17-minimum briefly and that was the mistake. Moved 17 -> 25 on 2026-09-09 as the current LTS - jsign 7.5 is Java 8 bytecode (class file major 52) and requires none of it, so this buys runway (2030-09-30 rather than 2027-09-30) rather than capability. Availability was checked on every path before moving, since one platform without the package would have split the fleet's signing JDK again: RHEL 9 AppStream, Debian trixie, Ubuntu 22.04 AND 24.04, winget, and the aka.ms MSI all carry 25.",
       "tracks": [
         { "track": "11", "released": "2019-01-21", "eol": "2027-09-30", "lts": true },
-        { "track": "17", "released": "2021-09-14", "eol": "2027-09-30", "lts": true },
+        { "track": "17", "released": "2021-09-14", "eol": "2027-09-30", "lts": true, "note": "Polaris's major until 2026-09-09." },
         { "track": "21", "released": "2023-09-19", "eol": "2028-09-30", "lts": true },
-        { "track": "25", "released": "2025-09-16", "eol": "2030-09-30", "lts": true }
+        { "track": "25", "released": "2025-09-16", "eol": "2030-09-30", "lts": true, "note": "Current LTS - Polaris's minimum and target." }
       ]
     },
     {

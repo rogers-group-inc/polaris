@@ -233,7 +233,7 @@ fi
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 
-# ─── 3c. Java 17 + jsign (agent code signing — optional at runtime) ─────────
+# ─── 3c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). The feature is
@@ -244,21 +244,23 @@ JSIGN_SHA256="602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"
 if command -v java &>/dev/null; then
   info "Java already installed"
 else
-  info "Installing Java 17 (headless, for agent code signing)..."
-  # openjdk-17-jre-headless by NAME, not default-jre-headless. The distro
+  info "Installing Java 25 (headless, for agent code signing)..."
+  # openjdk-25-jre-headless by NAME, not default-jre-headless. The distro
   # default is Java 17 on Ubuntu 22.04 and Java 21 on 24.04, so
   # `default-jre-headless` made two supported Polaris hosts sign agent binaries
-  # with different JDK majors -- and only one of them matched the 17 that the
-  # Dockerfile, the RHEL script and both Windows scripts all pin. There is no
-  # version in `default-jre-headless` for check:versions to compare, so the
-  # drift was invisible to the pin check as well as to the operator.
+  # with different JDK majors -- and neither matched what the Dockerfile, the
+  # RHEL script and both Windows scripts pin. There is no version in
+  # `default-jre-headless` for check:versions to compare, so the drift was
+  # invisible to the pin check as well as to the operator.
+  # 25 is available on jammy and noble alike (and on Debian trixie), so the
+  # fallback below should never fire on a supported release.
   # Fall back to the distro default rather than leaving the host with no JVM:
   # signing with the wrong major beats not signing at all, and the log says
   # which happened.
-  if apt-get install -y openjdk-17-jre-headless; then
-    info "Java 17 (openjdk-17-jre-headless) installed"
+  if apt-get install -y openjdk-25-jre-headless; then
+    info "Java 25 (openjdk-25-jre-headless) installed"
   elif apt-get install -y default-jre-headless; then
-    info "WARNING: openjdk-17-jre-headless unavailable on this release — installed default-jre-headless ($(java -version 2>&1 | head -1)). Agent signing will use this JVM; pin 17 if signatures must match other hosts."
+    info "WARNING: openjdk-25-jre-headless unavailable on this release — installed default-jre-headless ($(java -version 2>&1 | head -1)). Agent signing will use this JVM; pin 25 if signatures must match other hosts."
   else
     info "WARNING: Java install failed — agent code signing stays unavailable until Java is installed manually"
   fi

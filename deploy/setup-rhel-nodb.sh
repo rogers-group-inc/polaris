@@ -202,7 +202,7 @@ fi
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 
-# ─── 4c. Java 17 + jsign (agent code signing — optional at runtime) ─────────
+# ─── 4c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). The feature is
@@ -213,8 +213,8 @@ JSIGN_SHA256="602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"
 if command -v java &>/dev/null; then
   info "Java already installed"
 else
-  info "Installing Java 17 (headless, for agent code signing)..."
-  dnf install -y java-17-openjdk-headless || \
+  info "Installing Java 25 (headless, for agent code signing)..."
+  dnf install -y java-25-openjdk-headless || \
     info "WARNING: Java install failed — agent code signing stays unavailable until Java is installed manually"
 fi
 if [ -f "$APP_DIR/tools/jsign.jar" ]; then

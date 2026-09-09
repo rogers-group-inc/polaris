@@ -20,7 +20,7 @@ states a floor, it states the same one as this table.
 | **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date. 2.28.x was the last line supporting PostgreSQL 15, which is what capped the extension before the move to 17; 2.29+ supports 16/17/18, and 2.30 is current on both PGDG-supported majors. |
 | **Go** (agent build only) | 1.22 | **1.26** | 1.22 → 2025-02-11 · 1.25 → 2026-08-19 | Go supports only the two most recent majors, so this ages faster than anything else here. Needed only to build agent binaries in-app. |
 | **nginx** | 1.30 | **1.30** | 1.28 → 2026-04-14 · 1.30 → current | Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. The setup scripts install the **stable** branch from nginx.org, and 1.30 is the oldest branch still receiving fixes. HTTP/3 needs 1.25 at minimum, so the floor is a support statement now rather than a feature one. |
-| **Java** (agent signing only) | 17 | 17 | 17 → 2027-09-30 · 21 → 2028-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. Target is deliberately the same as the minimum — nothing here needs 21, and naming it would report a behind-target JDK on every healthy install. Move to 21 when 17 nears its date, not before. |
+| **Java** (agent signing only) | 25 | 25 | 21 → 2028-09-30 · 25 → 2030-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. Target equals the minimum on purpose — a target above what every install path provisions reports a behind-target JDK on every healthy host, which teaches operators to ignore this card. Moved 17 → 25 on 2026-09-09, the current LTS: jsign is Java 8 bytecode and needs none of it, but 25 is available on every supported platform and buys three more years before this row moves again. |
 | **RHEL / Rocky / AlmaLinux** | 9 | 9 | 9 → 2032-05-31 (full support ends 2027-05-31) | |
 | **Ubuntu** | 22.04 LTS | **24.04 LTS** | 22.04 → 2027-06-01 · 24.04 → 2029-05-31 | LTS only. Extended dates require Ubuntu Pro; don't treat them as free runway. |
 | **Windows Server** | 2019 | 2022 | see Microsoft's product lifecycle | |
@@ -1804,11 +1804,11 @@ SmartScreen is usually not the constraint in the first place: it only fires on f
 
 ### Polaris host prerequisites
 
-The install scripts in this guide (and the Docker image) provision the toolchain automatically: a headless **Java 17** runtime and the **jsign** jar (v7.5, SHA-256-pinned) at `<app dir>/tools/jsign.jar` (`/opt/polaris/tools/jsign.jar` on Linux, `C:\polaris\tools\jsign.jar` on Windows). Existing installs that predate this feature add them manually:
+The install scripts in this guide (and the Docker image) provision the toolchain automatically: a headless **Java 25** runtime and the **jsign** jar (v7.5, SHA-256-pinned) at `<app dir>/tools/jsign.jar` (`/opt/polaris/tools/jsign.jar` on Linux, `C:\polaris\tools\jsign.jar` on Windows). Existing installs that predate this feature add them manually:
 
 ```sh
 # RHEL/Rocky/Alma
-sudo dnf install -y java-17-openjdk-headless
+sudo dnf install -y java-25-openjdk-headless
 # Ubuntu/Debian
 sudo apt-get install -y default-jre-headless
 # Both:
@@ -1818,7 +1818,7 @@ sudo curl -fsSL -o /opt/polaris/tools/jsign.jar \
 echo "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c  /opt/polaris/tools/jsign.jar" | sha256sum -c -
 ```
 
-On Windows Server: `winget install Microsoft.OpenJDK.17` (or the MSI from https://aka.ms/download-jdk) and drop `jsign-7.5.jar` at `C:\polaris\tools\jsign.jar`. No Polaris restart needed — the availability probe re-checks on every page load.
+On Windows Server: `winget install Microsoft.OpenJDK.25` (or the MSI from https://aka.ms/download-jdk) and drop `jsign-7.5.jar` at `C:\polaris\tools\jsign.jar`. No Polaris restart needed — the availability probe re-checks on every page load.
 
 **Then install the keystore.** Either upload it through the UI, or place it on the host by hand.
 
@@ -1841,7 +1841,7 @@ Integrations → **Polaris Agents** → **Code signing (internal CA)**:
 1. Tick **Sign Windows agent binaries on build** and fill in the **keystore path**, **keystore password**, and **timestamp URL**. Leave **key alias** blank unless the keystore holds more than one entry, and leave **jsign jar path** blank for auto-detection. Saving requires `serverSettingsSystem = fullwrite` (admin).
 2. Click **Test** — it checks Java and the jar, then opens the keystore with the stored password via `keytool` and lists the aliases it found. That proves the path/password pair and catches a mistyped alias, which otherwise only surfaces as a jsign error mid-build. It makes **no network call**, so it does not prove the timestamp authority is reachable.
 
-   `keytool` ships inside `java-17-openjdk-headless`, but beside the JVM rather than necessarily symlinked onto `PATH`. Polaris tries the bare name first and then the JVM's own reported `java.home` (and `JAVA_HOME` if you set one), so it normally finds it either way. If it genuinely can't, Test reports *"password NOT verified"* and everything else still passes — signing itself never uses keytool, only `java -jar jsign.jar`, so this is a diagnostic downgrade rather than a functional one.
+   `keytool` ships inside `java-25-openjdk-headless`, but beside the JVM rather than necessarily symlinked onto `PATH`. Polaris tries the bare name first and then the JVM's own reported `java.home` (and `JAVA_HOME` if you set one), so it normally finds it either way. If it genuinely can't, Test reports *"password NOT verified"* and everything else still passes — signing itself never uses keytool, only `java -jar jsign.jar`, so this is a diagnostic downgrade rather than a functional one.
 3. Run a build. The progress strip gains `sign-windows-amd64` / `sign-windows-arm64` rows after the six platform rows; the completed Event carries `signed: true`.
 
 Verify a signed binary with `osslsigncode verify` (Linux) or `Get-AuthenticodeSignature` (Windows) — run the latter on a machine that trusts your internal root, or it will correctly report an untrusted chain. Explorer → Properties → Details also shows the embedded VERSIONINFO metadata (product name, version) that the agent binaries carry regardless of signing.

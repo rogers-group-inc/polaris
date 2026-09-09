@@ -79,7 +79,7 @@ RUN echo "deb http://deb.debian.org/debian trixie-backports main" \
       golang-go \
  && rm -rf /var/lib/apt/lists/*
 
-# Java 17 (headless) + the jsign jar for the optional agent code-signing
+# Java 25 (headless) + the jsign jar for the optional agent code-signing
 # feature (Integrations → Polaris Agents → Code signing — internal-CA
 # signing of the two Windows agent binaries during the in-app build). The
 # jar lands at /opt/polaris/tools/jsign.jar, one of agentSigningService's
@@ -93,9 +93,14 @@ RUN echo "deb http://deb.debian.org/debian trixie-backports main" \
 # every registry the image reaches. Operators mount their PKCS#12 under the
 # persistent state dir (/app/state/tools/codesign.pfx) and point the
 # keystore path at it — see docs/INSTALL.md → "Optional: Code signing".
+#
+# openjdk-25-jre-headless by NAME. `default-jre-headless` is whatever the base
+# image's Debian release calls default — 21 on trixie — so it carries no
+# version for check:versions to compare and would drift under the image on the
+# next base bump, exactly as it did on the Ubuntu scripts.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      default-jre-headless \
+      openjdk-25-jre-headless \
  && rm -rf /var/lib/apt/lists/*
 ADD https://github.com/ebourg/jsign/releases/download/7.5/jsign-7.5.jar /opt/polaris/tools/jsign.jar
 RUN echo "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c  /opt/polaris/tools/jsign.jar" | sha256sum -c - \

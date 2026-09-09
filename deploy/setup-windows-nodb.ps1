@@ -136,7 +136,7 @@ if ((Test-Command "go") -and ((go version) -match "go1\.(2[2-9]|[3-9][0-9])")) {
     }
 }
 
-# ─── 1c. Install Java 17 (agent code signing — optional at runtime) ──────────
+# ─── 1c. Install Java 25 (agent code signing — optional at runtime) ──────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). Opt-in —
@@ -147,13 +147,13 @@ Refresh-Path
 if (Test-Command "java") {
     Write-Info "Java already installed"
 } else {
-    Write-Info "Installing Microsoft OpenJDK 17 (for agent code signing)..."
+    Write-Info "Installing Microsoft.OpenJDK.25 (for agent code signing)..."
     try {
         if ($hasWinget) {
-            winget install --id Microsoft.OpenJDK.17 --accept-source-agreements --accept-package-agreements --silent
+            winget install --id Microsoft.OpenJDK.25 --accept-source-agreements --accept-package-agreements --silent
         } else {
-            $jdkUrl = "https://aka.ms/download-jdk/microsoft-jdk-17-windows-x64.msi"
-            $jdkMsi = "$env:TEMP\microsoft-jdk-17-windows-x64.msi"
+            $jdkUrl = "https://aka.ms/download-jdk/microsoft-jdk-25-windows-x64.msi"
+            $jdkMsi = "$env:TEMP\microsoft-jdk-25-windows-x64.msi"
             Write-Info "Downloading Microsoft OpenJDK installer..."
             Invoke-WebRequest -Uri $jdkUrl -OutFile $jdkMsi -UseBasicParsing
             Write-Info "Running OpenJDK installer..."
