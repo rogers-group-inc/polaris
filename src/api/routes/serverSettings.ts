@@ -51,6 +51,7 @@ import {
   deleteBackup,
   getBackupRecord,
   backupFilePath,
+  getBackupToolingStatus,
 } from "../../services/backupService.js";
 import {
   getBackupScheduleMasked,
@@ -464,6 +465,19 @@ router.post("/database/restore", maintenanceLimiter, requirePermission("serverSe
 router.get("/database/backups", maintenanceLimiter, async (_req, res, next) => {
   try {
     res.json(await listBackups());
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Can this host back itself up right now? The resolved pg_dump / psql, their
+// majors against the server's, and the operator sentence when one cannot work.
+// Rendered on the Backups card so a PostgreSQL 13 client in front of a 15
+// server (prod, 2026-09-09 — months of silently failing backups) is visible
+// the day it becomes true, not the day someone needs a restore. Rule 47.
+router.get("/database/backup-tooling", maintenanceLimiter, async (_req, res, next) => {
+  try {
+    res.json(await getBackupToolingStatus());
   } catch (err) {
     next(err);
   }

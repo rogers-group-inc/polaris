@@ -2488,7 +2488,7 @@ async function loadDatabaseInfo() {
             '<input type="checkbox" id="update-backup-checkbox" style="width:15px;height:15px;flex-shrink:0">' +
             '<span style="font-size:0.85rem">Back up database before applying updates</span>' +
           '</label>' +
-          '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.3rem 0 0 23px">Disable to skip the backup step and apply updates faster. Not recommended for production systems.</p>' +
+          '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0.3rem 0 0 23px">Disable to skip the backup step. The migration step of an update cannot be rolled back, so with this off a failed update has <strong>no recovery point</strong> — the in-app updater does not roll back, and the fallback script restores the database only from this backup. If you turned this off because backups were failing, the Backups card below now says why. Not recommended for production systems.</p>' +
         '</div>' +
         '<details id="update-history" style="margin-top:1rem">' +
           '<summary style="cursor:pointer;font-size:0.82rem;color:var(--color-text-secondary);user-select:none">Recent updates</summary>' +
@@ -3087,16 +3087,39 @@ async function loadBackupSchedule() {
 
 // ─── Backup History ─────────────────────────────────────────────────────────
 
+// The check that would have said "your pg_dump is PostgreSQL 13, your server
+// is 15" on the day it became true, instead of on the day someone needed a
+// restore (prod, 2026-09-09: months of failing backups behind "see the server
+// log"). Renders nothing when the tools are fine; the resolver's own sentence
+// — versions, path, fix — when they are not. Rule 47.
+function renderBackupToolingBanner(t) {
+  if (!t || t.ok) return '';
+  var problems = [t.pgDump, t.psql].filter(function (r) { return r && !r.compatible; });
+  if (problems.length === 0) return '';
+  return '<div style="background:color-mix(in srgb, var(--color-danger) 10%, transparent);border:1px solid var(--color-danger);border-radius:6px;padding:0.75rem 1rem;margin-bottom:0.75rem">' +
+      '<div style="font-weight:600;font-size:0.88rem;margin-bottom:0.35rem">&#10007; Backups cannot run on this host</div>' +
+      problems.map(function (r) {
+        return '<p style="font-size:0.82rem;margin:0.25rem 0;line-height:1.5">' + escapeHtml(r.problem || (r.tool + ' is unusable')) + '</p>';
+      }).join('') +
+    '</div>';
+}
+
 async function loadBackupHistory() {
   var body = document.getElementById("backup-history-body");
   if (!body) return;
   try {
-    var history = await api.serverSettings.listBackups();
+    // The tooling probe is best-effort: a failure there must not hide the list.
+    var results = await Promise.all([
+      api.serverSettings.listBackups(),
+      api.serverSettings.backupTooling().catch(function () { return null; }),
+    ]);
+    var history = results[0];
+    var toolingHtml = renderBackupToolingBanner(results[1]);
     if (!history || history.length === 0) {
-      body.innerHTML = '<p class="empty-state" style="font-size:0.85rem">No backups have been created yet.</p>';
+      body.innerHTML = toolingHtml + '<p class="empty-state" style="font-size:0.85rem">No backups have been created yet.</p>';
       return;
     }
-    body.innerHTML =
+    body.innerHTML = toolingHtml +
       '<table class="ip-table"><thead><tr>' +
         '<th>Date</th><th>Filename</th><th style="text-align:right">Size</th><th>Encrypted</th><th style="width:140px"></th>' +
       '</tr></thead><tbody>' +
@@ -3437,7 +3460,7 @@ async function applyUpdateUI() {
     allowWithoutBackup = !!pwResult.allowWithoutBackup;
   } else {
     var confirmed = await showConfirm(
-      "Apply this update? Backup is disabled — no recovery point will be created. " +
+      "Apply this update? Backup is disabled — no recovery point will be created, and the migration step cannot be rolled back. " +
       "The server will restart automatically when complete."
     );
     if (!confirmed) return;

@@ -1219,6 +1219,7 @@ const api = {
       });
     },
     listBackups: () => request("GET", "/server-settings/database/backups"),
+    backupTooling: () => request("GET", "/server-settings/database/backup-tooling"),
     // Scheduled backups. The GET returns the passphrase masked; echoing the mask
     // back on save means "keep the stored value".
     getBackupSchedule:  () => request("GET", "/server-settings/database/backup-schedule"),
