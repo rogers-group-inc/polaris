@@ -4093,7 +4093,12 @@ async function openAutomationWizard(existing, opts) {
     try {
       var res = await api.automations.preview({ trigger: draft.trigger, scope: draft.scope, reset: draft.reset || undefined });
       if (!res.supported) { box.innerHTML = '<p style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml(res.note || "Not previewable.") + '</p>'; return; }
-      var meeting = (res.matches || []).filter(function (m) { return m.meets; });
+      // Counted server-side over every reading: the returned rows are capped
+      // (and now ordered carve-out-first), so counting them here would report
+      // a number that moves with the cap rather than with the fleet.
+      var meeting = res.meetsCount != null
+        ? res.meetsCount
+        : (res.matches || []).filter(function (m) { return m.meets; }).length;
       var composite = (res.matches || []).some(function (m) { return Array.isArray(m.leaves); });
       // A state probe's reading is 0/1; show the probe's own word for it, since a
       // column of bare 1s and 0s is exactly what this framework exists to avoid.
@@ -4122,7 +4127,7 @@ async function openAutomationWizard(existing, opts) {
       var headHtml = composite
         ? '<tr><th>Asset</th><th>Conditions</th><th>Status</th></tr>'
         : '<tr><th>Asset</th><th>Dimension</th><th>Value</th><th>Status</th></tr>';
-      box.innerHTML = '<p style="font-size:0.85rem"><strong>' + meeting.length + '</strong> of ' + res.totalEvaluated + ' currently match.</p>' +
+      box.innerHTML = '<p style="font-size:0.85rem"><strong>' + meeting + '</strong> of ' + res.totalEvaluated + ' currently match.</p>' +
         '<div class="table-wrapper" style="max-height:200px;overflow:auto"><table><thead>' + headHtml + '</thead><tbody>' + rowsHtml + '</tbody></table></div>';
     } catch (err) { box.innerHTML = '<p style="color:var(--color-danger)">' + escapeHtml(err.message || "Preview failed") + '</p>'; }
   }
@@ -6021,18 +6026,21 @@ async function openAutomationWizard(existing, opts) {
         box.innerHTML = '<p style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml(res.note || "Nothing to preview for this trigger.") + '</p>';
         return;
       }
-      var matches = res.matches || [];
+      // The list answers "who will this automation alert on", so the rows a
+      // more-specific automation already covers are LEFT OUT of it — they are
+      // counted, by rule, in the warning box above instead. Listing them was
+      // the worst of both: on an all-assets draft over an already-covered
+      // fleet every visible row said "covered by …", and the few devices the
+      // draft actually owns were nowhere on screen.
+      var matches = (res.matches || []).filter(function (m) { return !m.excludedBy; });
       var names = matches.slice(0, 100).map(function (m) {
-        var carved = m.excludedBy
-          ? ' <span style="color:var(--color-warning, #b7791f);font-size:0.75rem">— covered by “' + escapeHtml(m.excludedBy.ruleName) + '”</span>'
-          : "";
         // Per-dimension metrics evaluate one reading per sensor / interface /
         // mount, so the same hostname legitimately appears several times —
         // WHICH sensor is the only thing that tells those rows apart.
         var dim = m.dimension
           ? ' <span style="color:var(--color-text-tertiary);font-size:0.78rem">' + escapeHtml(m.dimension) + '</span>'
           : "";
-        return '<tr><td>' + escapeHtml(m.hostname || m.assetId || "") + dim + carved + '</td></tr>';
+        return '<tr><td>' + escapeHtml(m.hostname || m.assetId || "") + dim + '</td></tr>';
       }).join("");
       // totalEvaluated counts READINGS; totalAssets counts devices. Reporting
       // the former as "devices" made 8 firewalls with 6 temperature sensors
@@ -6053,11 +6061,21 @@ async function openAutomationWizard(existing, opts) {
       var noteLine = res.note
         ? '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 4px">' + escapeHtml(res.note) + '</p>'
         : "";
+      // Covered = what is left once the carve-out is taken off. Absent means
+      // nothing was carved out, so the filter's own counts already are it.
+      var coveredRows = res.coveredEvaluated != null ? res.coveredEvaluated : res.totalEvaluated;
+      var coveredDevices = res.coveredAssets != null ? res.coveredAssets : devices;
+      var carvedAny = res.coveredEvaluated != null;
+      var listLine = !carvedAny
+        ? ""
+        : coveredDevices
+          ? '<p style="font-size:0.85rem;margin:0 0 4px">This automation will alert on the remaining <strong>' + coveredDevices + '</strong> device(s), listed below.</p>'
+          : '<p style="font-size:0.85rem;margin:0 0 4px">That leaves <strong>no</strong> device(s) for this automation — a more-specific one covers every device the filter matches.</p>';
       box.innerHTML = spec + noteLine +
         '<p style="font-size:0.85rem;margin:0 0 4px">' + countLine + '</p>' +
-        carveOutWarningHtml(res.carveOut) +
+        carveOutWarningHtml(res.carveOut) + listLine +
         (names ? '<div class="table-wrapper" style="max-height:220px;overflow:auto"><table><tbody>' + names + '</tbody></table></div>' +
-          (res.totalEvaluated > 100 ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0">…and ' + (res.totalEvaluated - 100) + ' more row(s).</p>' : "") : "");
+          (coveredRows > 100 ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0">…and ' + (coveredRows - 100) + ' more row(s).</p>' : "") : "");
     } catch (err) {
       box.innerHTML = '<p style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml(err.message || "Preview unavailable") + '</p>';
     }

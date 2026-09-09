@@ -3478,6 +3478,18 @@ export interface PreviewResult {
    *  than hidden. Only the device-list preview sets it; a metric preview has
    *  no readings for them either way. */
   unmonitoredCount?: number;
+  /** Readings that meet the trigger right now, counted over EVERY evaluated
+   *  reading rather than the capped `matches` window — the wizard's "N of M
+   *  currently match" line reported the capped number before, which undercounts
+   *  as soon as the fleet is bigger than the cap. */
+  meetsCount: number;
+  /** What is left after precedence carve-out — the readings / DISTINCT devices
+   *  this draft will actually alert on. Present only when something was carved
+   *  out (absent = nothing was, so `totalEvaluated` / `totalAssets` already are
+   *  the covered counts). The wizard lists these, not the carved-out remainder:
+   *  "who will this alert on" is the question the Devices step asks. */
+  coveredEvaluated?: number;
+  coveredAssets?: number;
   matches: PreviewMatch[];
   /** Rendered sample of the composed email (first match), when the draft has emailComposition. */
   emailPreview?: { subject: string; text: string; html?: string };
@@ -3593,6 +3605,30 @@ async function computeCarveOut(
   return carveOutAggregate(scopeRank(input.scope), scopeAssets, peers);
 }
 
+/**
+ * Stamp `excludedBy` on the carved-out matches, order them BEHIND the rest,
+ * and count what is left. Sorts in place; returns the covered counts.
+ *
+ * The order matters because the caller caps the list at 200 rows and the
+ * wizard's Devices step draws "the devices this automation will alert on" from
+ * it. On an all-assets draft over a fleet already covered by per-type
+ * automations the carved-out rows are the overwhelming majority (2254 of 2412
+ * on the prod fleet), so a meets-only sort filled the entire window with
+ * devices the draft can never fire about and the handful it does own never
+ * appeared at all. Within each group the original meets-first order holds.
+ */
+export function applyCarveOutToMatches(
+  matches: PreviewMatch[],
+  excludedBy: Map<string, { ruleId: string; ruleName: string }>,
+): { evaluated: number; assets: number } {
+  for (const m of matches) {
+    if (m.assetId && excludedBy.has(m.assetId)) m.excludedBy = excludedBy.get(m.assetId);
+  }
+  matches.sort((a, b) => Number(!!a.excludedBy) - Number(!!b.excludedBy) || Number(b.meets) - Number(a.meets));
+  const keep = matches.filter((m) => !m.excludedBy);
+  return { evaluated: keep.length, assets: new Set(keep.map((m) => m.assetId).filter(Boolean)).size };
+}
+
 /** Dry-run a draft rule against current data with NO writes. A draft without
  *  a trigger is a SCOPE-ONLY preview: list the devices the scope matches
  *  (the wizard's asset-filtering step). */
@@ -3647,6 +3683,7 @@ export async function previewRule(input: PreviewRuleInput): Promise<PreviewResul
       supported: true,
       totalEvaluated: assets.length,
       totalAssets: assets.length,
+      meetsCount: assets.length,
       unmonitoredCount: all.length - assets.length,
       matches: assets.slice(0, 200).map((a) => ({
         assetId: a.id,
@@ -3681,7 +3718,7 @@ export async function previewRule(input: PreviewRuleInput): Promise<PreviewResul
     // ABOUT rather than who is currently triggering it.
     const eventNote = "Event and change automations fire on new audit events, so there's nothing to evaluate against current data.";
     if (scopeIsUnconstrained(input.scope)) {
-      return { supported: false, note: eventNote, totalEvaluated: 0, matches: [] };
+      return { supported: false, note: eventNote, totalEvaluated: 0, meetsCount: 0, matches: [] };
     }
     const listed = await previewRule({ ...input, trigger: undefined });
     return { ...listed, note: eventNote + " These are the devices the filter selects — the automation only fires about these." };
@@ -3710,11 +3747,7 @@ export async function previewRule(input: PreviewRuleInput): Promise<PreviewResul
 
   // Precedence carve-out (both authoring directions) for asset-scoped drafts.
   const { excludedBy, summary: carveOut } = await computeCarveOut(input, scopeAssets);
-  if (excludedBy.size) {
-    for (const m of matches) {
-      if (m.assetId && excludedBy.has(m.assetId)) m.excludedBy = excludedBy.get(m.assetId);
-    }
-  }
+  const covered = excludedBy.size ? applyCarveOutToMatches(matches, excludedBy) : undefined;
 
   // Rendered sample of the composed email against the best reading (first
   // matching, else first evaluated) — templates only, no recipient resolution.
@@ -3731,11 +3764,16 @@ export async function previewRule(input: PreviewRuleInput): Promise<PreviewResul
   return {
     supported: true,
     totalEvaluated: readings.length,
+    // Counted over every reading, not the capped window below — the cap now
+    // orders by carve-out first, so a count taken from it would move with the
+    // precedence picture rather than with the data.
+    meetsCount: matches.filter((m) => m.meets).length,
     // Per-dimension metrics fan out to several readings per device; the device
     // count is what the wizard headlines. Host drafts have no asset scope.
     ...(trigger.type === "host_metric"
       ? {}
       : { totalAssets: new Set(readings.map((r) => r.assetId).filter(Boolean)).size }),
+    ...(covered ? { coveredEvaluated: covered.evaluated, coveredAssets: covered.assets } : {}),
     matches: matches.slice(0, 200),
     emailPreview,
     ...(carveOut.carvedOut || carveOut.carvesFrom ? { carveOut } : {}),
@@ -3797,6 +3835,7 @@ async function previewCompositeRule(trigger: CompositeTrigger, input: PreviewRul
   return {
     supported: true,
     totalEvaluated: evaluated,
+    meetsCount: matches.filter((m) => m.meets).length,
     ...(trigger.kind === "host" ? {} : { totalAssets: evaluated }),
     matches: matches.slice(0, 200),
     emailPreview,

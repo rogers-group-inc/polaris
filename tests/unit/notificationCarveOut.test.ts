@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildShadowIndex, isAssetShadowed, carveOutAggregate, type CarveOutPeer } from "../../src/services/notificationEngine.js";
+import { buildShadowIndex, isAssetShadowed, carveOutAggregate, applyCarveOutToMatches, type CarveOutPeer, type PreviewMatch } from "../../src/services/notificationEngine.js";
 import { triggerSignature, scopeRank, SCOPE_RANK } from "../../src/services/notificationTypes.js";
 import type { ScopeAsset } from "../../src/services/notificationRuleService.js";
 
@@ -172,5 +172,34 @@ describe("carveOutAggregate (preview, both directions)", () => {
     // hostname (8) beats subnet (7)
     const { excludedBy } = carveOutAggregate(SCOPE_RANK.allAssets, [inBoth], [subnetPeer, hostnamePeer]);
     expect(excludedBy.get("101f")).toEqual({ ruleId: "spec", ruleName: "Specific 101f" });
+  });
+});
+
+describe("applyCarveOutToMatches (what the Devices step lists)", () => {
+  const row = (assetId: string, meets: boolean, dimension = ""): PreviewMatch =>
+    ({ assetId, hostname: assetId + "-host", dimension, value: null, meets });
+  const by = (ruleName: string) => ({ ruleId: ruleName, ruleName });
+
+  it("puts the carved-out rows LAST so the 200-row cap keeps the ones this draft covers", () => {
+    const rows = [row("carved-a", true), row("kept-a", false), row("carved-b", false), row("kept-b", true)];
+    const covered = applyCarveOutToMatches(rows, new Map([
+      ["carved-a", by("FortiAP Asset down")],
+      ["carved-b", by("FortiSwitch Asset down")],
+    ]));
+    // meets-first ordering survives WITHIN each group.
+    expect(rows.map((r) => r.assetId)).toEqual(["kept-b", "kept-a", "carved-a", "carved-b"]);
+    expect(rows[0]!.excludedBy).toBeUndefined();
+    expect(rows[2]!.excludedBy).toEqual(by("FortiAP Asset down"));
+    expect(covered).toEqual({ evaluated: 2, assets: 2 });
+  });
+
+  it("counts a per-dimension metric's readings once per DEVICE", () => {
+    const rows = [row("a1", false, "CPU"), row("a1", false, "Fan"), row("a2", false, "CPU")];
+    expect(applyCarveOutToMatches(rows, new Map([["a2", by("Specific")]]))).toEqual({ evaluated: 2, assets: 1 });
+  });
+
+  it("reports zero covered when a more-specific automation owns every matched device", () => {
+    const rows = [row("a1", true), row("a2", false)];
+    expect(applyCarveOutToMatches(rows, new Map([["a1", by("Spec")], ["a2", by("Spec")]]))).toEqual({ evaluated: 0, assets: 0 });
   });
 });
