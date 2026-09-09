@@ -3774,7 +3774,14 @@ function renderUpdateFailed(status) {
 
   var recoveryHtml = '';
   if (status.backupFile) {
-    var cmd = 'gunzip -c ' + status.backupFile + ' | psql "DATABASE_URL"';
+    // Three separate psql sessions, not one: a database with TimescaleDB must be
+    // restored between timescaledb_pre_restore() and timescaledb_post_restore(),
+    // and pre_restore only affects sessions opened after it. The single
+    // `gunzip | psql` this card used to print skipped both and corrupted a
+    // Timescale restore — same defect the fallback scripts carried until 2026-09.
+    var CODE = 'font-size:0.8rem;background:var(--color-bg-secondary);padding:1px 5px;border-radius:3px';
+    var BLOCK = 'display:block;margin-top:0.3rem;font-size:0.8rem;background:var(--color-bg-secondary);padding:4px 8px;border-radius:3px;white-space:nowrap;overflow-x:auto';
+    var restoreCmd = 'gunzip -c ' + status.backupFile + ' | sudo -u postgres psql -v ON_ERROR_STOP=1 --single-transaction -d polaris';
     recoveryHtml =
       '<div style="margin-top:1rem;background:color-mix(in srgb, var(--color-warning) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);border-radius:6px;padding:1rem">' +
         '<div style="font-weight:600;font-size:0.88rem;margin-bottom:0.5rem">Pre-update backup available</div>' +
@@ -3782,20 +3789,20 @@ function renderUpdateFailed(status) {
         '<details>' +
           '<summary style="cursor:pointer;font-size:0.82rem;color:var(--color-text-secondary);user-select:none">Manual restore instructions (if the app is unavailable)</summary>' +
           '<ol style="font-size:0.82rem;margin:0.6rem 0 0.5rem;padding-left:1.4rem;line-height:1.7">' +
-            '<li>Download the pre-update backup from <strong>Backup History</strong> below.</li>' +
-            '<li>Stop the Polaris service on the server:<br>' +
-              '<code style="font-size:0.8rem;background:var(--color-bg-secondary);padding:1px 5px;border-radius:3px">sudo systemctl stop polaris</code>' +
-              ' &nbsp;(Linux) &nbsp;or&nbsp; ' +
-              '<code style="font-size:0.8rem;background:var(--color-bg-secondary);padding:1px 5px;border-radius:3px">nssm stop Polaris</code>' +
-              ' (Windows)</li>' +
-            '<li>Restore the database — replace <code style="font-size:0.8rem">DATABASE_URL</code> with the value from your <code style="font-size:0.8rem">.env</code> file:<br>' +
-              '<code style="display:block;margin-top:0.3rem;font-size:0.8rem;background:var(--color-bg-secondary);padding:4px 8px;border-radius:3px;white-space:nowrap;overflow-x:auto">' + escapeHtml(cmd) + '</code>' +
-            '</li>' +
-            '<li>Restart the service:<br>' +
-              '<code style="font-size:0.8rem;background:var(--color-bg-secondary);padding:1px 5px;border-radius:3px">sudo systemctl start polaris</code>' +
-              ' &nbsp;(Linux) &nbsp;or&nbsp; ' +
-              '<code style="font-size:0.8rem;background:var(--color-bg-secondary);padding:1px 5px;border-radius:3px">nssm start Polaris</code>' +
-              ' (Windows)</li>' +
+            '<li>Download the pre-update backup from <strong>Backup History</strong> below and copy it to the server.</li>' +
+            '<li>Prefer <strong>Server Settings → Maintenance → Restore</strong> once the app is reachable — it runs the TimescaleDB restore gates for you. The steps below are for when it is not.</li>' +
+            '<li>Stop the Polaris process group:<br>' +
+              '<code style="' + CODE + '">sudo systemctl stop polaris.target</code> &nbsp;(Linux) &nbsp;or&nbsp; ' +
+              '<code style="' + CODE + '">nssm stop &lt;service&gt;</code> for each Polaris service (Windows)</li>' +
+            '<li>Open the TimescaleDB restore window (skip this and step 6 only if the extension is not installed):<br>' +
+              '<code style="' + BLOCK + '">sudo -u postgres psql -d polaris -c \'SELECT timescaledb_pre_restore();\'</code></li>' +
+            '<li>Restore the dump:<br>' +
+              '<code style="' + BLOCK + '">' + escapeHtml(restoreCmd) + '</code></li>' +
+            '<li>Close the restore window — <strong>run this even if step 5 failed</strong>; a database left in restoring mode rejects hypertable writes:<br>' +
+              '<code style="' + BLOCK + '">sudo -u postgres psql -d polaris -c \'SELECT timescaledb_post_restore();\'</code></li>' +
+            '<li>Start the process group again:<br>' +
+              '<code style="' + CODE + '">sudo systemctl start polaris.target</code> &nbsp;(Linux) &nbsp;or&nbsp; ' +
+              '<code style="' + CODE + '">nssm start &lt;service&gt;</code> for each Polaris service (Windows — and use <code style="' + CODE + '">psql -U postgres</code> in place of <code style="' + CODE + '">sudo -u postgres psql</code> above)</li>' +
           '</ol>' +
         '</details>' +
       '</div>';

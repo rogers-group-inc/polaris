@@ -351,6 +351,64 @@ fi
 
 info "Updating: v${OLD_VERSION} (${OLD_COMMIT}) → v${NEW_VERSION} (${NEW_COMMIT})"
 
+# Restore a gzipped plain-SQL pg_dump into $DB_NAME. TimescaleDB-aware, which
+# is why it is a function and not one line: a database with the extension must
+# be restored between `timescaledb_pre_restore()` and `timescaledb_post_restore()`,
+# each in its OWN psql session — pre_restore sets a database-level flag that only
+# affects sessions opened after it. Skipping the pair restores hypertable
+# metadata in the wrong order and leaves chunks invisible. The in-app restore
+# (src/services/backupService.ts) learned this in 2026-08; this script kept doing
+# `gunzip | psql --single-transaction 2>/dev/null` — then printed "Database
+# restored from backup" unconditionally — until 2026-09-09.
+#
+# post_restore runs even when the dump itself fails: a database left in
+# restoring mode rejects normal hypertable writes, which is worse than the
+# failed restore that caused it. stderr is not discarded and the return status
+# is real. Same procedure as docs/INSTALL.md → Backups → Restoring.
+restore_database() {
+  local dump="$1"
+  local probe rc gates
+  probe=$(sudo -u postgres psql -tAX -d "$DB_NAME" -c "SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'" 2>&1); rc=$?
+  probe=$(echo "$probe" | tr -d '[:space:]')
+  # 0 = extension absent, 1 = present, 2 = could not tell. Fail toward running
+  # the gates: on a database WITHOUT the extension they are a clean error we can
+  # see and skip past; on one WITH it, leaving them out corrupts the restore.
+  if [[ $rc -eq 0 && "$probe" == "0" ]]; then
+    gates=0; info "timescaledb is not installed — plain restore"
+  elif [[ $rc -eq 0 && "$probe" == "1" ]]; then
+    gates=1; info "timescaledb is installed — restoring between timescaledb_pre_restore() and timescaledb_post_restore()"
+  else
+    gates=2; warn "Could not determine whether timescaledb is installed (${probe:-no output}) — running the pre/post restore gates anyway"
+  fi
+
+  if [[ $gates -ge 1 ]]; then
+    if ! sudo -u postgres psql -qX -v ON_ERROR_STOP=1 -d "$DB_NAME" -c "SELECT timescaledb_pre_restore();"; then
+      if [[ $gates -eq 1 ]]; then
+        error "timescaledb_pre_restore() failed — not restoring over a live TimescaleDB catalog without it."
+        return 1
+      fi
+      warn "timescaledb_pre_restore() failed — the extension is probably absent; continuing with a plain restore"
+      gates=0
+    fi
+  fi
+
+  local ok=0
+  if gunzip -c "$dump" | sudo -u postgres psql -qX -v ON_ERROR_STOP=1 --single-transaction -d "$DB_NAME"; then
+    ok=1
+  else
+    error "psql reported errors while restoring $dump (see above)"
+  fi
+
+  if [[ $gates -ge 1 ]]; then
+    if ! sudo -u postgres psql -qX -v ON_ERROR_STOP=1 -d "$DB_NAME" -c "SELECT timescaledb_post_restore();"; then
+      error "timescaledb_post_restore() FAILED — the database is still in restoring mode and will reject hypertable writes."
+      error "Run it by hand:  sudo -u postgres psql -d $DB_NAME -c 'SELECT timescaledb_post_restore();'"
+      ok=0
+    fi
+  fi
+  [[ "$ok" -eq 1 ]]
+}
+
 # ─── Rollback function ──────────────────────────────────────────────────────
 rollback() {
   echo ""
@@ -375,8 +433,12 @@ rollback() {
   # Restore database if migration failed and we have a backup
   if [[ "$1" == *"migration"* && -n "$BACKUP_FILE" && -f "$BACKUP_FILE" ]]; then
     warn "Restoring database from backup..."
-    gunzip -c "$BACKUP_FILE" | sudo -u postgres psql --single-transaction -d "$DB_NAME" 2>/dev/null
-    info "Database restored from backup"
+    if restore_database "$BACKUP_FILE"; then
+      info "Database restored from backup"
+    else
+      error "DATABASE RESTORE FAILED — the database may be partially restored. The backup is retained at: $BACKUP_FILE"
+      error "Restore it by hand: docs/INSTALL.md → Backups → Restoring (the TimescaleDB pre/post gates are required)."
+    fi
   fi
 
   # The git reset above restored deploy/*.service to OLD_COMMIT content. If

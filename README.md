@@ -202,14 +202,14 @@ Updates: `docker pull` + restart. The in-app updater under Server Settings → M
 
 ### Updating
 
-The recommended path is **Server Settings → Maintenance → Update**, which runs the same automated flow as the CLI scripts and rolls back on any failure:
+The recommended path is **Server Settings → Maintenance → Update**, which runs the same automated flow as the CLI scripts and stops at the first failed step, leaving the host restartable. The scripts are the fallback when the in-app updater cannot run:
 
 ```bash
-bash deploy/update-linux.sh                                         # Linux
+sudo bash deploy/update-linux.sh                                    # Linux
 powershell -ExecutionPolicy Bypass -File deploy\update-windows.ps1  # Windows, as Admin
 ```
 
-The flow: snapshot the commit → `pg_dump` backup (last 10 kept in `backups/`) → `git pull` → `npm ci` → build → stop service → migrate → start → HTTP smoke test. If any step fails the code, DB, and service are restored to the previous version.
+The flow: snapshot the commit → `pg_dump` backup (last 10 kept in `backups/`) → `git pull` → `npm ci` → build → stop service → migrate → start → HTTP smoke test. On a failed step the scripts roll the code back to the recorded commit and rebuild; if the *migration* step failed they also restore the pre-update dump (TimescaleDB-aware — the restore runs between `timescaledb_pre_restore()` and `timescaledb_post_restore()`). If the in-app updater already pulled the new code before failing, pass `--force` / `-Force` so the script finishes the install, build and migration instead of reporting "already up to date".
 
 ### Managing the service
 

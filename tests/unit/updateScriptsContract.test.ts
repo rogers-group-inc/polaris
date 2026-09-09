@@ -63,3 +63,29 @@ describe("the 'already up to date' exit is guarded in both scripts", () => {
     expect(windows).toMatch(/\$OldCommit -eq \$NewCommit -and -not \$Force/);
   });
 });
+
+// A Polaris database with TimescaleDB must be restored between
+// timescaledb_pre_restore() and timescaledb_post_restore(), each in its own
+// psql session. The in-app restore learned this in 2026-08; both scripts kept a
+// bare `psql --single-transaction 2>/dev/null` (then reported success
+// unconditionally) until 2026-09-09.
+describe("the rollback restore is TimescaleDB-aware and reports honestly", () => {
+  it("linux: restores through restore_database(), with both gates, and never discards psql's stderr", () => {
+    expect(linux).toMatch(/^restore_database\(\) \{/m);
+    expect(linux).toMatch(/restore_database "\$BACKUP_FILE"/);
+    expect(linux).toMatch(/SELECT timescaledb_pre_restore\(\);/);
+    expect(linux).toMatch(/SELECT timescaledb_post_restore\(\);/);
+    const silenced = codeLines(linux).filter((l) => /psql/.test(l) && /2>\/dev\/null/.test(l) && /single-transaction/.test(l));
+    expect(silenced).toEqual([]);
+  });
+
+  it("windows: restores through Restore-Database, with both gates, and the dead pg_restore probe is gone", () => {
+    expect(windows).toMatch(/^function Restore-Database \{/m);
+    expect(windows).toMatch(/Restore-Database -DumpFile \$BackupFile/);
+    expect(windows).toMatch(/SELECT timescaledb_pre_restore\(\);/);
+    expect(windows).toMatch(/SELECT timescaledb_post_restore\(\);/);
+    expect(windows).not.toMatch(/pg_restore\.exe/);
+    const silenced = codeLines(windows).filter((l) => /psql/.test(l) && /2>\$null/.test(l) && /single-transaction/.test(l));
+    expect(silenced).toEqual([]);
+  });
+});

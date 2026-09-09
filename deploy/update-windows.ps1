@@ -52,6 +52,61 @@ function Write-Step  { param([string]$Msg) Write-Host "[STEP]  $Msg" -Foreground
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 function Test-Command { param([string]$Name) return [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
+# Restore a gzipped plain-SQL pg_dump into $DbName. TimescaleDB-aware: a
+# database with the extension must be restored between timescaledb_pre_restore()
+# and timescaledb_post_restore(), each in its OWN psql session (pre_restore sets
+# a database-level flag that only affects sessions opened after it). Skipping
+# the pair restores hypertable metadata in the wrong order and leaves chunks
+# invisible. post_restore runs even when the dump fails -- a database left in
+# restoring mode rejects hypertable writes, which is worse than the failed
+# restore. Errors are shown and the result is real; the old one-liner discarded
+# stderr and then reported success unconditionally. Mirrors restore_database()
+# in deploy/update-linux.sh and docs/INSTALL.md -> Backups -> Restoring.
+function Restore-Database {
+    param([string]$DumpFile)
+    # 0 = extension absent, 1 = present, 2 = could not tell. Fail toward running
+    # the gates: on a database WITHOUT the extension they are a clean, visible
+    # error; on one WITH it, leaving them out corrupts the restore.
+    $probe = (& psql -U postgres -tAX -d $DbName -c "SELECT count(*) FROM pg_extension WHERE extname = 'timescaledb'" 2>$null | Out-String).Trim()
+    $probeOk = ($LASTEXITCODE -eq 0)
+    if ($probeOk -and $probe -eq "0") { $gates = 0; Write-Info "timescaledb is not installed -- plain restore" }
+    elseif ($probeOk -and $probe -eq "1") { $gates = 1; Write-Info "timescaledb is installed -- restoring between timescaledb_pre_restore() and timescaledb_post_restore()" }
+    else { $gates = 2; Write-Warn "Could not determine whether timescaledb is installed -- running the pre/post restore gates anyway" }
+
+    if ($gates -ge 1) {
+        & psql -U postgres -qX -v ON_ERROR_STOP=1 -d $DbName -c "SELECT timescaledb_pre_restore();"
+        if ($LASTEXITCODE -ne 0) {
+            if ($gates -eq 1) {
+                Write-Err "timescaledb_pre_restore() failed -- not restoring over a live TimescaleDB catalog without it."
+                return $false
+            }
+            Write-Warn "timescaledb_pre_restore() failed -- the extension is probably absent; continuing with a plain restore"
+            $gates = 0
+        }
+    }
+
+    $tempSql = Join-Path $env:TEMP "polaris-restore.sql"
+    $fs = [System.IO.File]::OpenRead($DumpFile)
+    $gz = New-Object System.IO.Compression.GzipStream($fs, [System.IO.Compression.CompressionMode]::Decompress)
+    $out = [System.IO.File]::Create($tempSql)
+    $gz.CopyTo($out)
+    $out.Close(); $gz.Close(); $fs.Close()
+    & psql -U postgres -qX -v ON_ERROR_STOP=1 --single-transaction -d $DbName -f $tempSql
+    $ok = ($LASTEXITCODE -eq 0)
+    Remove-Item $tempSql -Force -ErrorAction SilentlyContinue
+    if (-not $ok) { Write-Err "psql reported errors while restoring $DumpFile (see above)" }
+
+    if ($gates -ge 1) {
+        & psql -U postgres -qX -v ON_ERROR_STOP=1 -d $DbName -c "SELECT timescaledb_post_restore();"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "timescaledb_post_restore() FAILED -- the database is still in restoring mode and will reject hypertable writes."
+            Write-Err "Run it by hand:  psql -U postgres -d $DbName -c 'SELECT timescaledb_post_restore();'"
+            $ok = $false
+        }
+    }
+    return $ok
+}
+
 # Find pg_dump
 $pgBinDirs = @(
     "C:\Program Files\PostgreSQL\17\bin",
@@ -121,18 +176,12 @@ function Invoke-Rollback {
     # Restore database if migration failed
     if ($FailedAt -match "migration" -and $BackupFile -and (Test-Path $BackupFile)) {
         Write-Warn "Restoring database from backup..."
-        $sql = & "C:\Program Files\PostgreSQL\15\bin\pg_restore.exe" 2>$null  # just to check
-        # Use psql to restore the SQL dump
-        $tempSql = "$env:TEMP\polaris-restore.sql"
-        # Decompress .gz to temp file
-        $fs = [System.IO.File]::OpenRead($BackupFile)
-        $gz = New-Object System.IO.Compression.GzipStream($fs, [System.IO.Compression.CompressionMode]::Decompress)
-        $out = [System.IO.File]::Create($tempSql)
-        $gz.CopyTo($out)
-        $out.Close(); $gz.Close(); $fs.Close()
-        & psql -U postgres --single-transaction -d $DbName -f $tempSql 2>$null
-        Remove-Item $tempSql -Force -ErrorAction SilentlyContinue
-        Write-Info "Database restored from backup"
+        if (Restore-Database -DumpFile $BackupFile) {
+            Write-Info "Database restored from backup"
+        } else {
+            Write-Err "DATABASE RESTORE FAILED -- the database may be partially restored. The backup is retained at: $BackupFile"
+            Write-Err "Restore it by hand: docs/INSTALL.md -> Backups -> Restoring (the TimescaleDB pre/post gates are required)."
+        }
     }
 
     & $nssmExe restart $ServiceName 2>$null
