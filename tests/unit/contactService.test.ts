@@ -187,6 +187,25 @@ describe("searchAddressBook", () => {
     expect(await searchAddressBook("")).toHaveLength(50);
     expect(await searchAddressBook("", { limit: 5 })).toHaveLength(5);
   });
+
+  it("carries each account's enrolled push-device count, and only for accounts", async () => {
+    // Push is opt-in PER BROWSER: zero enrolled browsers is why a push
+    // automation naming a perfectly good recipient delivers nothing, and the
+    // count is already computed by listRecipientUsers — dropping it here is
+    // what made the address book unable to say so.
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: "u1", username: "jdoe", displayName: "Jane Doe", email: "jane@example.com" },
+      { id: "u2", username: "sroe", displayName: "Sam Roe", email: "sam@example.com" },
+    ]);
+    prismaMock.pushSubscription.groupBy.mockResolvedValue([{ userId: "u1", _count: { _all: 2 } }]);
+    prismaMock.contact.findMany.mockResolvedValue([contactRow()]);
+
+    const out = await searchAddressBook("");
+    expect(out.find((e) => e.email === "jane@example.com")!.pushDevices).toBe(2);
+    expect(out.find((e) => e.email === "sam@example.com")!.pushDevices).toBe(0);
+    // A contact is an address, not an account: there is no count to state.
+    expect(out.find((e) => e.email === "noc@example.com")!.pushDevices).toBeUndefined();
+  });
 });
 
 describe("resolveContactsForAsset", () => {
@@ -556,6 +575,20 @@ describe("listContacts (paging + server-side search)", () => {
     await listContacts({ origin: "directory", includeDirectorySynced: true });
     expect(prismaMock.contact.findMany.mock.calls.at(-1)![0].where)
       .toEqual({ origin: { not: "manual" } });
+  });
+
+  it("narrows to ONE backend, under the same gate", async () => {
+    // What the address book's per-directory tab asks for. A named backend is a
+    // narrowing of "directory", so it must take the gate identically — asking
+    // for "entra" is not a way around asking for "directory".
+    prismaMock.contact.findMany.mockResolvedValue([]);
+    prismaMock.contact.count.mockResolvedValue(0);
+
+    await listContacts({ origin: "entra", includeDirectorySynced: true });
+    expect(prismaMock.contact.findMany.mock.calls.at(-1)![0].where).toEqual({ origin: "entra" });
+
+    await listContacts({ origin: "entra" });
+    expect(prismaMock.contact.findMany.mock.calls.at(-1)![0].where).toEqual({ origin: { in: [] } });
   });
 });
 

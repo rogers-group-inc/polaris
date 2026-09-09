@@ -65,7 +65,7 @@ import { criteriaToCondition } from "../utils/criteriaToCondition.js";
 import { listRecipientUsers } from "./notificationRecipientService.js";
 import { logEvent } from "./eventLogService.js";
 import { logger } from "../utils/logger.js";
-import { MIN_DIRECTORY_QUERY, searchDirectory } from "./directorySearchService.js";
+import { MIN_DIRECTORY_QUERY, searchDirectory, type DirectorySourceKind } from "./directorySearchService.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -176,6 +176,18 @@ export interface AddressBookEntry {
   phone?: string | null;
   /** Provenance of a stored contact -- "manual" unless the sync owns it. */
   origin?: string;
+  /**
+   * How many browsers this ACCOUNT has enrolled for Web Push. Present on
+   * `source: "user"` entries only -- a contact or a directory hit is an
+   * address, and an address is not a push endpoint.
+   *
+   * Rides this payload because `listRecipientUsers` already computes it (one
+   * groupBy it used to discard here), and because zero is the single most
+   * common reason a push automation is configured correctly and delivers
+   * nothing -- the same fact the wizard's push picker warns about, on the page
+   * that lists who Polaris can reach.
+   */
+  pushDevices?: number;
 }
 
 const MAX_ASSET_PINS = 500;
@@ -404,8 +416,13 @@ export interface ListContactsOptions {
   q?: string | null;
   limit?: number;
   offset?: number;
-  /** "manual" = curated only, "directory" = synced only, "all" = both. */
-  origin?: "manual" | "directory" | "all";
+  /**
+   * "manual" = curated only, "directory" = synced only, "all" = both, or a
+   * single backend ("entra" / "ad") for the rows THAT directory produced —
+   * which is what the address book's per-directory tab asks for. A specific
+   * backend is a narrowing of "directory" and takes the same visibility gate.
+   */
+  origin?: "manual" | "directory" | "all" | DirectorySourceKind;
   /**
    * FALSE hides every directory-synced row, whatever `origin` asks for.
    *
@@ -447,6 +464,10 @@ function contactOriginWhere(opts: ListContactsOptions) {
     // `in: []` matches nothing, which is the honest answer to "the synced rows,
     // please" from someone who may not have them.
     return maySeeSynced ? { origin: { not: "manual" } } : { origin: { in: [] as string[] } };
+  }
+  // One named backend — the same answer, narrowed to the rows it owns.
+  if (wants !== "all") {
+    return maySeeSynced ? { origin: wants } : { origin: { in: [] as string[] } };
   }
   return maySeeSynced ? {} : { origin: "manual" };
 }
@@ -941,6 +962,7 @@ export async function searchAddressBook(
       name: u.displayName || u.username,
       description: "Polaris user account",
       kind: "person",
+      pushDevices: u.pushDevices,
     });
   }
   for (const c of contactRows) {

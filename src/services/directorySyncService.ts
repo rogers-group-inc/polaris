@@ -35,6 +35,7 @@ import { matchesWildcard } from "../utils/integrationFilter.js";
 import { prisma } from "../db.js";
 import { logEvent } from "./eventLogService.js";
 import { bumpContactCache, normalizeContactEmail } from "./contactService.js";
+import { listDirectorySources } from "./directorySearchService.js";
 import { listDirectoryPeople as listDirectoryPeopleEntra } from "./entraIdService.js";
 import { listDirectoryPeople as listDirectoryPeopleAd } from "./activeDirectoryService.js";
 
@@ -660,11 +661,14 @@ export async function purgeDirectoryContacts(
   return deleted;
 }
 
-/** True when at least one enabled integration has the sync switched on. */
+/**
+ * True when at least one enabled integration has the sync switched on.
+ *
+ * Delegates to the directory enumeration in directorySearchService rather than
+ * repeating the query: the address book's source tabs read the same rows to
+ * decide which directories to offer, and two copies of "what counts as a
+ * directory" is how a newly supported backend gets tabs but no sync flag.
+ */
 export async function directorySyncAvailable(): Promise<boolean> {
-  const rows = await prisma.integration.findMany({
-    where: { enabled: true, type: { in: ["entraid", "activedirectory"] } },
-    select: { config: true },
-  });
-  return rows.some((r) => (r.config as Record<string, unknown> | null)?.enableDirectorySync === true);
+  return (await listDirectorySources()).some((s) => s.sync);
 }

@@ -472,6 +472,32 @@
     },
     source: { label: "Source", width: "110px", cell: function (en) { return sourceBadge(en.source); } },
     /**
+     * How many browsers this ACCOUNT has enrolled for Web Push — the same cell
+     * the push-mode picker renders, for the same reason: push is opt-in per
+     * browser, so "none" is the single most common reason a push automation is
+     * configured correctly and delivers nothing, and it is invisible everywhere
+     * else. Zero is called out in the warning colour rather than left blank.
+     *
+     * A row that is not a Polaris account says so instead of showing 0: an
+     * address-book contact and a directory hit are ADDRESSES, and no number of
+     * enrolled browsers exists for them to have.
+     */
+    pushDevices: {
+      label: "Push devices",
+      width: "120px",
+      cell: function (en) {
+        if (en.source !== "user") {
+          return '<span style="color:var(--color-text-tertiary)" title="Push notifications go to a Polaris ' +
+            'account’s enrolled browsers; this row is an address">no Polaris account</span>';
+        }
+        var n = en.pushDevices || 0;
+        return n
+          ? escapeHtml(n + " device" + (n === 1 ? "" : "s"))
+          : '<span style="color:var(--color-warning)" title="This account has not turned push on in any browser, ' +
+            'so a push automation naming it delivers nothing">none</span>';
+      },
+    },
+    /**
      * Where a region sits in the nesting drawn on the Device Map: L1 is an
      * innermost region, and each step up contains the level below it. Shown so
      * the list an operator routes from says which rows are the local teams and
@@ -554,11 +580,14 @@
 
   // Survives a re-render (the Refresh button, a save from the editor) so the
   // operator's search term isn't silently thrown away under them.
-  // `origin` is the People tab's Curated / Directory filter. It only means
-  // anything once a directory is syncing AND the caller may see synced rows,
-  // so the control is rendered from the server's answer to both questions
-  // rather than guessed at.
-  var _tab = { term: "", origin: "all", showOriginFilter: false };
+  //
+  // `source` is the table's tab: which POPULATION the People pane is listing —
+  // all of them, Polaris accounts, one directory, or the contacts added here by
+  // hand. `sources` is the directory half of that strip, and comes from the
+  // server (which directories feed this book, what they are called, and whether
+  // this caller may see them) rather than being guessed at, so a tab can never
+  // name a directory whose rows the visibility gate would then withhold.
+  var _tab = { term: "", source: "all", sources: [] };
 
   function tabBodyHtml() {
     return '' +
@@ -571,9 +600,7 @@
           '<input type="text" class="input" id="ab-tab-search" autocomplete="off" spellcheck="false" ' +
                  'placeholder="Search people, contacts and lists…" value="' + escapeHtml(_tab.term) + '">' +
         '</div>' +
-        '<div id="ab-tab-origin" style="' + (_tab.showOriginFilter ? "margin-bottom:8px" : "display:none") + '">' +
-          originChipsHtml() +
-        '</div>' +
+        '<div class="table-tabs" id="ab-tab-sources">' + sourceTabsHtml() + '</div>' +
         '<div id="ab-tab-results"><p class="empty-state">Loading…</p></div>' +
       '</div>' +
       '<div data-ab-tpane="tags" style="display:none">' +
@@ -588,17 +615,35 @@
       '</div>';
   }
 
-  function tabPeopleCols() {
-    return [
-      AB_CELLS.name,
-      AB_CELLS.email,
-      AB_CELLS.description,
-      {
-        label: "Devices",
+  /**
+   * The People table's columns for ONE source tab.
+   *
+   * Two of them are dropped where the tab has already answered them: Source on
+   * a single-source tab (a whole column repeating the tab's own name), and the
+   * three management columns on the Polaris users tab, where no row is a
+   * contact and all three would read "—" for every row. The All tab keeps the
+   * full set, because that is the only tab where the columns vary by row.
+   */
+  function tabPeopleCols(plan) {
+    var cols = [AB_CELLS.name, AB_CELLS.email, AB_CELLS.description];
+    if (plan.contacts) {
+      cols.push({
+        // "Responsible for", not "Devices": this column is the contact's device
+        // FILTER — which devices an automation routing to "the contacts
+        // responsible for the triggering device" reaches them about. It was
+        // read as "this person's devices", which is a different question and
+        // the one the Push devices column below answers.
+        label: "Responsible for",
         width: "180px",
         cell: function (en) { return escapeHtml(en.contact ? targetSummary(en.contact) : "—"); },
-      },
-      AB_CELLS.source,
+      });
+    }
+    // Only where an account can appear: a Manual or directory tab holds
+    // addresses alone, and every cell would read "no Polaris account".
+    if (plan.key === "all" || plan.key === "user") cols.push(AB_CELLS.pushDevices);
+    if (plan.key === "all") cols.push(AB_CELLS.source);
+    if (!plan.contacts) return cols;
+    return cols.concat([
       {
         label: "Added by",
         width: "120px",
@@ -624,58 +669,148 @@
             '<button class="btn btn-danger btn-sm" data-ab-del="' + escapeHtml(en.contact.id) + '">Delete</button>';
         },
       },
-    ];
+    ]);
   }
 
   // How many CONTACT rows one page of the People tab asks for. The server caps
   // at 200 regardless; this is the number the "showing N of M" hint is about.
   var AB_PAGE_SIZE = 50;
 
+  /** The catalogue entry for a directory tab, or null. */
+  function directorySource(key) {
+    var found = null;
+    (_tab.sources || []).forEach(function (s) { if (s.kind === key) found = s; });
+    return found;
+  }
+
   /**
-   * Curated / Directory / All. Deliberately three chips rather than a "hide
-   * synced" checkbox: with a directory synced, "the address book" means two
-   * different populations, and an operator looking for a colleague they added
-   * by hand should be able to say so.
+   * The tab strip over the People table: All / Polaris users / one tab per
+   * directory / Manual.
+   *
+   * Tabs rather than the three Curated / Directory / All chips they replace,
+   * because "the address book" is not one list — it is Polaris accounts, the
+   * rows an operator typed in, and each directory's roster, three populations
+   * that are managed differently and answer different questions. The chips
+   * could only split the CONTACTS half, so the accounts and the live directory
+   * hits sat in every slice regardless.
+   *
+   * A directory tab is named after the integration that feeds it (its product
+   * name when two integrations of one kind share the backend), because "the
+   * directory" is not what an operator calls it.
    */
-  function originChipsHtml() {
-    var opts = [
-      { key: "all", label: "All" },
-      { key: "manual", label: "Added here" },
-      { key: "directory", label: "From the directory" },
+  function sourceTabs() {
+    var tabs = [
+      { key: "all", label: "All", title: "Everyone and everywhere Polaris can send an alert" },
+      { key: "user", label: "Polaris users", title: "Accounts on this Polaris install that carry an email address" },
     ];
-    return opts.map(function (o) {
-      return '<button type="button" class="chip' + (_tab.origin === o.key ? " active" : "") + '" ' +
-        'data-ab-origin="' + o.key + '">' + escapeHtml(o.label) + "</button>";
-    }).join(" ");
+    (_tab.sources || []).forEach(function (s) {
+      tabs.push({
+        key: s.kind,
+        // "<name> directory" unless the operator already put the word in the
+        // integration's name, where it would read "… Directory directory".
+        label: /director(y|ies)/i.test(s.label) ? s.label : s.label + " directory",
+        title: s.sync
+          ? "People synced into the address book from " + s.label
+          : "People looked up live in " + s.label + " — nothing from it is stored in Polaris",
+      });
+    });
+    tabs.push({ key: "manual", label: "Manual", title: "Contacts added here by hand" });
+    return tabs;
+  }
+
+  function sourceTabsHtml() {
+    return '<div class="table-tabs-list" role="tablist" aria-label="Address book sources">' +
+      sourceTabs().map(function (t) {
+        var on = _tab.source === t.key;
+        return '<button type="button" class="table-tab' + (on ? " active" : "") + '" role="tab" ' +
+          'aria-selected="' + (on ? "true" : "false") + '" title="' + escapeHtml(t.title) + '" ' +
+          'data-ab-source="' + escapeHtml(t.key) + '">' +
+          '<span class="table-tab-name">' + escapeHtml(t.label) + "</span></button>";
+      }).join("") + "</div>";
+  }
+
+  /**
+   * What ONE tab is made of: which halves to fetch, what to ask the contacts
+   * endpoint for, and which search hits belong here.
+   *
+   * Each tab is a QUERY rather than a client-side filter over one merged list,
+   * because the contacts half is paginated: filtering 50 mixed rows down to the
+   * synced ones would show a fraction of them and call it the directory. It
+   * also keeps the tabs honest about cost — Manual asks the directory nothing,
+   * and Polaris users never fans out to the GAL.
+   */
+  function tabPlan(key) {
+    if (key === "user") {
+      return { key: key, contacts: false, search: true, live: false,
+        keep: function (en) { return en.source === "user"; } };
+    }
+    if (key === "manual") return { key: key, contacts: true, origin: "manual", search: false };
+    if (key === "all") return { key: key, contacts: true, origin: "all", search: true, live: true, keep: null };
+    // A directory: its synced rows, plus what a live lookup finds in it.
+    return { key: key, contacts: true, origin: key, search: true, live: true,
+      keep: function (en) { return en.source === key; } };
+  }
+
+  /**
+   * Refresh the strip from what the list endpoint reported. Returns true when
+   * the ACTIVE tab was a directory that has since gone away (integration
+   * disabled, or the caller lost the visibility gate) and has been reset to
+   * All — the caller reloads, because the rows on screen are for a tab that no
+   * longer exists.
+   */
+  function syncSourceTabs(payload) {
+    var next = (payload && payload.directoryVisible && payload.directorySources) || [];
+    var same = next.length === _tab.sources.length && next.every(function (s, i) {
+      return s.kind === _tab.sources[i].kind && s.label === _tab.sources[i].label && !!s.sync === _tab.sources[i].sync;
+    });
+    var reset = false;
+    if (!same) {
+      _tab.sources = next.map(function (s) {
+        return { kind: s.kind, label: s.label || s.kind, sync: !!s.sync, search: !!s.search };
+      });
+      if (_tab.source !== "all" && _tab.source !== "user" && _tab.source !== "manual" && !directorySource(_tab.source)) {
+        _tab.source = "all";
+        reset = true;
+      }
+      var slot = document.getElementById("ab-tab-sources");
+      if (slot) slot.innerHTML = sourceTabsHtml();
+    }
+    return reset;
   }
 
   async function loadTabPeople() {
     var box = document.getElementById("ab-tab-results");
     if (!box) return;
     var term = _tab.term;
-    var contacts;
-    var entries;
+    var plan = tabPlan(_tab.source);
+    var contacts = [];
+    var entries = [];
+    var capped = false;
     var total = 0;
     try {
       // The search term goes to the SERVER for both halves. This used to pull
       // every contact and filter in the browser, which made each keystroke cost
       // the whole table.
       var res = await Promise.all([
-        api.contacts.list({ q: term, origin: _tab.origin, limit: AB_PAGE_SIZE }),
-        api.contacts.search(term, true),
+        plan.contacts ? api.contacts.list({ q: term, origin: plan.origin, limit: AB_PAGE_SIZE }) : null,
+        plan.search ? api.contacts.search(term, !!plan.live) : null,
       ]);
-      contacts = (res[0] && res[0].contacts) || [];
-      total = (res[0] && typeof res[0].total === "number") ? res[0].total : contacts.length;
-      entries = (res[1] && res[1].entries) || [];
-      // Offer the filter only when it can do something: the caller may see
-      // synced rows AND something is actually syncing. Otherwise it is a
-      // control whose "From the directory" option is always empty.
-      var offer = !!(res[0] && res[0].directoryVisible && res[0].directorySyncAvailable);
-      if (offer !== _tab.showOriginFilter) {
-        _tab.showOriginFilter = offer;
-        var slot = document.getElementById("ab-tab-origin");
-        if (slot) slot.style.display = offer ? "" : "none";
+      if (res[0]) {
+        contacts = res[0].contacts || [];
+        total = typeof res[0].total === "number" ? res[0].total : contacts.length;
+        // The strip is refreshed from whichever load carried the catalogue.
+        // The Polaris users tab makes no list call and so learns nothing — it
+        // renders the strip the last load left, which is the one the initial
+        // All load built.
+        if (syncSourceTabs(res[0])) return loadTabPeople();
       }
+      var found = (res[1] && res[1].entries) || [];
+      // The 50-row cap the "showing the first 50" hint is about is the SERVER's,
+      // so it is counted BEFORE this tab drops the hits belonging to another
+      // source — otherwise a capped payload whose rows were mostly not this
+      // tab's would read as a complete answer.
+      capped = found.length >= 50;
+      entries = found.filter(plan.keep || function () { return true; });
     } catch (err) {
       if (term !== _tab.term) return;
       box.innerHTML = '<p class="empty-state">' +
@@ -703,30 +838,66 @@
       return !en.email || !held[String(en.email).toLowerCase()];
     }));
 
-    var hint = "";
+    // Every note the pane has to make, in one place: each tab is a different
+    // population, so an empty one means something different on each.
+    var notes = [];
+    var ADD_A_CONTACT = "Add a contact to route alerts to an address that has no Polaris account — " +
+      "a distribution list, an on-call rotation, a vendor NOC.";
+    var src = directorySource(plan.key);
+    // The label is the operator's name for their integration and the notes are
+    // written into innerHTML — escape it here, once, rather than at each use.
+    var srcName = src ? escapeHtml(src.label) : "directory";
     if (!rows.length) {
-      hint = '<p class="hint" style="margin:8px 0 0">' + (term
-        ? "No people match that search."
-        : "No contacts yet, and no Polaris account carries an email address. Add a contact to route alerts to an " +
-          "address that has no Polaris account — a distribution list, an on-call rotation, a vendor NOC.") +
-        "</p>";
-    } else if (!term && !contacts.length) {
-      // The rows are all Polaris accounts and directory hits. Say what's missing
-      // rather than let a populated table imply the address book is set up.
-      hint = '<p class="hint" style="margin:8px 0 0">No contacts yet — every row above is a Polaris account. ' +
-        "Add a contact to route alerts to an address that has no Polaris account — a distribution list, " +
-        "an on-call rotation, a vendor NOC.</p>";
-    } else if (total > contacts.length) {
-      // A real count now, not a guess from a truncated array: the server
-      // reports how many matched across every page, so the operator learns
-      // whether narrowing the search will actually help.
-      hint = '<p class="hint" style="margin:8px 0 0">Showing ' + contacts.length + ' of ' + total +
-        ' matching contacts — narrow the search to see the rest.</p>';
-    } else if (entries.length >= 50) {
-      // The users ∪ directory half is still capped at 50 by searchAddressBook.
-      hint = '<p class="hint" style="margin:8px 0 0">Showing the first 50 matches — narrow the search to see more.</p>';
+      if (term) {
+        notes.push(plan.key === "all" ? "No people match that search."
+          : plan.key === "user" ? "No Polaris account matches that search."
+            : plan.key === "manual" ? "No contact added here matches that search."
+              : "No " + srcName + " entry matches that search.");
+      } else if (plan.key === "user") {
+        // An account with no address is not listed anywhere the address book
+        // reaches (searchAddressBook skips it), so say where addresses come
+        // from rather than implying there are no accounts.
+        notes.push("No Polaris account carries an email address — an account is listed here once it has one. " +
+          "Addresses are set per account under Users.");
+      } else if (plan.key === "manual") {
+        notes.push("No contacts have been added here yet. " + ADD_A_CONTACT);
+      } else if (src) {
+        notes.push(src.sync
+          ? "The directory sync hasn’t stored any " + srcName + " entries yet."
+          : "Nothing from " + srcName + " is stored in Polaris — search to look someone up in it.");
+      } else {
+        notes.push("No contacts yet, and no Polaris account carries an email address. " + ADD_A_CONTACT);
+      }
+    } else {
+      if (plan.key === "all" && !term && !contacts.length) {
+        // The rows are all Polaris accounts and directory hits. Say what's
+        // missing rather than let a populated table imply the address book is
+        // set up.
+        notes.push("No contacts yet — every row above is a Polaris account. " + ADD_A_CONTACT);
+      }
+      // A directory that is searched but not synced has NO rows of its own
+      // until something is typed; one that is synced still only stores the
+      // people the filters let through. Either way the table is not the roster.
+      if (src && src.search && !term) {
+        notes.push(src.sync
+          ? "Search to look anyone up in " + srcName + " — the rows above are only what the sync has stored."
+          : "Type at least two characters to look someone up in " + srcName + ".");
+      }
+      if (plan.contacts && total > contacts.length) {
+        // A real count, not a guess from a truncated array: the server reports
+        // how many matched across every page, so the operator learns whether
+        // narrowing the search will actually help.
+        notes.push("Showing " + contacts.length + " of " + total +
+          " matching contacts — narrow the search to see the rest.");
+      } else if (plan.search && capped) {
+        // The users ∪ directory half is still capped at 50 by searchAddressBook.
+        notes.push("Showing the first 50 matches — narrow the search to see more.");
+      }
     }
-    box.innerHTML = abTable(tabPeopleCols(), rows, hint);
+    var hint = notes.map(function (n) {
+      return '<p class="hint" style="margin:8px 0 0">' + n + "</p>";
+    }).join("");
+    box.innerHTML = abTable(tabPeopleCols(plan), rows, hint);
   }
 
   function loadTabTags() {
@@ -770,11 +941,17 @@
     }
 
     host.addEventListener("click", async function (ev) {
-      var chip = ev.target.closest && ev.target.closest("[data-ab-origin]");
-      if (chip) {
-        _tab.origin = chip.getAttribute("data-ab-origin") || "all";
-        var slot = document.getElementById("ab-tab-origin");
-        if (slot) slot.innerHTML = originChipsHtml();
+      var stab = ev.target.closest && ev.target.closest("[data-ab-source]");
+      if (stab) {
+        var want = stab.getAttribute("data-ab-source") || "all";
+        if (want === _tab.source) return;
+        _tab.source = want;
+        var slot = document.getElementById("ab-tab-sources");
+        if (slot) slot.innerHTML = sourceTabsHtml();
+        // The table is rebuilt from a different query, so blank it rather than
+        // leaving the previous tab's rows sitting under the new tab's name.
+        var results = document.getElementById("ab-tab-results");
+        if (results) results.innerHTML = '<p class="empty-state">Loading…</p>';
         loadTabPeople();
         return;
       }
