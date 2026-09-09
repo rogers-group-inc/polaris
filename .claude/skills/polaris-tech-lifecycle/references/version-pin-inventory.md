@@ -263,6 +263,16 @@ move is a project, not a dependency bump, so they are listed here and ignored in
   - eslint went 9 → 10 in 2026-09 as the fix for a `js-yaml` advisory: eslint 10 drops
     `@eslint/eslintrc`, which was the only thing pulling it, so the vulnerable package left
     the tree rather than being bumped. Clean on this codebase (0 errors).
+  - **`@eslint/js` moves with it and is a third member of that group.** `eslint.config.mjs`
+    imports it directly; eslint 9 supplied it transitively and eslint 10 does not, so it is
+    now an explicit devDependency. The trap is that an incremental `npm install` leaves the
+    old transitive copy in place and lint keeps working — only a clean `npm ci`, which is
+    what CI does, surfaces `ERR_MODULE_NOT_FOUND: Cannot find package '@eslint/js'`. **Run
+    `npm ci` before trusting a lint result after any eslint bump.** Its version line trails
+    eslint's: 10.10.0 pairs with `@eslint/js` 10.0.1.
+  - `@eslint/js` 10's recommended set adds **`no-useless-assignment`**, which lands on 31
+    pre-existing sites here and is switched off in `eslint.config.mjs` with a rationale.
+    Clearing those sites is an open follow-up, not part of the bump.
   - **TypeScript 6 → 7 was deliberately declined in the same pass.** Dependabot bundles it
     into the `typescript-toolchain` group with the eslint bump, which makes a compiler major
     look like a lint bump. Take eslint and `typescript-eslint` from that PR and leave
