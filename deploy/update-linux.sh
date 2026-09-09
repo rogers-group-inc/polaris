@@ -38,12 +38,20 @@ BACKUP_DIR="/opt/polaris/backups"
 # one. Mirrors applyUpdate(password, allowWithoutBackup) in
 # src/services/updateService.ts — keep the two in lockstep.
 ALLOW_WITHOUT_BACKUP=0
+# Finish an update whose code pull already happened (the in-app updater pulled,
+# then failed at npm ci; or this script was interrupted after step 3). Without
+# it the "already up to date" check below sees a no-op pull and stops, leaving
+# node_modules, dist/ and the schema at the OLD commit under NEW source.
+FORCE=0
 for arg in "$@"; do
   case "$arg" in
     --allow-without-backup) ALLOW_WITHOUT_BACKUP=1 ;;
+    --force) FORCE=1 ;;
     -h|--help)
-      echo "Usage: $0 [--allow-without-backup]"
+      echo "Usage: $0 [--allow-without-backup] [--force]"
       echo "  --allow-without-backup  Continue when pg_dump is unavailable or the backup fails."
+      echo "  --force                 Run install/build/migrate even when the code is already at the latest commit"
+      echo "                          (finishes an update that was interrupted after its code pull)."
       exit 0
       ;;
     *) echo "[ERROR] Unknown argument: $arg" >&2; exit 1 ;;
@@ -239,9 +247,17 @@ info "Managing $SYSTEMD_UNIT (split-role layout)"
 step "1/9  Recording current version..."
 
 OLD_VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "unknown")
-OLD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# As the app user, like every other git call in this script. The checkout is
+# owned by $APP_USER and this script runs as root, so a bare `git rev-parse`
+# fails with "detected dubious ownership" — and `2>/dev/null || echo unknown`
+# turned that into the string "unknown" on both sides of the pull, which the
+# up-to-date check below then compared as equal. Found on prod 2026-09-09.
+OLD_COMMIT=$(sudo -u "$APP_USER" git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 info "Current version: v${OLD_VERSION} (${OLD_COMMIT})"
+if [[ "$OLD_COMMIT" == "unknown" ]]; then
+  warn "Could not read the current git commit (as $APP_USER, in $APP_DIR). The rollback target for this run is unknown."
+fi
 
 # ─── 2. Pre-update database backup ──────────────────────────────────────────
 step "2/9  Creating pre-update database backup..."
@@ -302,16 +318,35 @@ sudo -u "$APP_USER" git fetch --all --prune
 sudo -u "$APP_USER" git pull --ff-only
 
 NEW_VERSION=$(node -e "console.log(require('./package.json').version)" 2>/dev/null || echo "unknown")
-NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+NEW_COMMIT=$(sudo -u "$APP_USER" git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-if [[ "$OLD_COMMIT" == "$NEW_COMMIT" ]]; then
+# "Already up to date" is only a safe reason to stop when BOTH commits are
+# known AND the operator has not asked to finish an interrupted run. One prod
+# incident (2026-09-09) behind each clause:
+#
+#   * Both commits read "unknown" (the git-as-root failure noted at step 1), so
+#     "unknown" == "unknown" was always true, this branch always fired, and the
+#     script exited 0 having updated nothing — on every standard install, since
+#     the day it was written. An unknown commit is a reason to keep going and
+#     say so, never a reason to declare success.
+#   * The in-app updater had already pulled and then failed at `npm ci`, so the
+#     pull here was a no-op while node_modules, dist/ and the schema were still
+#     at the old commit. "The pull moved nothing" is not "the install is
+#     current" — --force exists so an operator can finish a half-done update.
+if [[ "$OLD_COMMIT" == "unknown" || "$NEW_COMMIT" == "unknown" ]]; then
+  warn "Could not read the git commit before and after the pull — running the full pipeline rather than guessing that nothing changed."
+elif [[ "$OLD_COMMIT" == "$NEW_COMMIT" && "$FORCE" -eq 0 ]]; then
   info "Already up to date — v${OLD_VERSION} (${OLD_COMMIT})"
+  info "If an earlier update was interrupted after its code pull (dependencies, build or migrations still pending), re-run with --force to finish it."
   # Clean up the backup since no update occurred
   if [[ -n "$BACKUP_FILE" && -f "$BACKUP_FILE" ]]; then
     rm -f "$BACKUP_FILE"
     info "Removed unnecessary backup"
   fi
   exit 0
+elif [[ "$OLD_COMMIT" == "$NEW_COMMIT" ]]; then
+  info "Code already at ${NEW_COMMIT} — --force set, finishing the install / build / migrate steps"
+  warn "The code rollback for this run is a no-op: the checkout was already at this commit before it started."
 fi
 
 info "Updating: v${OLD_VERSION} (${OLD_COMMIT}) → v${NEW_VERSION} (${NEW_COMMIT})"

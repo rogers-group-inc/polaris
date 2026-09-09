@@ -32,7 +32,13 @@ param(
     # unrecoverable one. Mirrors applyUpdate(password, allowWithoutBackup) in
     # src/services/updateService.ts and --allow-without-backup in
     # deploy/update-linux.sh -- keep all three in lockstep.
-    [switch]$AllowWithoutBackup
+    [switch]$AllowWithoutBackup,
+    # Finish an update whose code pull already happened (the in-app updater
+    # pulled, then failed at npm ci; or this script was interrupted after the
+    # pull). Without it the "already up to date" check sees a no-op pull and
+    # stops, leaving node_modules, dist\ and the schema at the OLD commit under
+    # NEW source. Mirrors --force in deploy/update-linux.sh.
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -145,9 +151,18 @@ function Invoke-Rollback {
 Write-Step "1/8  Recording current version..."
 
 try { $OldVersion = (node -e "console.log(require('./package.json').version)") } catch {}
-try { $OldCommit = (git rev-parse --short HEAD) } catch {}
+try { $OldCommit = (git rev-parse --short HEAD 2>$null) } catch {}
+# A native-command failure does not throw here — it leaves $OldCommit empty.
+# Normalise to a sentinel so the up-to-date check below can refuse to compare
+# two unknowns as equal (the Linux script did exactly that on prod 2026-09-09,
+# when git refused the checkout's ownership, and exited 0 having updated
+# nothing).
+if (-not $OldCommit) { $OldCommit = "unknown" }
 
 Write-Info "Current version: v${OldVersion} (${OldCommit})"
+if ($OldCommit -eq "unknown") {
+    Write-Warn "Could not read the current git commit in $AppDir. The rollback target for this run is unknown."
+}
 
 # ─── 2. Pre-update database backup ──────────────────────────────────────────
 # Same contract as the in-app updater: abort unless the operator explicitly
@@ -251,10 +266,21 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 try { $NewVersion = (node -e "console.log(require('./package.json').version)") } catch {}
-try { $NewCommit = (git rev-parse --short HEAD) } catch {}
+try { $NewCommit = (git rev-parse --short HEAD 2>$null) } catch {}
+if (-not $NewCommit) { $NewCommit = "unknown" }
 
-if ($OldCommit -eq $NewCommit) {
+# "Already up to date" is only a safe reason to stop when BOTH commits are
+# known AND the operator has not asked to finish an interrupted run. An unknown
+# commit is a reason to keep going and say so, never a reason to declare
+# success; and "the pull moved nothing" is not "the install is current" — the
+# in-app updater may have pulled and then failed before installing. Same
+# contract as deploy/update-linux.sh.
+if ($OldCommit -eq "unknown" -or $NewCommit -eq "unknown") {
+    Write-Warn "Could not read the git commit before and after the pull — running the full pipeline rather than guessing that nothing changed."
+}
+elseif ($OldCommit -eq $NewCommit -and -not $Force) {
     Write-Info "Already up to date — v${OldVersion} (${OldCommit})"
+    Write-Info "If an earlier update was interrupted after its code pull (dependencies, build or migrations still pending), re-run with -Force to finish it."
     # Clean up unnecessary backup
     if ($BackupFile -and (Test-Path $BackupFile)) {
         Remove-Item $BackupFile -Force
@@ -262,6 +288,10 @@ if ($OldCommit -eq $NewCommit) {
     }
     Pop-Location
     exit 0
+}
+elseif ($OldCommit -eq $NewCommit) {
+    Write-Info "Code already at ${NewCommit} — -Force set, finishing the install / build / migrate steps"
+    Write-Warn "The code rollback for this run is a no-op: the checkout was already at this commit before it started."
 }
 
 Write-Info "Updating: v${OldVersion} (${OldCommit}) -> v${NewVersion} (${NewCommit})"

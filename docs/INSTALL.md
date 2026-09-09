@@ -120,8 +120,10 @@ restart or a reboot until an install succeeds.** Treat it as urgent, and do not 
 first to "see if it's fine".
 
 Apply the fix above, then re-run the update (Server Settings → Maintenance → Updates, or
-`sudo bash deploy/update-linux.sh`). If you need to repair the dependency tree without a full
-update:
+`sudo bash deploy/update-linux.sh`). If the in-app updater already pulled the new code before
+it failed, the script's `git pull` is a no-op and it will report "Already up to date" — pass
+`--force` (`-Force` on Windows) so it finishes the install, build and migration steps anyway.
+If you need to repair the dependency tree without a full update:
 
 ```bash
 cd /opt/polaris
