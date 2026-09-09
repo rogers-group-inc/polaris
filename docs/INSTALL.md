@@ -1671,7 +1671,7 @@ SmartScreen is usually not the constraint in the first place: it only fires on f
 
 ### Polaris host prerequisites
 
-The install scripts in this guide (and the Docker image) provision the toolchain automatically: a headless **Java 17** runtime and the **jsign** jar (v7.4, SHA-256-pinned) at `<app dir>/tools/jsign.jar` (`/opt/polaris/tools/jsign.jar` on Linux, `C:\polaris\tools\jsign.jar` on Windows). Existing installs that predate this feature add them manually:
+The install scripts in this guide (and the Docker image) provision the toolchain automatically: a headless **Java 17** runtime and the **jsign** jar (v7.5, SHA-256-pinned) at `<app dir>/tools/jsign.jar` (`/opt/polaris/tools/jsign.jar` on Linux, `C:\polaris\tools\jsign.jar` on Windows). Existing installs that predate this feature add them manually:
 
 ```sh
 # RHEL/Rocky/Alma
@@ -1681,11 +1681,11 @@ sudo apt-get install -y default-jre-headless
 # Both:
 sudo mkdir -p /opt/polaris/tools
 sudo curl -fsSL -o /opt/polaris/tools/jsign.jar \
-  https://github.com/ebourg/jsign/releases/download/7.4/jsign-7.4.jar
-echo "2abf2ade9ea322acc2d60c24794eadc465ff9380938fca4c932d09e0b25f1c28  /opt/polaris/tools/jsign.jar" | sha256sum -c -
+  https://github.com/ebourg/jsign/releases/download/7.5/jsign-7.5.jar
+echo "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c  /opt/polaris/tools/jsign.jar" | sha256sum -c -
 ```
 
-On Windows Server: `winget install Microsoft.OpenJDK.17` (or the MSI from https://aka.ms/download-jdk) and drop `jsign-7.4.jar` at `C:\polaris\tools\jsign.jar`. No Polaris restart needed — the availability probe re-checks on every page load.
+On Windows Server: `winget install Microsoft.OpenJDK.17` (or the MSI from https://aka.ms/download-jdk) and drop `jsign-7.5.jar` at `C:\polaris\tools\jsign.jar`. No Polaris restart needed — the availability probe re-checks on every page load.
 
 **Then install the keystore.** Either upload it through the UI, or place it on the host by hand.
 

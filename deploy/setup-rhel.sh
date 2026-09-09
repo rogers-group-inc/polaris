@@ -318,8 +318,8 @@ chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 # build signs the two Windows binaries via jsign (a Java CLI). The feature is
 # opt-in — missing Java/jsign only disables signing and the UI names exactly
 # what's missing — so failures here warn instead of aborting the install.
-JSIGN_VERSION="7.4"
-JSIGN_SHA256="2abf2ade9ea322acc2d60c24794eadc465ff9380938fca4c932d09e0b25f1c28"
+JSIGN_VERSION="7.5"
+JSIGN_SHA256="602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"
 if command -v java &>/dev/null; then
   info "Java already installed"
 else

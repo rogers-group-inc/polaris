@@ -92,8 +92,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       default-jre-headless \
  && rm -rf /var/lib/apt/lists/*
-ADD https://github.com/ebourg/jsign/releases/download/7.4/jsign-7.4.jar /opt/polaris/tools/jsign.jar
-RUN echo "2abf2ade9ea322acc2d60c24794eadc465ff9380938fca4c932d09e0b25f1c28  /opt/polaris/tools/jsign.jar" | sha256sum -c - \
+ADD https://github.com/ebourg/jsign/releases/download/7.5/jsign-7.5.jar /opt/polaris/tools/jsign.jar
+RUN echo "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c  /opt/polaris/tools/jsign.jar" | sha256sum -c - \
  && chmod 0644 /opt/polaris/tools/jsign.jar
 
 WORKDIR /app

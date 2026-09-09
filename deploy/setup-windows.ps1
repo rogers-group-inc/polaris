@@ -292,8 +292,8 @@ Write-Info "Created agent build dirs: $agentDataDir, $goCacheDir"
 # ─── 4c. jsign jar (agent code signing — optional at runtime) ────────────────
 # SHA-256-pinned download for the agent code-signing feature. Failure only
 # warns — signing is opt-in and the UI names exactly what's missing.
-$jsignVersion = "7.4"
-$jsignSha256  = "2ABF2ADE9EA322ACC2D60C24794EADC465FF9380938FCA4C932D09E0B25F1C28"
+$jsignVersion = "7.5"
+$jsignSha256  = "602A51C3545A6DC4FB99BD2EA7152B26D1345916D0C93DDFBD5936CB735AF91C"
 $jsignJar = Join-Path $AppDir "tools\jsign.jar"
 if (Test-Path $jsignJar) {
     Write-Info "jsign already present at $jsignJar"
