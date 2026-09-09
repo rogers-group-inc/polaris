@@ -89,12 +89,13 @@ and lying in the Dockerfile.
 
 ## PostgreSQL
 
-Currently **17** across 15 checked sites. Moved from 15 on 2026-09-09.
+Currently **17** across 17 checked sites. Moved from 15 on 2026-09-09.
 
 | Site | Form | Kind |
 |---|---|---|
 | `deploy/setup-rhel.sh` | `PG_MAJOR=17` — derives `PG_SERVICE`, `PG_BINDIR`, `PG_DATADIR` and the package names | pin |
 | `deploy/setup-rhel-nodb.sh` | `PG_CLIENT_MAJOR=17` → `dnf install -y "postgresql${PG_CLIENT_MAJOR}"` from PGDG (was an unversioned `dnf install -y postgresql`, which is PostgreSQL 13 on RHEL 9 and cannot dump a 17 server — rule 47) | pin |
+| `deploy/setup-ubuntu-nodb.sh` | `PG_CLIENT_MAJOR=17` → `apt-get install -y postgresql-client-17` from the PGDG apt repo. Was the unversioned `postgresql-client` metapackage — 14 on 22.04, 16 on 24.04 — i.e. the same rule-47 trap in apt form | pin |
 | `deploy/setup-ubuntu.sh` | `PG_MAJOR=17` + the PGDG **apt** repo → `apt-get install -y postgresql-17` | pin |
 | `deploy/ha/setup-rhel-ha.sh` | `PG_MAJOR=17` — the Patroni node's server packages, `PG_BIN`, `PGDATA` and the TimescaleDB package | pin |
 | `deploy/dropins/20-postgres.conf.example` | `After=` / `Requires=postgresql-17.service` — the reference copy of the per-host drop-in | pin |

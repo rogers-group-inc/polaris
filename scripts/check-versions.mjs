@@ -252,9 +252,9 @@ const FAMILIES = [
         re: /postgresql-(\d+)\.service/g, pick: (m) => m[1] },
       // The RHEL install's own majors. Unchecked until 2026-09-09, which is
       // how PG_CLIENT_MAJOR could have drifted from the units in silence.
-      { file: "deploy/setup-rhel.sh", label: "PG_MAJOR", kind: "pin",
+      { files: ["deploy/setup-rhel.sh", "deploy/setup-ubuntu.sh"], label: "PG_MAJOR", kind: "pin",
         re: /^PG_MAJOR=(\d+)/gm, pick: (m) => m[1] },
-      { file: "deploy/setup-rhel-nodb.sh", label: "PG_CLIENT_MAJOR", kind: "pin",
+      { files: ["deploy/setup-rhel-nodb.sh", "deploy/setup-ubuntu-nodb.sh"], label: "PG_CLIENT_MAJOR", kind: "pin",
         re: /^PG_CLIENT_MAJOR=(\d+)/gm, pick: (m) => m[1] },
       // The HA install provisions its own PostgreSQL for Patroni. A node that
       // came up on a different major than the stock scripts install cannot

@@ -200,7 +200,10 @@ if [[ -x "/usr/lib/postgresql/${PG_MAJOR}/bin/psql" ]]; then
   info "PostgreSQL ${PG_MAJOR} (PGDG) already installed"
 else
   info "Installing PostgreSQL ${PG_MAJOR} from PGDG..."
-  apt-get install -y curl ca-certificates gnupg
+  # lsb-release explicitly: the codename below comes from it, and the only
+  # other place that installs it is the nginx block, which is skipped entirely
+  # on a host that already has nginx.
+  apt-get install -y curl ca-certificates gnupg lsb-release
   install -d /usr/share/postgresql-common/pgdg
   curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc

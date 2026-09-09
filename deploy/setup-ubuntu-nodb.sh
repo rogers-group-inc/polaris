@@ -158,12 +158,30 @@ else
 fi
 
 # ─── 3. Install PostgreSQL client tools (for pg_dump backups) ────────────────
-if command -v pg_dump &>/dev/null; then
-  info "PostgreSQL client tools already installed"
+# From PGDG and VERSIONED, never `apt-get install -y postgresql-client`. The
+# unversioned metapackage is whatever the release froze on — 14 on Ubuntu 22.04,
+# 16 on 24.04 — and pg_dump refuses to dump a server newer than itself, so a 14
+# client in front of the 17 server this variant connects to fails every backup
+# with "server version mismatch" while `command -v pg_dump` reports success
+# because a binary exists. That is the RHEL lesson of 2026-09-09 (rule 47),
+# and the same trap was sitting here in apt form.
+PG_CLIENT_MAJOR=17
+if [[ -x "/usr/lib/postgresql/${PG_CLIENT_MAJOR}/bin/pg_dump" ]]; then
+  info "PostgreSQL ${PG_CLIENT_MAJOR} client tools already installed"
 else
-  info "Installing PostgreSQL client tools..."
-  apt-get install -y postgresql-client
-  info "PostgreSQL client tools installed"
+  info "Installing PostgreSQL ${PG_CLIENT_MAJOR} client tools from PGDG..."
+  # lsb-release explicitly: the codename below comes from it, and the only
+  # other place that installs it is the nginx block, which is skipped entirely
+  # on a host that already has nginx.
+  apt-get install -y curl ca-certificates gnupg lsb-release
+  install -d /usr/share/postgresql-common/pgdg
+  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+  echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list
+  apt-get update -qq
+  apt-get install -y "postgresql-client-${PG_CLIENT_MAJOR}"
+  info "PostgreSQL ${PG_CLIENT_MAJOR} client tools installed"
 fi
 
 # ─── 4. Create system user ───────────────────────────────────────────────────
