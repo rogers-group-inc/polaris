@@ -83,10 +83,10 @@ if ((Test-Command "node") -and ((node -v) -match "^v(22|24)\.")) {
 } else {
     Write-Info "Installing Node.js 24 LTS..."
     if ($hasWinget) {
-        winget install --id OpenJS.NodeJS.LTS --version 24.14.1 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id OpenJS.NodeJS.LTS --version 24.19.0 --accept-source-agreements --accept-package-agreements --silent
     } else {
-        $nodeUrl = "https://nodejs.org/dist/v24.14.1/node-v24.14.1-x64.msi"
-        $nodeMsi = "$env:TEMP\node-v24.14.1-x64.msi"
+        $nodeUrl = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi"
+        $nodeMsi = "$env:TEMP\node-v24.19.0-x64.msi"
         Write-Info "Downloading Node.js installer..."
         Invoke-WebRequest -Uri $nodeUrl -OutFile $nodeMsi -UseBasicParsing
         Write-Info "Running Node.js installer..."

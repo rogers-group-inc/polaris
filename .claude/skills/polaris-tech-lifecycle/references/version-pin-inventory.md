@@ -50,8 +50,8 @@ see *Why two numbers* below.
 | `Dockerfile.dev` | `FROM node:24-bookworm` | pin |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y nodejs:24` | pin |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | NodeSource `deb.nodesource.com/node_24.x` | pin |
-| two Windows setup scripts | `winget install --id OpenJS.NodeJS.LTS --version 24.14.1` | pin |
-| two Windows setup scripts | `nodejs.org/dist/v24.14.1/node-v24.14.1-x64.msi` fallback | pin |
+| two Windows setup scripts | `winget install --id OpenJS.NodeJS.LTS --version 24.19.0` | pin |
+| two Windows setup scripts | `nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi` fallback | pin |
 | both workflow files | `node-version: 24` (three occurrences) | pin |
 | `docs/INSTALL.md` | three `### 3. Node.js 24 (LTS)` install sections | prose pin |
 | `CLAUDE.md` | the tech-stack table row | prose |
@@ -71,13 +71,18 @@ and lying in the Dockerfile.
   tolerate it, nothing installs it, and nothing tests it — CI runs 24.
 - `engines.node` is **advisory**: there is no `.npmrc` with `engine-strict=true`, so npm warns
   and installs anyway. The accept-regexes are the only real gate.
-- **Windows pins an exact build** (`24.14.1`), so "Node 24" is false there past that patch, and
+- **Windows pins an exact build** (`24.19.0`), so "Node 24" is false there past that patch, and
   the day 24 goes EOL those scripts keep installing it on every fresh host with nothing
   objecting. This is still the single most likely way Polaris ends up provisioning
   end-of-life software, which is why the Windows scripts are in the `node-major` playbook's file
   list. The 2026-09 bump from 20 is the worked example: it initially missed `engines.node`,
   `Dockerfile.dev`, both README tables and `node-version:` in CI — so the suite went green
   against a runtime no supported install had.
+- **The winget channel, not nodejs.org, sets the Windows patch pin.** Both Windows sites name
+  the same build so the two install paths cannot diverge, and the ceiling is whatever
+  `OpenJS.NodeJS.LTS` has a manifest for — 24.19.0 on 2026-09-09, while nodejs.org was already
+  on 24.21.0. Check the winget manifest list before picking a patch: pinning a `--version`
+  winget does not carry makes that branch fail outright rather than falling through to the MSI.
 - `@types/node` tracks the **floor**, not the pin, so the compiler cannot green-light an API the
   oldest supported runtime lacks. The 2026-09 bump left it on 20 after moving `engines` to 22;
   `check:versions` is what caught that.
