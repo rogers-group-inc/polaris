@@ -20,6 +20,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const db = {
   rules: [] as any[],
   events: [] as any[],
+  assets: [] as any[],
   recentNotifs: [] as any[],
   created: [] as any[],
   updateManyCalls: [] as any[],
@@ -48,7 +49,16 @@ vi.mock("../../src/db.js", () => ({
         return create;
       }),
     },
-    asset: { findUnique: vi.fn(async () => null), findMany: vi.fn(async () => []) },
+    asset: {
+      findUnique: vi.fn(async ({ where }: any) => db.assets.find((a) => a.id === where.id) ?? null),
+      // Only the event tail's prime query (an explicit id list) is answered
+      // from the store; every other findMany keeps the empty default the
+      // threshold-path tests in this file rely on.
+      findMany: vi.fn(async (args: any) => {
+        const ids = args?.where?.id?.in;
+        return ids ? db.assets.filter((a) => ids.includes(a.id)) : [];
+      }),
+    },
     notificationRuleState: { findMany: vi.fn(async () => []), deleteMany: vi.fn(async () => ({ count: 0 })) },
   },
 }));
@@ -102,6 +112,7 @@ function discoverErrorEvent(resourceName: string, atMsAgo: number) {
 beforeEach(() => {
   db.rules.length = 0;
   db.events.length = 0;
+  db.assets.length = 0;
   db.recentNotifs.length = 0;
   db.created.length = 0;
   db.updateManyCalls.length = 0;
@@ -278,5 +289,103 @@ describe("event-tail counterpart reset", () => {
       },
     ] as never, new Date());
     expect(db.updateManyCalls).toHaveLength(0);
+  });
+});
+
+// ─── Device filter on the event tail (business rule 46) ─────────────────────
+// The wizard used to discard whatever the operator picked on the Devices step
+// for an event trigger and save `scope:{}` — save, reopen, "All assets" again.
+// Now it saves the filter, so the tail has to honor it; and every automation
+// written before it could (`{}`) has to keep firing about everything.
+
+function asset(over: Record<string, unknown> = {}) {
+  return {
+    id: "a-1", hostname: "sw-1", ipAddress: "10.0.0.1", macAddress: null,
+    assetType: "switch", status: "active", location: null, learnedLocation: null,
+    description: null, manufacturer: "Fortinet", model: "FS-148F", serialNumber: null,
+    os: null, osVersion: null, department: null, assignedTo: null, tags: [],
+    dependencySuppressed: false, lastSeenSwitch: null, lastSeenAp: null,
+    monitored: true, discoveredByIntegrationId: null,
+    ...over,
+  };
+}
+
+function rebootEvent(assetId: string, name: string, atMsAgo: number) {
+  return {
+    id: `e-${assetId}-${atMsAgo}`,
+    timestamp: new Date(NOW - atMsAgo),
+    action: "asset.rebooted",
+    resourceType: "asset",
+    resourceId: assetId,
+    resourceName: name,
+    level: "warning",
+    message: `${name} rebooted`,
+    details: null,
+    actor: "system:monitor",
+  };
+}
+
+const rebootRule = (scope: Record<string, unknown>) =>
+  eventRule({
+    id: "r-reboot",
+    name: "Device rebooted",
+    trigger: { type: "event", actionPattern: "asset.rebooted" },
+    scope,
+    cooldownSec: null,
+  });
+
+describe("event-tail device filter", () => {
+  it("fires only for the devices the filter names", async () => {
+    db.rules.push(rebootRule({ assetTypes: ["firewall"] }));
+    db.assets.push(asset({ id: "a-fw", hostname: "fw-1", assetType: "firewall" }), asset({ id: "a-sw", hostname: "sw-1", assetType: "switch" }));
+    db.events.push(rebootEvent("a-fw", "fw-1", 60_000), rebootEvent("a-sw", "sw-1", 30_000));
+    await evaluateAllNotificationRules();
+    expect(db.created.map((n) => n.assetHostname)).toEqual(["fw-1"]);
+  });
+
+  it("honors a condition tree the same way (the wizard's builder shape)", async () => {
+    db.rules.push(rebootRule({ condition: { op: "and", children: [{ field: "hostname", operator: "contains", value: "fw" }] } }));
+    db.assets.push(asset({ id: "a-fw", hostname: "fw-1" }), asset({ id: "a-sw", hostname: "sw-1" }));
+    db.events.push(rebootEvent("a-fw", "fw-1", 60_000), rebootEvent("a-sw", "sw-1", 30_000));
+    await evaluateAllNotificationRules();
+    expect(db.created.map((n) => n.assetHostname)).toEqual(["fw-1"]);
+  });
+
+  it("a filtered automation does not fire on an event that names no device", async () => {
+    db.rules.push(eventRule({ scope: { assetTypes: ["firewall"] }, cooldownSec: null }));
+    db.events.push(discoverErrorEvent("FMG-1", 60_000));
+    await evaluateAllNotificationRules();
+    expect(db.created).toHaveLength(0);
+  });
+
+  it("`{}` — every automation written before filters existed — still fires about everything", async () => {
+    db.rules.push(rebootRule({}));
+    db.assets.push(asset({ id: "a-fw", hostname: "fw-1", assetType: "firewall" }), asset({ id: "a-sw", hostname: "sw-1" }));
+    db.events.push(rebootEvent("a-fw", "fw-1", 60_000), rebootEvent("a-sw", "sw-1", 30_000));
+    await evaluateAllNotificationRules();
+    expect(db.created.map((n) => n.assetHostname).sort()).toEqual(["fw-1", "sw-1"]);
+  });
+
+  it("`allAssets` fires about everything, including subjects that are not devices", async () => {
+    db.rules.push(eventRule({ scope: { allAssets: true }, cooldownSec: null }));
+    db.events.push(discoverErrorEvent("FMG-1", 60_000));
+    await evaluateAllNotificationRules();
+    expect(db.created).toHaveLength(1);
+  });
+
+  it("change triggers are filtered by the same test", async () => {
+    db.rules.push(eventRule({
+      id: "r-fw-change",
+      trigger: { type: "change", changeType: "firmware_changed" },
+      scope: { assetTypes: ["firewall"] },
+      cooldownSec: null,
+    }));
+    db.assets.push(asset({ id: "a-fw", hostname: "fw-1", assetType: "firewall" }), asset({ id: "a-sw", hostname: "sw-1" }));
+    db.events.push(
+      { ...rebootEvent("a-fw", "fw-1", 60_000), action: "asset.firmware.changed" },
+      { ...rebootEvent("a-sw", "sw-1", 30_000), action: "asset.firmware.changed" },
+    );
+    await evaluateAllNotificationRules();
+    expect(db.created.map((n) => n.assetHostname)).toEqual(["fw-1"]);
   });
 });

@@ -2282,6 +2282,22 @@ async function openAutomationWizard(existing, opts) {
       default: return [];
     }
   }
+  /** The Devices step's one-line lead, which depends on what the trigger can
+   *  actually be filtered BY. This line used to tell an audit-event operator
+   *  that the step was ignored — and it was, silently discarding whatever was
+   *  picked here (business rule 46). It no longer is, so the copy has to say
+   *  what a filter now means for it, including the part that surprises: an
+   *  event about an integration or a user names no device, so a filtered
+   *  automation cannot fire on one. */
+  function step2LeadText() {
+    var t = draft.trigger || {};
+    if (!isTriggerScoped(t)) return "Polaris-host triggers aren’t tied to devices and ignore this filter.";
+    if (t.type === "event") {
+      return "This automation fires only about the devices this filter selects. Audit events that name no device — an integration, a user, the Polaris host — only match while this is set to All assets.";
+    }
+    return "Which devices this automation watches.";
+  }
+
   function step2Html() {
     var scope = draft.scope || {};
     var allAssets = !scope.condition && (scope.allAssets === true || Object.keys(scope).length === 0);
@@ -2289,7 +2305,7 @@ async function openAutomationWizard(existing, opts) {
       ? JSON.parse(JSON.stringify(scope.condition))
       : (allAssets ? { op: "and", children: [] } : CB.legacyScopeToCondition(scope));
     return '<h3 style="margin:0 0 0.25rem">Which devices?</h3>' +
-      '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">Polaris-host and audit-event triggers aren’t tied to assets and ignore this filter.</p>' +
+      '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">' + step2LeadText() + '</p>' +
       '<div class="form-group" style="margin-bottom:0.5rem"><label style="font-weight:600"><input type="checkbox" id="aw-all-assets"' + (allAssets ? " checked" : "") + '> All assets</label>' +
       '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 24px">Uncheck to filter which devices this automation applies to.</p></div>' +
       '<div id="aw-cond-wrap" style="display:' + (allAssets ? "none" : "block") + '">' +
@@ -5945,7 +5961,7 @@ async function openAutomationWizard(existing, opts) {
     var box = document.getElementById("aw-affected");
     if (!box) return;
     if (!isTriggerScoped(draft.trigger)) {
-      box.innerHTML = '<p style="color:var(--color-text-tertiary);font-size:0.85rem">This trigger isn’t tied to devices (Polaris host / audit events).</p>';
+      box.innerHTML = '<p style="color:var(--color-text-tertiary);font-size:0.85rem">This trigger isn’t tied to devices (Polaris host health).</p>';
       return;
     }
     try {
@@ -5955,6 +5971,12 @@ async function openAutomationWizard(existing, opts) {
       var body = { scope: draft.scope, trigger: draft.trigger, reset: draft.reset || undefined };
       if (editing && editing.id) body.id = editing.id;
       var res = await api.automations.preview(body);
+      // Nothing to evaluate (an unfiltered event/change draft): say why rather
+      // than rendering its empty result as "0 device(s) match the filter".
+      if (res.supported === false) {
+        box.innerHTML = '<p style="color:var(--color-text-tertiary);font-size:0.85rem">' + escapeHtml(res.note || "Nothing to preview for this trigger.") + '</p>';
+        return;
+      }
       var matches = res.matches || [];
       var names = matches.slice(0, 100).map(function (m) {
         var carved = m.excludedBy
@@ -5981,7 +6003,13 @@ async function openAutomationWizard(existing, opts) {
         ? '<p style="font-size:0.8rem;margin:0 0 6px">Specificity: <strong>' + escapeHtml(res.specificity.label) + '</strong>' +
           ' <span style="color:var(--color-text-tertiary)">— a more-specific automation watching the same thing takes precedence for the devices it covers.</span></p>'
         : "";
-      box.innerHTML = spec +
+      // An event/change draft answers with a note as well as a list — the list
+      // is who the filter selects, not who is triggering right now, and the
+      // count line alone would read as the latter.
+      var noteLine = res.note
+        ? '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 4px">' + escapeHtml(res.note) + '</p>'
+        : "";
+      box.innerHTML = spec + noteLine +
         '<p style="font-size:0.85rem;margin:0 0 4px">' + countLine + '</p>' +
         carveOutWarningHtml(res.carveOut) +
         (names ? '<div class="table-wrapper" style="max-height:220px;overflow:auto"><table><tbody>' + names + '</tbody></table></div>' +
