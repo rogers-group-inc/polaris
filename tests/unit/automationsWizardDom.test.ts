@@ -2102,6 +2102,68 @@ describe("trigger filter rows", () => {
     expect(() => ruleInputSchema.parse(saved)).not.toThrow();
   });
 
+  it("keeps the interface picker ON the Interface IP address row and saves what it names", async () => {
+    // The interface is INTEGRAL to this field (fieldMeta.integralDimension):
+    // the row compares ONE port's address, so the control that names the port
+    // belongs on it. It shipped with the interface reachable only as a group
+    // filter row, which left the condition row with nothing saying which
+    // interface it meant.
+    await openAtStep3("r-ifip-inline");
+    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifIpAddress");
+    const row = doc.querySelector("#aw-trig-root .scr-row:not([data-filter-row])") as unknown as Element;
+    const ifBox = row.querySelector('.tgl-dim[data-dim="ifNamePattern"]') as unknown as
+      { value: string; getAttribute: (a: string) => string | null };
+    expect(ifBox).toBeTruthy();
+    // Its hint asks which port rather than describing an optional narrowing.
+    expect(ifBox.getAttribute("placeholder")).toContain("which interface");
+    // The other interface fields keep the filter-row shape — an "oper status is
+    // down" rule per pinned port is a legitimate rule, an IP comparison over
+    // every pinned port is not.
+    await openAtStep3("r-ifoper-noinline");
+    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifOperStatus");
+    expect(doc.querySelector('#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim[data-dim="ifNamePattern"]')).toBeFalsy();
+
+    await openAtStep3("r-ifip-inline-save");
+    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifIpAddress");
+    (doc.querySelector("#aw-trig-root .tgl-op") as unknown as { value: string }).value = "!=";
+    (doc.querySelector("#aw-trig-root .tgl-value") as unknown as { value: string }).value = "0.0.0.0";
+    (doc.querySelector('#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim[data-dim="ifNamePattern"]') as unknown as { value: string }).value = "wan2";
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.field).toBe("ifIpAddress");
+    expect(saved.trigger.dimensionFilter).toEqual({ ifNamePattern: "wan2" });
+    expect(() => ruleInputSchema.parse(saved)).not.toThrow();
+  });
+
+  it("re-opens a stored Interface IP address rule with the interface on the row, not as a filter", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...BASE, id: "r-ifip-reopen", name: "stored ifIpAddress",
+      trigger: { type: "asset_state", field: "ifIpAddress", operator: "!=", value: "0.0.0.0", forDurationSec: 0, dimensionFilter: { ifNamePattern: "wan1", hostnamePattern: "GATE-A" } },
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    // The integral dimension is invisible to the lift: the hostname rises into a
+    // filter row, the interface stays where it was authored.
+    const filterDims = Array.from(doc.querySelectorAll("#aw-trig-root .scr-row[data-filter-row] .tgl-dim"))
+      .map((el) => (el as unknown as { getAttribute: (a: string) => string | null }).getAttribute("data-dim"));
+    expect(filterDims).toEqual(["hostnamePattern"]);
+    const inline = doc.querySelector('#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim[data-dim="ifNamePattern"]') as unknown as { value: string };
+    expect(inline.value).toBe("wan1");
+    // And an untouched save round-trips the stored shape either way.
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.dimensionFilter).toEqual({ ifNamePattern: "wan1", hostnamePattern: "GATE-A" });
+  });
+
   it("folds an SD-WAN rule-name row into the sdwan state condition", async () => {
     await openAtStep3("r-filter-sdwan");
     await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:sdwanRuleStatus");

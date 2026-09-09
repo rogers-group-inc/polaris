@@ -389,11 +389,20 @@ describe("ifIpAddress (interface IP address state field)", () => {
     // The builder renders the operator select and the value box off these: the
     // default hint ("e.g. up / down") is wrong for an address, and an ordered
     // comparator over one can only ever read false (compareValue).
-    const meta = (buildSchemaCatalog().fieldMeta as Record<string, { label: string; kind: string; placeholder?: string; equalityOnly?: boolean }>).ifIpAddress;
+    const fieldMeta = buildSchemaCatalog().fieldMeta as Record<string, { label: string; kind: string; placeholder?: string; equalityOnly?: boolean; integralDimension?: string }>;
+    const meta = fieldMeta.ifIpAddress!;
     expect(meta.label).toBe("Interface IP address");
     expect(meta.kind).toBe("dynamic");
     expect(meta.placeholder).toBe("e.g. 0.0.0.0");
     expect(meta.equalityOnly).toBe(true);
+    // The interface is INTEGRAL to this field, which is what keeps its picker on
+    // the condition row instead of leaving it to a group filter row: an address
+    // comparison is about one port, and unnamed it reads "any monitored
+    // interface" — true of every addressed device once a composite folds it per
+    // device. The other interface fields are narrowed by choice, not by need.
+    expect(meta.integralDimension).toBe("ifNamePattern");
+    expect(triggerDimensionApplicable("ifIpAddress", meta.integralDimension!)).toBe(true);
+    for (const f of ["ifOperStatus", "ifAdminStatus", "poeStatus"]) expect(fieldMeta[f]!.integralDimension).toBeUndefined();
   });
 
   it("compares an address the way the resolver hands it over", () => {
