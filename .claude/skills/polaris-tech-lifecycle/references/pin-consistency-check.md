@@ -25,14 +25,37 @@ glob**; `docs/INSTALL.md`, `README.md`, `CLAUDE.md`; and `src/data/platformEol.j
 Globs rather than enumerated lists, so a new setup script or workflow is in scope the moment it
 lands.
 
-## Rules
+## The model: floors and pins
 
 Each family declares the granularity it must agree on (`major` or `major.minor`), its sites, and
-a minimum site count.
+a minimum site count. Every site also carries a **role**:
+
+- **floor** — the minimum the repo requires (`engines.node`, `@types/node`, the accept-checks,
+  `NODE_MINIMUM_MAJOR`, a docs minimum column).
+- **pin** — what it actually installs (the Dockerfiles, winget/MSI, a module stream, CI's
+  `node-version`). This is the default for anything not marked `accept-range`.
+
+The checker asserts **floors agree with floors, pins agree with pins, and floor ≤ pin.** It does
+not demand one number per family.
+
+That last point was learned the hard way. The first version asserted a single number, and the
+moment Node became 22-floor / 24-pinned it reported a false failure listing 26 sites. There is no
+correct single number there: claiming 24 as the floor would lock a host on a perfectly good 22
+out of its next update via npm's engine warning, and claiming 20 would be a lie about what the
+dependency tree needs. A checker that forces a choice between lying in `engines.node` and lying
+in the Dockerfile is worse than no checker, because the way out is to disable it.
+
+**A comment is not a declaration site.** Whole-line comments are stripped before matching.
+`setup-rhel.sh` explains its module reset with "nodejs:20 fails with cannot enable multiple
+streams otherwise" directly above `dnf module enable -y nodejs:24`, and matching that comment
+made the family look self-inconsistent. Trailing comments on a line that also carries a real
+declaration are kept, so `node-version: 24  # bumped 2026-09` still reads as 24.
+
+## Rules
 
 | Rule | Asserts | On failure |
 |---|---|---|
-| `node-major` | one Node major across all 23 sites | fail |
+| `node-major` | the Node floors agree, the pins agree, and floor ≤ pin | fail |
 | `go-pin` | `agent/go.mod`'s directive matches every accept-regex floor, both winget ids, both MSI URLs and the prose | fail |
 | `nginx-floor` | the Linux accept-regex floor matches the documented `≥` claim | fail |
 | `postgres-major` | one major across the units, the Windows installer/service/NSSM trio, the image tags and the docs | fail |
@@ -54,7 +77,7 @@ a checker should force. Warning keeps them visible without making the gate un-pa
 
 | Check | What it reports |
 |---|---|
-| `node-major` extra | The install scripts accept a Node major that nothing installs, so a host that already has it is accepted and never tested. |
+| `node-major` extra | The install scripts accept a Node major that nothing installs, so a host that already has it is accepted and never tested. Quiet since the 2026-09 bump made 24 both the accepted ceiling and the pin; it fired for the whole time the scripts accepted 22 while every pin was 20. |
 | `postgres-source` | `deploy/setup-rhel.sh` installs unversioned AppStream `postgresql-server` and runs `postgresql-setup --initdb`, yielding `postgresql.service` — while the units the same script installs require `postgresql-15.service` and `docs/INSTALL.md` documents PGDG. The script cannot satisfy its own units. |
 | `unversioned-install` | A site that installs a distro default instead of a named version, so there is no number for the equality check to compare. Today: both Ubuntu scripts' `default-jre-headless`. |
 | `dataset-shape` staleness | `src/data/platformEol.json` last reviewed over 120 days ago. |
