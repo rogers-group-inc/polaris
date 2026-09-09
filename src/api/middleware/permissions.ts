@@ -272,7 +272,7 @@ export function callerIsAdminEquivalent(req: Request): boolean {
 }
 
 /**
- * Business rule 47 — nobody may hand out authority they do not hold.
+ * Business rule 48 — nobody may hand out authority they do not hold.
  *
  * `users:write` and `roles:write` are both a rung BELOW admin-equivalent
  * (users=fullwrite AND roles=fullwrite), and both used to be enough to

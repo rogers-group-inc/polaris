@@ -523,7 +523,7 @@ The scope test is in memory against the row the tail already primed for the aler
 
 ---
 
-## Rule 47 — Nobody hands out authority they do not hold
+## Rule 48 — Nobody hands out authority they do not hold
 
 **The invariant.** Admin-equivalence is `users=fullwrite AND roles=fullwrite`. A caller who does not hold it may not create it — not on a role, not on a user. `assertNoPrivilegeEscalation` refuses with a 403 at `POST /roles`, `PUT /roles/:id`, `POST /users` and `PUT /users/:id/role` whenever the target permission set is admin-equivalent and the caller's own is not.
 

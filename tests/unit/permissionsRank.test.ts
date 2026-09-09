@@ -67,7 +67,7 @@ describe("pickHighestPrivilegeRoleId", () => {
 });
 
 /**
- * Business rule 47 — nobody hands out authority they do not hold.
+ * Business rule 48 — nobody hands out authority they do not hold.
  *
  * users:write and roles:write both sit a rung BELOW admin-equivalent, and both
  * used to be enough to manufacture an admin (create an account on an admin
