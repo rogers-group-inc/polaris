@@ -8,7 +8,8 @@ This is the artifact that turns a major bump from a grep hunt into a checklist.
 A **family** is one number (a Node major, the Go pin) and every **declaration site** that
 states it. A site is anything that would keep provisioning or accepting the old version if you
 forgot it — which includes docs: **a doc claim is a declaration site, not commentary.** When
-`docs/INSTALL.md` says "Node.js 20+" three times, those are three sites.
+`docs/INSTALL.md` carries three per-platform `Node.js 24 (LTS)` install sections, those are
+three sites.
 
 Site kinds:
 
@@ -18,43 +19,68 @@ Site kinds:
   question (what have we actually tested?).
 - **prose** — a version claim in a doc or a script header. Just as load-bearing, easier to miss.
 
-`npm run check:versions` reads all of this and asserts each family agrees. If you edit a pin,
-run it before you commit. If you add a declaration site, add it to the checker — the
-`## Family index` table at the end of this file is the row set the script mirrors.
+Every site also has a **role**, and this is the part that matters:
+
+- **floor** — the minimum the repo requires: `engines.node`, `@types/node`, the accept-checks,
+  `NODE_MINIMUM_MAJOR`, a docs table's minimum column.
+- **pin** — what it actually installs: the Dockerfiles, winget/MSI versions, a module stream,
+  `node-version` in CI.
+
+`npm run check:versions` asserts the floors agree with each other, the pins agree with each
+other, and the floor never exceeds the pin. It deliberately does **not** demand a single number
+per family, because a floor and a pin answer different questions — see *Why two numbers* under
+Node. Run it before you commit any pin edit. If you add a declaration site, add it to the
+checker; the `## Family index` table at the end of this file is the row set the script mirrors.
 
 ## Node.js
 
-Currently **20** across 23 sites.
+**Floor 22, pinned 24**, across 22 checked sites. Those are two different numbers on purpose —
+see *Why two numbers* below.
 
-| Site | Form | Kind |
+| Site | Form | Role |
 |---|---|---|
-| `package.json` | `engines.node` `">=20.0.0"` | accept-range |
-| `package.json` | `@types/node` `"^20.14.2"` | pin |
-| `Dockerfile` | `FROM node:20-bookworm` (builder) and `node:20-bookworm-slim` (runtime) | pin |
-| `Dockerfile.dev` | `FROM node:20-bookworm` | pin |
-| four Linux setup scripts | `[[ "$(node -v)" == v20* \|\| "$(node -v)" == v22* ]]` | accept-range |
-| `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y nodejs:20` | pin |
-| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | NodeSource `deb.nodesource.com/node_20.x` | pin |
-| two Windows setup scripts | `(node -v) -match "^v(20\|22)\."` | accept-range |
-| two Windows setup scripts | `winget install --id OpenJS.NodeJS.LTS --version 20.19.0` | pin |
-| two Windows setup scripts | `nodejs.org/dist/v20.19.0/node-v20.19.0-x64.msi` fallback | pin |
-| both workflow files | `node-version: 20` (three occurrences) | pin |
-| `docs/INSTALL.md` | "Node.js 20+" — three separate install-section headings | prose |
-| `README.md` | "Install Node.js 20+" and the setup-script summary | prose |
+| `package.json` | `engines.node` `">=22.12.0"` | floor |
+| `package.json` | `@types/node` `"^22.20.1"` | floor |
+| `src/utils/platformVersions.ts` | `NODE_MINIMUM_MAJOR` | floor |
+| four Linux setup scripts | `[[ "$(node -v)" == v24* \|\| "$(node -v)" == v22* ]]` | floor (22) |
+| two Windows setup scripts | `(node -v) -match "^v(22\|24)\."` | floor (22) |
+| `docs/INSTALL.md` | the **Supported platform versions** table, minimum column | floor |
+| `README.md` | the system-requirements table, minimum column | floor |
+| `Dockerfile` | `FROM node:24-bookworm` (builder) and `node:24-bookworm-slim` (runtime) | pin |
+| `Dockerfile.dev` | `FROM node:24-bookworm` | pin |
+| `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y nodejs:24` | pin |
+| `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | NodeSource `deb.nodesource.com/node_24.x` | pin |
+| two Windows setup scripts | `winget install --id OpenJS.NodeJS.LTS --version 24.14.1` | pin |
+| two Windows setup scripts | `nodejs.org/dist/v24.14.1/node-v24.14.1-x64.msi` fallback | pin |
+| both workflow files | `node-version: 24` (three occurrences) | pin |
+| `docs/INSTALL.md` | three `### 3. Node.js 24 (LTS)` install sections | prose pin |
 | `CLAUDE.md` | the tech-stack table row | prose |
+| `deploy/upgrade-node.sh` | the existing-host upgrade path | pin |
 
-**Live divergences.**
+**Why two numbers.** The floor is what the dependency tree actually requires — `pg-boss` needs
+22.12 — and the pin is what every install path provisions. Keeping them apart is deliberate: if
+`engines.node` claimed 24, an install already running a perfectly good 22 would be locked out of
+its next update by npm's engine warning, for no reason. So `check:versions` asserts the floors
+agree with each other, the pins agree with each other, and the floor never exceeds the pin. It
+does **not** demand one number, because that would force a choice between lying in `engines.node`
+and lying in the Dockerfile.
 
-- The Linux scripts accept `v22`, and so do the Windows accept-checks, but **nothing installs
-  22**. A host that already has 22 passes the gate and runs a combination CI never exercised.
-  `check:versions` reports this as a warning.
-- Windows pins the exact build `20.19.0`. "Node 20+" is therefore false on Windows past that
-  patch, and the day Node 20 goes EOL these scripts keep installing an EOL runtime on every
-  fresh host with nothing objecting. This is the single most likely way Polaris ends up
-  provisioning end-of-life software, and it is why the Windows scripts appear in the
-  `node-major` playbook's file list.
+**Live divergences and standing facts.**
+
+- **A host on the floor has under a year of runway.** Node 22 ends 2027-04-30. The accept-checks
+  tolerate it, nothing installs it, and nothing tests it — CI runs 24.
 - `engines.node` is **advisory**: there is no `.npmrc` with `engine-strict=true`, so npm warns
   and installs anyway. The accept-regexes are the only real gate.
+- **Windows pins an exact build** (`24.14.1`), so "Node 24" is false there past that patch, and
+  the day 24 goes EOL those scripts keep installing it on every fresh host with nothing
+  objecting. This is still the single most likely way Polaris ends up provisioning
+  end-of-life software, which is why the Windows scripts are in the `node-major` playbook's file
+  list. The 2026-09 bump from 20 is the worked example: it initially missed `engines.node`,
+  `Dockerfile.dev`, both README tables and `node-version:` in CI — so the suite went green
+  against a runtime no supported install had.
+- `@types/node` tracks the **floor**, not the pin, so the compiler cannot green-light an API the
+  oldest supported runtime lacks. The 2026-09 bump left it on 20 after moving `engines` to 22;
+  `check:versions` is what caught that.
 
 ## PostgreSQL
 
@@ -215,15 +241,18 @@ redundant (harmless but misleading) or insufficient (a real hole). Re-verify wit
 
 The row set `scripts/check-versions.mjs` mirrors. These drift together or not at all.
 
-| Family | Agree on | Sites | Warn-only companion |
+Site counts move whenever a declaration site is added, so treat them as "roughly this many",
+not as a figure to keep in step by hand — `npm run check:versions` prints the live count.
+
+| Family | Agree on | Floor → pin | Warn-only companion |
 |---|---|---|---|
-| `node-major` | major | 23 | accept-range exceeds every pin |
-| `go-pin` | major.minor | 12 | — |
-| `nginx-floor` | major.minor | 5 | — |
-| `postgres-major` | major | 12 | `postgres-source` (RHEL AppStream vs PGDG) |
-| `java-major` | major | 6 | `unversioned-install` (Ubuntu `default-jre-headless`) |
-| `jsign-pin` | major.minor | 5 | — |
-| `dataset-shape` | n/a | — | dataset older than 120 days |
+| `node-major` | major | 22 → 24 | — (the accept-range gap closed when 24 became the pin) |
+| `go-pin` | major.minor | 1.22 | — |
+| `nginx-floor` | major.minor | 1.25 | — |
+| `postgres-major` | major | 15 | `postgres-source` (RHEL AppStream vs PGDG) |
+| `java-major` | major | 17 | `unversioned-install` (Ubuntu `default-jre-headless`) |
+| `jsign-pin` | major.minor | 7.4 | — |
+| `dataset-shape` | n/a | n/a | dataset older than 120 days |
 
 Not families, on purpose: the CI-has-no-TimescaleDB gap (a standing truth, not drift — a check
 that can never pass is noise) and the floating tags (reported informationally, since there is

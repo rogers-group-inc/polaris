@@ -1,6 +1,6 @@
 ---
 name: polaris-tech-lifecycle
-description: "Version lifecycle of the Polaris tech stack: the committed end-of-life dataset and its refresh procedure, the version-pin inventory (every Node / PostgreSQL / TimescaleDB / Go / nginx / Java / OS / npm-major pin and the file it lives in, as a lockstep table), one ordered upgrade playbook per technology with its blast radius, the check:versions pin-consistency guard, and the npm + Go dependency-audit procedure. Load when a task says EOL, end-of-life, end of support, supported until, minimum version, unsupported, version pin, outdated dependency, npm audit, npm outdated, dependabot, overrides, or upgrade/bump a runtime — Node 20 to 22, PostgreSQL 15 to 16/17, Go 1.22, Prisma 7, Express 5, TimescaleDB, nginx mainline, RHEL 9, Ubuntu 22.04, node:20-bookworm, latest-pg15 — and whenever a change edits engines.node, agent/go.mod, a version pin in a Dockerfile or a deploy/setup-* script, an image tag in a compose file, or node-version in a workflow."
+description: "Version lifecycle of the Polaris tech stack: the committed end-of-life dataset and its refresh procedure, the version-pin inventory (every Node / PostgreSQL / TimescaleDB / Go / nginx / Java / OS / npm-major pin and the file it lives in, as a lockstep table), one ordered upgrade playbook per technology with its blast radius, the check:versions pin-consistency guard, and the npm + Go dependency-audit procedure. Load when a task says EOL, end-of-life, end of support, supported until, minimum version, unsupported, version pin, outdated dependency, npm audit, npm outdated, dependabot, overrides, or upgrade/bump a runtime — Node 22 to 24, PostgreSQL 15 to 16/17, Go 1.22, Prisma 7, Express 5, TimescaleDB, nginx mainline, RHEL 9, Ubuntu 24.04, node:24-bookworm, latest-pg15 — and whenever a change edits engines.node, agent/go.mod, a version pin in a Dockerfile or a deploy/setup-* script, an image tag in a compose file, or node-version in a workflow."
 ---
 
 # Polaris tech-stack lifecycle
@@ -52,16 +52,21 @@ in-app Platform Lifecycle card reads it and never writes it; refreshing it is a 
   `@types/node`), both Dockerfiles, all six setup scripts, both workflow files, `docs/INSTALL.md`,
   `README.md` and the `CLAUDE.md` tech-stack row together — or one install path silently keeps
   provisioning the old runtime. `npm run check:versions` is what proves you got them all.
-- **A doc claim is a declaration site, not commentary.** "Node.js 20+" in `docs/INSTALL.md`
-  (three separate headings), `README.md` and the `CLAUDE.md` tech-stack row are part of the
-  family and are checked.
+- **A doc claim is a declaration site, not commentary.** The per-platform `Node.js 24 (LTS)`
+  headings in `docs/INSTALL.md`, its Supported platform versions table, both `README.md` tables
+  and the `CLAUDE.md` tech-stack row are part of the family and are checked.
+- **A family has two numbers: a floor and a pin.** Node is `>=22.12` in `engines.node` but 24 in
+  every Dockerfile and install script, on purpose — claiming 24 as the floor would lock a host
+  running a perfectly good 22 out of its next update. `check:versions` asserts floors agree with
+  floors, pins with pins, and floor <= pin; it never demands one number.
 - **`engines.node` is advisory.** There is no `.npmrc` with `engine-strict=true`, so npm warns
   and installs anyway. The setup scripts' accept-regexes are the only real gate, and they accept
-  a *range* while the pins install one version.
+  a *range* (22 or 24) while every pin installs 24.
 - **Windows is the tightest pin and goes stale first.** The Windows setup scripts hard-pin an
   exact Node build, `GoLang.Go.1.22`, `PostgreSQL.PostgreSQL.15` and `Microsoft.OpenJDK.17`,
-  while the Linux scripts accept ranges. "Node 20+" is false on Windows past the pinned patch,
-  and the day a pinned runtime goes EOL those scripts keep installing it on every fresh host.
+  while the Linux scripts accept ranges. A stated "Node 24" is therefore false on Windows past
+  the pinned patch, and the day a pinned runtime goes EOL those scripts keep installing it on
+  every fresh host with nothing objecting.
 - **"Go 1.22+" was asserted for a long time without being enforced.** `goAvailable()` in
   `src/services/agentBuildService.ts` historically only checked that `go version` *ran*; a host
   with an older toolchain passed the preflight and failed later inside `go build`. Keep

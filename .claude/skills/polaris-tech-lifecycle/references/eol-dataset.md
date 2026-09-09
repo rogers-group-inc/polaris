@@ -20,11 +20,16 @@ not help here — the MIBs keep the counter non-zero.
 Rejected alternatives, recorded so nobody re-litigates them:
 
 - **A JSON `import`.** `tsconfig.json` has no `resolveJsonModule`; enabling it changes
-  program-wide resolution for a repo this size. Whether `tsc` emits the JSON into `outDir` is
-  version-dependent. And `module: NodeNext` plus `"type": "module"` means the runtime needs an
-  import attribute — the `with` form landed in Node 20.10 and the `assert` form it replaced was
-  removed in Node 22, so there is no single spelling that runs across the whole declared
-  `engines.node` range.
+  program-wide resolution for a repo this size, and whether `tsc` emits the JSON into `outDir`
+  is version-dependent — which is the failure that matters, because the container ships only
+  `dist/`.
+
+  One leg of this argument has expired and is recorded so the reasoning stays honest: the
+  original rejection also leaned on import attributes, since the `with` form landed in Node
+  20.10 while the `assert` form it replaced was removed in 22, leaving no single spelling that
+  ran across a `>=20` range. With the floor now at 22.12 that is no longer true — `with` works
+  everywhere we support. The `resolveJsonModule` and emit objections stand on their own, so the
+  decision is unchanged, but a future revisit should weigh only those two.
 - **Somewhere under `docs/`.** `copy-build-assets.mjs` only mirrors `src/<dir>` → `dist/<dir>`,
   so anything outside `src/` would simply be absent in a container.
 
