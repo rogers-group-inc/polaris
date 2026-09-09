@@ -38,6 +38,14 @@ A fresh worktree has no `.env`, no `node_modules` and no `src/generated/prisma`.
 5. A wall of implicit-`any` typecheck errors or "81 files failed, 0 tests" in a brand-new
    worktree means the generated client is missing, not that the change is broken — run
    `npx prisma generate` (with `DATABASE_URL` set to anything well-formed) first.
+6. **Nothing tells you step 2 was skipped.** The worktrees live INSIDE the main checkout
+   (`<repo>/.claude/worktrees/<slug>`), so Node's `node_modules` lookup walks up the tree and
+   finds the main checkout's — `npm run lint`, `npm run typecheck` and `npx vitest` all run in
+   a worktree with no `node_modules` of its own, and none of them complain. `src/generated/prisma`
+   is resolved as a path INSIDE the worktree, though, so the only symptom of an unprepared
+   worktree is step 5's wall of ~900 implicit-`any` errors, which reads like the change broke
+   the build. Verified 2026-09-09: `npm run typecheck` in a worktree with zero local packages
+   ran `tsc` from up-tree and reported 907 errors, all of them the absent client.
 
 ## Line endings and the docs
 
