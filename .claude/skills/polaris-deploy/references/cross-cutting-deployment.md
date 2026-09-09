@@ -1,6 +1,6 @@
 ## cross-cutting/deployment
 
-**What it is:** The artifacts an operator touches to install, update, or run Polaris on a host: `deploy/setup-{rhel,ubuntu,windows}{,-nodb}.{sh,ps1}` (six fresh-install scripts; Linux variants install split-role + nginx + self-signed cert in one shot since Phase 3), `deploy/migrate-to-nginx.sh` (legacy-install cutover script, used by pre-Phase-3 hosts that were originally provisioned with the now-removed `polaris.service`), `deploy/upgrade-node.sh` (one-time Node runtime cutover on an existing host — same class of operator-run, service-stopping script as `migrate-to-nginx.sh`, and out of the in-app updater's reach for the same reason: the app user may not install system packages), `deploy/update-{linux,windows}.{sh,ps1}` (host-side updaters), `deploy/polaris-{web,monitor@,discovery,migrate}.service` + `polaris.target` (systemd units), `deploy/nginx/polaris.conf` + `polaris-nginx-dependency.conf` (nginx reference config + polaris-web Wants=nginx drop-in), `Dockerfile`, `docker-compose.yml` (gained an nginx service in Phase 3), `.env.example`, `docs/INSTALL.md`, and the first-run setup wizard at `src/setup/setupRoutes.ts`. None of these are read by the running app at request time — they shape how the app gets onto a host and what state it expects to find. See CLAUDE.md "Deployment & Updates" and the "Before any push, audit deployment surfaces" rule.
+**What it is:** The artifacts an operator touches to install, update, or run Polaris on a host: `deploy/setup-{rhel,ubuntu,windows}{,-nodb}.{sh,ps1}` (six fresh-install scripts; Linux variants install split-role + nginx + self-signed cert in one shot since Phase 3), `deploy/migrate-to-nginx.sh` (legacy-install cutover script, used by pre-Phase-3 hosts that were originally provisioned with the now-removed `polaris.service`), `deploy/upgrade-node.sh` (one-time Node runtime cutover on an existing host — same class of operator-run, service-stopping script as `migrate-to-nginx.sh`, and out of the in-app updater's reach for the same reason: the app user may not install system packages), `deploy/update-{linux,windows}.{sh,ps1}` (host-side updaters), `deploy/polaris-{web,monitor@,discovery,migrate}.service` + `polaris.target` (systemd units), `deploy/nginx/polaris.conf` + `polaris-nginx-dependency.conf` (nginx reference config + polaris-web Wants=nginx drop-in), `Dockerfile`, `docker-compose.yml` (gained an nginx service in Phase 3), `.env.example`, `docs/INSTALL.md`, the first-run setup wizard at `src/setup/setupRoutes.ts`, and `.github/workflows/docker-publish.yml` — which builds and publishes the GHCR image the Docker/Unraid install path pulls, and is therefore a deployment surface even though no operator runs it (see "How the container image is published" below). None of these are read by the running app at request time — they shape how the app gets onto a host and what state it expects to find. See CLAUDE.md "Deployment & Updates" and the "Before any push, audit deployment surfaces" rule.
 
 **Writers** (changes in `src/` that the deployment surface must mirror):
 - **New OS-level binary the app shells out to** — decide FIRST whether it is required or optional, because that decision is the whole design. `fping` (the ICMP packet-loss sweep AND, since 2026-09, the ICMP status probe — both via `utils/burstPing.ts`) is OPTIONAL: it lives in EPEL on RHEL and has no Windows build at all, so a hard dependency would either force a third-party repo onto an enterprise host or drop a supported platform. It therefore ships as an abstraction with two backends, the setup scripts install it **best-effort and never fail on it** (`--no-epel` opts out of the RHEL repo step), the Windows scripts print a note saying which path they are on, and `Dockerfile` / `Dockerfile.dev` install it outright — dev included, so a developer exercises the SAME backend production does instead of silently testing the fallback. Surfaces to update in lockstep: the four Linux `deploy/setup-*.sh`, the two `setup-windows*.ps1`, both Dockerfiles, `docs/INSTALL.md`, and the Tech Stack row in CLAUDE.md. A binary whose absence changes THROUGHPUT belongs here; one whose absence changes CORRECTNESS should be a hard dependency with a preflight check instead. A third case: a binary whose VERSION must match a server's (`pg_dump` refuses a server newer than itself) is resolved by that version — `utils/pgClientTools.ts` in the app, `resolve_pg_tool` in `deploy/update-linux.sh` — and verified with `--version` before it is trusted, never spawned by bare name and never guarded by `command -v` alone (rule 47; prod ran a PostgreSQL 13 client in front of a 15 server for months while every presence check passed).
@@ -103,6 +103,34 @@ guessed at otherwise.
 **What none of this can tell you:** SELinux behaviour, firewalld, the nginx front end, real disk
 layout, or anything about an upgrade of an existing host. A scratch VM is still the only way to
 sign off a full fresh install.
+
+## How the container image is published, and what guards it
+
+The image half of "how Polaris gets onto a host" is built by
+`.github/workflows/docker-publish.yml` — the third install path alongside the setup scripts and
+the in-app updater, and the one with no operator in the loop. It fires on a push to `main` and
+on a `v*` tag, runs `test` → `integration` → `build`, and pushes to
+`ghcr.io/<repo>` with a build-provenance attestation. `:latest` is published only from the
+default branch; tags also produce semver and short-SHA tags.
+
+Three properties are load-bearing rather than incidental, all added 2026-09:
+
+- **Every `uses:` is pinned to a 40-hex commit SHA with the version in a trailing comment**, not
+  to a tag. The `build` job holds `packages: write` + `id-token: write`, which is enough to
+  publish a signed image under our own name, and a tag is mutable — whoever controls an action's
+  repository could re-point it. Dependabot rewrites SHA pins and their comments, so **a PR that
+  swaps a SHA back to a bare tag is a regression that reads like an update.**
+- **A `v*` tag is refused unless it is reachable from the default branch.** Branch protection
+  does not cover tag creation, so without this anyone with write access could tag an unreviewed
+  commit and have it published *and attested*. The check asks
+  `repos/…/compare/<default>...<sha>` and accepts only `identical` or `behind`.
+- **`persist-credentials: false` on every checkout.** No job here pushes to the repository, so
+  the token must not be left in `.git/config` — which is also why the tag check uses the API
+  instead of a local `git fetch`: there is deliberately nothing to authenticate one with.
+
+The Dependabot side of this (grouping, what is ignored, how to resolve a new pin) lives in
+`polaris-tech-lifecycle` → dependency-audit.md. `npm run check:versions` scans these files by
+glob for `node-version:`, which is a Node pin and moves with that family, never with an action bump.
 
 **Related:** `cross-cutting/polaris-agent` (Go-version pin, agent binary distribution path under `data/agents/<version>/`).
 

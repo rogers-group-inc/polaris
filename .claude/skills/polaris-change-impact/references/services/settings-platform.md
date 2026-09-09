@@ -500,13 +500,14 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** In-app software update check, availability detection (Docker vs git checkout), update application pipeline (backup→pull→npm ci→prisma generate→tsc→migrate→restart), and progress tracking.
 
-**Public API:** `initUpdateStatus`, `getUpdateStatus`, `isUpdateMechanismAvailable`, `clearUpdateStatus`, `checkForUpdates`, `applyUpdate`, `getRecentCommits`, `restartService`.
+**Public API:** `initUpdateStatus`, `getUpdateStatus`, `isUpdateMechanismAvailable`, `clearUpdateStatus`, `checkForUpdates`, `applyUpdate`, `getRecentCommits`, `restartService`, plus the two pure shell-safety predicates `isSafeGitRef` / `isSafeRepoUrl` (exported for tests/unit/updateTrain.test.ts).
 
 **Cross-service deps:** `services/backupService.ts` (`createBackup` for the pre-update dump), `services/eventLogService.ts` (the `server.update.*` audit trail). Spawns git / npm / the project's own Prisma CLI by path (`PRISMA_CLI`, never `npx`), reads/writes `.update-status.json`.
 
 **Used by:** `src/api/routes/serverSettings.ts,1143,1151,1159 — Application Updates card endpoints`; `src/api/routes/serverSettings.ts — POST /restart` (Capacity Advisor "Restart Polaris to apply" button uses `restartService` standalone, without the update pipeline); `src/jobs/updateCheck.ts,31 — hourly check job`. ~7 call sites.
 
 **Invariants:**
+- **Everything in this file shells out through `execAsync`, which runs a SHELL — so any value interpolated into a command is an injection site, and the refs here are NOT ours.** `latestReleaseTag()` reads tag names out of the update repository, and `POLARIS_UPDATE_REPO` exists so that repository can be a fork or an internal mirror; `resolveDefaultBranch()` reads a branch name the remote chose via `origin/HEAD`. Git's own `check-ref-format` permits `;`, `&`, `|`, `$`, a backtick and both quote characters in a ref, so a tag named ``v1.0.0`id` `` was legal, and it reached `git checkout --detach <tag>` on the highest-blast-radius path in the repo. **Quoting is not the fix** — `$(…)` and backticks expand inside double quotes on /bin/sh, which is what the `"${desired}"` around the repo URL made look safe. `isSafeGitRef()` (allowlisted charset, no `..`, which would also re-point the `HEAD..<ref>` range reads) and `isSafeRepoUrl()` gate the three sources: an unsafe tag is skipped for the next-highest, an unsafe default branch falls back to main/master, an unsafe `POLARIS_UPDATE_REPO` is ignored in favour of the existing origin. All three log an error — silently returning null reads to an operator as "no releases yet". **Validate at the source, so every downstream interpolation is safe by construction**; adding a new git shell-out means asking where its ref came from.
 - Update mechanism disabled in Docker (`/.dockerenv` present, `.git/` absent) or when no `.git/` checkout exists; `getUpdateStatus()` returns `state: "disabled"` with a human-readable reason.
 - Status persists in `.update-status.json` at APP_DIR root; survives restarts.
 - applyUpdate() runs background; only one apply in flight at a time (`_applying` flag).

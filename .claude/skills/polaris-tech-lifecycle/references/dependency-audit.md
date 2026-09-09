@@ -125,6 +125,21 @@ forever and trains everyone to ignore Dependabot.
 **github-actions at `/`**, weekly, one grouped PR. The pinned `actions/*` set rots invisibly.
 Expect this to **not** touch `node-version` — that is a Node pin and belongs to `check:versions`.
 
+**Every `uses:` is pinned to a 40-hex commit SHA with the version in a trailing comment**
+(`actions/checkout@3d3c42e5… # v7.0.1`), never to a tag — since 2026-09. A tag is mutable, and
+`docker-publish.yml`'s build job holds `packages: write` + `id-token: write`, which is enough to
+publish a provenance-signed image under our own name; whoever controls an action's repository
+could re-point `v4` at new code and reach that. Dependabot understands the SHA-plus-comment form
+and rewrites both halves, so this costs nothing to keep current — but **a PR that replaces a SHA
+with a bare tag is a regression, not an update.** Resolve a new pin from the release tag, e.g.
+`gh api repos/<owner>/<action>/tags --jq '.[] | select(.name=="v7.0.1") | .commit.sha'`.
+
+The same workflow refuses to build a `v*` **tag that is not reachable from the default branch**.
+Branch protection does not cover tag creation, so without it anyone with write access could tag
+an unreviewed commit and have it published and attested. The check asks the API
+(`repos/…/compare/<default>…<sha>`, accepting only `identical` or `behind`) rather than doing a
+local `git fetch`, because the checkout deliberately keeps no credentials to fetch with.
+
 **docker at `/`**, weekly, with **node majors ignored**. Dependabot reads Dockerfile `FROM` lines
 and would otherwise offer `node:24-bookworm` → the next major: a whole-family platform bump
 disguised as a one-line PR. Ignoring the major turns it into a useful "20.x moved" signal instead

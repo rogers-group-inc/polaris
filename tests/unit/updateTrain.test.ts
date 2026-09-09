@@ -14,7 +14,7 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-import { getUpdateTrain, setUpdateTrain } from "../../src/services/updateService.js";
+import { getUpdateTrain, setUpdateTrain, isSafeGitRef, isSafeRepoUrl } from "../../src/services/updateService.js";
 import { prisma } from "../../src/db.js";
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -67,5 +67,81 @@ describe("setUpdateTrain", () => {
     expect(upsert).toHaveBeenCalledWith(
       expect.objectContaining({ update: { value: "nightly" } }),
     );
+  });
+});
+
+/**
+ * updateService shells out through `exec`, and the refs it interpolates are
+ * read OUT OF THE UPDATE REPOSITORY — which POLARIS_UPDATE_REPO can point at a
+ * fork or mirror. Git's own check-ref-format allows `;`, `&`, `|`, `$`, a
+ * backtick and both quotes in a ref name, so "git accepted it" is not the same
+ * as "safe to interpolate".
+ */
+describe("isSafeGitRef", () => {
+  it("accepts the branch and tag names that actually occur", () => {
+    for (const ref of [
+      "main", "master", "origin/HEAD", "origin/main",
+      "v1.0.0", "v0.17.2", "1.2", "release/2026-09", "feature_x", "a.b-c/d",
+    ]) {
+      expect(isSafeGitRef(ref), ref).toBe(true);
+    }
+  });
+
+  it("rejects every ref that would reach the shell as a command", () => {
+    for (const ref of [
+      "v1.0.0;id",
+      "v1.0.0`id`",
+      "v1.0.0$(id)",
+      "v1.0.0 && id",
+      "v1.0.0|id",
+      'v1.0.0"',
+      "v1.0.0'",
+      "v1.0.0\nid",
+      "v1.0.0 id",
+      "$(id)",
+      "-v1.0.0",     // leading dash would be read as an option, not a ref
+      "",
+    ]) {
+      expect(isSafeGitRef(ref), ref).toBe(false);
+    }
+  });
+
+  it("rejects `..`, which would also re-point the HEAD..<ref> range reads", () => {
+    expect(isSafeGitRef("v1..0")).toBe(false);
+    expect(isSafeGitRef("../../etc/passwd")).toBe(false);
+  });
+
+  it("bounds the length", () => {
+    expect(isSafeGitRef("v" + "1".repeat(500))).toBe(false);
+  });
+});
+
+describe("isSafeRepoUrl", () => {
+  it("accepts the clone-URL forms an operator would set", () => {
+    for (const url of [
+      "https://github.com/rogers-group-inc/polaris.git",
+      "https://git.example.internal:8443/team/polaris.git",
+      "ssh://git@example.internal/team/polaris.git",
+      "git@github.com:rogers-group-inc/polaris.git",
+      "git://example.internal/polaris.git",
+    ]) {
+      expect(isSafeRepoUrl(url), url).toBe(true);
+    }
+  });
+
+  it("rejects values the shell would act on inside the double quotes", () => {
+    // Double-quoting does not save this: $(…) and backticks expand inside them.
+    for (const url of [
+      'https://example.com/x.git"; id; #',
+      "https://example.com/$(id).git",
+      "https://example.com/`id`.git",
+      "https://example.com/x.git; id",
+      "https://example.com/x.git && id",
+      "https://example.com/x.git | id",
+      "https://example.com/a b.git",
+      "",
+    ]) {
+      expect(isSafeRepoUrl(url), url).toBe(false);
+    }
   });
 });
