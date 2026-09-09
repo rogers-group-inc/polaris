@@ -311,6 +311,18 @@ chown "root:$NGINX_GROUP" "$CERT_DIR/cert.pem" "$CERT_DIR/key.pem"
 chmod 0640                 "$CERT_DIR/cert.pem" "$CERT_DIR/key.pem"
 
 # ─── 6. Configure environment ────────────────────────────────────────────────
+# Node ignores the OS trust store, so on a network that re-signs HTTPS with an
+# internal CA every npm call fails with UNABLE_TO_GET_ISSUER_CERT_LOCALLY while
+# the code-pull step in the same script succeeds (that path goes through
+# OpenSSL, which DOES read the system store). Point Node at the system bundle
+# so the app's outbound calls and the in-app updater's `npm ci` both trust
+# whatever this host trusts. NODE_EXTRA_CA_CERTS *extends* Node's built-in
+# roots rather than replacing them, so setting it is harmless on a network that
+# does not intercept.
+NODE_CA_BUNDLE=""
+for _candidate in /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/ssl/certs/ca-certificates.crt; do
+  if [[ -f "$_candidate" ]]; then NODE_CA_BUNDLE="$_candidate"; break; fi
+done
 if [[ ! -f "$APP_DIR/.env" ]]; then
   info "Creating .env from template..."
   SESSION_SECRET=$(openssl rand -base64 32)
@@ -346,6 +358,11 @@ POLARIS_PUBLIC_URL=${PUBLIC_URL}
 # discovery) process group. Must match the number of polaris-monitor@N units
 # enabled below; raise if you scale monitor replicas later.
 POLARIS_MONITOR_REPLICAS=${MONITOR_REPLICAS}
+# Extra CA bundle for Node's TLS (see .env.example for the full rationale).
+# Detected from this host's trust store at install time. Add your internal root
+# to the OS store (update-ca-trust / update-ca-certificates) and it is picked
+# up from here — this points at the bundle, it does not import anything itself.
+NODE_EXTRA_CA_CERTS=${NODE_CA_BUNDLE}
 ENVFILE
   chown "$APP_USER:$APP_GROUP" "$APP_DIR/.env"
   chmod 600 "$APP_DIR/.env"

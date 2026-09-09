@@ -69,6 +69,38 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; }
 step()  { echo -e "${CYAN}[STEP]${NC}  $*"; }
 
+# ─── Node's TLS trust, for networks that inspect HTTPS ──────────────────────
+# Node ships its own CA store and ignores the OS one, so on a network that
+# re-signs HTTPS with an internal CA every `npm` call fails with
+# UNABLE_TO_GET_ISSUER_CERT_LOCALLY while `git pull` in the same script
+# succeeds — git goes through OpenSSL, which DOES read the system store. That
+# asymmetry is the fingerprint of this problem.
+#
+# The systemd units export NODE_EXTRA_CA_CERTS from .env via EnvironmentFile=,
+# which covers the app and the in-app updater's npm child. It does NOT cover
+# this script: `sudo` scrubs the environment, so it has to be re-supplied per
+# invocation — hence app_node() below rather than a bare `sudo -u`.
+NODE_CA=""
+if [[ -f "$APP_DIR/.env" ]]; then
+  NODE_CA=$(grep -E '^[[:space:]]*NODE_EXTRA_CA_CERTS=' "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' \t\r" || true)
+fi
+if [[ -n "$NODE_CA" && ! -f "$NODE_CA" ]]; then
+  warn "NODE_EXTRA_CA_CERTS is set to '$NODE_CA' but that file does not exist — ignoring it."
+  warn "npm will fall back to Node's bundled CA store and may fail on an inspecting network."
+  NODE_CA=""
+fi
+
+# Run a node-toolchain command as the app user, carrying the extra CA bundle
+# when one is configured. Use this for every npm/npx invocation; plain
+# `sudo -u` is fine for git and file operations.
+app_node() {
+  if [[ -n "${NODE_CA:-}" ]]; then
+    sudo -u "$APP_USER" env "NODE_EXTRA_CA_CERTS=$NODE_CA" "$@"
+  else
+    sudo -u "$APP_USER" "$@"
+  fi
+}
+
 # Sync shipped unit files from $APP_DIR/deploy/ into /etc/systemd/system/.
 # install-if-missing + overwrite-on-change: a no-op when nothing changed,
 # AND a unit shipping for the first time in an update (e.g. polaris-dash)
@@ -266,17 +298,17 @@ rollback() {
 
   cd "$APP_DIR"
   sudo -u "$APP_USER" git checkout "$OLD_COMMIT" -- . 2>/dev/null || sudo -u "$APP_USER" git reset --hard "$OLD_COMMIT"
-  sudo -u "$APP_USER" npm ci --production=false 2>/dev/null
+  app_node npm ci --production=false 2>/dev/null
   # Regenerate Prisma client + wipe stale dist so the rolled-back process
   # comes up with a client matching the rolled-back schema. Same rationale
   # as the forward-update path below; both are documented in
   # cross-cutting/schema-migrations-and-prisma-client-lifecycle in the polaris-change-impact skill.
-  sudo -u "$APP_USER" npx prisma generate 2>/dev/null
+  app_node npx prisma generate 2>/dev/null
   sudo -u "$APP_USER" rm -rf "$APP_DIR/dist" 2>/dev/null
   # `npm run build` (not bare tsc) so the post-tsc asset copy runs and the
   # rolled-back dist/ regains its non-.ts runtime assets: the bundled std MIB
   # .txt files and the platform end-of-life dataset under src/data/.
-  sudo -u "$APP_USER" npm run build 2>/dev/null
+  app_node npm run build 2>/dev/null
 
   # Restore database if migration failed and we have a backup
   if [[ "$1" == *"migration"* && -n "$BACKUP_FILE" && -f "$BACKUP_FILE" ]]; then
@@ -309,10 +341,10 @@ step "4/9  Installing dependencies..."
 # Ensure Node.js can bind to privileged ports (80, 443) without root
 setcap cap_net_bind_service=+ep "$(which node)" 2>/dev/null || true
 
-sudo -u "$APP_USER" npm ci --production=false || rollback "npm ci"
+app_node npm ci --production=false || rollback "npm ci"
 
 # Check for security vulnerabilities
-AUDIT_OUTPUT=$(sudo -u "$APP_USER" npm audit --production 2>/dev/null || true)
+AUDIT_OUTPUT=$(app_node npm audit --production 2>/dev/null || true)
 if echo "$AUDIT_OUTPUT" | grep -qiE "critical|high"; then
   warn "npm audit found high/critical vulnerabilities:"
   echo "$AUDIT_OUTPUT" | grep -iE "critical|high" | head -5
@@ -328,7 +360,7 @@ fi
 # cross-cutting/schema-migrations-and-prisma-client-lifecycle in the polaris-change-impact skill.
 step "5/9  Generating Prisma client..."
 
-sudo -u "$APP_USER" npx prisma generate || rollback "prisma generate"
+app_node npx prisma generate || rollback "prisma generate"
 
 # ─── 6. Build TypeScript ────────────────────────────────────────────────────
 # Clean dist/ first so stale compiled JS from a previous build (e.g.
@@ -343,7 +375,7 @@ sudo -u "$APP_USER" rm -rf "$APP_DIR/dist" || rollback "dist cleanup"
 # won't emit them. The std MIB .txt files (std SNMP-walks fail without them)
 # and the platform end-of-life dataset under src/data/ (the Platform Lifecycle
 # card renders empty without it) both ride this copy.
-sudo -u "$APP_USER" npm run build || rollback "TypeScript build"
+app_node npm run build || rollback "TypeScript build"
 
 info "Build successful — stopping service for migration"
 
@@ -352,7 +384,7 @@ step "7/9  Running database migrations..."
 
 systemctl stop "$SYSTEMD_UNIT"
 
-sudo -u "$APP_USER" npx prisma migrate deploy || rollback "database migration"
+app_node npx prisma migrate deploy || rollback "database migration"
 
 info "Migrations complete"
 
