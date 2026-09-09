@@ -85,12 +85,12 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
  * do — the port's LLDP neighbour, which alertInterfaceService supplies in the
  * charts' place.
  *
- * Only the STATE trio is here, deliberately, not every interface-dimensioned
- * metric: a port that is DOWN is not a device condition, but a port erroring or
- * saturating plausibly correlates with the device's own load, so an
- * `ifInErrorRate` alert keeps its graphs.
+ * Only the STATE fields are here, deliberately, not every interface-dimensioned
+ * metric: a port that is DOWN — or that lost its address — is not a device
+ * condition, but a port erroring or saturating plausibly correlates with the
+ * device's own load, so an `ifInErrorRate` alert keeps its graphs.
  */
-const PORT_SCOPED_METRICS: ReadonlySet<string> = new Set(["ifOperStatus", "ifAdminStatus", "poeStatus"]);
+const PORT_SCOPED_METRICS: ReadonlySet<string> = new Set(["ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus"]);
 
 export function isPortScopedAlert(metric: string | null | undefined): boolean {
   return !!metric && PORT_SCOPED_METRICS.has(metric);

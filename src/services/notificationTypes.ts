@@ -376,7 +376,7 @@ export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLab
 // Current Asset (or current-state child row) field conditions.
 export const ASSET_STATE_FIELDS = [
   "monitorStatus", "status", "consecutiveFailures", "dependencySuppressed", "quarantined",
-  "ifOperStatus", "ifAdminStatus", "poeStatus", "ipsecStatus", "sdwanRuleStatus", "sdwanSelectedMember",
+  "ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus", "ipsecStatus", "sdwanRuleStatus", "sdwanSelectedMember",
 ] as const;
 
 // ─── Host-metric trigger ────────────────────────────────────────────────────
@@ -3259,7 +3259,14 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
 };
 
 // Asset-state field metadata: label + input kind + (for enum/bool) valid values.
-export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" | "number" | "dynamic"; values?: string[] }> = {
+//
+// `placeholder` is the hint the builder's free-text value box shows; it exists
+// because the default ("e.g. up / down") is a lie on a field whose values are
+// not statuses. `equalityOnly` withholds the ordered comparators from the
+// operator select: the engine's compareValue can only answer == / != about a
+// non-numeric string, so offering ">=" there builds a rule that is silently
+// false forever.
+export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" | "number" | "dynamic"; values?: string[]; placeholder?: string; equalityOnly?: boolean }> = {
   // "passive" = no down-detection automation covers the device, so Polaris
   // renders no verdict for it. It is still polled and still charted — the
   // counters keep advancing, they are simply never compared to a threshold.
@@ -3275,6 +3282,15 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   quarantined: { label: "Quarantined", kind: "bool", values: ["true", "false"] },
   ifOperStatus: { label: "Interface oper status", kind: "dynamic" },
   ifAdminStatus: { label: "Interface admin status", kind: "dynamic" },
+  // The port's CURRENT L3 address, compared as a string. Its reason for
+  // existing is the negative form: `!= 0.0.0.0` is how an operator says "this
+  // interface actually has an address", which is the gate a rule about
+  // something riding that interface needs — an SD-WAN overlay's health check
+  // reports total packet loss whenever its underlay WAN port is unaddressed,
+  // and that is the underlay's outage to alert about, not the overlay's. The
+  // engine normalizes both sides through `bareInterfaceIp`, so the mask-
+  // carrying shapes ("0.0.0.0 0.0.0.0") compare equal to the bare address.
+  ifIpAddress: { label: "Interface IP address", kind: "dynamic", placeholder: "e.g. 0.0.0.0", equalityOnly: true },
   // Closed enum rather than "dynamic" (which ifOperStatus uses): every value
   // POWER-ETHERNET-MIB can report is known up front, so the wizard offers a
   // picker and a typo cannot silently produce a rule that never matches.
@@ -3352,6 +3368,7 @@ export const METRIC_DIMENSIONS: Record<string, string[]> = {
 export const FIELD_DIMENSIONS: Record<string, string[]> = {
   ifOperStatus: ["ifNamePattern"],
   ifAdminStatus: ["ifNamePattern"],
+  ifIpAddress: ["ifNamePattern"],
   poeStatus: ["ifNamePattern"],
   ipsecStatus: ["tunnelName"],
   sdwanRuleStatus: ["sdwanRulePattern"],
@@ -3459,6 +3476,7 @@ export function triggerDimensionApplicable(metricOrField: string, dimension: str
 export const STATE_FIELD_DIMENSIONS: Record<string, string[]> = {
   ifOperStatus: ["ifNamePattern"],
   ifAdminStatus: ["ifNamePattern"],
+  ifIpAddress: ["ifNamePattern"],
   poeStatus: ["ifNamePattern"],
   ipsecStatus: ["tunnelName"],
   sdwanRuleStatus: ["healthCheck"],

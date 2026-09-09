@@ -2073,6 +2073,35 @@ describe("trigger filter rows", () => {
     expect(() => ruleInputSchema.parse(saved)).not.toThrow();
   });
 
+  it("offers the interface IP address as an equality-only condition with an address hint", async () => {
+    // The SD-WAN case this field exists for: the loss condition is gated on the
+    // overlay's underlay port actually having an address. An ordered comparator
+    // over an address can only read false (compareValue), and "e.g. up / down"
+    // is the wrong hint, so both come from the field's own fieldMeta.
+    await openAtStep3("r-filter-ifip");
+    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifIpAddress");
+    const ops = Array.from(doc.querySelectorAll("#aw-trig-root .tgl-op option"))
+      .map((el) => (el as unknown as { value: string }).value);
+    expect(ops).toEqual(["==", "!="]);
+    const box = doc.querySelector("#aw-trig-root .tgl-value") as unknown as { value: string; getAttribute: (a: string) => string | null };
+    expect(box.getAttribute("placeholder")).toBe("e.g. 0.0.0.0");
+    (doc.querySelector("#aw-trig-root .tgl-op") as unknown as { value: string }).value = "!=";
+    box.value = "0.0.0.0";
+    const r1 = await addRow();
+    await pickWhat(r1, "d:ifNamePattern");
+    (lastRow().querySelector(".tgl-dim") as unknown as { value: string }).value = "wan1";
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.type).toBe("asset_state");
+    expect(saved.trigger.field).toBe("ifIpAddress");
+    expect(saved.trigger.operator).toBe("!=");
+    expect(saved.trigger.value).toBe("0.0.0.0");
+    expect(saved.trigger.dimensionFilter).toEqual({ ifNamePattern: "wan1" });
+    expect(() => ruleInputSchema.parse(saved)).not.toThrow();
+  });
+
   it("folds an SD-WAN rule-name row into the sdwan state condition", async () => {
     await openAtStep3("r-filter-sdwan");
     await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:sdwanRuleStatus");

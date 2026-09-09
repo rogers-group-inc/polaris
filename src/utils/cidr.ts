@@ -151,6 +151,32 @@ export function parseRangeFirstIp(rangeStr: string): string | null {
 }
 
 /**
+ * The bare address out of an INTERFACE address string, whatever shape the
+ * transport reported it in: "10.4.1.1", "10.4.1.1/24" (SNMP ipAddrTable
+ * joined with its mask) and the FortiOS CMDB pair "10.4.1.1 255.255.255.0"
+ * all yield "10.4.1.1". Empty string for null / blank input.
+ *
+ * Exists because the shapes are NOT interchangeable to a string comparison,
+ * which is what an operator's `!= 0.0.0.0` automation and the auto-monitor
+ * dead-parent check both are: "0.0.0.0 0.0.0.0" is the same unaddressed
+ * interface as "0.0.0.0" and must not read as a different value.
+ */
+export function bareInterfaceIp(raw: string | null | undefined): string {
+  if (raw == null) return "";
+  return raw.trim().split(/[\s/]/)[0] ?? "";
+}
+
+/**
+ * True when an interface address gives no evidence of a usable address: never
+ * sampled (null), empty, or the "unaddressed" placeholder 0.0.0.0 in any of
+ * the shapes above.
+ */
+export function interfaceIpIsUnaddressed(raw: string | null | undefined): boolean {
+  const ip = bareInterfaceIp(raw);
+  return ip === "" || ip === "0.0.0.0";
+}
+
+/**
  * Fully expand an IPv6 address: `::` filled with zero groups, every group
  * zero-padded to 4 hex digits. Input is assumed syntactically valid.
  */

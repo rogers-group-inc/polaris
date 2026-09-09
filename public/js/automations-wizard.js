@@ -2541,7 +2541,10 @@ async function openAutomationWizard(existing, opts) {
         optLabeled(meta.values, v, function (x) { return stateEnumValueLabel(field, x); }) + '</select>';
     }
     if (meta && meta.kind === "number") return '<input type="number" class="tgl-value" value="' + escapeHtml(v) + '" style="width:110px" placeholder="e.g. 3">';
-    return '<input type="text" class="tgl-value" value="' + escapeHtml(v) + '" style="width:130px" placeholder="e.g. up / down">';
+    // "e.g. up / down" is the right hint for a status field and a lie on one
+    // whose values are addresses, so a field may name its own (fieldMeta.placeholder).
+    var ph = (meta && meta.placeholder) || "e.g. up / down";
+    return '<input type="text" class="tgl-value" value="' + escapeHtml(v) + '" style="width:130px" placeholder="' + escapeHtml(ph) + '">';
   }
   /**
    * The value control for a 0/1 state metric: the probe's OWN two labels
@@ -2855,7 +2858,12 @@ async function openAutomationWizard(existing, opts) {
     // A monitorStatus value is one of six names — an ordered comparator over it
     // is meaningless ("status >= down"), and allowing one would also let a rule
     // look like a down-detection automation without being one.
-    var enumState = isState && s.fieldMeta && s.fieldMeta[leaf.field] && s.fieldMeta[leaf.field].kind === "enum";
+    // Same reasoning for a field that names itself equality-only (fieldMeta
+    // .equalityOnly): the engine can only answer is / is-not about a string
+    // that is not a number, so an ordered comparator would build a rule that
+    // reads false forever.
+    var stateMeta = isState && s.fieldMeta ? s.fieldMeta[leaf.field] : null;
+    var enumState = !!stateMeta && (stateMeta.kind === "enum" || stateMeta.equalityOnly === true);
     var line1 =
       '<div style="display:flex;gap:6px;align-items:center">' +
         '<span class="aw-grip" draggable="true" title="Drag to move">&#x2842;</span>' +

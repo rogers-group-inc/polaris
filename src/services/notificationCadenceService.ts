@@ -86,6 +86,7 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ifOutErrorRate: "systemInfo",
   ifOperStatus: "systemInfo",
   ifAdminStatus: "systemInfo",
+  ifIpAddress: "systemInfo",
   poeStatus: "systemInfo",
   sdwanLatencyMs: "systemInfo",
   sdwanJitterMs: "systemInfo",
