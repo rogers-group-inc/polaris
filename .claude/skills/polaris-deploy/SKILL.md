@@ -37,7 +37,9 @@ When the user says "push", before running the push protocol in `/polaris-worktre
    location). Stage the fixes as their own commit before pushing.
 2. If a `polaris_*` metric changed, the Grafana dashboard JSON changed with it.
 3. If a dependency or Go pin moved, `Dockerfile`, every `deploy/setup-*.{sh,ps1}`,
-   `docs/INSTALL.md` and `agent/go.mod` moved in lockstep.
+   `docs/INSTALL.md` and `agent/go.mod` moved in lockstep. Run `npm run check:versions` to
+   prove it — the full site list per family is `polaris-tech-lifecycle` →
+   version-pin-inventory.md, and it is longer than this rule implies.
 
 ## Adding an environment variable
 
@@ -55,4 +57,5 @@ operator-set → a default in `deploy/setup-*.{sh,ps1}` if the install scripts w
 - Disk severity tiers: watch 20–30 % free, amber 10–20 %, red < 10 % (sidebar banner).
 
 Related: `polaris-agent` (cert-pin rotation rides a cert swap), `polaris-monitoring-discovery` →
-`process-roles-runtime.md` and `observability.md`, `polaris-business-rules` rule 20c (backup you cannot restore).
+`process-roles-runtime.md` and `observability.md`, `polaris-business-rules` rule 20c (backup you cannot restore),
+`polaris-tech-lifecycle` (which version to move to, when it goes end-of-life, and every site that declares it).

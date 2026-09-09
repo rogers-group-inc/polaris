@@ -114,6 +114,7 @@ import {
 import { BACKUP_DIR, UPLOADS_DIR } from "../../utils/paths.js";
 import { maintenanceLimiter } from "../middleware/rateLimits.js";
 import { getAppVersion } from "../../utils/version.js";
+import { parsePostgresVersion } from "../../utils/platformVersions.js";
 import { isTimescaleAvailable } from "../../services/timescaleService.js";
 import { detectImageMagic } from "../../utils/imageMagic.js";
 import { BRANDING_DEFAULTS, getBranding, hasCustomLogo, normalizeBrandingFlag, normalizeTemperatureUnit } from "../../services/brandingService.js";
@@ -340,9 +341,9 @@ router.get("/database", async (_req, res, next) => {
     const maxConnections = Number(connResult[0]?.max || 100);
     const uptime = uptimeResult[0]?.uptime || "Unknown";
 
-    // Parse version string to extract short version
-    const versionMatch = version.match(/PostgreSQL\s+([\d.]+)/);
-    const shortVersion = versionMatch ? versionMatch[1] : version;
+    // Parse version string to extract short version. Shared with the platform
+    // lifecycle probe so the two cannot disagree about what "15.13" means.
+    const shortVersion = parsePostgresVersion(version) ?? version;
 
     // Parse connection URL for host/port
     const connUrl = process.env.DATABASE_URL || "";
@@ -1784,6 +1785,36 @@ router.get("/capacity-advisor", async (_req, res, next) => {
   }
 });
 
+// ─── Platform lifecycle ───────────────────────────────────────────────────
+//
+// What this host is running, and whether any of it is past or approaching end
+// of life. Feeds the Platform Lifecycle card on the Maintenance tab.
+//
+// No per-route gate: the blanket requirePermission("serverSettingsSystem",
+// "read") on the whole /server-settings mount in src/api/router.ts already
+// covers this, exactly as it does for /database, /pg-tuning and
+// /capacity-advisor. Adding one here would be inconsistent noise.
+//
+// Note what this route does NOT do: it never records a lifecycle transition.
+// /pg-tuning and /capacity-advisor both do, because disk state is
+// minutes-volatile and an admin loading the tab is the freshest signal
+// available. A lifecycle condition is true for months, so letting a page
+// refresh re-fire the Event would let a browser reload spam the on-call inbox.
+// Transitions belong to the daily job alone.
+const platformLifecycleQuery = z
+  .object({ refresh: z.coerce.boolean().optional() })
+  .strict();
+
+router.get("/platform-lifecycle", async (req, res, next) => {
+  try {
+    const q = platformLifecycleQuery.parse(req.query);
+    const { getPlatformLifecycle } = await import("../../services/platformLifecycleService.js");
+    res.json(await getPlatformLifecycle({ force: q.refresh === true }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Stages .env changes on disk — operator-level blast radius.
 router.post("/capacity-advisor/stage", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
   try {
@@ -2346,7 +2377,10 @@ router.post("/agents/build", requirePermission("serverSettingsSystem", "fullwrit
         return res.status(409).json({ error: err.message });
       }
       if (err instanceof GoUnavailableError) {
-        return res.status(400).json({ error: `Go is not available on this Polaris server: ${err.message}. Install Go 1.22+ and reload.` });
+        // The service's message already names the floor and distinguishes
+        // "not installed" from "installed but too old" — pass it through
+        // rather than re-stating a hardcoded minimum here.
+        return res.status(400).json({ error: err.message });
       }
       throw err;
     }

@@ -1279,6 +1279,7 @@ function computeReasons(
   snap: CapacitySnapshot,
   pgTuningNeeded: boolean,
   advisor?: AdvisorGapsForReasons,
+  lifecycle?: CapacityReason[],
 ): CapacityReason[] {
   const reasons: CapacityReason[] = [];
   const ram = snap.appHost.totalMemoryBytes;
@@ -1728,6 +1729,12 @@ function computeReasons(
     });
   }
 
+  // Platform end-of-life. All share one family, so the collapse pass yields a
+  // single row here and the per-component breakdown lives on the Platform
+  // Lifecycle card. `watch`-severity lifecycle rows never reach this list at
+  // all — see lifecycleCapacityReasons.
+  for (const r of lifecycle ?? []) reasons.push(r);
+
   return collapseReasonsByFamily(reasons);
 }
 
@@ -2031,9 +2038,34 @@ export async function getCapacitySnapshot(opts: {
     },
   };
 
-  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor);
+  snap.reasons = computeReasons(snap, opts.pgTuningNeeded, opts.advisor, await lifecycleReasonsSafe());
   snap.severity = deriveSeverity(snap.reasons);
   return snap;
+}
+
+/**
+ * Platform end-of-life reasons, or none.
+ *
+ * Lazy dynamic import for the same reason getCapacitySnapshotWithAdvisor uses
+ * one: it keeps this module out of a load cycle with a service that reads
+ * capacity state. Wrapped so a lifecycle failure can never take the capacity
+ * snapshot with it — the snapshot drives the sidebar disk alert, which is the
+ * more urgent of the two signals.
+ *
+ * Fetched here rather than threaded through every caller: getCapacitySnapshot
+ * has four call sites today and a fifth would silently miss the reasons.
+ */
+async function lifecycleReasonsSafe(): Promise<CapacityReason[]> {
+  try {
+    const { getPlatformLifecycle, lifecycleCapacityReasons } = await import(
+      "./platformLifecycleService.js"
+    );
+    const result = await getPlatformLifecycle();
+    return lifecycleCapacityReasons(result) as CapacityReason[];
+  } catch (err) {
+    logger.debug({ err }, "platform lifecycle reasons unavailable; capacity snapshot continues without them");
+    return [];
+  }
 }
 
 /**
@@ -2085,7 +2117,9 @@ export async function getCapacitySnapshotWithAdvisor(
   };
   // Re-derive reasons + severity in place with the advisor gaps wired in,
   // so the advisor-driven reasons fire without doing a second snapshot pass.
-  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons);
+  // The lifecycle result is memoized, so re-fetching it for this second pass
+  // costs nothing and keeps the two passes' reason lists identical.
+  snapshot.reasons = computeReasons(snapshot, opts.pgTuningNeeded, gapsForReasons, await lifecycleReasonsSafe());
   snapshot.severity = deriveSeverity(snapshot.reasons);
   return { snapshot, advisor };
 }

@@ -13,8 +13,28 @@
 import { getSetupState, markSetupComplete } from "./setup/detectSetup.js";
 import { getRole } from "./utils/role.js";
 import { installCrashHandlers } from "./utils/crashHandlers.js";
+import { NODE_MINIMUM_MAJOR, checkNodeVersionAtBoot } from "./utils/platformVersions.js";
 
 installCrashHandlers();
+
+// Advisory only — deliberately NOT process.exit(1).
+//
+// `engines.node` is advisory anyway (there is no .npmrc with
+// engine-strict=true, so npm warns and installs regardless), and the running
+// Node version was previously unreadable from anywhere in the app:
+// process.version appears nowhere outside generated code, so an operator on an
+// unsupported major got no signal at all until something in Express 5, Prisma 7
+// or node:fs.statfs misbehaved in a way that looked like a Polaris bug.
+//
+// Refusing to boot would strand that operator mid-upgrade with no UI to read
+// the reason, and the same fact reaches them twice more through the Platform
+// Lifecycle card and its Event. So: warn loudly, once, and start.
+// Do not "harden" this into a hard failure.
+checkNodeVersionAtBoot(NODE_MINIMUM_MAJOR, (msg) => {
+  console.warn("");
+  console.warn(`  WARNING: ${msg}`);
+  console.warn("");
+});
 
 (async () => {
   const state = getSetupState();

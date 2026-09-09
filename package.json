@@ -22,7 +22,10 @@
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "typecheck": "tsc --noEmit",
-    "check:docs": "node scripts/check-docs.mjs"
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:versions": "node scripts/check-versions.mjs",
+    "check:deps": "node scripts/check-deps.mjs",
+    "audit:deps": "npm outdated || true && npm audit --audit-level=high || true && node -e \"console.log('\\nTriage: .claude/skills/polaris-tech-lifecycle/references/dependency-audit.md')\""
   },
   "dependencies": {
     "@node-rs/argon2": "^2.0.2",
@@ -68,7 +71,7 @@
     "@types/multer": "^2.1.0",
     "@types/net-snmp": "^3.23.0",
     "@types/netmask": "^2.0.6",
-    "@types/node": "^20.14.2",
+    "@types/node": "^22.20.1",
     "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.20.0",
     "@types/qrcode": "^1.5.6",

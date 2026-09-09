@@ -2,16 +2,28 @@
 # Polaris pre-commit hook — version-controlled (activate with:
 #   git config core.hooksPath .githooks   — `npm install` does this via postinstall).
 #
-# Runs the structural doc-drift guard over CLAUDE.md + .claude/skills/** so a new
-# model / service / job / route can't land without being documented, and so stale
-# file:line refs, dead paths, orphaned reference files or references to the retired
-# root docs can't creep back in. It does NOT judge prose accuracy — that is
-# /polaris-docs-sync.
+# Two independent structural guards, each with its own staged-file filter so a
+# commit only pays for the checks it can actually break:
+#
+#   check-docs.mjs      the doc-drift guard over CLAUDE.md + .claude/skills/** —
+#                       a new model / service / job / route can't land
+#                       undocumented, and stale file:line refs, dead paths,
+#                       orphaned reference files or references to the retired
+#                       root docs can't creep back in.
+#   check-versions.mjs  the pin-consistency guard — a version bump can't land in
+#                       nine declaration sites of twelve, leaving the tenth to
+#                       keep provisioning the old runtime on every fresh host.
+#   check-deps.mjs      dependency targets and the overrides block. WARN ONLY
+#                       here: a commit must not be blocked on a dependency
+#                       decision. It fails in CI, where it should.
+#
+# Neither doc guard judges prose accuracy — that is /polaris-docs-sync.
 #
 # Bypass for one commit:  git commit --no-verify
 
-# Only run when code or the project-memory docs changed (skip pure asset/test commits).
 changed=$(git diff --cached --name-only)
+
+# --- doc drift ------------------------------------------------------------
 case "$changed" in
   *.ts|*src/*|*prisma/schema.prisma*|*CLAUDE.md*|*.claude/skills/*|*scripts/check-docs.mjs*)
     node scripts/check-docs.mjs || {
@@ -23,5 +35,35 @@ case "$changed" in
     ;;
   *)
     : # nothing relevant changed; skip the check
+    ;;
+esac
+
+# --- version pins ---------------------------------------------------------
+# Narrower filter than the docs check: a version check on a pure-UI commit is
+# only latency. The docs are in the list because a version claim in
+# docs/INSTALL.md or README.md is a declaration site, not commentary.
+case "$changed" in
+  *package.json*|*agent/go.mod*|*Dockerfile*|*deploy/*|*compose*.yml*|*.github/workflows/*|*src/data/platformEol.json*|*scripts/check-versions.mjs*|*docs/INSTALL.md*|*README.md*)
+    node scripts/check-versions.mjs || {
+      echo ""
+      echo "pre-commit: version-pin check failed (see above)."
+      echo "Every site for a version must agree — the site list per family is"
+      echo ".claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md."
+      echo "Bypass once with:  git commit --no-verify"
+      exit 1
+    }
+    ;;
+  *)
+    : # no pin-bearing file changed
+    ;;
+esac
+
+# --- dependency targets (warn only) --------------------------------------
+case "$changed" in
+  *package.json*|*agent/go.mod*|*src/data/dependencyTargets.json*|*scripts/check-deps.mjs*)
+    node scripts/check-deps.mjs --warn-only || true
+    ;;
+  *)
+    :
     ;;
 esac

@@ -31,6 +31,7 @@ import { randomUUID } from "node:crypto";
 import { AGENT_BIN_DIR, STATE_DIR } from "../utils/paths.js";
 import { AppError } from "../utils/errors.js";
 import { getAgentVersion, getAgentSourceDir } from "../utils/version.js";
+import { parseGoVersion, deriveTrack, compareTracks } from "../utils/platformVersions.js";
 import { logEvent } from "./eventLogService.js";
 import { truncate } from "../utils/text.js";
 import { logger } from "../utils/logger.js";
@@ -133,26 +134,66 @@ export class BuildQueueFullError extends Error {
 
 // ─── Go-detection ─────────────────────────────────────────────────────
 
+/**
+ * The Go minor line the agent build requires — the single source of truth for
+ * that number. `agent/go.mod`'s `go` directive, the install scripts' accept
+ * regexes and the "install Go N+" copy in the UI and the docs all state the
+ * same floor; this is the one the running app enforces, and every
+ * operator-facing string below interpolates it rather than repeating it.
+ *
+ * Bumping it is one site of many: the full list is
+ * .claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md,
+ * and `npm run check:versions` asserts they agree.
+ */
+export const GO_MINIMUM = "1.22";
+
 export interface GoAvailability {
+  /** The `go` binary ran. Deliberately unchanged in meaning — see below. */
   ok:       boolean;
+  /** Raw `go version` output, for display. */
   version?: string;
+  /** Parsed version, e.g. "1.22.7". Absent when unparseable. */
+  versionNumber?: string;
+  /** Minor line, e.g. "1.22". Absent when unparseable. */
+  track?:   string;
+  /** False only when the version parsed AND is below GO_MINIMUM. */
+  meetsMinimum?: boolean;
   error?:   string;
 }
 
 /**
- * Returns true when `go version` runs successfully. UI gates the Build
- * button on this; the route layer returns 400 when false.
+ * Probe the host's Go toolchain.
  *
- * Not cached because Go can be installed/removed on the host without
- * restarting Polaris, and operators expect "install Go and reload" to
- * just work. The exec is cheap (<10 ms when Go is on PATH).
+ * Not cached, because Go can be installed or removed on the host without
+ * restarting Polaris and operators expect "install Go and reload" to just
+ * work. The exec is cheap (<10 ms when Go is on PATH).
+ *
+ * `ok` keeps its original meaning — "the binary ran" — so nothing downstream
+ * changes behaviour silently. `meetsMinimum` is the new signal, and it is what
+ * the build gate reads.
+ *
+ * Before this, the check only confirmed `go version` exited 0 while five
+ * surfaces told the operator "install Go 1.22+". A host with an older
+ * toolchain therefore passed the preflight, showed an enabled Build button,
+ * and failed later inside `go build` — surfacing as a bare compiler error or
+ * "missing go.sum entry" instead of the preflight message that already
+ * existed. bookworm-slim shipping Go 1.21 is exactly that case, which is why
+ * the Dockerfile pulls golang from backports.
+ *
+ * An UNPARSEABLE version is treated as meeting the minimum, on purpose:
+ * refusing to build on a vendored or `devel` toolchain we simply failed to
+ * recognize is a worse outcome than the bug this fixes.
  */
 export async function goAvailable(): Promise<GoAvailability> {
   try {
     const { stdout } = await execFileAsync("go", ["version"], { timeout: 5_000 });
-    return { ok: true, version: stdout.trim() };
+    const raw = stdout.trim();
+    const versionNumber = parseGoVersion(raw) ?? undefined;
+    const track = versionNumber ? deriveTrack(versionNumber, "major.minor") ?? undefined : undefined;
+    const meetsMinimum = track ? compareTracks(track, GO_MINIMUM) >= 0 : true;
+    return { ok: true, version: raw, versionNumber, track, meetsMinimum };
   } catch (err: any) {
-    return { ok: false, error: err?.message ?? "go not found on PATH" };
+    return { ok: false, meetsMinimum: false, error: err?.message ?? "go not found on PATH" };
   }
 }
 
@@ -175,8 +216,19 @@ export class GoUnavailableError extends Error {
 
 export async function startBuild(input: StartBuildInput): Promise<StartBuildResult> {
   const go = await goAvailable();
+  // Both messages are complete sentences naming GO_MINIMUM: callers surface
+  // err.message verbatim rather than appending their own copy of the floor.
   if (!go.ok) {
-    throw new GoUnavailableError(go.error ?? "Go is not available on this Polaris server");
+    throw new GoUnavailableError(
+      `Go is not available on this Polaris server (${go.error ?? "go not found on PATH"}). Install Go ${GO_MINIMUM}+ and reload, or run the OS install script, which provisions it.`,
+    );
+  }
+  // Fail the preflight rather than the compile: before this check the build
+  // started and died inside `go build` with a bare compiler error.
+  if (go.meetsMinimum === false) {
+    throw new GoUnavailableError(
+      `Go ${go.track ?? go.versionNumber ?? "(unknown)"} is installed on this Polaris server, but building the agent requires Go ${GO_MINIMUM}+. Upgrade the toolchain and reload.`,
+    );
   }
   if (buildQueue.length >= QUEUE_DEPTH_LIMIT) {
     throw new BuildQueueFullError();
@@ -826,6 +878,14 @@ export interface InventoryResult {
   goAvailable: boolean;
   goVersion?:  string;
   goError?:    string;
+  /**
+   * Go is present but too old to build the agent. Distinct from goAvailable
+   * false so the UI can say "Go 1.21 is too old (need 1.22+)" instead of the
+   * misleading "Go is not installed".
+   */
+  goTooOld?:   boolean;
+  /** The floor the build enforces, so the UI never hardcodes the number. */
+  goMinimum:   string;
   manifest:    { currentVersion: string; minimumCompatible?: string; binaries: Record<string, string> } | null;
   files:       InventoryFile[];
   agentSourceVersion: string;
@@ -946,6 +1006,8 @@ export async function getInventory(): Promise<InventoryResult> {
     goAvailable: go.ok,
     goVersion:   go.version,
     goError:     go.error,
+    goTooOld:    go.ok && go.meetsMinimum === false,
+    goMinimum:   GO_MINIMUM,
     manifest,
     files,
     agentSourceVersion,

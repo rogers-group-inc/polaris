@@ -1522,6 +1522,7 @@ export const RESET_EVENT_SUGGESTIONS: Record<string, string> = {
   "agent.uninstall_failed": "agent.uninstalled",
   "agent.build.failed": "agent.build.completed",
   "integration.discover.error": "integration.discover.completed",
+  "platform.lifecycle_changed": "platform.lifecycle_recovered",
 };
 
 export const resetEventSchema = z

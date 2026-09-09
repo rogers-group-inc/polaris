@@ -770,10 +770,14 @@ export async function applyUpdate(
     // a file that exists in `dist/` but no longer in `src/` lingers forever.
     //
     // Build via `npm run build` (not bare `npx tsc`) so the post-tsc asset
-    // copy in scripts/copy-build-assets.mjs runs — it mirrors the bundled
-    // std MIB .txt files into dist/services/stdMibs/, which tsc won't emit.
-    // Without that, every std SNMP-walk (LLDP-MIB etc.) on the updated
-    // install fails with "Standard MIB ... is not installed on the server".
+    // copy in scripts/copy-build-assets.mjs runs — it mirrors every non-.ts
+    // runtime asset into dist/, which tsc won't emit. Two ride this copy, and
+    // both fail silently and only in production without it:
+    //   - the bundled std MIB .txt files → dist/services/stdMibs/. Every std
+    //     SNMP-walk (LLDP-MIB etc.) then fails with "Standard MIB ... is not
+    //     installed on the server".
+    //   - the platform end-of-life dataset → dist/data/. The Platform
+    //     Lifecycle card then renders "Unavailable" on the Maintenance tab.
     setStep(4, "running");
     try {
       const distDir = join(APP_DIR, "dist");

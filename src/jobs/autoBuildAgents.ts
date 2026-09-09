@@ -36,7 +36,7 @@ import { resolve as resolvePath } from "node:path";
 import { prisma } from "../db.js";
 import { AGENT_BIN_DIR } from "../utils/paths.js";
 import { getAgentVersion } from "../utils/version.js";
-import { goAvailable, startBuild } from "../services/agentBuildService.js";
+import { goAvailable, startBuild, GO_MINIMUM } from "../services/agentBuildService.js";
 import { logEvent } from "../services/eventLogService.js";
 import { logger } from "../utils/logger.js";
 import { runInstrumentedJob } from "./_metrics.js";
@@ -62,11 +62,17 @@ async function autoBuildIfStale(): Promise<void> {
   // (3) Go-availability gate. If Go went missing between the operator's
   // first Build and a subsequent Polaris update, surface a warning Event
   // so they see the staleness on the Events page.
+  // A toolchain that is present but too old is skipped here too: without this
+  // the auto-build burns a queue slot on a compile that cannot succeed, and
+  // reports it as a build failure rather than as a host prerequisite.
   const go = await goAvailable();
-  if (!go.ok) {
+  if (!go.ok || go.meetsMinimum === false) {
+    const why = go.ok
+      ? `Go ${go.track ?? "(unknown)"} is installed but the build requires Go ${GO_MINIMUM}+`
+      : `Go isn't installed`;
     logger.warn(
-      { from: manifest.currentVersion, to: wanted, reason: go.error },
-      "Agent binaries out-of-date but Go isn't available — skipping auto-build",
+      { from: manifest.currentVersion, to: wanted, reason: go.error ?? why, goTrack: go.track },
+      "Agent binaries out-of-date but the Go toolchain isn't usable — skipping auto-build",
     );
     await logEvent({
       action:       "agent.build.auto_skipped",
@@ -75,8 +81,8 @@ async function autoBuildIfStale(): Promise<void> {
       resourceName: wanted,
       message:
         `Agent binaries v${manifest.currentVersion} are stale relative to agent/VERSION ${wanted}, ` +
-        `but Go isn't installed. Install Go 1.22+ and click Build, or run the OS install script which provisions Go.`,
-      details: { from: manifest.currentVersion, to: wanted, reason: go.error },
+        `but ${why}. Install or upgrade Go on the Polaris server and click Build, or run the OS install script which provisions it.`,
+      details: { from: manifest.currentVersion, to: wanted, reason: go.error ?? why, goTrack: go.track ?? null },
     }).catch(() => { /* best-effort */ });
     return;
   }
