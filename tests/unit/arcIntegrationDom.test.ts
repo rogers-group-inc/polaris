@@ -174,7 +174,26 @@ describe("azureArcFormHTML setup instructions", () => {
     // returns fewer machines rather than an access error.
     const h = html();
     expect(h).toContain("Partial Reader means a partial roster");
-    expect(h).toContain("Read-only by design");
+  });
+
+  // The read-only claim has to track the run-command toggle. It used to be an
+  // unconditional "Polaris never writes to Azure / don't grant anything
+  // broader", which the Script Publishing tab of the SAME modal contradicts as
+  // soon as publishing is on — leaving the operator to pick which tab lied.
+  it("says read-only, with the script-publishing exception, when publishing is off", () => {
+    const h = boot().azureArcFormHTML({});
+    expect(h).toContain("Read-only unless you enable script publishing");
+    expect(h).toContain("Script Publishing");
+    expect(h).not.toContain("This integration can write to Azure");
+  });
+
+  it("drops the read-only claim once run-command publishing is on", () => {
+    const h = boot().azureArcFormHTML({ allowRunCommand: true });
+    expect(h).toContain("This integration can write to Azure");
+    expect(h).not.toContain("Read-only unless you enable script publishing");
+    // Discovery's own requirement is unchanged, and saying so is what stops
+    // an operator "fixing" the contradiction by over-granting.
+    expect(h).toContain("Reader");
   });
 
   it("uses only synthetic all-zero GUIDs in placeholders", () => {
@@ -183,6 +202,39 @@ describe("azureArcFormHTML setup instructions", () => {
     // Nothing that looks like a populated GUID should ship in the markup.
     const realish = h.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi) || [];
     for (const guid of realish) expect(guid.replace(/[-0]/g, "")).toBe("");
+  });
+});
+
+describe("arcScriptPublishingFormHTML RBAC guidance", () => {
+  const html = () => boot().arcScriptPublishingFormHTML(true);
+
+  it("names every action the run-command path actually calls", () => {
+    // read → the picker's roster, runCommands/write → dispatch,
+    // runCommands/read → the instanceView GET that returns exit code + output.
+    const h = html();
+    expect(h).toContain("Microsoft.HybridCompute/machines/read");
+    expect(h).toContain("Microsoft.HybridCompute/machines/runCommands/write");
+    expect(h).toContain("Microsoft.HybridCompute/machines/runCommands/read");
+  });
+
+  it("offers the least-privilege custom role and flags the built-in's breadth", () => {
+    const h = html();
+    expect(h).toContain("custom role");
+    expect(h).toContain("Azure Connected Machine Resource Administrator");
+    expect(h).toMatch(/modify and delete/i);
+  });
+
+  it("says to keep Reader, since roles are additive", () => {
+    expect(html()).toMatch(/Keep the existing Reader assignment/i);
+  });
+
+  it("still distinguishes Azure RBAC from a Graph permission", () => {
+    // The confusion carried over from the Intune side of the same feature.
+    expect(html()).toContain("Azure RBAC role assignment");
+  });
+
+  it("keeps the no-inert-state warning — the review gate for this vehicle", () => {
+    expect(html()).toContain("A run command executes immediately.");
   });
 });
 

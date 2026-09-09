@@ -53,7 +53,7 @@ const SCHEMA = {
     { type: "asset_metric", label: "Device metric", scoped: true },
     { type: "host_metric", label: "Host metric", scoped: false },
     { type: "asset_state", label: "Device state", scoped: true },
-    { type: "event", label: "Audit event match", scoped: false },
+    { type: "event", label: "Audit event match", scoped: true },
     { type: "change", label: "Change detection", scoped: false },
     { type: "composite", label: "Multiple conditions", scoped: true },
   ],
@@ -436,6 +436,8 @@ describe("makeAutomationSentences", () => {
     expect(s.isTriggerScoped({ type: "composite", kind: "asset" })).toBe(true);
     expect(s.isTriggerScoped({ type: "composite", kind: "host" })).toBe(false);
     expect(s.isTriggerScoped({ type: "host_metric" })).toBe(false);
+    // Business rule 46: an audit-event automation can name devices now.
+    expect(s.isTriggerScoped({ type: "event" })).toBe(true);
     expect(s.isTriggerScoped({ type: "asset_metric" })).toBe(true);
   });
 

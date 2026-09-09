@@ -43,8 +43,8 @@ The asset details panel renders charts for response time, CPU/memory, temperatur
 
 **Publishing the onboarding script (optional).** Rather than downloading the script and pushing it yourself, Polaris can deliver it through the two Azure vehicles it already holds credentials for. Both are **off by default** behind a checkbox on their own integration's *Script Publishing* tab, because each needs an additional vendor-side grant that the read-only discovery credential deliberately lacks.
 
-- **Intune** (Windows) — uploads the remediation + detection pair as a Remediation. Needs the Graph application permission `DeviceManagementConfiguration.ReadWrite.All` with admin consent. **Polaris never assigns the policy**: it arrives targeting nothing, and you pick the device groups in Intune after reading the script.
-- **Azure Arc** (Windows *and* Linux, including Windows Server — neither of which Intune reaches) — runs the script on machines you select, via Run Command. Needs an Azure **RBAC role assignment** carrying `Microsoft.HybridCompute/machines/runCommands/write` (e.g. Azure Connected Machine Resource Administrator), not a Graph permission. A run command **executes immediately** — there is no unassigned state, so your selection is the review step; Polaris only ever targets machines you explicitly tick, caps a run at 200, and skips any machine whose OS Arc doesn't report rather than guessing which script to send.
+- **Intune** (Windows) — uploads the remediation + detection pair as a Remediation. Needs the Graph application permission `DeviceManagementScripts.ReadWrite.All` with admin consent (a tenant answering on a different API version may ask for `DeviceManagementConfiguration.ReadWrite.All` instead — the 403 names the one it wants). **Polaris never assigns the policy**: it arrives targeting nothing, and you pick the device groups in Intune after reading the script.
+- **Azure Arc** (Windows *and* Linux, including Windows Server — neither of which Intune reaches) — runs the script on machines you select, via Run Command. Needs an Azure **RBAC role assignment** carrying all three of `Microsoft.HybridCompute/machines/read`, `runCommands/write` and `runCommands/read` (e.g. Azure Connected Machine Resource Administrator, or the least-privilege custom role in `docs/INSTALL.md`), not a Graph permission. A run command **executes immediately** — there is no unassigned state, so your selection is the review step; Polaris only ever targets machines you explicitly tick, caps a run at 200, and skips any machine whose OS Arc doesn't report rather than guessing which script to send.
 
 **SSH deployment with key auth** — Integrations → Polaris Agent → **SSH Deployment** generates the deployment keypair, keeps the private half sealed (never displayed or downloadable), and emits the onboarding script that authorizes the public half across a Windows or Linux fleet. That takes a reusable administrator password off the wire, and gets right the details that otherwise fail *silently*: on Windows the `administrators_authorized_keys` path and its ACL, on Linux the `~/.ssh` ownership, SELinux context, and the passwordless-sudo drop-in the agent installer requires. The scripts carry no machine-specific values, so the same file runs unchanged under Intune, GPO, Configuration Manager, Arc, Ansible, an RMM tool, or by hand; a paired detection script makes the rollout self-healing. SSH credentials also gain opt-in **host-key verification** (trust-on-first-use pinning) and support for passphrase-protected keys.
 
@@ -88,6 +88,9 @@ A built-in alias map collapses IEEE legal forms (`Fortinet, Inc.`) into marketin
 ### Capacity grading
 Server Settings → Maintenance shows host CPU/RAM/disk, database size with sample-table breakdown and dead-tuple ratios, monitoring workload (asset count, pinned-interface count incl. IPsec tunnels, pinned storage-mount count, cadences, retention), and a steady-state size projection. Critical conditions (disk free <10%, projected DB > 8× host RAM, autovacuum stale on a populated *and bloated* table) drive a non-dismissible sidebar alert; amber and watch conditions render as card-only reason rows.
 
+### Platform lifecycle
+Server Settings → Maintenance → **Platform Lifecycle** reports the version of every stack component this host is actually running — Node, PostgreSQL, TimescaleDB, Go, Java, nginx, the OS, PgBouncer, Prisma — and grades each against a committed, human-reviewed end-of-life dataset, with the ordered upgrade steps and the full list of files that must move together for anything past or approaching its end of life. Two states are kept distinct because they need different responses: a component **below Polaris's supported minimum** is a misconfiguration of that install, is critical, and reaches the sidebar alert; an **upstream end-of-life** is flagged red on the card and emailed once via a baseline automation, but deliberately does not hold a permanent banner open, since it clears only in a maintenance window. Supported versions and their dates are in [docs/INSTALL.md](docs/INSTALL.md) → "Supported platform versions"; the dataset is refreshed by a human, never fetched at runtime, so an air-gapped install still warns correctly.
+
 ### Authentication & RBAC
 - **Local accounts** — argon2id-hashed passwords with strength rules and per-account temporary lockout.
 - **TOTP second factor** — RFC 6238 enrollment via QR code, single-use backup codes, admin reset for lost devices. Local accounts enroll themselves from the account menu behind the page-header user badge, on any page — no admin involvement and no Users-page access needed.
@@ -103,6 +106,7 @@ Server Settings → Maintenance shows host CPU/RAM/disk, database size with samp
 - **Helmet CSP / HSTS / CSRF** synchronizer-token (`polaris_csrf` cookie + `X-CSRF-Token` header).
 - **Encrypted backups** with versioned magic header (`POLARIS\0`), retained on disk and surfaced for in-app restore.
 - **In-app updates** from Server Settings → Maintenance, with automatic rollback if any step fails.
+- **Platform end-of-life warnings** — the running stack graded against a committed EOL dataset, with upgrade playbooks; see "Platform lifecycle" above.
 - **PDF / CSV export** for assets, networks, events, and IP panel data.
 - **Prometheus `/metrics` + Grafana dashboard** — every `polaris_*` metric (monitor pass + work duration, probe latency by transport, FMG dual-lane worker, DB pool, capacity severity, discovery phases, sample rollups, HTTP, job health) graphed in `docs/grafana/polaris-monitoring-dashboard.json`. Bearer-token gated via `METRICS_TOKEN`. See `docs/INSTALL.md` → "Optional: Prometheus + Grafana."
 
@@ -114,9 +118,15 @@ Server Settings → Maintenance shows host CPU/RAM/disk, database size with samp
 | RAM | 4 GB | 8 GB |
 | DB data volume | 50 GB SSD | 100 GB+ SSD |
 | App / state volume | 5 GB | 20 GB |
-| OS | Windows Server 2019+, RHEL 9, Ubuntu 22.04+ | Windows Server 2022, RHEL 9, Ubuntu 22.04+ |
-| PostgreSQL | 15+ | 15+ |
-| Node.js | 20 LTS | 20 LTS |
+| OS | Windows Server 2019+, RHEL 9, Ubuntu 22.04+ | Windows Server 2022, RHEL 9, Ubuntu 24.04 LTS |
+| PostgreSQL | 15+ | 17 |
+| Node.js | 22.12 (hard floor) | 24 LTS |
+
+> **The minimum column is a floor, not a recommendation, and one of these is close to end of
+> life** — Node 22 ends 2027-04-30, so a host on the floor has under a year of runway.
+> [docs/INSTALL.md](docs/INSTALL.md) → "Supported platform versions" is the canonical table:
+> minimum, what Polaris targets, and every upstream EOL date. A running install grades itself
+> against it under Server Settings → Maintenance → Platform Lifecycle.
 
 Discovery pre-loads subnets, reservations, and assets for O(1) lookups; peak memory is ~200–400 MB on top of the Node.js base. Monitoring sample tables grow proportionally with monitored asset count × cadence × retention; the Capacity card on Server Settings → Maintenance projects this at runtime. The **DB data volume** (where PostgreSQL stores its `data_directory`) is the number that matters most — Postgres degrades hard when its volume hits 100%. See [docs/INSTALL.md](docs/INSTALL.md) → "Disk sizing — read this first" for the authoritative per-volume sizing table and platform-specific data-directory paths.
 
@@ -131,7 +141,7 @@ Discovery pre-loads subnets, reservations, and assets for O(1) lookups; peak mem
    CREATE DATABASE polaris OWNER polaris;
    ```
 
-2. **Install Node.js 20+** (https://nodejs.org).
+2. **Install Node.js 24 LTS** (https://nodejs.org) — 22.12 is the hard floor.
 
 3. **Clone, configure, run:**
 
@@ -147,7 +157,7 @@ The dashboard is at `http://localhost:3000`; the API at `http://localhost:3000/a
 
 ## Production deployment
 
-Automated scripts install Node.js 20, PostgreSQL 15, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
+Automated scripts install Node.js 24, PostgreSQL 15, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
 
 **RHEL / Rocky / Alma 9:**
 
@@ -285,7 +295,7 @@ A vCenter server (7.0U2+) over the vSphere Automation REST API, with two narrow 
 ### Azure Arc
 Arc-enabled machines (`Microsoft.HybridCompute/machines`) via **Azure Resource Manager**, using an Entra app registration with the client-credentials flow. Produces **assets only**. No Microsoft Graph permission is needed — this is ARM-only, which is the step most often carried over by mistake from an Entra ID setup.
 
-- **Required access** — the app registration's service principal needs the **Reader** role, ideally at the management-group root, and the `Microsoft.HybridCompute` resource provider must be registered in each subscription. Azure returns only what the principal can read, so a partial Reader assignment yields *fewer machines* rather than an access error; Test Connection reports how many subscriptions it can actually see, which is the way to catch that. Reader covers discovery entirely. It is **not** enough for the optional *Run deployment scripts* capability, which additionally needs a role carrying `Microsoft.HybridCompute/machines/runCommands/write` — see below.
+- **Required access** — the app registration's service principal needs the **Reader** role, ideally at the management-group root, and the `Microsoft.HybridCompute` resource provider must be registered in each subscription. Azure returns only what the principal can read, so a partial Reader assignment yields *fewer machines* rather than an access error; Test Connection reports how many subscriptions it can actually see, which is the way to catch that. Reader covers discovery entirely. It is **not** enough for the optional *Run deployment scripts* capability, which additionally needs a role carrying all three of `Microsoft.HybridCompute/machines/read`, `runCommands/write` and `runCommands/read` — listing the machines, dispatching the command and reading its result are three separate actions, and a role missing any one of them fails partway. See `docs/INSTALL.md` for the least-privilege custom role.
 - **What it reports** — because the Connected Machine agent runs in the guest: the real domain-joined FQDN, the running OS SKU and version, SMBIOS serial / manufacturer / model, and a live heartbeat. A `Disconnected` agent is treated as a reachability signal, never a lifecycle one — those machines stay in inventory, tagged `arc-disconnected`.
 - **Optional extras** (one extra query each for the whole tenant, all default off) — Arc-enabled **VMware / SCVMM** placement, which also supplies the identifier that matches a machine to its existing vCenter VM instead of duplicating it; Arc-enabled **SQL Server** instances, attached to their host; and Arc-enabled **Kubernetes** clusters, which are the one extra that adds devices — each connected cluster becomes its own asset.
 - **Filters** — explicit subscription list (or every subscription the app can see), plus wildcard resource-group and machine-name filters and `key=value` Azure-tag filters.
@@ -317,7 +327,7 @@ npm run test:coverage     # with coverage report
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js 20+ / TypeScript (ESM) |
+| Runtime | Node.js 24 LTS / TypeScript (ESM) — floor is 22.12 |
 | Framework | Express 5 |
 | ORM | Prisma 7 (driver-adapter via `@prisma/adapter-pg`) |
 | Database | PostgreSQL 15 |

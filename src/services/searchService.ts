@@ -12,6 +12,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { isValidIpAddress, normalizeCidr, ipInCidr } from "../utils/cidr.js";
 import { macColonUpperOrNull } from "../utils/mac.js";
 import { MONITOR_STATUS_LABELS } from "../utils/monitorStatus.js";
+import { findAssetIdsByDiscoveredHostname } from "./discoveredHostnameService.js";
 import { activeAlertSummaryByAsset, type AssetActiveAlertSummary } from "./notificationService.js";
 
 export interface SearchHit {
@@ -231,6 +232,10 @@ async function runSearch(
   const singleTerm = terms.length === 1;
 
   const mac = singleTerm ? normalizeMac(q) : null;
+  // Memoized once per search — see DiscoveredHostnameLookup.
+  let discoveredOnce: Promise<Map<string, string>> | null = null;
+  const discovered: DiscoveredHostnameLookup = () =>
+    (discoveredOnce ??= findAssetIdsByDiscoveredHostname(terms));
   const isIp = singleTerm && isIpLike(q);
   const isCidr = singleTerm && !isIp && isCidrLike(q) && q.includes("/");
 
@@ -254,12 +259,12 @@ async function runSearch(
   }
   if (scope === "map") {
     if (!allowed.sites) return empty;
-    const sites = await searchPinnedFirewalls(terms, mac, SCOPED_LIMIT);
+    const sites = await searchPinnedFirewalls(terms, mac, SCOPED_LIMIT, discovered);
     return { ...empty, sites: sites.map(siteHit) };
   }
   if (scope === "asset") {
     if (!allowed.assets) return empty;
-    const assetRows = await searchAssets(terms, mac, SCOPED_LIMIT);
+    const assetRows = await searchAssets(terms, mac, SCOPED_LIMIT, discovered);
     const originBySrcId = await resolveOriginFortigates(assetRows.map((a) => a.id));
     const assetHits = assetRows.map((a) => decorateAssetHit(a, originBySrcId.get(a.id)));
     return { ...empty, assets: assetHits };
@@ -291,8 +296,8 @@ async function runSearch(
     allowed.blocks       ? searchBlocks(terms)                          : Promise.resolve([]),
     allowed.subnets      ? searchSubnets(terms, isCidr ? q : null)      : Promise.resolve([]),
     allowed.reservations ? searchReservations(terms, isIp ? q : null)   : Promise.resolve([]),
-    allowed.assets       ? searchAssets(terms, mac)                     : Promise.resolve([]),
-    allowed.sites        ? searchPinnedFirewalls(terms, mac)            : Promise.resolve([]),
+    allowed.assets       ? searchAssets(terms, mac, PER_GROUP_LIMIT, discovered)          : Promise.resolve([]),
+    allowed.sites        ? searchPinnedFirewalls(terms, mac, PER_GROUP_LIMIT, discovered) : Promise.resolve([]),
     isIp && allowed.subnets && allowed.reservations ? resolveIp(q) : Promise.resolve(null),
   ]);
 
@@ -471,8 +476,13 @@ async function searchReservations(terms: string[], ipExact: string | null, limit
   });
 }
 
-async function searchAssets(terms: string[], mac: string | null, limit = PER_GROUP_LIMIT) {
-  return runAssetSearch(terms, mac, {}, limit);
+async function searchAssets(
+  terms: string[],
+  mac: string | null,
+  limit = PER_GROUP_LIMIT,
+  discovered?: DiscoveredHostnameLookup,
+) {
+  return runAssetSearch(terms, mac, {}, limit, discovered);
 }
 
 // ─── Tag-scope helpers (`tag:` / `t:`) ─────────────────────────────────────────
@@ -527,15 +537,34 @@ async function searchBlocksByTag(terms: string[], limit = PER_GROUP_LIMIT) {
   });
 }
 
-async function searchPinnedFirewalls(terms: string[], mac: string | null, limit = PER_GROUP_LIMIT) {
+async function searchPinnedFirewalls(
+  terms: string[],
+  mac: string | null,
+  limit = PER_GROUP_LIMIT,
+  discovered?: DiscoveredHostnameLookup,
+) {
   return runAssetSearch(terms, mac, {
     assetType: "firewall",
     latitude: { not: null },
     longitude: { not: null },
-  }, limit);
+  }, limit, discovered);
 }
 
-async function runAssetSearch(terms: string[], mac: string | null, baseFilter: any, limit = PER_GROUP_LIMIT) {
+/**
+ * Thunk resolving the discovered-hostname matches for the current search. A
+ * thunk, and shared: `assets` and `sites` are two groups over the same terms,
+ * so both await ONE lookup instead of issuing the pair of queries twice per
+ * keystroke — and a scope that never touches assets fires it not at all.
+ */
+type DiscoveredHostnameLookup = () => Promise<Map<string, string>>;
+
+async function runAssetSearch(
+  terms: string[],
+  mac: string | null,
+  baseFilter: any,
+  limit = PER_GROUP_LIMIT,
+  discovered: DiscoveredHostnameLookup = () => findAssetIdsByDiscoveredHostname(terms),
+) {
   // Per-term OR across the Asset's own columns. AND-combined below so every
   // term must hit at least one column (multi-word "match all" search). `mac`
   // is set only for single-term MAC queries — stored MAC case is inconsistent
@@ -582,7 +611,7 @@ async function runAssetSearch(terms: string[], mac: string | null, baseFilter: a
     terms.map((t) => Prisma.sql`observed::text ILIKE ${`%${t}%`}`),
     " AND ",
   );
-  const [byAsset, sourceHits, macSideHits, ipSideHits, ipHistHits, jsonHitIds] = await Promise.all([
+  const [byAsset, sourceHits, macSideHits, ipSideHits, ipHistHits, jsonHitIds, discoveredHostnames] = await Promise.all([
     prisma.asset.findMany({
       where: { ...baseFilter, AND: assetAnd },
       take: limit,
@@ -675,6 +704,14 @@ async function runAssetSearch(terms: string[], mac: string | null, baseFilter: a
       WHERE ${observedWhere}
       LIMIT ${jsonLimit}
     `,
+    // Assets whose DISCOVERED hostname matches — the second line the list and
+    // the slide-over print under an overridden hostname. `Asset.hostname`
+    // carries only the pin, so the discovered half of the name is invisible to
+    // the column scan above; this branch makes typing either of a pinned
+    // device's two names find it. Restricted to pinned assets and confirmed
+    // against the projection inside the service — see
+    // discoveredHostnameService.findAssetIdsByDiscoveredHostname.
+    discovered(),
   ]);
   // The raw query returns asset ids only; load the asset rows with the
   // baseFilter applied so the firewall vs. non-firewall partition still
@@ -687,10 +724,20 @@ async function runAssetSearch(terms: string[], mac: string | null, baseFilter: a
         orderBy: { hostname: "asc" },
       })
     : [];
+  // Same shape for the discovered-hostname hits: ids in, rows out, `baseFilter`
+  // re-applied so a pinned firewall can't leak out of the Device Map group.
+  const discoveredAssets = discoveredHostnames.size
+    ? await prisma.asset.findMany({
+        where: { ...baseFilter, id: { in: Array.from(discoveredHostnames.keys()) } },
+        take: limit,
+        orderBy: { hostname: "asc" },
+      })
+    : [];
   // Merge dedup by asset id; the byAsset query wins on hostname-sort order
-  // for ties so existing presentation is preserved. Source/MAC/current-IP/
-  // historical-IP side hits and JSON-blob hits fill any remaining budget in
-  // that order (current associated IPs rank above since-rotated-off ones).
+  // for ties so existing presentation is preserved. Discovered-hostname hits
+  // come next, then source/MAC/current-IP/historical-IP side hits and JSON-blob
+  // hits fill any remaining budget in that order (current associated IPs rank
+  // above since-rotated-off ones).
   const seen = new Set<string>();
   const merged: typeof byAsset = [];
   const tryPush = (a: any) => {
@@ -699,6 +746,13 @@ async function runAssetSearch(terms: string[], mac: string | null, baseFilter: a
     merged.push(a);
   };
   for (const a of byAsset) tryPush(a);
+  // Ranked directly behind the column matches: matching one of a device's two
+  // names is the same class of signal as matching its hostname column. The
+  // projected name rides along on the row so the hit can say why it matched.
+  for (const a of discoveredAssets) {
+    if (merged.length >= limit) break;
+    tryPush(Object.assign(a, { hostnameDiscovered: discoveredHostnames.get(a.id) ?? null }));
+  }
   for (const s of sourceHits) {
     if (merged.length >= limit) break;
     tryPush(s.asset);
@@ -726,7 +780,7 @@ async function runAssetSearch(terms: string[], mac: string | null, baseFilter: a
 // the asset was seen on a pinned firewall. Extracted from `searchAll` so the
 // scoped `asset:` path can reuse the same shape.
 function decorateAssetHit(
-  a: { id: string; hostname: string | null; ipAddress: string | null; macAddress: string | null; assetTag: string | null; assetType: string; manufacturer: string | null; model: string | null } & AssetMonitorPillFields,
+  a: { id: string; hostname: string | null; ipAddress: string | null; macAddress: string | null; assetTag: string | null; assetType: string; manufacturer: string | null; model: string | null; hostnameDiscovered?: string | null } & AssetMonitorPillFields,
   origin: { siteId: string; hostname: string } | undefined,
 ): SearchHit {
   const hit = assetHit(a);
@@ -857,9 +911,16 @@ export function assetMonitorPillState(a: AssetMonitorPillFields): { kind: string
 }
 
 function assetHit(
-  a: { id: string; hostname: string | null; ipAddress: string | null; macAddress: string | null; assetTag: string | null; assetType: string; manufacturer: string | null; model: string | null } & AssetMonitorPillFields,
+  a: { id: string; hostname: string | null; ipAddress: string | null; macAddress: string | null; assetTag: string | null; assetType: string; manufacturer: string | null; model: string | null; hostnameDiscovered?: string | null } & AssetMonitorPillFields,
 ): SearchHit {
-  const secondary = [a.ipAddress, a.macAddress, [a.manufacturer, a.model].filter(Boolean).join(" ")].filter(Boolean).join(" — ");
+  // `hostnameDiscovered` is stamped only on rows that were FOUND by their
+  // discovered name (runAssetSearch's pinned-hostname branch) — the title shows
+  // the pin, so without naming the other half the hit looks like it matched
+  // nothing the operator typed.
+  const discovered = a.hostnameDiscovered && a.hostnameDiscovered !== a.hostname
+    ? `discovered: ${a.hostnameDiscovered}`
+    : null;
+  const secondary = [discovered, a.ipAddress, a.macAddress, [a.manufacturer, a.model].filter(Boolean).join(" ")].filter(Boolean).join(" — ");
   return {
     type: "asset",
     id: a.id,
@@ -870,12 +931,17 @@ function assetHit(
 }
 
 function siteHit(
-  a: { id: string; hostname: string | null; serialNumber: string | null; ipAddress: string | null; model: string | null; learnedLocation: string | null } & AssetMonitorPillFields,
+  a: { id: string; hostname: string | null; serialNumber: string | null; ipAddress: string | null; model: string | null; learnedLocation: string | null; hostnameDiscovered?: string | null } & AssetMonitorPillFields,
 ): SearchHit {
   // Site label leads with hostname; subtitle pulls model + IP/serial so
   // the operator can disambiguate FortiGates whose hostnames overlap
   // (e.g. multiple branch units of the same model).
   const bits: string[] = [];
+  // Same as assetHit: stamped only when the DISCOVERED name is what matched,
+  // and the title is showing the pin instead.
+  if (a.hostnameDiscovered && a.hostnameDiscovered !== a.hostname) {
+    bits.push(`discovered: ${a.hostnameDiscovered}`);
+  }
   if (a.model) bits.push(a.model);
   if (a.ipAddress) bits.push(a.ipAddress);
   if (a.serialNumber) bits.push(a.serialNumber);

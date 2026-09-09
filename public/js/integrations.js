@@ -1163,11 +1163,17 @@ function scriptPublishingFormHTML(publishToIntune) {
         '<ol style="margin:0;padding-left:1.2rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.6">' +
           '<li>Open this app registration in <strong>Entra ID &rarr; App registrations &rarr; API permissions</strong>.</li>' +
           '<li>Add the <strong>Microsoft Graph &rarr; Application permission</strong> ' +
-            '<code>DeviceManagementConfiguration.ReadWrite.All</code>.</li>' +
+            '<code>DeviceManagementScripts.ReadWrite.All</code> &mdash; this is the scope Graph ' +
+            'enforces on Remediations (<code>deviceHealthScripts</code>). Some tenants answer on an ' +
+            'API version that asks for <code>DeviceManagementConfiguration.ReadWrite.All</code> ' +
+            'instead; if publishing fails, the 403 names the scope that tenant wants &mdash; add that one.</li>' +
           '<li><strong>Grant admin consent</strong> for the tenant &mdash; application permissions do not work without it.</li>' +
         '</ol>' +
         '<p style="margin:0.5rem 0 0 0;font-size:0.82rem;color:var(--color-text-secondary)">' +
-          'Discovery keeps working on the read permissions it already has; this is additive.' +
+          'Discovery keeps working on the read permissions it already has; this is additive. ' +
+          'A newly granted permission reaches Polaris on its next access token, which it caches for up to ' +
+          'an hour &mdash; a publish that fails right after the grant is retried automatically on a fresh ' +
+          'token, so try it once more before assuming the grant did not take.' +
         '</p>' +
       '</div>' +
       '<p class="hint" style="color:var(--color-warning,#d98c00);margin:0">' +
@@ -1212,11 +1218,21 @@ function arcScriptPublishingFormHTML(allowRunCommand) {
       '<div style="background:var(--color-bg-subtle,rgba(127,127,127,0.08));border-radius:6px;padding:0.75rem 1rem;margin-bottom:0.75rem">' +
         '<p style="margin:0 0 0.4rem 0;font-weight:500;font-size:0.85rem">Required in Azure before this works</p>' +
         '<ol style="margin:0;padding-left:1.2rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.6">' +
-          '<li>Discovery needs only <strong>Reader</strong>. This additionally needs a role carrying ' +
-            '<code>Microsoft.HybridCompute/machines/runCommands/write</code> &mdash; e.g. ' +
-            '<strong>Azure Connected Machine Resource Administrator</strong>, or a custom role.</li>' +
+          '<li>Discovery needs only <strong>Reader</strong>. Running scripts additionally needs all three of ' +
+            '<code>Microsoft.HybridCompute/machines/read</code>, ' +
+            '<code>Microsoft.HybridCompute/machines/runCommands/write</code> and ' +
+            '<code>Microsoft.HybridCompute/machines/runCommands/read</code>. ' +
+            'The last one is easy to miss and reads back the exit code and output &mdash; without it the script ' +
+            'dispatches but no result ever comes back.</li>' +
+          '<li>A <strong>custom role</strong> with exactly those three actions is the least-privilege option. The ' +
+            'built-in <strong>Azure Connected Machine Resource Administrator</strong> also covers them, but it can ' +
+            'additionally modify and delete Arc machine resources.</li>' +
           '<li>Assign it to this service principal at the <strong>subscription or resource-group scope</strong> ' +
-            'covering the machines you intend to onboard.</li>' +
+            'covering the machines you intend to onboard. The principal is the app\'s entry under ' +
+            '<strong>Entra ID &rarr; Enterprise applications</strong> &mdash; search by <strong>Application (client) ID</strong>. ' +
+            '<strong>Keep the existing Reader assignment</strong>; Azure roles are additive and discovery still needs it.</li>' +
+          '<li>Allow a few minutes for the assignment to propagate. A 403 immediately after assigning usually means ' +
+            '&ldquo;not yet&rdquo;, not &ldquo;wrong role&rdquo; &mdash; re-check only if it persists.</li>' +
         '</ol>' +
         '<p style="margin:0.5rem 0 0 0;font-size:0.82rem;color:var(--color-text-secondary)">' +
           'Note this is an <strong>Azure RBAC role assignment</strong>, not a Graph API permission &mdash; a ' +
@@ -5109,15 +5125,20 @@ function azureArcFormHTML(defaults) {
     '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">Complete these in the Azure portal before testing the connection:</p>' +
     '<ul style="margin:0 0 0.75rem 1.2rem;padding:0;font-size:0.85rem;line-height:1.6">' +
       '<li>Register an application under <strong>Entra ID &rarr; App registrations</strong>, and copy its <strong>Directory (tenant) ID</strong> and <strong>Application (client) ID</strong>.</li>' +
-      '<li>Under <strong>Certificates &amp; secrets &rarr; New client secret</strong>, create a secret and copy the <strong>Value</strong> (not the Secret ID — the Value is shown only once).</li>' +
-      '<li>Assign that app\'s service principal the <strong>Reader</strong> role &mdash; on the management group above your subscriptions for full coverage, or on each subscription individually.</li>' +
+      '<li>Under <strong>Certificates &amp; secrets &rarr; New client secret</strong>, create a secret and copy the <strong>Value</strong> (not the Secret ID — the Value is shown only once). ' +
+        'Note its <strong>expiry date</strong> and set yourself a reminder: when it lapses, discovery stops with an authentication error that never mentions expiry.</li>' +
+      '<li>Assign that app\'s service principal the <strong>Reader</strong> role &mdash; on the management group above your subscriptions for full coverage, or on each subscription individually. ' +
+        'The service principal is the app\'s entry under <strong>Entra ID &rarr; Enterprise applications</strong>; when selecting it in <strong>Access control (IAM)</strong>, search by the <strong>Application (client) ID</strong> rather than the display name, which can collide.</li>' +
       '<li>Confirm the <strong><code>Microsoft.HybridCompute</code></strong> resource provider is registered in each subscription (<strong>Subscription &rarr; Settings &rarr; Resource providers</strong>).</li>' +
       '<li>Paste the three values below, then press <strong>Test Connection</strong> — it reports how many subscriptions this app can actually see.</li>' +
     '</ul>' +
     calloutHTML("warning", "Partial Reader means a partial roster",
       "Azure returns only the resources this app is allowed to read, so a missing role assignment yields <em>fewer machines</em> — never an access-denied error. If Test Connection reports fewer subscriptions than you expect, check the Reader assignment first; nothing else will tell you.") +
-    calloutHTML("tip", "Read-only by design",
-      "Polaris never writes to Azure. <strong>Reader</strong> is sufficient for everything this integration does — don't grant anything broader.") +
+    (d.allowRunCommand === true
+      ? calloutHTML("warning", "This integration can write to Azure",
+          "Script publishing is <strong>on</strong>, so this is no longer a read-only integration: Polaris can create Run Commands, which execute as root/SYSTEM on machines you select. Discovery itself still needs only <strong>Reader</strong> — the additional role that grants execution is described on the <strong>Script Publishing</strong> tab. Turn that toggle off and Reader alone is sufficient again.")
+      : calloutHTML("tip", "Read-only unless you enable script publishing",
+          "As configured, Polaris only reads from Azure and <strong>Reader</strong> is sufficient — don't grant anything broader. The one exception is the <strong>Script Publishing</strong> tab: turning it on lets Polaris run the onboarding script on Arc machines, which needs an additional role and is described there.")) +
     formDivider() +
     sectionHeading("Connection Settings") +
     '<div class="form-group"><label>Tenant ID *</label><input type="text" id="f-tenantId" value="' + escapeHtml(d.tenantId || "") + '" placeholder="e.g. 00000000-0000-0000-0000-000000000000"><p class="hint">Directory (tenant) ID from Azure portal &gt; Entra ID &gt; Overview</p></div>' +
@@ -6001,6 +6022,11 @@ function _intgEditFormSpec(intg, config) {
         pollInterval: intg.pollInterval,
         verboseLogging: config.verboseLogging === true,
         verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
+        // Read by the General tab's read-only/writes-to-Azure callout. Without
+        // it that tab tells the operator "Reader is sufficient, don't grant
+        // anything broader" while the Script Publishing tab tells them to grant
+        // run-command rights — the two tabs of one modal contradicting.
+        allowRunCommand: config.allowRunCommand === true,
       };
       body = azureArcFormHTML(defaults);
       formGetter = function () {

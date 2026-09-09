@@ -108,7 +108,8 @@ function Invoke-Rollback {
         Remove-Item -Recurse -Force (Join-Path $AppDir "dist") -ErrorAction SilentlyContinue
     }
     # `npm run build` (not bare tsc) so the post-tsc asset copy runs and the
-    # rolled-back dist/ regains its bundled std MIB .txt files.
+    # rolled-back dist/ regains its non-.ts runtime assets: the bundled std MIB
+    # .txt files and the platform end-of-life dataset under src/data/.
     & npm run build 2>$null
 
     # Restore database if migration failed
@@ -279,8 +280,10 @@ if (Test-Path (Join-Path $AppDir "dist")) {
     Remove-Item -Recurse -Force (Join-Path $AppDir "dist") -ErrorAction Stop
 }
 # `npm run build` (not bare tsc) so scripts/copy-build-assets.mjs runs after
-# the compile and mirrors the bundled std MIB .txt files into dist/ — tsc
-# alone won't emit them and std SNMP-walks would fail post-update.
+# the compile and mirrors every non-.ts runtime asset into dist/ — tsc alone
+# won't emit them. The std MIB .txt files (std SNMP-walks fail without them)
+# and the platform end-of-life dataset under src/data/ (the Platform Lifecycle
+# card renders empty without it) both ride this copy.
 & npm run build
 if ($LASTEXITCODE -ne 0) { Invoke-Rollback "TypeScript build" }
 

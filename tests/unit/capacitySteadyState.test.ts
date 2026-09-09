@@ -22,6 +22,7 @@ vi.mock("../../src/db.js", () => ({
 import {
   projectSteadyStateSize,
   projectDetailBytes,
+  effectiveRetentionDays,
   isStaleVacuumTable,
   AUTOVACUUM_BLOAT_DEAD_TUP_RATIO,
 } from "../../src/services/capacityService.js";
@@ -32,6 +33,12 @@ const monitor = {
   telemetryIntervalSeconds: 60,
   systemInfoIntervalSeconds: 600,
 } as any;
+
+// What the projection actually uses for a 7-day tier when no chunk interval is
+// supplied: the configured 7 days plus one prune cadence (the prune runs every
+// 24 h, so a cutoff is reached up to a day late). Chunk slack is 0 here, which
+// is what a plain Postgres table gets.
+const EFF7 = effectiveRetentionDays({ retentionDays: 7, chunkIntervalDays: 0 });
 
 const baseArgs = {
   currentDbBytes: 50_000_000_000, // 50 GB
@@ -74,7 +81,7 @@ describe("projectSteadyStateSize — stable against measured per-row noise", () 
     const onlyDetail = [saneTables[0]];
     const projected = projectSteadyStateSize({ ...baseArgs, sampleTables: onlyDetail });
     const rowsPerDay = 86400 / 60;
-    const expectedSample = 2000 * rowsPerDay * 7 * 310;
+    const expectedSample = 2000 * rowsPerDay * EFF7 * 310;
     const base = baseArgs.currentDbBytes - onlyDetail[0].bytes;
     expect(projected).toBe(base + expectedSample);
   });
@@ -85,30 +92,131 @@ describe("projectSteadyStateSize — stable against measured per-row noise", () 
   });
 });
 
-describe("projectDetailBytes — measured daily rate vs workload fallback", () => {
+describe("projectDetailBytes — measured daily rate vs fallback", () => {
   const FALLBACK = 2_270_000_000;
   const DAILY = 12_000_000_000;
 
   it("uses measured daily × retention when retention ≤ compress-after (tier never compresses)", () => {
-    expect(projectDetailBytes({ measuredDailyBytes: DAILY, retentionDays: 7, compressAfterDays: 7, workloadFallbackBytes: FALLBACK }))
+    expect(projectDetailBytes({ measuredDailyBytes: DAILY, retentionDays: 7, compressAfterDays: 7, fallbackBytes: FALLBACK }))
       .toBe(DAILY * 7);
   });
 
   it("uses measured when compression is disabled (compressAfter 0)", () => {
-    expect(projectDetailBytes({ measuredDailyBytes: DAILY, retentionDays: 30, compressAfterDays: 0, workloadFallbackBytes: FALLBACK }))
+    expect(projectDetailBytes({ measuredDailyBytes: DAILY, retentionDays: 30, compressAfterDays: 0, fallbackBytes: FALLBACK }))
       .toBe(DAILY * 30);
   });
 
-  it("falls back to the workload model when retention reaches PAST the compress frontier", () => {
+  it("falls back when retention reaches PAST the compress frontier", () => {
     // retention 7 > compress 3 → part of the data is compressed; the
     // uncompressed daily rate would over-project, so use the fallback.
-    expect(projectDetailBytes({ measuredDailyBytes: DAILY, retentionDays: 7, compressAfterDays: 3, workloadFallbackBytes: FALLBACK }))
+    expect(projectDetailBytes({ measuredDailyBytes: DAILY, retentionDays: 7, compressAfterDays: 3, fallbackBytes: FALLBACK }))
       .toBe(FALLBACK);
   });
 
+  // The gate reads the CONFIGURED window; the multiplier is the effective one.
+  // Both the compression policy and the retention policy fire off a chunk's
+  // range_end, so chunk slack changes how long data sits on disk but not which
+  // policy reaches the chunk first. Gating on the widened number instead would
+  // kick every 7d/7d detail table onto the workload fallback — silently undoing
+  // the measured-rate path on the largest tables in the database.
+  it("gates on the configured window while multiplying by the effective one", () => {
+    expect(projectDetailBytes({
+      measuredDailyBytes: DAILY,
+      retentionDays: 15,          // 7 configured + 7 chunk + 1 prune
+      configuredRetentionDays: 7, // still dropped before compression reaches it
+      compressAfterDays: 7,
+      fallbackBytes: FALLBACK,
+    })).toBe(DAILY * 15);
+  });
+
   it("falls back when there is no measurement (null / zero)", () => {
-    expect(projectDetailBytes({ measuredDailyBytes: null, retentionDays: 7, compressAfterDays: 7, workloadFallbackBytes: FALLBACK })).toBe(FALLBACK);
-    expect(projectDetailBytes({ measuredDailyBytes: 0, retentionDays: 7, compressAfterDays: 7, workloadFallbackBytes: FALLBACK })).toBe(FALLBACK);
+    expect(projectDetailBytes({ measuredDailyBytes: null, retentionDays: 7, compressAfterDays: 7, fallbackBytes: FALLBACK })).toBe(FALLBACK);
+    expect(projectDetailBytes({ measuredDailyBytes: 0, retentionDays: 7, compressAfterDays: 7, fallbackBytes: FALLBACK })).toBe(FALLBACK);
+  });
+});
+
+/**
+ * The 2026-09 prod finding: the Maintenance card's steady-state figure sat
+ * ~18 GB BELOW the live database size and tracked it, instead of forecasting.
+ * Two independent causes, one test group each.
+ */
+describe("effectiveRetentionDays — drop_chunks granularity slack", () => {
+  it("adds the chunk interval and the prune cadence to the configured window", () => {
+    // asset_monitor_samples on prod: 7d retention, TimescaleDB's default 7d
+    // chunk interval → 12.58 days of data were actually on disk.
+    expect(effectiveRetentionDays({ retentionDays: 7, chunkIntervalDays: 7, pruneCadenceDays: 1 })).toBe(15);
+  });
+
+  it("gives a plain (non-hypertable) table only the prune cadence", () => {
+    expect(effectiveRetentionDays({ retentionDays: 7, chunkIntervalDays: 0, pruneCadenceDays: 1 })).toBe(8);
+  });
+
+  it("is worst for a table whose retention is SHORTER than its chunk interval", () => {
+    // asset_hardware_sensor_samples on prod: 3d retention, 7d chunks → keeps
+    // up to 11 days, i.e. 3.7x the configured window.
+    expect(effectiveRetentionDays({ retentionDays: 3, chunkIntervalDays: 7, pruneCadenceDays: 1 })).toBe(11);
+  });
+
+  it("returns 0 for a tier that is off (0) or FOREVER (-1)", () => {
+    expect(effectiveRetentionDays({ retentionDays: 0, chunkIntervalDays: 7 })).toBe(0);
+    expect(effectiveRetentionDays({ retentionDays: -1, chunkIntervalDays: 7 })).toBe(0);
+  });
+
+  it("never projects below what is already on disk for a table past its window", () => {
+    // The regression in one assertion: a table holding 12.58 days of data at a
+    // measured rate D, with 7d retention on 7d chunks, must not forecast 7×D.
+    const DAILY = 1_200_000_000;
+    const onDiskBytes = Math.round(DAILY * 12.58);
+    const table = [{ name: "asset_monitor_samples", rows: 1000, bytes: onDiskBytes, avgBytesPerRow: 310, deadTupRatio: 0, lastAutovacuum: null }];
+    const projected = projectSteadyStateSize({
+      ...baseArgs,
+      sampleTables: table,
+      measuredDetailDailyBytes: { asset_monitor_samples: DAILY },
+      compressAfterByTable: { asset_monitor_samples: 7 },
+      chunkIntervalByTable: { asset_monitor_samples: 7 },
+    });
+    const base = baseArgs.currentDbBytes - onDiskBytes;
+    expect(projected).toBe(base + DAILY * 15);
+    // And the part that was visibly wrong on the card: the sample projection
+    // exceeds the bytes the table already holds.
+    expect(projected - base).toBeGreaterThan(onDiskBytes);
+  });
+});
+
+describe("projectSteadyStateSize — standalone hypertables (countKey null)", () => {
+  // asset_service_log_samples was 13 GB of an 89 GB prod database and had no
+  // projection entry at all, so its bytes stayed in baseBytes and every byte it
+  // grew raised the steady-state figure 1:1.
+  const logTable = [
+    { name: "asset_service_log_samples", rows: 5000, bytes: 13_000_000_000, avgBytesPerRow: 300, deadTupRatio: 0, lastAutovacuum: null },
+  ];
+
+  it("projects a standalone table from its measured daily rate × effective retention", () => {
+    const DAILY = 1_000_000_000;
+    const projected = projectSteadyStateSize({
+      ...baseArgs,
+      sampleTables: logTable,
+      measuredDetailDailyBytes: { asset_service_log_samples: DAILY },
+      compressAfterByTable: { asset_service_log_samples: 7 },
+      chunkIntervalByTable: { asset_service_log_samples: 7 },
+    });
+    // process.detail default is 7d; + 7d chunk + 1d prune = 15d.
+    const base = baseArgs.currentDbBytes - 13_000_000_000;
+    expect(projected).toBe(base + DAILY * 15);
+  });
+
+  it("leaves a standalone table at its current size when it cannot be measured", () => {
+    // Neutral, not zero and not a guess: the fallback cancels the same table's
+    // contribution to sampleBytesNow, so an unmeasurable table neither inflates
+    // nor deflates the forecast.
+    const projected = projectSteadyStateSize({ ...baseArgs, sampleTables: logTable });
+    expect(projected).toBe(baseArgs.currentDbBytes);
+  });
+
+  it("has no per-asset row model, so fleet size does not move it", () => {
+    const small = projectSteadyStateSize({ ...baseArgs, monitoredCount: 100, telemetryEligibleCount: 100, systemInfoEligibleCount: 100, sampleTables: logTable });
+    const large = projectSteadyStateSize({ ...baseArgs, sampleTables: logTable });
+    expect(small).toBe(large);
   });
 });
 
@@ -124,9 +232,11 @@ describe("projectSteadyStateSize — measured detail daily rate", () => {
       sampleTables: ifaceTable,
       measuredDetailDailyBytes: { asset_interface_samples: 12_000_000_000 },
       compressAfterByTable: { asset_interface_samples: 7 },
+      chunkIntervalByTable: { asset_interface_samples: 1 },
     });
     const base = baseArgs.currentDbBytes - 2_000_000;
-    expect(projected).toBe(base + 12_000_000_000 * 7); // 84 GB of interface detail, matching reality
+    // 7d configured + 1d chunk interval + 1d prune cadence = 9 days on disk.
+    expect(projected).toBe(base + 12_000_000_000 * 9);
   });
 
   // Post pinned-only cutover: interface detail carries PINNED rows only, so it
@@ -139,7 +249,7 @@ describe("projectSteadyStateSize — measured detail daily rate", () => {
     // No pinnedInterfaceCount supplied → conservative default of 2/asset.
     // rowsPerAssetPerDay = (86400/600 + 86400/60) * 2 = (144 + 1440) * 2 = 3168
     // interfaces.detail retention = 7d; 395 B/row.
-    const fallback = 2000 * 3168 * 7 * 395;
+    const fallback = 2000 * 3168 * EFF7 * 395;
     expect(projected).toBe(base + fallback);
   });
 
@@ -151,7 +261,7 @@ describe("projectSteadyStateSize — measured detail daily rate", () => {
       pinnedInterfaceCount: 20_000,
     });
     const base = baseArgs.currentDbBytes - 2_000_000;
-    const fallback = 2000 * ((86400 / 600 + 86400 / 60) * 10) * 7 * 395;
+    const fallback = 2000 * ((86400 / 600 + 86400 / 60) * 10) * EFF7 * 395;
     expect(projected).toBe(base + fallback);
   });
 

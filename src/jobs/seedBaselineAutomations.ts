@@ -77,6 +77,46 @@ const MARKER_KEY_V2 = "seedBaselineAutomationsV2SeededAt";
 const MARKER_KEY_V3 = "seedBaselineAutomationsV3SeededAt";
 const MARKER_KEY_V4 = "seedBaselineAutomationsV4ResetEventSeededAt";
 const MARKER_KEY_V5 = "seedBaselineAutomationsV5LossCeilingSeededAt";
+const MARKER_KEY_V6 = "seedBaselineAutomationsV6PlatformLifecycleSeededAt";
+
+/**
+ * Platform end-of-life. Its own marker and its own set rather than an entry
+ * appended to EVENT_BASELINE_RULES: the marker contract is that a shipped set
+ * never changes, so an append would mean no existing install ever receives this
+ * rule — only brand-new ones would.
+ *
+ * Two things here are deliberate and easy to "simplify" wrongly:
+ *
+ * The reset is event-mode on a DISTINCT recovery action. `resetEventSchema`
+ * accepts only actionPattern and resourceType — no detailsMatch — so a
+ * single-action design would have this rule's reset match its own escalation
+ * and clear itself immediately. That is exactly why "Capacity severity
+ * escalated" settled for a timed reset; the lifecycle service emits
+ * platform.lifecycle_recovered so this one can genuinely self-clear when the
+ * operator finishes the upgrade.
+ *
+ * The cooldown is a week. An end-of-life condition is continuously true for
+ * months, so a short cooldown re-notifies on every daily tick that shifts the
+ * fingerprint (a day-count crossing a threshold, a second component degrading).
+ * Seven days puts "PostgreSQL is end-of-life" in the inbox roughly monthly —
+ * often enough to survive a change of on-call, rarely enough to stay read.
+ */
+const PLATFORM_LIFECYCLE_RULES: Record<string, unknown>[] = [
+  {
+    name: "Platform end-of-life warning",
+    description:
+      "Fires when the platform lifecycle check worsens (platform.lifecycle_changed, direction=escalated) — a runtime, database or OS is past or approaching end of life, or below Polaris's minimum. Clears when the check recovers. See Server Settings → Maintenance → Platform Lifecycle. Baseline example — edit or delete freely.",
+    severity: "warning",
+    trigger: {
+      type: "event",
+      actionPattern: "platform.lifecycle_changed",
+      detailsMatch: { direction: "escalated" },
+    },
+    reset: { mode: "event", resetEvent: { actionPattern: "platform.lifecycle_recovered" } },
+    cooldownSec: 604800,
+    messageTemplate: "{value}",
+  },
+];
 
 /**
  * The saturation ceiling the baseline packet-loss automation ships with.
@@ -765,14 +805,17 @@ export async function seedBaselineAutomations(): Promise<{ created: number; skip
   // stamped the V1 marker before the ceiling existed, where the anchor removal
   // would otherwise leave an all-assets rule alerting after every outage.
   const v5 = await migrateLossCeilingV5();
+  // V6 is its own set with its own marker so installs that stamped V2 long ago
+  // still receive the platform end-of-life rule.
+  const v6 = await seedRuleSet(MARKER_KEY_V6, PLATFORM_LIFECYCLE_RULES);
   return {
-    created: v1.created + v2.created + v3.created,
-    skipped: v1.skipped && v2.skipped && v3.skipped && v4.skipped && v5.skipped,
+    created: v1.created + v2.created + v3.created + v6.created,
+    skipped: v1.skipped && v2.skipped && v3.skipped && v4.skipped && v5.skipped && v6.skipped,
   };
 }
 
 /** Exported for the seed unit test (glob-vs-fixture pinning). */
-export { BASELINE_RULES, EVENT_BASELINE_RULES };
+export { BASELINE_RULES, EVENT_BASELINE_RULES, PLATFORM_LIFECYCLE_RULES };
 
 (async () => {
   try {

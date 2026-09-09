@@ -301,7 +301,8 @@ rollback() {
   sudo -u "$APP_USER" npx prisma generate 2>/dev/null
   sudo -u "$APP_USER" rm -rf "$APP_DIR/dist" 2>/dev/null
   # `npm run build` (not bare tsc) so the post-tsc asset copy runs and the
-  # rolled-back dist/ regains its bundled std MIB .txt files.
+  # rolled-back dist/ regains its non-.ts runtime assets: the bundled std MIB
+  # .txt files and the platform end-of-life dataset under src/data/.
   sudo -u "$APP_USER" npm run build 2>/dev/null
 
   # Restore database if migration failed and we have a backup
@@ -365,8 +366,10 @@ step "6/9  Building TypeScript..."
 
 sudo -u "$APP_USER" rm -rf "$APP_DIR/dist" || rollback "dist cleanup"
 # `npm run build` (not bare tsc) so scripts/copy-build-assets.mjs runs after
-# the compile and mirrors the bundled std MIB .txt files into dist/ — tsc
-# alone won't emit them and std SNMP-walks would fail post-update.
+# the compile and mirrors every non-.ts runtime asset into dist/ — tsc alone
+# won't emit them. The std MIB .txt files (std SNMP-walks fail without them)
+# and the platform end-of-life dataset under src/data/ (the Platform Lifecycle
+# card renders empty without it) both ride this copy.
 sudo -u "$APP_USER" npm run build || rollback "TypeScript build"
 
 info "Build successful — stopping service for migration"

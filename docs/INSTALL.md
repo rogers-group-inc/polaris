@@ -8,9 +8,41 @@ If you're upgrading an existing install rather than installing fresh, use the in
 
 ---
 
+## Supported platform versions
+
+The canonical list. Every per-platform section below installs these versions; where a section
+states a floor, it states the same one as this table.
+
+| Component | Minimum | Polaris targets | Upstream end of life | Notes |
+|---|---|---|---|---|
+| **Node.js** | 22 | **24** | 22 → 2027-04-30 · 24 → 2028-04-30 | LTS lines only. The minimum is the dependency tree's floor (`engines.node` is `>=22.12.0`); every install script provisions **24**. `engines.node` is advisory — npm warns and installs anyway — so the scripts' accept-checks are the real gate. A host left on 22 has under a year of runway. |
+| **PostgreSQL** | 15 | **17** | 15 → 2027-11-11 · 16 → 2028-11-09 · 17 → 2029-11-08 | Five-year policy; a major dies each November. Target is 17 because TimescaleDB 2.29 dropped 15. |
+| **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date: **2.28.x is the last line supporting PostgreSQL 15**, and 2.29+ supports only 16/17/18. |
+| **Go** (agent build only) | 1.22 | **1.26** | 1.22 → 2025-02-11 · 1.25 → 2026-08-19 | Go supports only the two most recent majors, so this ages faster than anything else here. Needed only to build agent binaries in-app. |
+| **nginx** | 1.25 | **1.30** | 1.25 → 2024-05-29 · 1.29 → 2026-05-13 | The 1.25 floor is the HTTP/3 requirement, not a support statement. The setup scripts install from the nginx.org **mainline** repo, so a scripted install lands on a current branch. |
+| **Java** (agent signing only) | 17 | **21** | 17 → 2027-09-30 · 21 → 2028-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. |
+| **RHEL / Rocky / AlmaLinux** | 9 | 9 | 9 → 2032-05-31 (full support ends 2027-05-31) | |
+| **Ubuntu** | 22.04 LTS | **24.04 LTS** | 22.04 → 2027-06-01 · 24.04 → 2029-05-31 | LTS only. Extended dates require Ubuntu Pro; don't treat them as free runway. |
+| **Windows Server** | 2019 | 2022 | see Microsoft's product lifecycle | |
+| **PgBouncer** (optional) | 1.21 | 1.21 | no published date | Polaris cannot read its version — confirm the floor by hand. |
+
+**Polaris warns you about this itself.** Server Settings → **Maintenance → Platform Lifecycle**
+shows what this host is actually running, grades it against these dates, and links the upgrade
+steps for anything past or approaching end of life. A component below the minimum above is
+flagged critical; an upstream end-of-life is flagged and emailed but deliberately does not hold
+a permanent banner open, since it clears only in a maintenance window.
+
+> Dates last reviewed 2026-09-08 against upstream sources. They live in
+> `src/data/platformEol.json`, which is what the in-app card reads; `npm run check:versions`
+> asserts the version pins across the repo agree with each other.
+
+---
+
 ## Disk sizing — read this first
 
 The single most common operational footgun on a fresh Polaris install is undersized `/var` (Linux) or undersized `C:` (Windows) — both are where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.
+
+**Budget more than your retention window.** When TimescaleDB is installed, sample data is reclaimed a whole *chunk* at a time — a chunk can only be dropped once all of it is past the cutoff, and the prune runs once every 24 h. Each tier therefore keeps its configured window **plus one chunk interval plus one prune cycle**. Most sample tables use TimescaleDB's default 7-day chunk interval (only the interface, storage and IPsec detail tables are narrowed to 1 day), so a 7-day detail retention holds up to ~15 days on disk and a 3-day retention holds up to ~11. Size for that, not for the number in the retention setting.
 
 The largest single driver is usually **how many interfaces operators pin** for fast-cadence polling (the System tab's *Poll 1m* column, and the per-integration interface auto-monitor selection). Polaris records interface *current state* for every port on every device at negligible cost, but keeps a time-series only for pinned interfaces — so a broad auto-monitor pattern across a fleet of 48-port switches is the difference between a few gigabytes and a few hundred. Server Settings → Maintenance → Capacity Advisor projects the steady-state size from your actual pinned count; if the forecast looks wrong, narrow the auto-monitor selection before buying disk.
 
@@ -24,6 +56,88 @@ The largest single driver is usually **how many interfaces operators pin** for f
 The **DB volume number is the one that matters most.** Aim high; Postgres degrades hard when its volume hits 100% (postmaster will crash on WAL writes during recovery, see *Recovery* below).
 
 The setup wizard runs a preflight check that statfs's the conventional PGDATA paths after you click **Test Connection** and surfaces a warning if free space is below the recommended minimum. The runtime check (Server Settings → Maintenance) then watches the actual `SHOW data_directory` value across all volumes.
+
+---
+
+## Upgrading Node on an existing install
+
+**The in-app updater cannot do this, by design.** It runs as the unprivileged
+`polaris` user, whose only root grant is the nginx apply wrapper
+(`deploy/sudoers.d/polaris-nginx`) — installing a system package is not something
+the web application is allowed to do, and giving it that power to save a
+once-every-two-years operation would be a poor trade. Node upgrades are an
+operator (or configuration-management) task.
+
+Order matters. Native modules are compiled against the Node headers present at
+install time, so **`node_modules` must be rebuilt after the runtime changes** —
+and `npm ci` deletes `node_modules` before it installs, so the service must be
+down for the whole window rather than restarted at the end.
+
+### The scripted path
+
+`deploy/upgrade-node.sh` performs the whole sequence with preflight checks, a
+pre-migration `pg_dump`, and a fail-safe: if `npm ci` fails it leaves the service
+stopped rather than starting a host with no dependencies.
+
+```bash
+cd /opt/polaris
+
+# See exactly what it would do; changes nothing.
+sudo bash deploy/upgrade-node.sh --dry-run
+
+# Do it.
+sudo bash deploy/upgrade-node.sh
+```
+
+Useful flags: `--target 22` (Node 22 LTS instead of 24), `--skip-backup` (no
+`pg_dump` first), `--pull` (fast-forward the checkout before rebuilding).
+`POLARIS_APP_DIR` and `POLARIS_APP_USER` override the `/opt/polaris` + `polaris`
+defaults, and `POLARIS_UPGRADE_BACKUP_DIR` moves the `pg_dump` off `/var/tmp`.
+All three are read from the invoking environment, not from `.env` — they are
+script arguments, not Polaris runtime settings.
+
+The script is idempotent: on a host that already meets the floor with a current
+build it reports that and exits without stopping anything.
+
+### The manual path
+
+Equivalent to the above, if you would rather run each step yourself:
+
+```bash
+# 1. Stop Polaris (all roles).
+sudo systemctl stop polaris.target
+
+# 2. Replace the runtime. RHEL 9 AppStream carries a nodejs:24 stream; the reset
+#    is required because a host pinned to nodejs:20 refuses a second stream.
+sudo dnf module reset nodejs -y
+sudo dnf module enable nodejs:24 -y
+sudo dnf install -y nodejs
+node -v        # expect v24.x
+
+#    Ubuntu/Debian instead:
+#    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+#    sudo apt install -y nodejs
+
+# 3. Rebuild dependencies against the new ABI, then rebuild the app.
+cd /opt/polaris
+sudo -u polaris npm ci --production=false
+sudo -u polaris npm run build
+
+# 4. Start, then confirm.
+sudo systemctl start polaris.target
+systemctl status 'polaris-*' --no-pager
+journalctl -u polaris-web -n 50 --no-pager
+```
+
+Two things to check afterwards. `npm ci` should no longer print `EBADENGINE`
+warnings for `pg-boss` or `@prisma/streams-local` — those warnings were the
+symptom of running below the floor. And if the install uses pg-boss queue mode,
+confirm it still comes up (Server Settings → Maintenance → Database → *Monitor
+queue*), since pg-boss was the package demanding `>=22.12` in the first place.
+
+If step 3 fails, **do not start the service** — `npm ci` will have left
+`node_modules` empty and the process cannot boot. Fix the install error and re-run
+step 3; nothing else in the sequence needs repeating.
 
 ---
 
@@ -109,13 +223,19 @@ sudo chmod o+x /var/lib/pgsql /var/lib/pgsql/15
 
 Edit `/var/lib/pgsql/15/data/pg_hba.conf` and add a line for the polaris user (typically `host polaris polaris 127.0.0.1/32 scram-sha-256`), then `sudo systemctl reload postgresql-15`.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
 ```bash
 sudo dnf module reset nodejs -y
-sudo dnf module enable nodejs:20 -y
+sudo dnf module enable nodejs:24 -y
 sudo dnf install -y nodejs
 ```
+
+Node **22.12 is the hard floor** — `pg-boss` declares `>=22.12.0` and
+`@prisma/streams-local` declares `>=22`. Node 20 reached end-of-life in April 2026
+and is below that floor; installs still on it should follow *Upgrading Node on an
+existing install* below. Node 22 is also supported (to ~April 2027) if you are
+already on it.
 
 ### 4. Polaris
 
@@ -348,12 +468,15 @@ sudo chmod o+x /var/lib/postgresql
 
 Edit `/etc/postgresql/<version>/main/pg_hba.conf` to add the polaris user, then `sudo systemctl reload postgresql`.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
+
+Node **22.12 is the hard floor** (`pg-boss` requires `>=22.12.0`). Node 20 is
+end-of-life as of April 2026 — see *Upgrading Node on an existing install* below.
 
 ### 4. Polaris
 
@@ -421,9 +544,11 @@ Edit `pg_hba.conf` (in the data directory) to add a line for the polaris user, t
 
 The `pgboss` schema grants are required for pg-boss queue mode (operators with thousands of monitored assets). Without them Polaris falls back to in-process cursor mode — fine for small/medium fleets, won't keep up at thousands.
 
-### 3. Node.js 20+
+### 3. Node.js 24 (LTS)
 
-Download the LTS installer from <https://nodejs.org/> and run it.
+Download the **24.x LTS** installer from <https://nodejs.org/> and run it. Node
+**22.12 is the hard floor** (`pg-boss` requires `>=22.12.0`); Node 20 is
+end-of-life as of April 2026.
 
 ### 4. Polaris
 
@@ -1255,7 +1380,7 @@ The Polaris Agent is a small Go binary you can install on Linux / macOS / Window
 
 ### Build the binaries
 
-**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.22+ alongside Node 20+, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
+**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.22+ alongside Node 24, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
 
 1. Sign in as admin
 2. Integrations → **Polaris Agents** tab → **Polaris Agent** card → **Build agent binaries (vX.Y.Z)**
@@ -1500,10 +1625,14 @@ Downloading the script and pushing it yourself works fine and needs no extra per
 Uploads the remediation + detection pair as an Intune **Remediation**.
 
 1. Open the app registration behind your Entra ID integration → **API permissions**.
-2. Add the Microsoft Graph **application** permission `DeviceManagementConfiguration.ReadWrite.All`.
+2. Add the Microsoft Graph **application** permission `DeviceManagementScripts.ReadWrite.All`.
 3. **Grant admin consent** — application permissions do nothing without it.
 4. Tick *Allow Polaris to publish scripts to Intune* on the integration's Script Publishing tab.
 5. Integrations → Polaris Agent → SSH Deployment → **Publish to Intune**.
+
+> **If publishing returns a 403 naming a different scope**, grant that one. Graph serves Remediations (`deviceHealthScripts`) from both `/v1.0` and `/beta`, Polaris uses whichever your tenant answers on, and the two do not enforce the same scope — some tenants want `DeviceManagementConfiguration.ReadWrite.All` instead. The error text names the scope your tenant is asking for; that is the authority, not this page.
+>
+> **A 403 immediately after fixing the grant is expected once.** Polaris authenticates with an app-only token whose permissions are frozen when the token is issued, and it caches that token for up to an hour, so the first attempt after a grant can still be carrying the pre-grant token. Polaris now discards a cached token and retries once when Graph returns 403, so pressing the button again is enough; you no longer need to restart the service or wait the token out.
 
 **Polaris never assigns the policy.** It arrives targeting nothing; you review the script and choose device groups in the Intune console. Re-publishing updates the same policy rather than creating a second one.
 
@@ -1513,8 +1642,40 @@ Note the permission grade: this takes the credential from "reads your device inv
 
 Runs the script directly on Arc-connected machines via **Run Command**. This is how Linux and Windows Server get onboarded — Intune deploys scripts to neither.
 
-1. Discovery needs only **Reader**. This additionally needs a role carrying `Microsoft.HybridCompute/machines/runCommands/write` — e.g. **Azure Connected Machine Resource Administrator**, or a custom role.
-2. Assign it to the service principal at the **subscription or resource-group scope** covering the machines you intend to onboard. This is an **Azure RBAC role assignment**, not a Graph API permission — a different mechanism from the Intune side, and a common point of confusion.
+1. Discovery needs only **Reader**. Running scripts additionally needs **all three** of these actions:
+
+   | Action | Why |
+   |---|---|
+   | `Microsoft.HybridCompute/machines/read` | lists the machines in the target picker |
+   | `Microsoft.HybridCompute/machines/runCommands/write` | dispatches the run command |
+   | `Microsoft.HybridCompute/machines/runCommands/read` | reads back exit code, stdout and stderr |
+
+   The third is the one people miss, and its absence is invisible until after a dispatch: the script runs, and no result ever comes back.
+
+   A **custom role** with exactly those three is the least-privilege option:
+
+   ```json
+   {
+     "Name": "Polaris Arc Run Command",
+     "Description": "Dispatch and read Polaris onboarding run commands on Arc machines.",
+     "IsCustom": true,
+     "Actions": [
+       "Microsoft.HybridCompute/machines/read",
+       "Microsoft.HybridCompute/machines/runCommands/read",
+       "Microsoft.HybridCompute/machines/runCommands/write"
+     ],
+     "NotActions": [],
+     "AssignableScopes": ["/subscriptions/<SUBSCRIPTION_ID>"]
+   }
+   ```
+
+   ```bash
+   az role definition create --role-definition polaris-arc-run-command.json
+   ```
+
+   The built-in **Azure Connected Machine Resource Administrator** also covers all three, but it can additionally modify and delete Arc machine resources.
+
+2. Assign it to the service principal at the **subscription or resource-group scope** covering the machines you intend to onboard. This is an **Azure RBAC role assignment**, not a Graph API permission — a different mechanism from the Intune side, and a common point of confusion. Two practical notes: the service principal is the app's entry under **Entra ID → Enterprise applications** (search by **Application (client) ID**, not display name), and **keep the existing Reader assignment** — Azure roles are additive and discovery still needs it. Allow a few minutes for propagation; a 403 straight after assigning usually means "not yet" rather than "wrong role".
 3. Tick *Allow Polaris to run deployment scripts* on the Arc integration's Script Publishing tab.
 4. Integrations → Polaris Agent → SSH Deployment → Azure Arc → **Choose machines…**, tick the targets, confirm.
 

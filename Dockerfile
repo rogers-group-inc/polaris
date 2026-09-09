@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ─── Builder ──────────────────────────────────────────────────────────────────
-FROM node:20-bookworm AS builder
+FROM node:24-bookworm AS builder
 
 WORKDIR /app
 
@@ -27,7 +27,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # ─── Runtime ──────────────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 
 # Commit count from the build host. Baked into the runtime image as the
 # patch number for the sidebar version display, since the runtime has no

@@ -1035,6 +1035,7 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/decommissionStaleAssets.js",
       "./jobs/flagStaleReservations.js",
       "./jobs/capacityWatch.js",
+      "./jobs/platformLifecycleWatch.js",
       "./jobs/hostMetricsCollector.js",
       // Names this host as the active instance in the DB every 30s, and
       // samples the WAL position for HA sizing. Scheduler role only — the
@@ -1054,6 +1055,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // recording one IP. Scheduler role only: one grouped scan for the
       // fleet, not one per monitor replica.
       "./jobs/detectDuplicateIpAssets.js",
+      // IP-keyed upstream sweep: MAC-less assets get their Last Seen Switch /
+      // AP derived through the owning gate's ARP cache, since every MAC-keyed
+      // writer of those columns can never reach them. Scheduler role only.
+      "./jobs/resolveIpUpstreamChain.js",
       "./jobs/dependencyReconciler.js",
       "./jobs/maintenanceScheduler.js",
       "./jobs/retryQueuedReservationPushes.js",

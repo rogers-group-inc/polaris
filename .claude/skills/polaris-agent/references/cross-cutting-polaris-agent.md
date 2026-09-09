@@ -125,6 +125,13 @@ and the Dockerfile's `golang-go` source (currently bookworm-backports)
 in lockstep, or operators will get cryptic "missing go.sum entry"
 errors when the build runs.
 
+`GO_MINIMUM` in `src/services/agentBuildService.ts` moves with them: it is the number the
+running app enforces at the build preflight and the number every operator-facing "install Go
+N+" string interpolates, so leaving it behind turns the preflight into a claim nothing checks.
+The complete site list is `polaris-tech-lifecycle` → version-pin-inventory.md, and
+`npm run check:versions` asserts they agree. That skill also carries Go's support window —
+only the two most recent majors, so this pin ages faster than anything else in the stack.
+
 **Bumping VERSION also requires regenerating the Windows VERSIONINFO
 resources** — `make -C agent winres` rewrites the committed
 `agent/cmd/polaris-agent/rsrc_windows_{amd64,arm64}.syso` (source:

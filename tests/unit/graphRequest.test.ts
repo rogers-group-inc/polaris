@@ -171,6 +171,55 @@ describe("401 handling", () => {
   });
 });
 
+describe("403 on a stale token", () => {
+  // An app-only token's `roles` claim is fixed when the token is minted, and
+  // this module caches one for up to an hour. Without the re-mint an operator
+  // who grants the missing Graph permission gets a byte-identical 403 on the
+  // next click and reasonably concludes the grant did not work.
+
+  it("re-mints once and succeeds when the 403 arrived on a CACHED token", async () => {
+    // First call warms the cache (token fetch + 200).
+    fetchMock.mockResolvedValueOnce(TOKEN_OK).mockResolvedValueOnce(res(200, { warm: true }));
+    await runAll(graphApiRequest(CONFIG, URL_OK));
+
+    // Second call: no token fetch queued — it starts from the cached token,
+    // which is the state an operator is in right after fixing the grant.
+    fetchMock
+      .mockResolvedValueOnce(res(403, { error: { message: "insufficient privileges" } }))
+      .mockResolvedValueOnce(TOKEN_OK)        // cache cleared, token re-minted
+      .mockResolvedValueOnce(res(200, { ok: true }));
+
+    await expect(runAll(graphApiRequest(CONFIG, URL_OK))).resolves.toEqual({ ok: true });
+    const tokenFetches = fetchMock.mock.calls.filter(([u]) => isTokenUrl(u)).length;
+    expect(tokenFetches).toBe(2);
+  });
+
+  it("does NOT re-mint when the 403 arrived on a freshly minted token", async () => {
+    // The token was issued moments ago, so it already carries whatever the app
+    // has been granted — re-asking AAD would return the same claims and burn a
+    // round trip per operator click for an app that is simply unauthorized.
+    fetchMock
+      .mockResolvedValueOnce(TOKEN_OK)
+      .mockResolvedValueOnce(res(403, { error: { message: "insufficient privileges" } }));
+
+    await expect(runAll(graphApiRequest(CONFIG, URL_OK)))
+      .rejects.toThrow(/permission denied \(403\)/);
+    const tokenFetches = fetchMock.mock.calls.filter(([u]) => isTokenUrl(u)).length;
+    expect(tokenFetches).toBe(1);
+  });
+
+  it("surfaces the 403 rather than looping when the fresh token is refused too", async () => {
+    fetchMock.mockResolvedValueOnce(TOKEN_OK).mockResolvedValueOnce(res(200, { warm: true }));
+    await runAll(graphApiRequest(CONFIG, URL_OK));
+
+    fetchMock.mockImplementation(async (url: string) =>
+      isTokenUrl(url) ? TOKEN_OK : res(403, { error: { message: "still forbidden" } }),
+    );
+    await expect(runAll(graphApiRequest(CONFIG, URL_OK)))
+      .rejects.toThrow(/permission denied \(403\): still forbidden/);
+  });
+});
+
 describe("error surfaces", () => {
   it("names a 403 as a permission problem — the probe depends on this wording", async () => {
     fetchMock

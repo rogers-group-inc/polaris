@@ -5738,7 +5738,7 @@ async function openViewModal(id, opts) {
     if (a.monitored) _renderIntermittencyBar(a.id, effSettings());
     if (a.monitored) _updateStreamSourceBadgesFromEffective(a.id, a, effSettings());
     _wireAssetMonitorActions(a);
-    _wireAssetRediscover(a);
+    _wireAssetDiscoverNow(a);
     _wireAssetChartRangeControls(a);
   } catch (err) {
     showToast(err.message, "error");
@@ -6018,7 +6018,9 @@ function _wireAssetRefreshExport(a) {
     }
 }
 
-// System-tab monitor actions: override reset + Poll Now.
+// System-tab monitor actions: override reset. (The Status row's action button
+// is Discover Now — see _wireAssetDiscoverNow. On-demand polling stays on the
+// mobile asset sheet's refresh gesture, which still calls probe-now.)
 function _wireAssetMonitorActions(a) {
     var monitorResetBtn = document.getElementById("btn-asset-monitor-reset");
     if (monitorResetBtn) {
@@ -6043,97 +6045,28 @@ function _wireAssetMonitorActions(a) {
         }
       });
     }
-    var probeBtn = document.getElementById("btn-asset-probe-now");
-    if (probeBtn) {
-      probeBtn.addEventListener("click", async function () {
-        probeBtn.disabled = true;
-        probeBtn.textContent = "Polling…";
-        try {
-          var r = await api.assets.probeNow(a.id);
-          // Build a per-stream summary so the toast names exactly which streams
-          // polled and which failed (and why). The probe-now endpoint returns:
-          //   { success, responseTimeMs, error?,
-          //     telemetry: {supported,collected,error?},
-          //     temperature: {supported,collected,error?},
-          //     systemInfo: {…} }
-          var parts = [];
-          var failures = [];
-          // `skipped` means nothing was measured — the response-time stream is
-          // set to Disabled, or vCenter (which answers FOR the asset) was
-          // unreachable. Neither is a device failure, so it reports like the
-          // other streams' "n/a" rather than turning the toast red.
-          if (r.success) parts.push("probe " + r.responseTimeMs + " ms");
-          else if (r.skipped) parts.push("probe n/a" + (r.error ? " (" + r.error + ")" : " (not polled)"));
-          else failures.push("probe: " + (r.error || "unknown"));
-
-          var tel = r.telemetry || {};
-          if (tel.collected) parts.push("telemetry");
-          else if (tel.supported && tel.error) failures.push("telemetry: " + tel.error);
-
-          // Hardware sensors dispatch on their own polling method. supported-
-          // but-empty (sensor-less device) is not a failure — collected===false
-          // with no error means "device exposes no sensors", so skip it.
-          var tmp = r.hardware || {};
-          if (tmp.collected) parts.push("hardware");
-          else if (tmp.supported && tmp.error) failures.push("hardware: " + tmp.error);
-
-          var si = r.systemInfo || {};
-          if (si.collected) parts.push("interfaces");
-          else if (si.supported && si.error) failures.push("interfaces: " + si.error);
-
-          var anyFail = failures.length > 0;
-          var label = anyFail ? "Poll partial" : "Polled";
-          var msg = label + (parts.length ? " (" + parts.join(" · ") + ")" : "");
-          if (anyFail) msg += " — " + failures.join("; ");
-          // No "warning" toast class exists — fall back to "error" on any
-          // failure so the user sees the red treatment they expect.
-          var kind = anyFail ? "error" : "success";
-          showToast(msg, kind);
-
-          await Promise.all([
-            _loadMonitorHistoryFor(a.id, _currentMonitorSelection(), { silent: true }),
-            _loadSystemTabFor(a.id, _currentSystemTabRange(), a, { silent: true }),
-          ]);
-
-          // Re-render the Status pill from the freshly-probed asset. probeNow
-          // ran the state machine in recordProbeResult, so monitorStatus may
-          // have flipped (e.g. down → recovering/up). Without this, the pill
-          // keeps showing the stale state the modal opened with even though
-          // everything else on the panel refreshed. Mutate `a` in place so the
-          // cached object every handler closes over (and _currentAssetForRefresh,
-          // which points at it) stays consistent.
-          try {
-            var fresh = await api.assets.get(a.id);
-            if (fresh && _isCurrentAsset(a.id)) {
-              Object.assign(a, fresh);
-              var pillWrap = document.getElementById("asset-status-pill-wrap");
-              if (pillWrap) pillWrap.innerHTML = assetMonitorBadge(a) + _assetOverrideBadge(a);
-            }
-          } catch (e) { /* pill stays as-is; chart/system already refreshed */ }
-        } catch (err) {
-          showToast(err.message || "Poll failed", "error");
-        } finally {
-          probeBtn.disabled = false;
-          probeBtn.textContent = "Poll Now";
-        }
-      });
-    }
 }
 
-// Single-FortiGate re-discover button + the appear-then-disappear run watch.
-function _wireAssetRediscover(a) {
-    var rediscoverBtn = document.getElementById("btn-asset-rediscover");
-    if (rediscoverBtn && !rediscoverBtn.disabled) {
-      rediscoverBtn.addEventListener("click", async function () {
-        rediscoverBtn.disabled = true;
-        rediscoverBtn.textContent = "Re-discovering…";
+// "Discover Now" button + the appear-then-disappear run watch.
+function _wireAssetDiscoverNow(a) {
+    var discoverBtn = document.getElementById("btn-asset-discover-now");
+    if (discoverBtn && !discoverBtn.disabled) {
+      discoverBtn.addEventListener("click", async function () {
+        discoverBtn.disabled = true;
+        discoverBtn.textContent = "Discovering…";
         var restore = function () {
-          if (!document.getElementById("btn-asset-rediscover")) return; // panel re-rendered/closed
-          rediscoverBtn.disabled = false;
-          rediscoverBtn.textContent = "Re-discover";
+          if (!document.getElementById("btn-asset-discover-now")) return; // panel re-rendered/closed
+          discoverBtn.disabled = false;
+          discoverBtn.textContent = "Discover Now";
         };
         try {
           var resp = await api.assets.rediscover(a.id);
+          // A FortiSwitch/FortiAP is refreshed by running its CONTROLLER gate.
+          // Say so — a run against a device the operator didn't click is
+          // surprising unless it's named.
+          if (resp.viaController && resp.deviceName) {
+            showToast("Discovering via controller " + resp.deviceName + "…", "info");
+          }
           if (window._pollDiscoveries) window._pollDiscoveries();
           // Watch the shared discoveries poll for the run to appear then
           // finish. /discoveries only lists ACTIVE runs (no terminal status),
@@ -6152,7 +6085,7 @@ function _wireAssetRediscover(a) {
             if (seen) {
               // Appeared, now gone → the run finished. Refresh the asset.
               clearInterval(watch);
-              showToast("Re-discovery finished — refreshing asset", "success");
+              showToast("Discovery finished — refreshing asset", "success");
               api.assets.get(a.id).then(function (fresh) {
                 if (fresh && _isCurrentAsset(a.id)) {
                   Object.assign(a, fresh);
@@ -6167,7 +6100,7 @@ function _wireAssetRediscover(a) {
               // Never appeared: either the viewer can't read /discoveries or
               // the run finished inside one poll gap. Stop watching.
               clearInterval(watch);
-              showToast("Re-discovery started — asset data will refresh within a few minutes", "info");
+              showToast("Discovery started — asset data will refresh within a few minutes", "info");
               restore();
             }
           }, 2000);
@@ -6175,7 +6108,7 @@ function _wireAssetRediscover(a) {
           // that outlives the 15-minute ceiling or a wedged poll).
           setTimeout(function () { clearInterval(watch); restore(); }, 15 * 60 * 1000);
         } catch (err) {
-          showToast(err.message || "Re-discovery failed to start", "error");
+          showToast(err.message || "Discovery failed to start", "error");
           restore();
         }
       });
@@ -9154,7 +9087,7 @@ function _renderWirelessStationsCard(container, si, asset) {
 //   * table — flat table of the latest row array
 // The Polaris collector probes each widget on the customWidget cadence
 // (default 60s); the renderer doesn't poll — it shows the freshest sample
-// the server has. Operator clicks Poll Now on the System tab to force-fetch.
+// the server has; it refreshes on the next collector cycle.
 
 function _customMibTabHTML(payload) {
   var hint = 'Widgets from <b>' + escapeHtml(payload.manufacturer || "this manufacturer") + '</b> ' +
@@ -11350,31 +11283,88 @@ function _assetOverrideResetBtn(a) {
     'title="Clear this override and let discovery auto-manage the asset per the integration’s Auto-Monitor setting">Reset to integration default</button>';
 }
 
-// "Re-discover" — single-FortiGate scoped re-discovery. Shown only on
-// FortiGate firewall assets (fortinetTopology.role === "fortigate")
-// discovered by a FortiManager or standalone FortiGate integration, to
-// operators with assets:write (the route's gate — a re-discover mutates
-// inventory, unlike Poll Now). If a discovery is already running for the
-// integration the button renders disabled with the live state.
-function _assetRediscoverBtnHTML(a) {
+// "Discover Now" — discovery scoped to this one asset. Replaced Poll Now in
+// the Status row, and absorbed the old "Re-discover" button.
+//
+// Shown to operators with assets:write (the route's gate — a discovery mutates
+// inventory, unlike the read-only probe Poll Now used to run). Enabled for the
+// Fortinet family (a FortiGate scopes a run to itself; a FortiSwitch/FortiAP
+// scopes one to its CONTROLLER gate, since a switch is only ever discovered as
+// a by-product of its controller's pass) and for directory-discovered assets
+// (Entra/Intune by deviceId, AD by objectGUID). vCenter and Arc assets render
+// the button DISABLED with the reason in its title rather than hidden — an
+// absent control reads as a permission problem, which is the wrong guess.
+//
+// The server re-resolves all of this (assetDiscoveryScope.ts) and is the
+// authority; this function only decides what to render. In particular it does
+// not try to prove a switch's controller is in Polaris — the route answers
+// that with a clear 400.
+function _assetDiscoverNowBtnHTML(a) {
+  if (typeof canManageAssets !== "function" || !canManageAssets()) return "";
   var topo = a && a.fortinetTopology;
   var integ = a && a.discoveredByIntegration;
-  if (!topo || topo.role !== "fortigate" || a.assetType !== "firewall") return "";
-  if (!integ || (integ.type !== "fortimanager" && integ.type !== "fortigate")) return "";
-  if (typeof canManageAssets !== "function" || !canManageAssets()) return "";
-  var running = ((window._getServerDiscoveries && window._getServerDiscoveries()) || [])
-    .find(function (d) { return d.id === integ.id; });
+  var role = topo && topo.role;
+  var isGate = role === "fortigate" && a.assetType === "firewall";
+  var isInfra = role === "fortiswitch" || role === "fortiap";
+  var fortinetIntg = integ && (integ.type === "fortimanager" || integ.type === "fortigate");
+  // Directory assets scope by the identifier already on their AssetSource row
+  // (Entra deviceId / AD objectGUID). The integration type is the cheap proxy
+  // the panel has to hand; the server re-resolves from the source rows and
+  // answers with a clear 400 if this asset has none.
+  var isDirectory = integ && (integ.type === "entraid" || integ.type === "activedirectory"
+    || integ.type === "vcenter" || integ.type === "azurearc");
+
+  var disabledReason = "";
+  if (!isGate && !isInfra && !isDirectory) {
+    disabledReason = "No discovery source owns this asset, so there is nothing to re-run.";
+  } else if (isGate && !fortinetIntg) {
+    disabledReason = "This FortiGate is not owned by a FortiManager or FortiGate integration.";
+  } else if (integ && integ.enabled === false) {
+    disabledReason = 'Integration "' + (integ.name || "") + '" is disabled.';
+  }
+  if (disabledReason) {
+    return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" disabled style="margin-right:6px" ' +
+      'title="' + escapeHtml(disabledReason) + '">Discover Now</button>';
+  }
+
+  // A switch/AP runs through its controller's integration, which need not be
+  // the one that stamped the child — fall back to the child's own so the
+  // in-flight check still lines up in the common single-integration case.
+  var runIntegId = integ && integ.id;
+  var running = runIntegId
+    ? ((window._getServerDiscoveries && window._getServerDiscoveries()) || [])
+        .find(function (d) { return d.id === runIntegId; })
+    : null;
   if (running) {
-    var deviceName = topo.deviceName || a.hostname || "";
+    var deviceName = (topo && topo.deviceName) || (isInfra ? (topo && topo.controllerFortigate) : a.hostname) || "";
     var scopedToThis = running.scopeDeviceName && deviceName &&
       String(running.scopeDeviceName).toLowerCase() === String(deviceName).toLowerCase();
-    var label = scopedToThis ? "Re-discovering…" : "Discovery running…";
-    return '<button class="btn btn-sm btn-secondary" id="btn-asset-rediscover" disabled style="margin-left:6px" ' +
+    var label = scopedToThis ? "Discovering…" : "Discovery running…";
+    return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" disabled style="margin-right:6px" ' +
       'title="A discovery is already running for ' + escapeHtml(integ.name) + '">' + label + '</button>';
   }
-  return '<button class="btn btn-sm btn-secondary" id="btn-asset-rediscover" style="margin-left:6px" ' +
-    'title="Re-run discovery for this FortiGate only: refresh its subnets, reservations, VIPs, FortiSwitches and FortiAPs without a full ' +
-    (integ.type === "fortimanager" ? "FortiManager sweep" : "discovery cycle") + '">Re-discover</button>';
+
+  var title;
+  if (isInfra) {
+    title = "Run discovery for this device's controller FortiGate: refreshes this " +
+      (role === "fortiap" ? "FortiAP" : "FortiSwitch") + " and its siblings without a full sweep";
+  } else if (isDirectory) {
+    var sourceLabels = {
+      entraid: "Entra ID / Intune",
+      activedirectory: "Active Directory",
+      vcenter: "vCenter",
+      azurearc: "Azure Arc",
+    };
+    title = "Re-read just this device from " + (sourceLabels[integ.type] || "its integration") +
+      " — no full sweep, and none of the fleet-wide passes (agent auto-deploy, auto-monitor, " +
+      "presence verification, stale-source cleanup) a scheduled run performs";
+  } else {
+    title = "Run discovery for this FortiGate only: refresh its subnets, reservations, VIPs, " +
+      "FortiSwitches and FortiAPs without a full " +
+      (integ.type === "fortimanager" ? "FortiManager sweep" : "discovery cycle");
+  }
+  return '<button class="btn btn-sm btn-primary" id="btn-asset-discover-now" style="margin-right:6px" ' +
+    'title="' + escapeHtml(title) + '">Discover Now</button>';
 }
 
 function assetMonitoringViewHTML(a) {
@@ -11414,9 +11404,7 @@ function assetMonitoringViewHTML(a) {
     if (a.monitorCredential) sourceLabel = rtPolling.toUpperCase() + " · " + a.monitorCredential.name;
     else sourceLabel = rtPolling.toUpperCase();
   }
-  var probeBtn = canProbeAssets()
-    ? '<button class="btn btn-sm btn-primary" id="btn-asset-probe-now" style="margin-right:6px" title="Poll the device now: run a response-time probe and pull fresh telemetry + interface data">Poll Now</button>'
-    : '';
+  var discoverBtn = _assetDiscoverNowBtnHTML(a);
   // Admin-only "Dependency Test" trigger lives next to the Status pill on
   // the System tab. Eligible for Fortinet infra only — workstations etc.
   // aren't part of the dependency tree, so the simulation has no children
@@ -11483,7 +11471,7 @@ function assetMonitoringViewHTML(a) {
       // (a down→up flip would otherwise leave the pill stale). depTestBtn sits
       // outside the wrapper — a probe never changes the dependency-test state.
       '<div class="detail-row"><span class="detail-label">Status</span>' +
-        '<span class="detail-value">' + probeBtn + '<span id="asset-status-pill-wrap">' + pill + overridePill + '</span>' + overrideReset + depTestBtn + _assetRediscoverBtnHTML(a) + '</span></div>' +
+        '<span class="detail-value">' + discoverBtn + '<span id="asset-status-pill-wrap">' + pill + overridePill + '</span>' + overrideReset + depTestBtn + '</span></div>' +
       // Last hour intermittency bar — one cell per probe sample, colored
       // by the resolved monitor state at that point. Sits in a single
       // grid column (half the panel); the value cell is flex:1 so the bar

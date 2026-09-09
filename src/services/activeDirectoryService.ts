@@ -15,6 +15,7 @@ import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import type { DirectoryPerson, DirectorySyncFilter } from "./directorySyncService.js";
 import { withBoundLdapClient, decodeObjectGuid, formatLdapError, escapeLdapFilterValue } from "./ldapClient.js";
+import { ldapGuidFilterValue } from "./discovery/discoveryScope.js";
 
 export interface ActiveDirectoryConfig {
   host: string;
@@ -379,6 +380,18 @@ export async function discoverDevices(
   config: ActiveDirectoryConfig,
   signal?: AbortSignal,
   onProgress?: AdDiscoveryProgressCallback,
+  /**
+   * Narrow the run to ONE computer object, by `objectGUID` (the value stored
+   * on the AssetSource row). Backs the asset slide-in's "Discover Now".
+   *
+   * Keyed on the GUID rather than the DN on purpose: a computer object that
+   * moves OU keeps its GUID and changes its DN, so a DN-based search would
+   * silently find nothing for exactly the machines most likely to need a
+   * refresh. The search still runs from `config.baseDn` at the configured
+   * scope, so an object moved OUT of the base DN correctly returns nothing —
+   * that is the same answer a full run would give.
+   */
+  scope?: { objectGuid: string },
 ): Promise<AdDiscoveryResult> {
   const log = onProgress || (() => {});
 
@@ -387,13 +400,23 @@ export async function discoverDevices(
   if (!config.bindPassword) throw new AppError(400, "Bind password is required");
   if (!config.baseDn)       throw new AppError(400, "Base DN is required");
 
+  // objectGUID is binary: the filter needs escaped bytes, not the hex string.
+  // A malformed stored GUID must fail loudly rather than build a filter that
+  // matches the wrong object (or, worse, everything).
+  const scopedGuidFilter = scope ? ldapGuidFilterValue(scope.objectGuid) : null;
+  if (scope && !scopedGuidFilter) {
+    throw new AppError(400, `Malformed AD objectGUID for scoped discovery: ${scope.objectGuid}`);
+  }
+
   const devices: DiscoveredAdDevice[] = [];
 
   try {
     await withBoundLdapClient(config, signal, async (client) => {
       const options: SearchOptions = {
         scope: config.searchScope || "sub",
-        filter: "(&(objectCategory=computer)(objectClass=computer))",
+        filter: scopedGuidFilter
+          ? `(&(objectCategory=computer)(objectClass=computer)(objectGUID=${scopedGuidFilter}))`
+          : "(&(objectCategory=computer)(objectClass=computer))",
         attributes: ATTRIBUTES,
         explicitBufferAttributes: BUFFER_ATTRIBUTES,
         paged: { pageSize: PAGE_SIZE },

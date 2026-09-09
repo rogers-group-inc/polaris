@@ -1,4 +1,4 @@
-# Business rules 36–44 — full narrative
+# Business rules 36–45 — full narrative
 
 Verbatim from BUSINESS-RULES.md: each rule records the decision *and the incident or constraint that forced it*. The invariant for each rule is in `invariants-12-29.md` / `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
@@ -456,3 +456,67 @@ the wizard says so in a warning rather than quietly extending an operator's own 
 And the maintenance / dependency-suppression pause is not a quiet hold: it `continue`s
 above the repeat pass and retires the live alert outright (business rule 16), so nothing
 is held and nothing is reported afterwards.
+
+---
+
+<a id="rule-45"></a>
+
+## Rule 45 — An address places a device only through the gate that owns it, and only a device nothing else can place
+
+**The invariant.** For an asset that has an IP address and NO MAC, `lastSeenSwitch` and `lastSeenAp` are derived by the `resolveIpUpstreamChain` sweep (`services/ipUpstreamChainService.ts`, every 10 minutes) along one chain: IP → the containing subnet's owning FortiGate (its chassis serial first, its FortiManager device name second, through `utils/fortinetParentKey.ts`) → THAT gate's `AssetArpEntry` → MAC → the `AssetMacTableEntry` learned port with the fewest MACs, and the `AssetWirelessStation` carrying the MAC or the address. Four refusals, each deliberate: another gate's ARP row never counts (with no owning gate resolvable, the address is accepted only when exactly one gate reports it); two MACs at the address on the owning gate is no answer; an address claim that is not current under rule 40's model is skipped; and ARP / FDB / station rows older than 24 hours are not evidence. The sweep touches MAC-less assets ONLY, it derives the MAC and never adopts it onto the asset, and it never clears a stamp. Each move is audited as `asset.switch_port.changed` / `asset.wireless_ap.changed` by `system:upstream-chain`.
+
+### What was missing
+
+Every writer of the two "last seen" columns was keyed by MAC. Discovery Phase 7.5 matched the FortiSwitch MAC map through the run's own MAC index; the FortiAP station scrape matched `staMacAddr` through the LLDP match index; the SNMP forwarding-database persist resolved its `matchedAssetId` by MAC and stamped nothing at all. So an asset that arrived from Active Directory, Azure Arc, a vCenter cluster, an active scan or the operator form — an address and a hostname, no hardware identity — could never be placed on a switch port or an AP, even though the gate's neighbour cache and the switches' tables already held every fact needed. The Add Asset form's IP cross-reference (`ipContextService`) had walked most of that chain read-only since 2026-08 for a typed address, and stopped one step short of the station table; nothing ran it for the inventory.
+
+### Why a separate sweep, and why it stops where it does
+
+**A sweep, not a hook.** The evidence arrives from three writers on three cadences — FMG/FortiGate discovery for ARP, the SNMP system-info pass for the FDB, the FortiAP scrape for stations — and a MAC-less asset is reached by none of them. Joining the chain inside any one of those write sites would mean the others' tables might be a cycle stale at that moment; reading all three on a cadence of their own, from the current-state tables they leave behind, is the only place the join is honest. The same reasoning made rule 40 a sweep.
+
+**The ARP lookup is scoped to the owning gate.** Overlapping RFC1918 ranges behind different gates on one FortiManager are the normal case on a multi-site fleet, so a global "who has this IP" over every gate's cache would hand a Site A workstation the MAC of whatever sits at the same address in Site B. Phase 7.6 keys ARP evidence by `(gate, ip)` for exactly this reason (rule 17), placeholder-MAC adoption does the same (rule 26), and the subnet's owning gate is resolved the way rule 41 says a gate must be — serial first, FMG device name second, never the hostname. When no gate can be named — a manual subnet, a gate with no Asset row — the rows are still accepted if a single gate reports the address, because a single reporter means no overlap was observed; two reporters is the overlap case and is skipped.
+
+**Two MACs is no answer.** Rule 26 already refuses to burn an address that two ARP rows disagree about into DHCP config; the same duplicate is not a reason to move a device's switch port either. The address is skipped and counted (`ambiguous`), so a persistent count is itself a finding.
+
+**Both ends must be fresh.** The asset's claim on the address follows rule 40's model exactly — an operator-owned claim (pin, or `ipSource="manual"`) never expires; a discovered one must have been re-asserted within `CLAIM_FRESH_DAYS` on its `AssetIpHistory` row, or the device seen when there is no history — because a recycled DHCP address is the other way this chain goes wrong: the laptop that left three weeks ago still records `10.1.1.50`, the printer that got the lease next is what the gate's ARP now answers with, and without the gate the laptop would be stamped onto the printer's port. The evidence tables have their own ceiling (24 hours): they are delete-replaced per scrape, so an older row does not mean the device is still there, it means the writer stopped answering — an offline gate, a switch dropped from monitoring.
+
+**MAC-less assets only.** A MAC-bearing asset already has writers, and their label format differs from this one (`<switchId>/<portName>` from the FortiSwitch MAC map, `<hostname>/<ifName>` here). A second writer on the same column would move it back and forth every tick and audit both halves as changes forever — the ping-pong the asset-change-events baseline exists to prevent within a single discovery run. This sweep therefore writes only what no other writer can. Widening it means reconciling the formats first, and is not a small change.
+
+**The MAC is derived, never adopted.** The obvious "better" version writes the ARP MAC onto the asset so every downstream matcher works for free. It also makes the row eligible for MAC-keyed dedupe and merge (`mergeDuplicateHostnameAssets` collapses rows sharing a MAC; Entra cross-links by Ethernet MAC), so one wrong adoption — a recycled address inside the freshness window, a gate misresolved — merges two devices and permanently deletes one row's monitoring history. Rule 26 gates the reservation-side adoption behind a double opt-in for the same reason. Adoption here is a deliberate follow-up behind an opt-in Setting, not a default, and the touches entry names what it must go through when it comes.
+
+**Nothing is cleared.** An address the network cannot currently account for is absence of evidence, not a move; the last known switch port stays until the chain places the device somewhere else.
+
+### What it gives the form
+
+The same change taught the Add Asset IP cross-reference the station table, with the two ways in that the sweep uses: by the resolved MAC, or by the address the AP itself recorded for the station. The switch-port line can only ever follow a MAC; the Wireless AP line is the one source on that panel that can place a device nothing wired has ever seen, and it says which path found it.
+
+## Rule 46 — A device filter on an event automation filters the event's subject
+
+**The invariant.** An `event` or `change` automation's `scope` decides which devices it fires about. `runEventTail` tests the Event's asset against `scopeMatchesAsset` for every rule whose scope names devices, ahead of the fired-this-event stamp; an event naming no asset, or one whose asset row is gone, is not a match for a filtered rule. An unconstrained scope (`scopeIsUnconstrained`: `{allAssets:true}`, `{}`, or an empty tree) fires about everything, exactly as before.
+
+### The report
+
+"The reboot event automation — I need to alert only for specific devices. When I change it to only be for specific devices and click save, there's no error message, but when I re-open it, it's back to all assets."
+
+Both halves of that were true, and the silence was the design working as written. The wizard's Devices step rendered for every trigger, the condition builder accepted the filter, and its live preview obligingly listed the devices it selected — that preview asks the scope-only endpoint, which has never cared what the trigger is. Then `buildPayload` wrote `scope: isTriggerScoped(draft.trigger) ? draft.scope : {}`, and the trigger catalog said `{ type: "event", scoped: false }`. So the save posted `{}`, the server stored `{}` as a perfectly valid scope, and reopening the automation ran `Object.keys(scope).length === 0` → "All assets", checked. Nothing to error about: every layer agreed with itself, and the only thing that disagreed was the operator's intent, which had been dropped at the payload boundary.
+
+### The second half nobody had reported
+
+`change` triggers had carried `scoped: true` from the start, so the wizard saved their device filters faithfully — and the event tail ignored them just as completely, because it never consulted `scope` at all. A change automation narrowed to firewalls fired for every asset in the fleet. The two bugs are one missing test in one loop, which is why the fix is one predicate applied to both trigger kinds rather than a special case for events.
+
+### Why an event automation is allowed to be about devices at all
+
+The original reasoning for `scoped: false` was sound as far as it went: an audit event is not a reading, it has no asset scope to evaluate against, and many event automations watch things that are not assets — an integration's discovery run, a user's login, a backup, the host's disk. But "the trigger has no scope" and "the operator may not narrow it" are different claims, and only the first one was true. Most Event rows in this install DO name an asset (`resourceType: "asset"`), which is precisely why several of the twelve seeded event automations read as device alerts; `asset.rebooted` is one of them. Once an operator wants that alert for the core switches and not for 900 access points, the device filter is the only vocabulary in the product that says so, and it was already sitting on screen.
+
+### The two refusals
+
+**An event with no asset cannot pass a device filter.** `integration.discover.error` names an integration; a failed login names a user; capacity and backup events name this install. A filter that says "asset type is firewall" has nothing to compare those against, and the honest reading of "only these devices" is that a subject which is not a device is not one of them. So a filtered automation skips them, and an operator who wants both keeps the automation on All assets — which the Devices step now says out loud, because the surprise is real and the alternative is a filtered automation that silently keeps firing about things its filter never mentioned.
+
+**A deleted asset is not tested.** The tail deliberately does not treat a null asset row as a skip — that is how `asset.deleted` reaches an alert at all, and swallowing it would silence the deletion audit trail. But a filter cannot be evaluated against a row that no longer exists, and guessing is worse than not firing: the alternative is a filtered automation firing about a device it may well have excluded. Filtered rules therefore lose the deletion event; unfiltered ones — including every seeded one — keep it.
+
+### Why `{}` had to become its own question
+
+`scopeMatchesAsset({}, asset)` is `false`, and correctly so: a scope the builder wrote with no dimensions and `allAssets` unchecked selects nothing, and the wizard refuses to save one for exactly that reason. But `{}` is also what the wizard wrote for **every event automation ever saved** before this change, and there it means the opposite — the operator picked All assets (or never touched the step) and the payload discarded the flag. Filtering the event tail on `scopeMatchesAsset` alone would therefore have silenced every existing event automation in the install, seeded and hand-written alike, the moment the code shipped. Hence `scopeIsUnconstrained` as a separate, first question, and hence its place in this rule: the next caller that filters on a scope has the same trap waiting for it.
+
+### Cost at fleet scale
+
+The scope test is in memory against the row the tail already primed for the alert text (`primeAssetDetailCache` — one `findMany` for the whole batch, added when a site-wide outage was serializing one point read per asset). "Does this scope constrain anything" is computed once per rule when the matchers compile, not once per event, so a 1000-event batch does not re-walk the same scope object a thousand times. Relation-backed filter leaves — interface name, SSID, FortiGate sighting — resolve through `decorateRelationLeafHits`, one query per distinct leaf for the whole batch and no query at all when no filter asks for one, the same contract the threshold path and `downDetectionService` use. The one new column on the primed select is `discoveredByIntegrationId`, which `scopeMatchesAsset` needs and the template fields did not already cover.

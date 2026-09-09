@@ -139,13 +139,15 @@
     if (!machines.length) {
       return '<p class="empty-state">This integration\'s Arc roster is empty, or its filters exclude everything.</p>';
     }
+    var selectable = 0;
     var rows = machines.map(function (m, i) {
       var connected = String(m.status || "").toLowerCase() === "connected";
       var os = (m.osType || "").toLowerCase();
       var unsupported = os !== "windows" && os !== "linux";
+      if (!unsupported) selectable++;
       return '<tr>' +
         '<td><input type="checkbox" class="wssh-arc-pick" data-armid="' + escapeHtml(m.armId) + '"' +
-          (unsupported ? " disabled" : "") + '></td>' +
+          (unsupported ? ' disabled title="Azure reports no OS type for this machine, so Polaris will not guess which script to send"' : "") + '></td>' +
         '<td>' + escapeHtml(m.name) + '</td>' +
         '<td>' + escapeHtml(m.osType || "—") + '</td>' +
         '<td>' + escapeHtml(m.resourceGroup || "—") + '</td>' +
@@ -154,10 +156,23 @@
           : '<span class="hint" style="margin:0">' + escapeHtml(m.status || "unknown") + '</span>') + '</td>' +
       '</tr>';
     }).join("");
+    // Every row disabled looks identical to a broken picker, so say plainly
+    // what the gate is and where the missing value comes from. The OS column
+    // is the reader's own evidence: "—" is Azure's answer, not ours.
+    var noneSelectable = selectable === 0
+      ? calloutHTML("warning", "None of these machines can be selected",
+          'Polaris sends a script only when Azure reports the machine\'s OS ' +
+          '(<code>properties.osType</code> on the Arc machine resource), and every row below came back without ' +
+          'one &mdash; see the OS column. That is Azure\'s answer, not a Polaris filter: it usually means the ' +
+          'Connected Machine agent has not completed a full check-in yet. Confirm the machines show an OS in the ' +
+          'Azure portal, then reopen this picker.')
+      : "";
     return (
+      noneSelectable +
       '<p class="hint" style="color:var(--color-warning,#d98c00);margin:0 0 0.75rem 0">' +
         'Every machine you tick will run the onboarding script as root/SYSTEM as soon as you confirm. ' +
-        'Machines whose OS Arc does not report are disabled &mdash; Polaris will not guess which script to send.' +
+        'Machines whose OS Arc does not report are disabled &mdash; Polaris will not guess which script to send. ' +
+        '<strong>' + selectable + ' of ' + machines.length + '</strong> selectable.' +
       '</p>' +
       '<div class="form-group"><input type="text" id="wssh-arc-filter" placeholder="Filter by name or resource group…"></div>' +
       '<div style="max-height:22rem;overflow:auto">' +

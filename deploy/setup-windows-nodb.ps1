@@ -4,14 +4,14 @@
     Polaris deployment script for Windows Server 2019/2022 with a remote/external PostgreSQL database.
 
 .DESCRIPTION
-    Installs Node.js 20 and deploys Polaris as a Windows Service, connecting to an external PostgreSQL database.
+    Installs Node.js 24 and deploys Polaris as a Windows Service, connecting to an external PostgreSQL database.
     Does NOT install PostgreSQL locally.
 
     Run as Administrator:
         powershell -ExecutionPolicy Bypass -File deploy\setup-windows-nodb.ps1 -DbUrl "postgresql://user:pass@db-host:5432/polaris"
 
     What this script does:
-      1. Installs Node.js 20 LTS (via winget or direct MSI)
+      1. Installs Node.js 24 LTS (via winget or direct MSI)
       2. Clones or copies the application to C:\polaris
       3. Configures .env with the provided DATABASE_URL
       4. Installs dependencies, builds, and runs migrations against the remote database
@@ -73,17 +73,20 @@ Write-Info "Starting Polaris deployment on $env:COMPUTERNAME (remote database mo
 
 $hasWinget = Test-Command "winget"
 
-# ─── 1. Install Node.js 20 ───────────────────────────────────────────────────
+# ─── 1. Install Node.js 24 (LTS) ─────────────────────────────────────────────
+# 22.12 is the hard floor: pg-boss declares >=22.12.0 and @prisma/streams-local
+# declares >=22, so Node 20 is below what the dependency tree supports as well as
+# being end-of-life (April 2026). An existing v22 is accepted; v20 is replaced.
 Refresh-Path
-if ((Test-Command "node") -and ((node -v) -match "^v(20|22)\.")) {
+if ((Test-Command "node") -and ((node -v) -match "^v(22|24)\.")) {
     Write-Info "Node.js $(node -v) already installed"
 } else {
-    Write-Info "Installing Node.js 20 LTS..."
+    Write-Info "Installing Node.js 24 LTS..."
     if ($hasWinget) {
-        winget install --id OpenJS.NodeJS.LTS --version 20.19.0 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id OpenJS.NodeJS.LTS --version 24.14.1 --accept-source-agreements --accept-package-agreements --silent
     } else {
-        $nodeUrl = "https://nodejs.org/dist/v20.19.0/node-v20.19.0-x64.msi"
-        $nodeMsi = "$env:TEMP\node-v20.19.0-x64.msi"
+        $nodeUrl = "https://nodejs.org/dist/v24.14.1/node-v24.14.1-x64.msi"
+        $nodeMsi = "$env:TEMP\node-v24.14.1-x64.msi"
         Write-Info "Downloading Node.js installer..."
         Invoke-WebRequest -Uri $nodeUrl -OutFile $nodeMsi -UseBasicParsing
         Write-Info "Running Node.js installer..."

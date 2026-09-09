@@ -107,6 +107,17 @@ export interface IpContextSwitchPort {
   switchAsset: { id: string; hostname: string | null } | null;
 }
 
+export interface IpContextApStation {
+  macAddress: string;
+  ssid: string | null;
+  band: string | null;
+  lastSeen: Date;
+  /** How the station was tied to the address: by the resolved MAC, or by the
+   *  address the AP itself recorded for the station. */
+  matchedBy: "mac" | "ip";
+  apAsset: { id: string; hostname: string | null } | null;
+}
+
 export interface IpContextExistingAsset {
   id: string;
   hostname: string | null;
@@ -148,6 +159,7 @@ export interface IpContextResult {
   arp: IpContextArpRow[];
   sightings: IpContextSighting[];
   switchPorts: IpContextSwitchPort[];
+  apStations: IpContextApStation[];
   existingAssets: IpContextExistingAsset[];
   firewall: IpContextFirewall | null;
   suggestions: IpContextSuggestions;
@@ -245,17 +257,31 @@ export async function lookupIpContext(
   // two disagree.
   const mac = arp[0]?.macAddress || reservationRow?.macAddress || null;
 
-  const switchPortRows = mac
-    ? await prisma.assetMacTableEntry.findMany({
-        where: { macAddress: mac, status: "learned" },
-        orderBy: { lastSeen: "desc" },
-        take: ROW_CAP,
-        select: {
-          macAddress: true, ifName: true, vlanId: true, lastSeen: true,
-          asset: { select: { id: true, hostname: true } },
-        },
-      })
-    : [];
+  const [switchPortRows, stationRows] = await Promise.all([
+    mac
+      ? prisma.assetMacTableEntry.findMany({
+          where: { macAddress: mac, status: "learned" },
+          orderBy: { lastSeen: "desc" },
+          take: ROW_CAP,
+          select: {
+            macAddress: true, ifName: true, vlanId: true, lastSeen: true,
+            asset: { select: { id: true, hostname: true } },
+          },
+        })
+      : Promise.resolve([]),
+    // The AP a wireless station is on. Two ways in: the MAC the address
+    // resolved to, or the address the AP itself recorded for the station --
+    // the latter is what answers for a device nothing wired has ever seen.
+    prisma.assetWirelessStation.findMany({
+      where: mac ? { OR: [{ staMacAddr: mac }, { staIpAddr: ip }] } : { staIpAddr: ip },
+      orderBy: { lastSeen: "desc" },
+      take: ROW_CAP,
+      select: {
+        staMacAddr: true, staIpAddr: true, ssid: true, band: true, lastSeen: true,
+        apAsset: { select: { id: true, hostname: true } },
+      },
+    }),
+  ]);
 
   const firewall = await resolveFirewall({
     arp,
@@ -280,6 +306,14 @@ export async function lookupIpContext(
       vlanId: p.vlanId,
       lastSeen: p.lastSeen,
       switchAsset: p.asset ?? null,
+    })),
+    apStations: stationRows.map((s) => ({
+      macAddress: s.staMacAddr,
+      ssid: s.ssid,
+      band: s.band,
+      lastSeen: s.lastSeen,
+      matchedBy: mac && s.staMacAddr === mac ? "mac" : "ip",
+      apAsset: s.apAsset ?? null,
     })),
     existingAssets: assetRows.map((a) => ({
       id: a.id,

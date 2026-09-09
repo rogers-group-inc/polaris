@@ -1,6 +1,6 @@
 ---
 name: polaris-business-rules
-description: "The 44 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups, SSH host keys, login restriction, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
+description: "The 45 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups, SSH host keys, login restriction, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
 user-invocable: false
 ---
 
@@ -12,7 +12,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(45 is the next free number.)
+(47 is the next free number.)
 
 ## How to read
 
@@ -21,18 +21,18 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 | touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11 below; 20a, 23, 26, 41, 42 in the references |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | rules 9–10 below; 12, 16, 36, 37 |
 | touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38 |
-| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44 |
-| touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41 |
+| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46 |
+| touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45 |
 | touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43 |
-| add or retire a rule | the numbering paragraph above; add the invariant to the right `invariants-*.md`, the narrative to the right `narrative-*.md`, and cite the number from code |
+| add or retire a rule | the numbering paragraph above; add the invariant to the right `invariants-*.md`, the narrative to the right `narrative-*.md`, and cite the number from code. **Never rename the reference files** — `invariants-30-43.md` / `narrative-36-43.md` keep their names whatever range they hold, since other skills and code link to them. **Re-check the next free number on `main` at merge time**: another worktree may have taken it while yours was open, and the branch merging second renumbers (the merge protocol says how) |
 
 Reference files (all verbatim):
 
 - [references/invariants-12-29.md](references/invariants-12-29.md) — the one-paragraph invariant for rules 12–29
-- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–44 (the filename keeps its original range: the reference is cited from code and the other skills)
+- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–45 (the filename keeps its original range: the reference is cited from code and the other skills)
 - [references/narrative-12-24.md](references/narrative-12-24.md) — full narrative, rules 12–24
 - [references/narrative-25-35.md](references/narrative-25-35.md) — full narrative, rules 25–35
-- [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–44
+- [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–45
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -51,7 +51,7 @@ before changing anything the invariant constrains.
 10. **Four statuses cannot be monitored: decommissioned / disabled / storage / quarantined** — `UNMONITORABLE_STATUSES` + `statusAllowsMonitoring` in `src/utils/assetInvariants.ts` is the list; enforcement is centralized in the Prisma extension in `src/db.ts` so every write path benefits, in **both directions**: `clampMonitoredForStatus` forces `monitored=false` + resets `consecutiveFailures` when a create/update/updateMany/upsert stages one of those statuses, and `enforceMonitorableStatus` catches the write that stages `monitored: true` with NO status by reading the row first (the shape of the operator toggle, the discovery monitored-sweep and bulk-monitor — without it every unmonitorable state was one `monitored: true` away from being polled again). `updateMany` narrows its WHERE instead of rewriting rows it can't resolve. **`maintenance` is deliberately NOT on the list** — a window pauses polling via `MONITOR_CANDIDATE_WHERE` while `monitored` keeps the operator's intent so it survives the window (business rule 16). `storage` and `quarantined` joined the list in 2026-08 with the automations-only-fire-on-monitored-assets cutover: a quarantined device is isolated at the FortiGate, so every probe fails BY DESIGN and a security action was producing an outage alert storm about the isolation working. Because quarantine is reversible, it **parks** the flag in `Asset.monitoredBeforeQuarantine` (mirroring `statusBeforeQuarantine`) and the release write restores status + `monitored` together — otherwise releasing a quarantine handed the device back to the network with nobody watching it. Otherwise still one-way: flipping status back to `active` does not auto-resume monitoring, re-enabling is operator-driven. The two operator-facing write paths (`PUT /assets/:id`, `POST /assets/bulk-monitor`) **refuse with a reason** rather than leaning on the silent clamp — a form that saves and comes back unticked reads as a bug. Existing rows are reconciled once by migration `20260827000000_monitorable_status_clamp` and swept every boot by `jobs/clampMonitoredForStatus.ts`.
 11. **DNS-resolved reservations** — Any Asset with a primary `ipAddress` falling inside a known (non-deprecated) Subnet that has no existing active reservation gets an auto-created Reservation with `sourceType="dns_resolved"`, `createdBy="system:dns-resolved"`, carrying the asset's hostname (`hostname || dnsName`) and `macAddress` when available. Eligible asset statuses: `active`, `maintenance`, `storage`, `quarantined`. IPv4 only. Never pushes to FortiGates. Never raises Conflict rows — defers silently to authoritative source types. See `src/services/dnsResolvedReservationService.ts`.
 
-## Rules 12–44 (index)
+## Rules 12–45 (index)
 
 | # | Rule | Invariant | Narrative |
 |---|---|---|---|
@@ -88,6 +88,8 @@ before changing anything the invariant constrains.
 | 42 | Some address space is not one network; the way to say so is to exclude it | invariants-30-43 | narrative-36-43 |
 | 43 | A grant is only as narrow as the act it names | invariants-30-43 | narrative-36-43 |
 | 44 | A quiet window withholds the reminder, not the alert, and the reminder that follows says how long | invariants-30-43 | narrative-36-43 |
+| 45 | An address places a device only through the gate that owns it, and only a device nothing else can place | invariants-30-43 | narrative-36-43 |
+| 46 | A device filter on an event automation filters the event's subject | invariants-30-43 | narrative-36-43 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

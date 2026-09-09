@@ -1808,6 +1808,177 @@ function renderCapacityAdvisorCard(advisor, pgConfigFile, dbConnectionMode) {
   '</div>';
 }
 
+// ─── Platform Lifecycle card ──────────────────────────────────────────────
+//
+// What this host is running, and whether any of it is past or approaching end
+// of life. Data comes from GET /server-settings/platform-lifecycle, which
+// grades the observed stack against the committed, human-reviewed dataset in
+// src/data/platformEol.json.
+//
+// Deliberately NO action buttons: nothing on this card is one-click fixable,
+// and offering a button that cannot do the thing would be a lie. Contrast the
+// two capacity reason codes that legitimately get one.
+
+function _lifecycleStateLabel(state) {
+  if (state === "below_minimum") return "Below minimum";
+  if (state === "eol") return "End of life";
+  if (state === "eol_extended") return "EOL (extended support)";
+  if (state === "approaching_eol") return "Approaching EOL";
+  if (state === "aging") return "Aging";
+  // Distinct from "Aging" on purpose: this row is below the version Polaris
+  // targets, which is a preference and not a date. "Aging" here was misread as
+  // "needs upgrading" for a component with 386 days of support left.
+  if (state === "behind_target") return "Behind target";
+  if (state === "ahead_of_tested") return "Ahead of tested";
+  if (state === "current") return "Current";
+  if (state === "not_installed") return "Not installed";
+  return "Unknown";
+}
+
+// "in 74 days" / "131 days ago" reads faster than a bare date, and the date is
+// alongside it anyway.
+function _lifecycleWhen(grade) {
+  if (grade.daysUntilEol === null || grade.daysUntilEol === undefined) return "";
+  var d = grade.daysUntilEol;
+  if (d === 0) return "today";
+  if (d > 0) return "in " + d + " day" + (d === 1 ? "" : "s");
+  return -d + " day" + (d === -1 ? "" : "s") + " ago";
+}
+
+function _lifecycleRowHtml(c) {
+  var g = c.grade || {};
+  var css = _capacitySeverityCssClass(g.severity === "none" ? "ok" : g.severity);
+  var when = _lifecycleWhen(g);
+
+  var supportedUntil = g.eolAt
+    ? escapeHtml(g.eolAt) + (when ? ' <span class="hint" style="font-size:0.72rem">(' + escapeHtml(when) + ')</span>' : "")
+    : (c.policy === "dated" ? '<span class="hint">—</span>' : '<span class="hint">no published date</span>');
+
+  var installed = c.observedVersion
+    ? escapeHtml(c.observedVersion)
+    : '<span class="hint">' + escapeHtml(c.probeStatus === "absent" ? "not installed" : "unknown") + "</span>";
+
+  // probeNote can carry raw `go version` / `nginx -v` output from the host, so
+  // it is escaped like everything else even though the dataset is committed.
+  var titleAttr = c.probeNote ? ' title="' + escapeHtml(c.probeNote) + '"' : "";
+
+  var target = c.polarisTarget
+    ? escapeHtml(c.polarisTarget) +
+      (c.targetTrackEolAt ? ' <span class="hint" style="font-size:0.72rem">(to ' + escapeHtml(c.targetTrackEolAt) + ')</span>' : "")
+    : '<span class="hint">—</span>';
+
+  var detail = "";
+  var interesting = g.severity && g.severity !== "none";
+  if (interesting && c.playbook) {
+    var steps = (c.playbook.steps || []).map(function (s) {
+      return "<li>" + escapeHtml(s) + "</li>";
+    }).join("");
+    var files = (c.playbook.files || []).map(function (f) {
+      return "<code>" + escapeHtml(f) + "</code>";
+    }).join(", ");
+    detail =
+      '<tr class="lifecycle-detail-row"><td colspan="6" style="padding:0 8px 8px">' +
+        '<details>' +
+          '<summary style="cursor:pointer;font-size:0.8rem">How to upgrade — ' + escapeHtml(c.playbook.title || "") + '</summary>' +
+          '<div style="margin:0.5rem 0 0 0;font-size:0.8rem">' +
+            (steps ? "<ol style=\"margin:0 0 0.5rem 1.1rem;padding:0\">" + steps + "</ol>" : "") +
+            (files ? '<p class="hint" style="margin:0.25rem 0 0">Files that move together: ' + files + "</p>" : "") +
+            (c.playbook.docAnchor ? '<p class="hint" style="margin:0.25rem 0 0">See <code>' + escapeHtml(c.playbook.docAnchor) + "</code></p>" : "") +
+          "</div>" +
+        "</details>" +
+      "</td></tr>";
+  }
+
+  return '<tr class="capacity-reason-' + css + '"' + titleAttr + ">" +
+      "<td><strong>" + escapeHtml(c.label || c.id) + "</strong></td>" +
+      "<td>" + installed + "</td>" +
+      "<td>" + (g.track ? escapeHtml(g.track) : '<span class="hint">—</span>') + "</td>" +
+      "<td>" + supportedUntil + "</td>" +
+      '<td><span class="capacity-pill capacity-pill-' + css + '">' + escapeHtml(_lifecycleStateLabel(g.state)) + "</span></td>" +
+      "<td>" + target + "</td>" +
+    "</tr>" + detail;
+}
+
+function renderPlatformLifecycleCard(lifecycle) {
+  // Same empty contract as the advisor card, so the row layout cannot break.
+  if (!lifecycle) return "";
+
+  if (lifecycle.datasetError) {
+    // A broken dataset gets a visible message, never a silently empty card.
+    return '<div class="settings-card" id="platform-lifecycle-card">' +
+      '<div class="capacity-header"><h4 style="margin:0">Platform Lifecycle</h4>' +
+      '<span class="capacity-pill capacity-pill-amber">Unavailable</span></div>' +
+      '<p class="hint" style="margin:0.6rem 0 0">The end-of-life dataset could not be read: ' +
+        escapeHtml(lifecycle.datasetError) +
+      "</p></div>";
+  }
+
+  var components = lifecycle.components || [];
+  if (components.length === 0) return "";
+
+  // Worst first: an operator should not have to scan for the problem.
+  var order = { critical: 0, warning: 1, watch: 2, none: 3 };
+  var sorted = components.slice().sort(function (a, b) {
+    var d = (order[a.grade.severity] ?? 3) - (order[b.grade.severity] ?? 3);
+    return d !== 0 ? d : String(a.label || a.id).localeCompare(String(b.label || b.id));
+  });
+
+  var severity = lifecycle.severity === "none" ? "ok" : lifecycle.severity;
+  var pillClass = "capacity-pill capacity-pill-" + _capacitySeverityCssClass(severity);
+  var problems = components.filter(function (c) {
+    return c.grade.severity === "warning" || c.grade.severity === "critical";
+  }).length;
+
+  var headerNote = problems > 0
+    ? '<span class="' + pillClass + '">' + problems + " need" + (problems === 1 ? "s" : "") + " attention</span>"
+    : '<span class="' + pillClass + '">' + _capacitySeverityLabel(severity) + "</span>";
+
+  // The app states how old the lifecycle data is; refreshing it is the skill's
+  // job (/polaris-tech-lifecycle). Without this line a stale "Current" verdict
+  // looks authoritative.
+  var staleNote = "";
+  if (lifecycle.datasetReviewedAt) {
+    var ageDays = Math.floor((Date.now() - Date.parse(lifecycle.datasetReviewedAt + "T00:00:00Z")) / 86400000);
+    if (ageDays > 180) {
+      staleNote = '<p class="hint" style="margin:0.4rem 0 0;color:var(--color-warning);font-size:0.78rem">' +
+        "End-of-life dates were last reviewed " + escapeHtml(lifecycle.datasetReviewedAt) +
+        " (" + ageDays + ' days ago). Refresh the dataset before trusting a "Current" verdict.</p>';
+    }
+  }
+
+  var infoLine = (lifecycle.informational || []).map(function (i) {
+    return escapeHtml(i.label) + " " + escapeHtml(i.version);
+  }).join(" · ");
+
+  return '<div class="settings-card" id="platform-lifecycle-card">' +
+    '<div class="capacity-header">' +
+      '<h4 style="margin:0">Platform Lifecycle</h4>' +
+      headerNote +
+    "</div>" +
+    staleNote +
+    // Six columns do not fit at every viewport; scroll inside the container
+    // rather than crushing the Component column (same fix as the advisor card).
+    '<div style="overflow-x:auto;margin-top:0.75rem">' +
+    '<table class="ip-table" style="width:100%;min-width:42rem">' +
+      "<thead><tr>" +
+        "<th>Component</th>" +
+        '<th style="width:8rem">Installed</th>' +
+        '<th style="width:5rem">Track</th>' +
+        '<th style="width:12rem">Supported until</th>' +
+        '<th style="width:11rem">Status</th>' +
+        '<th style="width:9rem">Polaris target</th>' +
+      "</tr></thead>" +
+      "<tbody>" + sorted.map(_lifecycleRowHtml).join("") + "</tbody>" +
+    "</table>" +
+    "</div>" +
+    (infoLine ? '<p class="hint" style="margin:0.6rem 0 0;font-size:0.78rem">' + infoLine + "</p>" : "") +
+    '<p class="hint" style="margin:0.3rem 0 0;font-size:0.78rem">' +
+      "Checked " + escapeHtml(formatLocalTime(lifecycle.computedAt)) +
+      (lifecycle.datasetReviewedAt ? " · dates reviewed " + escapeHtml(lifecycle.datasetReviewedAt) : "") +
+    "</p>" +
+  "</div>";
+}
+
 function renderCapacityCard(capacity, dbInfo, pgTuning) {
   if (!capacity) {
     // Capacity grading unavailable (e.g. statfs not supported) — still render
@@ -1945,7 +2116,14 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
       '<h5>Database</h5>' +
       '<div class="db-info-grid">' +
         dbInfoRow("Current size", _capacityFormatBytes(db.sizeBytes)) +
-        dbInfoRow("Steady-state at current settings", _capacityFormatBytes(work.steadyStateSizeBytes)) +
+        dbInfoRow(
+          "Steady-state at current settings",
+          _capacityFormatBytes(work.steadyStateSizeBytes),
+          "Peak size the database grows to if nothing changes. Legitimately larger than " +
+          "the current size while sample tables are still filling. Retention windows are " +
+          "reclaimed a whole TimescaleDB chunk at a time, so each tier keeps its configured " +
+          "window plus one chunk interval plus one prune cycle.",
+        ) +
         (allTables.length ? dbInfoRow("Tables", allTables.length) : "") +
         dbInfoRow("TimescaleDB", tsLabel) +
         dbInfoRow("Monitor queue", queueLabel) +
@@ -2256,9 +2434,11 @@ async function loadDatabaseInfo() {
       api.serverSettings.getDatabase(),
       api.serverSettings.getCapacityAdvisor(),
       loadTzOverride(),
+      api.serverSettings.getPlatformLifecycle(),
     ]);
     if (results[0].status === "rejected") throw results[0].reason;
     var db = results[0].value;
+    var lifecycle = results[3] && results[3].status === "fulfilled" ? results[3].value : null;
     var advisorResp = results[1].status === "fulfilled" && results[1].value
       ? results[1].value
       : null;
@@ -2269,6 +2449,7 @@ async function loadDatabaseInfo() {
     _dbLoaded = true;
 
     var advisorHtml = renderCapacityAdvisorCard(advisor, pgTuning && pgTuning.pgConfigFile, dbConnectionMode);
+    var lifecycleHtml = renderPlatformLifecycleCard(lifecycle);
 
     // ── Application Updates card ──
     var updateCardHtml =
@@ -2325,6 +2506,12 @@ async function loadDatabaseInfo() {
       (advisorHtml
         ? '<div class="settings-cards-row">' + advisorHtml + updateCardHtml + '</div>'
         : updateCardHtml) +
+      // Platform Lifecycle sits with the "what is this server and does it need
+      // work" group (Database → Advisor → Updates → Lifecycle) and above the
+      // operational-task group below. Full width of its own on purpose: it
+      // wants six columns, and pairing it with Updates would recreate the
+      // column crush the advisor card already had to solve.
+      lifecycleHtml +
       // ── Polaris Agent card ──
       // ── Backup / Restore / History — three columns ──
       '<div class="settings-cards-row-3">' +
@@ -2998,8 +3185,9 @@ function formatFileSize(bytes) {
   return size.toFixed(i === 0 ? 0 : 1) + " " + units[i];
 }
 
-function dbInfoRow(label, value) {
-  return '<div class="db-info-label">' + escapeHtml(label) + '</div>' +
+function dbInfoRow(label, value, hint) {
+  var titleAttr = hint ? ' title="' + escapeHtml(hint) + '"' : "";
+  return '<div class="db-info-label"' + titleAttr + '>' + escapeHtml(label) + '</div>' +
          '<div class="db-info-value">' + escapeHtml(String(value)) + '</div>';
 }
 

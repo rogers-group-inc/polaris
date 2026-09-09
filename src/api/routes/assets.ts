@@ -43,7 +43,7 @@ import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } 
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
-import { getDiscoveredHostnames, getDiscoveredHostname } from "../../services/discoveredHostnameService.js";
+import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
 import { shapeMacRows, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter, TEXT_FILTER_OPS } from "../../utils/prismaTextFilter.js";
@@ -117,6 +117,7 @@ import {
 // Cross-route-file import precedent: serverSettings.ts imports
 // hasActiveDiscoveries from ./integrations.js the same way.
 import { triggerDiscovery } from "../../services/discovery/discoveryEngine.js";
+import { resolveDiscoveryScopeForAsset } from "../../services/discovery/assetDiscoveryScope.js";
 import { isRunActive } from "../../services/discoveryRunState.js";
 
 const router = Router();
@@ -584,6 +585,51 @@ const AssetListQuerySchema = z.object({
 }).passthrough(); // per-column text filters (<col>, <col>Op) read off req.query
 
 /**
+ * Asset ids that match a filter term through their DISCOVERED hostname rather
+ * than the `hostname` column — i.e. rows whose hostname is pinned, where the
+ * list prints the discovered name as a second line under the pin. Typing
+ * either of those two names has to find the row, and only the pin is in a
+ * column, so the other half is resolved here (one indexed lookup per term-
+ * bearing filter; nothing at all when neither filter carries a term).
+ *
+ * Deliberately NOT run for the `empty` / `is_not_empty` ops: those ask about
+ * the Hostname cell's own value, which a pinned row always has.
+ */
+interface DiscoveredHostnameMatches {
+  /** Hostname-column filter term hits, or null for "nothing to add". */
+  hostnameIds: string[] | null;
+  /** Free-text `search` param hits, or null. */
+  searchIds: string[] | null;
+}
+
+const NO_DISCOVERED_MATCHES: DiscoveredHostnameMatches = { hostnameIds: null, searchIds: null };
+
+async function resolveDiscoveredHostnameMatches(
+  q: z.infer<typeof AssetListQuerySchema>,
+  raw: Record<string, unknown>,
+): Promise<DiscoveredHostnameMatches> {
+  const rawOp = typeof raw["hostnameOp"] === "string" ? (raw["hostnameOp"] as string) : undefined;
+  // Mirror buildPrismaTextFilter's op resolution exactly — an unrecognized op
+  // falls back to `contains` there, so it must here too.
+  const op = rawOp && ASSET_TEXT_OPS.has(rawOp) ? rawOp : "contains";
+  const hostnameTerm = op === "contains" || op === "not_contains"
+    ? (typeof raw["hostname"] === "string" ? (raw["hostname"] as string).trim() : "")
+    : "";
+  const searchTerm = (q.search ?? "").trim();
+  if (!hostnameTerm && !searchTerm) return NO_DISCOVERED_MATCHES;
+
+  const empty = new Map<string, string>();
+  const [hostnameHits, searchHits] = await Promise.all([
+    hostnameTerm ? findAssetIdsByDiscoveredHostname([hostnameTerm]) : Promise.resolve(empty),
+    searchTerm ? findAssetIdsByDiscoveredHostname([searchTerm]) : Promise.resolve(empty),
+  ]);
+  return {
+    hostnameIds: hostnameHits.size ? Array.from(hostnameHits.keys()) : null,
+    searchIds: searchHits.size ? Array.from(searchHits.keys()) : null,
+  };
+}
+
+/**
  * Build the Prisma `where` from validated list-query params. Shared by the list
  * endpoint and the "export filtered" path so both honor exactly the same
  * filters.
@@ -592,6 +638,7 @@ function buildAssetListWhere(
   q: z.infer<typeof AssetListQuerySchema>,
   raw: Record<string, unknown>,
   sessionUsername: string | undefined,
+  discovered: DiscoveredHostnameMatches = NO_DISCOVERED_MATCHES,
 ): Record<string, unknown> {
   const where: Record<string, unknown> = {};
   const and: Record<string, unknown>[] = [];
@@ -615,6 +662,11 @@ function buildAssetListWhere(
       { assetTag:   { contains: q.search, mode: "insensitive" } },
       { assignedTo: { contains: q.search, mode: "insensitive" } },
     ];
+    // Pinned rows whose DISCOVERED hostname matches — the `hostname` column
+    // above only ever holds the pin.
+    if (discovered.searchIds) {
+      (where.OR as Record<string, unknown>[]).push({ id: { in: discovered.searchIds } });
+    }
   }
 
   // Per-column operator-aware text filters.
@@ -623,7 +675,18 @@ function buildAssetListWhere(
     const op = typeof raw[key + "Op"] === "string" ? (raw[key + "Op"] as string) : undefined;
     if (value == null && op == null) continue;
     const frag = buildAssetTextFilter(column, value, op);
-    if (frag) and.push(frag);
+    if (!frag) continue;
+    // The Hostname cell shows two names on a pinned row (the pin, plus the
+    // discovered name underneath), so its filter spans both: `contains` matches
+    // either, `not_contains` has to reject the row if EITHER name matches.
+    if (key === "hostname" && discovered.hostnameIds) {
+      const isNot = op === "not_contains";
+      and.push(isNot
+        ? { AND: [frag, { id: { notIn: discovered.hostnameIds } }] }
+        : { OR: [frag, { id: { in: discovered.hostnameIds } }] });
+      continue;
+    }
+    and.push(frag);
   }
   // `_server` spans location + learnedLocation.
   const serverVal = typeof raw["server"] === "string" ? (raw["server"] as string) : undefined;
@@ -824,7 +887,8 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     const limit = Math.min(q.limit ?? ASSET_LIST_DEFAULT_LIMIT, ASSET_LIST_MAX_LIMIT);
     const offset = q.offset ?? 0;
 
-    const where = buildAssetListWhere(q, req.query as Record<string, unknown>, requestActor(req));
+    const discovered = await resolveDiscoveredHostnameMatches(q, req.query as Record<string, unknown>);
+    const where = buildAssetListWhere(q, req.query as Record<string, unknown>, requestActor(req), discovered);
     const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
 
     let favoriteIds = csvToArray(q.favoriteIds);
@@ -1742,66 +1806,61 @@ router.post("/:id/probe-now", requirePermission("assetsProbe", "read"), async (r
   } catch (err) { next(err); }
 });
 
-// POST /api/v1/assets/:id/rediscover — re-run discovery for ONE FortiGate.
-// For an FMG-discovered firewall this queues a SCOPED discovery run
-// (triggerDiscovery { scopeDeviceName }): the full run machinery — DiscoveryRun
-// row, progress, abort, pg-boss handoff — narrowed to the one roster device,
-// with the finalize pass in "finalize-scoped" mode (per-controller switch/AP
-// decommission only; no fleet sweeps). For a standalone-FortiGate asset the
-// integration IS the single gate, so a plain full run is the exact equivalent.
-// No request body. Gated assets:write (above Poll Now's read-only
-// assetsProbe grant) because a re-discover mutates inventory — creates/updates
-// assets + reservations, decommissions vanished switches/APs, releases stale
-// VIP/dhcp_reservation rows.
+// POST /api/v1/assets/:id/rediscover — run discovery scoped to ONE asset.
+// Backs the asset details slide-in's "Discover Now" button.
+//
+// `resolveDiscoveryScopeForAsset` decides which integration runs and how the
+// run is narrowed (see that module). For an FMG-owned FortiGate this queues a
+// SCOPED run (triggerDiscovery { scopeDeviceName }): the full run machinery —
+// DiscoveryRun row, progress, abort, pg-boss handoff — narrowed to the one
+// roster device, with the finalize pass in "finalize-scoped" mode
+// (per-controller switch/AP decommission only; no fleet sweeps). For a
+// standalone-FortiGate asset the integration IS the single gate, so a plain
+// full run is the exact equivalent.
+//
+// A FortiSwitch/FortiAP resolves to its CONTROLLER gate and scopes the run to
+// that: a switch is only ever discovered as a by-product of its controller's
+// pass, and "finalize-scoped" is precisely the per-gate ghost-switch/AP
+// cleanup such an asset needs. The response says which device was targeted so
+// the caller can tell the operator when it wasn't the asset they clicked.
+//
+// No request body. Gated assets:write (above Poll Now's read-only assetsProbe
+// grant) because a discovery mutates inventory — creates/updates assets +
+// reservations, decommissions vanished switches/APs, releases stale VIP /
+// dhcp_reservation rows.
 // HA note: fortinetTopology.deviceName resolves to the FMG cluster device, so
 // re-discovering a standby member's asset re-discovers the whole cluster.
 router.post("/:id/rediscover", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const asset = await prisma.asset.findUnique({
-      where: { id },
-      select: {
-        hostname: true,
-        ipAddress: true,
-        learnedLocation: true,
-        assetType: true,
-        fortinetTopology: true,
-        discoveredByIntegration: { select: { id: true, type: true, config: true, name: true, enabled: true } },
-      },
-    });
-    if (!asset) throw new AppError(404, "Asset not found");
-    const integration = asset.discoveredByIntegration;
-    if (!integration || (integration.type !== "fortimanager" && integration.type !== "fortigate")) {
-      throw new AppError(400, "Re-discovery is only available for FortiGates discovered by a FortiManager or FortiGate integration");
+    const resolution = await resolveDiscoveryScopeForAsset(id);
+    if (!resolution.ok) {
+      // A missing asset is the only 404; every other reason is a legitimate
+      // "this asset has no re-runnable discovery" → 400 with the reason as the
+      // message, so the operator is told why.
+      throw new AppError(resolution.notFound ? 404 : 400, resolution.reason);
     }
-    const topo = (asset.fortinetTopology as Record<string, unknown> | null) || null;
-    if (asset.assetType !== "firewall" || !topo || topo.role !== "fortigate") {
-      throw new AppError(400, "Re-discovery is only available for FortiGate firewall assets");
-    }
-    if (!integration.enabled) throw new AppError(400, `Integration "${integration.name}" is disabled`);
+    const { integration, scope, deviceName, filterAsset, viaController } = resolution.resolved;
 
-    // FMG device name: the topology stamp's deviceName is FMG/dvmdb truth
-    // (same resolver descriptionSyncService uses for device-targeted writes);
-    // hostname is the legacy-row fallback.
-    const deviceName = (typeof topo.deviceName === "string" && topo.deviceName) || asset.hostname;
-    if (!deviceName) throw new AppError(400, "Asset has no resolvable FortiGate device name");
-
-    // Honor deviceInclude/deviceExclude, same as probe-now: a re-discover
-    // must not pull a device the next full sweep would skip. Checked against
-    // the hostname (assetMatchesIntegrationFilter's match field) and the
-    // resolved FMG device name — the filter patterns can target either.
-    const filtHost = assetMatchesIntegrationFilter(asset, integration);
-    const filtDevice = assetMatchesIntegrationFilter({ ...asset, hostname: deviceName }, integration);
+    // Honor deviceInclude/deviceExclude, same as probe-now: a discovery must
+    // not pull a device the next full sweep would skip. Checked against the
+    // hostname (assetMatchesIntegrationFilter's match field) and the resolved
+    // FMG device name — the filter patterns can target either. For a
+    // switch/AP, filterAsset is already the controller gate.
+    const filtHost = assetMatchesIntegrationFilter(filterAsset, integration);
+    const filtDevice = deviceName
+      ? assetMatchesIntegrationFilter({ ...filterAsset, hostname: deviceName }, integration)
+      : filtHost;
     if (!filtHost.included && !filtDevice.included) {
       const reason = filtHost.reason || "Excluded by integration filter";
       logEvent({
         action: "asset.rediscover",
         resourceType: "asset",
         resourceId: id,
-        resourceName: asset.hostname || asset.ipAddress || undefined,
+        resourceName: filterAsset.hostname || filterAsset.ipAddress || undefined,
         actor: requestActor(req),
         level: "warning",
-        message: `Re-discovery blocked: ${asset.hostname || deviceName} — ${reason}`,
+        message: `Discovery blocked: ${filterAsset.hostname || deviceName} — ${reason}`,
         details: { integrationId: integration.id, integrationType: integration.type, deviceName, reason },
       });
       res.status(409).json({ message: reason });
@@ -1817,28 +1876,35 @@ router.post("/:id/rediscover", requirePermission("assets", "write"), async (req,
     // requestActor covers bearer-token callers ("api:<token name>") as well
     // as sessions — the actor string labels the run's start/complete Events.
     const actor = requestActor(req) ?? "";
-    const started = integration.type === "fortimanager"
-      ? await triggerDiscovery(integration.id, actor, { scopeDeviceName: deviceName })
+    // `scopeLabel` gives the run row a name an operator recognises: the gate
+    // name for FMG, the asset's hostname for a directory device (whose scope
+    // identifier is an opaque GUID).
+    const started = scope
+      ? await triggerDiscovery(integration.id, actor, { scope, scopeLabel: deviceName })
       : await triggerDiscovery(integration.id, actor);
     if (!started) {
       res.status(409).json({ message: `A discovery is already running for "${integration.name}" — try again when it finishes` });
       return;
     }
 
+    const target = deviceName || integration.name;
     logEvent({
       action: "asset.rediscover",
       resourceType: "asset",
       resourceId: id,
-      resourceName: asset.hostname || asset.ipAddress || undefined,
+      resourceName: filterAsset.hostname || filterAsset.ipAddress || undefined,
       actor: requestActor(req),
-      message: `Re-discovery requested for FortiGate "${asset.hostname || deviceName}" via "${integration.name}"`,
-      details: { integrationId: integration.id, integrationType: integration.type, deviceName },
+      message: viaController
+        ? `Discovery requested via controller FortiGate "${target}" using "${integration.name}"`
+        : `Discovery requested for FortiGate "${filterAsset.hostname || target}" via "${integration.name}"`,
+      details: { integrationId: integration.id, integrationType: integration.type, deviceName, viaController },
     });
     res.status(202).json({
-      message: "Re-discovery started",
+      message: viaController ? `Discovery started on controller ${target}` : "Discovery started",
       integrationId: integration.id,
       integrationName: integration.name,
-      deviceName: integration.type === "fortimanager" ? deviceName : null,
+      deviceName,
+      viaController,
     });
   } catch (err) { next(err); }
 });

@@ -1522,6 +1522,7 @@ export const RESET_EVENT_SUGGESTIONS: Record<string, string> = {
   "agent.uninstall_failed": "agent.uninstalled",
   "agent.build.failed": "agent.build.completed",
   "integration.discover.error": "integration.discover.completed",
+  "platform.lifecycle_changed": "platform.lifecycle_recovered",
 };
 
 export const resetEventSchema = z
@@ -1966,6 +1967,24 @@ export interface ScopeAsset extends ScopeConditionAsset {
   assetType: string | null;
   tags: string[];
   discoveredByIntegrationId: string | null;
+}
+
+/**
+ * Does this scope narrow anything at all? `{allAssets:true}` says so outright;
+ * a bare `{}` is the same answer arrived at differently — it is what the wizard
+ * WROTE for every event automation before device filters reached that trigger
+ * type (business rule 46), and what an API caller who omits `scope` gets. Both
+ * mean "any device", so a caller that filters on scope must ask this FIRST:
+ * `scopeMatchesAsset({}, …)` is false (it matches nothing), which is the right
+ * answer for a builder-authored scope and exactly the wrong one for those rows.
+ */
+export function scopeIsUnconstrained(scope: RuleScope | null | undefined): boolean {
+  if (!scope) return true;
+  if (scope.allAssets) return true;
+  const lists = [scope.assetTypes, scope.tags, scope.assetIds, scope.integrationIds, scope.manufacturers, scope.models, scope.subnetCidrs];
+  if (lists.some((l) => l && l.length > 0)) return false;
+  // An empty tree ANDs to true for every asset, so it selects nothing either.
+  return !(scope.condition && scope.condition.children.length > 0);
 }
 
 /**
@@ -3082,8 +3101,14 @@ export function followUpPolicy(
   return { repeat, escalation };
 }
 
-/** Trigger categories that select assets via `scope` (vs. event/host).
- *  Composite triggers are scoped iff kind="asset" — use isAssetScopedTrigger. */
+/** Trigger categories whose SUBJECT is an asset the scope selects (vs. event/host).
+ *  Composite triggers are scoped iff kind="asset" — use isAssetScopedTrigger.
+ *
+ *  `event` is deliberately absent even though an event automation may now carry
+ *  a device filter (business rule 46). This list answers "is this automation
+ *  ABOUT a device", which is what the asset-details Alerts tab asks — and an
+ *  all-assets `integration.discover.error` automation is about an integration,
+ *  not about each of 2000 devices it would otherwise be listed under. */
 export const ASSET_SCOPED_TRIGGER_TYPES = ["asset_metric", "asset_state", "change"] as const;
 
 /** Whether a trigger selects devices via `scope` (composite depends on kind). */
@@ -3539,7 +3564,11 @@ export function buildSchemaCatalog() {
       { type: "asset_metric", label: "Asset metric threshold", scoped: true, metrics: ASSET_METRICS },
       { type: "asset_state", label: "Asset state", scoped: true, fields: ASSET_STATE_FIELDS },
       { type: "host_metric", label: "Polaris host health", scoped: false, metrics: HOST_METRICS },
-      { type: "event", label: "Audit event match", scoped: false },
+      // Scoped since 2026-09 (business rule 46): the device filter selects
+      // which SUBJECTS an event automation fires about. It stays optional in
+      // spirit — "All assets" is the unconstrained answer — but the wizard now
+      // saves what the operator picked instead of discarding it.
+      { type: "event", label: "Audit event match", scoped: true },
       { type: "change", label: "Change detection", scoped: true, changeTypes: CHANGE_TYPES },
       { type: "composite", label: "Multiple conditions (AND/OR)", scoped: true },
     ],

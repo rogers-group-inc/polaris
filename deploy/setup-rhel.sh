@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 20, PostgreSQL 15, Go 1.22+, git, nginx (mainline ≥1.25)
+#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, git, nginx (mainline ≥1.25)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -101,12 +101,22 @@ info "  Cert hostname:     $HOSTNAME_FROM_URL"
 info "  Monitor replicas:  $MONITOR_REPLICAS"
 info "  Prometheus IP:     $PROMETHEUS_IP"
 
-# ─── 1. Install Node.js 20 ───────────────────────────────────────────────────
-if command -v node &>/dev/null && [[ "$(node -v)" == v20* || "$(node -v)" == v22* ]]; then
+# ─── 1. Install Node.js 24 (LTS) ─────────────────────────────────────────────
+# 22.12 is the hard floor (pg-boss declares >=22.12.0, @prisma/streams-local
+# >=22), so v20 is no longer merely old — it is below what the dependency tree
+# supports, and it went EOL in April 2026. RHEL 9 AppStream carries a nodejs:24
+# module stream, so this stays on vendor-packaged Node.
+#
+# An existing v22 install is accepted rather than forced up: it satisfies the
+# floor and is supported until ~April 2027. v20 and below are replaced.
+if command -v node &>/dev/null && [[ "$(node -v)" == v24* || "$(node -v)" == v22* ]]; then
   info "Node.js $(node -v) already installed"
 else
-  info "Installing Node.js 20..."
-  dnf module enable -y nodejs:20
+  info "Installing Node.js 24..."
+  # `module reset` first: enabling a second stream on a host already pinned to
+  # nodejs:20 fails with "cannot enable multiple streams" otherwise.
+  dnf module reset -y nodejs
+  dnf module enable -y nodejs:24
   dnf install -y nodejs npm
   info "Node.js $(node -v) installed"
 fi

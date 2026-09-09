@@ -142,6 +142,12 @@ export interface VcenterDiscoveryResult {
    * "deleted" from "not asked", so the sweep refuses to act on it.
    */
   inventoryComplete: boolean;
+  /**
+   * True when the run was narrowed to a single VM or host (the asset slide-in's
+   * Discover Now). Every absence-based pass in `syncVcenterDevices` must refuse
+   * to act on such a result: the fleet is not missing, it was never asked for.
+   */
+  scoped?: boolean;
 }
 
 export type VcenterDiscoveryProgressCallback = (
@@ -1263,8 +1269,12 @@ export function backingLabelFor(backing: VcenterDatastoreBacking | null): string
  * inventory is trustworthy.
  */
 export function vcenterSweepBlockedReason(
-  result: Pick<VcenterDiscoveryResult, "hosts" | "vms" | "inventoryComplete">,
+  result: Pick<VcenterDiscoveryResult, "hosts" | "vms" | "inventoryComplete"> & { scoped?: boolean },
 ): string | null {
+  // Checked FIRST so a scoped run gets an accurate reason rather than the
+  // "a per-host VM list failed" message, which would be a lie an operator
+  // could waste an afternoon on.
+  if (result.scoped) return "the run was scoped to a single device";
   if (!result.inventoryComplete) return "the inventory read was incomplete (a per-host VM list failed)";
   if (result.hosts.length === 0 && result.vms.length === 0) return "the inventory came back empty";
   return null;
@@ -1467,6 +1477,21 @@ export async function discoverInventory(
   config: VcenterConfig,
   signal?: AbortSignal,
   onProgress?: VcenterDiscoveryProgressCallback,
+  /**
+   * Narrow the run to ONE VM or ONE ESXi host. Backs the asset slide-in's
+   * "Discover Now".
+   *
+   * The win is Phase 4: a full run spends 3–4 REST calls PER VM on detail,
+   * Tools and guest identity, so a 2000-VM vCenter is thousands of calls; a
+   * VM-scoped run does that for one. Phases 1/2/5/6 are bounded by HOST count
+   * (tens), so they stay — and Phase 1 has to stay regardless, because VM→host
+   * placement is derived from the per-host listing and a VM written without its
+   * host would clobber `Asset.virtualization.hostAssetId`.
+   *
+   * The returned result is marked `scoped`, which is what stops the sync layer
+   * reading one VM as "the rest of the fleet was deleted".
+   */
+  scope?: { kind: "vm" | "host"; moref: string },
 ): Promise<VcenterDiscoveryResult> {
   const log = onProgress || (() => {});
 
@@ -1580,17 +1605,23 @@ export async function discoverInventory(
 
     // Phase 3 — VM lists per host (pins VM→host placement; also sidesteps the
     // 4000-item global list cap).
+    //
+    // Scoped to a HOST: there is no VM work to do at all, so the whole loop is
+    // skipped. Scoped to a VM: the same per-host loop runs, but each call also
+    // filters on the target moref, so every host answers with 0 or 1 rows and
+    // the loop still tells us WHICH host holds it — the placement fact we
+    // cannot get from the VM detail endpoint.
     type VmListRow = { vm: string; name: string; power_state?: string; hostMoref: string };
     const vmRows: VmListRow[] = [];
     let vmListFailures = 0;
-    for (const host of hosts) {
+    for (const host of (scope?.kind === "host" ? [] : hosts)) {
       if (signal?.aborted) throw new AppError(499, "Aborted");
       log("discover.device.start", "info", `vCenter: listing VMs on ${host.name}`);
       try {
         const rows = await session.request<Array<{ vm: string; name: string; power_state?: string }>>(
           "GET",
           "/api/vcenter/vm",
-          { query: { hosts: host.moref }, signal },
+          { query: scope?.kind === "vm" ? { hosts: host.moref, vms: scope.moref } : { hosts: host.moref }, signal },
         );
         for (const row of rows) vmRows.push({ ...row, hostMoref: host.moref });
         log("discover.device.complete", "info", `vCenter: ${host.name} — ${rows.length} VM(s)`);
@@ -1685,13 +1716,34 @@ export async function discoverInventory(
       logger.debug({ err: err?.message }, "vcenter: host DNS resolution unavailable");
     }
 
+    // A scoped run returns only the host(s) it actually concerns, so the sync
+    // doesn't upsert the whole cluster for one operator's click:
+    //   host scope — the target host.
+    //   vm scope   — the host the VM was found on. Its asset row still has to be
+    //                written, because `hostAssetIdByMoref` is how the VM's
+    //                `virtualization.hostAssetId` resolves; dropping it would
+    //                write the VM with no placement.
+    // Empty when the target wasn't found — a scoped run that matched nothing
+    // syncs nothing, and every absence-based pass is suppressed anyway.
+    const scopedHostMorefs = new Set(
+      scope?.kind === "host" ? [scope.moref] : scope?.kind === "vm" ? vms.map((v) => v.hostMoref) : [],
+    );
+    const returnedHosts = scope ? hosts.filter((h) => scopedHostMorefs.has(h.moref)) : hosts;
+
     return {
       clusters,
-      hosts,
+      hosts: returnedHosts,
       vms,
       datastores,
       presentVmMorefs: vmRows.map((r) => r.vm),
-      inventoryComplete: vmListFailures === 0,
+      // A scoped run did NOT read the whole inventory, so this is the honest
+      // value — and it is load-bearing: `vcenterSweepBlockedReason` treats an
+      // incomplete read as "never sweep", which is the SECOND independent guard
+      // stopping a one-device result from being read as a deleted fleet. The
+      // first is `scoped` below. Two guards because the failure is silent and
+      // catastrophic: it decommissions assets.
+      inventoryComplete: scope ? false : vmListFailures === 0,
+      scoped: scope ? true : undefined,
     };
   } finally {
     await session.logout();

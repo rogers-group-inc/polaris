@@ -23,10 +23,21 @@
  * Opt-in. Refuses unless the Entra integration carries
  * `config.publishToIntune === true`, which the operator sets on that
  * integration's Script Publishing tab after granting the app registration
- * `DeviceManagementConfiguration.ReadWrite.All` (Graph application permission,
- * admin consent). That grant upgrades the credential from "reads device
- * inventory" to "creates device-management policy tenant-wide" — the tab says
- * so, and so does this comment.
+ * `DeviceManagementScripts.ReadWrite.All` (Graph application permission, admin
+ * consent). That grant upgrades the credential from "reads device inventory"
+ * to "creates device-management policy tenant-wide" — the tab says so, and so
+ * does this comment.
+ *
+ * WHICH SCOPE. Observed in a live tenant (2026-09-08): Graph rejects these
+ * calls with "must have one of DeviceManagementScripts.Read.All,
+ * DeviceManagementScripts.ReadWrite.All" — NOT the
+ * DeviceManagementConfiguration.* scope this file used to name, which is what
+ * the published v1.0 reference lists for deviceHealthScripts. Which of the two
+ * a tenant enforces tracks the API version it answers `deviceHealthScripts` on,
+ * and that is exactly what resolveGraphBase probes for. So: tell operators to
+ * grant the Scripts scope, and let the 403 text — which names the scope the
+ * tenant actually wants — settle any disagreement. Do not "correct" this back
+ * to one scope on the strength of the docs alone.
  */
 
 import { createHash } from "node:crypto";
@@ -107,7 +118,8 @@ async function resolveGraphBase(config: EntraIdConfig): Promise<string> {
     502,
     "Could not reach Microsoft Graph deviceHealthScripts on /v1.0 or /beta" +
       (lastErr instanceof Error ? ` — ${lastErr.message}` : "") +
-      ". Confirm the app registration has DeviceManagementConfiguration.ReadWrite.All with admin consent.",
+      ". Confirm the app registration has DeviceManagementScripts.ReadWrite.All (some tenants ask " +
+      "for DeviceManagementConfiguration.ReadWrite.All instead — the 403 says which) with admin consent.",
   );
 }
 
