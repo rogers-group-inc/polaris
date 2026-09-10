@@ -203,6 +203,14 @@ interface MonitorJobPayload {
    */
   verboseDebug?: boolean;
   /**
+   * PROBE QUEUE ONLY: the resolved probe interval (`resolveProbeIntervalSec`) at
+   * publish time. The worker uses it to drop a job that queued behind an active
+   * job for the same asset, once that job has already taken this cycle's
+   * reading (`probeStillDue`). Optional so a job enqueued before this field
+   * existed still runs.
+   */
+  probeIntervalSec?: number;
+  /**
    * CHUNK FORM, used only by the ICMP loss sweep. That cadence measures a
    * batch of assets in ONE fping process rather than one process per asset
    * (utils/burstPing.ts), so its job carries the whole chunk and `assetId`
@@ -217,9 +225,10 @@ interface MonitorJobPayload {
    * monitor-settings hierarchy per asset nor guesses a timeout. Present only on
    * the probe queue, and only for assets whose resolved method is `icmp` —
    * every other transport stays one job per asset, because only ICMP has a
-   * batching primitive (see utils/burstPing.ts).
+   * batching primitive (see utils/burstPing.ts). `intervalSec` is the resolved
+   * probe interval, for the same pickup re-check `probeIntervalSec` serves.
    */
-  probeBatch?: Array<{ id: string; target: string; timeoutMs: number }>;
+  probeBatch?: Array<{ id: string; target: string; timeoutMs: number; intervalSec?: number }>;
 }
 
 // ─── discovery queue ───────────────────────────────────────────────────────
@@ -872,7 +881,7 @@ export async function startPgbossWorkers(): Promise<void> {
     await runDedicatedWorker("probe", job, (assetId, labels) =>
       batch && batch.length > 0
         ? runProbeBatchFor(batch, labels)
-        : runProbeFor(assetId, labels),
+        : runProbeFor(assetId, labels, job.data.probeIntervalSec),
     );
   });
 
@@ -1047,7 +1056,7 @@ async function dispatchFloatingJob(
       case "probe":
         await (job.data.probeBatch && job.data.probeBatch.length > 0
           ? runProbeBatchFor(job.data.probeBatch, labels)
-          : runProbeFor(assetId, labels));
+          : runProbeFor(assetId, labels, job.data.probeIntervalSec));
         break;
       case "fastFiltered": await runFastFilteredFor(assetId, labels); break;
       case "telemetry":    await runTelemetryFor(assetId, labels);    break;
@@ -1137,7 +1146,7 @@ const MONITOR_JOB_INSERT_CHUNK = 500;
  */
 export async function publishMonitorJobsBulk(
   cadence: MonitorCadence,
-  jobs: Array<{ assetId: string; transport?: string; assetType?: string; verboseDebug?: boolean }>,
+  jobs: Array<{ assetId: string; transport?: string; assetType?: string; verboseDebug?: boolean; probeIntervalSec?: number }>,
 ): Promise<void> {
   if (!bossInstance || jobs.length === 0) return;
   const queue = QUEUE_NAMES[cadence];
@@ -1150,6 +1159,7 @@ export async function publishMonitorJobsBulk(
           transport: j.transport,
           assetType: j.assetType,
           verboseDebug: j.verboseDebug,
+          probeIntervalSec: j.probeIntervalSec,
         } as MonitorJobPayload as object,
         singletonKey: `${j.assetId}:${cadence}`,
       })),
@@ -1161,14 +1171,21 @@ export async function publishMonitorJobsBulk(
  * Enqueue one CHUNK of batched ICMP status probes.
  *
  * Same coalescing contract as publishMonitorSweepJob: the singleton key is the
- * chunk INDEX, so re-publishing chunk N while the previous cycle's chunk N is
- * still queued replaces it rather than piling on. For the STATUS probe that
- * matters more than for the loss sweep — a backlog here would delay down
- * detection, and skipping a cycle is strictly better than deciding an outage
- * from a stale queue.
+ * chunk INDEX. Under the stately policy a re-publish of chunk N is absorbed
+ * while chunk N is still QUEUED, so a backlog cannot pile up. For the STATUS
+ * probe that matters more than for the loss sweep: a backlog here would delay
+ * down detection, and skipping a cycle is strictly better than deciding an
+ * outage from a stale queue.
+ *
+ * While chunk N is ACTIVE, stately lets ONE more queue behind it. That case is
+ * not rare: a chunk runs until its slowest target times out, which is a whole
+ * publisher tick, so the next tick re-publishes assets the active job is about
+ * to stamp. Each item's `intervalSec` lets `runProbeBatchFor` drop the assets
+ * that job already polled; without it every reading was taken twice, seconds
+ * apart.
  */
 export async function publishProbeBatchJob(
-  items: Array<{ id: string; target: string; timeoutMs: number }>,
+  items: Array<{ id: string; target: string; timeoutMs: number; intervalSec?: number }>,
   chunkIndex: number,
   labels?: { verboseDebug?: boolean },
 ): Promise<void> {

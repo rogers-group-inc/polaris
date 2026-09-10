@@ -98,6 +98,45 @@ export function runsHeavyCadences(a: {
 }
 
 /**
+ * Is a probe that was published as DUE still due when a worker picks it up?
+ *
+ * The pg-boss publisher re-evaluates every 5 s, and the probe queue's stately
+ * policy absorbs a duplicate only while the earlier job is still QUEUED. Once
+ * that job is ACTIVE, a second one queues behind it. A batched ICMP chunk runs
+ * as long as its slowest target (a single dead host holds it for the full
+ * probe timeout), and `lastMonitorAt` is only stamped when the readings are
+ * recorded, so the next tick still saw the whole chunk as due and queued it
+ * again. The duplicate ran seconds later, which charted every reading twice and
+ * counted every miss twice toward the covering automation's `missedPolls`
+ * (business rules 30 and 36).
+ *
+ * The re-check at pickup is the publisher's own `isDue` arithmetic, run against
+ * the freshest stamp we can see. `pendingLastMonitorAt` is the probe-patch
+ * buffer's unflushed value: the queued duplicate activates within about a second
+ * of the first job finishing, before the 2 s flush has reached the row.
+ *
+ * `intervalSec` absent means a job published before the interval rode the
+ * payload, or a caller that is not the cadence (the operator's Probe Now). Both
+ * mean "do not second-guess this job", so the answer is true.
+ */
+export function probeStillDue(
+  lastMonitorAt: Date | null | undefined,
+  intervalSec: number | null | undefined,
+  now: Date,
+  pendingLastMonitorAt?: Date | null,
+): boolean {
+  if (intervalSec == null || !Number.isFinite(intervalSec) || intervalSec <= 0) return true;
+  let freshest: number | null = null;
+  for (const d of [lastMonitorAt, pendingLastMonitorAt]) {
+    if (d instanceof Date && !Number.isNaN(d.getTime()) && (freshest === null || d.getTime() > freshest)) {
+      freshest = d.getTime();
+    }
+  }
+  if (freshest === null) return true;
+  return now.getTime() - freshest >= intervalSec * 1000;
+}
+
+/**
  * The ceiling the missed-poll bucket may ever reach.
  *
  * The bucket was UNBOUNDED until 2026-09-01, and that was the whole of the
