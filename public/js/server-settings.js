@@ -782,7 +782,7 @@ function renderCertsTab(container) {
       '</div>' +
       '<div class="form-group">' +
         '<label><input type="checkbox" id="proxy-http3-enabled"' + (p.http3Enabled ? " checked" : "") + disabled + '> HTTP/3 (QUIC over UDP)</label>' +
-        '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-top:0.2rem">Requires nginx 1.25+. When off, removes the QUIC listener, the Alt-Svc header, and ssl_early_data.</div>' +
+        '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-top:0.2rem">Requires nginx 1.30+. When off, removes the QUIC listener, the Alt-Svc header, and ssl_early_data.</div>' +
       '</div>' +
       '<div class="form-group">' +
         '<label>TLS protocols</label>' +

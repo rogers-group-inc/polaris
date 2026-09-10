@@ -94,10 +94,10 @@ build auto-prune + boot-time auto-build are layered on top.
   localStorage dismissal (`polaris.signing-alert.dismissed.<username>`).
 - `deploy/setup-{rhel,ubuntu,windows}{,-nodb}.{sh,ps1}` — install Go
   alongside Node + mkdir `$APP_DIR/data/agents` + `$APP_DIR/.cache/go-build`;
-  also install Java 17 headless + the SHA-256-pinned jsign jar to
+  also install Java 25 headless + the SHA-256-pinned jsign jar to
   `$APP_DIR/tools/jsign.jar` (warn-don't-abort — signing is opt-in).
-- `Dockerfile` — pulls `golang-go` from bookworm-backports; pre-creates
-  `/app/state/.cache/go-build`; installs `default-jre-headless` + the
+- `Dockerfile` — pulls `golang-go` from trixie-backports (the suite must track the base image); pre-creates
+  `/app/state/.cache/go-build`; installs `openjdk-25-jre-headless` by NAME + the
   pinned jsign jar at `/opt/polaris/tools/jsign.jar`.
 
 **Readers** (consume state):

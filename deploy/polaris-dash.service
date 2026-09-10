@@ -1,8 +1,18 @@
 [Unit]
 Description=Polaris — dash (unauthenticated read-only wallboard listener)
 Documentation=https://github.com/rogers-group-inc/polaris
-After=network.target postgresql-15.service polaris-migrate.service
-Requires=postgresql-15.service polaris-migrate.service
+# The local PostgreSQL dependency is deliberately NOT named in this file. Its
+# unit name is a host fact — postgresql-17.service on RHEL/PGDG,
+# postgresql.service on Debian/Ubuntu, and nothing at all when the database is
+# external — while this file is overwritten verbatim by every update, in-app or
+# scripted. Naming a major here meant an update could hand a host a Requires=
+# for a unit it does not have, which fails the start.
+# The setup scripts write it as a drop-in instead:
+#   /etc/systemd/system/<unit>.d/20-postgres.conf
+# Drop-ins survive the sync. See deploy/dropins/20-postgres.conf.example and
+# docs/INSTALL.md -> "The PostgreSQL dependency".
+After=network.target polaris-migrate.service
+Requires=polaris-migrate.service
 PartOf=polaris.target
 
 [Service]

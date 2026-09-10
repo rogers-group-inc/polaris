@@ -192,23 +192,32 @@ const FAMILIES = [
     agree: "major.minor",
     minSites: 8,
     sites: [
-      { file: "agent/go.mod", label: "go directive", kind: "pin",
+      // FLOOR, not pin. The go directive is a MINIMUM toolchain — the same
+      // shape as engines.node — and from 2026-09-09 the family has two numbers
+      // like Node's: 1.26 required, 1.27 pinned on Windows. Demanding one
+      // number would force a lie, because no Linux path can install 1.27 (the
+      // RHEL go-toolset module and the Go snap both stop at 1.26).
+      { file: "agent/go.mod", label: "go directive", kind: "pin", role: "floor",
         re: /^go (\d+\.\d+)/gm, pick: (m) => m[1] },
       { files: LINUX_SETUP, label: "go version accept floor", kind: "accept-range",
         re: /go1\\\.\((\d)\[(\d)-9\]/g, pick: (m) => `1.${m[1]}${m[2]}` },
       { files: WINDOWS_SETUP, label: "go accept floor", kind: "accept-range",
         re: /go1\\\.\((\d)\[(\d)-9\]/g, pick: (m) => `1.${m[1]}${m[2]}` },
-      { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
-        re: /GoLang\.Go\.(\d+\.\d+)/g, pick: (m) => m[1] },
+      // `--id GoLang.Go --version N`, not `--id GoLang.Go.N`: winget publishes
+      // ONE GoLang.Go package with per-version manifests. The old form named a
+      // package that does not exist, so the install failed on every host that
+      // HAS winget — and silently, since the MSI fallback is the else branch.
+      { files: WINDOWS_SETUP, label: "winget version", kind: "pin",
+        re: /GoLang\.Go --version (\d+\.\d+)/g, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "MSI fallback URL", kind: "pin",
         re: /go\.dev\/dl\/go(\d+\.\d+)\./g, pick: (m) => m[1] },
-      { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose",
+      { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose", role: "floor",
         re: /Go (\d+\.\d+)\+/g, pick: (m) => m[1] },
       // The minimum the app enforces at the agent-build preflight, and the
       // number every operator-facing "install Go N+" string interpolates.
-      { file: "src/services/agentBuildService.ts", label: "GO_MINIMUM", kind: "pin",
+      { file: "src/services/agentBuildService.ts", label: "GO_MINIMUM", kind: "pin", role: "floor",
         re: /GO_MINIMUM = "(\d+\.\d+)"/g, pick: (m) => m[1] },
-      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
+      { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose", role: "floor",
         re: /\*\*Go\*\*[^|\n]*\|\s*(\d+\.\d+)\s*\|/g, pick: (m) => m[1] },
     ],
   },
@@ -235,8 +244,23 @@ const FAMILIES = [
     agree: "major",
     minSites: 8,
     sites: [
-      { files: UNITS, label: "unit After=/Requires=", kind: "pin",
+      // NOT the shipped units. They named postgresql-<major>.service until
+      // 2026-09-09; the dependency is a per-host drop-in now, because the unit
+      // name is a host fact and an update overwrites the unit files verbatim.
+      // `checkUnitsNameNoPostgres` below asserts the major stays out of them.
+      { file: "deploy/dropins/20-postgres.conf.example", label: "drop-in example", kind: "pin",
         re: /postgresql-(\d+)\.service/g, pick: (m) => m[1] },
+      // The RHEL install's own majors. Unchecked until 2026-09-09, which is
+      // how PG_CLIENT_MAJOR could have drifted from the units in silence.
+      { files: ["deploy/setup-rhel.sh", "deploy/setup-ubuntu.sh"], label: "PG_MAJOR", kind: "pin",
+        re: /^PG_MAJOR=(\d+)/gm, pick: (m) => m[1] },
+      { files: ["deploy/setup-rhel-nodb.sh", "deploy/setup-ubuntu-nodb.sh"], label: "PG_CLIENT_MAJOR", kind: "pin",
+        re: /^PG_CLIENT_MAJOR=(\d+)/gm, pick: (m) => m[1] },
+      // The HA install provisions its own PostgreSQL for Patroni. A node that
+      // came up on a different major than the stock scripts install cannot
+      // replicate from the primary at all.
+      { file: "deploy/ha/setup-rhel-ha.sh", label: "PG_MAJOR", kind: "pin",
+        re: /^PG_MAJOR=(\d+)/gm, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
         re: /PostgreSQL\.PostgreSQL\.(\d+)/g, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "installer URL", kind: "pin",
@@ -247,6 +271,13 @@ const FAMILIES = [
         re: /timescaledb:latest-pg(\d+)/g, pick: (m) => m[1] },
       { files: WORKFLOWS, label: "CI service image", kind: "pin",
         re: /image:\s*postgres:(\d+)-/g, pick: (m) => m[1] },
+      // The in-container client. Unversioned (`postgresql-client`) until
+      // 2026-09-09, so it silently WAS whatever the base image shipped and
+      // agreed with the pin only by luck of Debian's release. pgClientTools
+      // resolves by the SERVER's major (rule 47), so a mismatch here fails
+      // every in-container backup.
+      { files: ["Dockerfile", "Dockerfile.dev"], label: "postgresql-client", kind: "pin",
+        re: /postgresql-client-(\d+)/g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md"], label: "timescaledb package", kind: "pin",
         re: /timescaledb-2-postgresql-(\d+)/g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md"], label: "pg_config path", kind: "pin",
@@ -272,6 +303,12 @@ const FAMILIES = [
         re: /Microsoft\.OpenJDK\.(\d+)/g, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "JDK MSI URL", kind: "pin",
         re: /microsoft-jdk-(\d+)-windows/g, pick: (m) => m[1] },
+      // The number the RUNNING APP states. Every "install Java N+" string
+      // interpolates it, and nothing else in this family reads src/ — which is
+      // how the copy went on saying "Java 17+" while all ten install sites
+      // said 25.
+      { file: "src/services/agentSigningService.ts", label: "JAVA_MINIMUM", kind: "pin",
+        re: /JAVA_MINIMUM = "(\d+)"/g, pick: (m) => m[1] },
       { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
         re: /\*\*Java\*\*[^|\n]*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
     ],
@@ -342,7 +379,7 @@ function checkPostgresSource() {
 // the checker is blind to.
 const FLOATING = [
   { file: "compose.dev.yml", re: /timescale\/timescaledb:latest-pg\d+/g },
-  { file: "docker-compose.yml", re: /nginx:mainline/g },
+  { file: "docker-compose.yml", re: /nginx:stable/g },
   { file: "docker-compose.yml", re: /polaris:latest/g },
 ];
 
@@ -480,7 +517,7 @@ const UNVERSIONED = [
   {
     re: /apt-get install -y default-jre-headless/g,
     what: "Java",
-    pinned: "java-17-openjdk-headless (RHEL) / Microsoft.OpenJDK.17 (Windows)",
+    pinned: "a NAMED openjdk-<major>-jre-headless / java-<major>-openjdk-headless / Microsoft.OpenJDK.<major> — 25 today, and the java-major check is what says so",
     // A versioned install of the same technology in the SAME file means the
     // unversioned one is a deliberate fallback, not the primary path — the pin
     // check works, and the degradation is logged at install time. Only an
@@ -500,7 +537,7 @@ const UNVERSIONED = [
     // `command -v pg_dump` said all was well (prod, 2026-09-09).
     re: /dnf install -y postgresql(?![0-9"${}\w-])/g,
     what: "the PostgreSQL client tools",
-    pinned: "postgresql15 from PGDG — RHEL 9's unversioned AppStream package is PostgreSQL 13, which cannot dump a 15+ server",
+    pinned: "postgresql${PG_MAJOR} from PGDG (17 today) — RHEL 9's unversioned AppStream package is PostgreSQL 13, and pg_dump refuses a server newer than itself",
     pairedWith: /dnf install -y "?postgresql(?:\$\{PG_(?:CLIENT_)?MAJOR\}|1\d)\b/,
   },
 ];
@@ -526,6 +563,37 @@ function checkUnversionedInstalls() {
   return out;
 }
 
+/**
+ * units-name-no-postgres — a hard gate, not a pin check.
+ *
+ * The shipped units named postgresql-<major>.service until 2026-09-09. That was
+ * wrong in a way no equality check could see: both update paths overwrite the
+ * main unit files verbatim, so the major in a unit is re-asserted onto every
+ * host at every update — including hosts where that unit does not exist
+ * (Debian's is postgresql.service, an external-DB install has none, a Patroni
+ * node has it masked). setup-ubuntu.sh rewrote the name in place at install
+ * time and the next update put the RHEL name straight back.
+ *
+ * The dependency is a per-host drop-in now (deploy/dropins/20-postgres.conf.example).
+ * This fails if a major finds its way back into a shipped unit.
+ */
+function checkUnitsNameNoPostgres() {
+  const out = [];
+  for (const rel of UNITS()) {
+    const src = readCode(rel) ?? "";
+    for (const m of src.matchAll(/^(?:After|Requires|Wants|BindsTo)=.*?(postgresql[^\s]*\.service)/gm)) {
+      out.push(
+        `${rel} names ${m[1]} in a [Unit] dependency. The PostgreSQL unit name is a HOST fact — ` +
+          `postgresql-<major>.service on RHEL/PGDG, postgresql.service on Debian, absent for an external ` +
+          `database, masked under Patroni — and both update paths overwrite this file verbatim, so the name ` +
+          `would be re-asserted onto every host on every update. Put it in a 20-postgres.conf drop-in ` +
+          `instead (deploy/dropins/20-postgres.conf.example); drop-ins survive the sync.`,
+      );
+    }
+  }
+  return out;
+}
+for (const msg of checkUnitsNameNoPostgres()) failures.push({ check: "units-name-no-postgres", msg });
 for (const msg of checkPostgresSource()) warnings.push({ check: "postgres-source", msg });
 for (const msg of checkUnversionedInstalls()) warnings.push({ check: "unversioned-install", msg });
 

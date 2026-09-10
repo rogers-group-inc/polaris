@@ -24,8 +24,8 @@ Two services under the compose project name `polaris` (containers become
 
 ### `postgres`
 
-- `timescale/timescaledb:latest-pg15` (PG 15.x on the same Alpine base the
-  previous `postgres:15-alpine` used), data on the `pgdata` named volume
+- `timescale/timescaledb:latest-pg17` (PG 17.x on the same Alpine base the
+  previous `postgres:17-alpine` used), data on the `pgdata` named volume
   (survives `compose down`; only `compose down -v` wipes it).
 - **TimescaleDB is installed in dev on purpose**, so dev matches what every
   documented production install runs. Without it the 21 sample + rollup tables
@@ -48,8 +48,8 @@ Two services under the compose project name `polaris` (containers become
 
 ### `app`
 
-- Built from [Dockerfile.dev](Dockerfile.dev): `node:20-bookworm` plus
-  native-module build deps (`python3`, `build-essential`), `postgresql-client`
+- Built from [Dockerfile.dev](Dockerfile.dev): `node:24-trixie` plus
+  native-module build deps (`python3`, `build-essential`), `postgresql-client-17`
   for ad-hoc psql inside the container, and `iputils-ping` (the monitoring
   code path spawns the system `ping` for ICMP probes). The production image
   in [Dockerfile](Dockerfile) is a separate multi-stage build — don't confuse

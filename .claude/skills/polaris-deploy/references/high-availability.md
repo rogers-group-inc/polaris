@@ -28,13 +28,19 @@ what the load balancer monitors.
   web roles double every poll and duplicate every alert. Nothing here is
   fixable by configuration; four layers make it impossible instead — see
   docs/HA.md §5. **Do not "improve" any of them without reading that section.**
-- **Every unit's `Requires=postgresql-15.service` must be redirected, not
+- **Every unit's local-PostgreSQL dependency must be redirected, not
   edited.** Patroni owns PostgreSQL and the stock unit is masked. The redirect
   lives in `deploy/ha/dropins/<unit>.service.d/10-ha.conf` precisely because
   the updater overwrites the main unit files (`cp -f` from `deploy/`) and leaves
-  `.d/*.conf` alone. The `10-` prefix matters: an empty `After=`/`Requires=`
-  assignment resets entries parsed EARLIER, so these must sort before
-  `nginx-dependency.conf`.
+  `.d/*.conf` alone. Since 2026-09-09 the shipped units name no PostgreSQL unit
+  at all — a single-node host gets one from its own `20-postgres.conf` drop-in
+  — so on an HA node what must win is the reset in `10-ha.conf`, and both
+  update paths deliberately skip writing a `20-` file when
+  `/etc/polaris/ha-node` or a `10-ha.conf` is present. The `10-` prefix
+  matters: an empty `After=`/`Requires=` assignment resets entries parsed
+  EARLIER, so these must sort before `nginx-dependency.conf` — and ahead of any
+  `20-postgres.conf` an install carried in from before the cutover, which is
+  why that name sorts after.
 - **The primary guard is `ExecStartPre` on `polaris-migrate` and
   `polaris-web`.** Every other unit `Requires=` the migrate one-shot, so the
   group cannot start on a replica however it was started. If you add a sixth

@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, git, nginx (mainline ≥1.25)
+#   1. Installs Node.js 24, PostgreSQL 17, Go 1.26+, git, nginx (stable ≥1.30)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -121,12 +121,12 @@ else
   info "Node.js $(node -v) installed"
 fi
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). The agent's go.mod pins go 1.22 as the minimum;
-# RHEL 9's default golang AppStream module ships 1.21.x which is too old,
-# so pull from the go-toolset module instead.
-if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+# → Polaris Agent → Build). The agent's go.mod pins go 1.26 as the minimum;
+# RHEL 9's default golang AppStream module is older, so pull from the
+# go-toolset module instead — it carries 1.26 (1.26.7 on 9.6).
+if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go (go-toolset)..."
@@ -135,20 +135,25 @@ else
   info "Go $(go version | awk '{print $3}') installed"
 fi
 
-# ─── 1c. Install nginx mainline (HTTP/3 ≥ 1.25 required) ─────────────────────
-# RHEL 9's AppStream nginx is too old for HTTP/3, so always pull mainline from
-# nginx.org. The repo file pins enabled=1 so unattended `dnf upgrade` keeps
-# the mainline version instead of replacing with AppStream.
-if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(2[5-9]|[3-9][0-9])'; then
+# ─── 1c. Install nginx stable (HTTP/3 ≥ 1.30 required) ─────────────────────
+# RHEL 9's AppStream nginx is too old for HTTP/3, so always pull from nginx.org.
+# The STABLE branch (even minors) is what we install: 1.30 is the oldest branch
+# still receiving fixes, and a branch that only takes patch releases is the
+# right shape for a box an operator is not watching. The mainline stanza stays
+# in the repo file at enabled=0 for anyone who needs a newer feature — flip the
+# two enabled= flags. The repo file pins enabled=1 on stable so unattended
+# `dnf upgrade` keeps the nginx.org build instead of replacing it with
+# AppStream's.
+if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])'; then
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
 else
-  info "Installing nginx mainline from nginx.org..."
+  info "Installing nginx stable from nginx.org..."
   cat > /etc/yum.repos.d/nginx.repo <<'REPO'
 [nginx-stable]
 name=nginx stable repo
 baseurl=http://nginx.org/packages/centos/9/$basearch/
 gpgcheck=1
-enabled=0
+enabled=1
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 
@@ -156,7 +161,7 @@ module_hotfixes=true
 name=nginx mainline repo
 baseurl=http://nginx.org/packages/mainline/centos/9/$basearch/
 gpgcheck=1
-enabled=1
+enabled=0
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 REPO
@@ -194,9 +199,9 @@ else
   warn "  interval to suit. To fix later:  dnf install -y epel-release fping"
 fi
 
-# ─── 2. Install PostgreSQL 15 (PGDG, not AppStream) ─────────────────────────
+# ─── 2. Install PostgreSQL 17 (PGDG, not AppStream) ─────────────────────────
 # PGDG rather than RHEL's AppStream module, and the reason is load-bearing
-# rather than preference: the TimescaleDB package requires `postgresql15-server`,
+# rather than preference: the TimescaleDB package requires `postgresql17-server`,
 # a PGDG package name. AppStream has no package by that name at all, so an
 # AppStream install can never gain the extension every sample table wants.
 #
@@ -210,12 +215,12 @@ fi
 #   * the non-modular default in AppStream is `postgresql-server-13.16-1.el9`.
 #
 # So a fresh install got **PostgreSQL 13** -- two majors below the 15 Polaris
-# states as its minimum, incapable of TimescaleDB, and producing an unversioned
-# `postgresql.service` while the units this same script installs declare
-# `Requires=postgresql-15.service`. It could not satisfy its own units and it
-# was not even installing the right major. docs/INSTALL.md documented the PGDG
-# path all along.
-PG_MAJOR=15
+# stated as its minimum at the time, incapable of TimescaleDB, and producing an
+# unversioned `postgresql.service` while the units this script installed declared
+# `Requires=postgresql-15.service` (the dependency is a per-host drop-in now).
+# It could not satisfy its own units and was not even installing the right
+# major. docs/INSTALL.md documented the PGDG path all along.
+PG_MAJOR=17
 PG_SERVICE="postgresql-${PG_MAJOR}"
 PG_BINDIR="/usr/pgsql-${PG_MAJOR}/bin"
 PG_DATADIR="/var/lib/pgsql/${PG_MAJOR}/data"
@@ -236,7 +241,7 @@ fi
 # PGDG handles that itself: its packages register /usr/bin/psql and
 # /usr/bin/pg_dump through `alternatives`, pointing at the installed major's
 # bindir. Verified in a systemd container on AlmaLinux 9 (RHEL-compatible):
-# `pg_dump` resolves to /usr/pgsql-15/bin/pg_dump via
+# `pg_dump` resolves to /usr/pgsql-<major>/bin/pg_dump via
 # /etc/alternatives/pgsql-pg_dump and dumps a live database with no help.
 #
 # So this only CHECKS the link. Do NOT symlink these into /usr/local/bin --
@@ -312,19 +317,19 @@ fi
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 
-# ─── 3c. Java 17 + jsign (agent code signing — optional at runtime) ─────────
+# ─── 3c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). The feature is
 # opt-in — missing Java/jsign only disables signing and the UI names exactly
 # what's missing — so failures here warn instead of aborting the install.
-JSIGN_VERSION="7.4"
-JSIGN_SHA256="2abf2ade9ea322acc2d60c24794eadc465ff9380938fca4c932d09e0b25f1c28"
+JSIGN_VERSION="7.5"
+JSIGN_SHA256="602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"
 if command -v java &>/dev/null; then
   info "Java already installed"
 else
-  info "Installing Java 17 (headless, for agent code signing)..."
-  dnf install -y java-17-openjdk-headless || \
+  info "Installing Java 25 (headless, for agent code signing)..."
+  dnf install -y java-25-openjdk-headless || \
     info "WARNING: Java install failed — agent code signing stays unavailable until Java is installed manually"
 fi
 if [ -f "$APP_DIR/tools/jsign.jar" ]; then
@@ -553,6 +558,26 @@ cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.targ
 info "Installing polaris-web's Wants=nginx drop-in..."
 mkdir -p "$NGINX_DROPIN_DIR"
 cp "$APP_DIR/deploy/nginx/polaris-nginx-dependency.conf" "$NGINX_DROPIN_DIR/nginx-dependency.conf"
+
+# ─── The PostgreSQL ordering dependency, as a drop-in ───────────────────────
+# The shipped units do not name a PostgreSQL unit: the name is a host fact
+# ($PG_SERVICE here, postgresql.service on Debian/Ubuntu, nothing at all for an
+# external DB), and every update overwrites the main unit files verbatim. A
+# major written into a unit therefore survives only until the next update, and
+# a host handed a Requires= for a unit it does not have fails to start.
+# Drop-ins survive both sync paths, so it lives here instead. Reference copy:
+# deploy/dropins/20-postgres.conf.example.
+info "Installing the PostgreSQL dependency drop-in (${PG_SERVICE}.service)..."
+for unit in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do
+  mkdir -p "/etc/systemd/system/${unit}.service.d"
+  cat > "/etc/systemd/system/${unit}.service.d/20-postgres.conf" <<DROPIN
+# Written by deploy/setup-rhel.sh. Survives updates — the main unit file does
+# not. Change the unit name here if the database moves to another major.
+[Unit]
+After=${PG_SERVICE}.service
+Requires=${PG_SERVICE}.service
+DROPIN
+done
 
 systemctl daemon-reload
 

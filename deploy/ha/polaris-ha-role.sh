@@ -166,7 +166,7 @@ cmd_status() {
   "setupComplete": $([[ -f "$APP_DIR/.setup-complete" ]] && echo true || echo false),
   "lastSync": "$(cat "$LAST_SYNC_FILE" 2>/dev/null || echo never)",
   "hold": "$(cat "$HOLD_FILE" 2>/dev/null || echo none)",
-  "tsdb": "$(rpm -q --qf '%{VERSION}' timescaledb-2-postgresql-15 2>/dev/null || echo none)",
+  "tsdb": "$(rpm -qa --qf '%{VERSION} ' 'timescaledb-2-postgresql-*' 2>/dev/null | awk '{print $1}' | grep . || echo none)",
   "polarisUid": "$(id -u "$APP_USER" 2>/dev/null || echo none)"
 }
 JSON
@@ -357,7 +357,7 @@ cmd_verify() {
   compare "git HEAD"     "$(local_head)"       "$(printf '%s' "$status" | json_field head)"
   compare "node"         "$(node -v 2>/dev/null || echo none)" "$(printf '%s' "$status" | json_field node)"
   compare "polaris uid"  "$(id -u "$APP_USER" 2>/dev/null || echo none)" "$(printf '%s' "$status" | json_field polarisUid)"
-  compare "timescaledb"  "$(rpm -q --qf '%{VERSION}' timescaledb-2-postgresql-15 2>/dev/null || echo none)" "$(printf '%s' "$status" | json_field tsdb)"
+  compare "timescaledb"  "$(rpm -qa --qf '%{VERSION} ' 'timescaledb-2-postgresql-*' 2>/dev/null | awk '{print $1}' | grep . || echo none)" "$(printf '%s' "$status" | json_field tsdb)"
 
   echo "local readiness:"
   if preflight; then echo "  preflight          OK"; else echo "  preflight          FAILED"; rc=1; fi

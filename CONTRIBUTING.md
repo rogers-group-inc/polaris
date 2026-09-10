@@ -40,7 +40,7 @@ DATABASE_URL=postgresql://... SESSION_SECRET=... \
 ```
 
 CI (`.github/workflows/docker-publish.yml`) runs typecheck + unit (`test` job)
-and the integration suite against a `postgres:15` service container
+and the integration suite against a `postgres:17` service container
 (`integration` job); both gate the image build.
 
 ## Code conventions (the load-bearing ones)

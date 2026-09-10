@@ -47,7 +47,7 @@
     "multer": "^2.3.0",
     "net-snmp": "^3.26.3",
     "netmask": "^2.0.2",
-    "nodemailer": "^10.0.0",
+    "nodemailer": "^10.0.2",
     "openid-client": "^6.8.8",
     "otpauth": "^9.5.2",
     "pg": "^8.23.0",
@@ -57,7 +57,7 @@
     "prom-client": "^15.1.3",
     "qrcode": "^1.5.4",
     "ssh2": "^1.17.0",
-    "undici": "^6.28.1",
+    "undici": "^8.10.2",
     "web-push": "^3.6.7",
     "ws": "^8.21.3",
     "zod": "^3.23.8"
@@ -80,7 +80,7 @@
     "@types/supertest": "^7.2.1",
     "@types/web-push": "^3.6.4",
     "@types/xml2js": "^0.4.14",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^5.0.0",
     "cytoscape": "^3.34.3",
     "cytoscape-dagre": "^2.5.0",
     "dagre": "^0.8.5",
@@ -93,7 +93,7 @@
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   },
   "engines": {
     "node": ">=22.12.0"

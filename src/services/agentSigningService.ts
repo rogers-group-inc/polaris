@@ -264,12 +264,29 @@ export async function resolveJsignJar(cfg: Pick<AgentSigningConfig, "jsignJarPat
   return null;
 }
 
+/**
+ * The JDK major every install path provisions, and the number every
+ * operator-facing "install Java N+" string interpolates. Single source of
+ * truth for the Java floor, the way `GO_MINIMUM` is for Go: the copy strings
+ * had said "Java 17+" for months after the scripts moved to 25, which points
+ * an operator at a version `src/data/platformEol.json` grades as
+ * below-minimum — always critical. Declared in
+ * .claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md
+ * and asserted against every other Java site by `npm run check:versions`.
+ *
+ * jsign itself needs far less (7.5 is Java 8 bytecode); this is the version
+ * the fleet is provisioned and tested with, not a jsign requirement.
+ */
+export const JAVA_MINIMUM = "25";
+
 export interface SigningAvailability {
   enabled: boolean;
   /** All required config fields present (keystore path + password + TSA). */
   configured: boolean;
   javaOk: boolean;
   javaVersion?: string;
+  /** `JAVA_MINIMUM` — so the UI states one floor and never its own literal. */
+  javaMinimum: string;
   jarPath?: string;
   /** The keystore file exists and is readable by this process. */
   keystoreOk: boolean;
@@ -321,7 +338,7 @@ export async function signingAvailability(cfg?: AgentSigningConfig): Promise<Sig
   else if (!config.keystorePath) error = "No signing keystore configured";
   else if (!config.keystorePassword) error = "Keystore password is not set";
   else if (!config.tsaUrl) error = "No timestamp authority configured";
-  else if (!javaOk) error = "Java runtime not found on PATH (install Java 17+ headless)";
+  else if (!javaOk) error = `Java runtime not found on PATH (install Java ${JAVA_MINIMUM}+ headless)`;
   else if (!jarPath) {
     const looked = (config.jsignJarPath ? [config.jsignJarPath] : JSIGN_JAR_CANDIDATES).join(", ");
     error = `jsign jar not found (looked at: ${looked})`;
@@ -334,6 +351,7 @@ export async function signingAvailability(cfg?: AgentSigningConfig): Promise<Sig
     configured,
     javaOk,
     javaVersion,
+    javaMinimum: JAVA_MINIMUM,
     jarPath,
     keystoreOk,
     ok: config.enabled && configured && javaOk && !!jarPath && keystoreOk,
@@ -452,7 +470,7 @@ export function parseKeytoolAliases(stdout: string): string[] {
  *
  * Resolution is two-step: the bare name (which is the whole story wherever the
  * JDK registered its alternatives), then the JVM-reported `java.home`. That
- * second step matters because `java-17-openjdk-headless` DOES ship keytool —
+ * second step matters because `java-25-openjdk-headless` DOES ship keytool —
  * beside the JVM — so a PATH miss is not the same as the tool being absent,
  * and without the fallback the Test button would sit permanently degraded on a
  * perfectly well-provisioned host.
@@ -487,7 +505,7 @@ export async function verifyKeystore(
     /* not on PATH — fall through to the JVM-reported location */
   }
 
-  // `java-17-openjdk-headless` DOES ship keytool, but next to the JVM rather
+  // `java-25-openjdk-headless` DOES ship keytool, but next to the JVM rather
   // than necessarily symlinked into /usr/bin, so a PATH miss is not the same
   // as "absent". Ask the JVM where it lives instead of guessing at
   // /usr/lib/jvm globs, which differ across distros and Windows JDKs.
@@ -823,7 +841,7 @@ export async function testSigningSetup(): Promise<{ ok: boolean; message: string
     };
   }
   const avail = await signingAvailability(cfg);
-  if (!avail.javaOk) return { ok: false, message: "Java runtime not found on PATH (install Java 17+ headless)" };
+  if (!avail.javaOk) return { ok: false, message: `Java runtime not found on PATH (install Java ${JAVA_MINIMUM}+ headless)` };
   if (!avail.jarPath) {
     return { ok: false, message: "jsign jar not found — set the jar path or install it to a default location" };
   }

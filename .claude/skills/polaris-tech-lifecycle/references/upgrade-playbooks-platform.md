@@ -58,14 +58,19 @@ version-sensitive hooks.
 4. `pg_upgrade`, or dump/restore for a small install. Keep the old data directory.
 5. Update the extension, then confirm every hypertable, chunk interval and retention policy
    survived — count them before and after.
-6. Rename the `After=` / `Requires=` dependency in the shipped units; on Windows the service
-   name, the NSSM `DependOnService`, and the `bin` path candidate all move.
-7. The package names, `pg_config` path and installer pin in every setup script (`PG_MAJOR` in
-   `setup-rhel.sh`, `PG_CLIENT_MAJOR` in `setup-rhel-nodb.sh`); the image tags in
-   `compose.dev.yml` and the CI service container; **and the `postgresql-client` in
-   `Dockerfile` / `Dockerfile.dev`** — unversioned, so it is whatever Debian bookworm ships (15,
-   which is why it agrees with the pin today). A 16+ server needs `postgresql-client-16` from
-   the PGDG apt repo in the image, or every in-container backup fails the rule-47 check.
+6. Rewrite the per-host drop-in — `/etc/systemd/system/<unit>.d/20-postgres.conf`, five of them
+   — with the new unit name, then `daemon-reload`. **Do not edit the shipped units.** Since
+   2026-09-09 they name no PostgreSQL unit at all, because both update paths overwrite them
+   verbatim and the name is a host fact; `check:versions` fails if a major reappears in one. On
+   Windows the service name and the bin-path probe list move instead.
+7. `PG_MAJOR` in `setup-rhel.sh`, `setup-ubuntu.sh` and `deploy/ha/setup-rhel-ha.sh`;
+   `PG_CLIENT_MAJOR` in both `-nodb` variants; the installer pin on Windows; the image tags in
+   `compose.dev.yml` and the CI service container; **and `postgresql-client-<major>` in
+   `Dockerfile` / `Dockerfile.dev`**. Every one of those is checked now — the client was
+   unversioned until 2026-09-09, so it silently WAS whatever the base image shipped and agreed
+   with the pin only by luck of Debian's release. The image base must actually carry the target
+   major (trixie ships 17); if it does not, add the PGDG apt repo to the image, or every
+   in-container backup fails the rule-47 check.
 8. **Remove the old major's client packages once the switch is final**, and any unversioned
    AppStream `postgresql` / `postgresql-server` left on the host. The app and
    `deploy/update-linux.sh` pick `pg_dump` / `psql` by the SERVER's major (rule 47 —
@@ -140,7 +145,9 @@ that host builds agents.
 **Risk: low.** No data, no lockstep beyond the accept-regexes.
 
 ### Order
-1. Decide mainline or stable. The scripts install mainline today.
+1. Decide mainline or stable. Since 2026-09-09 the scripts install the **stable** branch,
+   with the mainline stanza written into the RHEL repo file at `enabled=0` — moving branches is
+   two flag flips there, and adding or removing a `/mainline` path segment on Debian/Ubuntu.
 2. Widen the accept-regex in the four Linux scripts and the migrate helper.
 3. Update the three `>=` claims in `docs/INSTALL.md` and the help text beside the HTTP/3 toggle.
 4. Re-apply the managed config and confirm HTTP/3 still negotiates.
@@ -154,12 +161,23 @@ upgrades, so verify an agent reconnects, not just that pages load.
 **Risk: low.** Build-time only, and the feature is opt-in.
 
 ### Order
-1. Confirm the jsign release in use runs on the target major.
-2. The JDK package in the Dockerfile, the winget id and MSI URL in the Windows scripts, the
-   `java-N-openjdk-headless` package in the RHEL scripts.
-3. Decide what to do about the Ubuntu scripts' unversioned `default-jre-headless` — pinning it
-   is the point of the exercise.
-4. Re-sign one agent binary and verify the signature chain.
+1. Confirm the jsign release in use runs on the target major — 7.5 is Java 8 bytecode (class
+   file major 52), so anything from 8 up. Nothing here forces a newer JDK; a move buys runway.
+2. **Confirm the package exists on EVERY platform before touching a file**: RHEL AppStream
+   (`java-N-openjdk-headless`), Debian and BOTH Ubuntu LTSes (`openjdk-N-jre-headless`), winget
+   (`Microsoft.OpenJDK.N`) and the `aka.ms` MSI. One platform without it puts that host on a
+   different signing JDK, which is precisely the failure the named-package change ended.
+3. The JDK package in the Dockerfile, the winget id and MSI URL in the Windows scripts, the
+   `java-N-openjdk-headless` package in the RHEL scripts and `openjdk-N-jre-headless` in the
+   Ubuntu ones. Nothing installs `default-jre-headless` any more — do not reintroduce it, in a
+   script or in the image; it carries no version for the check to compare and drifts per host.
+4. `JAVA_MINIMUM` in `src/services/agentSigningService.ts` — the number the running app
+   states. Both `signingAvailability` error strings interpolate it and the Code-signing
+   card renders `availability.javaMinimum`, so the browser carries no literal of its own.
+   `check:versions` reads it; it is the only Java site inside `src/`.
+5. Keep `polarisTarget` equal to `polarisMinimum` in the dataset. A target above what the
+   install paths provision reports a behind-target JDK on every healthy host.
+6. Re-sign one agent binary and verify the signature chain.
 
 ### Blast radius
 Signing only. A missing or wrong JDK disables code signing and the UI says so; it does not break

@@ -4,14 +4,14 @@
     Polaris deployment script for Windows Server 2019/2022.
 
 .DESCRIPTION
-    Installs Node.js 24, PostgreSQL 15, and deploys Polaris as a Windows Service.
+    Installs Node.js 24, PostgreSQL 17, and deploys Polaris as a Windows Service.
 
     Run as Administrator:
         powershell -ExecutionPolicy Bypass -File deploy\setup-windows.ps1
 
     What this script does:
       1. Installs Node.js 24 LTS (via winget or direct MSI)
-      2. Installs PostgreSQL 15 (via winget or direct installer)
+      2. Installs PostgreSQL 17 (via winget or direct installer)
       3. Creates the PostgreSQL database and role
       4. Clones or copies the application to C:\polaris
       5. Installs dependencies and runs migrations
@@ -67,11 +67,11 @@ if ((Test-Command "node") -and ((node -v) -match "^v(22|24)\.")) {
 } else {
     Write-Info "Installing Node.js 24 LTS..."
     if ($hasWinget) {
-        winget install --id OpenJS.NodeJS.LTS --version 24.14.1 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id OpenJS.NodeJS.LTS --version 24.19.0 --accept-source-agreements --accept-package-agreements --silent
     } else {
         # Direct MSI download
-        $nodeUrl = "https://nodejs.org/dist/v24.14.1/node-v24.14.1-x64.msi"
-        $nodeMsi = "$env:TEMP\node-v24.14.1-x64.msi"
+        $nodeUrl = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi"
+        $nodeMsi = "$env:TEMP\node-v24.19.0-x64.msi"
         Write-Info "Downloading Node.js installer..."
         Invoke-WebRequest -Uri $nodeUrl -OutFile $nodeMsi -UseBasicParsing
         Write-Info "Running Node.js installer..."
@@ -85,23 +85,30 @@ if ((Test-Command "node") -and ((node -v) -match "^v(22|24)\.")) {
     Write-Info "Node.js $(node -v) installed"
 }
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). The agent's go.mod pins go 1.22 as the minimum.
+# → Polaris Agent → Build). The agent's go.mod pins go 1.26 as the minimum;
+# this installs 1.27, the newest release winget carries a manifest for.
+#
+# --id GoLang.Go --version, NOT --id GoLang.Go.1.27: winget publishes ONE
+# GoLang.Go package with per-version manifests. The old `--id GoLang.Go.1.22`
+# named a package that does not exist, so on any host that HAS winget the
+# install failed and the MSI fallback never ran (it is the else branch) —
+# leaving Go absent and the in-app agent Build failing at the compiler.
 # winget installs to C:\Program Files\Go\bin; we add it to the Machine PATH
 # explicitly because the polaris NSSM service inherits the Machine PATH, not
 # whatever the operator's terminal session looks like.
 Refresh-Path
-if ((Test-Command "go") -and ((go version) -match "go1\.(2[2-9]|[3-9][0-9])")) {
+if ((Test-Command "go") -and ((go version) -match "go1\.(2[6-9]|[3-9][0-9])")) {
     Write-Info "Go $(go version) already installed"
 } else {
-    Write-Info "Installing Go 1.22..."
+    Write-Info "Installing Go 1.27..."
     if ($hasWinget) {
-        winget install --id GoLang.Go.1.22 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id GoLang.Go --version 1.27.0 --accept-source-agreements --accept-package-agreements --silent
     } else {
         # Direct MSI download fallback when winget isn't available.
-        $goUrl = "https://go.dev/dl/go1.22.7.windows-amd64.msi"
-        $goMsi = "$env:TEMP\go-1.22.7.windows-amd64.msi"
+        $goUrl = "https://go.dev/dl/go1.27.0.windows-amd64.msi"
+        $goMsi = "$env:TEMP\go-1.27.0.windows-amd64.msi"
         Write-Info "Downloading Go installer..."
         Invoke-WebRequest -Uri $goUrl -OutFile $goMsi -UseBasicParsing
         Write-Info "Running Go installer..."
@@ -126,7 +133,7 @@ if ((Test-Command "go") -and ((go version) -match "go1\.(2[2-9]|[3-9][0-9])")) {
     }
 }
 
-# ─── 1c. Install Java 17 (agent code signing — optional at runtime) ──────────
+# ─── 1c. Install Java 25 (agent code signing — optional at runtime) ──────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). Opt-in —
@@ -137,13 +144,13 @@ Refresh-Path
 if (Test-Command "java") {
     Write-Info "Java already installed"
 } else {
-    Write-Info "Installing Microsoft OpenJDK 17 (for agent code signing)..."
+    Write-Info "Installing Microsoft.OpenJDK.25 (for agent code signing)..."
     try {
         if ($hasWinget) {
-            winget install --id Microsoft.OpenJDK.17 --accept-source-agreements --accept-package-agreements --silent
+            winget install --id Microsoft.OpenJDK.25 --accept-source-agreements --accept-package-agreements --silent
         } else {
-            $jdkUrl = "https://aka.ms/download-jdk/microsoft-jdk-17-windows-x64.msi"
-            $jdkMsi = "$env:TEMP\microsoft-jdk-17-windows-x64.msi"
+            $jdkUrl = "https://aka.ms/download-jdk/microsoft-jdk-25-windows-x64.msi"
+            $jdkMsi = "$env:TEMP\microsoft-jdk-25-windows-x64.msi"
             Write-Info "Downloading Microsoft OpenJDK installer..."
             Invoke-WebRequest -Uri $jdkUrl -OutFile $jdkMsi -UseBasicParsing
             Write-Info "Running OpenJDK installer..."
@@ -161,28 +168,31 @@ if (Test-Command "java") {
     }
 }
 
-# ─── 2. Install PostgreSQL 15 ────────────────────────────────────────────────
+# ─── 2. Install PostgreSQL 17 ────────────────────────────────────────────────
+# Newest first: this list is also what an ALREADY-installed host is detected
+# by, and the first hit wins. A box carrying both 15 and 17 should be driven
+# from the 17 bindir, not the one that happens to sort lowest.
 $pgBinDirs = @(
-    "C:\Program Files\PostgreSQL\15\bin",
+    "C:\Program Files\PostgreSQL\17\bin",
     "C:\Program Files\PostgreSQL\16\bin",
-    "C:\Program Files\PostgreSQL\17\bin"
+    "C:\Program Files\PostgreSQL\15\bin"
 )
 $pgBin = $pgBinDirs | Where-Object { Test-Path "$_\psql.exe" } | Select-Object -First 1
 
 if ($pgBin) {
     Write-Info "PostgreSQL already installed at $pgBin"
 } else {
-    Write-Info "Installing PostgreSQL 15..."
+    Write-Info "Installing PostgreSQL 17..."
     if ($hasWinget) {
-        winget install --id PostgreSQL.PostgreSQL.15 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id PostgreSQL.PostgreSQL.17 --accept-source-agreements --accept-package-agreements --silent
     } else {
-        $pgUrl = "https://get.enterprisedb.com/postgresql/postgresql-15.13-1-windows-x64.exe"
-        $pgInstaller = "$env:TEMP\postgresql-15-installer.exe"
+        $pgUrl = "https://get.enterprisedb.com/postgresql/postgresql-17.11-1-windows-x64.exe"
+        $pgInstaller = "$env:TEMP\postgresql-17-installer.exe"
         Write-Info "Downloading PostgreSQL installer..."
         Invoke-WebRequest -Uri $pgUrl -OutFile $pgInstaller -UseBasicParsing
         Write-Info "Running PostgreSQL installer (this may take a few minutes)..."
         Start-Process $pgInstaller -ArgumentList `
-            "--mode unattended --superpassword postgres --servicename postgresql-15 --servicepassword postgres --serverport 5432" `
+            "--mode unattended --superpassword postgres --servicename postgresql-17 --servicepassword postgres --serverport 5432" `
             -Wait -NoNewWindow
         Remove-Item $pgInstaller -Force -ErrorAction SilentlyContinue
     }
@@ -292,8 +302,8 @@ Write-Info "Created agent build dirs: $agentDataDir, $goCacheDir"
 # ─── 4c. jsign jar (agent code signing — optional at runtime) ────────────────
 # SHA-256-pinned download for the agent code-signing feature. Failure only
 # warns — signing is opt-in and the UI names exactly what's missing.
-$jsignVersion = "7.4"
-$jsignSha256  = "2ABF2ADE9EA322ACC2D60C24794EADC465FF9380938FCA4C932D09E0B25F1C28"
+$jsignVersion = "7.5"
+$jsignSha256  = "602A51C3545A6DC4FB99BD2EA7152B26D1345916D0C93DDFBD5936CB735AF91C"
 $jsignJar = Join-Path $AppDir "tools\jsign.jar"
 if (Test-Path $jsignJar) {
     Write-Info "jsign already present at $jsignJar"

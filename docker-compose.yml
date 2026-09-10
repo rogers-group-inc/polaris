@@ -60,7 +60,7 @@ x-polaris-common: &polaris-common
 
 services:
   nginx:
-    image: nginx:mainline
+    image: nginx:stable
     restart: unless-stopped
     ports:
       - "443:443/tcp"

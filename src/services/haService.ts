@@ -305,8 +305,15 @@ async function probeHostFacts(): Promise<HostFactsProbe> {
       if (Number.isFinite(uid)) facts.polarisUid = uid;
     } catch { /* not a packaged install */ }
     try {
-      const { stdout } = await execFileAsync("rpm", ["-q", "--qf", "%{VERSION}", "timescaledb-2-postgresql-15"], { timeout: 5000 });
-      if (stdout.trim() && !/not installed/i.test(stdout)) facts.tsdbVersion = stdout.trim();
+      // -qa with a glob, not -q with one major: the package name carries the
+      // PostgreSQL major (timescaledb-2-postgresql-17), so a hardcoded name
+      // reports "not installed" on every host that has moved. This figure is
+      // compared between the two nodes to catch a version skew that would stop
+      // a replica replaying the primary's WAL, so a silent "none" on both sides
+      // is worse than useless — it looks like agreement.
+      const { stdout } = await execFileAsync("rpm", ["-qa", "--qf", "%{VERSION} ", "timescaledb-2-postgresql-*"], { timeout: 5000 });
+      const version = stdout.trim().split(/\s+/)[0] ?? "";
+      if (version && !/not installed/i.test(version)) facts.tsdbVersion = version;
     } catch { /* Timescale is optional */ }
     try {
       const { stdout } = await execFileAsync("chronyc", ["tracking"], { timeout: 3000 });
@@ -616,8 +623,10 @@ export async function enableHa(input: EnableHaInput, actor: string): Promise<HaC
       standby: generateSyncKeypair("polaris-ha standby"),
     },
     hostFacts: {
-      pgBinDir: existing.hostFacts?.pgBinDir ?? "/usr/pgsql-15/bin",
-      pgdata: existing.hostFacts?.pgdata ?? "/var/lib/pgsql/15/data",
+      // Fallbacks only — a probed host overwrites both. Keep the major in step
+      // with PG_MAJOR in deploy/setup-rhel.sh and deploy/ha/setup-rhel-ha.sh.
+      pgBinDir: existing.hostFacts?.pgBinDir ?? "/usr/pgsql-17/bin",
+      pgdata: existing.hostFacts?.pgdata ?? "/var/lib/pgsql/17/data",
       tsdbVersion: facts.tsdbVersion,
       nodeMajor: facts.nodeMajor,
       polarisUid: facts.polarisUid,

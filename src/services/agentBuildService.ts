@@ -145,7 +145,7 @@ export class BuildQueueFullError extends Error {
  * .claude/skills/polaris-tech-lifecycle/references/version-pin-inventory.md,
  * and `npm run check:versions` asserts they agree.
  */
-export const GO_MINIMUM = "1.22";
+export const GO_MINIMUM = "1.26";
 
 export interface GoAvailability {
   /** The `go` binary ran. Deliberately unchanged in meaning — see below. */

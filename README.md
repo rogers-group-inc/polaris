@@ -119,7 +119,7 @@ Server Settings → Maintenance → **Platform Lifecycle** reports the version o
 | DB data volume | 50 GB SSD | 100 GB+ SSD |
 | App / state volume | 5 GB | 20 GB |
 | OS | Windows Server 2019+, RHEL 9, Ubuntu 22.04+ | Windows Server 2022, RHEL 9, Ubuntu 24.04 LTS |
-| PostgreSQL | 15+ | 17 |
+| PostgreSQL | 17+ | 17 |
 | Node.js | 22.12 (hard floor) | 24 LTS |
 
 > **The minimum column is a floor, not a recommendation, and one of these is close to end of
@@ -134,7 +134,7 @@ Discovery pre-loads subnets, reservations, and assets for O(1) lookups; peak mem
 
 ## Quick start (development)
 
-1. **Install PostgreSQL 15+** and create the database:
+1. **Install PostgreSQL 17+** and create the database:
 
    ```sql
    CREATE USER polaris WITH PASSWORD 'polaris';
@@ -157,7 +157,7 @@ The dashboard is at `http://localhost:3000`; the API at `http://localhost:3000/a
 
 ## Production deployment
 
-Automated scripts install Node.js 24, PostgreSQL 15, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
+Automated scripts install Node.js 24, PostgreSQL 17, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
 
 **RHEL / Rocky / Alma 9:**
 
@@ -188,7 +188,7 @@ After the script finishes the app is live at `http://<server-ip>:3000` — log i
 docker pull ghcr.io/rogers-group-inc/polaris:latest
 ```
 
-Multi-stage image, ~940 MB, x86_64. PostgreSQL is **not** included — run a `postgres:15` container alongside it (or point at any reachable Postgres). Expose container port `3000` (HTTP-only; terminate TLS in a reverse proxy in front of the container — see `docker-compose.yml` for the nginx-fronted reference stack). All persistent state lives under `/app/state`, so a single bind mount is enough:
+Multi-stage image, ~940 MB, x86_64. PostgreSQL is **not** included — run a `postgres:17` container alongside it (or point at any reachable Postgres). Expose container port `3000` (HTTP-only; terminate TLS in a reverse proxy in front of the container — see `docker-compose.yml` for the nginx-fronted reference stack). All persistent state lives under `/app/state`, so a single bind mount is enough:
 
 | Container path | Host path | Notes |
 |---|---|---|
@@ -332,7 +332,7 @@ npm run test:coverage     # with coverage report
 | Runtime | Node.js 24 LTS / TypeScript (ESM) — floor is 22.12 |
 | Framework | Express 5 |
 | ORM | Prisma 7 (driver-adapter via `@prisma/adapter-pg`) |
-| Database | PostgreSQL 15 |
+| Database | PostgreSQL 17 |
 | Sessions | express-session + connect-pg-simple |
 | Validation | Zod |
 | Logging | Pino |

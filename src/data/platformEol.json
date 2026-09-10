@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-09-08",
+  "reviewedAt": "2026-09-09",
   "reviewedBy": "david.moore@rogersgroupinc.com",
-  "sourceNotes": "Every dated entry was read from the cited source on its sourceCheckedOn date. endoflife.date aggregates vendor lifecycle pages; entries sourced from it carry confidence \"aggregator\" and should be re-confirmed against the vendor page before a date drives a maintenance window. Refresh procedure: .claude/skills/polaris-tech-lifecycle/references/eol-dataset.md",
+  "sourceNotes": "Every dated entry was read from the cited source on its sourceCheckedOn date. endoflife.date aggregates vendor lifecycle pages; entries sourced from it carry confidence \"aggregator\" and should be re-confirmed against the vendor page before a date drives a maintenance window. Refresh procedure: .claude/skills/polaris-tech-lifecycle/references/eol-dataset.md. The 2026-09-09 pass moved five families to current versions (PostgreSQL 15->17, Java 17->25, Go 1.22->1.26/1.27, nginx mainline->stable 1.30, the Debian image base 12->13) and re-read the vendor pages for each rather than trusting the aggregator, which is why several entries carry confidence vendor now.",
   "technologies": [
     {
       "id": "node",
@@ -34,20 +34,20 @@
       "trackGranularity": "major",
       "policy": "dated",
       "securityExposed": true,
-      "polarisMinimum": "15",
+      "polarisMinimum": "17",
       "polarisTarget": "17",
-      "polarisMaximumTested": "15",
+      "polarisMaximumTested": "17",
       "upgradePlaybook": "postgres-major",
-      "source": "https://endoflife.date/api/postgresql.json",
-      "sourceCheckedOn": "2026-09-08",
-      "confidence": "aggregator",
-      "notes": "Five-year support policy; a major dies in the November of its fifth year. Polaris targets 17 because TimescaleDB 2.29 dropped PostgreSQL 15 (see the timescaledb entry) - staying on 15 caps the extension at the 2.28.x line.",
+      "source": "https://www.postgresql.org/versions.json",
+      "sourceCheckedOn": "2026-09-09",
+      "confidence": "vendor",
+      "notes": "Five-year support policy; a major dies in the November of its fifth year. Moved 15 -> 17 on 2026-09-09: TimescaleDB 2.29 dropped PostgreSQL 15, so staying on 15 capped the extension at the 2.28.x line. 17 rather than 18 because 17 is what the Debian trixie image base ships as postgresql-client-17, so the container needs no PGDG apt repo of its own; TimescaleDB 2.30 is packaged for both. Every install path now provisions it from PGDG on Debian/Ubuntu too - the distro metapackage was 14 on 22.04 and 16 on 24.04, never the stated major, and had no number in its name for the pin check to catch.",
       "tracks": [
         { "track": "13", "released": "2020-09-24", "eol": "2025-11-13" },
         { "track": "14", "released": "2021-09-30", "eol": "2026-11-12" },
-        { "track": "15", "released": "2022-10-13", "eol": "2027-11-11", "note": "Last major supported by the TimescaleDB 2.28.x line." },
+        { "track": "15", "released": "2022-10-13", "eol": "2027-11-11", "note": "Polaris's major until 2026-09-09; last one supported by the TimescaleDB 2.28.x line." },
         { "track": "16", "released": "2023-09-14", "eol": "2028-11-09" },
-        { "track": "17", "released": "2024-09-26", "eol": "2029-11-08" },
+        { "track": "17", "released": "2024-09-26", "eol": "2029-11-08", "note": "Polaris's minimum and target. Debian 13 (trixie) ships this major, which is what the container image uses as its client." },
         { "track": "18", "released": "2025-09-25", "eol": "2030-11-14" }
       ]
     },
@@ -64,7 +64,7 @@
       "source": "https://docs.timescale.com/self-hosted/latest/upgrades/upgrade-pg/",
       "sourceCheckedOn": "2026-09-08",
       "confidence": "vendor",
-      "notes": "TimescaleDB publishes no dated end-of-life for its own minors. Its lifecycle is a PostgreSQL-compatibility horizon instead: 2.28.x is the last line supporting PostgreSQL 15, and 2.29.0 supports only 16/17/18. Graded informational - the actionable fact lives on the PostgreSQL row and in the postgres-major playbook.",
+      "notes": "TimescaleDB publishes no dated end-of-life for its own minors. Its lifecycle is a PostgreSQL-compatibility horizon instead: 2.28.x is the last line supporting PostgreSQL 15, and 2.29.0 supports only 16/17/18. That horizon is what drove the PostgreSQL 15 -> 17 move on 2026-09-09; 2.30.0 is the current line and is packaged for 17. Graded informational - the actionable fact lives on the PostgreSQL row and in the postgres-major playbook.",
       "tracks": []
     },
     {
@@ -74,21 +74,21 @@
       "trackGranularity": "major.minor",
       "policy": "dated",
       "securityExposed": false,
-      "polarisMinimum": "1.22",
-      "polarisTarget": "1.26",
+      "polarisMinimum": "1.26",
+      "polarisTarget": "1.27",
       "upgradePlaybook": "go-pin",
-      "source": "https://endoflife.date/api/go.json",
-      "sourceCheckedOn": "2026-09-08",
-      "confidence": "aggregator",
-      "notes": "Go supports only the two most recent majors: a release dies the day the major two ahead of it ships. Build-time only on a Polaris host (the in-app agent build), never in the serving path, so an EOL toolchain grades warning rather than critical.",
+      "source": "https://go.dev/dl/",
+      "sourceCheckedOn": "2026-09-09",
+      "confidence": "vendor",
+      "notes": "Go supports only the two most recent majors: a release dies the day the major two ahead of it ships. Build-time only on a Polaris host (the in-app agent build), never in the serving path, so an EOL toolchain grades warning rather than critical. Moved off the long-EOL 1.22 floor on 2026-09-09. Minimum 1.26 and target 1.27 are two numbers on purpose, the same arrangement as Node: 1.26 and 1.27 are the two supported majors, and no Linux path can install 1.27 today - the RHEL go-toolset module carries 1.26.7 and the Go snap's newest channel is 1.26/stable - while the Windows scripts pin 1.27.0, the newest winget has a manifest for. Neither Ubuntu LTS can satisfy the floor from its archive at all (24.04 ships 1.22, 22.04 ships 1.18), so the snap fallback is the branch that runs there.",
       "tracks": [
         { "track": "1.21", "released": "2023-08-08", "eol": "2024-08-13" },
-        { "track": "1.22", "released": "2024-02-06", "eol": "2025-02-11", "note": "Polaris's current floor, and past upstream support." },
+        { "track": "1.22", "released": "2024-02-06", "eol": "2025-02-11", "note": "Polaris's floor until 2026-09-09, long past upstream support by then." },
         { "track": "1.23", "released": "2024-08-13", "eol": "2025-08-12" },
         { "track": "1.24", "released": "2025-02-11", "eol": "2026-02-10" },
         { "track": "1.25", "released": "2025-08-12", "eol": "2026-08-19" },
-        { "track": "1.26", "released": "2026-02-10", "eol": null },
-        { "track": "1.27", "released": "2026-08-19", "eol": null }
+        { "track": "1.26", "released": "2026-02-10", "eol": null, "note": "Polaris's floor - the older of the two supported majors, and the newest the RHEL go-toolset module and the Go snap carry." },
+        { "track": "1.27", "released": "2026-08-19", "eol": null, "note": "Current release; what the Windows scripts pin (1.27.0, the newest winget manifest)." }
       ]
     },
     {
@@ -98,13 +98,13 @@
       "trackGranularity": "major.minor",
       "policy": "dated",
       "securityExposed": true,
-      "polarisMinimum": "1.25",
+      "polarisMinimum": "1.30",
       "polarisTarget": "1.30",
       "upgradePlaybook": "nginx",
-      "source": "https://endoflife.date/api/nginx.json",
-      "sourceCheckedOn": "2026-09-08",
-      "confidence": "aggregator",
-      "notes": "Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. Polaris's 1.25 floor is the HTTP/3 requirement, not a support statement - 1.25 itself went EOL 2024-05-29. The Linux setup scripts install from the nginx.org mainline repository, so a scripted install lands on a current branch even though the documented floor is old.",
+      "source": "https://nginx.org/en/download.html",
+      "sourceCheckedOn": "2026-09-09",
+      "confidence": "vendor",
+      "notes": "Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. The floor was 1.25 for a long time because that is the first branch with stable HTTP/3 - a FEATURE requirement, and 1.25 itself went EOL 2024-05-29. On 2026-09-09 the Linux setup scripts moved from the nginx.org mainline repository to the STABLE one and the floor became 1.30, the oldest branch still receiving fixes, so the number is now a support statement. The mainline stanza is still written into the repo file at enabled=0 for anyone who needs a newer feature.",
       "tracks": [
         { "track": "1.24", "released": "2023-04-11", "eol": "2024-04-23" },
         { "track": "1.25", "released": "2023-05-23", "eol": "2024-05-29", "note": "First branch with stable HTTP/3; Polaris's documented floor." },
@@ -112,8 +112,8 @@
         { "track": "1.27", "released": "2024-05-28", "eol": "2025-06-24" },
         { "track": "1.28", "released": "2025-04-23", "eol": "2026-04-14" },
         { "track": "1.29", "released": "2025-06-24", "eol": "2026-05-13" },
-        { "track": "1.30", "released": "2026-04-14", "eol": null, "note": "Current stable." },
-        { "track": "1.31", "released": "2026-05-13", "eol": null, "note": "Current mainline; what nginx:mainline and the nginx.org repository resolve to." }
+        { "track": "1.30", "released": "2026-04-14", "eol": null, "note": "Current stable - Polaris's floor and what the setup scripts install (1.30.4 on 2026-09-09)." },
+        { "track": "1.31", "released": "2026-05-13", "eol": null, "note": "Current mainline; what the disabled mainline stanza and nginx:mainline resolve to." }
       ]
     },
     {
@@ -123,18 +123,18 @@
       "trackGranularity": "major",
       "policy": "dated",
       "securityExposed": false,
-      "polarisMinimum": "17",
-      "polarisTarget": "17",
+      "polarisMinimum": "25",
+      "polarisTarget": "25",
       "upgradePlaybook": "java-major",
       "source": "https://endoflife.date/api/microsoft-build-of-openjdk.json",
-      "sourceCheckedOn": "2026-09-08",
+      "sourceCheckedOn": "2026-09-09",
       "confidence": "aggregator",
-      "notes": "Only needed to run jsign for agent code signing, so build-time only. The deploy scripts install Microsoft.OpenJDK.17; these dates are Microsoft's build, which can differ from Oracle's and Temurin's for the same major. Target is deliberately 17, the same as the minimum - do NOT raise it to 21 just because 21 is newer. This was 21 briefly and it was wrong: nothing here needs 21, so it made every healthy install report a behind-target Java forever, which is noise that teaches operators to ignore this card. 17 is supported to 2027-09-30; when that gets close the grader's own clock reports `aging` with the date attached, and THAT is when to move the target to 21 (or whatever LTS is current then).",
+      "notes": "Only needed to run jsign for agent code signing, so build-time only. The deploy scripts install Microsoft.OpenJDK.25 on Windows, java-25-openjdk-headless on RHEL and openjdk-25-jre-headless on Debian/Ubuntu and in the container image; these dates are Microsoft's build, which can differ from Oracle's and Temurin's for the same major. TARGET ALWAYS EQUALS MINIMUM here, and that rule survived the move: a target above what every install path provisions makes every healthy install report a behind-target Java forever, which is noise that teaches operators to ignore this card. It was 21-with-a-17-minimum briefly and that was the mistake. Moved 17 -> 25 on 2026-09-09 as the current LTS - jsign 7.5 is Java 8 bytecode (class file major 52) and requires none of it, so this buys runway (2030-09-30 rather than 2027-09-30) rather than capability. Availability was checked on every path before moving, since one platform without the package would have split the fleet's signing JDK again: RHEL 9 AppStream, Debian trixie, Ubuntu 22.04 AND 24.04, winget, and the aka.ms MSI all carry 25.",
       "tracks": [
         { "track": "11", "released": "2019-01-21", "eol": "2027-09-30", "lts": true },
-        { "track": "17", "released": "2021-09-14", "eol": "2027-09-30", "lts": true },
+        { "track": "17", "released": "2021-09-14", "eol": "2027-09-30", "lts": true, "note": "Polaris's major until 2026-09-09." },
         { "track": "21", "released": "2023-09-19", "eol": "2028-09-30", "lts": true },
-        { "track": "25", "released": "2025-09-16", "eol": "2030-09-30", "lts": true }
+        { "track": "25", "released": "2025-09-16", "eol": "2030-09-30", "lts": true, "note": "Current LTS - Polaris's minimum and target." }
       ]
     },
     {
@@ -186,17 +186,17 @@
       "trackGranularity": "major",
       "policy": "dated",
       "securityExposed": true,
-      "polarisMinimum": "12",
+      "polarisMinimum": "13",
       "polarisTarget": "13",
       "upgradePlaybook": "os-major",
       "source": "https://endoflife.date/api/debian.json",
       "sourceCheckedOn": "2026-09-08",
       "confidence": "aggregator",
-      "notes": "Reported as \"Container base image\" rather than a host OS when Polaris runs in a container - the Dockerfile is built FROM node:20-bookworm, which is Debian 12. extendedSupport is the volunteer LTS project, not the Debian security team.",
+      "notes": "Reported as \"Container base image\" rather than a host OS when Polaris runs in a container - the Dockerfile is built FROM node:24-trixie, which is Debian 13 (moved from bookworm on 2026-09-09: trixie ships the PostgreSQL 17 client and openjdk-25, so neither needs a third-party repo inside the image). extendedSupport is the volunteer LTS project, not the Debian security team.",
       "tracks": [
         { "track": "11", "released": "2021-08-14", "eol": "2026-08-31", "extendedSupport": "2031-06-30" },
-        { "track": "12", "released": "2023-06-10", "eol": "2028-06-30", "extendedSupport": "2033-06-30", "note": "bookworm - the Docker base image." },
-        { "track": "13", "released": "2025-08-09", "eol": "2030-06-30", "extendedSupport": "2035-06-30" }
+        { "track": "12", "released": "2023-06-10", "eol": "2028-06-30", "extendedSupport": "2033-06-30", "note": "bookworm - the Docker base image until 2026-09-09." },
+        { "track": "13", "released": "2025-08-09", "eol": "2030-06-30", "extendedSupport": "2035-06-30", "note": "trixie - the Docker base image." }
       ]
     },
     {
@@ -289,9 +289,9 @@
         "Take a verified backup and confirm a restore into a scratch database first.",
         "Install the target major side by side from PGDG, then pg_upgrade (or dump/restore for a small install).",
         "Re-run the timescaledb extension update and confirm every hypertable and chunk survived.",
-        "Rename the After= dependency in the shipped systemd units, and DependOnService plus the service name on Windows.",
-        "Bump the package names, the pg_config path and the installer pin in every setup script.",
-        "Bump the image tags in compose.dev.yml and the CI service container.",
+        "Rewrite the per-host drop-in /etc/systemd/system/<unit>.d/20-postgres.conf with the new unit name - the SHIPPED units name no PostgreSQL unit and must not be edited. On Windows, the service name and the bin-path probe list.",
+        "Bump PG_MAJOR / PG_CLIENT_MAJOR in every setup script (RHEL, Ubuntu and both -nodb variants), plus the installer pin on Windows. All four are checked by check:versions.",
+        "Bump the image tags in compose.dev.yml and the CI service container, and postgresql-client-<major> in BOTH Dockerfiles - the image base must actually ship that major, or add the PGDG apt repo to the image.",
         "Smoke-test the backup and restore path end to end - it is the only code that calls timescaledb_pre_restore and post_restore."
       ],
       "files": [
@@ -301,6 +301,10 @@
         "deploy/setup-ubuntu-nodb.sh",
         "deploy/setup-windows.ps1",
         "deploy/setup-windows-nodb.ps1",
+        "deploy/dropins/20-postgres.conf.example",
+        "deploy/ha/setup-rhel-ha.sh",
+        "Dockerfile",
+        "Dockerfile.dev",
         "compose.dev.yml",
         "docs/INSTALL.md",
         "README.md",
@@ -349,7 +353,7 @@
       "docAnchor": "docs/INSTALL.md#supported-platform-versions",
       "risk": "low",
       "steps": [
-        "Decide mainline or stable: the setup scripts install from the nginx.org mainline repository today.",
+        "Decide mainline or stable: since 2026-09-09 the setup scripts install the nginx.org STABLE branch, with the mainline stanza written at enabled=0.",
         "Widen the accept-regex in all four Linux setup scripts and the migrate-to-nginx helper.",
         "Update the >= claims in docs/INSTALL.md, which state the floor three times.",
         "Re-apply the managed config and confirm HTTP/3 still negotiates."
@@ -370,8 +374,9 @@
       "docAnchor": "docs/INSTALL.md#supported-platform-versions",
       "risk": "low",
       "steps": [
-        "Confirm the jsign release in use runs on the target major.",
+        "Confirm the jsign release in use runs on the target major (7.5 is Java 8 bytecode, so anything from 8 up), and that the JDK package EXISTS on every platform - RHEL AppStream, Debian, both Ubuntu LTSes, winget and the aka.ms MSI. One platform without it splits the fleet's signing JDK.",
         "Bump the JDK package in the Dockerfile and the winget id plus MSI URL in every setup script.",
+        "Bump JAVA_MINIMUM in src/services/agentSigningService.ts - the number the running app states. Both signingAvailability error strings interpolate it and the Code-signing card renders availability.javaMinimum, so the browser carries no literal of its own. check:versions reads it, and it is the only Java site inside src/.",
         "Re-sign one agent binary and verify the signature chain before shipping."
       ],
       "files": [
@@ -382,6 +387,8 @@
         "deploy/setup-ubuntu-nodb.sh",
         "deploy/setup-windows.ps1",
         "deploy/setup-windows-nodb.ps1",
+        "src/services/agentSigningService.ts",
+        "public/js/agent-build.js",
         "docs/INSTALL.md"
       ]
     },

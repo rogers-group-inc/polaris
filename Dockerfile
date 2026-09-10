@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ─── Builder ──────────────────────────────────────────────────────────────────
-FROM node:24-bookworm AS builder
+FROM node:24-trixie AS builder
 
 WORKDIR /app
 
@@ -27,7 +27,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # ─── Runtime ──────────────────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS runtime
+FROM node:24-trixie-slim AS runtime
 
 # Commit count from the build host. Baked into the runtime image as the
 # patch number for the sidebar version display, since the runtime has no
@@ -47,34 +47,39 @@ ENV NODE_ENV=production \
 # finish — but a container is a controlled environment with no reason to make
 # it take the slow path. ~100 KB.
 #
-# postgresql-client is deliberately the distro package: on bookworm that is
-# PostgreSQL 15, at /usr/lib/postgresql/15/bin, which is exactly where
-# src/utils/pgClientTools.ts looks for a 15 server (rule 47). It only agrees
-# with the PostgreSQL pin because bookworm ships 15 — bumping the server major
-# means `postgresql-client-<N>` from the PGDG apt repo here, or every
-# in-container backup refuses with "pg_dump is PostgreSQL 15 but the server is
-# PostgreSQL <N>". Listed in the PostgreSQL-major playbook for that reason.
+# postgresql-client-17 by NAME, not the unversioned `postgresql-client`
+# metapackage. src/utils/pgClientTools.ts resolves pg_dump/psql by the SERVER's
+# major (rule 47), so a client that silently follows the base image's default
+# is how an in-container backup starts refusing with "pg_dump is PostgreSQL 15
+# but the server is PostgreSQL 17". The version is now stated here and checked
+# by scripts/check-versions.mjs like every other PostgreSQL site.
+#
+# Debian 13 (trixie) ships 17, so this needs no PGDG apt repo in the image —
+# which is exactly why the base moved to trixie alongside the server bump. A
+# major that trixie does NOT carry would mean adding apt.postgresql.org here.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      postgresql-client \
+      postgresql-client-17 \
       iputils-ping \
       fping \
       ca-certificates \
       tini \
  && rm -rf /var/lib/apt/lists/*
 
-# Install Go 1.22+ for the Polaris Agent build feature (Server Settings →
-# Maintenance → Polaris Agent → Build). bookworm-slim ships golang 1.21.x
-# which is too old for agent/go.mod; bookworm-backports has 1.22+.
+# Install Go for the Polaris Agent build feature (Server Settings →
+# Maintenance → Polaris Agent → Build). trixie ships golang 1.24, which is
+# below agent/go.mod's floor; trixie-backports carries 1.26.
+# The backports SUITE must track the base image — a bookworm-backports line on
+# a trixie base resolves to nothing and the build fails at apt-get install.
 # Image size grows from ~50 MB to ~350 MB (one-time hit, not per-tag).
-RUN echo "deb http://deb.debian.org/debian bookworm-backports main" \
+RUN echo "deb http://deb.debian.org/debian trixie-backports main" \
       > /etc/apt/sources.list.d/backports.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends -t bookworm-backports \
+ && apt-get install -y --no-install-recommends -t trixie-backports \
       golang-go \
  && rm -rf /var/lib/apt/lists/*
 
-# Java 17 (headless) + the jsign jar for the optional agent code-signing
+# Java 25 (headless) + the jsign jar for the optional agent code-signing
 # feature (Integrations → Polaris Agents → Code signing — internal-CA
 # signing of the two Windows agent binaries during the in-app build). The
 # jar lands at /opt/polaris/tools/jsign.jar, one of agentSigningService's
@@ -88,12 +93,17 @@ RUN echo "deb http://deb.debian.org/debian bookworm-backports main" \
 # every registry the image reaches. Operators mount their PKCS#12 under the
 # persistent state dir (/app/state/tools/codesign.pfx) and point the
 # keystore path at it — see docs/INSTALL.md → "Optional: Code signing".
+#
+# openjdk-25-jre-headless by NAME. `default-jre-headless` is whatever the base
+# image's Debian release calls default — 21 on trixie — so it carries no
+# version for check:versions to compare and would drift under the image on the
+# next base bump, exactly as it did on the Ubuntu scripts.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      default-jre-headless \
+      openjdk-25-jre-headless \
  && rm -rf /var/lib/apt/lists/*
-ADD https://github.com/ebourg/jsign/releases/download/7.4/jsign-7.4.jar /opt/polaris/tools/jsign.jar
-RUN echo "2abf2ade9ea322acc2d60c24794eadc465ff9380938fca4c932d09e0b25f1c28  /opt/polaris/tools/jsign.jar" | sha256sum -c - \
+ADD https://github.com/ebourg/jsign/releases/download/7.5/jsign-7.5.jar /opt/polaris/tools/jsign.jar
+RUN echo "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c  /opt/polaris/tools/jsign.jar" | sha256sum -c - \
  && chmod 0644 /opt/polaris/tools/jsign.jar
 
 WORKDIR /app

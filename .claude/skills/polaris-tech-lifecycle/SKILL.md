@@ -1,6 +1,6 @@
 ---
 name: polaris-tech-lifecycle
-description: "Version lifecycle of the Polaris tech stack: the committed end-of-life dataset and its refresh procedure, the version-pin inventory (every Node / PostgreSQL / TimescaleDB / Go / nginx / Java / OS / npm-major pin and the file it lives in, as a lockstep table), one ordered upgrade playbook per technology with its blast radius, the check:versions pin-consistency guard, and the npm + Go dependency-audit procedure. Load when a task says EOL, end-of-life, end of support, supported until, minimum version, unsupported, version pin, outdated dependency, npm audit, npm outdated, dependabot, overrides, or upgrade/bump a runtime — Node 22 to 24, PostgreSQL 15 to 16/17, Go 1.22, Prisma 7, Express 5, TimescaleDB, nginx mainline, RHEL 9, Ubuntu 24.04, node:24-bookworm, latest-pg15 — and whenever a change edits engines.node, agent/go.mod, a version pin in a Dockerfile or a deploy/setup-* script, an image tag in a compose file, or node-version in a workflow."
+description: "Version lifecycle of the Polaris tech stack: the committed end-of-life dataset and its refresh procedure, the version-pin inventory (every Node / PostgreSQL / TimescaleDB / Go / nginx / Java / OS / npm-major pin and the file it lives in, as a lockstep table), one ordered upgrade playbook per technology with its blast radius, the check:versions pin-consistency guard, and the npm + Go dependency-audit procedure. Load when a task says EOL, end-of-life, end of support, supported until, minimum version, unsupported, version pin, outdated dependency, npm audit, npm outdated, dependabot, overrides, or upgrade/bump a runtime — Node 22 to 24, PostgreSQL 17 to 18, Go 1.26/1.27, Prisma 7, Express 5, TimescaleDB, nginx stable, RHEL 9, Ubuntu 24.04, node:24-trixie, latest-pg17 — and whenever a change edits engines.node, agent/go.mod, a version pin in a Dockerfile or a deploy/setup-* script, an image tag in a compose file, or node-version in a workflow."
 ---
 
 # Polaris tech-stack lifecycle
@@ -63,16 +63,34 @@ in-app Platform Lifecycle card reads it and never writes it; refreshing it is a 
   and installs anyway. The setup scripts' accept-regexes are the only real gate, and they accept
   a *range* (22 or 24) while every pin installs 24.
 - **Windows is the tightest pin and goes stale first.** The Windows setup scripts hard-pin an
-  exact Node build, `GoLang.Go.1.22`, `PostgreSQL.PostgreSQL.15` and `Microsoft.OpenJDK.17`,
-  while the Linux scripts accept ranges. A stated "Node 24" is therefore false on Windows past
-  the pinned patch, and the day a pinned runtime goes EOL those scripts keep installing it on
-  every fresh host with nothing objecting.
-- **"Go 1.22+" was asserted for a long time without being enforced.** `goAvailable()` in
-  `src/services/agentBuildService.ts` historically only checked that `go version` *ran*; a host
-  with an older toolchain passed the preflight and failed later inside `go build`. Keep
-  `GO_MINIMUM` the single source of truth for that number and for every copy string.
-- **Floating tags hide drift.** `compose.dev.yml` uses a `latest-pg15` tag and
-  `docker-compose.yml` uses `nginx:mainline` and a `:latest` app image. The checker can assert
+  exact Node build, an exact Go version, `PostgreSQL.PostgreSQL.<major>` and
+  `Microsoft.OpenJDK.<major>`, while the Linux scripts accept ranges. A stated "Node 24" is
+  therefore false on Windows past the pinned patch, and the day a pinned runtime goes EOL those
+  scripts keep installing it on every fresh host with nothing objecting.
+- **A winget pin can fail silently, because the MSI download is the `else` branch.** `--version`
+  must name a version that channel actually has (`OpenJS.NodeJS.LTS` lagged nodejs.org by two
+  minors on 2026-09-09), and the package id must exist at all — `--id GoLang.Go.1.22` named a
+  package winget does not publish, so on every host WITH winget the Go install failed and the
+  fallback never ran. Check the manifest list before pinning.
+- **The PostgreSQL unit name is a host fact and must never be in a shipped unit.** Both update
+  paths overwrite `deploy/polaris-*.service` verbatim, so a major written there is re-asserted
+  onto every host at every update — including hosts where that unit does not exist. It lives in
+  a per-host `20-postgres.conf` drop-in; `check:versions` fails if it creeps back.
+- **No unversioned install is left UNGUARDED, and that is load-bearing.** An unversioned package
+  name has no number for the equality check to compare, so it drifts per host, silently, in
+  exactly the place the guard exists to watch — and every instance had bitten by 2026-09-09:
+  AppStream PostgreSQL 13 on RHEL, the 14/16 `postgresql` metapackage on Ubuntu,
+  `default-jre-headless` giving Java 17 on one LTS and 21 on the other, and the same in the
+  Dockerfile. All of those now name a version. The one that stays unversioned is `golang-go`,
+  deliberately: it is followed immediately by a `go version` re-check against the accept-regex
+  and a snap fallback, so the version is enforced even though the package name carries none.
+  That is why `check:versions` skips it rather than reporting it.
+- **`GO_MINIMUM` is the single source of truth for the Go floor** in
+  `src/services/agentBuildService.ts` — the preflight and every operator-facing copy string
+  interpolate it. `goAvailable()` historically only checked that `go version` *ran*, so a host
+  with an older toolchain passed and failed later inside `go build`.
+- **Floating tags hide drift.** `compose.dev.yml` uses a `latest-pg<major>` tag and
+  `docker-compose.yml` uses `nginx:stable` and a `:latest` app image. The checker can assert
   the major those imply and nothing more; dev and the reference stack move under you.
 - **CI exercises no TimescaleDB.** The publish workflow runs a plain `postgres` service
   container, so hypertable, chunk and compression paths get no CI signal at all. A PostgreSQL or

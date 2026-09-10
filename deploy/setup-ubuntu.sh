@@ -5,7 +5,7 @@
 #
 # What this script does (Phase 3+ — single-process polaris.service no longer
 # shipped to production; every fresh install is split-role + nginx-fronted):
-#   1. Installs Node.js 24, PostgreSQL 15, Go 1.22+, nginx (mainline ≥1.25)
+#   1. Installs Node.js 24, PostgreSQL 17, Go 1.26+, nginx (stable ≥1.30)
 #   2. Creates a dedicated 'polaris' system user + DB + role
 #   3. Clones the application to /opt/polaris
 #   4. Installs dependencies, builds, runs migrations
@@ -109,31 +109,33 @@ fi
 # Phase 3+: Polaris no longer binds privileged ports — nginx terminates TLS
 # on 443 and proxies HTTP-only to 127.0.0.1:3000. No setcap on node needed.
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). Ubuntu 24.04 LTS ships golang-go 1.22 in main;
-# 22.04 LTS ships 1.18 which is too old for the agent's go.mod, so fall back
-# to the official Go snap channel when the apt package is too old.
-if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+# → Polaris Agent → Build). NEITHER Ubuntu LTS can satisfy the 1.26 floor from
+# the archive — 24.04 ships golang-go 1.22 and 22.04 ships 1.18 — so on a
+# supported release the snap branch below is the one that runs. The apt attempt
+# stays because it is cheap, it is correct on a newer Debian, and the version
+# re-check after it is what decides.
+if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go..."
-  if apt-get install -y golang-go && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+  if apt-get install -y golang-go && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
     info "Go $(go version | awk '{print $3}') installed via apt"
   else
-    info "Default apt golang-go is too old (<1.22); installing via snap..."
-    snap install --classic --channel=1.22/stable go
+    info "Default apt golang-go is too old (<1.26); installing via snap..."
+    snap install --classic --channel=1.26/stable go
     info "Go $(go version | awk '{print $3}') installed via snap"
   fi
 fi
 
-# ─── 1c. Install nginx mainline (HTTP/3 ≥ 1.25 required) ─────────────────────
-# Ubuntu/Debian's default nginx is too old for HTTP/3; pull mainline from
+# ─── 1c. Install nginx stable (HTTP/3 ≥ 1.30 required) ─────────────────────
+# Ubuntu/Debian's default nginx is too old for HTTP/3; pull the STABLE branch from
 # nginx.org's official Debian/Ubuntu repo.
-if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(2[5-9]|[3-9][0-9])'; then
+if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])'; then
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
 else
-  info "Installing nginx mainline from nginx.org..."
+  info "Installing nginx stable from nginx.org..."
   apt-get install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring 2>/dev/null || \
     apt-get install -y curl gnupg2 ca-certificates lsb-release debian-archive-keyring
   curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
@@ -144,10 +146,10 @@ else
     NGINX_DISTRO=debian
   fi
   CODENAME=$(lsb_release -cs)
-  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/${NGINX_DISTRO} ${CODENAME} nginx" \
+  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/${NGINX_DISTRO} ${CODENAME} nginx" \
     > /etc/apt/sources.list.d/nginx.list
   # Pin nginx.org over distro nginx (prevents unattended upgrades from
-  # replacing mainline with the older distro version).
+  # replacing the nginx.org build with the older distro version).
   cat > /etc/apt/preferences.d/99nginx <<'PREF'
 Package: *
 Pin: origin nginx.org
@@ -183,16 +185,40 @@ else
   warn "  interval to suit. To fix later:  apt-get install -y fping"
 fi
 
-# ─── 2. Install PostgreSQL 15 ────────────────────────────────────────────────
-if command -v psql &>/dev/null; then
-  info "PostgreSQL already installed"
+# ─── 2. Install PostgreSQL 17 (PGDG, not the distro metapackage) ─────────────
+# This used to be `apt-get install -y postgresql postgresql-contrib` — the
+# distro metapackage, whose major is whatever the release froze on: PostgreSQL
+# 14 on Ubuntu 22.04 and 16 on 24.04. Neither is the major every other site
+# here names, 14 is BELOW the stated minimum, and there is no number in the
+# package name for the pin check to disagree with, so the drift was invisible.
+# Same shape as the RHEL AppStream bug fixed on 2026-09-09, one archive along.
+#
+# PGDG also matters for the extension: the TimescaleDB package depends on
+# `postgresql-17` by name, and the distro metapackage cannot satisfy it.
+PG_MAJOR=17
+if [[ -x "/usr/lib/postgresql/${PG_MAJOR}/bin/psql" ]]; then
+  info "PostgreSQL ${PG_MAJOR} (PGDG) already installed"
 else
-  info "Installing PostgreSQL..."
-  apt-get install -y postgresql postgresql-contrib
-  info "PostgreSQL installed"
+  info "Installing PostgreSQL ${PG_MAJOR} from PGDG..."
+  # lsb-release explicitly: the codename below comes from it, and the only
+  # other place that installs it is the nginx block, which is skipped entirely
+  # on a host that already has nginx.
+  apt-get install -y curl ca-certificates gnupg lsb-release
+  install -d /usr/share/postgresql-common/pgdg
+  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+  echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list
+  apt-get update -qq
+  # No postgresql-contrib-<major> here: Debian packaging folded contrib into
+  # postgresql-<major> at PostgreSQL 10, and PGDG only still publishes the
+  # split package for 9.x. Asking for it fails the install outright.
+  apt-get install -y "postgresql-${PG_MAJOR}"
+  info "PostgreSQL ${PG_MAJOR} installed"
 fi
 
-# Enable and start PostgreSQL
+# Enable and start PostgreSQL. Debian's postgresql.service is a wrapper that
+# starts every configured cluster; the per-cluster unit is postgresql@N-main.
 systemctl enable --now postgresql
 info "PostgreSQL is running"
 
@@ -212,32 +238,34 @@ fi
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 
-# ─── 3c. Java 17 + jsign (agent code signing — optional at runtime) ─────────
+# ─── 3c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). The feature is
 # opt-in — missing Java/jsign only disables signing and the UI names exactly
 # what's missing — so failures here warn instead of aborting the install.
-JSIGN_VERSION="7.4"
-JSIGN_SHA256="2abf2ade9ea322acc2d60c24794eadc465ff9380938fca4c932d09e0b25f1c28"
+JSIGN_VERSION="7.5"
+JSIGN_SHA256="602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"
 if command -v java &>/dev/null; then
   info "Java already installed"
 else
-  info "Installing Java 17 (headless, for agent code signing)..."
-  # openjdk-17-jre-headless by NAME, not default-jre-headless. The distro
+  info "Installing Java 25 (headless, for agent code signing)..."
+  # openjdk-25-jre-headless by NAME, not default-jre-headless. The distro
   # default is Java 17 on Ubuntu 22.04 and Java 21 on 24.04, so
   # `default-jre-headless` made two supported Polaris hosts sign agent binaries
-  # with different JDK majors -- and only one of them matched the 17 that the
-  # Dockerfile, the RHEL script and both Windows scripts all pin. There is no
-  # version in `default-jre-headless` for check:versions to compare, so the
-  # drift was invisible to the pin check as well as to the operator.
+  # with different JDK majors -- and neither matched what the Dockerfile, the
+  # RHEL script and both Windows scripts pin. There is no version in
+  # `default-jre-headless` for check:versions to compare, so the drift was
+  # invisible to the pin check as well as to the operator.
+  # 25 is available on jammy and noble alike (and on Debian trixie), so the
+  # fallback below should never fire on a supported release.
   # Fall back to the distro default rather than leaving the host with no JVM:
   # signing with the wrong major beats not signing at all, and the log says
   # which happened.
-  if apt-get install -y openjdk-17-jre-headless; then
-    info "Java 17 (openjdk-17-jre-headless) installed"
+  if apt-get install -y openjdk-25-jre-headless; then
+    info "Java 25 (openjdk-25-jre-headless) installed"
   elif apt-get install -y default-jre-headless; then
-    info "WARNING: openjdk-17-jre-headless unavailable on this release — installed default-jre-headless ($(java -version 2>&1 | head -1)). Agent signing will use this JVM; pin 17 if signatures must match other hosts."
+    info "WARNING: openjdk-25-jre-headless unavailable on this release — installed default-jre-headless ($(java -version 2>&1 | head -1)). Agent signing will use this JVM; pin 25 if signatures must match other hosts."
   else
     info "WARNING: Java install failed — agent code signing stays unavailable until Java is installed manually"
   fi
@@ -448,12 +476,23 @@ cp "$APP_DIR/deploy/polaris-discovery.service"  /etc/systemd/system/polaris-disc
 cp "$APP_DIR/deploy/polaris-dash.service"       /etc/systemd/system/polaris-dash.service
 cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.target
 
-# Ubuntu/Debian's PostgreSQL service is just `postgresql` (not the
-# `postgresql-15` RHEL uses); strip the RHEL-specific version suffix from
-# the shipped units' After= / Requires= lines so systemd doesn't fail to
-# resolve the dependency.
+# Ubuntu/Debian's PostgreSQL service is just `postgresql` (the wrapper over
+# postgresql@<major>-main), not the versioned unit RHEL/PGDG uses. The shipped
+# units name NO PostgreSQL unit at all, so this is a drop-in rather than the
+# in-place rewrite it used to be — and that rewrite was load-bearing and wrong:
+# every update overwrites the main unit files verbatim, so the RHEL name came
+# straight back and the host was left requiring a unit Debian does not have.
+# Drop-ins survive both sync paths. Reference: deploy/dropins/20-postgres.conf.example.
+info "Installing the PostgreSQL dependency drop-in (postgresql.service)..."
 for unit in polaris-migrate polaris-web polaris-monitor@ polaris-discovery polaris-dash; do
-  sed -i -E 's/postgresql-15\.service/postgresql.service/g' "/etc/systemd/system/${unit}.service"
+  mkdir -p "/etc/systemd/system/${unit}.service.d"
+  cat > "/etc/systemd/system/${unit}.service.d/20-postgres.conf" <<'DROPIN'
+# Written by deploy/setup-ubuntu.sh. Survives updates — the main unit file
+# does not. postgresql.service is Debian's wrapper over postgresql@<major>-main.
+[Unit]
+After=postgresql.service
+Requires=postgresql.service
+DROPIN
 done
 
 info "Installing polaris-web's Wants=nginx drop-in..."

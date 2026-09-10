@@ -181,6 +181,46 @@ PSQL=$(resolve_pg_tool psql "$PG_SERVER_MAJOR")
 # Returns 0 if it ran daemon-reload, 1 if no files needed syncing.
 # Operator customization must live in <unit>.d/*.conf drop-ins — direct
 # edits to the main unit file get clobbered here, matching the in-app path.
+# Carry an installed unit's local-PostgreSQL dependency into a drop-in before
+# the unit file is overwritten.
+#
+# Units shipped before 2026-09-09 named the dependency inline
+# (Requires=postgresql-15.service). The shipped units no longer do — the name
+# is a host fact, and this function is the only thing that knows what a given
+# host chose. Without it, the first update after that change would silently
+# drop the ordering: PostgreSQL is enabled and would usually win the race at
+# boot, but "usually" is not an ordering guarantee, and polaris-migrate failing
+# to connect takes the whole target down.
+#
+# Idempotent, and never overwrites a drop-in that already exists (an operator
+# who has already set the name by hand keeps it).
+preserve_postgres_dependency() {
+  local name="$1" installed="/etc/systemd/system/$1"
+  [[ -f "$installed" ]] || return 0
+  local dropin_dir="/etc/systemd/system/${name}.d"
+  [[ -f "$dropin_dir/20-postgres.conf" ]] && return 0
+  # NEVER on an HA node. There, 10-ha.conf resets After=/Requires= and points
+  # them at patroni.service, and drop-ins apply in lexical order — a 20- file
+  # would re-add the dependency *after* that reset and either fail the start or
+  # race Patroni by starting a second postgres against the same data directory.
+  # The inline dependency in an old unit was neutralized by that same reset, so
+  # there is nothing to preserve.
+  [[ -f /etc/polaris/ha-node || -f "$dropin_dir/10-ha.conf" ]] && return 0
+  local pgunit
+  pgunit="$(sed -nE 's/^Requires=.*\b(postgresql[^[:space:]]*)\.service.*/\1/p' "$installed" | head -1)"
+  [[ -n "$pgunit" ]] || return 0
+  mkdir -p "$dropin_dir"
+  cat > "$dropin_dir/20-postgres.conf" <<DROPIN
+# Migrated from the inline dependency in ${name} by deploy/update-linux.sh.
+# The shipped unit no longer names a PostgreSQL unit — see
+# deploy/dropins/20-postgres.conf.example.
+[Unit]
+After=${pgunit}.service
+Requires=${pgunit}.service
+DROPIN
+  info "Preserved ${name}'s PostgreSQL dependency (${pgunit}.service) as a drop-in"
+}
+
 sync_unit_files() {
   local synced=0
   local units=(
@@ -197,6 +237,7 @@ sync_unit_files() {
     name="$(basename "$f")"
     target="/etc/systemd/system/$name"
     if [[ ! -f "$target" ]] || ! cmp -s "$f" "$target"; then
+      preserve_postgres_dependency "$name"
       cp -f "$f" "$target"
       info "Synced unit file: $name"
       synced=$((synced + 1))

@@ -9,7 +9,7 @@
 #
 # What this does:
 #   1. Confirms split-role polaris.target is enabled (single-process is unsupported here)
-#   2. Ensures nginx >= 1.25 (HTTP/3 stable) — installs from nginx.org if older/missing
+#   2. Ensures nginx >= 1.30 (HTTP/3 stable, current stable branch) — installs from nginx.org if older/missing
 #   3. Extracts the active server cert + key from Setting.certificates to a temp dir
 #   4. Stages the nginx config with PROMETHEUS_IP substituted, validates with `nginx -t`
 #   5. Commits everything atomically: writes /etc/polaris-nginx/{cert,key}.pem with
@@ -137,7 +137,7 @@ if grep -q '^POLARIS_PROXY_CERT_PATH=' "$ENV_FILE" 2>/dev/null \
   exit 0
 fi
 
-step "Preflight: ensure nginx >= 1.25 (HTTP/3 stable)"
+step "Preflight: ensure nginx >= 1.30 (HTTP/3 stable, current stable branch)"
 NEEDS_NGINX_INSTALL=0
 if ! command -v nginx >/dev/null 2>&1; then
   info "nginx not installed; will install from nginx.org repo."
@@ -146,8 +146,8 @@ else
   NGINX_VER=$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
   NGINX_MAJOR=$(echo "$NGINX_VER" | cut -d. -f1)
   NGINX_MINOR=$(echo "$NGINX_VER" | cut -d. -f2)
-  if [[ -z "$NGINX_VER" ]] || [[ $NGINX_MAJOR -lt 1 ]] || { [[ $NGINX_MAJOR -eq 1 ]] && [[ $NGINX_MINOR -lt 25 ]]; }; then
-    warn "nginx $NGINX_VER is below 1.25 (HTTP/3 stable). Replacing with nginx.org mainline."
+  if [[ -z "$NGINX_VER" ]] || [[ $NGINX_MAJOR -lt 1 ]] || { [[ $NGINX_MAJOR -eq 1 ]] && [[ $NGINX_MINOR -lt 30 ]]; }; then
+    warn "nginx $NGINX_VER is below 1.30 (the current stable branch). Replacing with nginx.org stable."
     NEEDS_NGINX_INSTALL=1
   else
     info "nginx $NGINX_VER detected — meets HTTP/3 requirement."
@@ -155,13 +155,13 @@ else
 fi
 
 if [[ "$NEEDS_NGINX_INSTALL" == "1" ]]; then
-  step "Installing nginx mainline from nginx.org"
+  step "Installing nginx stable from nginx.org"
   cat > /etc/yum.repos.d/nginx.repo <<'REPO'
 [nginx-stable]
 name=nginx stable repo
 baseurl=http://nginx.org/packages/centos/9/$basearch/
 gpgcheck=1
-enabled=0
+enabled=1
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 
@@ -169,7 +169,7 @@ module_hotfixes=true
 name=nginx mainline repo
 baseurl=http://nginx.org/packages/mainline/centos/9/$basearch/
 gpgcheck=1
-enabled=1
+enabled=0
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 REPO

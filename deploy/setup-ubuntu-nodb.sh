@@ -107,18 +107,19 @@ fi
 info "Granting Node.js low-port binding capability..."
 setcap cap_net_bind_service=+ep "$(which node)"
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
-# Required by the Polaris Agent build feature. Ubuntu 24.04 ships golang-go
-# 1.22 in main; 22.04 ships 1.18 which is too old — fall back to snap.
-if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
+# Required by the Polaris Agent build feature. Neither Ubuntu LTS can satisfy
+# the 1.26 floor from the archive (24.04 ships 1.22, 22.04 ships 1.18), so the
+# snap branch is the one that runs on a supported release.
+if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go..."
-  if apt-get install -y golang-go && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+  if apt-get install -y golang-go && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
     info "Go $(go version | awk '{print $3}') installed via apt"
   else
-    info "Default apt golang-go is too old (<1.22); installing via snap..."
-    snap install --classic --channel=1.22/stable go
+    info "Default apt golang-go is too old (<1.26); installing via snap..."
+    snap install --classic --channel=1.26/stable go
     info "Go $(go version | awk '{print $3}') installed via snap"
   fi
 fi
@@ -157,12 +158,30 @@ else
 fi
 
 # ─── 3. Install PostgreSQL client tools (for pg_dump backups) ────────────────
-if command -v pg_dump &>/dev/null; then
-  info "PostgreSQL client tools already installed"
+# From PGDG and VERSIONED, never `apt-get install -y postgresql-client`. The
+# unversioned metapackage is whatever the release froze on — 14 on Ubuntu 22.04,
+# 16 on 24.04 — and pg_dump refuses to dump a server newer than itself, so a 14
+# client in front of the 17 server this variant connects to fails every backup
+# with "server version mismatch" while `command -v pg_dump` reports success
+# because a binary exists. That is the RHEL lesson of 2026-09-09 (rule 47),
+# and the same trap was sitting here in apt form.
+PG_CLIENT_MAJOR=17
+if [[ -x "/usr/lib/postgresql/${PG_CLIENT_MAJOR}/bin/pg_dump" ]]; then
+  info "PostgreSQL ${PG_CLIENT_MAJOR} client tools already installed"
 else
-  info "Installing PostgreSQL client tools..."
-  apt-get install -y postgresql-client
-  info "PostgreSQL client tools installed"
+  info "Installing PostgreSQL ${PG_CLIENT_MAJOR} client tools from PGDG..."
+  # lsb-release explicitly: the codename below comes from it, and the only
+  # other place that installs it is the nginx block, which is skipped entirely
+  # on a host that already has nginx.
+  apt-get install -y curl ca-certificates gnupg lsb-release
+  install -d /usr/share/postgresql-common/pgdg
+  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+  echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list
+  apt-get update -qq
+  apt-get install -y "postgresql-client-${PG_CLIENT_MAJOR}"
+  info "PostgreSQL ${PG_CLIENT_MAJOR} client tools installed"
 fi
 
 # ─── 4. Create system user ───────────────────────────────────────────────────
@@ -178,32 +197,34 @@ fi
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 
-# ─── 4c. Java 17 + jsign (agent code signing — optional at runtime) ─────────
+# ─── 4c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). The feature is
 # opt-in — missing Java/jsign only disables signing and the UI names exactly
 # what's missing — so failures here warn instead of aborting the install.
-JSIGN_VERSION="7.4"
-JSIGN_SHA256="2abf2ade9ea322acc2d60c24794eadc465ff9380938fca4c932d09e0b25f1c28"
+JSIGN_VERSION="7.5"
+JSIGN_SHA256="602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"
 if command -v java &>/dev/null; then
   info "Java already installed"
 else
-  info "Installing Java 17 (headless, for agent code signing)..."
-  # openjdk-17-jre-headless by NAME, not default-jre-headless. The distro
+  info "Installing Java 25 (headless, for agent code signing)..."
+  # openjdk-25-jre-headless by NAME, not default-jre-headless. The distro
   # default is Java 17 on Ubuntu 22.04 and Java 21 on 24.04, so
   # `default-jre-headless` made two supported Polaris hosts sign agent binaries
-  # with different JDK majors -- and only one of them matched the 17 that the
-  # Dockerfile, the RHEL script and both Windows scripts all pin. There is no
-  # version in `default-jre-headless` for check:versions to compare, so the
-  # drift was invisible to the pin check as well as to the operator.
+  # with different JDK majors -- and neither matched what the Dockerfile, the
+  # RHEL script and both Windows scripts pin. There is no version in
+  # `default-jre-headless` for check:versions to compare, so the drift was
+  # invisible to the pin check as well as to the operator.
+  # 25 is available on jammy and noble alike (and on Debian trixie), so the
+  # fallback below should never fire on a supported release.
   # Fall back to the distro default rather than leaving the host with no JVM:
   # signing with the wrong major beats not signing at all, and the log says
   # which happened.
-  if apt-get install -y openjdk-17-jre-headless; then
-    info "Java 17 (openjdk-17-jre-headless) installed"
+  if apt-get install -y openjdk-25-jre-headless; then
+    info "Java 25 (openjdk-25-jre-headless) installed"
   elif apt-get install -y default-jre-headless; then
-    info "WARNING: openjdk-17-jre-headless unavailable on this release — installed default-jre-headless ($(java -version 2>&1 | head -1)). Agent signing will use this JVM; pin 17 if signatures must match other hosts."
+    info "WARNING: openjdk-25-jre-headless unavailable on this release — installed default-jre-headless ($(java -version 2>&1 | head -1)). Agent signing will use this JVM; pin 25 if signatures must match other hosts."
   else
     info "WARNING: Java install failed — agent code signing stays unavailable until Java is installed manually"
   fi
@@ -378,7 +399,7 @@ else
   info "Database already seeded ($HAS_USERS users) — skipping"
 fi
 
-# ─── 9. Install nginx mainline + self-signed cert + split-role units ────────
+# ─── 9. Install nginx stable + self-signed cert + split-role units ────────
 # Same as setup-ubuntu.sh from here — see that script's comments for the
 # rationale on each step. Duplicated rather than sourced so operators can
 # run setup-ubuntu-nodb.sh standalone from a fresh git clone.
@@ -394,11 +415,11 @@ info "Public URL:        $PUBLIC_URL"
 info "Cert hostname:     $HOSTNAME_FROM_URL"
 info "Monitor replicas:  $MONITOR_REPLICAS"
 
-# Install nginx mainline (HTTP/3 ≥ 1.25)
-if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(2[5-9]|[3-9][0-9])'; then
+# Install nginx stable (HTTP/3 ≥ 1.30)
+if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])'; then
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
 else
-  info "Installing nginx mainline from nginx.org..."
+  info "Installing nginx stable from nginx.org..."
   apt-get install -y curl gnupg2 ca-certificates lsb-release ubuntu-keyring 2>/dev/null || \
     apt-get install -y curl gnupg2 ca-certificates lsb-release debian-archive-keyring
   curl https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
@@ -408,7 +429,7 @@ else
     NGINX_DISTRO=debian
   fi
   CODENAME=$(lsb_release -cs)
-  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/mainline/${NGINX_DISTRO} ${CODENAME} nginx" \
+  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/${NGINX_DISTRO} ${CODENAME} nginx" \
     > /etc/apt/sources.list.d/nginx.list
   cat > /etc/apt/preferences.d/99nginx <<'PREF'
 Package: *
@@ -463,9 +484,11 @@ cp "$APP_DIR/deploy/polaris-discovery.service"  /etc/systemd/system/polaris-disc
 cp "$APP_DIR/deploy/polaris-dash.service"       /etc/systemd/system/polaris-dash.service
 cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.target
 
+# The DB is remote, so no local-postgres dependency drop-in is written. The
+# shipped units name no PostgreSQL unit, so there is nothing to strip; clear a
+# stale drop-in in case this host used to run its database locally.
 for unit in polaris-migrate polaris-web polaris-monitor@ polaris-discovery polaris-dash; do
-  sed -i -E "s/(After=.*)postgresql-15\\.service\\s*/\\1/" "/etc/systemd/system/${unit}.service"
-  sed -i "/^Requires=postgresql-15\\.service\\s*$/d"        "/etc/systemd/system/${unit}.service"
+  rm -f "/etc/systemd/system/${unit}.service.d/20-postgres.conf"
 done
 
 mkdir -p "$NGINX_DROPIN_DIR"

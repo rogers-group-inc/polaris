@@ -5,7 +5,7 @@
 #   {{THIS_ADDR}}   this node's cluster address (IP or FQDN reachable from the peers)
 #   {{PEER_ADDR}}   the other database node's cluster address
 #   {{WITNESS_ADDR}} the witness node's address (etcd only, no PostgreSQL)
-#   {{PG_BIN}}      e.g. /usr/pgsql-15/bin
+#   {{PG_BIN}}      e.g. /usr/pgsql-17/bin
 #   {{PGDATA}}      e.g. /var/lib/pgsql/15/data
 #   {{NOFAILOVER}}  true on the standby until the switchover rehearsal passes
 #   {{*_PASSWORD}}  generated once, kept in the HA config (sealed) and in your vault

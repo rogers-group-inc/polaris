@@ -112,12 +112,12 @@ fi
 info "Granting Node.js low-port binding capability..."
 setcap cap_net_bind_service=+ep "$(which node)"
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
-# → Polaris Agent → Build). The agent's go.mod pins go 1.22 as the minimum;
-# RHEL 9's default golang AppStream module ships 1.21.x which is too old,
-# so pull from the go-toolset module instead.
-if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+# → Polaris Agent → Build). The agent's go.mod pins go 1.26 as the minimum;
+# RHEL 9's default golang AppStream module is older, so pull from the
+# go-toolset module instead — it carries 1.26 (1.26.7 on 9.6).
+if command -v go &>/dev/null && go version | grep -qE 'go1\.(2[6-9]|[3-9][0-9])'; then
   info "Go $(go version | awk '{print $3}') already installed"
 else
   info "Installing Go (go-toolset)..."
@@ -174,7 +174,7 @@ fi
 # existed. Prod, 2026-09-09. The same lesson setup-rhel.sh learned for the
 # SERVER packages, applied to the client. Step 5 checks the installed major
 # against the actual server once the connection string is known to work.
-PG_CLIENT_MAJOR=15
+PG_CLIENT_MAJOR=17
 if [[ -x "/usr/pgsql-${PG_CLIENT_MAJOR}/bin/pg_dump" ]]; then
   info "PostgreSQL ${PG_CLIENT_MAJOR} client tools already installed"
 else
@@ -202,19 +202,19 @@ fi
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
 
-# ─── 4c. Java 17 + jsign (agent code signing — optional at runtime) ─────────
+# ─── 4c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). The feature is
 # opt-in — missing Java/jsign only disables signing and the UI names exactly
 # what's missing — so failures here warn instead of aborting the install.
-JSIGN_VERSION="7.4"
-JSIGN_SHA256="2abf2ade9ea322acc2d60c24794eadc465ff9380938fca4c932d09e0b25f1c28"
+JSIGN_VERSION="7.5"
+JSIGN_SHA256="602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"
 if command -v java &>/dev/null; then
   info "Java already installed"
 else
-  info "Installing Java 17 (headless, for agent code signing)..."
-  dnf install -y java-17-openjdk-headless || \
+  info "Installing Java 25 (headless, for agent code signing)..."
+  dnf install -y java-25-openjdk-headless || \
     info "WARNING: Java install failed — agent code signing stays unavailable until Java is installed manually"
 fi
 if [ -f "$APP_DIR/tools/jsign.jar" ]; then
@@ -387,7 +387,7 @@ else
   info "Database already seeded ($HAS_USERS users) — skipping"
 fi
 
-# ─── 9. Install nginx mainline + self-signed cert + split-role units ────────
+# ─── 9. Install nginx stable + self-signed cert + split-role units ────────
 # Identical to setup-rhel.sh from this point on — see that script's
 # corresponding section comments. We don't share via a sourced library
 # because operators run these scripts via `bash deploy/setup-rhel-nodb.sh`
@@ -404,17 +404,17 @@ info "Public URL:        $PUBLIC_URL"
 info "Cert hostname:     $HOSTNAME_FROM_URL"
 info "Monitor replicas:  $MONITOR_REPLICAS"
 
-# Install nginx mainline from nginx.org (RHEL AppStream is too old for HTTP/3)
-if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(2[5-9]|[3-9][0-9])'; then
+# Install nginx stable from nginx.org (RHEL AppStream is too old for HTTP/3)
+if command -v nginx >/dev/null 2>&1 && nginx -v 2>&1 | grep -qE '1\.(3[0-9]|[4-9][0-9])'; then
   info "nginx $(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') already installed"
 else
-  info "Installing nginx mainline from nginx.org..."
+  info "Installing nginx stable from nginx.org..."
   cat > /etc/yum.repos.d/nginx.repo <<'REPO'
 [nginx-stable]
 name=nginx stable repo
 baseurl=http://nginx.org/packages/centos/9/$basearch/
 gpgcheck=1
-enabled=0
+enabled=1
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 
@@ -422,7 +422,7 @@ module_hotfixes=true
 name=nginx mainline repo
 baseurl=http://nginx.org/packages/mainline/centos/9/$basearch/
 gpgcheck=1
-enabled=1
+enabled=0
 gpgkey=https://nginx.org/keys/nginx_signing.key
 module_hotfixes=true
 REPO
@@ -467,9 +467,10 @@ if ! grep -q '^POLARIS_MONITOR_REPLICAS=' "$APP_DIR/.env"; then
   } >> "$APP_DIR/.env"
 fi
 
-# Install split-role systemd units. The polaris-migrate unit has
-# Requires=postgresql-15.service in its shipped form; the -nodb variant of
-# this script strips that out since the DB is remote (no local postgres).
+# Install split-role systemd units. The shipped units name no PostgreSQL unit
+# at all (it is a host fact, and an update overwrites these files verbatim), so
+# the -nodb variant has nothing to strip — it simply writes no dependency
+# drop-in. See deploy/dropins/20-postgres.conf.example.
 info "Installing split-role systemd units..."
 cp "$APP_DIR/deploy/polaris-migrate.service"    /etc/systemd/system/polaris-migrate.service
 cp "$APP_DIR/deploy/polaris-web.service"        /etc/systemd/system/polaris-web.service
@@ -478,10 +479,11 @@ cp "$APP_DIR/deploy/polaris-discovery.service"  /etc/systemd/system/polaris-disc
 cp "$APP_DIR/deploy/polaris-dash.service"       /etc/systemd/system/polaris-dash.service
 cp "$APP_DIR/deploy/polaris.target"             /etc/systemd/system/polaris.target
 
-# Strip local-postgres dependencies from all four units — DB is remote.
+# The DB is remote, so no local-postgres dependency drop-in is written. Clear
+# a stale one if this host used to run its database locally — the drop-in
+# survives updates by design, so nothing else would ever remove it.
 for unit in polaris-migrate polaris-web polaris-monitor@ polaris-discovery polaris-dash; do
-  sed -i -E "s/(After=.*)postgresql-15\\.service\\s*/\\1/" "/etc/systemd/system/${unit}.service"
-  sed -i "/^Requires=postgresql-15\\.service\\s*$/d"        "/etc/systemd/system/${unit}.service"
+  rm -f "/etc/systemd/system/${unit}.service.d/20-postgres.conf"
 done
 
 # nginx-dependency drop-in for polaris-web

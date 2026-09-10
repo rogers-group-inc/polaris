@@ -83,10 +83,10 @@ if ((Test-Command "node") -and ((node -v) -match "^v(22|24)\.")) {
 } else {
     Write-Info "Installing Node.js 24 LTS..."
     if ($hasWinget) {
-        winget install --id OpenJS.NodeJS.LTS --version 24.14.1 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id OpenJS.NodeJS.LTS --version 24.19.0 --accept-source-agreements --accept-package-agreements --silent
     } else {
-        $nodeUrl = "https://nodejs.org/dist/v24.14.1/node-v24.14.1-x64.msi"
-        $nodeMsi = "$env:TEMP\node-v24.14.1-x64.msi"
+        $nodeUrl = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi"
+        $nodeMsi = "$env:TEMP\node-v24.19.0-x64.msi"
         Write-Info "Downloading Node.js installer..."
         Invoke-WebRequest -Uri $nodeUrl -OutFile $nodeMsi -UseBasicParsing
         Write-Info "Running Node.js installer..."
@@ -100,20 +100,20 @@ if ((Test-Command "node") -and ((node -v) -match "^v(22|24)\.")) {
     Write-Info "Node.js $(node -v) installed"
 }
 
-# ─── 1b. Install Go 1.22+ ────────────────────────────────────────────────────
+# ─── 1b. Install Go 1.26+ ────────────────────────────────────────────────────
 # Required by the Polaris Agent build feature (Server Settings → Maintenance
 # → Polaris Agent → Build). winget installs to C:\Program Files\Go\bin; we
 # add it to Machine PATH so the NSSM service user sees it.
 Refresh-Path
-if ((Test-Command "go") -and ((go version) -match "go1\.(2[2-9]|[3-9][0-9])")) {
+if ((Test-Command "go") -and ((go version) -match "go1\.(2[6-9]|[3-9][0-9])")) {
     Write-Info "Go $(go version) already installed"
 } else {
-    Write-Info "Installing Go 1.22..."
+    Write-Info "Installing Go 1.27..."
     if ($hasWinget) {
-        winget install --id GoLang.Go.1.22 --accept-source-agreements --accept-package-agreements --silent
+        winget install --id GoLang.Go --version 1.27.0 --accept-source-agreements --accept-package-agreements --silent
     } else {
-        $goUrl = "https://go.dev/dl/go1.22.7.windows-amd64.msi"
-        $goMsi = "$env:TEMP\go-1.22.7.windows-amd64.msi"
+        $goUrl = "https://go.dev/dl/go1.27.0.windows-amd64.msi"
+        $goMsi = "$env:TEMP\go-1.27.0.windows-amd64.msi"
         Write-Info "Downloading Go installer..."
         Invoke-WebRequest -Uri $goUrl -OutFile $goMsi -UseBasicParsing
         Write-Info "Running Go installer..."
@@ -136,7 +136,7 @@ if ((Test-Command "go") -and ((go version) -match "go1\.(2[2-9]|[3-9][0-9])")) {
     }
 }
 
-# ─── 1c. Install Java 17 (agent code signing — optional at runtime) ──────────
+# ─── 1c. Install Java 25 (agent code signing — optional at runtime) ──────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →
 # Code signing): when internal-CA code signing is configured, the in-app agent
 # build signs the two Windows binaries via jsign (a Java CLI). Opt-in —
@@ -147,13 +147,13 @@ Refresh-Path
 if (Test-Command "java") {
     Write-Info "Java already installed"
 } else {
-    Write-Info "Installing Microsoft OpenJDK 17 (for agent code signing)..."
+    Write-Info "Installing Microsoft.OpenJDK.25 (for agent code signing)..."
     try {
         if ($hasWinget) {
-            winget install --id Microsoft.OpenJDK.17 --accept-source-agreements --accept-package-agreements --silent
+            winget install --id Microsoft.OpenJDK.25 --accept-source-agreements --accept-package-agreements --silent
         } else {
-            $jdkUrl = "https://aka.ms/download-jdk/microsoft-jdk-17-windows-x64.msi"
-            $jdkMsi = "$env:TEMP\microsoft-jdk-17-windows-x64.msi"
+            $jdkUrl = "https://aka.ms/download-jdk/microsoft-jdk-25-windows-x64.msi"
+            $jdkMsi = "$env:TEMP\microsoft-jdk-25-windows-x64.msi"
             Write-Info "Downloading Microsoft OpenJDK installer..."
             Invoke-WebRequest -Uri $jdkUrl -OutFile $jdkMsi -UseBasicParsing
             Write-Info "Running OpenJDK installer..."
@@ -216,8 +216,8 @@ Write-Info "Created agent build dirs: $agentDataDir, $goCacheDir"
 # ─── 3c. jsign jar (agent code signing — optional at runtime) ────────────────
 # SHA-256-pinned download for the agent code-signing feature. Failure only
 # warns — signing is opt-in and the UI names exactly what's missing.
-$jsignVersion = "7.4"
-$jsignSha256  = "2ABF2ADE9EA322ACC2D60C24794EADC465FF9380938FCA4C932D09E0B25F1C28"
+$jsignVersion = "7.5"
+$jsignSha256  = "602A51C3545A6DC4FB99BD2EA7152B26D1345916D0C93DDFBD5936CB735AF91C"
 $jsignJar = Join-Path $AppDir "tools\jsign.jar"
 if (Test-Path $jsignJar) {
     Write-Info "jsign already present at $jsignJar"
