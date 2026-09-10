@@ -1284,14 +1284,21 @@ export interface FilterOptions {
  * Options for the NOC dashboard's global filters:
  *   - assetTypes: `{name, label}` entries for the per-widget asset-type grid —
  *     every built-in (canonical order, so the grid is stable on a fleet that
- *     happens to own no printers) followed by every CUSTOM registry type that
- *     is actually present in the fleet, by label. Labels come from the
- *     AssetTypeDef registry, which is why the grid can name a custom type
- *     instead of printing its snake_case value. Customs are present-only
- *     because the registry may carry types nobody has assigned yet, and a
- *     checkbox for a type no asset wears filters nothing. The widgets used to
- *     get a bare `string[]` of built-ins here and never read it — the grid was
- *     drawn from a static list, so a custom type could not be filtered at all.
+ *     happens to own no printers) followed by every CUSTOM type the
+ *     AssetTypeDef registry carries, UNIONED with any custom name still worn
+ *     by a live asset whose registry row is gone, by label. Labels come from
+ *     the registry, which is why the grid can name a custom type instead of
+ *     printing its snake_case value. The custom half was present-only until
+ *     2026-09 — a type the operator had just created in Server Settings had
+ *     no checkbox until something was typed as it, which reads as the grid
+ *     not knowing about the type at all (reported that way). The registry is
+ *     the vocabulary an operator sees, so it is the vocabulary the grid
+ *     offers, matching the Assets page's Type filter (`/asset-types`); the
+ *     present-set union is what keeps a retired-but-still-stamped name
+ *     switchable rather than stranding it in a config's off-list with no way
+ *     to switch it back on. The widgets used to get a bare `string[]` of
+ *     built-ins here and never read it — the grid was drawn from a static
+ *     list, so a custom type could not be filtered at all.
  *   - regions: distinct `region:<name>` tag values across the live fleet, the
  *     same tags the `regionTags` filter matches. Sorted.
  *   - fortigates: `{name, regions}` entries for the "Selected FortiGates"
@@ -1335,8 +1342,13 @@ export async function getFilterOptions(): Promise<FilterOptions> {
   // assets after its row was deleted) gets its snake_case value humanized.
   const labelFor = (name: string) =>
     labels.get(name) || name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  const customTypes = [...present]
-    .filter((t) => t && !(BUILTIN_ASSET_TYPES as readonly string[]).includes(t))
+  // Registry first (the vocabulary Server Settings shows, whether or not the
+  // fleet owns one yet), then any orphan name still stamped on a live asset.
+  const customNames = new Set<string>();
+  for (const name of [...registryRows.map((r) => r.name), ...present]) {
+    if (name && !(BUILTIN_ASSET_TYPES as readonly string[]).includes(name)) customNames.add(name);
+  }
+  const customTypes = [...customNames]
     .map((name) => ({ name, label: labelFor(name) }))
     .sort((a, b) => a.label.localeCompare(b.label));
   return {

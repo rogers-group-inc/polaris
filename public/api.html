@@ -549,8 +549,9 @@
             <span class="gate">assets:read</span></div>
           <p><code>{ assetTypes, regions, fortigates }</code> — the values the noc-summary
             filters accept. <code>assetTypes</code> is <code>{ name, label }</code> entries:
-            every built-in type followed by every operator-added type present in the fleet,
-            registry-labelled. Empty arrays (not 403) without <code>assets:read</code>.</p>
+            every built-in type followed by every operator-added type the asset-type
+            registry carries (plus any custom name still worn by a live asset whose
+            registry row is gone), registry-labelled. Empty arrays (not 403) without <code>assets:read</code>.</p>
         </div>
       </section>
 
