@@ -500,7 +500,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** In-app software update check, availability detection (Docker vs git checkout), update application pipeline (backup→pull→npm ci→prisma generate→tsc→migrate→restart), and progress tracking.
 
-**Public API:** `initUpdateStatus`, `getUpdateStatus`, `isUpdateMechanismAvailable`, `clearUpdateStatus`, `checkForUpdates`, `applyUpdate`, `getRecentCommits`, `restartService`, plus the two pure shell-safety predicates `isSafeGitRef` / `isSafeRepoUrl` (exported for tests/unit/updateTrain.test.ts).
+**Public API:** `initUpdateStatus`, `getUpdateStatus`, `isUpdateMechanismAvailable`, `clearUpdateStatus`, `checkForUpdates`, `applyUpdate`, `getRecentCommits`, `restartService`, plus the two pure shell-safety predicates `isSafeGitRef` / `isSafeRepoUrl` (exported for tests/unit/updateTrain.test.ts) and the test seams `_setExecRunnerForTests` / `_resetApplyingForTests` / `_setRunningCommitForTests` (tests/unit/updatePipeline.test.ts).
 
 **Cross-service deps:** `services/backupService.ts` (`createBackup` for the pre-update dump), `services/eventLogService.ts` (the `server.update.*` audit trail). Spawns git / npm / the project's own Prisma CLI by path (`PRISMA_CLI`, never `npx`), reads/writes `.update-status.json`.
 
