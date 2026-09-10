@@ -4319,6 +4319,9 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   text-decoration: none;
   color: inherit;
   border-radius: var(--radius-sm);
+  /* Active Alerts marks an alert with no device (an event / host_metric rule)
+     clickable too — its row is a <div>, which carries no pointer of its own. */
+  cursor: pointer;
 }
 .recent-item-link:hover { background: var(--color-bg-elevated); }
 

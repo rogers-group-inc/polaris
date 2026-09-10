@@ -1098,6 +1098,17 @@ export interface AlertRow {
   severity: string;
   raisedAt: Date;
   ruleName: string | null;
+  /** The KIND of automation behind the alert — the raising rule's
+   *  `trigger.type` (`asset_metric` | `asset_state` | `host_metric` | `event` |
+   *  `change` | `composite`), null when the rule is gone or its trigger is
+   *  unreadable. Carried for the widget's "event-triggered alerts" toggle: an
+   *  event rule fires off an audit Event (`agent.disconnected`, a failed sync)
+   *  rather than off a reading, so an operator watching device health wants
+   *  them out of the feed while the operator watching integrations wants them
+   *  in. Read from the rule, not stored on the Notification, because the
+   *  automation is where the kind lives — a rule retyped after the alert was
+   *  raised is still the rule the alert belongs to. */
+  triggerType: string | null;
   acknowledged: boolean;
   acknowledgedBy: string | null;
 }
@@ -1153,12 +1164,13 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
       ...(assetIds ? { OR: [{ assetId: { in: assetIds } }, { assetId: null }] } : {}),
     },
     select: {
-      id: true, assetId: true, assetHostname: true, dimension: true, message: true,
+      id: true, ruleId: true, assetId: true, assetHostname: true, dimension: true, message: true,
       severity: true, triggeredAt: true,
       acknowledged: true, acknowledgedBy: true, rule: { select: { name: true } },
     },
     orderBy: { triggeredAt: "desc" },
   });
+  const triggerTypeByRule = await triggerTypesFor(rows);
   const out: AlertRow[] = rows.map((n) => ({
     id: n.id,
     assetId: n.assetId ?? null,
@@ -1168,6 +1180,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     severity: n.severity,
     raisedAt: n.triggeredAt,
     ruleName: n.rule?.name ?? null,
+    triggerType: (n.ruleId && triggerTypeByRule.get(n.ruleId)) || null,
     acknowledged: n.acknowledged,
     acknowledgedBy: n.acknowledgedBy ?? null,
   }));
@@ -1181,6 +1194,31 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     return compareDimensions(a.dimension, b.dimension);
   });
   return { alerts: limit === null ? out : out.slice(0, limit), total: out.length };
+}
+
+/**
+ * ruleId → `trigger.type`, for the alert rows just fetched.
+ *
+ * One extra query over the DISTINCT rules present, not a `rule: { trigger }`
+ * join on the notification select: `trigger` is a JSON column carrying a whole
+ * condition tree (a composite rule's runs to kilobytes), and the join would
+ * ship one copy PER ALERT. A fleet of 2000 assets losing a gate has thousands
+ * of uncleared rows behind a handful of automations, so the join is megabytes
+ * of duplicate JSON on a feed that ticks every 30s; the id set is tens of rows.
+ */
+async function triggerTypesFor(rows: { ruleId: string | null }[]): Promise<Map<string, string>> {
+  const ruleIds = [...new Set(rows.map((r) => r.ruleId).filter((id): id is string => !!id))];
+  if (!ruleIds.length) return new Map();
+  const rules = await prisma.notificationRule.findMany({
+    where: { id: { in: ruleIds } },
+    select: { id: true, trigger: true },
+  });
+  const out = new Map<string, string>();
+  for (const r of rules) {
+    const t = (r.trigger as { type?: unknown } | null)?.type;
+    if (typeof t === "string") out.set(r.id, t);
+  }
+  return out;
 }
 
 /** Natural-order compare for a dimension label (port2 < port10). Nulls last. */
