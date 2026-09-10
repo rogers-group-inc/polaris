@@ -15,6 +15,7 @@ vi.mock("../../src/db.js", () => ({
     assetTypeDef: { findMany: vi.fn() },
     event: { findMany: vi.fn() },
     notification: { findMany: vi.fn() },
+    notificationRule: { findMany: vi.fn() },
     $queryRawUnsafe: vi.fn(),
     $queryRaw: vi.fn(),
   },
@@ -37,12 +38,16 @@ const rawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 const rawQuery = prisma.$queryRaw as unknown as ReturnType<typeof vi.fn>;
 const resolve = resolveMonitorSettings as unknown as ReturnType<typeof vi.fn>;
 const notifFindMany = (prisma as unknown as { notification: { findMany: ReturnType<typeof vi.fn> } }).notification.findMany;
+const ruleFindMany = (prisma as unknown as { notificationRule: { findMany: ReturnType<typeof vi.fn> } }).notificationRule.findMany;
 const typeDefFindMany = (prisma as unknown as { assetTypeDef: { findMany: ReturnType<typeof vi.fn> } }).assetTypeDef.findMany;
 
 beforeEach(() => {
   vi.clearAllMocks();
   // Default: no active alerts — feeds keep their base ordering.
   notifFindMany.mockResolvedValue([]);
+  // Default: the alert rows name no rule, so the trigger-kind lookup finds
+  // nothing to look up (getRecentAlerts skips the query on an empty id set).
+  ruleFindMany.mockResolvedValue([]);
   // Default: an empty asset-type registry (only getFilterOptions reads it).
   typeDefFindMany.mockResolvedValue([]);
 });
@@ -475,13 +480,51 @@ describe("getRecentAlerts", () => {
     expect(r.alerts[0]).toEqual({
       id: "n1", assetId: "asset-1", hostname: "fw-1", dimension: null,
       message: "fw-1 is down", severity: "critical", raisedAt: t,
-      ruleName: "Asset down", acknowledged: true, acknowledgedBy: "jsmith",
+      ruleName: "Asset down", triggerType: null, acknowledged: true, acknowledgedBy: "jsmith",
     });
     // It reads ALERTS, never audit Events — the whole point of the feed.
     expect(eventFindMany).not.toHaveBeenCalled();
     expect(notifFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ cleared: false }),
     }));
+  });
+
+  it("carries each alert's trigger kind, looked up once per DISTINCT rule", async () => {
+    // The widget's "Event-triggered alerts" toggle filters on this. The lookup
+    // is one query over the distinct rules rather than a join on the
+    // notification select, because `trigger` is a whole condition tree and the
+    // join ships one copy per alert — thousands of them when a gate goes down.
+    const t = new Date("2026-06-20T00:00:00Z");
+    notifFindMany.mockReset();
+    notifFindMany.mockResolvedValueOnce([
+      { id: "n1", ruleId: "r-evt", assetId: null, assetHostname: null, message: "agent gone", severity: "warning", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: { name: "Agent disconnected" } },
+      { id: "n2", ruleId: "r-evt", assetId: "a2", assetHostname: "sw-1", message: "agent gone", severity: "warning", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: { name: "Agent disconnected" } },
+      { id: "n3", ruleId: "r-cpu", assetId: "a3", assetHostname: "sw-2", message: "cpu", severity: "warning", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: { name: "High CPU" } },
+    ]);
+    ruleFindMany.mockResolvedValueOnce([
+      { id: "r-evt", trigger: { type: "event", actionPattern: "agent.disconnected" } },
+      { id: "r-cpu", trigger: { type: "asset_metric", metric: "cpuPercent" } },
+    ]);
+    const r = await noc.getRecentAlerts();
+    expect(r.alerts.map((x) => [x.id, x.triggerType])).toEqual([
+      ["n1", "event"], ["n2", "event"], ["n3", "asset_metric"],
+    ]);
+    expect(ruleFindMany).toHaveBeenCalledTimes(1);
+    expect(ruleFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: ["r-evt", "r-cpu"] } },
+    }));
+  });
+
+  it("leaves triggerType null when the rule is gone or its trigger is unreadable", async () => {
+    const t = new Date("2026-06-20T00:00:00Z");
+    notifFindMany.mockReset();
+    notifFindMany.mockResolvedValueOnce([
+      { id: "n1", ruleId: "r-gone", assetHostname: "a", message: "m", severity: "warning", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: null },
+      { id: "n2", ruleId: "r-odd", assetHostname: "b", message: "m", severity: "warning", triggeredAt: t, acknowledged: false, acknowledgedBy: null, rule: { name: "r" } },
+    ]);
+    ruleFindMany.mockResolvedValueOnce([{ id: "r-odd", trigger: null }]);
+    const r = await noc.getRecentAlerts();
+    expect(r.alerts.every((x) => x.triggerType === null)).toBe(true);
   });
 
   it("carries the dimension, so one automation's per-port alerts are tellable apart", async () => {

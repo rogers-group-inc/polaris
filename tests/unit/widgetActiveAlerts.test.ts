@@ -35,8 +35,9 @@ interface AlertRow {
   acknowledged?: boolean;
   acknowledgedBy?: string | null;
   raisedAt?: string;
+  triggerType?: string | null;
 }
-interface Cfg { minSeverity?: string; rowLimit?: number | null }
+interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string }
 interface WidgetModule {
   type: string;
   defaultConfig: Cfg & Record<string, unknown>;
@@ -217,13 +218,18 @@ describe("row contents", () => {
     }
   });
 
-  it("leaves an alert about Polaris itself unlinked — there is no device page", () => {
-    // A host_metric rule or a system-scoped event alert carries no assetId.
+  it("keeps an alert about Polaris itself unlinked but ACTIONABLE — no device page, still an alert", () => {
+    // A host_metric rule or an event-triggered alert carries no assetId, so
+    // there is no href to give it. It used to be an inert div because of that,
+    // which made the alerts most likely to need a human the only ones nobody
+    // could acknowledge or clear from here. It carries the alert id instead.
     const el = render([alert({ id: "a", severity: "critical", assetId: null, hostname: "Polaris server" })], 1,
       { minSeverity: "warning" });
     const row = rowsOf(el)[0];
     expect(row.tagName.toLowerCase()).toBe("div");
     expect(row.hasAttribute("data-asset-id")).toBe(false);
+    expect(row.getAttribute("data-alert-id")).toBe("a");
+    expect(row.getAttribute("class")).toContain("recent-item-link");
   });
 
   it("keeps an acknowledged alert listed, dims the ALERT, and names who has it", () => {
@@ -258,6 +264,46 @@ describe("row contents", () => {
   });
 });
 
+describe("event-triggered alerts", () => {
+  // An event rule fires off an audit Event (an agent disconnecting, a failed
+  // sync) rather than off a reading, so it answers a different question from
+  // the rest of the feed — hideable per widget, shown until someone says
+  // otherwise.
+  const evt = (id: string) => alert({ id, severity: "critical", triggerType: "event", assetId: null, hostname: null, ruleName: "Agent disconnected" });
+
+  it("lists them by default, so an existing dashboard's feed does not change under the control", () => {
+    const el = render([evt("e"), alert({ id: "d", severity: "critical" })], 2, { minSeverity: "warning", rowLimit: 50 });
+    expect(rowsOf(el)).toHaveLength(2);
+  });
+
+  it("hides only the EVENT kind when the gear says hide", () => {
+    // A `change` rule (firmware moved, the switch behind an asset changed) is
+    // about the device, so it stays — as does everything metric/state-driven.
+    const el = render([
+      evt("e"),
+      alert({ id: "chg", severity: "critical", triggerType: "change" }),
+      alert({ id: "cpu", severity: "critical", triggerType: "asset_metric" }),
+      alert({ id: "old", severity: "critical" }), // pre-upgrade cached row: no triggerType at all
+    ], 4, { minSeverity: "warning", rowLimit: 50, eventAlerts: "hide" });
+    expect(rowsOf(el).map((r: any) => r.getAttribute("data-alert-id"))).toEqual(["chg", "cpu", "old"]);
+  });
+
+  it("names the event filter, not the severity floor, when it is what emptied the widget", () => {
+    const el = render([evt("e1"), evt("e2")], 2, { minSeverity: "warning", eventAlerts: "hide" });
+    expect((el.querySelector(".empty-state") as any).textContent).toBe("No active alerts — event-triggered alerts are hidden");
+  });
+
+  it("does not read as a truncated feed just because rows were filtered out", () => {
+    // The overflow note measures the SERVER cap against what was FETCHED. Off
+    // the filtered set it would announce "Showing 1 of 3 active alerts — raise
+    // Row limit to fetch more" over a feed that sent everything it had.
+    const el = render([evt("e1"), evt("e2"), alert({ id: "d", severity: "critical" })], 3,
+      { minSeverity: "warning", rowLimit: 50, eventAlerts: "hide" });
+    expect(rowsOf(el)).toHaveLength(1);
+    expect(noteText(el)).toBeNull();
+  });
+});
+
 describe("gear config", () => {
   it("offers a row limit seeded at the default, and warns that the cap is severity-ordered", () => {
     const el = mountWidget();
@@ -286,5 +332,29 @@ describe("gear config", () => {
   it("ships a defaultConfig carrying the row limit", () => {
     expect(mod.defaultConfig.rowLimit).toBe(50);
     expect(mod.defaultConfig.minSeverity).toBe("warning");
+    expect(mod.defaultConfig.eventAlerts).toBe("show");
+  });
+
+  it("offers Show/Hide for event-triggered alerts, seeded at Show", () => {
+    const el = mountWidget();
+    mod.renderConfig(el, {}, () => {});
+    const sel = el.querySelector('[data-k="eventAlerts"]') as any;
+    const selected = Array.from(sel.querySelectorAll("option"))
+      .filter((o: any) => o.hasAttribute("selected")).map((o: any) => o.getAttribute("value"));
+    expect(selected).toEqual(["show"]);
+    // The hidden rows still spend the server's cap — say so where it's set.
+    expect(el.textContent).toContain("still count against the row limit");
+  });
+
+  it("seeds the control from a saved hide, and writes the choice back", () => {
+    const el = mountWidget();
+    const changes: Array<[string, unknown]> = [];
+    mod.renderConfig(el, { eventAlerts: "hide" }, (k, v) => changes.push([k, v]));
+    const sel = el.querySelector('[data-k="eventAlerts"]') as any;
+    expect(Array.from(sel.querySelectorAll("option"))
+      .filter((o: any) => o.hasAttribute("selected")).map((o: any) => o.getAttribute("value"))).toEqual(["hide"]);
+    sel.value = "show";
+    sel.dispatchEvent(new (doc.defaultView as any).Event("change"));
+    expect(changes).toEqual([["eventAlerts", "show"]]);
   });
 });
