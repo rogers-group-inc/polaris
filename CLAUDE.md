@@ -26,8 +26,8 @@ invariants and "when changing this" checklists are what make a change land right
 | `polaris-agent` | anything under `agent/`, agent install/build/upgrade, cert pins, `ManagedAgent`, sample streams | auto |
 | `polaris-tech-lifecycle` | EOL dates, a version pin or minimum version, bumping Node / Postgres / Go / a dependency major, `npm audit`, Dependabot | auto |
 | `polaris-worktree-workflow` | the start of every coding task; "worktree", "lock", "dev environment", "merge", "push" | auto + `/polaris-worktree-workflow` |
-| `polaris-deploy` | env vars, systemd/nginx/Docker, the updater, before any push | `/polaris-deploy` only |
-| `polaris-docs-sync` | before every commit; after `check:docs` fails | `/polaris-docs-sync` only |
+| `polaris-deploy` | a task is done: it runs docs-sync, audits deploy surfaces, commits, merges and pushes; env vars, systemd/nginx/Docker, the updater | `/polaris-deploy` only |
+| `polaris-docs-sync` | a commit made outside `/polaris-deploy`; after `check:docs` fails | `/polaris-docs-sync` only |
 | `polaris-design-sync` | publishing the UI kit to the Claude Design project; after the external kit is lifted into `design/` | `/polaris-design-sync` only |
 
 In-place references the skills point at: `.env.example` (runtime variables, with comments),
@@ -49,8 +49,9 @@ Both are fed from this repo's commits, not edited on their own schedule: the `/p
    `WORKLOCK` file at its root (one line: ISO timestamp + purpose). A PreToolUse hook refuses
    Edit/Write inside the repo without one.
 2. **Finishing a task = delete `WORKLOCK`, then commit everything in the worktree.** Run
-   `/polaris-docs-sync` first. This end-of-work commit does not wait for approval; merges and
-   pushes do.
+   `/polaris-docs-sync` first — or `/polaris-deploy`, which runs it and carries on through
+   merge and push. The end-of-work commit does not wait for approval; merges and pushes do,
+   and `/polaris-deploy` is that approval.
 3. **A dev environment = a `DEVLOCK` file at the worktree root + one podman stack per worktree**
    (`podman compose -f compose.dev.yml -p polaris-<slug>`; podman, never docker).
 4. **"merge"** → list every worktree WITHOUT a lock file as a numbered menu, merge the chosen
@@ -142,7 +143,7 @@ npm run check:docs && npm run check:versions && npm run check:deps
 - All audit-worthy actions (creates, updates, deletes, discovery events) must write an `Event` record.
 - **Commits.** Each logical change gets its own commit; don't batch unrelated work. Inside a worktree the end-of-work commit (after deleting `WORKLOCK`) happens without asking — see Session workflow. Merging to `main` and pushing happen only when the user says so.
 - **Run `/polaris-docs-sync` before the end-of-work commit.** It names the skill reference entries each kind of change must refresh (models, services, jobs, routes, rules, UI canonicals, env vars, metrics) and runs `npm run check:docs`, which enforces the structural half (every model / service / job / route named, no `file:line` refs, every service has a touches entry, every referenced path exists). Anything the change moved, broke or invalidated gets refreshed in the same commit — the indexes only stay trustworthy if they are reviewed every commit.
-- **Never push without the user's explicit go-ahead.** "push" runs `/polaris-deploy`'s deployment-surface audit (README, `docs/INSTALL.md`, `deploy/` scripts, Dockerfile / compose) first, then the push protocol in `/polaris-worktree-workflow`.
+- **Never push without the user's explicit go-ahead.** "push" and `/polaris-deploy` are that go-ahead; both run the deployment-surface audit (README, `docs/INSTALL.md`, `deploy/` scripts, Dockerfile / compose), then the push protocol in `/polaris-worktree-workflow`.
 - **Production is updated through the in-app updater** (Server Settings → Maintenance), which also syncs the shipped systemd units and nginx config. Do not suggest `git pull` or manual restart steps unless asked.
 - **Version is automatic** — never edit the patch in `package.json`. See the version policy above.
 - **FortiManager ↔ standalone FortiGate parity.** Treat the FortiManager and standalone FortiGate integrations as paired surfaces. Whenever you add or change a FortiManager-side feature — new tab, config field, toggle, push pathway, monitoring stream, filter, etc. — evaluate whether the same change applies to the standalone FortiGate path and, if so, ship both in the same change. The two integrations talk to the same FortiOS device fleet via different transports (FMG proxy/direct vs. direct REST), so most user-visible features make sense on both. Only skip parity when the feature is structurally FMG-only (multi-FortiGate device filter, ADOM scoping, FMG-proxy concurrency tuning). UI: the Add/Edit modal tab layouts (`General` / `Filters` / `Monitoring` / `DHCP Push` / `Quarantine Push` / `Description Sync` / `SD-WAN` / `Geographic Location`) should look identical between the two types — diverge only on the tab content where the integrations genuinely differ. Backend: prefer `buildTransportForIntegration()`-style helpers that dispatch on integration type so push/quarantine/lease-release pathways stay generic instead of hardcoding `type === "fortimanager"` checks.

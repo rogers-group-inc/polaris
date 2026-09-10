@@ -1,6 +1,6 @@
 ---
 name: polaris-docs-sync
-description: "Pre-commit documentation review for Polaris: which skill reference file each kind of change must update (new Prisma model, service, job, route, permission key, env var, metric, agent stream, business rule, UI canonical, integration type), the lockstep checklists, the skill-authoring constraints, and how to run and fix npm run check:docs. Run /polaris-docs-sync before every commit and after check-docs fails."
+description: "Pre-commit documentation review for Polaris: which skill reference file each kind of change must update (new Prisma model, service, job, route, permission key, env var, metric, agent stream, business rule, UI canonical, integration type), the lockstep checklists, the skill-authoring constraints, and how to run and fix npm run check:docs. Run /polaris-docs-sync before every commit and after check-docs fails; /polaris-deploy runs this review itself as its first step, so a task shipped through it never needs a separate invocation."
 disable-model-invocation: true
 ---
 
@@ -15,6 +15,10 @@ entry, every referenced path exists, every reference file linked and under size 
 cannot judge whether prose is still accurate. That is what this review is for.
 
 ## The procedure (before the end-of-work commit)
+
+`/polaris-deploy` runs this procedure as step 1 of its release pipeline, over the whole branch,
+before its deploy audit, commit, merge and push. Invoke it on its own only for a commit made
+outside that pipeline, or after `check:docs` fails.
 
 1. **List what the change touched**: models, services, jobs, routes, utils, public/ files,
    env vars, metrics, agent code, deploy artifacts, rules cited in the diff.

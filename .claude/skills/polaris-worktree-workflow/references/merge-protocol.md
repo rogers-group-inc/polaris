@@ -1,6 +1,8 @@
 # Merge protocol
 
-Triggered by the user saying "merge" (in any chat, about any worktree). Merging never pushes.
+Triggered by the user saying "merge" (in any chat, about any worktree), or as stage 5 of
+`/polaris-deploy`. Merging on its own never pushes; inside `/polaris-deploy` it continues into
+`push-protocol.md`.
 
 ## 1. Inventory the worktrees
 
@@ -41,7 +43,9 @@ For each selected worktree:
 1. If dirty: commit the pending changes **in that worktree** (`git -C <path> add -A && git -C
    <path> commit -m "wip: pending changes at merge time"`), so nothing is lost and the merge
    is of a real commit.
-2. From the main checkout, on `main`: `git merge --no-ff worktree-<slug>` (a merge commit per
+2. From the main checkout, on `main` (a worktree-isolated session must `ExitWorktree` with
+   action keep first — its Bash guard refuses git commands aimed at the main checkout):
+   `git merge --no-ff worktree-<slug>` (a merge commit per
    worktree keeps each unit of work identifiable in history; use the branch's own subjects in
    the merge message body).
 3. On conflict: **stop**. Do not resolve silently. Report the conflicting files and ask; the
@@ -104,8 +108,9 @@ verbatim), pass `npm run check:docs`, and merge separately.
 ## 5. Verify main
 
 After the last merge and the skill review: `npm run check:docs`, `npm run typecheck`, and the unit suite
-(`npx vitest run tests/unit --no-file-parallelism`) on `main`. Report the results. Do not push;
-the user says "push" separately, which runs `push-protocol.md`.
+(`npx vitest run tests/unit --no-file-parallelism`) on `main`. Report the results. Do not push
+unless this merge is stage 5 of `/polaris-deploy`, which continues into `push-protocol.md`;
+otherwise the user says "push" separately.
 
 ## The DEVLOCK variant (the chat's own worktree)
 

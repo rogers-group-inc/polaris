@@ -1,12 +1,14 @@
 # Push protocol
 
-Triggered by the user saying "push". That word is the go-ahead; nothing else is.
+Triggered by the user saying "push", or as the last stage of `/polaris-deploy`. Those two are
+the go-ahead; nothing else is.
 
 ## 1. Pre-push audit
 
 Run the deployment-surface audit in `/polaris-deploy` (README, `docs/INSTALL.md`, `deploy/`
 scripts, Dockerfile / compose, Grafana JSON if a metric moved). Stage any fixes as their own
-commit on `main` before pushing. If `main` is behind `origin/main`, stop and report — the user
+commit on `main` before pushing. Inside `/polaris-deploy` the audit already ran in the worktree
+(its step 2) — skip to the push. If `main` is behind `origin/main`, stop and report — the user
 decides whether to merge or rebase.
 
 ## 2. Push

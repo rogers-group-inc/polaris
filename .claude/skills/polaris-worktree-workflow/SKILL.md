@@ -12,7 +12,9 @@ description: "Polaris session workflow: start every task in its own git worktree
    `WORKLOCK` at its root. A PreToolUse hook refuses Edit/Write inside the repo otherwise.
 2. **Finishing = delete `WORKLOCK`, then commit everything in the worktree.** That
    end-of-work commit does not wait for approval (run `/polaris-docs-sync` first). Merging to
-   main and pushing happen only when the user says "merge" / "push".
+   main and pushing happen only when the user says "merge" / "push" — or invokes
+   `/polaris-deploy`, which is docs-sync → deploy audit → commit → merge → push as one pipeline
+   and is itself the go-ahead for the last two.
 3. **A dev environment = `DEVLOCK` at the worktree root + one podman stack per worktree.**
 4. **"merge"** → the merge protocol below (numbered menu of unlocked worktrees).
    **"push"** → the push protocol below (push main, clean up what was merged).
@@ -39,6 +41,9 @@ npm install --no-audit --no-fund              # own node_modules + generated Pri
 ```
 
 ## End of a task (short form)
+
+One-command form: `/polaris-deploy` does everything below and carries on through merge and
+push. The steps stay here for a commit made outside that pipeline.
 
 ```
 /polaris-docs-sync                            # refresh the skill entries the change touched
@@ -67,7 +72,8 @@ Report the branch name and say the worktree is ready to merge. Do not merge or p
 
 ## "push" (short form; full steps in push-protocol.md)
 
-1. Run `/polaris-deploy`'s pre-push audit; stage fixes as their own commit.
+1. Run `/polaris-deploy`'s deployment-surface audit; stage fixes as their own commit (skipped
+   when this push is the last stage of `/polaris-deploy` — its audit already ran in the worktree).
 2. `git push origin main`.
 3. For each worktree merged in this session (plus any `worktree-*` branch already fully merged,
    `git branch --merged main`): refuse if a lock file is present; check for directory junctions;

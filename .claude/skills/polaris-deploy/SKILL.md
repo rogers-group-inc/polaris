@@ -1,6 +1,6 @@
 ---
 name: polaris-deploy
-description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. Run /polaris-deploy before pushing, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
+description: "Polaris deployment, runtime configuration and operations: the environment-variable catalogue, split-role systemd layout (polaris.target, web/monitor@N/discovery/dash/migrate), the in-app updater and update trains, nginx front-end + managed config + cert rotation, Docker/compose, first-run setup lock, disk-space monitoring, backup/restore, install and update scripts, docs/INSTALL.md. /polaris-deploy is also the release pipeline for a finished worktree: it runs the docs-sync review itself, audits the deployment surfaces, makes the end-of-work commit, merges to main and pushes — invoking it is the go-ahead for the merge and the push. Run it when a task is done, when adding or changing an env var, or when a change touches deploy/, Dockerfile, nginx, systemd units or the updater."
 disable-model-invocation: true
 ---
 
@@ -27,15 +27,48 @@ manual restart unless asked.
 | the local dev stack (podman/docker compose, host-native, DB reset) | `DEVELOPMENT.md` |
 | the shipped units, nginx template, sudo wrapper, update scripts | `deploy/` |
 | the production image and the multi-container stack | `Dockerfile`, `docker-compose.yml` (state under `./state`) |
+| the merge menu and the push / clean-up steps this pipeline ends with | `polaris-worktree-workflow` → merge-protocol.md, push-protocol.md |
 
-## Before any push — audit the deployment surfaces
+## The release pipeline — what `/polaris-deploy` does, in order
 
-When the user says "push", before running the push protocol in `/polaris-worktree-workflow`:
+Invoking this skill on a finished worktree is the user's go-ahead for everything below,
+**including the merge and the push**. Do not ask for the docs-sync review, the merge or the
+push separately; the only things that stop the pipeline are a failing check, a merge
+conflict, or `main` behind `origin/main`.
+
+1. **Docs-sync review — run it, never ask the user to.** Read
+   `.claude/skills/polaris-docs-sync/SKILL.md` and follow its procedure over the whole branch
+   (`git diff main...HEAD`). The Skill tool refuses that skill by design
+   (`disable-model-invocation`); reading the file and following it is how this pipeline runs
+   it. While the branch is still one diff, also walk the merge-time skill review in
+   `polaris-worktree-workflow` → merge-protocol.md § 4 (new invariant → numbered rule, new
+   subsystem → entry or skill, routing drift, stale prose, traps) and make those edits here
+   in the worktree — after the merge they would need a worktree of their own.
+2. **Deployment-surface audit** — the three checks in the next section. Fixes are commits in
+   the worktree, before the merge, so `main` never receives a direct commit.
+3. **Verify**: `npm run check:docs && npm run typecheck && npx vitest run tests/unit
+   --no-file-parallelism`, plus `npm run check:versions` when a pin moved. A failure stops
+   the pipeline; report the output.
+4. **End-of-work commit**: `rm WORKLOCK`, commit everything pending (one logical change per
+   commit). A `DEVLOCK` means a dev stack is up: `podman compose -f compose.dev.yml -p
+   polaris-<slug> down -v`, delete the lock, then commit.
+5. **Merge** per merge-protocol.md, from the main checkout — a worktree-isolated session must
+   `ExitWorktree` (keep) first; its Bash guard refuses git aimed at the main checkout. This
+   chat's worktree is merged without a menu (`git merge --no-ff worktree-<slug>`); every
+   other unlocked worktree is offered as the numbered menu and merged only if picked, with
+   the § 4 review done at merge time as usual. Conflict → stop and report. Then
+   `npm run check:docs` + `npm run typecheck` on `main`.
+6. **Push** per push-protocol.md: `git push origin main` (stop and report if `main` is behind
+   `origin/main`), then remove the merged worktrees and their branches.
+7. **Report**: the pushed range, worktrees and branches removed, skill entries changed, and
+   anything skipped with the reason.
+
+## The deployment-surface audit (pipeline step 2; also what a bare "push" runs)
 
 1. Re-read `README.md`, `docs/INSTALL.md`, the install/update scripts under `deploy/` and
    `scripts/`, and the Dockerfile / compose files for anything the change invalidated
    (a new env var, a new runtime dependency, a changed port, a new unit, a new nginx
-   location). Stage the fixes as their own commit before pushing.
+   location). Stage the fixes as their own commit.
 2. If a `polaris_*` metric changed, the Grafana dashboard JSON changed with it.
 3. If a dependency or Go pin moved, `Dockerfile`, every `deploy/setup-*.{sh,ps1}`,
    `docs/INSTALL.md` and `agent/go.mod` moved in lockstep. Run `npm run check:versions` to
