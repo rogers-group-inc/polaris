@@ -369,9 +369,25 @@ move is a project, not a dependency bump, so they are listed here and ignored in
 - **the Prisma family** — `prisma`, `@prisma/client` and `@prisma/adapter-pg` are **one
   version** and must move together. Driver-adapter setup, and the generated client is
   gitignored so every checkout regenerates via `postinstall`.
-- **zod 3**, **typescript 6**, **eslint 10** + `typescript-eslint 8`, **vitest 4** +
+- **zod 3**, **typescript 6**, **eslint 10** + `typescript-eslint 8`, **vitest 5** +
   `@vitest/coverage-v8` (versions must match), **pg 8**, **pg-boss 12**, **pino 10**,
-  **undici 6**, **multer 2**, **happy-dom 20**.
+  **undici 8**, **multer 2**, **happy-dom 20**.
+  - **undici is a LOCKSTEP member with Node, not a free npm major** — the one entry in this
+    list that has a second declaration site, and it is not in a file: it is
+    `process.versions.undici`, the undici bundled into whatever Node major is pinned (7.24.4
+    on Node 24.14.1). A `Dispatcher` is only valid to the undici copy that created it, so
+    pairing our `Agent` with Node's global `fetch` breaks the moment the two majors differ.
+    That is what shipped on 2026-09-09: the range moved 6 → 8 against Node's bundled 7 and
+    every FortiManager and standalone-FortiGate request with `verifySsl:false` — connection
+    test, discovery, DHCP/quarantine push, response-time probes — died at the transport with
+    `UND_ERR_INVALID_ARG — invalid onRequestStart method` (undici 8 renamed the dispatcher
+    handler interface). **The coupling is now removed rather than managed**:
+    `src/utils/tlsDispatcher.ts → tlsFetch()` takes both the fetch and the Agent from this
+    dependency, so the majors are free to diverge again. Keep it that way — the failure mode
+    is invisible to `typecheck`, `npm audit` and `check:versions` alike, and the suite only
+    catches it because `tests/unit/tlsDispatcher.test.ts` dispatches over a real loopback
+    server instead of stubbing `fetch`. A **Node** major bump is therefore also an undici
+    event: re-read that util before assuming otherwise.
   - eslint went 9 → 10 in 2026-09 as the fix for a `js-yaml` advisory: eslint 10 drops
     `@eslint/eslintrc`, which was the only thing pulling it, so the vulnerable package left
     the tree rather than being bumped. Clean on this codebase (0 errors).

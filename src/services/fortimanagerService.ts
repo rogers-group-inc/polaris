@@ -7,7 +7,7 @@
 import { Netmask } from "netmask";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
-import { insecureTlsDispatcher } from "../utils/tlsDispatcher.js";
+import { tlsFetch } from "../utils/tlsDispatcher.js";
 import { logger } from "../utils/logger.js";
 import { normalizeMacOrNull, normalizeMacsDistinct } from "../utils/mac.js";
 import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
@@ -535,18 +535,19 @@ async function rpcAttempt(
     };
     if (apiUser) headers["access_user"] = apiUser;
 
-    let res: Awaited<ReturnType<typeof fetch>>;
+    let res: Awaited<ReturnType<typeof tlsFetch>>;
     try {
-      // verifySsl=false relaxes TLS for THIS connection only (undici
-      // dispatcher) — never via the process-global env flip, which raced
-      // concurrent requests. See src/utils/tlsDispatcher.ts.
-      res = await fetch(url, {
+      // verifySsl=false relaxes TLS for THIS connection only (an undici
+      // dispatcher scoped to this request) — never via the process-global env
+      // flip, which raced concurrent requests. tlsFetch owns the pairing: a
+      // dispatcher is only valid to the undici copy that created it, so the
+      // fetch must not be Node's global one. See src/utils/tlsDispatcher.ts.
+      res = await tlsFetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
         signal: controller.signal,
-        ...(verifySsl === false ? { dispatcher: insecureTlsDispatcher() } : {}),
-      } as RequestInit);
+      }, verifySsl);
     } catch (err: any) {
       // Intentional external abort (integration re-saved) — propagate as-is, never retry.
       if (externalSignal?.aborted && !timedOut) throw err;

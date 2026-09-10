@@ -13,7 +13,8 @@
 import { Netmask } from "netmask";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
-import { insecureTlsDispatcher } from "../utils/tlsDispatcher.js";
+import { tlsFetch } from "../utils/tlsDispatcher.js";
+import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { normalizeMacOrNull, normalizeMacsDistinct } from "../utils/mac.js";
 import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
@@ -124,7 +125,7 @@ export async function testConnection(config: FortiGateConfig): Promise<{
  * either alone is far more actionable than the HTTP status. Never throws — a
  * diagnostic must not replace the error it is describing.
  */
-async function fgErrorDetail(res: Response): Promise<string> {
+async function fgErrorDetail(res: UndiciResponse): Promise<string> {
   try {
     const text = await res.text();
     if (!text) return "";
@@ -178,19 +179,21 @@ export async function fgRequest<T>(
     // but some admin/audit configurations log this header.
     if (config.apiUser) headers["access_user"] = config.apiUser;
 
-    // verifySsl=false relaxes TLS for THIS connection only (undici
-    // dispatcher) — never via the process-global NODE_TLS_REJECT_UNAUTHORIZED
-    // flip, which raced the parallel per-device query chains.
-    const init: RequestInit & { dispatcher?: ReturnType<typeof insecureTlsDispatcher> } = {
+    // verifySsl=false relaxes TLS for THIS connection only (an undici
+    // dispatcher scoped to this request) — never via the process-global
+    // NODE_TLS_REJECT_UNAUTHORIZED flip, which raced the parallel per-device
+    // query chains. tlsFetch owns the pairing: a dispatcher is only valid to
+    // the undici copy that created it, so the fetch must not be Node's global
+    // one. See src/utils/tlsDispatcher.ts.
+    const init: UndiciRequestInit = {
       method,
       headers,
       signal: controller.signal,
-      ...(config.verifySsl === false ? { dispatcher: insecureTlsDispatcher() } : {}),
     };
     if (opts.body !== undefined && (method === "POST" || method === "PUT")) {
       init.body = JSON.stringify(opts.body);
     }
-    const res = await fetch(url, init);
+    const res = await tlsFetch(url, init, config.verifySsl);
 
     // 401 and 403 are DIFFERENT operator problems and must not share a message.
     // 401 = the token is wrong. 403 = the token authenticated fine, but FortiOS
