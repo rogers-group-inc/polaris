@@ -90,6 +90,7 @@ const DEFAULT_USERNAME = "polaris-agent";
 
 export interface PlatformAccountConfig {
   accountMode: SshOnboardingAccountMode;
+  /** "" only in existing mode, until an operator names the account. */
   username: string;
 }
 
@@ -112,11 +113,22 @@ export interface WindowsSshOnboardingState extends WindowsSshOnboardingConfig {
   fingerprint: string | null;
 }
 
-function parsePlatform(raw: unknown, fallbackUsername: string): PlatformAccountConfig {
+/**
+ * Only a CREATED account has a default name. An existing account has none: it
+ * must name an administrator that is really on the endpoints, and defaulting
+ * it to polaris-agent — an account nothing creates in that mode — let the card
+ * publish a fleet script whose credential could not log in anywhere.
+ */
+function defaultUsernameFor(accountMode: SshOnboardingAccountMode): string {
+  return accountMode === "create" ? DEFAULT_USERNAME : "";
+}
+
+function parsePlatform(raw: unknown): PlatformAccountConfig {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const accountMode: SshOnboardingAccountMode = o.accountMode === "create" ? "create" : "existing";
   return {
-    accountMode: o.accountMode === "create" ? "create" : "existing",
-    username: typeof o.username === "string" && o.username ? o.username : fallbackUsername,
+    accountMode,
+    username: typeof o.username === "string" && o.username ? o.username : defaultUsernameFor(accountMode),
   };
 }
 
@@ -140,8 +152,8 @@ function parseConfig(raw: unknown): WindowsSshOnboardingConfig {
       windows: idOf("windows") ?? legacyId,
       linux: idOf("linux"),
     },
-    windows: parsePlatform(legacyWindows, DEFAULT_USERNAME),
-    linux: parsePlatform(o.linux, DEFAULT_USERNAME),
+    windows: parsePlatform(legacyWindows),
+    linux: parsePlatform(o.linux),
     polarisServerIp: typeof o.polarisServerIp === "string" ? o.polarisServerIp : "",
     generatedAt: typeof o.generatedAt === "string" && o.generatedAt ? o.generatedAt : null,
   };
@@ -253,8 +265,10 @@ export async function saveOnboardingConfig(
 
   const rawUsername = input.username === undefined ? cur.username : String(input.username ?? "");
   // Validated against the SAME rules the script generator enforces, so a bad
-  // value is rejected at save time rather than at download time.
-  const username = validateUsernameFor(platform, rawUsername, accountMode);
+  // value is rejected at save time rather than at download time. A blank field
+  // takes the mode's default — polaris-agent for a created account, nothing
+  // (so the validator refuses it) for an existing one.
+  const username = validateUsernameFor(platform, rawUsername || defaultUsernameFor(accountMode), accountMode);
   const polarisServerIp = assertValidServerIp(
     input.polarisServerIp === undefined ? current.polarisServerIp : String(input.polarisServerIp ?? ""),
   );
@@ -348,7 +362,10 @@ export async function generateKeypair(actor: string): Promise<WindowsSshOnboardi
 
   for (const platform of SSH_ONBOARDING_PLATFORMS) {
     const existing = await loadManagedCredential(cfg.credentialIds[platform]);
-    const nextConfig = { username: cfg[platform].username, privateKey, publicKey, port: 22 };
+    // validateSshConfig requires a username, and an existing-mode card may not
+    // have named one yet. The placeholder is replaced by syncCredentialUsername
+    // the moment it is saved, and no script renders until then.
+    const nextConfig = { username: cfg[platform].username || DEFAULT_USERNAME, privateKey, publicKey, port: 22 };
     if (existing) {
       rotating = true;
       // REPLACE the config rather than merging it. updateCredential() routes
@@ -438,6 +455,17 @@ export async function getOnboardingScript(
     throw new AppError(400, "Generate the deployment keypair before downloading the onboarding script");
   }
   const acct = state[platform];
+  // An existing account has no default name, so an unnamed one has nothing to
+  // put in the script. Say what to do instead of the validator's bare
+  // "username is required" — this message also reaches Intune/Arc publishing.
+  // Windows detection never names the account, so it still renders.
+  if (!acct.username && (platform === "linux" || kind === "remediation")) {
+    throw new AppError(
+      400,
+      `Enter the existing ${platform === "linux" ? "Linux" : "Windows"} account Polaris signs in as on the ` +
+        "SSH Deployment card and save — an existing account has no default name",
+    );
+  }
 
   if (platform === "linux") {
     return kind === "detection"

@@ -562,7 +562,7 @@
         '</div>' +
         '<div class="form-group">' +
           '<label>Username</label>' +
-          '<input type="text" id="wssh-username" value="' + escapeHtml((s && s.username) || "") + '" placeholder="polaris-agent">' +
+          '<input type="text" id="wssh-username" value="' + escapeHtml(a.username || "") + '" placeholder="' + escapeHtml(usernamePlaceholder(mode)) + '">' +
           '<p class="hint"><code>DOMAIN\\user</code> is allowed only with an existing account — a domain account cannot be created locally.</p>' +
         '</div>' +
         '<div class="form-group">' +
@@ -644,10 +644,19 @@
     );
   }
 
+  // An existing account has no default, so the placeholder shows the shape to
+  // type. A created account left blank is saved as polaris-agent server-side.
+  function usernamePlaceholder(mode) {
+    if (mode === "create") return "polaris-agent";
+    return _platform === "linux" ? "<username>" : "<domain>\\<username>";
+  }
+
   function syncModeHint() {
+    var create = document.querySelector('input[name="wssh-mode"][value="create"]');
+    var user = el("wssh-username");
+    if (user) user.placeholder = usernamePlaceholder(create && create.checked ? "create" : "existing");
     var hint = el("wssh-mode-hint");
     if (!hint) return;
-    var create = document.querySelector('input[name="wssh-mode"][value="create"]');
     var isLinux = _platform === "linux";
     if (create && create.checked) {
       hint.textContent = isLinux
