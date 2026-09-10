@@ -1518,6 +1518,10 @@ export function triggerTypeAllowsResetEvent(type: string): boolean {
 export const RESET_EVENT_SUGGESTIONS: Record<string, string> = {
   "agent.disconnected": "agent.connected",
   "agent.upgrade_failed": "agent.upgrade_succeeded",
+  // Written when the upgrade fan-out couldn't even start on a row (rule 49) —
+  // distinct from upgrade_failed, which means the attempt reached the host and
+  // lost. Both recover on the same verb.
+  "agent.upgrade_skipped": "agent.upgrade_succeeded",
   "agent.install_failed": "agent.installed",
   "agent.uninstall_failed": "agent.uninstalled",
   "agent.build.failed": "agent.build.completed",
