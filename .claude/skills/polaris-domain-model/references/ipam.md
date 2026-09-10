@@ -4,7 +4,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 ## Definitions and invariants
 
-- **IpBlock** — top-level CIDR namespace; has many Subnets.
+- **IpBlock** — top-level CIDR namespace; has many Subnets. Its `cidr` is also a device-filter value: the condition builders' **IP block** field (`ipBlock`, `notificationTypes.SCOPE_FIELD_OPS`) stores the block's CIDR and matches `Asset.ipAddress` inside it, so a block rule covers the whole range including addresses in no defined Subnet. The consequence of storing the CIDR rather than the id: RENAMING a block is free, RE-CIDRing one does not follow into saved filters.
 
 - **Subnet** — CIDR carved from a block; has many Reservations; tracks discovery origin. `tags` carries operator tags **plus inherited `region:<name>` tags** (a subnet served by a FortiGate inside a map region inherits it, matched through `controllerIdentityKeys`) — provenance-bounded by `RegionTagAssignment`, so a reconcile strips only what it applied and hand-added region tags survive. **`fortigateSerial` is the CHASSIS identity of the serving gate** — `fortigateDevice` is a NAME, and a name cannot tell a RENAME from a REPLACEMENT, which need opposite handling. Tri-state (NULL = unknown, applies no constraint and is never backfilled), compared per run against the reporting device's whole cluster serial set so an HA failover reads as the same gate; anything else raises the `chassis-replaced` Conflict. **A retired subnet MOVES to the archive rather than going `deprecated`** — a deprecated row still holds `@@unique([blockId, cidr])`, so its address space became unrecordable rather than reusable. See business rule 41.
 

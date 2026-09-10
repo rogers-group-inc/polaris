@@ -2044,7 +2044,7 @@ async function openAutomationWizard(existing, opts) {
       none: "All child conditions must NOT be satisfied",
       notAll: "At least one child condition must NOT be satisfied",
     },
-    operatorLabels: { equals: "is equal to", notEquals: "is not equal to", contains: "contains", notContains: "does not contain", startsWith: "starts with", endsWith: "ends with", has: "is applied", notHas: "is not applied", inCidr: "is in subnet", notInCidr: "is not in subnet" },
+    operatorLabels: { equals: "is equal to", notEquals: "is not equal to", contains: "contains", notContains: "does not contain", startsWith: "starts with", endsWith: "ends with", has: "is applied", notHas: "is not applied", inCidr: "is within", notInCidr: "is not within" },
     fields: [
       { field: "assetType", label: "Device type", ops: ["equals", "notEquals"], optionsFrom: "assetTypes" },
       { field: "manufacturer", label: "Manufacturer", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "manufacturers" },
@@ -2053,6 +2053,7 @@ async function openAutomationWizard(existing, opts) {
       { field: "os", label: "Operating system", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: null },
       { field: "tag", label: "Tag", ops: ["has", "notHas"], optionsFrom: "tags" },
       { field: "subnet", label: "Subnet / IP", ops: ["inCidr", "notInCidr"], optionsFrom: "subnets" },
+      { field: "ipBlock", label: "IP block", ops: ["inCidr", "notInCidr"], optionsFrom: "ipBlocks" },
       { field: "interfaceName", label: "Device interface", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "interfaceNames" },
       { field: "ssid", label: "Broadcast SSID", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "ssids" },
       { field: "status", label: "Lifecycle status", ops: ["equals", "notEquals"], optionsFrom: null, values: ["active", "maintenance", "decommissioned", "storage", "disabled", "quarantined"] },
@@ -2311,6 +2312,7 @@ async function openAutomationWizard(existing, opts) {
       case "ssids":         return (_awScopeOptions.ssids || []).map(function (n) { return { value: n, label: n }; });
       case "tags": return (_ruleTagList || []).map(function (t) { return { value: t, label: t }; });
       case "subnets": return (_awScopeOptions.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
+      case "ipBlocks": return (_awScopeOptions.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
       default: return [];
     }
   }
