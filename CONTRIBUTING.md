@@ -39,9 +39,23 @@ DATABASE_URL=postgresql://... SESSION_SECRET=... \
   npx vitest run tests/integration --no-file-parallelism
 ```
 
-CI (`.github/workflows/docker-publish.yml`) runs typecheck + unit (`test` job)
-and the integration suite against a `postgres:17` service container
-(`integration` job); both gate the image build.
+CI (`.github/workflows/docker-publish.yml`) runs typecheck + lint + unit
+(`test` job) and the integration suite against a `postgres:17` service
+container plus a matching `postgresql-client-17` (`integration` job). It is the
+only workflow that runs the suites — `check-docs.yml` runs the structural doc
+guards, and CodeQL runs separately.
+
+Both jobs gate the image build, but note *how*: `build` declares
+`needs: [test, integration]`, so a failing suite does not fail the build — the
+build job is reported **skipped**, no image is published, and `main` carries on
+looking green. So after a push, check that `build` actually ran, not just that
+the suites passed.
+
+On Windows, `tests/integration/backupRestore.test.ts` skips itself entirely:
+its gate looks for `pg_dump` on `PATH`, which a Windows dev box normally has
+no reason to carry. A green local integration run therefore does **not**
+validate a backup or restore change — use the podman stack for that
+(`DEVELOPMENT.md`), where the container has the client tools.
 
 ## Code conventions (the load-bearing ones)
 
