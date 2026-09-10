@@ -350,6 +350,24 @@ export async function buildNodeBundle(cfg: HaConfig, role: HaRole): Promise<Buff
   const witness = requireNode(cfg, "witness");
   const self = requireNode(cfg, role);
 
+  // Checked here, not where the cert is read into the tar below. Two reasons,
+  // both learned the hard way:
+  //   - The entries.push() for a non-witness role evaluates readEnvFile()
+  //     BEFORE readProxyCert() (arguments evaluate left to right), so on a host
+  //     whose .env is unreadable the operator got a 500 about .env and could
+  //     never see this 409 — the one that names the thing they have to fix.
+  //   - issueEtcdCert() below mints a node certificate. Refusing after that
+  //     point means a cert was issued and thrown away for a request that was
+  //     never going to succeed.
+  // The witness is exempt: it gets etcd material only, and a vote does not need
+  // to be able to impersonate the application.
+  if (role !== "witness" && !process.env.POLARIS_PROXY_CERT_PATH) {
+    throw new AppError(
+      409,
+      "POLARIS_PROXY_CERT_PATH is not set — the standby must serve the same certificate agents pin.",
+    );
+  }
+
   const cert = await issueEtcdCert(cfg, self.name, self.clusterAddr, self.extraSans);
 
   const entries: TarEntry[] = [
