@@ -193,7 +193,11 @@ POLARIS_UPDATE_REPO=
 # root the whole host trusts is still rejected inside Polaris and inside npm —
 # the fingerprint is npm failing UNABLE_TO_GET_ISSUER_CERT_LOCALLY while the
 # code-pull step of the same update succeeds (that path is OpenSSL, which does
-# read the system store).
+# read the system store). Cisco Umbrella's intelligent proxy is the DNS-layer
+# variant: the registry resolves to an Umbrella address (146.112/16), so the
+# firewall never shows the real destination — same fix, its root in the OS store
+# (prod, 2026-09-10). The in-app preflight message says whether THIS process has
+# the variable, whether the file exists, or that the bundle lacks the CA.
 #
 # Read by NODE ITSELF at process start, not by the app, so it only works as a
 # real environment variable: it takes effect from .env because the shipped units
