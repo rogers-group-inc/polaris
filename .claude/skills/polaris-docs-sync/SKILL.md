@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Docs sync — the commit-time review
 
-The project memory lives in `CLAUDE.md` (always loaded, ≤15 KB) and eleven skills under
+The project memory lives in `CLAUDE.md` (always loaded, ≤15 KB) and twelve skills under
 `.claude/skills/` (loaded on demand). They only stay trustworthy if every commit refreshes
 what the change moved, broke or invalidated. A pre-commit hook and a CI job
 (`npm run check:docs`, `scripts/check-docs.mjs`) enforce the *structural* half — every
