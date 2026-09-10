@@ -28,7 +28,7 @@
   "go": [
     { "name": "github.com/gorilla/websocket", "target": "v1.5.3", "note": "The agent command channel." },
     { "name": "github.com/shirou/gopsutil/v3", "target": "v3.24.5", "note": "Reads OS internals for the sample streams - a bump can change what a metric means on one platform and not another. Verify one Linux and one Windows agent before shipping." },
-    { "name": "golang.org/x/sys", "target": "v0.20.0" }
+    { "name": "golang.org/x/sys", "target": "v0.48.0", "note": "The syscall layer under gopsutil. Its go directive tracks the current Go release closely — v0.44.0 (the first with the AIKIDO-2026-11041 fix) already requires go 1.25, and v0.48.0 requires 1.26 — so this module cannot be bumped independently of the Go floor. Cross-compile all six targets after a bump; a syscall package can build on one GOOS and fail on another." }
   ],
   "overrides": [
     { "name": "dompurify", "floor": "^3.4.14", "reason": "XSS in the sanitizer, reached through jspdf (AIKIDO-2026-404587). jspdf asks for ^3.3.1, so only a floor moves it. Browser-side PDF export, not a server path.", "runtimeReachable": true, "reviewedAt": "2026-09-09" },

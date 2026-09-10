@@ -97,6 +97,20 @@ so the review cost dwarfs the bump. That is why Dependabot watches this monthly,
 can change what a metric *means* on one platform and not another. Check one Linux and one Windows
 agent report sane values before shipping.
 
+**`golang.org/x/sys` cannot be bumped independently of the Go floor, and Dependabot will not
+say so.** Its `go` directive tracks the current Go release closely — v0.44.0 requires go 1.25,
+v0.48.0 requires 1.26 — so a PR that looks like a one-line module bump silently demands a
+toolchain move across all 14 Go pin sites. Dependabot #134 (v0.20.0 → v0.48.0) sat unmergeable
+for exactly that reason and became a trivial merge the moment the Go floor reached 1.26. **When
+a `golang.org/x/*` PR appears, read the target version's `go` directive first**:
+`go mod download golang.org/x/sys@vX.Y.Z` then read `go` out of
+`$(go env GOMODCACHE)/cache/download/golang.org/x/sys/@v/vX.Y.Z.mod`. There is no intermediate
+version to retreat to — the lowest release carrying a given fix already carries its go directive.
+
+**Cross-compile all six targets after any x/sys bump** — it *is* the syscall layer, so it can
+build on the host GOOS and fail on another: `GOOS=… GOARCH=… go build ./...` over
+linux/darwin/windows × amd64/arm64.
+
 ## Dependabot
 
 `.github/dependabot.yml`, four ecosystems.

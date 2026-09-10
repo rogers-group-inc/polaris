@@ -248,6 +248,20 @@ The 2026-09-09 floor move deliberately did **not** touch `agent/VERSION`: a tool
 not an agent release, and bumping the version would tell every enrolled agent an upgrade is
 available. Rebuild the binaries in-app when you want them rebuilt.
 
+**A MODULE bump is the other case, and it does move `agent/VERSION`.** The 2026-09-10
+`golang.org/x/sys` v0.20.0 → v0.48.0 went to 0.17.3 with regenerated `.syso` files, because
+unlike a `go` directive change it alters the code compiled into the binary — x/sys is the
+syscall layer under gopsutil, so the shipped agent genuinely differs and enrolled agents should
+be offered the upgrade. The dividing line is whether the binary's CONTENT changes, not whether
+`agent/go.mod` was edited.
+
+**The Go floor and `golang.org/x/sys` are coupled in one direction.** x/sys tracks the current
+Go release in its own `go` directive — v0.44.0 needs 1.25, v0.48.0 needs 1.26 — so the module
+cannot move ahead of the floor, and there is no older release carrying the same fix to retreat
+to. Dependabot #134 was unmergeable against the 1.22 floor for that reason alone and became a
+clean merge once the floor reached 1.26. Read the target's directive before judging such a PR;
+`dependency-audit.md` → The Go module set has the one-liner for it.
+
 ## nginx
 
 Floor **1.30** across 6 sites, installed from the nginx.org **stable** branch.
