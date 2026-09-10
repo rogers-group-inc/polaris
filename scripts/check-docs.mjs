@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Doc-drift guard for the project memory: CLAUDE.md (always loaded) plus every Markdown
-// file under .claude/skills/** (the eleven project skills and their references). Catches the
+// file under .claude/skills/** (the twelve project skills and their references). Catches the
 // *mechanically-checkable* drift that accumulated badly before the 2026-05 docs overhaul —
 // it CANNOT judge whether prose is still accurate, only structural coverage + reference
 // hygiene. The prose review is /polaris-docs-sync.
@@ -12,7 +12,7 @@
 // Exit 0 = all checks pass; exit 1 = at least one failure (with a report).
 //
 // Checks (see .claude/skills/polaris-docs-sync/references/check-docs-reference.md):
-//   docs-present               CLAUDE.md + each of the eleven SKILL.md files exist.
+//   docs-present               CLAUDE.md + each of the twelve SKILL.md files exist.
 //   no-line-numbers            No `file.ext:NNN` or prose "(line N)" references in any doc.
 //   models-documented          Every Prisma model in schema.prisma is named in some doc.
 //   files-documented           Every src/ service, job, route, util file is named in some doc.
@@ -47,6 +47,7 @@ const SKILLS = [
   "polaris-domain-model", "polaris-business-rules", "polaris-api-rbac", "polaris-change-impact",
   "polaris-ui-canon", "polaris-monitoring-discovery", "polaris-deploy", "polaris-agent",
   "polaris-docs-sync", "polaris-worktree-workflow", "polaris-tech-lifecycle",
+  "polaris-design-sync",
 ];
 const KNOWN_FRONTMATTER_KEYS = new Set(["name", "description", "user-invocable", "disable-model-invocation", "allowed-tools", "argument-hint"]);
 
