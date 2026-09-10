@@ -365,8 +365,11 @@
           if (problem) return;
           if (c.op !== undefined && Array.isArray(c.children)) { walk(c); return; }
           if (!c.value) { problem = "Every condition needs a value (or remove the empty row)."; return; }
-          if (c.field === "subnet" && !CIDR_ISH.test(c.value)) {
-            problem = 'Subnet "' + c.value + '" does not look like a CIDR or IP (e.g. 10.20.0.0/16).';
+          // Both CIDR-valued fields — an IP block rule stores the block's own
+          // CIDR, so it is refused here on the same terms the server refuses it.
+          if ((c.field === "subnet" || c.field === "ipBlock") && !CIDR_ISH.test(c.value)) {
+            problem = (c.field === "ipBlock" ? 'IP block "' : 'Subnet "') + c.value +
+              '" does not look like a CIDR or IP (e.g. 10.20.0.0/16).';
           }
         });
       };

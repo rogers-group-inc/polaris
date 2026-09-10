@@ -762,6 +762,19 @@ export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   os: STRING_OPS,
   tag: ["has", "notHas"],
   subnet: ["inCidr", "notInCidr"],
+  // "IP block" — the IPAM block an address falls inside, stored as the block's
+  // CIDR and matched by exactly the `subnet` predicate below. A separate field
+  // rather than more entries on the `subnet` picker because a block is the
+  // level operators actually name ("everything in Corporate Core"), and one
+  // rule then covers subnets nobody has defined yet — an address inside the
+  // block's range but in no Subnet row still matches, which is the point.
+  //
+  // A block's CIDR is what is stored, not its id or name: the value has to
+  // survive being read by the pure evaluator, which sees an asset row and
+  // nothing else. The consequence to know is that RE-CIDRing a block does not
+  // follow into saved rules (renaming one is free) — the same trade the
+  // `subnet` field has always made.
+  ipBlock: ["inCidr", "notInCidr"],
   // "Device interface" — matched against the device's CURRENT-STATE interface
   // inventory (AssetInterface.ifName), so a rule pairs naturally with a device
   // type ("switches that have a fortilink port"). Multi-valued like
@@ -787,6 +800,14 @@ export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   assetId: ["equals", "notEquals"],
 };
 export const SCOPE_FIELDS = Object.keys(SCOPE_FIELD_OPS);
+
+/**
+ * Fields whose VALUE is a CIDR (or a bare IP, read as a host route) rather than
+ * a string to compare. They validate together and match together — the set
+ * exists so a third CIDR-shaped field cannot be taught to one half and
+ * forgotten in the other.
+ */
+const CIDR_VALUED_FIELDS = new Set(["subnet", "ipBlock"]);
 
 /**
  * Shell-style wildcard comparison ("PLV*-61F-?"), compiled by the shared
@@ -873,7 +894,7 @@ function makeScopeConditionSchema(
       if (!ops.includes(r.operator)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `operator "${r.operator}" is not valid for field "${r.field}"` });
       }
-      if (r.field === "subnet" && !isValidCidr(r.value) && !isValidIpAddress(r.value)) {
+      if (CIDR_VALUED_FIELDS.has(r.field) && !isValidCidr(r.value) && !isValidIpAddress(r.value)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"${r.value}" must be a CIDR (e.g. 10.20.0.0/16) or an IP address` });
       }
       // A malformed wildcard must be a 400 at save time, not a throw inside the
@@ -1154,7 +1175,12 @@ function matchScopeRule(rule: ScopeConditionRule, asset: ScopeConditionAsset): b
       const has = (asset.tags ?? []).some((t) => t.toLowerCase() === v);
       return rule.operator === "notHas" ? !has : has;
     }
-    case "subnet": {
+    case "subnet":
+    case "ipBlock": {
+      // One predicate for both CIDR-valued fields: an IP block is stored as its
+      // own CIDR, so "inside the block" IS "inside that range". They stay
+      // separate FIELDS because the pickers differ and the specificity ladder
+      // ranks a block below a subnet — see SCOPE_RANK.
       const ip = asset.ipAddress ?? "";
       let inside = false;
       if (ip) {
@@ -1518,6 +1544,10 @@ export function triggerTypeAllowsResetEvent(type: string): boolean {
 export const RESET_EVENT_SUGGESTIONS: Record<string, string> = {
   "agent.disconnected": "agent.connected",
   "agent.upgrade_failed": "agent.upgrade_succeeded",
+  // Written when the upgrade fan-out couldn't even start on a row (rule 49) —
+  // distinct from upgrade_failed, which means the attempt reached the host and
+  // lost. Both recover on the same verb.
+  "agent.upgrade_skipped": "agent.upgrade_succeeded",
   "agent.install_failed": "agent.installed",
   "agent.uninstall_failed": "agent.uninstalled",
   "agent.build.failed": "agent.build.completed",
@@ -1873,8 +1903,11 @@ export const SCOPE_RANK = {
   model: 4,
   tag: 5,
   region: 6,
-  subnet: 7,
-  hostname: 8,
+  // An IP block CONTAINS subnets, so it targets less precisely than one — a
+  // block rule loses the carve-out to a subnet rule over the same trigger.
+  ipBlock: 7,
+  subnet: 8,
+  hostname: 9,
 } as const;
 
 /** Ladder for the wizard's "Specificity: …" indicator (least → most). */
@@ -1886,6 +1919,7 @@ export const SCOPE_RANK_LADDER: { key: keyof typeof SCOPE_RANK; label: string }[
   { key: "model", label: "Model" },
   { key: "tag", label: "Tag" },
   { key: "region", label: "Region" },
+  { key: "ipBlock", label: "IP block" },
   { key: "subnet", label: "Subnet" },
   { key: "hostname", label: "Hostname" },
 ];
@@ -1916,6 +1950,7 @@ function conditionRuleRank(rule: ScopeConditionRule): number {
     case "manufacturer": return SCOPE_RANK.manufacturer;
     case "model": return SCOPE_RANK.model;
     case "tag": return isRegionTagValue(rule.value) ? SCOPE_RANK.region : SCOPE_RANK.tag;
+    case "ipBlock": return SCOPE_RANK.ipBlock;
     case "subnet": return SCOPE_RANK.subnet;
     case "hostname": return SCOPE_RANK.hostname;
     // status / assetId / interfaceName — not on the ladder. An interface is a
@@ -3765,6 +3800,7 @@ const SCOPE_FIELD_META: Record<string, { label: string; optionsFrom: string | nu
   os: { label: "Operating system", optionsFrom: null },
   tag: { label: "Tag", optionsFrom: "tags" },
   subnet: { label: "Subnet / IP", optionsFrom: "subnets" },
+  ipBlock: { label: "IP block", optionsFrom: "ipBlocks" },
   interfaceName: { label: "Device interface", optionsFrom: "interfaceNames" },
   ssid: { label: "Broadcast SSID", optionsFrom: "ssids" },
   status: {
@@ -3805,8 +3841,11 @@ export function scopeConditionMeta(fieldOps: Record<string, readonly string[]>) 
       endsWith: "ends with",
       has: "is applied",
       notHas: "is not applied",
-      inCidr: "is in subnet",
-      notInCidr: "is not in subnet",
+      // Deliberately not "is in subnet": the same operator now carries the
+      // `ipBlock` field, and the label is what both the operator dropdown and
+      // the automations-list prose summary render.
+      inCidr: "is within",
+      notInCidr: "is not within",
       [WILDCARD_OP]: "matches (wildcard *)",
     },
     fields: Object.keys(fieldOps)

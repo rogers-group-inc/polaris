@@ -214,6 +214,10 @@ export async function listScopeOptions(): Promise<{
    *  unmonitored APs carry is a choice that cannot produce an alert. */
   ssids: string[];
   subnets: { id: string; name: string; cidr: string }[];
+  /** The IPAM blocks, for the condition builder's "IP block" picker. Unfiltered
+   *  by monitoring for the same reason `subnets` is — this is the address plan,
+   *  not inventory — and there is no deprecated state on a block to exclude. */
+  ipBlocks: { id: string; name: string; cidr: string }[];
   regions: string[];
   /** How deep region NESTING goes right now (1 = nothing is nested), plus the
    *  derived level of each region keyed by its LOWER-CASED name. The two
@@ -244,7 +248,7 @@ export async function listScopeOptions(): Promise<{
   // event and change triggers fire on them. The subnet list is IPAM, not
   // inventory, so it is unfiltered by the same reasoning.
   const monitoredOnly = { monitored: true } as const;
-  const [mfrRows, modelRows, ifNameRows, ssidRows, subnets, regions, regionLevelsOut, roles, tagRows] = await Promise.all([
+  const [mfrRows, modelRows, ifNameRows, ssidRows, subnets, ipBlocks, regions, regionLevelsOut, roles, tagRows] = await Promise.all([
     prisma.asset.findMany({
       select: { manufacturer: true },
       distinct: ["manufacturer"],
@@ -283,6 +287,13 @@ export async function listScopeOptions(): Promise<{
     prisma.subnet.findMany({
       select: { id: true, name: true, cidr: true },
       where: { status: { not: "deprecated" } },
+      orderBy: { cidr: "asc" },
+    }),
+    // The IP blocks those subnets hang off, for the "IP block" condition field.
+    // Tens of rows on the largest install — this is the top of the IPAM tree,
+    // not a per-device table — so it needs neither a cap nor a distinct pass.
+    prisma.ipBlock.findMany({
+      select: { id: true, name: true, cidr: true },
       orderBy: { cidr: "asc" },
     }),
     // The map-region catalogue rides THIS payload rather than being fetched
@@ -327,6 +338,7 @@ export async function listScopeOptions(): Promise<{
     interfaceNames: ifNameRows.map((r) => r.ifName).filter((n) => !!n && n.trim() !== ""),
     ssids: ssidRows.map((r) => r.ssid).filter((n): n is string => !!n && n.trim() !== ""),
     subnets,
+    ipBlocks,
     // Bare names — how User/Role/GroupMapping.regionTags store them. The
     // `region:` prefix exists only on ASSET tags.
     regions: regions.map((r) => r.name).filter((n) => !!n && n.trim() !== "").sort(),

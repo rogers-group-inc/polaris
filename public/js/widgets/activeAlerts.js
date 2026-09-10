@@ -35,6 +35,21 @@
  *     same reason the asset Alerts tab grew a Detail column.
  *   • a click-through. The row now opens the asset's details slide-in in place
  *     (downNodes pattern), since an alert is a prompt to go look at a device.
+ *
+ * Two later additions (2026-09), both about the alerts that are NOT about a
+ * device:
+ *   • EVERY row is clickable, not just the ones naming an asset. An alert from
+ *     an event-triggered or host_metric automation carries no assetId and was
+ *     rendered as an inert div, so the alerts most likely to need a human —
+ *     an agent disconnecting, a failed sync, Polaris itself — were the only
+ *     ones the widget wouldn't let anyone act on. A click now offers the asset
+ *     Alerts tab's own verbs (Acknowledge… / Clear / Open device where there
+ *     IS a device) through PolarisWidgets.openAlertRow, and this widget holds
+ *     the result over the caches until the feed catches up.
+ *   • the gear can HIDE event-triggered alerts (config.eventAlerts). They
+ *     answer a different question from the rest of the feed, and a board built
+ *     for device health shouldn't have to carry them — or, on an integrations
+ *     board, be the only thing that can't.
  */
 
 (function () {
@@ -65,6 +80,23 @@
 
   function severityOf(r) { return r.severity; }
 
+  // Whether the operator wants alerts raised by EVENT-triggered automations in
+  // this widget (config.eventAlerts: "show" | "hide", default show — an
+  // existing dashboard's feed doesn't change under it).
+  //
+  // Event rules fire off an audit Event — agent.disconnected, a failed
+  // integration sync, a discovery error — rather than off a reading, so they
+  // answer a different question from the rest of the feed: an operator
+  // watching device health reads them as noise, while the operator watching
+  // the integrations wants exactly them. Only `event` is hidden: a `change`
+  // rule (firmware changed, an asset's switch moved) is about the device, and
+  // the metric/state/composite tiers are the feed's whole point.
+  //
+  // Filtered CLIENT-side like the severity floor, so a hidden row still spends
+  // one of the server's capped rows — which the overflow note accounts for by
+  // measuring the cap against what was FETCHED, not what survived the filters.
+  function hidesEventAlerts(config) { return !!config && config.eventAlerts === "hide"; }
+
   // The rank floor to display at. Reads config.minSeverity when present, else
   // folds a pre-control `severities` checkbox array into its lowest rank (so a
   // saved ["info","warning","error"] keeps showing info rows) — an unrepresentable
@@ -86,7 +118,11 @@
     var rows = (data && data.rows) || [];
     var total = data && data.total != null ? data.total : null;
     var min = minRankOf(config);
-    var filtered = rows.filter(function (r) { return (RANK[severityOf(r)] || 0) >= min; });
+    var hideEvents = hidesEventAlerts(config);
+    var filtered = rows.filter(function (r) {
+      if (hideEvents && r.triggerType === "event") return false;
+      return (RANK[severityOf(r)] || 0) >= min;
+    });
     // Header export: the configured-severity listing pre the row-limit clip.
     // Severity is the raising automation's own tier, so "Critical only"
     // = critical automations rather than the old error-level Events.
@@ -112,11 +148,17 @@
     // unknown one.
     PolarisWidgets.setHeaderSeverityCounts(el, displayed, { unalerted: "omit", severityOf: severityOf });
     if (!filtered.length) {
-      var empty = rows.length ? PolarisWidgets.minSeverityEmptyText({ minSeverity: PolarisWidgets.severityTierForRank(min) }) : null;
+      // Name the filter that emptied the widget. "No alerts at or above
+      // warning" over a feed whose every row is a hidden event alert sends the
+      // operator to the wrong control.
+      var allEvents = hideEvents && rows.length > 0 && rows.every(function (r) { return r.triggerType === "event"; });
+      var empty = allEvents
+        ? "No active alerts — event-triggered alerts are hidden"
+        : (rows.length ? PolarisWidgets.minSeverityEmptyText({ minSeverity: PolarisWidgets.severityTierForRank(min) }) : null);
       el.innerHTML = '<p class="empty-state">' + escapeHtml(empty || "No active alerts") + '</p>';
       return;
     }
-    el.innerHTML = displayed.map(rowHTML).join("") + overflowHTML(displayed, filtered, total);
+    el.innerHTML = displayed.map(rowHTML).join("") + overflowHTML(displayed, filtered, rows, total);
   }
 
   function rowHTML(r) {
@@ -154,17 +196,26 @@
         escapeHtml("Acknowledged" + (r.acknowledgedBy ? " by " + r.acknowledgedBy : "")) + '">' +
         escapeHtml(ackWho) + '</span>'
       : "";
-    // An alert is a prompt to go look at the device, so the row opens that
-    // device's details slide-in on its Alerts tab (the alert itself, not the
-    // General tab the operator would then have to leave). An alert about Polaris ITSELF (a host_metric
-    // rule, a system-scoped event) carries no assetId and stays an inert div —
-    // there's no device page to open.
+    // Every row is a prompt to DO something, so every row is clickable —
+    // Acknowledge / Clear / Open device from a row menu (PolarisWidgets.
+    // openAlertRow). An alert about Polaris ITSELF (a host_metric rule, an
+    // event rule on a failed sync) carries no assetId: it used to render as an
+    // inert div, which left the alerts most likely to need a human the only
+    // ones the widget wouldn't let them act on. It is still a div — there is no
+    // asset URL to put in an href — but it carries the alert id and answers the
+    // click with the two verbs that don't need a device.
     var tag = r.assetId ? "a" : "div";
-    var attrs = r.assetId
-      ? ' href="/assets.html#view=asset:' + encodeURIComponent(r.assetId) +
-        '&tab=notifications" data-asset-id="' + escapeHtml(r.assetId) + '"'
-      : "";
-    return "<" + tag + ' class="recent-item' + (r.assetId ? " recent-item-link" : "") + '"' + attrs +
+    var attrs = ' data-alert-id="' + escapeHtml(r.id || "") + '"' +
+      (r.acknowledged ? ' data-alert-ack="1"' : "") +
+      (r.assetId
+        ? ' href="/assets.html#view=asset:' + encodeURIComponent(r.assetId) +
+          '&tab=notifications" data-asset-id="' + escapeHtml(r.assetId) + '"'
+        : "");
+    // The hover/pointer affordance is withheld where the click can do nothing:
+    // the /dash wallboard has no session and loads no dialogs, so a device-less
+    // row there is as inert as it ever was and must not claim otherwise.
+    var actionable = r.assetId || !window.POLARIS_DASH_LOCAL;
+    return "<" + tag + ' class="recent-item' + (actionable ? " recent-item-link" : "") + '"' + attrs +
       ' style="border-left:3px solid ' + bar + ';padding-left:8px">' +
       '<div style="min-width:0">' +
         '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + title + who + dim + ack + '</div>' +
@@ -177,9 +228,14 @@
   // Where the view stops, said out loud. The cap slices a severity-DESC list,
   // so a silent end-of-list is exactly how a fleet's serious alerts go missing
   // behind a screenful of criticals.
-  function overflowHTML(displayed, filtered, total) {
+  function overflowHTML(displayed, filtered, fetched, total) {
     var msg = null;
-    if (total != null && total > filtered.length) {
+    // The SERVER cap is measured against what it SENT (`fetched`), not against
+    // what survived the display filters — otherwise every widget with a
+    // severity floor or event alerts hidden reads as truncated ("Showing 3 of
+    // 40") when the operator's own filters removed the difference, and a real
+    // truncation stops being tellable from a filter doing its job.
+    if (total != null && total > fetched.length) {
       // The SERVER capped the fetch, so more rows need a bigger Row limit.
       msg = "Showing " + displayed.length + " of " + total + " active alerts — raise Row limit to fetch more.";
     } else if (filtered.length > displayed.length) {
@@ -196,7 +252,7 @@
     description: "Alerts your automations have raised and nothing has cleared, most severe first.",
     defaultSize: { width: 6, height: 1 },
     minSize: { width: 4, height: 1 },
-    defaultConfig: { minSeverity: DEFAULT_TIER, regionScope: "mine", rowLimit: DEFAULT_ROWS },
+    defaultConfig: { minSeverity: DEFAULT_TIER, regionScope: "mine", rowLimit: DEFAULT_ROWS, eventAlerts: "show" },
     // The feed reads Notification rows, so this is alerts:read, not events:read.
     // Every role was seeded that key at read, so no dashboard loses the widget.
     requiredPermission: { key: "alerts", level: "read" },
@@ -204,23 +260,45 @@
     fetchData: fetchAlerts,
 
     renderInstance: function (el, config, data, ctx) {
-      render(el, data, config);
-      // Click an alert → open its device's details slide-in in place (over the
-      // dashboard) on the Alerts tab when openViewModal is loaded; fall back to
-      // navigation with the same tab in the hash.
+      // What the operator did FROM THIS WIDGET, held over every later paint
+      // until the feed agrees. Both caches sit between the act and the next
+      // fetch — getNocSummary memoizes 15s client-side on top of the route's
+      // 10s TTL — so without this an acknowledged row comes back
+      // unacknowledged and a cleared one comes back at all, which reads as a
+      // click that did nothing. Overrides only ever REMOVE or ANNOTATE a row,
+      // never invent one, and they cost nothing once the feed stops sending it.
+      var local = { acked: {}, cleared: {} };
+      var latest = data;
+      var paint = function () { render(el, applyLocal(latest, local), config); };
+      var refresh = function () {
+        return fetchAlerts(config).then(function (d) { latest = d; paint(); }).catch(function () {});
+      };
+      paint();
+      // Click an alert → its verbs (Acknowledge / Clear / Open device), which
+      // is how an alert with no device gets acted on at all. A row that leaves
+      // one verb ("Open device", for a read-only role) opens the device
+      // straight away, as the click always did.
       // Ctrl/meta/middle-click keep the href so the Assets page can still open
       // in a new tab. Delegated on el so it survives the 30s re-render.
       var onClick = function (ev) {
         if (ev.defaultPrevented || ev.button === 1 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
-        var link = ev.target.closest(".recent-item[data-asset-id]");
+        var link = ev.target.closest(".recent-item[data-alert-id]");
         if (!link || !el.contains(link)) return;
         ev.preventDefault();
-        PolarisWidgets.openAssetDetail(link.getAttribute("data-asset-id"), { tab: "notifications" });
+        PolarisWidgets.openAlertRow(link, {
+          alertId: link.getAttribute("data-alert-id"),
+          assetId: link.getAttribute("data-asset-id"),
+          acknowledged: link.getAttribute("data-alert-ack") === "1",
+          onChanged: function (kind, id, fresh) {
+            if (kind === "cleared") local.cleared[id] = true;
+            else local.acked[id] = (fresh && fresh.acknowledgedBy) || true;
+            paint();
+            refresh();
+          },
+        });
       };
       el.addEventListener("click", onClick);
-      var timer = setInterval(function () {
-        fetchAlerts(config).then(function (d) { render(el, d, config); }).catch(function () {});
-      }, PolarisWidgets.REFRESH.normal);
+      var timer = setInterval(refresh, PolarisWidgets.REFRESH.normal);
       ctx.onUnmount(function () { clearInterval(timer); el.removeEventListener("click", onClick); });
     },
 
@@ -229,7 +307,10 @@
       render(el, { rows: [
         { id: "a1", assetId: "p1", hostname: "fgt-branch-12", ruleName: "Asset down", message: "fgt-branch-12 is down", severity: "critical", acknowledged: false, raisedAt: new Date(now - 6 * 60000).toISOString() },
         { id: "a2", assetId: "p2", hostname: "core-sw-1", dimension: "Overlay-2", ruleName: "IPsec tunnel down", message: "core-sw-1: IPsec tunnel Overlay-2 is down", severity: "serious", acknowledged: true, acknowledgedBy: "jsmith", raisedAt: new Date(now - 40 * 60000).toISOString() },
-      ], total: 2 }, { minSeverity: DEFAULT_TIER });
+        // The device-less kind: an event-triggered automation, no assetId —
+        // the row the gear's "Event-triggered alerts" control governs.
+        { id: "a3", assetId: null, hostname: null, ruleName: "Agent disconnected", message: "Agent on app-srv-04 stopped reporting", severity: "warning", triggerType: "event", acknowledged: false, raisedAt: new Date(now - 3 * 60000).toISOString() },
+      ], total: 3 }, { minSeverity: DEFAULT_TIER });
     },
 
     renderConfig: function (el, config, onChange) {
@@ -240,6 +321,20 @@
       el.querySelector('[data-k="rowLimit"]').addEventListener("change", function (e) {
         onChange("rowLimit", PolarisWidgets.parseRowLimit(e.target.value));
       });
+      // Event-triggered alerts. A select rather than a checkbox because the
+      // two states both need naming — "hide" is a claim about which alerts
+      // this board is FOR, not an option someone left off.
+      var evt = hidesEventAlerts(config) ? "hide" : "show";
+      el.insertAdjacentHTML("beforeend",
+        '<label>Event-triggered alerts</label>' +
+        '<select data-k="eventAlerts">' +
+          '<option value="show"' + (evt === "show" ? " selected" : "") + '>Show</option>' +
+          '<option value="hide"' + (evt === "hide" ? " selected" : "") + '>Hide</option>' +
+        '</select>' +
+        '<p class="widget-config-hint">Alerts from automations triggered by an event (an agent disconnecting, a failed sync) rather than by a reading. Hidden rows still count against the row limit.</p>');
+      el.querySelector('[data-k="eventAlerts"]').addEventListener("change", function (e) {
+        onChange("eventAlerts", e.target.value === "hide" ? "hide" : "show");
+      });
       // Seed the shared control from the effective floor so a pre-control
       // `severities` config renders as the tier it actually behaves like; the
       // first change writes `minSeverity` and the legacy key stops mattering.
@@ -248,6 +343,29 @@
       PolarisWidgets.renderNocFilterConfig(el, config, onChange, true);
     },
   });
+
+  // Fold this widget's own acknowledge/clear acts over a fetched payload.
+  // `total` drops with the rows removed but never below what is left, so the
+  // overflow note can't claim fewer alerts exist than are on screen.
+  function applyLocal(data, local) {
+    var rows = (data && data.rows) || [];
+    var total = data && data.total != null ? data.total : null;
+    var out = [];
+    var dropped = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (local.cleared[r.id]) { dropped++; continue; }
+      var who = local.acked[r.id];
+      if (who && !r.acknowledged) {
+        r = Object.assign({}, r, {
+          acknowledged: true,
+          acknowledgedBy: typeof who === "string" ? who : r.acknowledgedBy,
+        });
+      }
+      out.push(r);
+    }
+    return { rows: out, total: total == null ? null : Math.max(total - dropped, out.length) };
+  }
 
   // The feed returns the capped list plus the TRUE uncleared count. Rows are
   // NOT clipped here — render() clips, so the export menu and the overflow note

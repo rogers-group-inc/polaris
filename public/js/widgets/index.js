@@ -888,6 +888,95 @@
     return true;
   };
 
+  // ── Clicking a row that IS an alert ───────────────────────────────────────
+  //
+  // openAssetRow above is for a row that is a DEVICE carrying an alert, so its
+  // fallback is the device page. This one is for a row that is the ALERT —
+  // Active Alerts — where the device is the optional part: an event-triggered
+  // or host_metric alert has no asset at all, and before this it was rendered
+  // as an inert <div> the operator could not act on from the one widget whose
+  // whole job is to list the things needing action. The verbs are the asset
+  // Alerts tab's, so an alert about Polaris itself or about a failed sync can
+  // be acknowledged and cleared exactly where it is seen.
+  //
+  // Verbs are offered only where they would work — the row menu canon: a verb
+  // you can't perform isn't offered, which is a COURTESY (both routes are the
+  // control, and a refusal still renders as a state/toast):
+  //   • Acknowledge… — `alerts:write`, and only on an unacknowledged alert
+  //   • Clear        — `alerts:fullwrite`, confirmed first (it ends the alert,
+  //                    runs the automation's reset actions and stops
+  //                    escalation — the same sentence the asset tab confirms
+  //                    with, because it is the same act)
+  //   • Open device  — only when the alert names one
+  // With no verb left to offer the click falls back to the device (today's
+  // behaviour for a read-only role), and an alert with neither verb nor device
+  // does nothing rather than opening an empty menu. The /dash wallboard loads
+  // neither app.js nor the ack modules, so it lands in that fallback too.
+  //
+  // opts: { alertId, assetId, acknowledged, onChanged(kind, alertId) }
+  window.PolarisWidgets.openAlertRow = function (anchor, opts) {
+    opts = opts || {};
+    var openDevice = function () {
+      if (opts.assetId) window.PolarisWidgets.openAssetDetail(opts.assetId, { tab: "notifications" });
+    };
+    var at = function (level) { return typeof window.permAtLeast !== "function" || window.permAtLeast("alerts", level); };
+    var dialogs = typeof window.showRowMenu === "function" && !window.POLARIS_DASH_LOCAL;
+    // onChanged(kind, alertId, fresh?) — `fresh` is the re-read alert the ack
+    // modal hands back (it re-reads after the write, so acknowledgedBy is the
+    // server's answer and not an assumption about who clicked).
+    var changed = function (kind, fresh) {
+      if (typeof opts.onChanged === "function") opts.onChanged(kind, opts.alertId, fresh);
+    };
+    var items = [];
+    if (dialogs && opts.alertId && !opts.acknowledged && at("write") && window.PolarisAlertAckModal && window.openModal) {
+      items.push({
+        label: "Acknowledge alert…",
+        title: "Put your name on this alert without leaving the dashboard",
+        onSelect: function () {
+          window.PolarisAlertAckModal.open(opts.alertId, {
+            onAcknowledged: function (fresh) { changed("acknowledged", fresh); },
+            onOpenDevice: opts.assetId ? openDevice : undefined,
+          });
+        },
+      });
+    }
+    if (dialogs && opts.alertId && at("fullwrite") && typeof window.showConfirm === "function") {
+      items.push({
+        label: "Clear alert",
+        title: "End this alert — it stops escalation and runs the automation's reset actions",
+        onSelect: function () { clearAlertFromRow(opts.alertId, changed); },
+      });
+    }
+    if (opts.assetId) items.push({ label: "Open device", onSelect: openDevice });
+    if (!items.length) return false;
+    if (items.length === 1 && items[0].label === "Open device") { openDevice(); return false; }
+    window.showRowMenu(anchor, items, { label: "Alert actions" });
+    return true;
+  };
+
+  // Clear one alert, reporting what the SERVER did (the route skips rows
+  // already cleared, and a success toast over a no-op is how "I clicked it and
+  // nothing happened" starts) — the asset Alerts tab's contract, kept here so
+  // both surfaces say the same thing about the same act.
+  function clearAlertFromRow(alertId, changed) {
+    window.showConfirm("Clear this alert? It stops escalation and runs the automation's reset actions. A still-true condition can raise a new alert.")
+      .then(function (ok) {
+        if (!ok) return;
+        return api.alerts.clear([alertId]).then(function (res) {
+          var n = res && typeof res.cleared === "number" ? res.cleared : 1;
+          if (typeof window.showToast === "function") {
+            window.showToast(n ? "Alert cleared" : "That alert was already cleared", n ? "success" : "error");
+          }
+          changed("cleared");
+        });
+      })
+      .catch(function (err) {
+        if (typeof window.showToast === "function") {
+          window.showToast((err && err.message) || "Couldn't clear the alert", "error");
+        }
+      });
+  }
+
   // Append the shared per-widget filter controls into a gear-popover container.
   // Region scope (All / My regions / Selected regions) goes on every NOC
   // widget; "Selected regions" reveals a checkbox list of the created regions

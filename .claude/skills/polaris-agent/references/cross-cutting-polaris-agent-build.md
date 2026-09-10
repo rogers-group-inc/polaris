@@ -43,7 +43,10 @@ build auto-prune + boot-time auto-build are layered on top.
   credentialId?, actor})` — SSH/WinRM-driven binary swap that preserves
   agent.conf. Transitions installStatus active → upgrading → active.
   Emits `agent.upgrade_kickoff`, `agent.upgrade_succeeded`,
-  `agent.upgrade_failed`. Which statuses may start one is the exported
+  `agent.upgrade_failed` — plus `agent.upgrade_skipped` from
+  `upgradeAllOutdated` when a row refuses BEFORE `installStatus` moves, which
+  is the only trace such a row leaves (rule 49). The credential + transport
+  come from `resolveUpgradeCredential`, not straight off the row. Which statuses may start one is the exported
   `UPGRADEABLE_INSTALL_STATUSES` / `canUpgradeFromStatus` in the same file
   — `active` **plus `upgrade_failed`**, since every failure path leaves the
   old binary and agent.conf in place. THREE readers must keep using that

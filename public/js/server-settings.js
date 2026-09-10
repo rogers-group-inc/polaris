@@ -6587,6 +6587,8 @@ function _tagValueOptions(schema) {
       case "tags":           return plain(o.tags);
       case "subnets":
         return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
+      case "ipBlocks":
+        return (o.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
       default: return [];
     }
   };
