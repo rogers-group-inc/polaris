@@ -84,3 +84,15 @@ point the worktree's `.env` at `localhost:<port>/polaris_<slug>`, `npx prisma mi
   last one, and make one throwaway request after login before the first mutating call.
 - `compose.dev.yml` sets `name: polaris`; the `-p` flag overrides it. Omit `-p` and you are
   operating the MAIN dev stack.
+- **Anything you park in `.env` reaches every test.** `tests/setup.ts` dotenv-loads it so the
+  suite picks up `DATABASE_URL` the way `npm run dev` does, so a var added there for a local
+  experiment silently changes test behaviour. `TRUST_PROXY=1` in `.env` (needed when something
+  terminates TLS in front of the dev server) breaks `tests/integration/dashServer.test.ts` — the
+  case asserting a spoofed `X-Forwarded-For` loses to the socket IP *without* trust proxy — and it
+  fails as a bare `socket hang up`, which reads like anything but a leftover env var. Pass such
+  vars on the command line instead (`TRUST_PROXY=1 npm run dev`); a real env var survives
+  `node --env-file=.env`.
+- **Stopping `npm run dev` may not free the port.** Killing the npm wrapper leaves the node child
+  listening, so the server you "restarted" never binds and you keep testing the old process with
+  the old env. The tell is a config change that appears to have no effect. Check
+  `netstat -ano | grep ':<port> .*LISTENING'` and kill that PID directly.
