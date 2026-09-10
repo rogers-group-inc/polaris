@@ -179,6 +179,64 @@ describe("evaluateScopeCondition — device-filter fields", () => {
     });
   });
 
+  describe("ipBlock — the IPAM block an address falls inside", () => {
+    // The block's own CIDR is what is stored, so the field is the `subnet`
+    // predicate under a different picker. These pin that equivalence: if the
+    // two ever diverge, a rule an operator built from the block list would
+    // start meaning something other than the subnet rule beside it.
+    const IN_BLOCK: ScopeConditionAsset = { ...ASSET, ipAddress: "10.20.7.9" };
+    const OUT_OF_BLOCK: ScopeConditionAsset = { ...ASSET, ipAddress: "10.99.7.9" };
+
+    it("matches an address inside the block and not one outside it", () => {
+      expect(evaluateScopeCondition(one("ipBlock", "inCidr", "10.20.0.0/16"), IN_BLOCK)).toBe(true);
+      expect(evaluateScopeCondition(one("ipBlock", "inCidr", "10.20.0.0/16"), OUT_OF_BLOCK)).toBe(false);
+      expect(evaluateScopeCondition(one("ipBlock", "notInCidr", "10.20.0.0/16"), OUT_OF_BLOCK)).toBe(true);
+    });
+
+    // The block is the whole point: an address in the range but in no defined
+    // Subnet row still matches, which a subnet-by-subnet filter cannot say.
+    it("covers the block's range, not just its defined subnets", () => {
+      expect(evaluateScopeCondition(one("ipBlock", "inCidr", "10.20.0.0/16"),
+        { ...ASSET, ipAddress: "10.20.250.1" })).toBe(true);
+    });
+
+    it("reads an asset with no IP as outside every block", () => {
+      const noIp: ScopeConditionAsset = { ...ASSET, ipAddress: null };
+      expect(evaluateScopeCondition(one("ipBlock", "inCidr", "10.20.0.0/16"), noIp)).toBe(false);
+      expect(evaluateScopeCondition(one("ipBlock", "notInCidr", "10.20.0.0/16"), noIp)).toBe(true);
+    });
+
+    it("is offered to BOTH vocabularies, CIDR-shaped in each", () => {
+      expect(SCOPE_FIELD_OPS.ipBlock).toEqual(["inCidr", "notInCidr"]);
+      // Closed-shape like `subnet`: the flat builder never offered a pattern
+      // against a CIDR, so widening to the device filter must not add one.
+      expect(DEVICE_FILTER_FIELD_OPS.ipBlock).not.toContain("matches");
+      for (const vocab of [SCOPE_FIELD_OPS, DEVICE_FILTER_FIELD_OPS]) {
+        expect(scopeConditionMeta(vocab).fields.map((f) => f.field)).toContain("ipBlock");
+      }
+      const meta = scopeConditionMeta(DEVICE_FILTER_FIELD_OPS).fields.find((f) => f.field === "ipBlock");
+      expect(meta?.label).toBe("IP block");
+      expect(meta?.optionsFrom).toBe("ipBlocks");
+    });
+
+    it("refuses a value that is not a CIDR or an IP", () => {
+      expect(scopeConditionSchema.safeParse(one("ipBlock", "inCidr", "Corporate Core")).success).toBe(false);
+      expect(scopeConditionSchema.safeParse(one("ipBlock", "inCidr", "10.20.0.0/16")).success).toBe(true);
+      // A bare address is a host route, exactly as `subnet` reads one.
+      expect(scopeConditionSchema.safeParse(one("ipBlock", "inCidr", "10.20.7.9")).success).toBe(true);
+    });
+
+    // A block CONTAINS subnets, so it targets less precisely than one — this is
+    // the ordering the rule 18 carve-out ladder resolves ties by.
+    it("ranks below a subnet and above a tag on the specificity ladder", () => {
+      const rank = (field: string) => scopeRank({ condition: one(field, "inCidr", "10.20.0.0/16") } as never);
+      expect(rank("ipBlock")).toBeLessThan(rank("subnet"));
+      expect(rank("ipBlock")).toBeGreaterThan(
+        scopeRank({ condition: one("tag", "has", "core") } as never),
+      );
+    });
+  });
+
   it("keeps the automations fields working unchanged", () => {
     expect(evaluateScopeCondition(one("assetType", "equals", "switch"), ASSET)).toBe(true);
     expect(evaluateScopeCondition(one("hostname", "endsWith", "sw1"), ASSET)).toBe(true);

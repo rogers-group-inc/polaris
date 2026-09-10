@@ -43,6 +43,7 @@ const META = {
     { field: "hostname", label: "Hostname", ops: ["equals", "contains"], optionsFrom: null },
     { field: "tag", label: "Tag", ops: ["has"], optionsFrom: "tags" },
     { field: "subnet", label: "Subnet / IP", ops: ["inCidr"], optionsFrom: "subnets" },
+    { field: "ipBlock", label: "IP block", ops: ["inCidr"], optionsFrom: "ipBlocks" },
   ],
   maxDepth: 5,
 };
@@ -168,6 +169,17 @@ describe("condition-builder validation", () => {
       .toBeNull();
     expect(b.validate({ op: "and", children: [{ field: "subnet", operator: "inCidr", value: "10.20.0.7" }] }))
       .toBeNull(); // a bare IP is a /32
+  });
+
+  // The IP block picker offers "name — CIDR" and stores the CIDR half. Typing
+  // the block's NAME is the mistake the message has to name, or the operator
+  // reads "Subnet ... does not look like a CIDR" about a row that says IP block.
+  it("refuses an IP block value that isn't CIDR-ish, naming the field", () => {
+    const b = make();
+    expect(b.validate({ op: "and", children: [{ field: "ipBlock", operator: "inCidr", value: "Corporate Core" }] }))
+      .toMatch(/^IP block .*does not look like a CIDR/i);
+    expect(b.validate({ op: "and", children: [{ field: "ipBlock", operator: "inCidr", value: "10.20.0.0/16" }] }))
+      .toBeNull();
   });
 });
 

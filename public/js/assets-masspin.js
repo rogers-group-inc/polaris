@@ -195,6 +195,7 @@
         case "ssids":         return (o.ssids || []).map(function (n) { return { value: n, label: n }; });
         case "tags":          return (o.tags || []).map(function (t) { return { value: t, label: t }; });
         case "subnets":       return (o.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
+        case "ipBlocks":      return (o.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
         default: return [];
       }
     }
