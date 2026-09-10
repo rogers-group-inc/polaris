@@ -208,7 +208,7 @@ only the two most recent majors alive.
 
 | Site | Form | Kind |
 |---|---|---|
-| `agent/go.mod` | `go 1.26` directive | floor |
+| `agent/go.mod` | `go 1.26.0` directive — patch-qualified since `go get` rewrote it for x/sys; `check:versions` reads `/^go (\d+\.\d+)/`, so either form satisfies it and neither is worth normalising by hand | floor |
 | four Linux setup scripts | `go version \| grep -qE 'go1\.(2[6-9]\|[3-9][0-9])'` | accept-range |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y go-toolset` then `dnf install -y golang` | pin (module stream) |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `golang-go`, re-verified against the same regex, then `snap install --channel=1.26/stable go` — which is the branch that actually runs, since neither LTS archive reaches 1.26 | accept-range |
@@ -247,6 +247,20 @@ rebuild contract lives in `polaris-agent` → cross-cutting-polaris-agent.md; do
 The 2026-09-09 floor move deliberately did **not** touch `agent/VERSION`: a toolchain bump is
 not an agent release, and bumping the version would tell every enrolled agent an upgrade is
 available. Rebuild the binaries in-app when you want them rebuilt.
+
+**A MODULE bump is the other case, and it does move `agent/VERSION`.** The 2026-09-10
+`golang.org/x/sys` v0.20.0 → v0.48.0 went to 0.17.3 with regenerated `.syso` files, because
+unlike a `go` directive change it alters the code compiled into the binary — x/sys is the
+syscall layer under gopsutil, so the shipped agent genuinely differs and enrolled agents should
+be offered the upgrade. The dividing line is whether the binary's CONTENT changes, not whether
+`agent/go.mod` was edited.
+
+**The Go floor and `golang.org/x/sys` are coupled in one direction.** x/sys tracks the current
+Go release in its own `go` directive — v0.44.0 needs 1.25, v0.48.0 needs 1.26 — so the module
+cannot move ahead of the floor, and there is no older release carrying the same fix to retreat
+to. Dependabot #134 was unmergeable against the 1.22 floor for that reason alone and became a
+clean merge once the floor reached 1.26. Read the target's directive before judging such a PR;
+`dependency-audit.md` → The Go module set has the one-liner for it.
 
 ## nginx
 
