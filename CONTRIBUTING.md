@@ -76,9 +76,11 @@ and the integration suite against a `postgres:17` service container
   `.claude/worktrees/<slug>` with a `WORKLOCK` file at its root (a `DEVLOCK` while a
   per-worktree podman dev stack is up); the end-of-work commit deletes the lock. Merging
   to `main` and pushing are separate, explicit steps — see the
-  `polaris-worktree-workflow` skill.
+  `polaris-worktree-workflow` skill — unless you finish with `/polaris-deploy`, which chains
+  docs-sync, the deploy audit, the commit, the merge and the push.
 - **One logical change per commit.** Don't batch unrelated work.
-- **Before every commit, run the docs-sync review** (`/polaris-docs-sync`): re-read the
+- **Before every commit, run the docs-sync review** (`/polaris-docs-sync`; `/polaris-deploy`
+  runs it for you): re-read the
   skill reference entries your change touched and update anything it moved, broke, or
   invalidated — in the same commit. The pre-commit hook + `npm run check:docs` enforce
   the *structural* half (every model/service/job/route named, no `file:line` or
