@@ -37,7 +37,7 @@ let make: (over?: Record<string, unknown>) => Builder;
 const META = {
   groupOps: ["and", "or", "none", "notAll"],
   groupOpLabels: { and: "All child conditions", or: "At least one", none: "None", notAll: "Not all" },
-  operatorLabels: { equals: "is equal to", contains: "contains", has: "is applied", inCidr: "is in subnet" },
+  operatorLabels: { equals: "is equal to", contains: "contains", has: "is applied", inCidr: "is within" },
   fields: [
     { field: "assetType", label: "Device type", ops: ["equals"], optionsFrom: "assetTypes" },
     { field: "hostname", label: "Hostname", ops: ["equals", "contains"], optionsFrom: null },
