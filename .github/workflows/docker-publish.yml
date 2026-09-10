@@ -87,6 +87,40 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The service container above is PostgreSQL 17; ubuntu-latest's own
+      # pg_dump is 16, and pg_dump refuses to dump a server newer than itself.
+      # Without this step backupRestore.test.ts fails on the rule-47 guard in
+      # pgClientTools — which is exactly what it is there to do, and what broke
+      # this workflow for 200 commits from 2026-09-10.
+      #
+      # It has to be the VERSIONED package, never the `postgresql-client`
+      # metapackage: that resolves to whatever the Ubuntu release froze on (16
+      # on 24.04), so `command -v pg_dump` would succeed and every backup would
+      # still refuse. Same trap as deploy/setup-ubuntu-nodb.sh, same fix.
+      #
+      # /usr/lib/postgresql/<major>/bin is the FIRST place pgToolCandidates
+      # looks, so no $GITHUB_PATH edit is needed and CI exercises the same
+      # `source: "versioned-dir"` resolution production uses. The runner image
+      # normally carries the PGDG list already (its own PostgreSQL comes from
+      # there); add it when absent, because Ubuntu's archive has no 17.
+      - name: Install PostgreSQL 17 client
+        run: |
+          set -euo pipefail
+          if [ ! -x /usr/lib/postgresql/17/bin/pg_dump ]; then
+            if ! ls /etc/apt/sources.list.d/ | grep -qi pgdg; then
+              sudo install -d /usr/share/postgresql-common/pgdg
+              curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+                | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc > /dev/null
+              echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+                | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+            fi
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client-17
+          fi
+          # Assert it, rather than trusting the install: a silent miss here
+          # reappears as an unexplained backup refusal three jobs later.
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
       - name: Apply migrations
         run: npx prisma migrate deploy
 

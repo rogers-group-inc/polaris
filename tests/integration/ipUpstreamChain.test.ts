@@ -103,12 +103,29 @@ async function maclessAsset(over: Record<string, unknown> = {}): Promise<string>
  * row to appear proves the single in-flight upsert has landed, so the delete
  * after it is final. This is the same class of trap as the dns_resolved
  * auto-create race; do not replace it with a bare deleteMany.
+ *
+ * The wait must FAIL when the row never shows, not fall through. A timed-out
+ * loop followed by `deleteMany` deletes nothing and still satisfies
+ * `count === 0`, so the test goes green, the upsert lands a moment later, and
+ * the stale claim it was supposed to set up reads as fresh — the original
+ * failure, back as a rare CI-only flake with no evidence pointing here. So the
+ * appearance is asserted, and the budget is generous: this is one row on a
+ * contended runner, and waiting is free when it arrives on the first poll.
  */
 async function dropIpHistory(assetId: string): Promise<void> {
-  for (let i = 0; i < 50; i++) {
-    if ((await prisma.assetIpHistory.count({ where: { assetId } })) > 0) break;
+  let appeared = false;
+  for (let i = 0; i < 150; i++) {
+    if ((await prisma.assetIpHistory.count({ where: { assetId } })) > 0) {
+      appeared = true;
+      break;
+    }
     await new Promise((r) => setTimeout(r, 20));
   }
+  expect(
+    appeared,
+    "db.ts recordIpHistory() never wrote an asset_ip_history row within 3s — " +
+      "deleting now would race the in-flight upsert instead of following it",
+  ).toBe(true);
   await prisma.assetIpHistory.deleteMany({ where: { assetId } });
   expect(await prisma.assetIpHistory.count({ where: { assetId } })).toBe(0);
 }

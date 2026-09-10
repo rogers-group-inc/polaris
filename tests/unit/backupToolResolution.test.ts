@@ -9,8 +9,14 @@
  * keep green: pg_dump 13.23 in front of a 15.18 server must come back
  * `compatible: false` with both versions in `problem`.
  *
- * No database and no client tools: prisma's GUC read and child_process.execFile
- * are both mocked.
+ * No database, no client tools and no filesystem: prisma's GUC read,
+ * child_process.execFile AND fs.existsSync are all mocked. The last one is not
+ * optional — resolvePgToolPath is handed the real existsSync otherwise, and
+ * then the HOST decides the outcome: on a machine that happens to carry
+ * /usr/lib/postgresql/<n>/bin (every ubuntu-latest runner ships 16), the
+ * unknown-major scan finds a versioned binary and the PATH-fallback assertion
+ * below fails. That is what broke CI on 2026-09-10; the test passed on Windows
+ * only because "C:\Program Files\PostgreSQL" happened not to exist there.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -24,6 +30,15 @@ vi.mock("../../src/db.js", () => ({
 // `[promisify.custom]` that resolves `{ stdout, stderr }`; a plain mock would be
 // promisified by the callback convention and resolve just the first argument,
 // so the service would destructure a string. Give the mock the same custom.
+// existsSync picks which candidate path wins, so it must not reach the real
+// filesystem — see the header. Spread the original: backupService pulls
+// mkdirSync/statSync/openSync/readSync/closeSync/unlinkSync/createReadStream/
+// createWriteStream from this same module, and a bare replacement strips them.
+vi.mock("node:fs", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs")>();
+  return { ...real, existsSync: () => false };
+});
+
 const execFileMock = vi.fn();
 vi.mock("node:child_process", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:child_process")>();

@@ -291,6 +291,14 @@ const FAMILIES = [
         re: /timescaledb:latest-pg(\d+)/g, pick: (m) => m[1] },
       { files: WORKFLOWS, label: "CI service image", kind: "pin",
         re: /image:\s*postgres:(\d+)-/g, pick: (m) => m[1] },
+      // The CI client, beside the CI service image above. Both live in the
+      // same file and they MUST agree: the integration job dumps the service
+      // container, and pg_dump refuses a server newer than itself (rule 47).
+      // Registered 2026-09-10, after the service image moved to 17 while the
+      // job kept using the runner's own 16 — which failed every backup test
+      // and skipped the image build for 200 commits before anyone looked.
+      { files: WORKFLOWS, label: "CI client package", kind: "pin",
+        re: /postgresql-client-(\d+)/g, pick: (m) => m[1] },
       // The in-container client. Unversioned (`postgresql-client`) until
       // 2026-09-09, so it silently WAS whatever the base image shipped and
       // agreed with the pin only by luck of Debian's release. pgClientTools
