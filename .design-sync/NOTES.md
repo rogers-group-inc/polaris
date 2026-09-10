@@ -65,12 +65,28 @@ this repo — was scoped and deferred, not rejected. Decision recorded 2026-09-0
   `C:/Program Files/Google/Chrome/Application/chrome.exe`; Edge also works. The throwaway
   scripts lived in the session scratchpad, not the repo — rewrite them if you need them.
 
+## Status
+
+- **Uploaded 2026-09-10** to design-system project `Polaris UI`,
+  `ac6a54e0-a141-4754-967c-6fb9eb604d0a` (recorded in `config.json`) — 14 files, all 14
+  confirmed present by `list_files`. A re-sync overwrites in place: rebuild, then
+  `finalize_plan` against that same `projectId` before any write.
+- **`DesignSync` needs a design-system authorization the VS Code extension session cannot
+  grant** — it reports as non-interactive and `/design-login` is not a command there. It
+  must be run once from the standalone terminal `claude` CLI on this machine; every other
+  session then reuses it. That is what blocked the original upload for a day.
+
 ## Re-sync risks — what can silently go stale
 
-- **`design/` is a snapshot, `public/` is the source.** Per `polaris-ui-canon`, the kit in
-  `design/css/` is copied from `public/css/`. If someone updates `public/` and not
-  `design/`, this bundle ships the older look and nothing complains. Check the two are in
-  step before re-syncing.
+- **`design/` tracks the external kit, NOT `public/`.** An earlier version of this note
+  had the copy direction backwards. `polaris-ui-canon` and commit 72a6c3df are explicit:
+  `design/` is a drop-in snapshot re-synced wholesale from the external kit and is *never
+  edited to chase `public/`* — a fix made in `public/` travels back only when the kit is
+  next lifted. So `design/css/` and `public/css/` diverging is expected, not rot (they were
+  ~1250 lines apart at the first upload), and this bundle correctly ships the **kit**: the
+  portable contract, without the app-specific accretions in `public/`. Do not "fix" the
+  drift by copying `public/css/` over `design/css/`. What to check before a re-sync is
+  whether the kit has been lifted since the last `docs(design): sync the kit` commit.
 - **The conventions header is hand-written and will rot.** It enumerates ~74 class names
   and 30 tokens. Re-run the validation described above against a fresh build on every
   re-sync and fix or cut any name that no longer resolves. Never rewrite the file
@@ -81,7 +97,7 @@ this repo — was scoped and deferred, not rejected. Decision recorded 2026-09-0
 - **The Google Fonts `@import` is a network dependency** at render time in someone else's
   environment. If the brand faces look wrong in Claude Design, vendor the `.woff2` files
   into `fonts/` and replace the `@import` with local `@font-face` rules.
-- **`projectId` is still null** — nothing has been uploaded yet. `DesignSync` requires
-  authorization that only `/design-login` in an interactive terminal session can grant;
-  it is not available in the VS Code extension session this was built in. Record the id
-  in `config.json` the moment a project is created.
+- **Cards were never rendered inside Claude Design.** The 10/10 visual pass was headless
+  Chrome locally. The Google-Fonts `@import` and the Design System pane's own card
+  rendering are still unverified in that environment — look at the pane before trusting
+  the look.

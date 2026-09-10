@@ -1,7 +1,7 @@
 {
   "$comment": "Polaris syncs to Claude Design via an OFF-SCRIPT layout, not the /design-sync converter. Polaris has no component library to convert: dist/ is the compiled Express backend and the frontend is vanilla JS served from public/. See NOTES.md before changing anything here.",
   "shape": "off-script-css-kit",
-  "projectId": null,
+  "projectId": "ac6a54e0-a141-4754-967c-6fb9eb604d0a",
   "buildCmd": "node .design-sync/build.mjs",
   "localDir": "./ds-bundle",
   "readmeHeader": ".design-sync/conventions.md",
