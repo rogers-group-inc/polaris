@@ -141,7 +141,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Opt-in per integration (`allowRunCommand`), enforced in BOTH this service and `dispatchRunCommand` itself, so the low-level write is safe even if a future caller forgets.
 
 **When changing this:**
-- Tests: `tests/unit/arcPublish.test.ts` (13, orchestration) + `tests/unit/arcRunCommand.test.ts` (10, the ARM write — OS routing, skips, partial failure). The second exists because the first mocks `dispatchRunCommand`, which is where the safety-critical logic lives.
+- Tests: `tests/unit/arcPublish.test.ts` (13, orchestration) + `tests/unit/arcRunCommand.test.ts` (13, the ARM write — OS routing, skips, partial failure — plus `listRunCommandTargets` over raw ARG and fallback rows). The second exists because the first mocks `dispatchRunCommand` AND `listRunCommandTargets`, which is where the safety-critical logic lives — the roster read going unnormalized is exactly what the mock hid.
 - The required Azure grant is an **RBAC role assignment** (`Microsoft.HybridCompute/machines/runCommands/write`), NOT a Graph permission. `README.md`'s "Reader is sufficient" guidance is now conditional.
 
 ---
@@ -197,6 +197,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `normalizeVmUuid` REJECTS the all-zero (and all-F) GUID. Some BIOSes report it; if those collapsed onto one map key every such machine would mass-merge into a single asset.
 - `swapVmUuidEndianness` is involutive and BOTH variants must be indexed at match time. Windows, `dmidecode` and VMware disagree about byte-swapping the first three SMBIOS UUID fields, so the same machine can present either form — index one only and every Arc-on-VMware machine silently duplicates instead of merging.
 - ARG and per-subscription rows must normalize IDENTICALLY (`normalizeArcMachine`); a unit test locks this. Drift means the two read paths mint different assets for the same machine.
+- **Every reader of the machine roster goes through `normalizeArcMachine` — discovery AND `listRunCommandTargets`.** Both fetchers return RAW ARM rows typed `any[]`, so handing one straight to `filterArcMachines` type-checks while `osType` (really `properties.osType`), `armId` (`id`) and `azureRegion` (`location`) all read undefined. That shipped once: the run-command picker showed every machine's name and no OS, disabled all 206 rows, and its callout blamed the Connected Machine agent. `tests/unit/arcRunCommand.test.ts` feeds raw rows through `listRunCommandTargets` on both read paths to pin it.
 - `proxyQuery` is host-pinned to `management.azure.com`, requires an `api-version`, and permits POST only to `/providers/Microsoft.ResourceGraph/resources`.
 - API versions are module-level consts and are **verify-on-real-tenant**, as is the `detectedProperties` bag — its key names vary by Connected Machine agent version, so every read of it is optional-chained and case-tolerant.
 - `fetchNetworkProfile` is ONE GET PER MACHINE: default off, concurrency-capped, deadline-bounded, and it reports what it skipped rather than silently truncating.

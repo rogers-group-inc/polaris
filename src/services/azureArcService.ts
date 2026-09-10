@@ -1796,11 +1796,25 @@ export async function listRunCommandTargets(
 ): Promise<ArcRunCommandTarget[]> {
   const subscriptions = await resolveSubscriptions(config, signal);
   if (subscriptions.length === 0) return [];
-  // The two fetchers take different scope shapes — the ARG one wants bare
+  // Same read discovery does, fallback included: Resource Graph first, the
+  // per-subscription list when ARG is switched off or unavailable. The two
+  // fetchers take different scope shapes — the ARG one wants bare
   // subscription ids, the per-subscription lister wants the full records.
-  const machines = config.useResourceGraph === false
-    ? await fetchMachinesViaSubscriptionList(config, subscriptions, signal)
-    : await fetchMachinesViaResourceGraph(config, subscriptions.map((s) => s.subscriptionId), signal);
+  let rawRows: any[] | null = null;
+  if (config.useResourceGraph !== false) {
+    try {
+      rawRows = await fetchMachinesViaResourceGraph(config, subscriptions.map((s) => s.subscriptionId), signal);
+    } catch { /* fall through to the per-subscription list, as discovery does */ }
+  }
+  rawRows ??= await fetchMachinesViaSubscriptionList(config, subscriptions, signal);
+  // Both fetchers return RAW ARM rows: the OS type lives at properties.osType,
+  // the region at `location`, the ARM id at `id`. Only normalizeArcMachine puts
+  // them where ArcRunCommandTarget reads them. Skipping it still type-checked
+  // (the fetchers return any[]) and left every machine with no OS, no armId and
+  // no region — a picker that could select nothing, and a message blaming Azure.
+  const machines = rawRows
+    .map((row) => normalizeArcMachine(row))
+    .filter((m): m is DiscoveredArcMachine => m !== null);
   return filterArcMachines(machines, config).map((m) => ({
     armId: m.armId,
     name: m.name,
