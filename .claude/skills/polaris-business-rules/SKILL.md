@@ -1,6 +1,6 @@
 ---
 name: polaris-business-rules
-description: "The 48 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups, SSH host keys, login restriction, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
+description: "The 50 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups, SSH host keys, login restriction, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
 user-invocable: false
 ---
 
@@ -93,6 +93,7 @@ before changing anything the invariant constrains.
 | 46 | A device filter on an event automation filters the event's subject | invariants-30-43 | narrative-44-48 |
 | 47 | A PostgreSQL client is chosen by the server's major and verified, never spawned by bare name | invariants-30-43 | narrative-44-48 |
 | 48 | Nobody hands out authority they do not hold | invariants-30-43 | narrative-44-48 |
+| 50 | A response the app did not write is a response with the app's headers missing | invariants-30-43 | narrative-44-48 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

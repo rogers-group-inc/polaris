@@ -1,0 +1,84 @@
+# HawkScan (DAST) configuration for Polaris.
+#
+# Run against a LOCAL dev stack, never production:
+#   1. bring up this worktree's Postgres + `npm run dev` (see DEVELOPMENT.md)
+#   2. front it with the nginx harness (deploy/nginx/README-scan-harness.md) so
+#      the edge headers in deploy/nginx/polaris.conf are actually in the response
+#      path -- three of the four findings from the first scan lived there, not in
+#      the Node app, and a direct-to-Node scan cannot see them
+#   3. APP_HOST=https://localhost:8443 hawk scan
+#
+# TRUST_PROXY=1 must be set in the scanned install's .env. Without it Express
+# ignores X-Forwarded-Proto, req.secure stays false, and every cookie loses its
+# Secure flag -- a finding that does not exist in a real proxied install.
+app:
+  applicationId: ${APP_ID:9dcefca7-17d4-4e8f-a4cc-477c466356a4}
+  env: ${APP_ENV:Development}
+  host: ${APP_HOST:https://localhost:8443}
+
+  # Authenticated scanning. Polaris posts JSON to a CSRF-exempt login route
+  # (the exemption is deliberate -- see EXEMPT_PATH_PREFIXES in
+  # src/api/middleware/csrf.ts) and maintains the session in `connect.sid`.
+  #
+  # KNOWN COVERAGE LIMIT: every mutating route outside that exempt list
+  # requires the polaris_csrf cookie echoed back in an X-CSRF-Token header
+  # (double-submit). HawkScan's config-level anti-CSRF handles form *fields*,
+  # not a header, so POST/PUT/DELETE attacks return 403 and only the read
+  # surface is genuinely exercised. Closing that needs an auth/session .kts
+  # script -- tracked as a follow-up, not a silent gap.
+  authentication:
+    usernamePassword:
+      type: JSON
+      loginPath: /api/v1/auth/login
+      usernameField: username
+      passwordField: password
+      # The dev seed credential (npm run db:seed creates admin/admin). Kept as an
+      # interpolated default so a scan against any other install supplies its own
+      # via SCAN_USERNAME / SCAN_PASSWORD rather than editing this file.
+      scanUsername: ${SCAN_USERNAME:admin}
+      scanPassword: ${SCAN_PASSWORD:admin}
+    cookieAuthorization:
+      cookieNames:
+        - connect.sid
+    # /api/v1/auth/me answers 200 either way and reports the session state in
+    # its body, which makes it a precise indicator pair.
+    loggedInIndicator: '.*"authenticated":true.*'
+    loggedOutIndicator: '.*"authenticated":false.*'
+    testPath:
+      # 401 unauthenticated, 200 with the session cookie.
+      path: /api/v1/subnets
+      success: ".*200.*"
+
+  # Excluded because the scan authenticates as a full-permission admin and
+  # these actually do the thing: restart the process, apply an in-app update,
+  # restore over the database, mass-upgrade agents, or end the scan's own
+  # session. CSRF would refuse them today (see the coverage limit above), but
+  # that is one control away from a scanner rebooting the box it is scanning.
+  excludePaths:
+    - "^/api/v1/server-settings/database/restore$"
+    - "^/api/v1/server-settings/database/backup$"
+    - "^/api/v1/server-settings/restart$"
+    - "^/api/v1/server-settings/updates/apply$"
+    - "^/api/v1/server-settings/agents/upgrade-all$"
+    - "^/api/v1/auth/logout$"
+
+hawk:
+  spider:
+    base: true
+    # Polaris serves server-rendered pages whose data arrives over XHR, so the
+    # ajax spider is what reaches the API surface behind each page.
+    ajax: true
+    ajaxBrowser: CHROME_HEADLESS
+    maxDurationMinutes: 5
+  scan:
+    concurrentRequests: '20'
+    throttlePassiveBacklog: '10000'
+  startupTimeoutMinutes: 5
+
+tags:
+  - name: _STACKHAWK_AGENT
+    value: ${HAWK_AGENT:none}
+  - name: _STACKHAWK_GIT_COMMIT_SHA
+    value: ${COMMIT_SHA:none}
+  - name: _STACKHAWK_GIT_BRANCH
+    value: ${BRANCH_NAME:none}

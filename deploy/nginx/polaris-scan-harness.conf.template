@@ -1,0 +1,76 @@
+# deploy/nginx/polaris-scan-harness.conf.template
+#
+# A local reverse proxy for DAST scanning ONLY. Not an install artifact --
+# deploy/nginx/polaris.conf is the config operators actually run, and this file
+# exists so a scan can see the headers that config emits.
+#
+# Why it is needed: three of the four findings in the first HawkScan run
+# (duplicate Strict-Transport-Security, the nginx version in Server, and the
+# CSP that finalhandler used to overwrite on 404s) live at or pass through the
+# edge. A scan pointed straight at `npm run dev` on :3010 sees none of the
+# nginx half and silently reports a clean bill of health for it.
+#
+# What is verbatim from deploy/nginx/polaris.conf: server_tokens, the HSTS
+# add_header + proxy_hide_header pair, and every proxy_set_header. Change
+# either file's copy of those and change both.
+#
+# What is deliberately dropped: the QUIC/HTTP-3 listeners (nothing under test
+# needs them), /dash, and the four Prometheus-allowlisted /metrics blocks --
+# those carry a literal <PROMETHEUS_IP> placeholder that `nginx -t` rejects
+# until the migrate script substitutes it.
+#
+# ${POLARIS_SCAN_UPSTREAM} is substituted at container start by the nginx
+# image's envsubst entrypoint. NGINX_ENVSUBST_FILTER=POLARIS_ is REQUIRED --
+# without it envsubst also expands nginx's own $host / $remote_addr /
+# $proxy_add_x_forwarded_for into empty strings and the proxy headers silently
+# go blank. See README-scan-harness.md for the full run recipe.
+
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  '' close;
+}
+
+server {
+  listen 443 ssl;
+  http2 on;
+
+  add_header Alt-Svc 'h3=":443"; ma=86400' always;
+
+  server_name localhost;
+
+  ssl_certificate     /etc/polaris-nginx/cert.pem;
+  ssl_certificate_key /etc/polaris-nginx/key.pem;
+  ssl_protocols       TLSv1.2 TLSv1.3;
+  ssl_session_cache shared:SSL:10m;
+  ssl_session_timeout 1d;
+
+  # --- under test (verbatim from deploy/nginx/polaris.conf) ---
+  server_tokens off;
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+  proxy_hide_header Strict-Transport-Security;
+  # ------------------------------------------------------------
+
+  proxy_set_header Host              $host;
+  proxy_set_header X-Real-IP         $remote_addr;
+  proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_set_header X-Forwarded-Host  $host;
+  proxy_set_header Authorization     $http_authorization;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade           $http_upgrade;
+  proxy_set_header Connection        $connection_upgrade;
+
+  proxy_read_timeout 3600s;
+  proxy_send_timeout 3600s;
+  client_max_body_size 8m;
+
+  location / {
+    proxy_pass http://${POLARIS_SCAN_UPSTREAM};
+  }
+
+  location = /api/v1/server-settings/database/restore {
+    client_max_body_size 0;
+    proxy_request_buffering off;
+    proxy_pass http://${POLARIS_SCAN_UPSTREAM};
+  }
+}

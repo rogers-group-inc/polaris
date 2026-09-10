@@ -19,6 +19,7 @@ import { pwaRouter } from "./api/routes/pwa.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { errorHandler } from "./api/middleware/errorHandler.js";
 import { csrfMiddleware } from "./api/middleware/csrf.js";
+import { AppError } from "./utils/errors.js";
 import { logger } from "./utils/logger.js";
 import { resolveTrustProxy } from "./utils/trustProxy.js";
 import { buildHelmetOptions } from "./utils/securityHeaders.js";
@@ -838,6 +839,22 @@ app.use("/api", (_req, res, next) => {
   next();
 });
 app.use("/api/v1", router);
+
+// Business rule 50 — unmatched route → an explicit 404, never Express's
+// built-in finalhandler.
+// finalhandler OVERWRITES the Content-Security-Policy helmet just set with its
+// own `default-src 'none'`, and neither `frame-ancestors` nor `form-action`
+// falls back to default-src — so every 404 in the app advertised an
+// unrestricted framing and form-submission policy (the CSP HawkScan flags as
+// a wildcard directive), while normal responses carried the real policy. Its
+// HTML body also echoed the method and path back ("Cannot GET /robots.txt").
+// Routing 404s through AppError keeps helmet's headers on the response and
+// returns the same `{ error }` JSON shape as every other failure. The message
+// is fixed, not built from the request — nothing the caller sent comes back.
+app.use((_req, _res, next) => {
+  next(new AppError(404, "Not found"));
+});
+
 app.use(errorHandler);
 
 export async function startApp(): Promise<void> {

@@ -7,6 +7,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 46](#rule-46) — A device filter on an event automation filters the event's subject
 - [Rule 47](#rule-47) — A PostgreSQL client is chosen by the server's major and verified before it is trusted, never spawned by bare name
 - [Rule 48](#rule-48) — Nobody hands out authority they do not hold
+- [Rule 50](#rule-50) — A response the app did not write is a response with the app's headers missing
 
 <a id="rule-44"></a>
 
@@ -261,3 +262,66 @@ The caller's level is read from `req.roleSnapshot` first and `req.session.roleSn
 ### What it deliberately does not do
 
 It is not a four-eyes rule. An administrator granting administrator is the normal way an install gets its second admin, and blocking it would be a different (and much more disruptive) policy than the one the finding asks for. It also does not touch server-side provisioning: `ssoProvisioning` maps an IdP group onto a role with no human actor in the request to test, and the seed creates the first administrator before anyone exists to be escalated. Both are outside the rule by construction, not by exemption.
+
+<a id="rule-50"></a>
+
+## Rule 50 — A response the app did not write is a response with the app's headers missing
+
+The first DAST scan of Polaris (HawkScan, 2026-09-10) returned one Medium finding, and it was
+not on any route anyone had written: **CSP: Wildcard Directive**, on `/robots.txt` and
+`/sitemap.xml`. Neither path exists. That was the point.
+
+Nothing handled unmatched routes, so they fell through to Express's built-in `finalhandler`,
+which does not merely answer 404 — it **replaces** the `Content-Security-Policy` that
+`buildHelmetOptions()` had already put on the response with its own `default-src 'none'`. That
+looks stricter, and for fetches it is. But `frame-ancestors` and `form-action` do **not** fall
+back to `default-src`: with them absent, framing and form submission are unrestricted. So every
+404 the app produced advertised a weaker policy than every route that matched, and the two
+states were invisible to each other — the headers on a working page proved nothing about the
+headers on a missing one. `finalhandler` also echoed the request into its HTML body ("Cannot GET
+/robots.txt"), reflecting caller-controlled text back.
+
+The fix is one middleware, mounted after the `/api/v1` router: `next(new AppError(404, "Not
+found"))`. `errorHandler` then answers it like every other failure, which means helmet's headers
+stay and the body is the app's usual `{ error }` JSON. The message is a constant — the handler
+never builds it from the path or the method, so nothing the caller sent comes back.
+
+**Under `/api/v1` the answer is deliberately different.** `requireAuth` is mounted on the API
+router ahead of any route match, so an unknown API path answers **401** to an anonymous caller,
+and only an authenticated one reaches the JSON 404. That is not an inconsistency to iron out:
+the API does not tell an anonymous caller which endpoints exist.
+
+**The same invariant has an edge half, and it is where most of the scan's findings lived.** Of
+the four findings, three were headers and only one was in Node:
+
+| Finding | Where it lived |
+|---|---|
+| CSP: Wildcard Directive (Medium) | `src/app.ts` — the `finalhandler` fall-through above |
+| Strict-Transport-Security Multiple Header Entries | `deploy/nginx/polaris.conf` — the edge and helmet both emitted it |
+| Server leaks version information | `deploy/nginx/polaris.conf` — `server_tokens` |
+| Cookie without HttpOnly (`polaris_csrf`) | by design — see below |
+
+nginx now emits HSTS itself and `proxy_hide_header`s the upstream's copy. Two
+`Strict-Transport-Security` headers is not "defense in depth": RFC 6797 §8.1 says a UA that
+receives more than one processes **only the first** and the response is non-compliant, so the
+comment in that file claiming browsers "take the strongest seen" was wrong as well as moot.
+helmet keeps setting it, because that is what protects an install running Node's own TLS with
+no proxy in front. `server_tokens off` stops handing a scanner the exact nginx build; it still
+sends a bare `Server: nginx`, since dropping the header entirely needs a third-party module.
+
+**The `polaris_csrf` finding is a false positive and must stay one.** It is the double-submit
+CSRF cookie; same-origin JavaScript in our own pages has to read it to echo it in
+`X-CSRF-Token`. `HttpOnly` on that cookie would not harden anything — it would disable CSRF
+protection. The session cookie `connect.sid` is `HttpOnly`, which is the one that matters.
+
+**A scan aimed at the app alone cannot see the edge half.** `npm run dev` on :3010 has no nginx
+in front of it, so three of these four findings are structurally invisible to a direct scan and
+it reports the proxy clean. `deploy/nginx/README-scan-harness.md` exists for exactly this: it
+fronts a dev instance with the shipped directives so they are in the response path. It also
+records the one setting the harness must not omit — `TRUST_PROXY=1`, without which Express
+ignores `X-Forwarded-Proto`, `req.secure` stays false, and every cookie loses its `Secure`
+flag, manufacturing a finding that does not exist in any real proxied install.
+
+Guard: `tests/integration/notFoundHeaders.test.ts` asserts the status, the JSON shape, the
+absence of the reflected path, and that a 404's CSP is byte-identical to a matched route's — a
+plain status assertion would still pass with `finalhandler` back in place.
