@@ -292,7 +292,7 @@ async function readServerMajor(): Promise<number | null> {
     const rows = await prisma.$queryRawUnsafe<{ server_version_num: string }[]>("SHOW server_version_num");
     return pgMajorFromServerVersion(rows[0]?.server_version_num);
   } catch (err) {
-    logger.warn({ err }, "backup: could not read server_version_num; resolving client tools from PATH");
+    logger.warn({ err }, "backup: could not read server_version_num; taking the newest versioned client install, then PATH");
     return null;
   }
 }

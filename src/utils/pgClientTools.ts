@@ -17,7 +17,12 @@
  * `/usr/lib/postgresql/<major>/bin/<tool>` (Debian/Ubuntu) or the Windows
  * install dir for the server's major first, accept a NEWER major (pg_dump is
  * backward compatible), and fall back to PATH only when nothing versioned
- * exists. Then verify with `--version` before trusting it.
+ * exists. When the server's major cannot be read at all, scan the versioned
+ * dirs newest-first rather than jumping to PATH: on 2026-09-10 the host most
+ * likely to have no answer was the one that had just removed AppStream 13
+ * (the fix above) without `alternatives --auto` — no psql on PATH to ask, and
+ * /usr/pgsql-15/bin/pg_dump sitting right there unlooked-for. Then verify
+ * with `--version` before trusting it.
  *
  * Pure and dependency-free (filesystem access is injected) so it is unit-
  * testable without a database or the client tools. backupService owns the
@@ -79,16 +84,42 @@ export function pgToolCandidates(tool: PgTool, serverMajor: number, opts: PgTool
   if (!Number.isFinite(serverMajor) || serverMajor <= 0) return [];
   const out: string[] = [];
   for (let m = serverMajor; m <= serverMajor + NEWER_MAJORS_ACCEPTED; m++) {
-    if (platform === "win32") {
-      out.push(`C:\\Program Files\\PostgreSQL\\${m}\\bin\\${tool}.exe`);
-    } else {
-      out.push(`/usr/pgsql-${m}/bin/${tool}`);          // PGDG on RHEL / Rocky / Alma
-      out.push(`/usr/lib/postgresql/${m}/bin/${tool}`); // Debian / Ubuntu
-      if (platform === "darwin") {
-        out.push(`/opt/homebrew/opt/postgresql@${m}/bin/${tool}`);
-        out.push(`/usr/local/opt/postgresql@${m}/bin/${tool}`);
-      }
-    }
+    out.push(...layoutPaths(tool, m, platform));
+  }
+  return out;
+}
+
+/** The majors scanned, newest first, when the server's major is unknown. */
+const UNKNOWN_MAJOR_SCAN_NEWEST = 20;
+const UNKNOWN_MAJOR_SCAN_OLDEST = 10;
+
+/**
+ * Candidates when nobody could say what major the server is: every versioned
+ * layout, NEWEST major first. Newest because a newer `pg_dump` is accepted and
+ * an older one is refused by the `--version` check that follows either way —
+ * so the order only decides how often that check has to say no. The shell twin
+ * (`pg_versioned_dirs` in deploy/update-linux.sh) lists what is on disk in the
+ * same order.
+ */
+export function pgToolCandidatesUnknownMajor(tool: PgTool, opts: PgToolCandidateOptions = {}): string[] {
+  const platform = opts.platform ?? process.platform;
+  const out: string[] = [];
+  for (let m = UNKNOWN_MAJOR_SCAN_NEWEST; m >= UNKNOWN_MAJOR_SCAN_OLDEST; m--) {
+    out.push(...layoutPaths(tool, m, platform));
+  }
+  return out;
+}
+
+/** Where a PostgreSQL `major` puts `tool` on each supported platform. */
+function layoutPaths(tool: PgTool, m: number, platform: NodeJS.Platform): string[] {
+  if (platform === "win32") return [`C:\\Program Files\\PostgreSQL\\${m}\\bin\\${tool}.exe`];
+  const out = [
+    `/usr/pgsql-${m}/bin/${tool}`,          // PGDG on RHEL / Rocky / Alma
+    `/usr/lib/postgresql/${m}/bin/${tool}`, // Debian / Ubuntu
+  ];
+  if (platform === "darwin") {
+    out.push(`/opt/homebrew/opt/postgresql@${m}/bin/${tool}`);
+    out.push(`/usr/local/opt/postgresql@${m}/bin/${tool}`);
   }
   return out;
 }
@@ -102,7 +133,9 @@ export interface ResolvedPgToolPath {
 /**
  * First candidate that exists, else the bare name (whatever PATH resolves —
  * which is exactly the thing this module exists to stop trusting blindly, so a
- * "path" result should always be followed by a `--version` probe).
+ * "path" result should always be followed by a `--version` probe). With no
+ * server major the versioned dirs are still searched, newest first; PATH is
+ * the last resort in both cases, never the first.
  */
 export function resolvePgToolPath(
   tool: PgTool,
@@ -110,10 +143,11 @@ export function resolvePgToolPath(
   exists: (p: string) => boolean,
   opts: PgToolCandidateOptions = {},
 ): ResolvedPgToolPath {
-  if (serverMajor != null) {
-    for (const candidate of pgToolCandidates(tool, serverMajor, opts)) {
-      if (exists(candidate)) return { path: candidate, source: "versioned-dir" };
-    }
+  const candidates = serverMajor != null
+    ? pgToolCandidates(tool, serverMajor, opts)
+    : pgToolCandidatesUnknownMajor(tool, opts);
+  for (const candidate of candidates) {
+    if (exists(candidate)) return { path: candidate, source: "versioned-dir" };
   }
   return { path: tool, source: "path" };
 }

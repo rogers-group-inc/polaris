@@ -56,6 +56,28 @@ export function getAppVersion(): string {
   return APP_VERSION;
 }
 
+// The commit the RUNNING process was built from, captured once at boot. This
+// is deliberately separate from "what does the checkout's HEAD say": the
+// in-app updater pulls new code before it installs, builds and restarts, so
+// after an update that failed part-way the checkout is ahead of the process
+// serving requests. Comparing the checkout to the remote then says "up to
+// date" while the old build keeps running with no way to finish (prod,
+// 2026-09-10). Null where there is no git tree to ask (the Docker image) or
+// git is not on PATH.
+const RUNNING_COMMIT: string | null = (() => {
+  try {
+    const out = execSync("git rev-parse HEAD", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return /^[0-9a-f]{40}$/.test(out) ? out : null;
+  } catch {
+    return null;
+  }
+})();
+
+/** Full SHA of the commit this process booted from, or null when unknown. */
+export function getRunningCommit(): string | null {
+  return RUNNING_COMMIT;
+}
+
 // ─── Polaris Agent version (decoupled from Polaris version) ──────────────
 //
 // The Polaris Agent is version-tracked independently from Polaris itself.

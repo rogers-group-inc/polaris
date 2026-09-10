@@ -21,7 +21,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { logger } from "../utils/logger.js";
 import { prisma } from "../db.js";
-import { getAppVersion } from "../utils/version.js";
+import { getAppVersion, getRunningCommit } from "../utils/version.js";
 import { deriveNginxServerName, derivePolarisPort } from "../utils/publicUrl.js";
 import { renderNginxConfig } from "./nginxRenderer.js";
 import { getProxyConfig, saveProxyConfig } from "./proxyConfigService.js";
@@ -92,6 +92,21 @@ export function isSafeRepoUrl(url: string): boolean {
 /** Test seam. Pass null to restore the real `exec`. */
 export function _setExecRunnerForTests(fn: ExecRunner | null): void {
   _execRunner = fn ?? _realExec;
+}
+
+/** Test seam for the commit the running process booted from. `undefined`
+ *  restores the real value; `null` models a process with no git tree. */
+let _runningCommitOverride: string | null | undefined;
+export function _setRunningCommitForTests(sha: string | null | undefined): void {
+  _runningCommitOverride = sha;
+}
+
+/** The running process's boot commit, only when it is a plain hex SHA — it is
+ *  interpolated into `git rev-list <sha>..<ref>`, so anything else is dropped
+ *  and the checkout's HEAD stands in for it. */
+function runningCommit(): string | null {
+  const sha = _runningCommitOverride === undefined ? getRunningCommit() : _runningCommitOverride;
+  return sha && /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
 }
 
 /** How much command output a failed step keeps for the operator. */
@@ -340,6 +355,10 @@ export interface UpdateStatus {
   currentVersion?: string;
   latestVersion?: string;
   currentCommit?: string;
+  /** HEAD of the checkout on disk. Differs from currentCommit (the RUNNING
+   *  process's commit) when an update pulled code and then failed before the
+   *  restart — the state that used to read as "up to date". */
+  checkoutCommit?: string;
   latestCommit?: string;
   commitsBehind?: number;
   changes?: string[];
@@ -481,19 +500,34 @@ async function resolveDefaultBranch(): Promise<string> {
 }
 
 /**
- * Compare the installed code (HEAD) against a target ref (a branch tip for
- * nightly, a tag for release) and derive the version + change list. Avoids the
+ * Compare the RUNNING code against a target ref (a branch tip for nightly, a
+ * tag for release) and derive the version + change list. Avoids the
  * `^{commit}` / `2>/dev/null` shell idioms that misbehave on cmd.exe.
+ *
+ * "Current" is the commit this process booted from, not the checkout's HEAD.
+ * The pipeline pulls BEFORE it installs, builds and restarts, so an update that
+ * fails after the pull leaves HEAD ahead of the process serving requests.
+ * Measured against HEAD, that host read "up to date" and the card offered
+ * nothing — while the old build kept running and the new one was never
+ * installed (prod, 2026-09-10, after the TLS-inspection failure at Install
+ * dependencies). Measured against the boot commit it is an available update
+ * whose pull step is simply a no-op.
  */
 async function computeTargetInfo(ref: string): Promise<{
   currentCommit: string;
+  checkoutCommit: string;
   latestCommit: string;
   commitsBehind: number;
   changes: string[];
   version: string;
 }> {
-  const { stdout: localFull } = await execAsync("git rev-list -n 1 HEAD", { cwd: APP_DIR });
-  const currentCommit = localFull.trim().slice(0, 7);
+  const { stdout: headFull } = await execAsync("git rev-list -n 1 HEAD", { cwd: APP_DIR });
+  const checkoutCommit = headFull.trim().slice(0, 7);
+  const running = runningCommit();
+  // The range base for "what is new": the boot commit when known, else HEAD
+  // (Docker has no git tree — and no in-app updates either).
+  const base = running ?? "HEAD";
+  const currentCommit = (running ?? headFull.trim()).slice(0, 7);
   const { stdout: remoteFull } = await execAsync(`git rev-list -n 1 ${ref}`, { cwd: APP_DIR });
   const latestCommit = remoteFull.trim().slice(0, 7);
 
@@ -501,13 +535,13 @@ async function computeTargetInfo(ref: string): Promise<{
   let changes: string[] = [];
   if (currentCommit !== latestCommit) {
     try {
-      const { stdout: behindStr } = await execAsync(`git rev-list --count HEAD..${ref}`, {
+      const { stdout: behindStr } = await execAsync(`git rev-list --count ${base}..${ref}`, {
         cwd: APP_DIR,
       });
       commitsBehind = parseInt(behindStr.trim(), 10) || 0;
     } catch {}
     try {
-      const { stdout: logStr } = await execAsync(`git log --oneline HEAD..${ref}`, {
+      const { stdout: logStr } = await execAsync(`git log --oneline ${base}..${ref}`, {
         cwd: APP_DIR,
       });
       changes = logStr.trim().split("\n").filter(Boolean);
@@ -523,7 +557,7 @@ async function computeTargetInfo(ref: string): Promise<{
     version = computeVersion(`${rMajor}.${rMinor}`, count.trim());
   } catch {}
 
-  return { currentCommit, latestCommit, commitsBehind, changes, version };
+  return { currentCommit, checkoutCommit, latestCommit, commitsBehind, changes, version };
 }
 
 let _status: UpdateStatus = { state: "idle" };
@@ -754,6 +788,7 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
         state: "up-to-date",
         currentVersion: readCurrentVersion(),
         currentCommit: info.currentCommit,
+        checkoutCommit: info.checkoutCommit,
         latestCommit: info.latestCommit,
         latestVersion: info.version,
         commitsBehind: 0,
@@ -763,16 +798,30 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
       return _status;
     }
 
+    // The checkout is ahead of the running build: an earlier update pulled the
+    // code and then failed before the restart (its own card explained why; the
+    // operator may since have dismissed it). Say so, because "Update Available"
+    // with a changelog the host already holds would otherwise read as a fresh
+    // release — and the operator needs to know Apply is how they finish.
+    const pulledButUnfinished = info.checkoutCommit !== info.currentCommit;
+    const note = pulledButUnfinished
+      ? `This host's checkout is already at ${info.checkoutCommit}, ahead of the running build: an earlier update pulled the code but did not finish` +
+        " installing, building and restarting it, so the previous version is still serving. Apply Update finishes that work" +
+        " (the pull step will report the code is already current) and picks up anything newer."
+      : undefined;
+
     _status = {
       state: "available",
       currentVersion: readCurrentVersion(),
       latestVersion: info.version,
       currentCommit: info.currentCommit,
+      checkoutCommit: info.checkoutCommit,
       latestCommit: info.latestCommit,
       commitsBehind: info.commitsBehind,
       changes: info.changes,
       train,
       releaseTag,
+      note,
     };
     return _status;
   } catch (err: any) {

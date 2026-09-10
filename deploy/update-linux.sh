@@ -152,9 +152,33 @@ app_node() {
 # Ubuntu use, accept a newer major, and fall back to PATH only when nothing
 # versioned exists. Mirrors src/utils/pgClientTools.ts, which the app uses for
 # the same decision.
+# Every versioned client directory on this host, newest major first. Two jobs:
+# it lends pg_server_major a psql that can ASK the server its version when PATH
+# has none, and it is resolve_pg_tool's fallback when that question went
+# unanswered — any versioned client beats whatever PATH happens to hold.
+pg_versioned_dirs() {
+  local d v
+  for d in /usr/pgsql-[0-9]*/bin /usr/lib/postgresql/[0-9]*/bin; do
+    [[ -d "$d" ]] || continue
+    v="${d//[^0-9]/}"
+    printf '%s\t%s\n' "$v" "$d"
+  done | sort -rn | cut -f2-
+}
 pg_server_major() {
-  sudo -u postgres psql --tuples-only --no-align --no-psqlrc -c "SHOW server_version_num" 2>/dev/null \
-    | tr -d '[:space:]' | sed -E 's/^([0-9]{2})[0-9]{4}$/\1/'
+  # PATH's psql first, then each versioned one. On 2026-09-10 prod had removed
+  # RHEL's AppStream 13 packages (the fix for the mismatch below) without
+  # `alternatives --auto`, so /usr/bin/psql was gone, this probe returned
+  # nothing, resolve_pg_tool skipped the versioned dirs it exists to search,
+  # and the update stopped at "pg_dump not found" with /usr/pgsql-15/bin/pg_dump
+  # sitting right there.
+  local psql_bin out d
+  for psql_bin in psql $(pg_versioned_dirs | while read -r d; do echo "$d/psql"; done); do
+    out=$(sudo -u postgres "$psql_bin" --tuples-only --no-align --no-psqlrc -c "SHOW server_version_num" 2>/dev/null | tr -d '[:space:]') || true
+    # 6 digits since PostgreSQL 10 (MMmmpp), 5 for 9.x (Mmmpp): the major is
+    # everything but the last four.
+    if [[ "$out" =~ ^[0-9]{5,6}$ ]]; then echo "${out:0:$(( ${#out} - 4 ))}"; return 0; fi
+  done
+  return 1
 }
 resolve_pg_tool() {
   local tool="$1" major="$2" m d
@@ -163,6 +187,13 @@ resolve_pg_tool() {
       for d in "/usr/pgsql-${m}/bin" "/usr/lib/postgresql/${m}/bin"; do
         if [[ -x "$d/$tool" ]]; then echo "$d/$tool"; return 0; fi
       done
+    done
+  else
+    # Server major unknown: take the newest versioned client. A newer pg_dump
+    # is accepted anyway and an older one is refused by the check below —
+    # PATH is still the last resort, never the first.
+    for d in $(pg_versioned_dirs); do
+      if [[ -x "$d/$tool" ]]; then echo "$d/$tool"; return 0; fi
     done
   fi
   command -v "$tool" 2>/dev/null || echo "$tool"

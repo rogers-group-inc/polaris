@@ -121,7 +121,10 @@ first to "see if it's fine".
 
 Apply the fix above, then re-run the update (Server Settings → Maintenance → Updates, or
 `sudo bash deploy/update-linux.sh`). If the in-app updater already pulled the new code before
-it failed, the script's `git pull` is a no-op and it will report "Already up to date" — pass
+it failed, the checkout is ahead of the process that is still serving. The in-app card measures
+against the **running** build, so Check for Updates still offers Apply Update — with a note that
+the code is already on disk — and Apply finishes the install, build, migration and restart. The
+script's `git pull` is a no-op in that state and it will report "Already up to date" — pass
 `--force` (`-Force` on Windows) so it finishes the install, build and migration steps anyway.
 If you need to repair the dependency tree without a full update:
 
@@ -198,6 +201,12 @@ dnf remove postgresql postgresql-server
 alternatives --auto pgsql-pg_dump; alternatives --auto pgsql-psql
 pg_dump --version && psql --version                 # both must report the server's major
 ```
+
+The `alternatives --auto` line is for you and for anything else that calls `pg_dump` or `psql` by
+name. Polaris and `deploy/update-linux.sh` look in the versioned directories first and, when
+nothing on PATH can say which major the server is, take the newest versioned client — so a host
+that skipped that line still backs up and updates (it did not, before 2026-09-10: the script
+stopped at "pg_dump not found" with the versioned `pg_dump` present under `/usr/pgsql-<major>/bin`).
 
 Package removal leaves data directories alone — the PGDG cluster under
 `/var/lib/pgsql/<major>/data` is untouched. Then re-enable the pre-update backup if it was switched off to get past this

@@ -3427,6 +3427,12 @@ function renderUpdateAvailable(result) {
           ? '<span style="font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--color-text-tertiary);border:1px solid var(--color-border);border-radius:10px;padding:1px 8px">Release' + (result.releaseTag ? ' ' + escapeHtml(result.releaseTag) : '') + '</span>'
           : '<span style="font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--color-text-tertiary);border:1px solid var(--color-border);border-radius:10px;padding:1px 8px">Nightly</span>') +
       '</div>' +
+      // Set by the server when the checkout is already ahead of the running
+      // build (an earlier update pulled, then failed before the restart).
+      // Without it this card would read as a brand-new release.
+      (result.note
+        ? '<div style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.6rem">' + escapeHtml(result.note) + '</div>'
+        : '') +
       '<div class="db-info-grid">' +
         '<div class="db-info-label">Current</div><div class="db-info-value">v' + escapeHtml(result.currentVersion) + ' <span class="mono" style="color:var(--color-text-tertiary)">(' + escapeHtml(result.currentCommit) + ')</span></div>' +
         '<div class="db-info-label">Latest</div><div class="db-info-value">v' + escapeHtml(result.latestVersion) + ' <span class="mono" style="color:var(--color-text-tertiary)">(' + escapeHtml(result.latestCommit) + ')</span></div>' +
