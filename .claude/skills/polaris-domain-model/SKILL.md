@@ -61,8 +61,8 @@ AssetStatus:             active | maintenance | decommissioned | storage | disab
 // Frontend three, all in public/js/widgets/index.js: BUILTIN_ASSET_TYPES,
 // ASSET_TYPE_LABELS and ASSET_TYPE_COLORS. Those maps are the SEED and the
 // offline fallback: since 2026-09 the gear's asset-type grid repaints from
-// GET /dashboard/filter-options (built-ins + the custom types present in the
-// fleet, registry-labelled), so a name absent from them is unordered,
+// GET /dashboard/filter-options (built-ins + every custom type the asset-type
+// registry carries, registry-labelled), so a name absent from them is unordered,
 // uncoloured and late rather than invisible. Before that the widgets read no
 // registry at all, and because the server derived the hidden set as
 // (built-ins − the enabled ones the widget sent), a name they lacked was

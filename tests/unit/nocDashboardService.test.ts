@@ -667,7 +667,7 @@ describe("getHighestTemperature", () => {
 });
 
 describe("getFilterOptions", () => {
-  it("offers every built-in plus the CUSTOM types present in the fleet, registry-labelled", async () => {
+  it("offers every built-in plus every CUSTOM registry type, registry-labelled", async () => {
     findMany
       .mockResolvedValueOnce([
         { assetType: "firewall" }, { assetType: "network_camera" }, { assetType: "acme-widget" },
@@ -676,8 +676,9 @@ describe("getFilterOptions", () => {
     typeDefFindMany.mockResolvedValueOnce([
       { name: "network_camera", label: "Network Camera" },
       { name: "access_point", label: "Access Point" },
-      // A registry row nobody has assigned yet is NOT a filter entry — a
-      // checkbox for a type no asset wears filters nothing.
+      // A type the operator just created in Server Settings, nothing typed as
+      // it yet. It still gets a checkbox: the registry is the vocabulary the
+      // operator sees, so it is the vocabulary the grid offers.
       { name: "plc", label: "PLC" },
     ]);
     rawQuery.mockResolvedValueOnce([]);
@@ -685,8 +686,9 @@ describe("getFilterOptions", () => {
     const names = r.assetTypes.map((t) => t.name);
     // Built-ins lead, in canonical order, whether or not the fleet owns any.
     expect(names.slice(0, BUILT_IN_ASSET_TYPES.length)).toEqual([...BUILT_IN_ASSET_TYPES]);
-    // Then the present customs, by label. 'plc' has no assets; it is absent.
-    expect(names.slice(BUILT_IN_ASSET_TYPES.length)).toEqual(["acme-widget", "network_camera"]);
+    // Then the customs by label: the registry's two ('plc' asset-less), plus
+    // 'acme-widget', which no registry row claims but a live asset still wears.
+    expect(names.slice(BUILT_IN_ASSET_TYPES.length)).toEqual(["acme-widget", "network_camera", "plc"]);
     // The registry supplies the label; a name with no row is humanized so the
     // grid never shows a raw snake_case value.
     expect(r.assetTypes.find((t) => t.name === "network_camera")!.label).toBe("Network Camera");
