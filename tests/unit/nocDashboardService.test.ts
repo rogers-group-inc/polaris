@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../../src/db.js", () => ({
   prisma: {
     asset: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn() },
+    assetTypeDef: { findMany: vi.fn() },
     event: { findMany: vi.fn() },
     notification: { findMany: vi.fn() },
     $queryRawUnsafe: vi.fn(),
@@ -36,11 +37,14 @@ const rawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 const rawQuery = prisma.$queryRaw as unknown as ReturnType<typeof vi.fn>;
 const resolve = resolveMonitorSettings as unknown as ReturnType<typeof vi.fn>;
 const notifFindMany = (prisma as unknown as { notification: { findMany: ReturnType<typeof vi.fn> } }).notification.findMany;
+const typeDefFindMany = (prisma as unknown as { assetTypeDef: { findMany: ReturnType<typeof vi.fn> } }).assetTypeDef.findMany;
 
 beforeEach(() => {
   vi.clearAllMocks();
   // Default: no active alerts — feeds keep their base ordering.
   notifFindMany.mockResolvedValue([]);
+  // Default: an empty asset-type registry (only getFilterOptions reads it).
+  typeDefFindMany.mockResolvedValue([]);
 });
 
 describe("getStatusSummary", () => {
@@ -663,10 +667,37 @@ describe("getHighestTemperature", () => {
 });
 
 describe("getFilterOptions", () => {
-  it("returns built-in types present (canonical order, custom dropped), distinct region tags, and sorted FortiGate {name, regions} entries", async () => {
+  it("offers every built-in plus the CUSTOM types present in the fleet, registry-labelled", async () => {
     findMany
       .mockResolvedValueOnce([
-        { assetType: "firewall" }, { assetType: "server" }, { assetType: "acme-widget" },
+        { assetType: "firewall" }, { assetType: "network_camera" }, { assetType: "acme-widget" },
+      ])
+      .mockResolvedValueOnce([]);
+    typeDefFindMany.mockResolvedValueOnce([
+      { name: "network_camera", label: "Network Camera" },
+      { name: "access_point", label: "Access Point" },
+      // A registry row nobody has assigned yet is NOT a filter entry — a
+      // checkbox for a type no asset wears filters nothing.
+      { name: "plc", label: "PLC" },
+    ]);
+    rawQuery.mockResolvedValueOnce([]);
+    const r = await noc.getFilterOptions();
+    const names = r.assetTypes.map((t) => t.name);
+    // Built-ins lead, in canonical order, whether or not the fleet owns any.
+    expect(names.slice(0, BUILT_IN_ASSET_TYPES.length)).toEqual([...BUILT_IN_ASSET_TYPES]);
+    // Then the present customs, by label. 'plc' has no assets; it is absent.
+    expect(names.slice(BUILT_IN_ASSET_TYPES.length)).toEqual(["acme-widget", "network_camera"]);
+    // The registry supplies the label; a name with no row is humanized so the
+    // grid never shows a raw snake_case value.
+    expect(r.assetTypes.find((t) => t.name === "network_camera")!.label).toBe("Network Camera");
+    expect(r.assetTypes.find((t) => t.name === "acme-widget")!.label).toBe("Acme-Widget");
+    expect(r.assetTypes.find((t) => t.name === "access_point")!.label).toBe("Access Point");
+  });
+
+  it("returns distinct region tags and sorted FortiGate {name, regions} entries", async () => {
+    findMany
+      .mockResolvedValueOnce([
+        { assetType: "firewall" }, { assetType: "server" },
       ])
       // 2nd findMany: distinct firewall learnedLocation values (unsorted from
       // the DB) + each gate's tags (region: prefix stripped, others dropped)
@@ -676,7 +707,6 @@ describe("getFilterOptions", () => {
       ]);
     rawQuery.mockResolvedValueOnce([{ region: "East" }, { region: "West" }]);
     const r = await noc.getFilterOptions();
-    expect(r.assetTypes).toEqual(["server", "firewall"]); // builtin order; custom 'acme-widget' dropped
     expect(r.regions).toEqual(["East", "West"]);
     expect(r.fortigates).toEqual([
       { name: "ATLANTA-FG", regions: [] },
@@ -857,6 +887,44 @@ describe("resolveFilteredAssetIds", () => {
       notIn: BUILT_IN_ASSET_TYPES.filter((t) => !["server", "switch"].includes(t)),
     });
     expect(where.tags).toEqual({ hasSome: ["region:East"] });
+  });
+
+  // The dimension the gear grid writes: names to hide outright. It is the only
+  // one that can hide a CUSTOM type — the legacy enabled list derives its
+  // hidden set from the built-ins, so a custom name was never in it.
+  it("hides the named types, custom ones included", async () => {
+    findMany.mockResolvedValueOnce([{ id: "a" }]);
+    const r = await noc.resolveFilteredAssetIds({
+      hideAssetTypes: ["network_camera", "printer"],
+      regionNames: null,
+    });
+    expect(r).toEqual(["a"]);
+    const where = (findMany.mock.calls[0][0] as { where: Record<string, unknown> }).where;
+    expect(where.assetType).toEqual({ notIn: ["network_camera", "printer"] });
+  });
+
+  it("returns null when the hidden list is empty (nothing narrows)", async () => {
+    const r = await noc.resolveFilteredAssetIds({ hideAssetTypes: [], regionNames: null });
+    expect(r).toBeNull();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  // A stale bundle can send both. Union, not last-writer-wins: each names part
+  // of what the operator switched off.
+  it("unions the hidden list with a legacy enabled list", async () => {
+    findMany.mockResolvedValueOnce([]);
+    await noc.resolveFilteredAssetIds({
+      assetTypes: ["server", "switch"],
+      hideAssetTypes: ["network_camera"],
+      regionNames: null,
+    });
+    const where = (findMany.mock.calls[0][0] as { where: Record<string, unknown> }).where;
+    expect(where.assetType).toEqual({
+      notIn: [
+        "network_camera",
+        ...BUILT_IN_ASSET_TYPES.filter((t) => !["server", "switch"].includes(t)),
+      ],
+    });
   });
 
   it("filters by FortiGate names across both haystacks (learnedLocation OR sighting rows, exact-insensitive)", async () => {

@@ -122,9 +122,16 @@ export const FORTIGATE_NONE_SENTINEL = "__none__";
  * Resolve a per-widget filter into the set of matching asset ids, or null when
  * no filter is active (callers then skip the constraint entirely — the default
  * unfiltered path). Three dimensions:
- *   - assetTypes: the ENABLED built-in types. Hidden = built-ins NOT enabled;
- *     we exclude those (`assetType NOT IN hidden`) so unchecked types disappear
- *     while custom (non-built-in) types always remain visible.
+ *   - hideAssetTypes: the types the widget wants EXCLUDED, named outright
+ *     (`assetType NOT IN hidden`). This is the dimension the grid writes today,
+ *     and the only one that can hide a CUSTOM (operator-added) type: naming the
+ *     hidden set rather than the enabled one means a type added to the registry
+ *     after a config was saved is not in that config's hidden list, so it stays
+ *     visible until the operator says otherwise.
+ *   - assetTypes: the LEGACY dimension — the ENABLED built-in types, from a
+ *     stored config (or a cached older bundle) written before the grid learned
+ *     the registry. Hidden = built-ins NOT enabled, so custom types always show
+ *     through it. Sent together with hideAssetTypes the two union.
  *   - regionNames: the user's region names ("My regions"). An asset matches if
  *     it carries the `region:<name>` tag for any of them. Empty = all regions.
  *   - fortigateNames: FortiGate device names ("Selected FortiGates" — the
@@ -144,15 +151,17 @@ export const FORTIGATE_NONE_SENTINEL = "__none__";
  */
 export async function resolveFilteredAssetIds(opts: {
   assetTypes?: string[] | null;
+  hideAssetTypes?: string[] | null;
   regionNames?: string[] | null;
   fortigateNames?: string[] | null;
 }): Promise<string[] | null> {
   const where: Record<string, unknown> = {};
   let active = false;
+  const hidden = new Set<string>((opts.hideAssetTypes || []).filter(Boolean));
   if (Array.isArray(opts.assetTypes)) {
-    const hidden = BUILTIN_ASSET_TYPES.filter((t) => !opts.assetTypes!.includes(t));
-    if (hidden.length > 0) { where.assetType = { notIn: hidden }; active = true; }
+    for (const t of BUILTIN_ASSET_TYPES) if (!opts.assetTypes.includes(t)) hidden.add(t);
   }
+  if (hidden.size > 0) { where.assetType = { notIn: [...hidden] }; active = true; }
   const regionNames = (opts.regionNames || []).filter(Boolean);
   if (regionNames.length > 0) {
     where.tags = { hasSome: regionNames.map((n) => "region:" + n) };
@@ -1266,17 +1275,23 @@ export async function getSitesWithIssues(maxSites: number | null = 25, assetIds:
 }
 
 export interface FilterOptions {
-  assetTypes: string[];
+  assetTypes: Array<{ name: string; label: string }>;
   regions: string[];
   fortigates: Array<{ name: string; regions: string[] }>;
 }
 
 /**
  * Options for the NOC dashboard's global filters:
- *   - assetTypes: the built-in asset types actually present in the fleet, in
- *     the canonical built-in order. Only built-ins are returned because the
- *     per-widget `assetTypes` filter (resolveFilteredAssetIds) toggles built-ins
- *     — custom types are always shown and aren't meaningful filter entries.
+ *   - assetTypes: `{name, label}` entries for the per-widget asset-type grid —
+ *     every built-in (canonical order, so the grid is stable on a fleet that
+ *     happens to own no printers) followed by every CUSTOM registry type that
+ *     is actually present in the fleet, by label. Labels come from the
+ *     AssetTypeDef registry, which is why the grid can name a custom type
+ *     instead of printing its snake_case value. Customs are present-only
+ *     because the registry may carry types nobody has assigned yet, and a
+ *     checkbox for a type no asset wears filters nothing. The widgets used to
+ *     get a bare `string[]` of built-ins here and never read it — the grid was
+ *     drawn from a static list, so a custom type could not be filtered at all.
  *   - regions: distinct `region:<name>` tag values across the live fleet, the
  *     same tags the `regionTags` filter matches. Sorted.
  *   - fortigates: `{name, regions}` entries for the "Selected FortiGates"
@@ -1288,15 +1303,16 @@ export interface FilterOptions {
  *     narrow its list to the widget's selected regions client-side.
  *     Non-Fortinet operator-typed firewalls carry no learnedLocation and are
  *     naturally excluded. Sorted by name.
- * Three cheap queries; safe for a read-only NOC kiosk token.
+ * Four cheap queries; safe for a read-only NOC kiosk token.
  */
 export async function getFilterOptions(): Promise<FilterOptions> {
-  const [typeRows, regionRows, fortigateRows] = await Promise.all([
+  const [typeRows, registryRows, regionRows, fortigateRows] = await Promise.all([
     prisma.asset.findMany({
       where: { status: { notIn: EXCLUDED_LIFECYCLE_STATUSES } },
       select: { assetType: true },
       distinct: ["assetType"],
     }),
+    prisma.assetTypeDef.findMany({ select: { name: true, label: true } }),
     prisma.$queryRaw<Array<{ region: string }>>`
       SELECT DISTINCT substring(t from 8) AS region
       FROM "assets", unnest("tags") AS t
@@ -1314,8 +1330,17 @@ export async function getFilterOptions(): Promise<FilterOptions> {
     }),
   ]);
   const present = new Set(typeRows.map((r) => r.assetType));
+  const labels = new Map(registryRows.map((r) => [r.name, r.label]));
+  // A registry row is the label source; a type with no row (a name still on
+  // assets after its row was deleted) gets its snake_case value humanized.
+  const labelFor = (name: string) =>
+    labels.get(name) || name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const customTypes = [...present]
+    .filter((t) => t && !(BUILTIN_ASSET_TYPES as readonly string[]).includes(t))
+    .map((name) => ({ name, label: labelFor(name) }))
+    .sort((a, b) => a.label.localeCompare(b.label));
   return {
-    assetTypes: BUILTIN_ASSET_TYPES.filter((t) => present.has(t)),
+    assetTypes: BUILTIN_ASSET_TYPES.map((name) => ({ name, label: labelFor(name) })).concat(customTypes),
     regions: regionRows.map((r) => r.region).filter(Boolean),
     fortigates: fortigateRows
       .filter((r): r is typeof r & { learnedLocation: string } => Boolean(r.learnedLocation))
@@ -1428,13 +1453,15 @@ export function clearNocFeedCache(): void {
 
 function filterCacheKey(
   assetTypes: string[] | null,
+  hideAssetTypes: string[] | null,
   regionNames: string[] | null,
   fortigateNames: string[] | null,
 ): string {
   const t = (assetTypes ?? []).slice().sort().join(",");
+  const h = (hideAssetTypes ?? []).slice().sort().join(",");
   const r = (regionNames ?? []).slice().sort().join(",");
   const f = (fortigateNames ?? []).slice().sort().join(",");
-  return t + "|" + r + "|" + f;
+  return t + "|" + h + "|" + r + "|" + f;
 }
 
 /**
@@ -1451,6 +1478,7 @@ export async function getNocSummaryPayload(opts: {
   canEvents: boolean;
   canAlerts: boolean;
   assetTypes: string[] | null;
+  hideAssetTypes?: string[] | null;
   regionNames: string[] | null;
   fortigateNames?: string[] | null;
   capLimit: number | null;
@@ -1462,7 +1490,8 @@ export async function getNocSummaryPayload(opts: {
     : opts.feeds.filter((f): f is NocFeedName => Object.prototype.hasOwnProperty.call(NOC_FEEDS, f));
 
   const fortigateNames = opts.fortigateNames ?? null;
-  const fKey = filterCacheKey(opts.assetTypes, opts.regionNames, fortigateNames);
+  const hideAssetTypes = opts.hideAssetTypes ?? null;
+  const fKey = filterCacheKey(opts.assetTypes, hideAssetTypes, opts.regionNames, fortigateNames);
   // `alerts` is the activeAlerts feed's gate — it reads Notification rows, so
   // events:read has no claim on it. No caller loses the feed by the switch:
   // migration 20260628000000 seeded `notifications: read` (renamed to `alerts`
@@ -1479,7 +1508,12 @@ export async function getNocSummaryPayload(opts: {
   let assetIds: string[] | null = null;
   if (requested.some((f) => allowed(NOC_FEEDS[f].gate))) {
     assetIds = (await nocFeedCache.getOrCompute("ids|" + fKey, () =>
-      resolveFilteredAssetIds({ assetTypes: opts.assetTypes, regionNames: opts.regionNames, fortigateNames }),
+      resolveFilteredAssetIds({
+        assetTypes: opts.assetTypes,
+        hideAssetTypes,
+        regionNames: opts.regionNames,
+        fortigateNames,
+      }),
     )) as string[] | null;
   }
 
