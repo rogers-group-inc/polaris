@@ -299,6 +299,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `credential.ssh_keypair_generated` is stamped at **warning** level — rotating locks Polaris out of every endpoint until the script re-runs fleet-wide.
 - A `credentialId` pointing at a row an admin deleted reads as "no keypair yet" (offer Generate), never a 500.
 - Config is validated with the SAME validators the script generator uses, so bad input fails at save time rather than at download time.
+- **Only a created account has a default username** (`polaris-agent`, via `defaultUsernameFor`). An existing-mode account defaults to `""`: save refuses it blank, and `getOnboardingScript` refuses every script that names the account (Windows remediation, both Linux scripts — Windows detection checks only the key) until one is entered. Defaulting existing mode to `polaris-agent` let the card publish an Intune remediation whose credential logged in as an account nothing had created. `generateKeypair` still writes `polaris-agent` onto the credential when the account is unnamed, because `validateSshConfig` requires a username; the first save replaces it.
+- The card's Username input reads `state[platform].username`, never a top-level `username` (there is none — reading it rendered the box permanently blank, so a saved account never showed and a blank Save was refused). Its placeholder follows the mode radio: `<domain>\<username>` (Windows) / `<username>` (Linux) for an existing account, `polaris-agent` for a created one.
 
 **When changing this:**
 - `POST /agents/windows-ssh/generate` must keep BOTH gates: `serverSettingsSystem:fullwrite` AND `credentials:write`. It mints a fleet-wide admin credential; the second gate is not redundant.

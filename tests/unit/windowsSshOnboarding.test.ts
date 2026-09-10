@@ -121,8 +121,11 @@ describe("getOnboardingState", () => {
     expect(s.publicKey).toBeNull();
     expect(s.fingerprint).toBeNull();
     expect(s.credentialIds).toEqual({ windows: null, linux: null });
-    expect(s.windows).toEqual({ accountMode: "existing", username: "polaris-agent" });
-    expect(s.linux).toEqual({ accountMode: "existing", username: "polaris-agent" });
+    // An existing account has NO default name. Defaulting it to polaris-agent
+    // shipped a fleet script whose credential logged in as an account nothing
+    // had created.
+    expect(s.windows).toEqual({ accountMode: "existing", username: "" });
+    expect(s.linux).toEqual({ accountMode: "existing", username: "" });
   });
 
   it("reads as 'not generated' when the credential was deleted out from under it", async () => {
@@ -150,6 +153,8 @@ describe("generateKeypair", () => {
     ]);
     const cred = db.credentials[0];
     expect(cred.type).toBe("ssh");
+    // No account named yet, but an ssh credential must carry a username.
+    expect(cred.config.username).toBe("polaris-agent");
     // Same private key in both rows.
     expect(db.credentials[1].config.privateKey).toBe(cred.config.privateKey);
 
@@ -256,7 +261,25 @@ describe("saveOnboardingConfig", () => {
     expect(s.windows).toEqual({ accountMode: "create", username: "svc-polaris" });
     expect(s.polarisServerIp).toBe("10.0.0.42");
     // Per-platform: saving Windows must not disturb Linux.
-    expect(s.linux.username).toBe("polaris-agent");
+    expect(s.linux.username).toBe("");
+  });
+
+  it("requires an existing account to be named, but defaults a created one", async () => {
+    await expect(
+      saveOnboardingConfig({ platform: "windows", accountMode: "existing", username: "" }, "t"),
+    ).rejects.toThrow(/username is required/i);
+    await expect(
+      saveOnboardingConfig({ platform: "linux", accountMode: "existing", username: "" }, "t"),
+    ).rejects.toThrow(/username is required/i);
+
+    const s = await saveOnboardingConfig({ platform: "windows", accountMode: "create", username: "" }, "t");
+    expect(s.windows).toEqual({ accountMode: "create", username: "polaris-agent" });
+  });
+
+  it("carries a named existing domain account through to the credential", async () => {
+    await generateKeypair("tester");
+    await saveOnboardingConfig({ platform: "windows", accountMode: "existing", username: "CORP\\svc-polaris" }, "t");
+    expect(db.credentials[0].config.username).toBe("CORP\\svc-polaris");
   });
 
   it("applies the script generator's validation at save time, not download time", async () => {
@@ -289,8 +312,19 @@ describe("getOnboardingScript", () => {
     await expect(getOnboardingScript("windows", "remediation")).rejects.toThrow(/Generate the deployment keypair/i);
   });
 
+  it("refuses the scripts that name an account until an existing one is entered", async () => {
+    await generateKeypair("tester");
+    await expect(getOnboardingScript("windows", "remediation")).rejects.toThrow(/existing Windows account/i);
+    await expect(getOnboardingScript("linux", "remediation")).rejects.toThrow(/existing Linux account/i);
+    await expect(getOnboardingScript("linux", "detection")).rejects.toThrow(/existing Linux account/i);
+    // Windows detection checks only the key, so it has nothing to refuse over.
+    const det = await getOnboardingScript("windows", "detection");
+    expect(det.script).toContain((await getOnboardingState()).publicKey!);
+  });
+
   it("returns both variants with distinct filenames once keyed", async () => {
     await generateKeypair("tester");
+    await saveOnboardingConfig({ platform: "windows", username: "CORP\\svc-polaris" }, "tester");
     const rem = await getOnboardingScript("windows", "remediation");
     const det = await getOnboardingScript("windows", "detection");
 
