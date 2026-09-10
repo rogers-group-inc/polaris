@@ -17,6 +17,18 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { fgRequest } from "../../src/services/fortigateService.js";
 import { AppError } from "../../src/utils/errors.js";
 
+// The FortiManager/FortiGate transports call `tlsFetch` — undici's own fetch
+// paired with its own dispatcher, because a dispatcher is only valid to the
+// undici copy that created it (see src/utils/tlsDispatcher.ts). Route it back
+// to the global fetch so this file keeps stubbing that one seam. The real
+// pairing is exercised unmocked, against a live local server, in
+// tests/unit/tlsDispatcher.test.ts — mocking it here is what let the
+// undici 6 -> 8 skew reach production unnoticed.
+vi.mock("../../src/utils/tlsDispatcher.js", () => ({
+  tlsFetch: (...args: unknown[]) => (globalThis.fetch as (...a: unknown[]) => unknown)(...args),
+  insecureTlsDispatcher: () => ({}),
+}));
+
 const config = { host: "10.0.0.1", port: 443, apiUser: "polaris", apiToken: "tok", verifySsl: false };
 
 function mockStatus(status: number, body: unknown = {}) {
