@@ -1,4 +1,6 @@
-# Business rules 44–47 — full narrative
+# Business rules 44–49 — full narrative
+
+> The filename keeps its original range: it is cited from code and from the other skills.
 
 Verbatim from BUSINESS-RULES.md: each rule records the decision *and the incident or constraint that forced it*. The invariant for each rule is in `invariants-12-29.md` / `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
@@ -7,6 +9,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 46](#rule-46) — A device filter on an event automation filters the event's subject
 - [Rule 47](#rule-47) — A PostgreSQL client is chosen by the server's major and verified before it is trusted, never spawned by bare name
 - [Rule 48](#rule-48) — Nobody hands out authority they do not hold
+- [Rule 49](#rule-49) — An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved
 
 <a id="rule-44"></a>
 
@@ -261,3 +264,45 @@ The caller's level is read from `req.roleSnapshot` first and `req.session.roleSn
 ### What it deliberately does not do
 
 It is not a four-eyes rule. An administrator granting administrator is the normal way an install gets its second admin, and blocking it would be a different (and much more disruptive) policy than the one the finding asks for. It also does not touch server-side provisioning: `ssoProvisioning` maps an IdP group onto a role with no human actor in the request to test, and the seed creates the first administrator before anyone exists to be escalated. Both are outside the rule by construction, not by exemption.
+
+<a id="rule-49"></a>
+
+## Rule 49 — An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved
+
+**The invariant.** `resolveUpgradeCredential` decides what an agent upgrade connects with: the operator's explicit `credentialId`, else the row's `installCredentialId`, else the Polaris-managed SSH deployment credential for that platform. The transport comes from the credential's `type`, not from the row. An adopted credential is written back onto the row only after the upgrade succeeds.
+
+### How it was found
+
+A Windows server sat on agent 0.17.1 while the current build was 0.17.3. Pressing **Upgrade** returned `No install credential on file for this agent; pass credentialId explicitly.` The operator had just run the SSH-Deployment onboarding script on that host through Azure Arc and seen it report success, which made the refusal read as a bug in the thing they had only just fixed.
+
+Two separate things were true, and neither was visible from the panel.
+
+### Why the row had no credential
+
+`ManagedAgent.installCredentialId` is written at install time and never afterwards — no later path repoints it — and its foreign key is `ON DELETE SET NULL`. That is deliberate (a deleted credential must not block removing a stuck agent), but it means deleting one credential silently strands every agent installed with it. The other road to null is age: migration `20260514010000` added the column with no backfill, so every install older than it has carried a null since.
+
+### Why it stayed stranded
+
+The refusal was thrown by `startUpgrade` **before** it touched `installStatus`. So the row never became `upgrade_failed`; it stayed `active`, stayed inside `upgradeAllOutdated`'s filter as out-of-date, and was re-skipped by every subsequent fan-out — including the auto-upgrade hook that runs after each new build. `upgradeAllOutdated` caught the throw into `perAsset[].error` and moved on, writing no Event and no `installError`. Nothing anywhere said this host was being passed over. It would have sat on 0.17.1 until someone pressed the button by hand and read the message, which is exactly how it was eventually found.
+
+### Why the onboarding script did not help, and why the obvious fix would not have either
+
+The Arc dispatch authorizes the deployment key on the host. It does not touch the ManagedAgent row, and the toast reports *dispatch* — Azure runs the script asynchronously afterwards, which is why that dialog has a **Check outcomes** button.
+
+The obvious repair — fall back to the managed deployment credential — fixes nothing on its own. Migration `20260609000000` backfilled `installTransport='winrm'` onto **every** pre-existing Windows row, and the managed credential is key-only. Honouring the row's transport would hand a passwordless credential to `winrmConnectionFromCred`, which refuses with "WinRM credential is missing username or password". The rows that most need the fallback are precisely the rows carrying that backfilled `winrm`.
+
+So the transport follows the credential's **type**. That is not a special case for the fallback: the install routes already refuse a credential whose `type` does not match the chosen transport, so for a healthy row the two always agree and the change is a no-op there. It is the row's column that is the derived, drifting copy.
+
+### Why adoption waits for success
+
+Rewriting `installCredentialId` and `installTransport` at kickoff would be a guess written down as fact. A Windows box that genuinely only speaks WinRM, and never had the deployment key authorized, will fail to connect over SSH — and if the row had already been repointed, the operator's recorded install credential would have been replaced by one that demonstrably cannot reach the host. Writing on success only means reaching the host is the proof. The failure path leaves the row exactly as it was and lands as `upgrade_failed`, which is itself an upgradeable status (see rule under `UPGRADEABLE_INSTALL_STATUSES`), so the next fan-out retries it.
+
+An explicit operator override is never adopted, even when it works. Polaris records what it chose, not what it was told; adopting an override would turn a one-off "use this credential just now" into a permanent change to the row that the operator never asked for.
+
+### What stays strict
+
+An explicit `credentialId` that does not resolve is still an error — someone who names a credential gets told it is wrong rather than quietly connected with a different one. A WinRM credential on a non-Windows agent is refused. And the rule is scoped to **upgrade**: install, reinstall and uninstall still require a credential on file, which is why the agent table's Reinstall button is still disabled on `hasInstallCredential: false` and force-remove is still the way out.
+
+### The silence itself was the bug
+
+Even with the fallback, a row can still be unupgradeable — no credential, and no deployment keypair ever generated. That now writes an `agent.upgrade_skipped` Event against the asset with the version it is stuck on, and logs a warning. The credential fallback fixes the common case; the Event is what stops the uncommon one from hiding for another two releases.

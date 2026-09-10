@@ -52,8 +52,13 @@ import {
   inferAgentPlatform,
   pickTransportAndCredential,
   checkAutoDeployPreconditions,
+  type AgentTransport,
 } from "./agentAutoDeployService.js";
 import { resolveInstallScriptId, type AgentOsPlatform } from "./agentInstallScripts.js";
+import {
+  getOnboardingState,
+  type SshOnboardingPlatform,
+} from "./windowsSshOnboardingService.js";
 
 // ─── Public entry points ──────────────────────────────────────────────
 
@@ -136,17 +141,132 @@ export function canUpgradeFromStatus(status: string | null | undefined): boolean
 
 export interface StartUpgradeInput {
   managedAgentId: string;
-  credentialId?:  string; // defaults to ManagedAgent.installCredentialId
+  /** Operator override. Omitted, resolveUpgradeCredential uses the row's
+   *  installCredentialId, falling back to the managed deployment credential. */
+  credentialId?:  string;
   hostOverride?:  string;
   actor:          string; // username for audit trail
   testOverrides?: TestOverrides;
 }
 
+/** What an upgrade will actually connect with — see resolveUpgradeCredential. */
+export interface ResolvedUpgradeCredential {
+  credentialId:   string;
+  credentialName: string;
+  transport:      AgentTransport;
+  /**
+   * True when the credential did NOT come from the row — the row was stranded
+   * (no usable `installCredentialId`) and we fell back to the Polaris-managed
+   * SSH deployment credential. A successful upgrade writes the adoption back
+   * onto the row; a failed one leaves it untouched.
+   */
+  adopted:        boolean;
+}
+
+/**
+ * Decide which credential + transport an upgrade should use, healing rows that
+ * can't answer for themselves.
+ *
+ * `ManagedAgent.installCredentialId` is written only at install time and its FK
+ * is ON DELETE SET NULL, so a row loses its credential two ways: an admin
+ * deleted the credential it installed with, or the install predates the column
+ * (migration 20260514010000 added it with no backfill). Either way the row was
+ * permanently un-upgradeable — `startUpgrade` threw BEFORE touching
+ * `installStatus`, so the row stayed `active` + out-of-date and every
+ * `upgradeAllOutdated` fan-out re-skipped it with no Event, no `installError`
+ * and nothing on the asset panel. A host stranded this way sat on its original
+ * binary forever while the rest of the fleet moved on.
+ *
+ * The fallback is the Polaris-managed SSH deployment credential (Integrations →
+ * Polaris Agent → SSH Deployment). It exists precisely so Polaris can reach the
+ * fleet without per-host credentials, and the onboarding script authorizes its
+ * key on every host it runs on.
+ *
+ * **Transport follows the credential's TYPE, not the row.** For a healthy row
+ * those always agree — the install routes refuse a credential whose `type`
+ * doesn't match the chosen transport — so this changes nothing there. It is
+ * what makes the fallback work at all: the managed credential is key-only, and
+ * `installTransport` was backfilled to `winrm` for EVERY pre-2026-06-09 Windows
+ * row (migration 20260609000000), so honoring the row would hand a passwordless
+ * credential to `winrmConnectionFromCred` and die on "missing username or
+ * password". Overriding is safe because the new transport is not persisted
+ * until the upgrade succeeds: a host that really is WinRM-only fails to
+ * connect, keeps its recorded transport, and lands as `upgrade_failed` with a
+ * real reason — which is itself retryable.
+ */
+export async function resolveUpgradeCredential(
+  row: { installCredentialId: string | null; installTransport: string; osPlatform: string },
+  overrideCredentialId?: string,
+): Promise<ResolvedUpgradeCredential> {
+  const onRow = overrideCredentialId ?? row.installCredentialId ?? null;
+
+  // An id that no longer resolves is treated as absent, not as an error: the
+  // SetNull FK covers the deletion case, but a credential can also become
+  // unreadable (secrets that won't decrypt), and the fallback is a better
+  // answer than a refusal in both.
+  let cred = onRow ? await getCredential(onRow).catch(() => null) : null;
+  let adopted = false;
+
+  if (!cred) {
+    if (overrideCredentialId) {
+      // An explicitly-passed id that doesn't resolve is an operator mistake —
+      // say so instead of silently connecting with something else.
+      throw new AppError(400, `Credential ${overrideCredentialId} not found`);
+    }
+    const managedId = await managedDeployCredentialIdFor(row.osPlatform);
+    if (managedId) {
+      cred = await getCredential(managedId).catch(() => null);
+      adopted = !!cred;
+    }
+  }
+
+  if (!cred) {
+    throw new AppError(400,
+      "No install credential on file for this agent, and no Polaris-managed SSH deployment " +
+      "credential to fall back on. Generate a deployment keypair under Integrations → Polaris " +
+      "Agent → SSH Deployment and run the onboarding script on this host, pass credentialId " +
+      "explicitly, or force-remove the agent and reinstall.");
+  }
+
+  const transport: AgentTransport = cred.type === "winrm" ? "winrm" : "ssh";
+  if (transport === "winrm" && row.osPlatform !== "windows") {
+    throw new AppError(400,
+      `Credential "${cred.name}" is WinRM, which is only valid for Windows hosts — ` +
+      `this agent is ${row.osPlatform}.`);
+  }
+
+  return { credentialId: cred.id, credentialName: cred.name, transport, adopted };
+}
+
+/**
+ * The managed deployment credential for a platform, or null when no keypair has
+ * been generated. `getOnboardingState` already nulls an id whose credential was
+ * deleted, so a dangling pointer reads as "none" rather than throwing here.
+ *
+ * darwin maps to the Linux credential: the SSH Deployment card is Windows +
+ * Linux only, and both POSIX platforms take the same key. If that account isn't
+ * on the Mac the connection simply fails — still better than the refusal, and
+ * still retryable.
+ */
+async function managedDeployCredentialIdFor(osPlatform: string): Promise<string | null> {
+  const platform: SshOnboardingPlatform = osPlatform === "windows" ? "windows" : "linux";
+  try {
+    const state = await getOnboardingState();
+    return state.credentialIds[platform];
+  } catch (err) {
+    logger.warn({ err, osPlatform }, "Could not read SSH deployment onboarding state for upgrade fallback");
+    return null;
+  }
+}
+
 /**
  * Fire-and-forget upgrade kickoff. Refuses synchronously (throws) when
  * the agent is already at manifest.currentVersion, no binaries are staged,
- * or the row isn't in an UPGRADEABLE_INSTALL_STATUSES state (so a previously
- * failed upgrade IS retryable from here). Otherwise transitions
+ * the row isn't in an UPGRADEABLE_INSTALL_STATUSES state (so a previously
+ * failed upgrade IS retryable from here), or no credential can be resolved
+ * for it at all — `resolveUpgradeCredential` first tries the row's own
+ * credential, then the managed SSH deployment credential, so "no install
+ * credential on file" is no longer by itself a dead end. Otherwise transitions
  * installStatus → "upgrading" and dispatches
  * the platform-specific upgrade path. The agent's bearer + cert pin
  * survive — we don't touch agent.conf; only the binary is replaced.
@@ -174,10 +294,9 @@ export async function startUpgrade(input: StartUpgradeInput): Promise<{ fromVers
     throw new AppError(409, `Agent is already at v${manifest.currentVersion}.`);
   }
 
-  const credentialId = input.credentialId ?? row.installCredentialId ?? null;
-  if (!credentialId) {
-    throw new AppError(400, "No install credential on file for this agent; pass credentialId explicitly.");
-  }
+  // Throws (before any state change) only when the row has no credential AND
+  // there's no managed deployment credential to adopt.
+  const resolved = await resolveUpgradeCredential(row, input.credentialId);
 
   // Sync-half: transition state + emit kickoff event. Then fire the
   // async runner. UI starts polling immediately and sees "upgrading".
@@ -191,10 +310,15 @@ export async function startUpgrade(input: StartUpgradeInput): Promise<{ fromVers
     resourceId:   row.assetId,
     actor:        input.actor,
     level:        "info",
-    message:      `Polaris Agent upgrade kicked off (${row.agentVersion ?? "unknown"} → ${manifest.currentVersion})`,
+    message:      resolved.adopted
+      ? `Polaris Agent upgrade kicked off (${row.agentVersion ?? "unknown"} → ${manifest.currentVersion}) ` +
+        `using the managed deployment credential "${resolved.credentialName}" — this agent had no install credential on file`
+      : `Polaris Agent upgrade kicked off (${row.agentVersion ?? "unknown"} → ${manifest.currentVersion})`,
     details: {
       managedAgentId: row.id,
-      credentialId,
+      credentialId:   resolved.credentialId,
+      transport:      resolved.transport,
+      adoptedCredential: resolved.adopted,
       fromVersion:    row.agentVersion ?? null,
       toVersion:      manifest.currentVersion,
       binaryFilename: binaryName,
@@ -204,7 +328,7 @@ export async function startUpgrade(input: StartUpgradeInput): Promise<{ fromVers
   setImmediate(() =>
     runUpgrade({
       managedAgentId: row.id,
-      credentialId,
+      resolved,
       hostOverride:   input.hostOverride,
       testOverrides:  input.testOverrides,
       actor:          input.actor,
@@ -269,7 +393,24 @@ export async function upgradeAllOutdated(actor: string): Promise<UpgradeAllResul
       await startUpgrade({ managedAgentId: e.id, actor });
       perAsset.push({ assetId: e.assetId, managedAgentId: e.id, ok: true });
     } catch (err: any) {
-      perAsset.push({ assetId: e.assetId, managedAgentId: e.id, ok: false, error: err?.message ?? String(err) });
+      // startUpgrade throws BEFORE it touches installStatus, so a row that
+      // refuses here leaves no trace of its own: it stays "active", stays
+      // out-of-date, and gets re-skipped by every later fan-out. Until this
+      // Event existed, a host stranded on an old binary was invisible unless
+      // someone pressed Upgrade on it by hand. Record it against the asset so
+      // it shows up where the operator already looks.
+      const error = err?.message ?? String(err);
+      logger.warn({ managedAgentId: e.id, assetId: e.assetId, err }, "Agent upgrade fan-out skipped a row");
+      await logEvent({
+        action:       "agent.upgrade_skipped",
+        resourceType: "asset",
+        resourceId:   e.assetId,
+        actor,
+        level:        "warning",
+        message:      `Polaris Agent upgrade skipped (still on ${e.agentVersion ?? "an unknown version"}): ${error}`,
+        details:      { managedAgentId: e.id, fromVersion: e.agentVersion ?? null, toVersion: currentVersion },
+      }).catch(() => { /* best-effort — never fail the fan-out on the audit write */ });
+      perAsset.push({ assetId: e.assetId, managedAgentId: e.id, ok: false, error });
     }
   });
   return {
@@ -758,7 +899,7 @@ async function failUninstall(managedAgentId: string, assetId: string, reason: st
 
 interface RunUpgradeInput {
   managedAgentId: string;
-  credentialId:   string;
+  resolved:       ResolvedUpgradeCredential;
   hostOverride?:  string;
   testOverrides?: TestOverrides;
   actor:          string;
@@ -791,7 +932,7 @@ async function runUpgrade(input: RunUpgradeInput): Promise<void> {
 
   let cred;
   try {
-    cred = await getCredential(input.credentialId, { revealSecrets: true });
+    cred = await getCredential(input.resolved.credentialId, { revealSecrets: true });
   } catch (err: any) {
     return failUpgrade(input.managedAgentId, row.assetId, `Credential lookup failed: ${err.message ?? err}`, input.actor);
   }
@@ -818,7 +959,10 @@ async function runUpgrade(input: RunUpgradeInput): Promise<void> {
     }
   } else if (row.osPlatform === "windows") {
     try {
-      if (row.installTransport === "ssh") {
+      // The RESOLVED transport, not the row's: for a healthy row they agree,
+      // and for an adopted credential the row's value is stale (or was
+      // backfilled to winrm) — see resolveUpgradeCredential.
+      if (input.resolved.transport === "ssh") {
         await sshWindowsUpgrade({
           host,
           cred:            cred.config as Record<string, unknown>,
@@ -848,9 +992,21 @@ async function runUpgrade(input: RunUpgradeInput): Promise<void> {
   // existing value until the host's next heartbeat reports the new one;
   // the route already returned the expected toVersion to the operator so
   // the UI doesn't need to wait for that.
+  //
+  // An ADOPTED credential is written back here and only here — proof it can
+  // actually reach the host, so the row stops being stranded and the next
+  // fan-out needs no fallback. Written on success only: a host that failed
+  // keeps whatever it had recorded rather than being repointed at a
+  // credential that didn't work.
+  const adoption = input.resolved.adopted
+    ? {
+        installCredentialId: input.resolved.credentialId,
+        installTransport:    input.resolved.transport,
+      }
+    : {};
   await prisma.managedAgent.update({
     where: { id: row.id },
-    data:  { installStatus: "active", installError: null },
+    data:  { installStatus: "active", installError: null, ...adoption },
   });
   await logEvent({
     action:       "agent.upgrade_succeeded",
@@ -858,8 +1014,19 @@ async function runUpgrade(input: RunUpgradeInput): Promise<void> {
     resourceId:   row.assetId,
     actor:        input.actor,
     level:        "info",
-    message:      `Polaris Agent upgraded to v${toVersion}`,
-    details:      { managedAgentId: row.id, fromVersion: row.agentVersion ?? null, toVersion },
+    message:      input.resolved.adopted
+      ? `Polaris Agent upgraded to v${toVersion}; adopted the managed deployment credential ` +
+        `"${input.resolved.credentialName}" (${input.resolved.transport}) as this agent's install credential`
+      : `Polaris Agent upgraded to v${toVersion}`,
+    details: {
+      managedAgentId:    row.id,
+      fromVersion:       row.agentVersion ?? null,
+      toVersion,
+      adoptedCredential: input.resolved.adopted,
+      ...(input.resolved.adopted
+        ? { credentialId: input.resolved.credentialId, transport: input.resolved.transport }
+        : {}),
+    },
   });
 }
 
