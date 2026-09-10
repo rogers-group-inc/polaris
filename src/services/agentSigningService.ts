@@ -452,7 +452,7 @@ export function parseKeytoolAliases(stdout: string): string[] {
  *
  * Resolution is two-step: the bare name (which is the whole story wherever the
  * JDK registered its alternatives), then the JVM-reported `java.home`. That
- * second step matters because `java-17-openjdk-headless` DOES ship keytool —
+ * second step matters because `java-25-openjdk-headless` DOES ship keytool —
  * beside the JVM — so a PATH miss is not the same as the tool being absent,
  * and without the fallback the Test button would sit permanently degraded on a
  * perfectly well-provisioned host.
@@ -487,7 +487,7 @@ export async function verifyKeystore(
     /* not on PATH — fall through to the JVM-reported location */
   }
 
-  // `java-17-openjdk-headless` DOES ship keytool, but next to the JVM rather
+  // `java-25-openjdk-headless` DOES ship keytool, but next to the JVM rather
   // than necessarily symlinked into /usr/bin, so a PATH miss is not the same
   // as "absent". Ask the JVM where it lives instead of guessing at
   // /usr/lib/jvm globs, which differ across distros and Windows JDKs.
