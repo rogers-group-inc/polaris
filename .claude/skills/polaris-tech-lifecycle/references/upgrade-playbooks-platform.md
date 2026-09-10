@@ -171,9 +171,13 @@ upgrades, so verify an agent reconnects, not just that pages load.
    `java-N-openjdk-headless` package in the RHEL scripts and `openjdk-N-jre-headless` in the
    Ubuntu ones. Nothing installs `default-jre-headless` any more — do not reintroduce it, in a
    script or in the image; it carries no version for the check to compare and drifts per host.
-4. Keep `polarisTarget` equal to `polarisMinimum` in the dataset. A target above what the
+4. `JAVA_MINIMUM` in `src/services/agentSigningService.ts` — the number the running app
+   states. Both `signingAvailability` error strings interpolate it and the Code-signing
+   card renders `availability.javaMinimum`, so the browser carries no literal of its own.
+   `check:versions` reads it; it is the only Java site inside `src/`.
+5. Keep `polarisTarget` equal to `polarisMinimum` in the dataset. A target above what the
    install paths provision reports a behind-target JDK on every healthy host.
-5. Re-sign one agent binary and verify the signature chain.
+6. Re-sign one agent binary and verify the signature chain.
 
 ### Blast radius
 Signing only. A missing or wrong JDK disables code signing and the UI says so; it does not break

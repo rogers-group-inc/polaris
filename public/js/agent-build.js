@@ -133,16 +133,21 @@
     // "Too old" is reported separately from "not installed": they need
     // different actions, and the old copy sent an operator with Go 1.21 off
     // to install a toolchain they already had.
-    var goMin = inv.goMinimum || "1.22";
+    // No literal fallback: a hardcoded floor here outlived three toolchain
+    // moves and told operators to install a Go the preflight then refused.
+    // The server owns the number (GO_MINIMUM); if it is missing from the
+    // payload, say "Go" without one rather than a stale one.
+    var goMin = inv.goMinimum || "";
+    var goMinTxt = goMin ? " " + escapeHtml(goMin) + "+" : "";
     var goNotice = "";
     if (!inv.goAvailable || inv.goTooOld) {
       goNotice =
         '<div style="margin-bottom:0.75rem;padding:0.5rem 0.75rem;background:rgba(255,160,40,0.08);' +
           'border-left:3px solid var(--color-warning);border-radius:4px;font-size:0.82rem;color:var(--color-warning)">' +
           (inv.goTooOld
-            ? '⚠ Go ' + escapeHtml(inv.goVersion || "") + ' is installed, but building the agent requires Go ' +
-              escapeHtml(goMin) + '+. Upgrade the toolchain on this host and reload.'
-            : '⚠ Go is not installed on this Polaris server. Install Go ' + escapeHtml(goMin) + '+ on the host (see ' +
+            ? '⚠ Go ' + escapeHtml(inv.goVersion || "") + ' is installed, but building the agent requires Go' +
+              goMinTxt + '. Upgrade the toolchain on this host and reload.'
+            : '⚠ Go is not installed on this Polaris server. Install Go' + goMinTxt + ' on the host (see ' +
               '<code>docs/INSTALL.md</code> → "Optional: Polaris Agent") and reload to enable the Build button.') +
         '</div>';
     }
@@ -183,8 +188,8 @@
       ? '<button class="btn btn-primary" id="btn-agent-build">Build agent binaries (v' + escapeHtml(inv.agentSourceVersion) + ')</button>'
       : '<button class="btn btn-primary" disabled title="' +
         (inv.goTooOld
-          ? 'Go ' + escapeHtml(inv.goVersion || "") + ' is too old — upgrade to Go ' + escapeHtml(goMin) + '+ to enable'
-          : 'Install Go ' + escapeHtml(goMin) + '+ on the server to enable') +
+          ? 'Go ' + escapeHtml(inv.goVersion || "") + ' is too old — upgrade to Go' + goMinTxt + ' to enable'
+          : 'Install Go' + goMinTxt + ' on the server to enable') +
         '">Build agent binaries</button>';
 
     var goVerLine = inv.goAvailable && inv.goVersion
@@ -756,7 +761,7 @@
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0 0 0.3rem 0">' +
           'Signs the two Windows agent binaries after every build with your internal CA, so Defender can be ' +
           'told to trust them by publisher instead of re-evaluating a new file hash every build. ' +
-          'Requires Java 17+ and the jsign jar on this Polaris server, plus a PKCS#12 keystore holding an ' +
+          'Requires Java' + (avail.javaMinimum ? ' ' + escapeHtml(avail.javaMinimum) + '+' : '') + ' and the jsign jar on this Polaris server, plus a PKCS#12 keystore holding an ' +
           'internal-CA code-signing certificate (see <code>docs/INSTALL.md</code> → "Optional: Code signing").' +
         '</p>' +
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0 0 0.3rem 0">' +

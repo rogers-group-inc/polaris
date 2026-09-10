@@ -290,6 +290,7 @@ Java **25**, jsign **7.5**.
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `java-25-openjdk-headless` | pin |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `openjdk-25-jre-headless`, falling back to `default-jre-headless` | pin |
 | two Windows setup scripts | `Microsoft.OpenJDK.25` + `aka.ms/download-jdk/microsoft-jdk-25-windows-x64.msi` | pin |
+| `src/services/agentSigningService.ts` | `JAVA_MINIMUM` — the number the RUNNING APP states, interpolated into every "install Java N+" string and served to the UI as `availability.javaMinimum` | pin |
 | all six setup scripts | `JSIGN_VERSION="7.5"` + `JSIGN_SHA256` | pin |
 
 **RESOLVED 2026-09-09.** The Ubuntu scripts installed `default-jre-headless`, the distro
@@ -310,6 +311,17 @@ instead of 2027-09-30, and one fewer edit later. Availability was checked on eve
 because one platform without the package splits the fleet's signing JDK all over again: RHEL 9
 AppStream (`java-25-openjdk-headless`), Debian trixie and Ubuntu 22.04 *and* 24.04
 (`openjdk-25-jre-headless`), winget (`Microsoft.OpenJDK.25`) and the `aka.ms` MSI all carry it.
+
+**The app states a floor too, and it was the last site to move (2026-09-11).** The two
+`signingAvailability` error strings and the Code-signing card both said "Java 17+" for two days
+after every install path moved to 25 — pointing an operator at a version `platformEol.json`
+grades `below_minimum`, which is ALWAYS critical, while the card that told them to install it
+called it fine. Nothing caught it because `java-major` read only install scripts, the Dockerfile
+and the docs table; no family member read `src/`. `JAVA_MINIMUM` is now that number, the strings
+interpolate it, the browser reads it off the availability payload rather than carrying its own
+literal, and the family scans it — the same shape `GO_MINIMUM` has had since the Go floor
+started being enforced. A copy string with a hardcoded version is a claim nothing checks.
+
 
 **Target always equals minimum in the dataset for this row.** A target above what the install
 paths provision makes every healthy install report a behind-target JDK forever, which is the

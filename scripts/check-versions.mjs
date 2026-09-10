@@ -303,6 +303,12 @@ const FAMILIES = [
         re: /Microsoft\.OpenJDK\.(\d+)/g, pick: (m) => m[1] },
       { files: WINDOWS_SETUP, label: "JDK MSI URL", kind: "pin",
         re: /microsoft-jdk-(\d+)-windows/g, pick: (m) => m[1] },
+      // The number the RUNNING APP states. Every "install Java N+" string
+      // interpolates it, and nothing else in this family reads src/ — which is
+      // how the copy went on saying "Java 17+" while all ten install sites
+      // said 25.
+      { file: "src/services/agentSigningService.ts", label: "JAVA_MINIMUM", kind: "pin",
+        re: /JAVA_MINIMUM = "(\d+)"/g, pick: (m) => m[1] },
       { file: "docs/INSTALL.md", label: "supported-versions table", kind: "prose",
         re: /\*\*Java\*\*[^|\n]*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
     ],
@@ -511,7 +517,7 @@ const UNVERSIONED = [
   {
     re: /apt-get install -y default-jre-headless/g,
     what: "Java",
-    pinned: "java-17-openjdk-headless (RHEL) / Microsoft.OpenJDK.17 (Windows)",
+    pinned: "a NAMED openjdk-<major>-jre-headless / java-<major>-openjdk-headless / Microsoft.OpenJDK.<major> — 25 today, and the java-major check is what says so",
     // A versioned install of the same technology in the SAME file means the
     // unversioned one is a deliberate fallback, not the primary path — the pin
     // check works, and the degradation is logged at install time. Only an
@@ -531,7 +537,7 @@ const UNVERSIONED = [
     // `command -v pg_dump` said all was well (prod, 2026-09-09).
     re: /dnf install -y postgresql(?![0-9"${}\w-])/g,
     what: "the PostgreSQL client tools",
-    pinned: "postgresql15 from PGDG — RHEL 9's unversioned AppStream package is PostgreSQL 13, which cannot dump a 15+ server",
+    pinned: "postgresql${PG_MAJOR} from PGDG (17 today) — RHEL 9's unversioned AppStream package is PostgreSQL 13, and pg_dump refuses a server newer than itself",
     pairedWith: /dnf install -y "?postgresql(?:\$\{PG_(?:CLIENT_)?MAJOR\}|1\d)\b/,
   },
 ];

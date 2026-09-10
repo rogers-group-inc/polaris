@@ -376,6 +376,7 @@
       "steps": [
         "Confirm the jsign release in use runs on the target major (7.5 is Java 8 bytecode, so anything from 8 up), and that the JDK package EXISTS on every platform - RHEL AppStream, Debian, both Ubuntu LTSes, winget and the aka.ms MSI. One platform without it splits the fleet's signing JDK.",
         "Bump the JDK package in the Dockerfile and the winget id plus MSI URL in every setup script.",
+        "Bump JAVA_MINIMUM in src/services/agentSigningService.ts - the number the running app states. Both signingAvailability error strings interpolate it and the Code-signing card renders availability.javaMinimum, so the browser carries no literal of its own. check:versions reads it, and it is the only Java site inside src/.",
         "Re-sign one agent binary and verify the signature chain before shipping."
       ],
       "files": [
@@ -386,6 +387,8 @@
         "deploy/setup-ubuntu-nodb.sh",
         "deploy/setup-windows.ps1",
         "deploy/setup-windows-nodb.ps1",
+        "src/services/agentSigningService.ts",
+        "public/js/agent-build.js",
         "docs/INSTALL.md"
       ]
     },
