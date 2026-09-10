@@ -183,7 +183,7 @@
       // The list used to be Object.keys(ASSET_TYPE_LABELS) — the static map —
       // so a custom type the chart happily DREW had no checkbox and could not
       // be hidden. getAssetTypeOptions() is the shared vocabulary (built-ins +
-      // the custom registry types present in the fleet, registry-labelled);
+      // every custom type the asset-type registry carries, registry-labelled);
       // paint the built-in seed first so the popover is never empty, then
       // repaint when it resolves. A hidden type the list no longer offers
       // stays in hiddenTypes — dropping it would silently un-hide it.

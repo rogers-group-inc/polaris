@@ -771,8 +771,8 @@
   };
 
   // The asset-type vocabulary the gear grid offers, as [{value, label}]: every
-  // built-in plus every CUSTOM registry type present in the fleet, labelled by
-  // its registry row. Rides the SAME one-shot /dashboard/filter-options fetch
+  // built-in plus every CUSTOM type the asset-type registry carries (one the
+  // fleet does not wear yet included), labelled by its registry row. Rides the SAME one-shot /dashboard/filter-options fetch
   // as the region and FortiGate pickers, so the grid costs no extra request
   // and works on the unauthenticated /dash wallboard.
   //
@@ -901,7 +901,7 @@
   // don't ride the noc-summary filter).
   // The type grid is painted TWICE: once synchronously from the built-in list
   // so the popover is never empty, then again when getAssetTypeOptions()
-  // resolves and adds the custom registry types present in the fleet. A toggle
+  // resolves and adds every custom type the registry carries. A toggle
   // made before that lands is kept (the repaint reads the live off-list, not
   // the config snapshot).
   // onChange(key, value) is the widget's config setter — key is "regionScope"/
@@ -1097,7 +1097,7 @@
       }
 
       // Built-ins now (the popover is never empty), then the full vocabulary —
-      // built-ins plus the custom registry types present in the fleet — once
+      // built-ins plus every custom type the registry carries — once
       // /dashboard/filter-options answers.
       paintTypeGrid(BUILTIN.map(function (t) { return { value: t, label: labels[t] || t }; }));
       window.PolarisWidgets.getAssetTypeOptions().then(function (options) {
