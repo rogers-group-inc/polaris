@@ -389,6 +389,30 @@ redundant (harmless but misleading) or insufficient (a real hole). Re-verify wit
 `npm ls <pkg>` before deleting one, and never `npm audit fix --force`. Details:
 [dependency-audit.md](dependency-audit.md).
 
+## etcd and Patroni (HA installs only)
+
+**Neither is pinned anywhere in this repo, and that is the finding.** They exist only on an
+active/standby HA install (`docs/HA.md`); a single-node Polaris has neither.
+
+| Site | Form | Role |
+|---|---|---|
+| `deploy/ha/setup-rhel-ha.sh` | `dnf --enablerepo=pgdg-rhel9-extras install -y etcd` | **unversioned** |
+| `deploy/ha/setup-rhel-ha.sh` | `dnf install -y patroni patroni-etcd` | **unversioned** |
+| `deploy/ha/patroni.yml.example` | `etcd3.hosts` — the API generation, so effectively an etcd 3.x floor | prose |
+| `deploy/ha/patroni.yml.example` | written against **Patroni 3.x**; the `on_role_change` callback re-derives the role from the REST API because the vocabulary changed in 4.x | prose |
+| `src/data/platformEol.json` | the `etcd` and `patroni` entries — where their lifecycle is tracked, since no pin exists to check | dataset |
+
+There is no equality check to run: with nothing naming a version, nothing can disagree. What
+`check:versions` reports instead is an `unversioned-install` warning per install line, every run.
+The risk it names is specific — **a primary and a standby built months apart get whatever PGDG
+shipped on their build days**, and a version skew across the pair is the likeliest way this
+design breaks. etcd compounds it by supporting only the current and previous release branch, so
+a host can fall out of support because something newer shipped, with no date to plan against.
+
+Pinning both explicitly is the obvious fix and is **not** done: it is a deployment decision
+(which versions, and whether to carry the PGDG repo pin) that wants a human and a real HA pair
+to test against. `polarisMinimum` / `polarisTarget` in the dataset are drafted, not decided.
+
 ## Family index
 
 The row set `scripts/check-versions.mjs` mirrors. These drift together or not at all.
@@ -405,6 +429,7 @@ not as a figure to keep in step by hand — `npm run check:versions` prints the 
 | `java-major` | major | 25 | `unversioned-install` — quiet since the Ubuntu scripts named a major |
 | `jsign-pin` | major.minor | 7.5 | — |
 | `dataset-shape` | n/a | n/a | dataset older than 120 days |
+| — (no family: nothing names a version) | n/a | n/a | `unversioned-install` — **loud on purpose**, two lines every run, for etcd and Patroni on an HA install |
 
 Not families, on purpose: the CI-has-no-TimescaleDB gap (a standing truth, not drift — a check
 that can never pass is noise) and the floating tags (reported informationally, since there is

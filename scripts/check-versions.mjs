@@ -85,6 +85,26 @@ function glob(dir, re) {
     .map((n) => `${dir}/${n}`);
 }
 
+/**
+ * Everything shipped under `deploy/ha/`, globbed.
+ *
+ * `glob` above is deliberately non-recursive, and the setup/unit globs match on
+ * basename, so `deploy/ha/setup-rhel-ha.sh` matched none of them and the entire
+ * HA install path sat outside this checker: 20 `postgresql-15` declarations, 8
+ * `timescaledb-2-postgresql-15` and a `/usr/pgsql-15/` path, none of them
+ * checked, while the header of this file promised a new deploy script is "in
+ * scope the moment it lands". A PostgreSQL major bump would have moved every
+ * other install path and left HA hosts provisioning 15 against units that
+ * require the new one.
+ *
+ * Globbed rather than enumerated for the same reason as the others: a file
+ * added under `deploy/ha/` later is scanned without anyone remembering to come
+ * back here. HA is NOT added to LINUX_SETUP — those scripts are the Node-floor
+ * family and `setup-rhel-ha.sh` installs no Node, so widening that glob would
+ * fail `minSites` on a script that has nothing to declare.
+ */
+const HA_DEPLOY = () => glob("deploy/ha", /\.(sh|service|timer|conf|example)$/);
+
 const LINUX_SETUP = () => glob("deploy", /^setup-(rhel|ubuntu)(-nodb)?\.sh$/);
 const WINDOWS_SETUP = () => glob("deploy", /^setup-windows(-nodb)?\.ps1$/);
 const ALL_SETUP = () => [...LINUX_SETUP(), ...WINDOWS_SETUP()];
@@ -286,6 +306,15 @@ const FAMILIES = [
         re: /\*\*PostgreSQL\*\*\s*\|\s*(\d+)\s*\|/g, pick: (m) => m[1] },
       { file: "README.md", label: "system-requirements table", kind: "prose",
         re: /\|\s*PostgreSQL\s*\|\s*(\d+)\+/g, pick: (m) => m[1] },
+      // The HA install path (see HA_DEPLOY). Its packages, service names and
+      // pg_config paths are pins exactly like the base scripts' — they decide
+      // what a standby and a witness provision.
+      { files: HA_DEPLOY, label: "HA package/service name", kind: "pin",
+        re: /postgresql-?(\d\d)(?:-server|\.service)?\b/g, pick: (m) => m[1] },
+      { files: HA_DEPLOY, label: "HA timescaledb package", kind: "pin",
+        re: /timescaledb-2-postgresql-(\d+)/g, pick: (m) => m[1] },
+      { files: HA_DEPLOY, label: "HA pg_config path", kind: "pin",
+        re: /\/usr\/pgsql-(\d+)\//g, pick: (m) => m[1] },
     ],
   },
 
@@ -540,10 +569,39 @@ const UNVERSIONED = [
     pinned: "postgresql${PG_MAJOR} from PGDG (17 today) — RHEL 9's unversioned AppStream package is PostgreSQL 13, and pg_dump refuses a server newer than itself",
     pairedWith: /dnf install -y "?postgresql(?:\$\{PG_(?:CLIENT_)?MAJOR\}|1\d)\b/,
   },
+  // The HA cluster's two dependencies are unversioned everywhere, and unlike
+  // Java there is no pin ANYWHERE to compare them against — so `pinned` is null
+  // and the message says what is actually true instead of naming a pin that
+  // does not exist. They are still worth a line every run: an operator building
+  // a standby months after the primary gets whatever PGDG ships that day, and a
+  // version skew across the pair is the likeliest way this design breaks.
+  {
+    re: /dnf(?: --enablerepo=\S+)? install -y etcd\b/g,
+    what: "etcd",
+    pinned: null,
+    note:
+      "so the version is whatever the PGDG repo ships on the day each node is built. Nothing in this repo names an " +
+      "etcd version, so there is nothing to cross-check; its lifecycle is tracked in src/data/platformEol.json instead. " +
+      "Note etcd supports only the current and previous release branch, so a host can fall out of support because " +
+      "something newer shipped, with no date announced ahead of time.",
+  },
+  {
+    re: /dnf install -y patroni patroni-etcd\b/g,
+    what: "Patroni",
+    pinned: null,
+    note:
+      "so the version is whatever PGDG ships per host. deploy/ha/patroni.yml.example was written against 3.x while " +
+      "upstream is 4.1.5 (2026-09); 4.x is anticipated rather than unsupported — the role callback re-derives the role " +
+      "from the REST API because the vocabulary changed in 4.x — but a primary and a standby built months apart can " +
+      "still land on different majors. Tracked in src/data/platformEol.json; Patroni publishes no dated lifecycle.",
+  },
 ];
 function checkUnversionedInstalls() {
   const out = [];
-  for (const rel of ALL_SETUP()) {
+  // HA_DEPLOY as well as the base scripts: setup-rhel-ha.sh is where etcd and
+  // Patroni are installed, and it matched none of the globs this checker used
+  // to read.
+  for (const rel of [...ALL_SETUP(), ...HA_DEPLOY()]) {
     // readCode, not read: the pairing test must look at what the script RUNS,
     // not what it says. The comment explaining why the fallback exists names
     // `openjdk-17-jre-headless`, which made this check see a versioned install
@@ -554,8 +612,10 @@ function checkUnversionedInstalls() {
       if (u.pairedWith && u.pairedWith.test(src)) continue;
       for (const m of src.matchAll(u.re)) {
         out.push(
-          `${rel} installs ${u.what} unversioned (\`${m[0]}\`) — whatever the distro default is — while other ` +
-            `sites pin ${u.pinned}. Nothing here can disagree, so nothing here can be checked; the host decides.`,
+          u.pinned
+            ? `${rel} installs ${u.what} unversioned (\`${m[0]}\`) — whatever the distro default is — while other ` +
+              `sites pin ${u.pinned}. Nothing here can disagree, so nothing here can be checked; the host decides.`
+            : `${rel} installs ${u.what} unversioned (\`${m[0]}\`) — ${u.note}`,
         );
       }
     }

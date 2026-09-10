@@ -19,11 +19,25 @@ bypassed on its own when that is genuinely the right call.
 
 `package.json`; `agent/go.mod`; `agent/Makefile`; `Dockerfile` and `Dockerfile.dev`;
 `deploy/setup-*.sh` and `deploy/setup-*.ps1` **by glob**; the shipped `deploy/polaris-*.service`
-units **by glob**; `compose.dev.yml`; `docker-compose.yml`; `.github/workflows/*.yml` **by
+units **by glob**; everything shipped under `deploy/ha/` **by glob** (`HA_DEPLOY`);
+`compose.dev.yml`; `docker-compose.yml`; `.github/workflows/*.yml` **by
 glob**; `docs/INSTALL.md`, `README.md`, `CLAUDE.md`; and `src/data/platformEol.json`.
 
 Globs rather than enumerated lists, so a new setup script or workflow is in scope the moment it
 lands.
+
+**`glob` matches on basename and does not recurse, so a SUBDIRECTORY is invisible until it has
+its own entry.** That is not theoretical: `deploy/ha/` shipped with 20 `postgresql-15`
+declarations, 8 `timescaledb-2-postgresql-15` and a `/usr/pgsql-15/` path, and none of them were
+checked — `deploy/setup-*` does not match `deploy/ha/setup-rhel-ha.sh`, and the unit glob does not
+match `deploy/ha/polaris-ha-role.service`. A PostgreSQL major would have moved every other install
+path and left HA hosts provisioning 15 against units requiring the new one, with this checker
+reporting all-consistent. `HA_DEPLOY` closes it for that directory; **if you add another
+subdirectory under `deploy/`, add a glob for it here or it is silently unchecked.**
+
+HA is deliberately NOT added to `LINUX_SETUP`: those scripts are the Node-floor family and
+`setup-rhel-ha.sh` installs no Node, so widening that glob would fail `minSites` on a script with
+nothing to declare.
 
 ## The model: floors and pins
 

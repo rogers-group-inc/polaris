@@ -91,12 +91,42 @@ async function maclessAsset(over: Record<string, unknown> = {}): Promise<string>
   return a.id;
 }
 
+/**
+ * Drop the `asset_ip_history` row db.ts writes for an asset's IP, and be sure
+ * it stays dropped.
+ *
+ * `db.ts → recordIpHistory()` is FIRE-AND-FORGET by design ("history is
+ * best-effort and the caller doesn't await"), so its INSERT is still in flight
+ * when `prisma.asset.create` resolves. Deleting immediately can WIN that race,
+ * and the upsert then lands after the delete and puts a `lastSeen = now` row
+ * back — which makes a deliberately stale claim read as fresh. Waiting for the
+ * row to appear proves the single in-flight upsert has landed, so the delete
+ * after it is final. This is the same class of trap as the dns_resolved
+ * auto-create race; do not replace it with a bare deleteMany.
+ */
+async function dropIpHistory(assetId: string): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    if ((await prisma.assetIpHistory.count({ where: { assetId } })) > 0) break;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  await prisma.assetIpHistory.deleteMany({ where: { assetId } });
+  expect(await prisma.assetIpHistory.count({ where: { assetId } })).toBe(0);
+}
+
 async function arp(gateId: string, mac: string, ifName = "internal3"): Promise<void> {
   await prisma.assetArpEntry.create({ data: { assetId: gateId, ipAddress: IP, macAddress: mac, ifName } });
 }
 
-async function fdb(switchId: string, mac: string, ifName: string): Promise<void> {
-  await prisma.assetMacTableEntry.create({ data: { assetId: switchId, macAddress: mac, ifName, status: "learned", vlanId: 12 } });
+/**
+ * One learned FDB row. `vlanId` is a parameter because `AssetMacTableEntry` is
+ * unique on `(assetId, macAddress, vlanId)` — a switch learns a MAC on exactly
+ * ONE port per VLAN, so two rows for the same MAC on the same switch must
+ * differ by VLAN. The chain solver keys on `(assetId, ifName)` and ignores
+ * `vlanId` entirely (`ipUpstreamChainService.ts → portKey()`), so the VLAN a
+ * row carries never changes which port wins.
+ */
+async function fdb(switchId: string, mac: string, ifName: string, vlanId = 12): Promise<void> {
+  await prisma.assetMacTableEntry.create({ data: { assetId: switchId, macAddress: mac, ifName, status: "learned", vlanId } });
 }
 
 d("ip upstream chain sweep", () => {
@@ -104,9 +134,11 @@ d("ip upstream chain sweep", () => {
     const id = await maclessAsset();
     await arp(gateA, MAC);
     // The MAC shows on the access port AND on the uplink trunk above it; the
-    // trunk has learned many MACs and must lose.
-    await fdb(sw, MAC, "port15");
-    await fdb(sw, MAC, "port48");
+    // trunk has learned many MACs and must lose. The two rows carry different
+    // VLANs because the table is unique per (switch, MAC, VLAN) — see fdb() —
+    // and the solver ranks on port cardinality, which the VLAN does not enter.
+    await fdb(sw, MAC, "port15", 12);
+    await fdb(sw, MAC, "port48", 99);
     for (let i = 0; i < 5; i++) await fdb(sw, `00:00:00:00:00:0${i}`, "port48");
     await prisma.assetWirelessStation.create({ data: { apAssetId: ap, staMacAddr: MAC, source: "snmp" } });
 
@@ -153,10 +185,39 @@ d("ip upstream chain sweep", () => {
     expect(a.lastSeenSwitch).toBeNull();
   });
 
-  it("skips an asset whose discovered address claim is stale", async () => {
+  it("skips an asset whose discovered address claim is stale, with no history row", async () => {
     // Discovered (not operator-owned), last asserted a month ago, no history
-    // row — a leftover record, not a current claim (rule 40).
+    // row — a leftover record, not a current claim (rule 40). This is the
+    // `?? row.lastSeen` FALLBACK arm of claimIsFresh.
+    //
+    // Dropping the history row is load-bearing: db.ts upserts
+    // asset_ip_history on every write carrying an asset's IP, so the create
+    // above already made a row stamped lastSeen=now. Leaving it would make
+    // ipLastSeen win and the claim read as FRESH — which is exactly why this
+    // test failed the first time it ever ran against a real database. See
+    // dropIpHistory for why a plain deleteMany here is not enough.
     const id = await maclessAsset({ ipSource: "fortigate", lastSeen: new Date(Date.now() - 30 * 86_400_000) });
+    await dropIpHistory(id);
+    await arp(gateA, MAC);
+    await fdb(sw, MAC, "port15");
+
+    const r = await resolveIpUpstreamForMaclessAssets();
+    expect(r.staleClaims).toBe(1);
+    expect(r.candidates).toBe(0);
+    const a = await prisma.asset.findUniqueOrThrow({ where: { id }, select: { lastSeenSwitch: true } });
+    expect(a.lastSeenSwitch).toBeNull();
+  });
+
+  it("skips a discovered claim whose HISTORY row is a month old", async () => {
+    // The shape a stale claim actually has in production: the address IS in
+    // asset_ip_history, because db.ts put it there, and it was last asserted a
+    // month ago. `ipLastSeen` is preferred over the asset's own `lastSeen` in
+    // claimIsFresh, so this arm is the one that decides real assets — the case
+    // above only reaches the fallback, and before this test nothing covered it.
+    const old = new Date(Date.now() - 30 * 86_400_000);
+    const id = await maclessAsset({ ipSource: "fortigate" });
+    await prisma.asset.update({ where: { id }, data: { lastSeen: old } });
+    await prisma.assetIpHistory.updateMany({ where: { assetId: id }, data: { lastSeen: old } });
     await arp(gateA, MAC);
     await fdb(sw, MAC, "port15");
 

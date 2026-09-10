@@ -555,6 +555,14 @@ notify-peer`, and the standby pulls the new tree within seconds.
 this host is the primary, holds off the reconciler for the duration, and
 notifies the peer at the end.
 
+Both paths also refresh the HA files that do not live in the tree once
+installed — `/usr/local/sbin/polaris-ha-role`, `polaris-ha-role.service` and
+`.timer`, `patroni.service.d/10-polaris.conf`, and the `10-ha.conf` drop-ins —
+so a fix to the reconciler arrives with the release that carries it. Only files
+already present are refreshed, never created: this script decides which of them
+a node gets, so **if a release adds a new HA file, re-run `setup-rhel-ha.sh` on
+each node to install it.** Release notes will say so when it happens.
+
 **The one window to know about.** Between an update finishing and the standby
 syncing (seconds normally, up to 60 if the notification cannot get through) the
 standby is running the previous release. That only matters for a migration that

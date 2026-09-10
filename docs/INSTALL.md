@@ -1148,6 +1148,17 @@ unit's `.d/` directory) so they survive every update. The transient unit
 that runs the sync runs as root via the polkit grant above; no extra sudo /
 NOPASSWD entry is required.
 
+On a high-availability node — one carrying `/etc/polaris/ha-node`, so a
+primary or a standby, never the witness — the same step then refreshes the HA
+files, which live outside `/opt/polaris` once installed and so could not
+previously be updated at all: `/usr/local/sbin/polaris-ha-role`,
+`polaris-ha-role.service` and `.timer`, `patroni.service.d/10-polaris.conf`,
+and the `10-ha.conf` drop-ins. Only files that are **already present** are
+refreshed, never created, because `deploy/ha/setup-rhel-ha.sh` is what decides
+which of them a node's role gets. So if a release adds a NEW HA file, re-run
+that script on each node to install it — the release notes will say when that
+applies.
+
 ### Windows (NSSM)
 
 Register one service per role with the same `AppDirectory`, role via

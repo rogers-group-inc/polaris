@@ -1493,6 +1493,35 @@ export async function restartService() {
       `    logger -t polaris-updater "Synced unit file: $name (operator edits to the main unit file are clobbered; use $name.d/*.conf drop-ins for customization)"`,
       `  fi`,
       `done`,
+      // HA artifacts (docs/HA.md). These live OUTSIDE the tree once installed
+      // — polaris-ha-role.sh is installed to /usr/local/sbin/polaris-ha-role,
+      // the units to /etc/systemd/system, the drop-ins to <unit>.d/ — so an
+      // update that changes any of them had no way to reach an HA host at all.
+      // The reconciler script was the sharp end of that: the standby pulls the
+      // new TREE, but the tree copy is not what runs.
+      //
+      // REFRESH-ONLY-IF-PRESENT, deliberately unlike the base units above.
+      // setup-rhel-ha.sh owns installation because it knows the node's role —
+      // a witness has no polaris-* drop-ins and must not grow them, and a
+      // non-HA host (no marker) must not grow HA units at all. The cost of
+      // that choice: a genuinely NEW HA artifact in a future release needs
+      // setup-rhel-ha.sh re-run to land the first time.
+      // Lockstep: deploy/update-linux.sh sync_ha_artifacts().
+      `if [ -f /etc/polaris/ha-node ]; then`,
+      `  sync_ha() {`,
+      `    if [ ! -f "$1" ] || [ ! -f "$2" ]; then return 0; fi`,
+      `    if cmp -s "$1" "$2"; then return 0; fi`,
+      `    install -o root -g root -m "$3" "$1" "$2"`,
+      `    logger -t polaris-updater "Synced HA artifact: $2"`,
+      `  }`,
+      `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.sh /usr/local/sbin/polaris-ha-role 0755`,
+      `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.service /etc/systemd/system/polaris-ha-role.service 0644`,
+      `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.timer /etc/systemd/system/polaris-ha-role.timer 0644`,
+      `  sync_ha ${APP_DIR}/deploy/ha/patroni.service.d/10-polaris.conf /etc/systemd/system/patroni.service.d/10-polaris.conf 0644`,
+      `  for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do`,
+      `    sync_ha ${APP_DIR}/deploy/ha/dropins/$u.service.d/10-ha.conf /etc/systemd/system/$u.service.d/10-ha.conf 0644`,
+      `  done`,
+      `fi`,
       `systemctl daemon-reload`,
       `systemctl restart polaris.target`,
       // HA (docs/HA.md): the updater only ever runs on the ACTIVE node, so
