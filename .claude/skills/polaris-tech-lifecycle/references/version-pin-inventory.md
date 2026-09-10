@@ -265,7 +265,9 @@ clean merge once the floor reached 1.26. Read the target's directive before judg
 
 ## nginx
 
-Floor **1.30** across 6 sites, installed from the nginx.org **stable** branch.
+Floor **1.30** across 6 sites, installed from the nginx.org **stable** branch. A 7th
+site is dev-only and deliberately not a pin: the DAST scan harness pulls `nginx:stable`
+the way `docker-compose.yml` does (business rule 50).
 
 | Site | Form | Kind |
 |---|---|---|
@@ -275,6 +277,7 @@ Floor **1.30** across 6 sites, installed from the nginx.org **stable** branch.
 | `deploy/ha/setup-rhel-ha.sh` | its own single-stanza copy of the same repo file | pin (repo) |
 | `deploy/migrate-to-nginx.sh` | parses the running version for its own gate (`$NGINX_MINOR -lt 30`) | accept-range |
 | `docker-compose.yml` | `image: nginx:stable` | floating |
+| `deploy/nginx/README-scan-harness.md` | `docker.io/library/nginx:stable` in the DAST harness `podman run` | floating (dev only, ships nowhere) |
 | `docs/INSTALL.md` | "nginx ≥ 1.30" and the stable-branch phrasing — five occurrences plus the table row | prose |
 | `public/js/server-settings.js` | "Requires nginx 1.30+" help text beside the HTTP/3 toggle | prose |
 

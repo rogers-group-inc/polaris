@@ -114,8 +114,17 @@ function renderHstsHeader(cfg: ProxyConfig): string {
   return [
     "",
     "",
-    "  # HSTS at the edge.",
+    "  # HSTS at the edge, and the upstream's copy stripped so the response",
+    "  # carries exactly one. Polaris also sets this header via helmet (which is",
+    "  # what protects an install running Node's own TLS with no proxy in front),",
+    "  # so without the hide a proxied response carried it TWICE, and RFC 6797",
+    "  # §8.1 says a UA that receives more than one processes only the first",
+    "  # and the response is non-compliant — browsers do not take the",
+    "  # strongest seen. The hide is paired with the add_header deliberately:",
+    "  # with HSTS disabled here the edge strips nothing, so the app's own",
+    "  # header still reaches the client.",
     `  add_header Strict-Transport-Security "${directives.join("; ")}" always;`,
+    "  proxy_hide_header Strict-Transport-Security;",
   ].join("\n");
 }
 

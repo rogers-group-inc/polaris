@@ -1,6 +1,6 @@
 ---
 name: polaris-business-rules
-description: "The 49 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups, SSH host keys, login restriction, agent upgrade credentials, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
+description: "The 50 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups, SSH host keys, login restriction, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
 user-invocable: false
 ---
 
@@ -12,7 +12,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(49 is the next free number.)
+(51 is the next free number.)
 
 ## How to read
 
@@ -95,6 +95,7 @@ before changing anything the invariant constrains.
 | 47 | A PostgreSQL client is chosen by the server's major and verified, never spawned by bare name | invariants-30-43 | narrative-44-48 |
 | 48 | Nobody hands out authority they do not hold | invariants-30-43 | narrative-44-48 |
 | 49 | An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved | invariants-30-43 | narrative-44-48 |
+| 50 | A response the app did not write is a response with the app's headers missing | invariants-30-43 | narrative-44-48 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),
