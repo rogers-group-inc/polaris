@@ -41,8 +41,20 @@ a permanent banner open, since it clears only in a maintenance window.
 ## Networks that inspect TLS
 
 Skip this unless your network re-signs HTTPS with an internal CA (Zscaler, Palo Alto,
-Netskope and similar). If it does, read it before installing or updating — it is the one
-environment problem that can leave an install unable to update.
+Netskope, Cisco Umbrella and similar). If it does, read it before installing or updating — it
+is the one environment problem that can leave an install unable to update.
+
+**Umbrella looks different from the others.** Its intelligent proxy works at the DNS layer: the
+host resolves `registry.npmjs.org` to an Umbrella address in `146.112.0.0/16` and talks to the
+proxy, which fetches the real site and re-signs it with the `Cisco Umbrella Root CA` chain. So
+the firewall never shows a connection to the registry's real addresses (Cloudflare,
+`104.16.0.0/16`), `getent hosts registry.npmjs.org` answers with an Umbrella IP, and
+`openssl s_client -showcerts` shows an issuer such as `Cisco Umbrella Secondary SubCA`. The fix
+is the same as for the inline inspectors — the Umbrella root goes into the OS trust store — and
+the root is a public certificate your Umbrella administrator downloads from the dashboard under
+Deployments → Configuration → Root Certificate. (Prod, 2026-09-10: the variable was set, the
+service had it, `npm ping` still failed, and the firewall search for the registry's addresses
+came back empty — that combination is this.)
 
 **Why it bites Polaris specifically.** Node ships its *own* bundled CA store and ignores the
 operating system's. So a root certificate the entire host trusts — one you added with
@@ -111,6 +123,26 @@ Azure Arc discovery, the weekly IEEE OUI refresh, weather and map tiles, and web
 of every package download on a host that installs 600+ packages — a supply-chain hole in place
 of a configuration gap.
 
+### Still failing with the line in `.env`?
+
+The Update Failed message states what the **running process** knows about
+`NODE_EXTRA_CA_CERTS`, and that sentence decides the next step:
+
+- **"is NOT set in this process's environment"** — the service has not been restarted since the
+  line was added. systemd reads `.env` only when a unit starts, and the `npm` the updater spawns
+  inherits the service's environment, so a line added afterwards is invisible to both until
+  `systemctl restart polaris.target`. There is no separate npm process to restart. To see what
+  the service actually has:
+
+  ```bash
+  sudo cat /proc/$(systemctl show -p MainPID --value polaris-web.service)/environ | tr '\0' '\n' | grep NODE_EXTRA
+  ```
+
+- **"is set but that file does not exist"** — fix the path (the bundle locations are in step 2).
+- **"is set and the file exists"** — the variable is fine and the bundle lacks the CA that signs
+  the registry on your network. Step 1 was skipped or the interception root has changed: add it
+  to the OS trust store again and re-run `update-ca-trust` / `update-ca-certificates`.
+
 ### Recovering an install whose update already failed here
 
 `npm ci` deletes `node_modules` **before** it installs, so an update that failed at Install
@@ -139,6 +171,20 @@ sudo systemctl restart polaris.target
 `deploy/update-linux.sh` reads `NODE_EXTRA_CA_CERTS` out of `.env` and re-supplies it to every
 `npm` call itself, because `sudo` scrubs the environment — which is why the manual commands
 above pass it explicitly too.
+
+**"Your local changes to the following files would be overwritten by merge."** If the in-app
+pull step fails with this, a `deploy/update-linux.sh` run from before 2026-09-10 rolled back
+by restoring the previous commit's files by path, which leaves HEAD at the newer commit and
+every changed file looking locally modified. Nothing in the checkout is edited in place
+(`.env` and `data/` are untracked), so the in-app updater now discards such changes before it
+pulls and records the discarded paths in the `server.update.*` Event; the scripts roll back
+with `git reset --hard` so it no longer happens. On an install still running older code, clear
+it by hand and re-run the update:
+
+```bash
+sudo -u polaris git -C /opt/polaris status --short    # expect only staged "M" rows
+sudo -u polaris git -C /opt/polaris reset --hard HEAD
+```
 
 ### Windows
 

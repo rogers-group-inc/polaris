@@ -390,6 +390,50 @@ d("applyUpdate — registry preflight", () => {
     expect(msg).not.toContain("a hang, not a refusal");
   });
 
+  /**
+   * Prod, 2026-09-10: .env carried NODE_EXTRA_CA_CERTS and the preflight still
+   * failed UNABLE_TO_GET_ISSUER_CERT_LOCALLY. Whether the variable reached
+   * THIS process (systemd reads .env only at unit start; the npm child
+   * inherits this process's environment) is the one fact that separates "restart
+   * the service" from "the bundle lacks the CA", so the refusal message states
+   * it rather than leaving the operator to guess.
+   */
+  describe("the refusal message says what this process knows about NODE_EXTRA_CA_CERTS", () => {
+    const saved = process.env.NODE_EXTRA_CA_CERTS;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.NODE_EXTRA_CA_CERTS;
+      else process.env.NODE_EXTRA_CA_CERTS = saved;
+    });
+
+    async function refusal(): Promise<string> {
+      stubExec({ failOn: "npm ping", errorProps: { stderr: "npm error code UNABLE_TO_GET_ISSUER_CERT_LOCALLY" } });
+      const run = runUpdate();
+      await vi.advanceTimersByTimeAsync(RETRY_MS);
+      await run;
+      return steps()[STEP.DEPS]?.message ?? "";
+    }
+
+    it("unset: names the restart, because a line in .env is invisible until the unit restarts", async () => {
+      delete process.env.NODE_EXTRA_CA_CERTS;
+      const msg = await refusal();
+      expect(msg).toContain("NODE_EXTRA_CA_CERTS is NOT set in this process's environment");
+      expect(msg).toContain("systemctl restart polaris.target");
+    });
+
+    it("set to a missing file: says the file does not exist", async () => {
+      process.env.NODE_EXTRA_CA_CERTS = "/nonexistent/polaris-test-bundle.pem";
+      const msg = await refusal();
+      expect(msg).toContain("NODE_EXTRA_CA_CERTS=/nonexistent/polaris-test-bundle.pem is set but that file does not exist");
+    });
+
+    it("set to a real file: rules the variable out and points at the bundle's contents", async () => {
+      process.env.NODE_EXTRA_CA_CERTS = fileURLToPath(import.meta.url);
+      const msg = await refusal();
+      expect(msg).toContain("is set and the file exists, so the variable is not the problem");
+      expect(msg).toContain("update-ca-trust");
+    });
+  });
+
   it("a 404 from a private mirror counts as reachable and does not block the install", async () => {
     // The ping fails with a 404 (failOnce, so the stub's errorProps describe
     // THAT failure); the build failure keeps the restart timer unscheduled.
@@ -415,6 +459,47 @@ d("applyUpdate — train selection", () => {
 
     expect(calls.some((c) => c.includes("git pull --ff-only"))).toBe(true);
     expect(calls.some((c) => c.includes("checkout --detach"))).toBe(false);
+  });
+
+  /**
+   * Prod, 2026-09-10: a failed run of deploy/update-linux.sh rolled back with
+   * `git checkout <old> -- .`, which leaves HEAD at the new commit and the
+   * tree at the old content — 77 "locally modified" files — and the in-app
+   * pull refused with "Your local changes to the following files would be
+   * overwritten by merge". The checkout is an installation, not an editing
+   * surface: tracked-file changes are discarded before the pull, named on the
+   * step, and carried into the Event trail.
+   */
+  it("discards local changes to tracked files before pulling, and says so on the step and in the Event", async () => {
+    settingRows.set("update.train", "nightly");
+    const calls = stubExec({
+      stdout: { "git status --porcelain --untracked-files=no": "M  CLAUDE.md\nM  deploy/update-linux.sh\n" },
+    });
+
+    await runUpdate();
+
+    const status = calls.findIndex((c) => c.includes("git status --porcelain --untracked-files=no"));
+    const reset = calls.findIndex((c) => c.includes("git reset --hard HEAD"));
+    const pull = calls.findIndex((c) => c.includes("git pull --ff-only"));
+    expect(status).toBeGreaterThan(-1);
+    expect(reset).toBeGreaterThan(status);
+    expect(pull).toBeGreaterThan(reset);
+    expect(steps()[STEP.PULL]?.message ?? "").toContain("discarded local changes to 2 tracked files");
+    expect(eventNamed("server.update.applied")?.details?.discardedLocalChanges).toEqual([
+      "CLAUDE.md",
+      "deploy/update-linux.sh",
+    ]);
+  });
+
+  it("leaves a clean checkout alone — no reset when nothing is dirty", async () => {
+    settingRows.set("update.train", "nightly");
+    const calls = stubExec();
+
+    await runUpdate();
+
+    expect(calls.some((c) => c.includes("git reset --hard"))).toBe(false);
+    expect(steps()[STEP.PULL]?.message ?? "").not.toContain("discarded");
+    expect(eventNamed("server.update.applied")?.details?.discardedLocalChanges).toEqual([]);
   });
 
   it("release checks out the highest version-sorted tag", async () => {

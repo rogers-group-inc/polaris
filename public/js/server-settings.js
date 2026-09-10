@@ -3359,7 +3359,12 @@ async function loadUpdateHistory() {
 
 async function checkForUpdatesUI() {
   var btn = document.getElementById("btn-check-updates");
-  var statusEl = document.getElementById("update-check-status");
+  // Every card that renders #btn-check-updates must render this span beside
+  // it. The Update Failed card once did not, and this line threw on null
+  // before the request was sent — Check Again looked dead until Dismiss
+  // re-rendered the plain check state (prod, 2026-09-10). Tolerate a missing
+  // span anyway: a dead button is the worst outcome here.
+  var statusEl = document.getElementById("update-check-status") || { innerHTML: "" };
   btn.disabled = true;
   btn.textContent = "Checking...";
   statusEl.innerHTML = '<span style="color:var(--color-text-tertiary)">Fetching latest version...</span>';
@@ -3849,6 +3854,7 @@ function renderUpdateFailed(status) {
     '<div style="display:flex;gap:8px;align-items:center;margin-top:1rem">' +
       '<button class="btn btn-secondary" id="btn-dismiss-update">Dismiss</button>' +
       '<button class="btn btn-secondary" id="btn-check-updates">Check Again</button>' +
+      '<span id="update-check-status" style="font-size:0.82rem"></span>' +
     '</div>';
 
   // Reload backup history so the pre-update backup entry is visible immediately

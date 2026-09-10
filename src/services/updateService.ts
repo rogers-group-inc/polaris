@@ -238,6 +238,63 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_DIR = join(__dirname, "..", "..");
 const STATUS_FILE = join(APP_DIR, ".update-status.json");
 
+/**
+ * Tracked files under APP_DIR whose index or working-tree content differs from
+ * HEAD (`git status --porcelain --untracked-files=no`), reset to HEAD. Returns
+ * the paths that were discarded. Untracked files — `.env`, `data/`, the app
+ * user's caches — are never touched. A `git status` failure is not fatal here:
+ * it returns nothing and the pull step surfaces the real error.
+ */
+async function discardLocalChanges(): Promise<string[]> {
+  let dirty: string[] = [];
+  try {
+    const { stdout } = await execAsync("git status --porcelain --untracked-files=no", {
+      cwd: APP_DIR,
+      timeout: 30000,
+    });
+    // Porcelain v1: two status columns, a space, then the path (renames read
+    // "R  old -> new"; keeping the whole tail is fine for an audit list).
+    dirty = stdout
+      .split("\n")
+      .map((l) => l.replace(/\r$/, ""))
+      .filter((l) => l.length > 3)
+      .map((l) => l.slice(3).trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+  if (dirty.length === 0) return [];
+  await execAsync("git reset --hard HEAD", { cwd: APP_DIR, timeout: 30000 });
+  logger.warn(
+    { files: dirty },
+    "Discarded local changes to tracked files in the install checkout before pulling — a by-path rollback is the usual source",
+  );
+  return dirty;
+}
+
+/**
+ * What THIS process knows about NODE_EXTRA_CA_CERTS — the one fact that tells
+ * "the variable never reached the service" from "the bundle lacks the CA".
+ * Node reads it at start-up from the environment systemd built from .env, so a
+ * line added to .env is invisible until the unit restarts, and the npm child
+ * the preflight spawns inherits exactly what this process has. On 2026-09-10
+ * prod had the line in .env and still failed here; this sentence is the
+ * difference between one restart and an afternoon.
+ */
+function nodeExtraCaNote(): string {
+  const v = (process.env.NODE_EXTRA_CA_CERTS || "").trim();
+  if (!v) {
+    return " NODE_EXTRA_CA_CERTS is NOT set in this process's environment — if .env has it, the service has not been" +
+      " restarted since the line was added (systemd reads .env only when the unit starts: `systemctl restart polaris.target`).";
+  }
+  if (!existsSync(v)) {
+    return ` NODE_EXTRA_CA_CERTS=${v} is set but that file does not exist on this host.`;
+  }
+  return ` NODE_EXTRA_CA_CERTS=${v} is set and the file exists, so the variable is not the problem: that bundle does not` +
+    " contain the CA that signs registry.npmjs.org on this network — add the interception root to the OS trust store" +
+    " (update-ca-trust on RHEL, update-ca-certificates on Debian) so the bundle picks it up, then restart polaris.target.";
+}
+
 // Git repository the in-app updater fetches/pulls from. Operators can point
 // installs at a fork or internal mirror by setting POLARIS_UPDATE_REPO in .env.
 // When set, the URL is applied to the `origin` remote before every fetch/pull
@@ -878,6 +935,9 @@ export async function applyUpdate(
     allowWithoutBackup,
   };
   const pipelineStartedAt = Date.now();
+  // Tracked files the pull step had to reset before it could fast-forward;
+  // carried into the failed/applied Event so a dirty checkout is on record.
+  let discardedLocalChanges: string[] = [];
 
   const steps: NonNullable<UpdateStatus["steps"]> = [
     { name: "Backup database", status: "pending", message: "" },
@@ -959,6 +1019,7 @@ export async function applyUpdate(
         stepIndex: idx,
         stepDurationMs: stepMs ?? null,
         pipelineDurationMs: Date.now() - pipelineStartedAt,
+        discardedLocalChanges,
         steps: steps.map((s) => ({ name: s.name, status: s.status, durationMs: s.durationMs ?? null })),
       },
     });
@@ -1013,10 +1074,19 @@ export async function applyUpdate(
       // before pulling — covers the case where applyUpdate runs without a
       // preceding checkForUpdates, or the env changed since the last check.
       await ensureUpdateRemote();
-      await execAsync("git checkout -- package-lock.json", {
-        cwd: APP_DIR,
-        timeout: 10000,
-      }).catch(() => {});
+      // The install checkout is not an editing surface, but it can still be
+      // dirty: the fallback scripts' rollback used to restore the previous
+      // commit BY PATH (`git checkout <old> -- .`), which leaves HEAD at the
+      // new commit and every changed file "locally modified" — and the pull
+      // below then refuses with "Your local changes … would be overwritten by
+      // merge" (prod, 2026-09-10; 77 files). Tracked-file edits under APP_DIR
+      // are never the operator's work (.env and the data dirs are untracked),
+      // so discard them, and say so on the step and in the Event trail. This
+      // subsumes the older `git checkout -- package-lock.json` special case.
+      discardedLocalChanges = await discardLocalChanges();
+      const discardedNote = discardedLocalChanges.length
+        ? `discarded local changes to ${discardedLocalChanges.length} tracked file${discardedLocalChanges.length === 1 ? "" : "s"}; `
+        : "";
       if (train === "release") {
         // Release train: check out the latest release tag (detached HEAD).
         // Moving HEAD in either direction is fine — an operator switching from
@@ -1034,7 +1104,7 @@ export async function applyUpdate(
           cwd: APP_DIR,
           timeout: 60000,
         });
-        setStep(1, "done", `Checked out release ${tag}`);
+        setStep(1, "done", `${discardedNote}Checked out release ${tag}`);
       } else {
         // Nightly train: fast-forward the current branch. If HEAD is detached
         // (we were previously on the release train), return to the default
@@ -1047,7 +1117,7 @@ export async function applyUpdate(
           cwd: APP_DIR,
           timeout: 60000,
         });
-        setStep(1, "done", stdout.trim().split("\n").pop() || "Updated");
+        setStep(1, "done", discardedNote + (stdout.trim().split("\n").pop() || "Updated"));
       }
     } catch (err: any) {
       failUpdate(1, "git update failed: " + (err.stderr || err.message));
@@ -1134,7 +1204,7 @@ export async function applyUpdate(
           ` cd ${APP_DIR} && ${NPM_PING_CMD}.`
         : " Usual causes: a TLS-inspecting proxy (npm fails UNABLE_TO_GET_ISSUER_CERT_LOCALLY because Node ignores" +
           " the OS trust store — set NODE_EXTRA_CA_CERTS, see docs/INSTALL.md → \"Networks that inspect TLS\")," +
-          " an outbound firewall rule, or no internet on this host.";
+          " an outbound firewall rule, or no internet on this host." + nodeExtraCaNote();
       failUpdate(
         2,
         "Cannot reach the npm registry: " + detail +
@@ -1258,6 +1328,7 @@ export async function applyUpdate(
         ...audit,
         toVersion: _status.latestVersion ?? audit.toVersion,
         pipelineDurationMs: Date.now() - pipelineStartedAt,
+        discardedLocalChanges,
         steps: steps.map((s) => ({ name: s.name, status: s.status, durationMs: s.durationMs ?? null })),
       },
     });
