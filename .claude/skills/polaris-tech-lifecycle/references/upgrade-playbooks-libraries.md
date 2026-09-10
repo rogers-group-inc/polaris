@@ -56,7 +56,18 @@ steps are in the dataset's `go-pin` playbook. Two things belong here:
   drifting into a claim nothing checks.
 - **The rebuild contract is `polaris-agent`'s.** Bumping the `go` directive also moves
   `agent/VERSION` and the committed Windows resource files, and the fleet's upgrade check
-  compares against that version. Route there; do not restate it.
+  compares against that version. Route there; do not restate it. Note the 2026-09-09 floor move
+  deliberately did **not** touch `agent/VERSION`: a toolchain bump is not an agent release, and
+  moving the version tells every enrolled agent an upgrade is waiting. Rebuild when you mean to.
+- **Check what each platform can actually install before choosing the floor.** Since 2026-09-09
+  this family has a floor AND a pin (1.26 → 1.27) for that reason: no Linux path can install
+  1.27 — the RHEL `go-toolset` module carries 1.26.7 and the Go snap's newest channel is
+  `1.26/stable` — while the Windows scripts pin the newest winget has a manifest for. Neither
+  Ubuntu LTS reaches the floor from its own archive at all, so the snap fallback is the branch
+  that runs there. A floor above what a platform can provide is an install script that fails.
+- **The winget package is `GoLang.Go` with per-version manifests.** `--id GoLang.Go --version N`,
+  never `--id GoLang.Go.N` — that named a package that does not exist, and since the MSI download
+  is the `else` branch of `if ($hasWinget)`, the failure left the host with no Go at all.
 
 Go's policy is only the two most recent majors, so this pin ages faster than anything else in the
 stack — roughly every six months something falls off the back.

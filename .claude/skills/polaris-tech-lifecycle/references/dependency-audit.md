@@ -126,7 +126,7 @@ forever and trains everyone to ignore Dependabot.
 Expect this to **not** touch `node-version` — that is a Node pin and belongs to `check:versions`.
 
 **docker at `/`**, weekly, with **node majors ignored**. Dependabot reads Dockerfile `FROM` lines
-and would otherwise offer `node:24-bookworm` → the next major: a whole-family platform bump
+and would otherwise offer `node:24-trixie` → the next major: a whole-family platform bump
 disguised as a one-line PR. Ignoring the major turns it into a useful "20.x moved" signal instead
 of a trap. It will not touch the compose files, which use floating tags it could not bump anyway.
 

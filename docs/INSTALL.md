@@ -322,7 +322,7 @@ sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-
 # Disable RHEL's AppStream postgresql module so PGDG's packages aren't shadowed
 sudo dnf -qy module disable postgresql
 
-# Install Postgres 15 + contrib (needed for various Polaris features)
+# Install Postgres 17 + contrib (needed for various Polaris features)
 sudo dnf install -y postgresql17 postgresql17-server postgresql17-contrib
 
 # Initialize PGDATA and start the service

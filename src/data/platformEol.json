@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-09-08",
+  "reviewedAt": "2026-09-09",
   "reviewedBy": "david.moore@rogersgroupinc.com",
-  "sourceNotes": "Every dated entry was read from the cited source on its sourceCheckedOn date. endoflife.date aggregates vendor lifecycle pages; entries sourced from it carry confidence \"aggregator\" and should be re-confirmed against the vendor page before a date drives a maintenance window. Refresh procedure: .claude/skills/polaris-tech-lifecycle/references/eol-dataset.md",
+  "sourceNotes": "Every dated entry was read from the cited source on its sourceCheckedOn date. endoflife.date aggregates vendor lifecycle pages; entries sourced from it carry confidence \"aggregator\" and should be re-confirmed against the vendor page before a date drives a maintenance window. Refresh procedure: .claude/skills/polaris-tech-lifecycle/references/eol-dataset.md. The 2026-09-09 pass moved five families to current versions (PostgreSQL 15->17, Java 17->25, Go 1.22->1.26/1.27, nginx mainline->stable 1.30, the Debian image base 12->13) and re-read the vendor pages for each rather than trusting the aggregator, which is why several entries carry confidence vendor now.",
   "technologies": [
     {
       "id": "node",
@@ -289,9 +289,9 @@
         "Take a verified backup and confirm a restore into a scratch database first.",
         "Install the target major side by side from PGDG, then pg_upgrade (or dump/restore for a small install).",
         "Re-run the timescaledb extension update and confirm every hypertable and chunk survived.",
-        "Rename the After= dependency in the shipped systemd units, and DependOnService plus the service name on Windows.",
-        "Bump the package names, the pg_config path and the installer pin in every setup script.",
-        "Bump the image tags in compose.dev.yml and the CI service container.",
+        "Rewrite the per-host drop-in /etc/systemd/system/<unit>.d/20-postgres.conf with the new unit name - the SHIPPED units name no PostgreSQL unit and must not be edited. On Windows, the service name and the bin-path probe list.",
+        "Bump PG_MAJOR / PG_CLIENT_MAJOR in every setup script (RHEL, Ubuntu and both -nodb variants), plus the installer pin on Windows. All four are checked by check:versions.",
+        "Bump the image tags in compose.dev.yml and the CI service container, and postgresql-client-<major> in BOTH Dockerfiles - the image base must actually ship that major, or add the PGDG apt repo to the image.",
         "Smoke-test the backup and restore path end to end - it is the only code that calls timescaledb_pre_restore and post_restore."
       ],
       "files": [
@@ -301,6 +301,10 @@
         "deploy/setup-ubuntu-nodb.sh",
         "deploy/setup-windows.ps1",
         "deploy/setup-windows-nodb.ps1",
+        "deploy/dropins/20-postgres.conf.example",
+        "deploy/ha/setup-rhel-ha.sh",
+        "Dockerfile",
+        "Dockerfile.dev",
         "compose.dev.yml",
         "docs/INSTALL.md",
         "README.md",
@@ -349,7 +353,7 @@
       "docAnchor": "docs/INSTALL.md#supported-platform-versions",
       "risk": "low",
       "steps": [
-        "Decide mainline or stable: the setup scripts install from the nginx.org mainline repository today.",
+        "Decide mainline or stable: since 2026-09-09 the setup scripts install the nginx.org STABLE branch, with the mainline stanza written at enabled=0.",
         "Widen the accept-regex in all four Linux setup scripts and the migrate-to-nginx helper.",
         "Update the >= claims in docs/INSTALL.md, which state the floor three times.",
         "Re-apply the managed config and confirm HTTP/3 still negotiates."
@@ -370,7 +374,7 @@
       "docAnchor": "docs/INSTALL.md#supported-platform-versions",
       "risk": "low",
       "steps": [
-        "Confirm the jsign release in use runs on the target major.",
+        "Confirm the jsign release in use runs on the target major (7.5 is Java 8 bytecode, so anything from 8 up), and that the JDK package EXISTS on every platform - RHEL AppStream, Debian, both Ubuntu LTSes, winget and the aka.ms MSI. One platform without it splits the fleet's signing JDK.",
         "Bump the JDK package in the Dockerfile and the winget id plus MSI URL in every setup script.",
         "Re-sign one agent binary and verify the signature chain before shipping."
       ],

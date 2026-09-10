@@ -151,12 +151,15 @@ assumed:
 
 So a fresh RHEL install got **PostgreSQL 13** — two majors below the 15 Polaris states as its
 minimum, TimescaleDB-incapable, and producing an unversioned `postgresql.service` while the
-units the same script installs declare `Requires=postgresql-15.service`. It could not satisfy
-its own units *and* it was installing the wrong major. `docs/INSTALL.md` had documented the
-PGDG path all along.
+units the same script installed then declared `Requires=postgresql-15.service` inline. It could
+not satisfy its own units *and* it was installing the wrong major. `docs/INSTALL.md` had
+documented the PGDG path all along.
 
-The script now follows it: PGDG repo, `dnf -qy module disable postgresql`, the `postgresql15*`
-packages, `/usr/pgsql-15/bin/postgresql-15-setup initdb`, and the `postgresql-15` service.
+The script now follows it, and the major is a single `PG_MAJOR` variable rather than a literal:
+PGDG repo, `dnf -qy module disable postgresql`, the `postgresql${PG_MAJOR}*` packages,
+`/usr/pgsql-${PG_MAJOR}/bin/postgresql-${PG_MAJOR}-setup initdb`, and the
+`postgresql-${PG_MAJOR}` service — 17 since 2026-09-09. The unit name reaches systemd through
+the per-host `20-postgres.conf` drop-in, never through a shipped unit.
 
 **The non-obvious part of that move, and a wrong turn worth not repeating.** Polaris spawns
 `psql` and `pg_dump` by BARE NAME for backup and restore (`src/services/backupService.ts`), so
@@ -178,8 +181,8 @@ do not. Its own `psql` calls still use the absolute `$PG_BINDIR/psql` rather tha
 `sudo`'s `secure_path`.
 
 **TimescaleDB compatibility caps the PostgreSQL major from the other side.** TimescaleDB 2.29
-dropped PostgreSQL 15; 2.28.x is the last line that supports it. Staying on 15 pins the
-extension, which is why the dataset targets PostgreSQL 17.
+dropped PostgreSQL 15; 2.28.x is the last line that supports it. Staying on 15 would have pinned
+the extension, which is why the dataset targeted 17 and why the 2026-09-09 pass moved there.
 
 ## TimescaleDB
 
@@ -187,8 +190,8 @@ No version is pinned anywhere. The real constraints are:
 
 | Site | Form |
 |---|---|
-| `docs/INSTALL.md` | `timescaledb-2-postgresql-15` — the PG major is inside the package name |
-| `compose.dev.yml` | `timescale/timescaledb:latest-pg15`, `shared_preload_libraries=timescaledb` |
+| `docs/INSTALL.md` | `timescaledb-2-postgresql-17` — the PG major is inside the package name, so it moves with `PG_MAJOR` |
+| `compose.dev.yml` | `timescale/timescaledb:latest-pg17`, `shared_preload_libraries=timescaledb` |
 | runtime | detected, not pinned: `src/services/timescaleService.ts` reads `pg_extension` |
 
 **CI exercises no TimescaleDB at all** — the publish workflow's service container is a plain
