@@ -71,6 +71,8 @@ const {
   isUpdateMechanismAvailable,
   _setExecRunnerForTests,
   _resetApplyingForTests,
+  _setRunningCommitForTests,
+  checkForUpdates,
 } = await import("../../src/services/updateService.js");
 
 const STATUS_FILE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".update-status.json");
@@ -148,6 +150,7 @@ beforeEach(() => {
 
 afterEach(() => {
   _setExecRunnerForTests(null);
+  _setRunningCommitForTests(undefined);
   vi.useRealTimers();
   if (existsSync(STATUS_FILE)) { try { unlinkSync(STATUS_FILE); } catch { /* best effort */ } }
 });
@@ -574,5 +577,85 @@ d("applyUpdate — train selection", () => {
     expect(getUpdateStatus().state).toBe("failed");
     expect(steps()[STEP.PULL]?.status).toBe("failed");
     expect(steps()[STEP.PULL]?.message).toContain("No release tags");
+  });
+});
+
+// ── checkForUpdates: the running commit, not the checkout ────────────────────
+//
+// The pipeline pulls BEFORE it installs, builds and restarts. An update that
+// fails after the pull (prod, 2026-09-10: TLS inspection at Install
+// dependencies) leaves the checkout's HEAD ahead of the process serving
+// requests. Measured against HEAD that host read "up to date" with no Apply
+// button — the old build kept running and nothing could finish the update
+// from the UI. The check measures against the boot commit instead.
+d("checkForUpdates — measures against the RUNNING commit, not the checkout's HEAD", () => {
+  const RUNNING = "a".repeat(40);
+  const PULLED = "b".repeat(40);
+  const REMOTE_NEWER = "c".repeat(40);
+
+  /** git as seen by checkForUpdates on the nightly train (origin/HEAD resolves). */
+  function stubGit(opts: { head: string; remote: string; running: string | null | undefined }) {
+    _setRunningCommitForTests(opts.running);
+    return stubExec({
+      stdout: {
+        "git rev-list -n 1 HEAD": opts.head + "\n",
+        "git rev-list -n 1 origin/HEAD": opts.remote + "\n",
+        "git rev-list --count origin/HEAD": "2792\n",
+        "git rev-list --count ": "5\n",
+        "git log --oneline ": "cccccc1 fix: one\ncccccc2 fix: two\n",
+        "git show origin/HEAD:package.json": JSON.stringify({ version: "0.9.0" }),
+      },
+    });
+  }
+
+  it("reports up to date when the running build, the checkout and the remote agree", async () => {
+    stubGit({ head: RUNNING, remote: RUNNING, running: RUNNING });
+    const s = await checkForUpdates();
+    expect(s.state).toBe("up-to-date");
+    expect(s.note).toBeUndefined();
+  });
+
+  it("offers the update when the checkout was pulled but never installed, and says so", async () => {
+    const calls = stubGit({ head: PULLED, remote: PULLED, running: RUNNING });
+    const s = await checkForUpdates();
+    expect(s.state).toBe("available");
+    expect(s.currentCommit).toBe("aaaaaaa");
+    expect(s.checkoutCommit).toBe("bbbbbbb");
+    expect(s.latestCommit).toBe("bbbbbbb");
+    expect(s.latestVersion).toBe("0.9.2792");
+    expect(s.commitsBehind).toBe(5);
+    expect(s.changes).toHaveLength(2);
+    expect(s.note).toMatch(/already at bbbbbbb/);
+    expect(s.note).toMatch(/Apply Update finishes/);
+    // The changelog is measured from what is RUNNING, not from HEAD — or it
+    // would be empty for exactly the case this exists for.
+    expect(calls).toContain(`git rev-list --count ${RUNNING}..origin/HEAD`);
+    expect(calls).toContain(`git log --oneline ${RUNNING}..origin/HEAD`);
+  });
+
+  it("a plain new release (checkout still at the running commit) carries no note", async () => {
+    const calls = stubGit({ head: RUNNING, remote: REMOTE_NEWER, running: RUNNING });
+    const s = await checkForUpdates();
+    expect(s.state).toBe("available");
+    expect(s.note).toBeUndefined();
+    expect(s.currentCommit).toBe("aaaaaaa");
+    expect(s.checkoutCommit).toBe("aaaaaaa");
+    expect(calls).toContain(`git rev-list --count ${RUNNING}..origin/HEAD`);
+  });
+
+  it("falls back to HEAD when the running commit is unknown", async () => {
+    const calls = stubGit({ head: PULLED, remote: REMOTE_NEWER, running: null });
+    const s = await checkForUpdates();
+    expect(s.state).toBe("available");
+    expect(s.currentCommit).toBe("bbbbbbb");
+    expect(s.note).toBeUndefined();
+    expect(calls).toContain("git rev-list --count HEAD..origin/HEAD");
+  });
+
+  it("never interpolates a running commit that is not a plain SHA", async () => {
+    const calls = stubGit({ head: PULLED, remote: REMOTE_NEWER, running: "aaaaaaa; rm -rf /" });
+    await checkForUpdates();
+    expect(calls.some((c) => c.includes("rm -rf"))).toBe(false);
+    expect(calls).toContain("git rev-list --count HEAD..origin/HEAD");
   });
 });

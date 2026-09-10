@@ -121,7 +121,10 @@ first to "see if it's fine".
 
 Apply the fix above, then re-run the update (Server Settings → Maintenance → Updates, or
 `sudo bash deploy/update-linux.sh`). If the in-app updater already pulled the new code before
-it failed, the script's `git pull` is a no-op and it will report "Already up to date" — pass
+it failed, the checkout is ahead of the process that is still serving. The in-app card measures
+against the **running** build, so Check for Updates still offers Apply Update — with a note that
+the code is already on disk — and Apply finishes the install, build, migration and restart. The
+script's `git pull` is a no-op in that state and it will report "Already up to date" — pass
 `--force` (`-Force` on Windows) so it finishes the install, build and migration steps anyway.
 If you need to repair the dependency tree without a full update:
 
