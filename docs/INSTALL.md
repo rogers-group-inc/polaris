@@ -41,8 +41,20 @@ a permanent banner open, since it clears only in a maintenance window.
 ## Networks that inspect TLS
 
 Skip this unless your network re-signs HTTPS with an internal CA (Zscaler, Palo Alto,
-Netskope and similar). If it does, read it before installing or updating — it is the one
-environment problem that can leave an install unable to update.
+Netskope, Cisco Umbrella and similar). If it does, read it before installing or updating — it
+is the one environment problem that can leave an install unable to update.
+
+**Umbrella looks different from the others.** Its intelligent proxy works at the DNS layer: the
+host resolves `registry.npmjs.org` to an Umbrella address in `146.112.0.0/16` and talks to the
+proxy, which fetches the real site and re-signs it with the `Cisco Umbrella Root CA` chain. So
+the firewall never shows a connection to the registry's real addresses (Cloudflare,
+`104.16.0.0/16`), `getent hosts registry.npmjs.org` answers with an Umbrella IP, and
+`openssl s_client -showcerts` shows an issuer such as `Cisco Umbrella Secondary SubCA`. The fix
+is the same as for the inline inspectors — the Umbrella root goes into the OS trust store — and
+the root is a public certificate your Umbrella administrator downloads from the dashboard under
+Deployments → Configuration → Root Certificate. (Prod, 2026-09-10: the variable was set, the
+service had it, `npm ping` still failed, and the firewall search for the registry's addresses
+came back empty — that combination is this.)
 
 **Why it bites Polaris specifically.** Node ships its *own* bundled CA store and ignores the
 operating system's. So a root certificate the entire host trusts — one you added with
