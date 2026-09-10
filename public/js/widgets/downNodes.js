@@ -26,7 +26,9 @@
  */
 
 (function () {
-  var TYPE_LABELS = PolarisWidgets.ASSET_TYPE_LABELS;
+  // Humanizes a type the static label map lacks (an operator-added registry
+  // type), so a row/export never prints a raw snake_case value.
+  var typeName = PolarisWidgets.assetTypeLabel;
 
   function groupKey(node, groupBy) {
     if (groupBy === "division") return node.division || "Ungrouped";
@@ -35,7 +37,7 @@
   }
 
   function nodeRowHTML(n) {
-    var typeLabel = TYPE_LABELS[n.assetType] || n.assetType || "asset";
+    var typeLabel = typeName(n.assetType, "asset");
     var name = n.hostname || n.ipAddress || "(unnamed)";
     var sub = [escapeHtml(typeLabel)];
     if (n.ipAddress) sub.push('<span class="dash-alert-ip">' + escapeHtml(n.ipAddress) + '</span>');
@@ -83,7 +85,7 @@
       columns: [
         { header: "Hostname", get: function (n) { return n.hostname || ""; } },
         { header: "IP Address", get: function (n) { return n.ipAddress || ""; } },
-        { header: "Type", get: function (n) { return TYPE_LABELS[n.assetType] || n.assetType || ""; } },
+        { header: "Type", get: function (n) { return typeName(n.assetType); } },
         { header: "Site", get: function (n) { return n.site || ""; } },
         { header: "Division", get: function (n) { return n.division || ""; } },
         { header: "Down Since", get: function (n) { return n.monitorStatusChangedAt ? new Date(n.monitorStatusChangedAt).toISOString() : ""; } },

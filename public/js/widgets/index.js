@@ -94,6 +94,39 @@
   }
   window.PolarisWidgets.effectiveAssetTypes = effectiveAssetTypes;
 
+  // The types a config wants HIDDEN, which is what the server is actually told.
+  // Two stored shapes, unioned:
+  //
+  //   • `assetTypesOff` — what the grid writes today: the UNCHECKED names,
+  //     built-in or custom. Naming the hidden set is what lets a custom type be
+  //     switched off at all, and it means a type added to the registry later
+  //     isn't in any existing config's list, so it shows until an operator says
+  //     otherwise — the same "new types stay visible" property the widening
+  //     rule below buys for the legacy shape, without the guesswork. It also
+  //     retires that rule's known limit: unchecking ONLY the newer built-ins is
+  //     now stored as a hidden list and survives, where before it read as
+  //     all-on and widened back.
+  //   • `assetTypes` — the LEGACY enabled list (built-ins only), from a config
+  //     saved before the grid learned the registry. Hidden is
+  //     (built-ins − effectiveAssetTypes(list)), so an all-on legacy config
+  //     stays unfiltered.
+  //
+  // Returns [] when nothing is hidden — callers then send no param at all.
+  function hiddenAssetTypes(config) {
+    config = config || {};
+    var out = [];
+    var add = function (t) { if (t && out.indexOf(t) === -1) out.push(t); };
+    if (Array.isArray(config.assetTypesOff)) config.assetTypesOff.forEach(add);
+    var enabled = effectiveAssetTypes(config.assetTypes);
+    if (enabled && enabled.length > 0) {
+      window.PolarisWidgets.BUILTIN_ASSET_TYPES.forEach(function (t) {
+        if (enabled.indexOf(t) === -1) add(t);
+      });
+    }
+    return out;
+  }
+  window.PolarisWidgets.hiddenAssetTypes = hiddenAssetTypes;
+
   // Widget refresh cadence, by how fast the underlying thing actually moves:
   //   fast   — in-flight progress (a running discovery)
   //   normal — outage state (down assets/interfaces, active alerts)
@@ -115,8 +148,9 @@
   var NOC_TTL_MS = 15000;
 
   // Translate a widget config into a stable query string for /noc-summary.
-  // assetTypes is sent only when it's a strict subset of the eight built-ins
-  // (all-on = omit = unfiltered). regionScope "mine" expands to the caller's
+  // The asset-type filter goes out as ?hideAssetTypes= (the switched-off
+  // names) and only when something is off — all-on = omit = unfiltered.
+  // regionScope "mine" expands to the caller's
   // effective region names (app.js global currentEffectiveRegions); "custom"
   // uses the widget's own picked region list (config.regions). fortigateScope
   // "custom" sends the picked FortiGate device names (config.fortigates) —
@@ -125,14 +159,14 @@
   function nocQueryString(opts) {
     opts = opts || {};
     var parts = [];
-    // Resolve a pre-existing config into today's built-in set BEFORE the
-    // strict-subset test, or a config that was all-on when it was saved reads
-    // as a narrowing and hides the built-ins added since.
-    var types = effectiveAssetTypes(opts.assetTypes);
-    if (types
-        && types.length > 0
-        && types.length < window.PolarisWidgets.BUILTIN_ASSET_TYPES.length) {
-      parts.push("assetTypes=" + encodeURIComponent(types.slice().sort().join(",")));
+    // One param carries the asset-type filter, and it names what to HIDE —
+    // hiddenAssetTypes folds both stored shapes (the grid's `assetTypesOff`
+    // and a legacy enabled `assetTypes` list) into that one set, so a config
+    // that was all-on when it was saved sends nothing and the built-ins added
+    // since it was written keep showing.
+    var hidden = hiddenAssetTypes(opts);
+    if (hidden.length > 0) {
+      parts.push("hideAssetTypes=" + encodeURIComponent(hidden.slice().sort().join(",")));
     }
     var regions = null;
     if (opts.regionScope === "custom") regions = Array.isArray(opts.regions) ? opts.regions : [];
@@ -253,6 +287,9 @@
     var s = parseInt(config.sampleCount, 10);
     return {
       assetTypes: config.assetTypes,
+      // The grid's switched-off list (built-in or custom). Read together with
+      // `assetTypes` by hiddenAssetTypes — see the two stored shapes there.
+      assetTypesOff: config.assetTypesOff,
       regionScope: config.regionScope,
       regions: config.regions,
       fortigateScope: config.fortigateScope,
@@ -717,6 +754,11 @@
   var _filterOptionsPromise = null;
   function getFilterOptions() {
     if (_filterOptionsPromise) return _filterOptionsPromise;
+    // A widget rendered without the app shell's API client (an isolated
+    // harness) gets empty pickers rather than a ReferenceError.
+    if (typeof api === "undefined" || !api.dashboard || !api.dashboard.filterOptions) {
+      return Promise.resolve({});
+    }
     _filterOptionsPromise = api.dashboard.filterOptions()
       .catch(function () { _filterOptionsPromise = null; return {}; });
     return _filterOptionsPromise;
@@ -726,6 +768,51 @@
   };
   window.PolarisWidgets.getFortigateOptions = function () {
     return getFilterOptions().then(function (d) { return (d && d.fortigates) || []; });
+  };
+
+  // The asset-type vocabulary the gear grid offers, as [{value, label}]: every
+  // built-in plus every CUSTOM registry type present in the fleet, labelled by
+  // its registry row. Rides the SAME one-shot /dashboard/filter-options fetch
+  // as the region and FortiGate pickers, so the grid costs no extra request
+  // and works on the unauthenticated /dash wallboard.
+  //
+  // Why this exists: the grid used to be drawn from the static
+  // BUILTIN_ASSET_TYPES list, so an operator-added type (network_camera, …)
+  // had no checkbox — it showed in every widget's rows and could not be
+  // switched off, no matter how many of them the fleet held. The static list
+  // is still the seed and the fallback (a failed fetch, a logged-out page, a
+  // pre-{name,label} server answering `string[]`).
+  //
+  // Registry labels are folded into ASSET_TYPE_LABELS by MUTATING it — the row
+  // renderers (downNodes, downInterfaces) captured that object at load, so a
+  // re-assignment would never reach them — and an existing key is never
+  // overwritten, so the compact "AP" the widgets show survives the registry's
+  // longer "Access Point".
+  window.PolarisWidgets.getAssetTypeOptions = function () {
+    var BUILTIN = window.PolarisWidgets.BUILTIN_ASSET_TYPES;
+    var labels = window.PolarisWidgets.ASSET_TYPE_LABELS;
+    var seed = function () {
+      return BUILTIN.map(function (t) { return { value: t, label: labels[t] || t }; });
+    };
+    return getFilterOptions().then(function (d) {
+      var rows = (d && d.assetTypes) || [];
+      var out = [];
+      var seen = {};
+      rows.forEach(function (r) {
+        var name = typeof r === "string" ? r : (r && r.name);
+        if (!name || seen[name]) return;
+        seen[name] = true;
+        var label = (r && typeof r === "object" && r.label) || null;
+        if (label && !Object.prototype.hasOwnProperty.call(labels, name)) labels[name] = label;
+        out.push({ value: name, label: labels[name] || label || name });
+      });
+      // Every built-in is offered even on a fleet that owns none of that type,
+      // so the grid doesn't gain and lose checkboxes as inventory changes.
+      BUILTIN.forEach(function (t) {
+        if (!seen[t]) { seen[t] = true; out.push({ value: t, label: labels[t] || t }); }
+      });
+      return out.length ? out : seed();
+    }).catch(function () { return seed(); });
   };
 
   // Open an asset's details slide-in in place when the canonical slide-over
@@ -812,10 +899,17 @@
   // gates, e.g. one site's switches/APs) are added only when includeAssetTypes
   // is true (every NOC widget except the maps, which fetch /map/sites and
   // don't ride the noc-summary filter).
+  // The type grid is painted TWICE: once synchronously from the built-in list
+  // so the popover is never empty, then again when getAssetTypeOptions()
+  // resolves and adds the custom registry types present in the fleet. A toggle
+  // made before that lands is kept (the repaint reads the live off-list, not
+  // the config snapshot).
   // onChange(key, value) is the widget's config setter — key is "regionScope"/
-  // "fortigateScope" (string), "regions"/"fortigates" (string[]), or
-  // "assetTypes" (string[]). Appends, so a widget can render its own controls
-  // first, then call this.
+  // "fortigateScope" (string), "regions"/"fortigates" (string[]),
+  // "assetTypesOff" (string[] — the switched-off types, what the filter is
+  // actually stored as) or "assetTypes" (string[] — the checked list, kept in
+  // step for the header title and for a config read by older bundles).
+  // Appends, so a widget can render its own controls first, then call this.
   window.PolarisWidgets.renderNocFilterConfig = function (el, config, onChange, includeAssetTypes) {
     config = config || {};
     var labels = window.PolarisWidgets.ASSET_TYPE_LABELS;
@@ -840,17 +934,8 @@
         +   '<option value="custom"' + (fgScope === "custom" ? " selected" : "") + '>Selected FortiGates…</option>'
         + '</select>'
         + '<div class="widget-config-typegrid widget-config-fglist" data-nocf="fortigateList" style="display:none"></div>';
-      // Same resolution the query path uses — a config saved before a built-in
-      // existed shows that type CHECKED, matching the rows the widget renders.
-      var enabled = effectiveAssetTypes(config.assetTypes) || BUILTIN.slice();
       html += '<label class="widget-config-label">Asset types</label>'
-        + '<div class="widget-config-typegrid">'
-        + BUILTIN.map(function (t) {
-            return '<label class="widget-config-typeopt">'
-              + '<input type="checkbox" data-noctype="' + t + '"' + (enabled.indexOf(t) !== -1 ? " checked" : "") + '> '
-              + (labels[t] || t) + '</label>';
-          }).join("")
-        + '</div>';
+        + '<div class="widget-config-typegrid" data-nocf="typeList"></div>';
     }
     el.insertAdjacentHTML("beforeend", html);
 
@@ -972,16 +1057,53 @@
     }
 
     if (includeAssetTypes) {
-      var boxes = el.querySelectorAll("[data-noctype]");
-      Array.prototype.forEach.call(boxes, function (cb) {
-        cb.addEventListener("change", function () {
-          var current = [];
-          Array.prototype.forEach.call(boxes, function (b) {
-            if (b.checked) current.push(b.getAttribute("data-noctype"));
+      // The off-list is the state this grid edits. Seeded from the stored
+      // config through the same resolver the query path uses, so a config
+      // saved before a built-in existed shows that type CHECKED — matching
+      // the rows the widget actually renders.
+      var liveOff = hiddenAssetTypes(config);
+      var typeGrid = el.querySelector('[data-nocf="typeList"]');
+
+      function paintTypeGrid(options) {
+        typeGrid.innerHTML = options.map(function (o) {
+          var off = liveOff.indexOf(o.value) !== -1;
+          return '<label class="widget-config-typeopt">'
+            + '<input type="checkbox" data-noctype="' + escapeHtml(o.value) + '"' + (off ? "" : " checked") + '> '
+            + escapeHtml(o.label) + '</label>';
+        }).join("");
+        var boxes = typeGrid.querySelectorAll("[data-noctype]");
+        Array.prototype.forEach.call(boxes, function (cb) {
+          cb.addEventListener("change", function () {
+            var on = [];
+            var offered = {};
+            var off = [];
+            Array.prototype.forEach.call(boxes, function (b) {
+              var t = b.getAttribute("data-noctype");
+              offered[t] = true;
+              if (b.checked) on.push(t); else off.push(t);
+            });
+            // A type the grid doesn't offer (switched off while it was in the
+            // fleet, since decommissioned) stays hidden rather than silently
+            // switching itself back on.
+            liveOff.forEach(function (t) { if (!offered[t] && off.indexOf(t) === -1) off.push(t); });
+            liveOff = off;
+            onChange("assetTypesOff", off);
+            // The checked list is what the header title names, and it is what
+            // an older bundle reading this config would filter on — keep the
+            // two in step rather than leaving a stale enabled list behind.
+            onChange("assetTypes", on);
           });
-          onChange("assetTypes", current);
         });
-      });
+      }
+
+      // Built-ins now (the popover is never empty), then the full vocabulary —
+      // built-ins plus the custom registry types present in the fleet — once
+      // /dashboard/filter-options answers.
+      paintTypeGrid(BUILTIN.map(function (t) { return { value: t, label: labels[t] || t }; }));
+      window.PolarisWidgets.getAssetTypeOptions().then(function (options) {
+        if (typeGrid.isConnected === false) return; // popover closed while we waited
+        if (options.length > BUILTIN.length) paintTypeGrid(options);
+      }).catch(function () { /* keep the built-in grid */ });
     }
   };
 
@@ -1007,12 +1129,27 @@
     hypervisor: "#5c6bc0", kubernetes_cluster: "#00897b",
   };
 
+  // Display name for ANY asset type, including one this bundle has never heard
+  // of. A row used to print an operator-added type's stored value verbatim
+  // ("network_camera") because the static map was the only source; a custom
+  // type is now humanized ("Network Camera") and, once a gear popover has
+  // pulled /dashboard/filter-options, named by its actual registry label.
+  window.PolarisWidgets.assetTypeLabel = function (t, fallback) {
+    if (!t) return fallback || "";
+    var labels = window.PolarisWidgets.ASSET_TYPE_LABELS;
+    if (labels[t]) return labels[t];
+    return String(t).replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  };
+
   // ─── Widget header title ─────────────────────────────────────────────────
   // The name a widget INSTANCE wears on the canvas, derived from its
   // registration plus the two gear controls that change what it's showing:
   //
-  //   • asset-type filter — a strict subset of the built-ins is appended in
-  //     parens ("Highest Avg CPU (Server, Switch)"); all-on / unset → bare.
+  //   • asset-type filter — a narrowed grid is named in parens, whichever way
+  //     is shorter: the types SHOWN ("Highest Avg CPU (Server, Switch)") or,
+  //     when fewer are off than on, the ones switched off ("Down Assets (excl.
+  //     Printer, Camera)"). Hiding one type out of a dozen shouldn't spend the
+  //     whole header listing the eleven that remain. All-on / unset → bare.
   //   • minimum severity — the tier is appended ("… — Warning and up"), and a
   //     widget may declare a `severityLabel` to swap its base label: a top-N
   //     metric widget narrowed to alerting rows is no longer showing the
@@ -1030,12 +1167,25 @@
       ? ((tier && module.severityLabel) || module.label)
       : ((w && w.type) + " (unknown widget)");
     var BUILTIN = window.PolarisWidgets.BUILTIN_ASSET_TYPES || [];
-    if (Array.isArray(cfg.assetTypes) && cfg.assetTypes.length > 0 && cfg.assetTypes.length < BUILTIN.length) {
-      var labels = window.PolarisWidgets.ASSET_TYPE_LABELS || {};
-      var picked = BUILTIN
-        .filter(function (t) { return cfg.assetTypes.indexOf(t) !== -1; })  // preserve built-in order
-        .map(function (t) { return labels[t] || t; });
-      if (picked.length) base += " (" + picked.join(", ") + ")";
+    var hidden = hiddenAssetTypes(cfg);
+    if (hidden.length > 0) {
+      var name = function (t) { return window.PolarisWidgets.assetTypeLabel(t); };
+      // Built-ins first in canonical order, then custom types — the grid's own
+      // order, so the header reads in the order the checkboxes are laid out.
+      var inGridOrder = function (list) {
+        return BUILTIN.filter(function (t) { return list.indexOf(t) !== -1; })
+          .concat(list.filter(function (t) { return BUILTIN.indexOf(t) === -1; }));
+      };
+      // What's left ON: the grid's checked list when it wrote one (it names
+      // custom types too), else the built-ins that aren't hidden.
+      var shown = inGridOrder((Array.isArray(cfg.assetTypes) && cfg.assetTypes.length > 0
+        ? cfg.assetTypes
+        : BUILTIN
+      ).filter(function (t) { return hidden.indexOf(t) === -1; }));
+      hidden = inGridOrder(hidden);
+      if (shown.length === 0) base += " (no types)";
+      else if (hidden.length < shown.length) base += " (excl. " + hidden.map(name).join(", ") + ")";
+      else base += " (" + shown.map(name).join(", ") + ")";
     }
     if (tier) base += " — " + tier;
     return base;

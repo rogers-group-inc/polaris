@@ -513,7 +513,11 @@
             <code>status, downNodes, downInterfaces, downIpsecTunnels, topCpu, topMemory,
             slowestResponse, packetLoss, diskUsage, temperature, storageForecast, stalePolls,
             sitesWithIssues, recentReboots, activeAlerts</code>; absent = all.
-            Filters: <code>assetTypes</code>, <code>regionTags</code>, <code>fortigates</code>
+            Filters: <code>hideAssetTypes</code> (CSV of the asset types to EXCLUDE —
+            built-in or operator-added; <code>assetTypes</code> is the legacy inverse and
+            names the ENABLED built-ins, from which the hidden set is derived as the
+            built-ins it omits — sending both unions them), <code>regionTags</code>,
+            <code>fortigates</code>
             (all CSV), <code>limit</code> (≤1000; each feed has its own default cap),
             <code>samples</code> (top-N averaging depth, ≤100, default 10),
             <code>includeDependencyDown=1</code>.</p>
@@ -544,7 +548,9 @@
           <div class="endpoint-head"><span class="method m-get">GET</span> /dashboard/filter-options
             <span class="gate">assets:read</span></div>
           <p><code>{ assetTypes, regions, fortigates }</code> — the values the noc-summary
-            filters accept. Empty arrays (not 403) without <code>assets:read</code>.</p>
+            filters accept. <code>assetTypes</code> is <code>{ name, label }</code> entries:
+            every built-in type followed by every operator-added type present in the fleet,
+            registry-labelled. Empty arrays (not 403) without <code>assets:read</code>.</p>
         </div>
       </section>
 

@@ -10,7 +10,9 @@
  */
 
 (function () {
-  var TYPE_LABELS = PolarisWidgets.ASSET_TYPE_LABELS;
+  // Humanizes a type the static label map lacks (an operator-added registry
+  // type), so a row/export never prints a raw snake_case value.
+  var typeName = PolarisWidgets.assetTypeLabel;
 
   // Normalize the two noc-summary arrays into a single row list with a `kind`
   // discriminator so render/group/sort treat them uniformly. The physical /
@@ -65,7 +67,7 @@
   }
 
   function rowHTML(n) {
-    var typeLabel = TYPE_LABELS[n.assetType] || n.assetType || "asset";
+    var typeLabel = typeName(n.assetType, "asset");
     var host = n.hostname || n.ipAddress || "(unnamed)";
     var title = (PolarisWidgets.alertSeverityPill ? PolarisWidgets.alertSeverityPill(n.alertSeverity) : "") +
       escapeHtml(n.name || (n.kind === "tunnel" ? "(tunnel)" : "(interface)"));

@@ -100,7 +100,11 @@ d("GET /api/v1/dashboard/noc-summary — bearer token role gate", () => {
 
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.assetTypes)).toBe(true);
-    expect(res.body.assetTypes).toContain("firewall"); // the seeded down-fw-01
+    // {name, label} entries — the label is what the gear grid shows, which is
+    // how an operator-added type gets a readable checkbox.
+    expect(res.body.assetTypes).toEqual(
+      expect.arrayContaining([{ name: "firewall", label: expect.any(String) }]), // the seeded down-fw-01
+    );
     expect(Array.isArray(res.body.regions)).toBe(true);
   });
 

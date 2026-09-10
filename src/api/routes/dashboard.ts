@@ -183,15 +183,21 @@ router.get("/noc-summary", async (req, res, next) => {
     // getNocSummaryPayload), so no existing kiosk token loses the feed.
     const canAlerts = hasPermission(req, "alerts", "read");
 
-    // Per-widget filters (optional): ?assetTypes=server,switch,... (the ENABLED
-    // built-in types), ?regionTags=East,West (the caller's "My regions"
+    // Per-widget filters (optional): ?hideAssetTypes=printer,network_camera
+    // (the types the widget's gear grid has switched OFF — the form the grid
+    // writes today, and the only one that can hide an operator-added CUSTOM
+    // type, since it names the hidden set outright), ?assetTypes=server,switch
+    // (the LEGACY form: the ENABLED built-in types, still arriving from configs
+    // saved before the grid learned the registry — the two union),
+    // ?regionTags=East,West (the caller's "My regions"
     // names), and ?fortigates=SITE-FG1,SITE-FG2 (the "Selected FortiGates"
     // per-site narrowing — assets behind any named gate via learnedLocation /
     // sighting rows). The service resolves them to an asset-id set (cached) —
     // null when nothing narrows, the default unfiltered path. The frontend
-    // memoizes per (feeds, assetTypes, regionTags, fortigates) so each
-    // distinct request fetches once.
+    // memoizes per (feeds, assetTypes, hideAssetTypes, regionTags, fortigates)
+    // so each distinct request fetches once.
     const assetTypes = parseCsvParam(req.query.assetTypes);
+    const hideAssetTypes = parseCsvParam(req.query.hideAssetTypes);
     const regionNames = parseCsvParam(req.query.regionTags);
     const fortigateNames = parseCsvParam(req.query.fortigates);
 
@@ -220,6 +226,7 @@ router.get("/noc-summary", async (req, res, next) => {
       canEvents,
       canAlerts,
       assetTypes,
+      hideAssetTypes,
       regionNames,
       fortigateNames,
       capLimit,

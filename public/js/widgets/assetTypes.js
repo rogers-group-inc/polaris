@@ -31,13 +31,10 @@
     return out;
   }
 
-  // The widgets read no registry (no /asset-types fetch here), so a custom type
-  // arrives as its stored snake_case name — humanize it rather than print it raw.
-  function typeLabel(t) {
-    var lbls = PolarisWidgets.ASSET_TYPE_LABELS;
-    if (lbls[t]) return lbls[t];
-    return String(t).replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
-  }
+  // A custom type arrives as its stored snake_case name; the shared helper
+  // humanizes it rather than printing it raw, and returns the real registry
+  // label once a gear popover has pulled /dashboard/filter-options.
+  var typeLabel = PolarisWidgets.assetTypeLabel;
 
   // Unknown types get a stable hue derived from the name: several custom types
   // sharing one fallback grey are indistinguishable as adjacent pie slices.
@@ -170,7 +167,6 @@
     },
 
     renderConfig: function (el, config, onChange) {
-      var lbls = PolarisWidgets.ASSET_TYPE_LABELS;
       var hidden = new Set(config.hiddenTypes || []);
       el.innerHTML =
         '<label>Chart style</label>' +
@@ -179,23 +175,42 @@
           '<option value="bar"' + (config.chartStyle === "bar" ? " selected" : "") + '>Bar</option>' +
         '</select>' +
         '<label>Hide types</label>' +
-        '<div style="display:flex;flex-direction:column;gap:3px;max-height:120px;overflow:auto;border:1px solid var(--color-border,rgba(255,255,255,0.1));border-radius:4px;padding:6px;">' +
-          Object.keys(lbls).map(function (k) {
-            return '<label style="display:flex;gap:6px;align-items:center;font-size:0.8rem;margin:0">' +
-              '<input type="checkbox" data-hide="' + k + '"' + (hidden.has(k) ? " checked" : "") + '> ' + escapeHtml(lbls[k]) +
-            '</label>';
-          }).join("") +
-        '</div>';
+        '<div data-k="hideList" style="display:flex;flex-direction:column;gap:3px;max-height:120px;overflow:auto;border:1px solid var(--color-border,rgba(255,255,255,0.1));border-radius:4px;padding:6px;"></div>';
       el.querySelector('[data-k="chartStyle"]').addEventListener("change", function (e) {
         onChange("chartStyle", e.target.value);
       });
-      el.querySelectorAll('input[data-hide]').forEach(function (cb) {
-        cb.addEventListener("change", function () {
-          if (cb.checked) hidden.add(cb.getAttribute("data-hide"));
-          else hidden.delete(cb.getAttribute("data-hide"));
-          onChange("hiddenTypes", Array.from(hidden));
+
+      // The list used to be Object.keys(ASSET_TYPE_LABELS) — the static map —
+      // so a custom type the chart happily DREW had no checkbox and could not
+      // be hidden. getAssetTypeOptions() is the shared vocabulary (built-ins +
+      // the custom registry types present in the fleet, registry-labelled);
+      // paint the built-in seed first so the popover is never empty, then
+      // repaint when it resolves. A hidden type the list no longer offers
+      // stays in hiddenTypes — dropping it would silently un-hide it.
+      var listEl = el.querySelector('[data-k="hideList"]');
+      function paint(options) {
+        listEl.innerHTML = options.map(function (o) {
+          return '<label style="display:flex;gap:6px;align-items:center;font-size:0.8rem;margin:0">' +
+            '<input type="checkbox" data-hide="' + escapeHtml(o.value) + '"' + (hidden.has(o.value) ? " checked" : "") + '> ' +
+            escapeHtml(o.label) +
+          '</label>';
+        }).join("");
+        listEl.querySelectorAll('input[data-hide]').forEach(function (cb) {
+          cb.addEventListener("change", function () {
+            if (cb.checked) hidden.add(cb.getAttribute("data-hide"));
+            else hidden.delete(cb.getAttribute("data-hide"));
+            onChange("hiddenTypes", Array.from(hidden));
+          });
         });
-      });
+      }
+      var lbls = PolarisWidgets.ASSET_TYPE_LABELS;
+      paint((PolarisWidgets.BUILTIN_ASSET_TYPES || []).map(function (t) {
+        return { value: t, label: lbls[t] || t };
+      }));
+      PolarisWidgets.getAssetTypeOptions().then(function (options) {
+        if (listEl.isConnected === false) return; // popover closed while we waited
+        if (options.length) paint(options);
+      }).catch(function () { /* keep the built-in list */ });
     },
   });
 })();
