@@ -203,11 +203,11 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
   // tick: the likeliest way for the tick to overrun its budget and silently
   // skip under the runningProbe guard. Same per-job singletonKey, so the
   // coalescing contract is unchanged.
-  const dueJobs = new Map<MonitorCadence, Array<{ assetId: string; transport?: string; assetType?: string; verboseDebug?: boolean }>>();
+  const dueJobs = new Map<MonitorCadence, Array<{ assetId: string; transport?: string; assetType?: string; verboseDebug?: boolean; probeIntervalSec?: number }>>();
   const queueJob = (
     cadence: MonitorCadence,
     assetId: string,
-    labels: { transport?: string; assetType?: string; verboseDebug?: boolean },
+    labels: { transport?: string; assetType?: string; verboseDebug?: boolean; probeIntervalSec?: number },
   ): void => {
     let arr = dueJobs.get(cadence);
     if (!arr) { arr = []; dueJobs.set(cadence, arr); }
@@ -234,8 +234,10 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
   // ICMP assets due a status probe this tick, published as chunks after the
   // loop. Each carries its RESOLVED timeout so the worker does not re-walk the
   // settings hierarchy per asset (and so a batch can never hand one asset
-  // another's timeout — they are bucketed by it).
-  const probeBatchDue: Array<{ id: string; target: string; timeoutMs: number }> = [];
+  // another's timeout — they are bucketed by it). The resolved interval rides
+  // along too, so the worker can drop an asset an earlier, still-active chunk
+  // has already polled (monitorStatus.probeStillDue).
+  const probeBatchDue: Array<{ id: string; target: string; timeoutMs: number; intervalSec: number }> = [];
 
   for (const a of candidates) {
     // Resolve effective settings via the four-tier hierarchy. Cached after
@@ -336,9 +338,9 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
       // credentials, so there is nothing to batch (snmpMultiGet batches OIDs
       // WITHIN one session; it cannot span hosts).
       if (eff.responseTimePolling === "icmp" && a.ipAddress) {
-        probeBatchDue.push({ id: a.id, target: a.ipAddress, timeoutMs: eff.probeTimeoutMs });
+        probeBatchDue.push({ id: a.id, target: a.ipAddress, timeoutMs: eff.probeTimeoutMs, intervalSec: probeIntervalSec });
       } else {
-        queueJob("probe", a.id, labels);
+        queueJob("probe", a.id, { ...labels, probeIntervalSec });
       }
     }
     if (telemetry && canTelemetry && isUp && enabled.has("telemetry")) {

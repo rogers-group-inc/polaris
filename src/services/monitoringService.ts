@@ -192,6 +192,7 @@ import {
   isConfigStatusEdge,
   monitorStatusFor,
   nextFailureBucket,
+  probeStillDue,
   runsHeavyCadences,
   type MonitorStatus,
 } from "../utils/monitorStatus.js";
@@ -239,6 +240,15 @@ export interface ProbeResult {
    * declare an entire virtual fleet down the moment vCenter hiccups.
    */
   skipped?: boolean;
+  /**
+   * "Somebody already took this reading." Set by `probeAsset` when a queued
+   * probe job reaches a worker after a later job has already polled the asset
+   * (see `probeStillDue`). Unlike `skipped`, this must not even stamp
+   * `lastMonitorAt`: the earlier job's stamp IS the cadence anchor, and
+   * overwriting it would push the next poll later for no reason. `runProbeFor`
+   * returns before `recordProbeResult` when it sees this.
+   */
+  duplicate?: boolean;
   /**
    * The device's raw sysDescr, when the probe was asked to carry it.
    *
@@ -1929,10 +1939,15 @@ async function collectIpsecOnlyFortinetSafe(
  * its own findUnique on the state-machine update path. The /probe-now
  * route doesn't bother (one operator-triggered request, savings don't
  * matter); leaves `out` undefined and pays the second read.
+ *
+ * `out.dueIntervalSec` is the resolved probe interval the pg-boss publisher
+ * carried on the job. When set, an asset already polled since the job was
+ * published returns `{ duplicate: true }` without touching the network (see
+ * `probeStillDue`). The row is already loaded, so the check costs nothing.
  */
 export async function probeAsset(
   assetId: string,
-  out?: { snapshot?: AssetMonitorSnapshot },
+  out?: { snapshot?: AssetMonitorSnapshot; dueIntervalSec?: number },
 ): Promise<ProbeResult> {
   const start = performance.now();
   try {
@@ -1945,6 +1960,15 @@ export async function probeAsset(
     // skip its own findUnique. The fields in `AssetMonitorSnapshot` are a
     // subset of what this `include` already pulled — no extra DB cost.
     if (out) out.snapshot = asset;
+    // A job that queued behind an ACTIVE job for the same asset: that job has
+    // already taken this cycle's reading. A slow probe to a dark host
+    // (probeTimeoutMs ~ one 5s publisher tick) is how the second job gets queued.
+    if (
+      out?.dueIntervalSec !== undefined &&
+      !probeStillDue(asset.lastMonitorAt, out.dueIntervalSec, new Date(), getPendingProbePatch(assetId)?.lastMonitorAt)
+    ) {
+      return { success: false, responseTimeMs: 0, duplicate: true };
+    }
     if (!asset.monitored) return finish(start, false, "Monitoring disabled");
     const effectiveRTCred = asset.responseTimeCredential ?? asset.monitorCredential;
 
@@ -11321,8 +11345,16 @@ export async function recordProbeResult(
    *  Bypasses the agent-polling guard below so the agent's real samples
    *  drive the five-state machine. The default (periodic-loop callers
    *  leaving this false/undefined) keeps the guard active so the
-   *  synthetic no-op probeAsset doesn't churn state. */
-  opts?: { fromAgent?: boolean },
+   *  synthetic no-op probeAsset doesn't churn state.
+   *
+   *  `observedAt` is when the reading was actually TAKEN, when the caller
+   *  knows it to be earlier than the moment it is recorded. The batched ICMP
+   *  probe passes the instant its echoes went out: the chunk only returns once
+   *  its slowest target times out, so stamping at record time would place
+   *  every reading up to a probe timeout late and stretch the cadence by the
+   *  same amount. It sets the sample timestamp and the `lastMonitorAt` anchor
+   *  only; status-change time and Events still use the record time. */
+  opts?: { fromAgent?: boolean; observedAt?: Date },
 ): Promise<void> {
   const loaded = preloadedAsset ?? await prisma.asset.findUnique({
     where: { id: assetId },
@@ -11407,6 +11439,7 @@ export async function recordProbeResult(
   const recoveryPolls = verdict ? recoveryPollsFor(verdict, effective.intervalSeconds) : 0;
 
   const now = new Date();
+  const observedAt = opts?.observedAt ?? now;
   const previousStatus = asset.monitorStatus ?? "unknown";
   // Counter update. `consecutiveFailures` is a LEAKY BUCKET WITH A CEILING, not
   // a run length and no longer an unbounded debt — see business rule 30 and
@@ -11486,7 +11519,7 @@ export async function recordProbeResult(
 
   enqueueMonitorSample({
     assetId,
-    timestamp: now,
+    timestamp: observedAt,
     success: result.success,
     responseTimeMs: result.success ? result.responseTimeMs : null,
     error: result.success ? null : (result.error ?? null),
@@ -11527,7 +11560,7 @@ export async function recordProbeResult(
   // Alerts duration.
   enqueueProbePatch(assetId, {
     monitorStatus: nextStatus,
-    lastMonitorAt: now,
+    lastMonitorAt: observedAt,
     lastResponseTimeMs: result.success ? result.responseTimeMs : null,
     consecutiveFailures: newCf,
     consecutiveSuccesses: newCs,
@@ -11714,6 +11747,11 @@ export interface ProbeBatchItem {
   /** The RESOLVED probeTimeoutMs, carried from the publisher so the worker does
    *  not re-walk the monitor-settings hierarchy 250 times. */
   timeoutMs: number;
+  /** The RESOLVED probe interval (`resolveProbeIntervalSec`), carried for the
+   *  same reason, so the worker can drop an asset already polled since the
+   *  chunk was published (`probeStillDue`). Optional so a chunk queued before
+   *  this field existed still runs unfiltered. */
+  intervalSec?: number;
 }
 
 /**
@@ -11763,22 +11801,45 @@ export async function runProbeBatchFor(items: ProbeBatchItem[], labels: WorkItem
         discoveredByIntegrationId: true, monitorIntervalSec: true, cpuMemoryIntervalSec: true,
         temperatureIntervalSec: true, systemInfoIntervalSec: true, probeTimeoutMs: true,
         dependencySuppressed: true, cpuMemoryTimeoutMs: true, temperatureTimeoutMs: true,
-        systemInfoTimeoutMs: true,
+        systemInfoTimeoutMs: true, lastMonitorAt: true,
       },
     });
     const byId = new Map(snapshots.map((a) => [a.id, a as AssetMonitorSnapshot]));
+    const lastMonitorAtById = new Map(snapshots.map((a) => [a.id, a.lastMonitorAt]));
 
     // Re-check only the CHEAP half at pickup — a pg-boss job can land seconds
     // after publication and the asset may have been un-monitored since. The
     // monitor-settings hierarchy was already resolved by the publisher and
     // re-walking it per asset would cost more than the batch it guards, which
-    // is why `timeoutMs` rides the payload.
-    const live = items.filter((i) => byId.get(i.id)?.monitored === true);
+    // is why `timeoutMs` and `intervalSec` ride the payload.
+    //
+    // "Still due" is the other half. This chunk may have queued behind an
+    // ACTIVE job holding the same chunk index, published one tick earlier while
+    // that job was still waiting on its slowest target. Every asset that job
+    // already recorded is dropped here, so each asset gets one reading per
+    // cadence (see `probeStillDue`).
+    const pickedUpAt = new Date();
+    let alreadyPolled = 0;
+    const live = items.filter((i) => {
+      if (byId.get(i.id)?.monitored !== true) return false;
+      if (!probeStillDue(lastMonitorAtById.get(i.id), i.intervalSec, pickedUpAt, getPendingProbePatch(i.id)?.lastMonitorAt)) {
+        alreadyPolled++;
+        return false;
+      }
+      return true;
+    });
+    if (alreadyPolled > 0) {
+      logger.debug({ chunk: items.length, alreadyPolled }, "Batched ICMP probe dropped assets already polled since publication");
+    }
     if (live.length === 0) {
       recordWorkOutcome("probe", "success", labels);
       return "success";
     }
 
+    // The instant the echoes go out, which is when every reading below was
+    // taken. Recording them at completion would place them up to one probe
+    // timeout late: the chunk waits for its slowest target.
+    const sentAt = new Date();
     const results = await pingTargets(
       live.map((i) => ({ target: i.target, timeoutMs: i.timeoutMs })),
       { count: 1 },
@@ -11802,7 +11863,7 @@ export async function runProbeBatchFor(items: ProbeBatchItem[], labels: WorkItem
       attempted++;
       if (!success) failed++;
       try {
-        await recordProbeResult(item.id, result, byId.get(item.id) ?? null);
+        await recordProbeResult(item.id, result, byId.get(item.id) ?? null, { observedAt: sentAt });
       } catch (err) {
         // One asset's state write must not abandon the rest of the chunk.
         logger.error({ err, assetId: item.id }, "Batched ICMP probe failed to record a result");
@@ -11830,15 +11891,28 @@ export async function runProbeBatchFor(items: ProbeBatchItem[], labels: WorkItem
   }
 }
 
-export async function runProbeFor(assetId: string, labels: WorkItemLabels): Promise<CadenceOutcome> {
+export async function runProbeFor(
+  assetId: string,
+  labels: WorkItemLabels,
+  /** The resolved probe interval the publisher carried on the job. When set, a
+   *  job that queued behind an already-finished poll of the same asset is
+   *  dropped (`probeStillDue`). Absent (cursor mode, older jobs) = always run. */
+  dueIntervalSec?: number,
+): Promise<CadenceOutcome> {
   const stopWork = startWorkTimer("probe", labels);
   const probeStart = Date.now();
   try {
     // probeAsset stashes its loaded asset row into `probeOut.snapshot` so
     // recordProbeResult can reuse it for the state-machine update — one
     // findUnique per probe instead of two.
-    const probeOut: { snapshot?: AssetMonitorSnapshot } = {};
+    const probeOut: { snapshot?: AssetMonitorSnapshot; dueIntervalSec?: number } = { dueIntervalSec };
     const result = await probeAsset(assetId, probeOut);
+    // Already polled this cycle by the job this one queued behind: no reading,
+    // no anchor stamp, no probe metric. The work itself ran cleanly.
+    if (result.duplicate) {
+      recordWorkOutcome("probe", "success", labels);
+      return "success";
+    }
     const probeMs = Date.now() - probeStart;
     await recordProbeResult(assetId, result, probeOut.snapshot ?? null);
     // A skipped probe measured nothing, so it is charted nowhere and counted
@@ -13261,7 +13335,7 @@ export async function computeDueWork(
       // publisher makes. Every other transport needs its own authenticated
       // conversation and stays one work item per asset.
       if (eff.responseTimePolling === "icmp" && a.ipAddress) {
-        probeBatch.push({ id: a.id, target: a.ipAddress, timeoutMs: eff.probeTimeoutMs });
+        probeBatch.push({ id: a.id, target: a.ipAddress, timeoutMs: eff.probeTimeoutMs, intervalSec: probeIntervalSec });
       } else {
         probes.push({ id: a.id, kind: "probe" });
       }
