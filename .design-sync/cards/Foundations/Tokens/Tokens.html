@@ -1,0 +1,70 @@
+<!-- @dsCard group="Foundations" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Design tokens</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 24px; }
+  .sw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin-bottom: 22px; }
+  .sw { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
+  .sw-chip { height: 46px; }
+  .sw-meta { padding: 6px 8px; background: var(--color-bg-primary); }
+  .sw-name { font-family: var(--font-mono); font-size: 0.7rem; color: var(--color-text-primary); }
+  .sw-note { font-size: 0.68rem; color: var(--color-text-tertiary); }
+  .shape-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+  .shape { background: var(--color-bg-primary); border: 1px solid var(--color-border); padding: 14px 18px; font-size: 0.72rem; color: var(--color-text-secondary); }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Design tokens</h2></div>
+
+  <p class="hint" style="margin-bottom:14px">Every colour, radius and shadow goes through a variable. Never write a raw hex value in app code.</p>
+
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-title">Surfaces</div>
+    <div class="sw-grid">
+      <div class="sw"><div class="sw-chip" style="background:var(--color-bg-primary)"></div><div class="sw-meta"><div class="sw-name">--color-bg-primary</div><div class="sw-note">panels, cards, tables</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-bg-secondary)"></div><div class="sw-meta"><div class="sw-name">--color-bg-secondary</div><div class="sw-note">page ground</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-bg-tertiary)"></div><div class="sw-meta"><div class="sw-name">--color-bg-tertiary</div><div class="sw-note">sidebar, thead, chrome</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-surface)"></div><div class="sw-meta"><div class="sw-name">--color-surface</div><div class="sw-note">raised surface</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-bg-elevated)"></div><div class="sw-meta"><div class="sw-name">--color-bg-elevated</div><div class="sw-note">popovers, row hover</div></div></div>
+    </div>
+
+    <div class="card-title">Borders &amp; text</div>
+    <div class="sw-grid">
+      <div class="sw"><div class="sw-chip" style="background:var(--color-border)"></div><div class="sw-meta"><div class="sw-name">--color-border</div><div class="sw-note">default 1px border</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-border-light)"></div><div class="sw-meta"><div class="sw-name">--color-border-light</div><div class="sw-note">row separators</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-text-primary)"></div><div class="sw-meta"><div class="sw-name">--color-text-primary</div><div class="sw-note">body copy</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-text-secondary)"></div><div class="sw-meta"><div class="sw-name">--color-text-secondary</div><div class="sw-note">labels, meta</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-text-tertiary)"></div><div class="sw-meta"><div class="sw-name">--color-text-tertiary</div><div class="sw-note">hints, thead</div></div></div>
+    </div>
+
+    <div class="card-title">Accent &amp; status</div>
+    <div class="sw-grid">
+      <div class="sw"><div class="sw-chip" style="background:var(--color-accent)"></div><div class="sw-meta"><div class="sw-name">--color-accent</div><div class="sw-note">alias --color-primary</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-accent-hover)"></div><div class="sw-meta"><div class="sw-name">--color-accent-hover</div><div class="sw-note">hover state</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-success)"></div><div class="sw-meta"><div class="sw-name">--color-success</div><div class="sw-note">healthy, available</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-warning)"></div><div class="sw-meta"><div class="sw-name">--color-warning</div><div class="sw-note">degraded</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-danger)"></div><div class="sw-meta"><div class="sw-name">--color-danger</div><div class="sw-note">down, destructive</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-sev-serious)"></div><div class="sw-meta"><div class="sw-name">--color-sev-serious</div><div class="sw-note">severity ladder</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-sev-notice)"></div><div class="sw-meta"><div class="sw-name">--color-sev-notice</div><div class="sw-note">severity ladder</div></div></div>
+      <div class="sw"><div class="sw-chip" style="background:var(--color-deprecated)"></div><div class="sw-meta"><div class="sw-name">--color-deprecated</div><div class="sw-note">retired</div></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Radius, shadow, type</div>
+    <div class="shape-row">
+      <div class="shape" style="border-radius:var(--radius-sm)">--radius-sm · 4px</div>
+      <div class="shape" style="border-radius:var(--radius-md)">--radius-md · 8px</div>
+      <div class="shape" style="border-radius:var(--radius-lg)">--radius-lg · 12px</div>
+      <div class="shape" style="border-radius:var(--radius-md); box-shadow:var(--shadow-sm)">--shadow-sm</div>
+      <div class="shape" style="border-radius:var(--radius-md); box-shadow:var(--shadow-md)">--shadow-md</div>
+    </div>
+    <p style="margin-top:14px; font-family:var(--font-sans); color:var(--color-text-primary)">--font-sans — Inter, the UI face for all prose and controls.</p>
+    <p class="mono" style="color:var(--color-text-primary)">--font-mono — Roboto Mono, every identifier: 192.0.2.41 · 00:1B:44:11:3A:B7</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,69 @@
+<!-- @dsCard group="Overlays" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Slide-over</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 24px; min-height: 560px; }
+  /* .slideover translates in from the right once .open is added; the card pins it
+     open. openSlideover() adds .open on the next animation frame at runtime. */
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Slide-over</h2></div>
+  <p class="hint">
+    Entity detail views. The panel stays open while the user works the page underneath, so it is
+    deliberately not <code>aria-modal</code> and has no hard focus trap.
+  </p>
+
+  <div class="slideover-overlay open">
+    <div class="slideover open">
+      <div class="slideover-resize-handle"></div>
+      <div class="slideover-header">
+        <div class="slideover-header-top">
+          <h3>core-switch-01</h3>
+          <button class="btn-icon" aria-label="Close">&times;</button>
+        </div>
+        <div class="slideover-meta">
+          <span class="mono">192.0.2.11</span>
+          <span>Switch</span>
+          <span class="badge badge-active">Active</span>
+          <span>Seen 2 min ago</span>
+        </div>
+      </div>
+      <div class="slideover-body">
+        <!-- .slideover-body has ZERO padding: every state supplies its own gutter. -->
+        <div style="padding: 1rem 1.25rem 1rem 2.5rem">
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-title">Interfaces</div>
+            <div class="table-wrapper">
+              <table>
+                <thead><tr><th>Port</th><th>VLAN</th><th>State</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">port1</td><td>40</td><td><span class="badge badge-active">Up</span></td></tr>
+                  <tr><td class="mono">port2</td><td>40</td><td><span class="badge badge-active">Up</span></td></tr>
+                  <tr><td class="mono">port9</td><td>—</td><td><span class="badge badge-level-error">Down</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Utilisation</div>
+            <div class="util-row">
+              <span style="min-width:90px; font-size:0.8rem">Ports</span>
+              <div class="util-bar-track"><div class="util-bar-fill" style="width:66%"></div></div>
+              <span class="mono" style="font-size:0.78rem">66%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="slideover-footer">
+        <button class="btn btn-secondary">Close</button>
+        <button class="btn btn-primary">Edit</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!-- @dsCard group="Data" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Badges</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 24px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .card { margin-bottom: 16px; }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Badges</h2></div>
+  <p class="hint" style="margin-bottom:16px">
+    <code>.badge</code> is a pill: 99px radius, 0.72rem/600, 2px 8px. Always pair it with a
+    semantic variant. Reuse the closest existing one — don't mint new colours.
+  </p>
+
+  <div class="card">
+    <div class="card-title">Lifecycle</div>
+    <div class="row">
+      <span class="badge badge-active">Active</span>
+      <span class="badge badge-available">Available</span>
+      <span class="badge badge-reserved">Reserved</span>
+      <span class="badge badge-expired">Expired</span>
+      <span class="badge badge-released">Released</span>
+      <span class="badge badge-conflict">Conflict</span>
+      <span class="badge badge-deprecated">Deprecated</span>
+      <span class="badge badge-decommissioned">Decommissioned</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">State</div>
+    <div class="row">
+      <span class="badge badge-disabled">Disabled</span>
+      <span class="badge badge-maintenance">Maintenance</span>
+      <span class="badge badge-quarantined">Quarantined</span>
+      <span class="badge badge-storage">Storage</span>
+      <span class="badge badge-passive">Passive</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Severity ladder</div>
+    <div class="row">
+      <span class="badge badge-level-informational">Informational</span>
+      <span class="badge badge-level-info">Info</span>
+      <span class="badge badge-level-notice">Notice</span>
+      <span class="badge badge-level-warning">Warning</span>
+      <span class="badge badge-level-serious">Serious</span>
+      <span class="badge badge-level-error">Error</span>
+      <span class="badge badge-level-critical">Critical</span>
+    </div>
+    <p class="hint">Severity colours are deliberately identical in every theme — a severity is a fixed meaning, not a surface colour.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Roles &amp; classification</div>
+    <div class="row">
+      <span class="badge badge-admin">Admin</span>
+      <span class="badge badge-network-admin">Network Admin</span>
+      <span class="badge badge-assets-admin">Assets Admin</span>
+      <span class="badge badge-readonly">Read only</span>
+      <span class="badge badge-user">User</span>
+    </div>
+    <div class="row">
+      <span class="badge badge-v4">IPv4</span>
+      <span class="badge badge-v6">IPv6</span>
+      <span class="badge badge-vlan">VLAN 40</span>
+      <span class="badge badge-clickable badge-reserved">Clickable pill</span>
+    </div>
+    <p class="hint"><code>.badge-clickable</code> adds hover brighten, active scale and a focus ring — use it whenever the pill is a control.</p>
+  </div>
+</body>
+</html>

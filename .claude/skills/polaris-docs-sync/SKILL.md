@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Docs sync — the commit-time review
 
-The project memory lives in `CLAUDE.md` (always loaded, ≤15 KB) and eleven skills under
+The project memory lives in `CLAUDE.md` (always loaded, ≤15 KB) and twelve skills under
 `.claude/skills/` (loaded on demand). They only stay trustworthy if every commit refreshes
 what the change moved, broke or invalidated. A pre-commit hook and a CI job
 (`npm run check:docs`, `scripts/check-docs.mjs`) enforce the *structural* half — every
@@ -52,6 +52,7 @@ the pre-skills task list verbatim. The short form:
 | business rule | `polaris-business-rules` (SKILL.md for 1–11; `invariants-*.md` + `narrative-*.md` for 12+); cite the number from code |
 | `public/api.html` (the external API contract) | regenerate the `polaris-api-conventions` plugin. The clone lives beside this checkout at `../polaris-api-conventions` (do not re-clone; origin https://github.com/rogers-group-inc/polaris-api-conventions). From the folder holding both clones: `node polaris-api-conventions/scripts/import-api-html.mjs polaris/public/api.html`, then in the plugin repo bump `plugin.json` version, commit, push. `check:docs` compares its `sourceApiHtmlSha256` against the current page and warns (never fails) when they have drifted — silence means current, or that the clone was not found |
 | Fortinet API behaviour learned the hard way (an FMG JSON-RPC or FortiOS REST call, or a FortiSwitch/FortiAP MIB, that did not do what the docs say — usually a change under `services/fortimanagerService.ts`, `services/fortigateService.ts`, `services/forti*`, `utils/forti*`) | record it in the `fortinet-api-conventions` plugin, beside this checkout at `../fortinet-api-conventions` (origin https://github.com/davidmoore-rogers/fortinet-api-conventions). Add or amend the entry in its `skills/fortinet-api-conventions/references/*.md` (a new rule goes in its SKILL.md too), bump `plugin.json` version, commit, push. Vendor behaviour only — no Polaris names, fields or hostnames. Both plugin repos are separate git repos: their commits are their own, never part of the Polaris commit |
+| `design/css/` re-synced from the external kit (a `docs(design): sync the kit` commit), or a preview card / the conventions header edited | run `/polaris-design-sync` — the Claude Design project is a manual push that nothing re-runs, so it goes stale silently. That skill owns the procedure and the validation pass; `.design-sync/NOTES.md` is its durable record. A `public/css/` change on its own is NOT a trigger: `design/` tracks the external kit and is never edited to chase `public/` |
 | deploy artifact, Dockerfile, unit, nginx | `polaris-deploy/references/*`, `docs/INSTALL.md`, `README.md` |
 | a version pin, a dependency major, an EOL date | `polaris-tech-lifecycle/references/version-pin-inventory.md` (every declaration site for that family) + the matching upgrade playbook; run `npm run check:versions`; a changed date also updates `src/data/platformEol.json` per `references/eol-dataset.md` |
 | the session workflow itself | `polaris-worktree-workflow`, the CLAUDE.md "Session workflow" paragraph, the hook script |

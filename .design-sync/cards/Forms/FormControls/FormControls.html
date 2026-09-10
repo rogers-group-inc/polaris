@@ -1,0 +1,82 @@
+<!-- @dsCard group="Forms" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Form controls</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>body { padding: 24px; } .card { margin-bottom: 16px; }</style>
+</head>
+<body>
+  <div class="page-header"><h2>Form controls</h2></div>
+
+  <div class="card">
+    <div class="card-title">Filter bar</div>
+    <div class="filter-bar">
+      <label>Search</label>
+      <input type="text" placeholder="Name or address" style="max-width:220px">
+      <label>Status</label>
+      <select style="max-width:160px">
+        <option>All</option>
+        <option>Active</option>
+        <option>Maintenance</option>
+      </select>
+      <button class="btn btn-sm btn-secondary">Clear</button>
+    </div>
+  </div>
+
+  <div class="card" style="max-width:560px">
+    <div class="card-title">Form groups</div>
+
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" value="core-switch-01">
+      <div class="hint">Must be unique across the site.</div>
+    </div>
+
+    <div class="form-group">
+      <label>Address</label>
+      <input type="text" value="192.0.2.11">
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+      <div class="form-group">
+        <label>Type</label>
+        <select><option>Switch</option><option>Router</option><option>Access point</option></select>
+      </div>
+      <div class="form-group">
+        <label>VLAN</label>
+        <input type="number" value="40">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Notes</label>
+      <textarea rows="3" placeholder="Optional"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label>Serial</label>
+      <div class="form-value mono">FGT-0000-EXAMPLE</div>
+      <div class="hint">Read-only display value uses <code>.form-value</code>.</div>
+    </div>
+
+    <div class="form-group field-locked">
+      <label>Managed by</label>
+      <input type="text" value="Discovery — cannot be edited here" disabled>
+      <div class="hint">A field the user may not change gets <code>.field-locked</code>.</div>
+    </div>
+
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px">
+      <button class="btn btn-secondary">Cancel</button>
+      <button class="btn btn-primary">Save</button>
+    </div>
+  </div>
+
+  <p class="hint">
+    Structure is always <code>.form-group &gt; label + control + .hint</code>. Controls are
+    full-width by default — don't restyle them per page. Multi-column layouts use an inline
+    <code>display:grid</code> rather than new classes.
+  </p>
+</body>
+</html>

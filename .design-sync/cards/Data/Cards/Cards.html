@@ -1,0 +1,64 @@
+<!-- @dsCard group="Data" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Cards &amp; metrics</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>body { padding: 24px; } .card { margin-bottom: 16px; }</style>
+</head>
+<body>
+  <div class="page-header"><h2>Cards &amp; metrics</h2></div>
+
+  <div class="card">
+    <div class="card-title">Card</div>
+    <p style="font-size:0.85rem; color:var(--color-text-secondary)">
+      <code>.card</code> is the standard panel: <code>--color-bg-primary</code> on
+      <code>--radius-lg</code>, 1rem 1.25rem of padding, <code>--shadow-sm</code>.
+      <code>.card-title</code> is 0.75rem, 600, uppercase, 1px letter-spacing.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">KPI grid</div>
+    <div class="kpi-grid">
+      <div class="kpi-card"><div class="kpi-label">Total subnets</div><div class="kpi-value">342</div></div>
+      <div class="kpi-card"><div class="kpi-label">Addresses in use</div><div class="kpi-value">18,904</div></div>
+      <div class="kpi-card"><div class="kpi-label">Reservations</div><div class="kpi-value">1,205</div></div>
+      <div class="kpi-card"><div class="kpi-label">Conflicts</div><div class="kpi-value">3</div></div>
+    </div>
+    <p class="hint" style="margin-top:10px">
+      <code>.kpi-grid</code> is <code>repeat(auto-fit, minmax(180px,1fr))</code> at 10px gap.
+      The value is mono, 1.75rem, 700 — always.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Utilisation bars</div>
+    <div class="util-row">
+      <span style="min-width:130px; font-size:0.8rem">10.20.0.0/22</span>
+      <div class="util-bar-track"><div class="util-bar-fill" style="width:38%"></div></div>
+      <span class="mono" style="font-size:0.78rem">38%</span>
+    </div>
+    <div class="util-row">
+      <span style="min-width:130px; font-size:0.8rem">10.20.4.0/24</span>
+      <div class="util-bar-track"><div class="util-bar-fill" style="width:72%"></div></div>
+      <span class="mono" style="font-size:0.78rem">72%</span>
+    </div>
+    <div class="util-row">
+      <span style="min-width:130px; font-size:0.8rem">10.20.5.0/24</span>
+      <div class="util-bar-track"><div class="util-bar-fill" style="width:96%"></div></div>
+      <span class="mono" style="font-size:0.78rem">96%</span>
+    </div>
+    <p class="hint" style="margin-top:10px">
+      <code>.util-row &gt; .util-bar-track &gt; .util-bar-fill</code> — a 6px pill track.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Spinner</div>
+    <span class="spinner" style="width:18px; height:18px"></span>
+    <span style="margin-left:10px; font-size:0.85rem; color:var(--color-text-secondary)">Loading…</span>
+  </div>
+</body>
+</html>

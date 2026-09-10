@@ -8,7 +8,7 @@ review in `SKILL.md`. Bypass one commit with `git commit --no-verify` and say so
 
 | Check | Fails when | Fix |
 |---|---|---|
-| `docs-present` | any of the eleven `.claude/skills/<name>/SKILL.md` files is missing, or `CLAUDE.md` is | restore the file; the eleven names are listed in the script's `SKILLS` array |
+| `docs-present` | any of the twelve `.claude/skills/<name>/SKILL.md` files is missing, or `CLAUDE.md` is | restore the file; the twelve names are listed in the script's `SKILLS` array |
 | `no-line-numbers` | any doc cites a source location by line number — a `file.ts` followed by a colon and digits, or prose such as "around line" + a number | cite `path/file.ts → symbolName()` instead; line numbers drift |
 | `models-documented` | a `model X {` in `prisma/schema.prisma` (except `*Hourly` / `*Daily` rollups) is named in no doc | add a Definitions bullet + Schema block to the right `polaris-domain-model/references/<domain>.md` |
 | `files-documented` | a `src/services|jobs|api/routes|utils/*.ts` file (not `_`-prefixed, not `.d.ts`) is named in no doc | add it to the matching `polaris-change-impact/references/file-map/*.md` slice (and the jobs table for a job) |

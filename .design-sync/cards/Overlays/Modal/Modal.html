@@ -1,0 +1,46 @@
+<!-- @dsCard group="Overlays" -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Modal</title>
+<link rel="stylesheet" href="../../../styles.css">
+<style>
+  body { padding: 24px; min-height: 520px; }
+  /* The overlay is fixed and transparent until .open is added — the card pins it
+     open so the modal is visible. openModal() does this for you at runtime. */
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Modal</h2></div>
+  <p class="hint">Modals are for forms and confirmations. For an entity detail view that should coexist with the page, use a slide-over instead.</p>
+
+  <div class="modal-overlay open" role="dialog" aria-modal="true" aria-labelledby="m-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="m-title">Add Thing</h3>
+        <button class="btn-icon" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" placeholder="core-switch-02">
+          <div class="hint">Must be unique across the site.</div>
+        </div>
+        <div class="form-group">
+          <label>Address</label>
+          <input type="text" placeholder="192.0.2.12">
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select><option>Switch</option><option>Router</option><option>Access point</option></select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary">Cancel</button>
+        <button class="btn btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
