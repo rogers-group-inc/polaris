@@ -95,12 +95,34 @@ describe("resolvePgToolPath", () => {
     expect(r).toEqual({ path: "pg_dump", source: "path" });
   });
 
-  it("falls back to the bare name when the server major is unknown", () => {
-    // The prod layout: /usr/pgsql-15 exists, but with no major to look for the
-    // resolver cannot pick it — the caller's --version probe is what protects
-    // the operator here, so the source must say "path".
-    const r = resolvePgToolPath("pg_dump", null, onDisk(["/usr/pgsql-15/bin/pg_dump"]), { platform: "linux" });
-    expect(r.source).toBe("path");
+  it("scans the versioned dirs, newest first, when the server major is unknown", () => {
+    // The 2026-09-10 prod layout: /usr/pgsql-15 exists but nothing can say the
+    // server is 15 (the host had removed AppStream 13 without `alternatives
+    // --auto`, so the shell twin found no psql on PATH to ask). The versioned
+    // client is still the right answer — a newer pg_dump is accepted and an
+    // older one is refused by the --version check that follows — so PATH stays
+    // the LAST resort, not the first. Until this the resolver returned the bare
+    // name here and the update stopped at "pg_dump not found".
+    const r = resolvePgToolPath(
+      "pg_dump",
+      null,
+      onDisk(["/usr/lib/postgresql/13/bin/pg_dump", "/usr/pgsql-15/bin/pg_dump"]),
+      { platform: "linux" },
+    );
+    expect(r).toEqual({ path: "/usr/pgsql-15/bin/pg_dump", source: "versioned-dir" });
+
+    const win = resolvePgToolPath(
+      "pg_dump",
+      null,
+      onDisk(["C:\\Program Files\\PostgreSQL\\15\\bin\\pg_dump.exe", "C:\\Program Files\\PostgreSQL\\16\\bin\\pg_dump.exe"]),
+      { platform: "win32" },
+    );
+    expect(win).toEqual({ path: "C:\\Program Files\\PostgreSQL\\16\\bin\\pg_dump.exe", source: "versioned-dir" });
+  });
+
+  it("falls back to the bare name when the server major is unknown AND nothing versioned exists", () => {
+    const r = resolvePgToolPath("pg_dump", null, onDisk([]), { platform: "linux" });
+    expect(r).toEqual({ path: "pg_dump", source: "path" });
   });
 });
 

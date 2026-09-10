@@ -202,6 +202,12 @@ alternatives --auto pgsql-pg_dump; alternatives --auto pgsql-psql
 pg_dump --version && psql --version                 # both must report the server's major
 ```
 
+The `alternatives --auto` line is for you and for anything else that calls `pg_dump` or `psql` by
+name. Polaris and `deploy/update-linux.sh` look in the versioned directories first and, when
+nothing on PATH can say which major the server is, take the newest versioned client — so a host
+that skipped that line still backs up and updates (it did not, before 2026-09-10: the script
+stopped at "pg_dump not found" with `/usr/pgsql-15/bin/pg_dump` present).
+
 Package removal leaves data directories alone — a PG15 cluster under `/var/lib/pgsql/15/data`
 is untouched. Then re-enable the pre-update backup if it was switched off to get past this
 (Server Settings → Maintenance → Updates), and take a manual backup to confirm.

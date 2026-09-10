@@ -215,6 +215,12 @@ A failing dump threw `"Database backup failed — see the server log for details
 
 `setup-rhel.sh` had already learned the versioned-package lesson for the *server* — its comment says a fresh install used to get PostgreSQL 13 and "was not even installing the right major". `setup-rhel-nodb.sh`, its sibling for external databases, still ran `dnf install -y postgresql` for the client. The updater script's rollback restored a Timescale database without the gates `backupService` had learned to run in 2026-08. The updater's `git rev-parse` ran as root and had been silently returning "unknown" since it was written. The pattern of the afternoon was a lesson learned in one file and never carried to the file next to it, and this rule exists so that the next place that spawns a PostgreSQL client has something to cite.
 
+### The day after
+
+The operator did the fix: removed the AppStream 13 packages. The next `update-linux.sh` run stopped at *"pg_dump not found (looked for a PostgreSQL ? install and on PATH)"* — with `/usr/pgsql-15/bin/pg_dump` on disk. The `?` is the tell. The script learned the server's major by running `sudo -u postgres psql`, and `psql` by bare name was `/usr/bin/psql`, which the 13 package had owned and taken with it (`alternatives --auto` had not been run). No answer, so `resolve_pg_tool` skipped the versioned directories it exists to search and went straight to a PATH that had nothing either. The TypeScript twin had the same shape — `if (serverMajor != null)` around the scan — hidden only because the app reads the version through its own connection.
+
+Two amendments. The probe borrows each versioned `psql` to ask the question when PATH's cannot. And when the question still has no answer, both twins take the *newest* versioned client before PATH: a newer `pg_dump` is accepted and an older one is refused by the `--version` check either way, so the order only decides how often that check says no. "Falls back to PATH only when nothing versioned exists" was the rule from the start; the unknown-major branch just had not been made to obey it. The host most likely to have no `psql` on PATH is the one that has just followed this rule's own fix — a resolver that fails exactly there is a resolver for the case that never happens.
+
 ---
 
 <a id="rule-48"></a>

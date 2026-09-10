@@ -91,6 +91,19 @@ describe("update-linux.sh resolves pg_dump / psql by the server's major", () => 
     expect(linux).toMatch(/"\$PG_DUMP_MAJOR" -lt "\$PG_SERVER_MAJOR"/);
     expect(linux).toMatch(/pg_dump is PostgreSQL \$\{PG_DUMP_MAJOR\}.*server is PostgreSQL \$\{PG_SERVER_MAJOR\}/);
   });
+
+  it("finds the versioned client even when no psql on PATH can say what the server is", () => {
+    // 2026-09-10, prod: the AppStream 13 packages had been removed (the fix for
+    // the mismatch above) without `alternatives --auto`, so /usr/bin/psql was
+    // gone, the server-major probe returned nothing, and the resolver never
+    // looked in /usr/pgsql-15 — "pg_dump not found (looked for a PostgreSQL ?
+    // install and on PATH)" with the binary sitting right there.
+    expect(linux).toMatch(/^pg_versioned_dirs\(\) \{/m);
+    // The probe asks PATH's psql, then each versioned psql, newest first.
+    expect(linux).toMatch(/for psql_bin in psql \$\(pg_versioned_dirs/);
+    // With no major the resolver scans the versioned dirs before PATH.
+    expect(linux).toMatch(/else\s*\n(?:\s*#.*\n)*\s*for d in \$\(pg_versioned_dirs\); do\s*\n\s*if \[\[ -x "\$d\/\$tool" \]\]/);
+  });
 });
 
 // One backup directory — the app's (<state>/data/backups). Two directories with
