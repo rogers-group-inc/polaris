@@ -208,7 +208,7 @@ only the two most recent majors alive.
 
 | Site | Form | Kind |
 |---|---|---|
-| `agent/go.mod` | `go 1.26` directive | floor |
+| `agent/go.mod` | `go 1.26.0` directive — patch-qualified since `go get` rewrote it for x/sys; `check:versions` reads `/^go (\d+\.\d+)/`, so either form satisfies it and neither is worth normalising by hand | floor |
 | four Linux setup scripts | `go version \| grep -qE 'go1\.(2[6-9]\|[3-9][0-9])'` | accept-range |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y go-toolset` then `dnf install -y golang` | pin (module stream) |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `golang-go`, re-verified against the same regex, then `snap install --channel=1.26/stable go` — which is the branch that actually runs, since neither LTS archive reaches 1.26 | accept-range |
