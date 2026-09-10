@@ -163,3 +163,21 @@ describe("the rollback restore is TimescaleDB-aware and reports honestly", () =>
     expect(silenced).toEqual([]);
   });
 });
+
+// A failed update on 2026-09-10 (prod) rolled back with `git checkout <old> -- .`,
+// which restores the old file CONTENT but leaves HEAD at the new commit. The
+// checkout then read as 77 locally-modified files, and the next in-app update's
+// `git pull --ff-only` refused: "Your local changes to the following files would
+// be overwritten by merge". `reset --hard` moves HEAD back too (and removes
+// files the new commit had added), so the rolled-back checkout is clean.
+describe("the code rollback moves HEAD back, it does not restore files by path", () => {
+  it("linux: reset --hard, and no `checkout <old> -- .` on any code line", () => {
+    expect(linux).toMatch(/sudo -u "\$APP_USER" git reset --hard "\$OLD_COMMIT"/);
+    expect(codeLines(linux).filter((l) => /git checkout "?\$OLD_COMMIT"? -- \./.test(l))).toEqual([]);
+  });
+
+  it("windows: reset --hard, and no `checkout <old> -- .` on any code line", () => {
+    expect(windows).toMatch(/& git reset --hard \$OldCommit/);
+    expect(codeLines(windows).filter((l) => /git checkout \$OldCommit -- \./.test(l))).toEqual([]);
+  });
+});

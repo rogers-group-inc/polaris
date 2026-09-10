@@ -157,8 +157,13 @@ function Invoke-Rollback {
     Write-Host ""
 
     Push-Location $AppDir
-    & git checkout $OldCommit -- . 2>$null
-    if ($LASTEXITCODE -ne 0) { & git reset --hard $OldCommit 2>$null }
+    # `reset --hard`, never `checkout <old> -- .`: the by-path form restores the
+    # old CONTENT but leaves HEAD at the new commit, so the checkout reads as
+    # dozens of locally-modified files and every later `git pull --ff-only`
+    # (the in-app updater's) refuses with "Your local changes would be
+    # overwritten by merge" (Linux prod, 2026-09-10). Moving HEAD back makes the
+    # rolled-back checkout tell the truth.
+    & git reset --hard $OldCommit 2>$null
     & npm ci --include=dev 2>$null
     # Regenerate Prisma client + wipe stale dist so the rolled-back process
     # comes up with a client matching the rolled-back schema. Same rationale

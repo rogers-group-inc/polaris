@@ -576,7 +576,13 @@ rollback() {
   echo ""
 
   cd "$APP_DIR"
-  sudo -u "$APP_USER" git checkout "$OLD_COMMIT" -- . 2>/dev/null || sudo -u "$APP_USER" git reset --hard "$OLD_COMMIT"
+  # `reset --hard`, never `checkout <old> -- .`: the by-path form restores the
+  # old CONTENT but leaves HEAD at the new commit, so the checkout reads as 77
+  # locally-modified files and every later `git pull --ff-only` (the in-app
+  # updater's) refuses with "Your local changes would be overwritten by merge"
+  # (prod, 2026-09-10). It also leaves behind files ADDED between the two
+  # commits. Moving HEAD back makes the rolled-back checkout tell the truth.
+  sudo -u "$APP_USER" git reset --hard "$OLD_COMMIT"
   app_node npm ci --include=dev 2>/dev/null
   # Regenerate Prisma client + wipe stale dist so the rolled-back process
   # comes up with a client matching the rolled-back schema. Same rationale
