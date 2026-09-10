@@ -115,7 +115,17 @@ on a `v*` tag, runs `test` → `integration` → `build`, and pushes to
 `ghcr.io/<repo>` with a build-provenance attestation. `:latest` is published only from the
 default branch; tags also produce semver and short-SHA tags.
 
-Three properties are load-bearing rather than incidental, all added 2026-09:
+**This workflow is also the only test gate on `main`.** `check-docs.yml` runs the structural
+doc guards and CodeQL runs separately; nothing else runs the suites. And `build` declares
+`needs: [test, integration]`, so a failing test does not fail *visibly* — the `build` job is
+reported `skipped`, no image is published, and `main` moves on with a green-looking commit list.
+Between 2026-09-08 and 2026-09-10 that combination hid three unrelated test breakages for 200
+commits: `ghcr.io/<repo>:latest` silently stopped moving and nothing ran the suites. **After any
+push to `main`, a green `test` + `integration` is not the check — confirm the `build` job
+actually RAN**, and that a new image version exists. `gh run list --workflow=docker-publish.yml
+--limit 1` plus `gh run view <id> --json jobs` is the whole check.
+
+Four properties are load-bearing rather than incidental, all added 2026-09:
 
 - **Every `uses:` is pinned to a 40-hex commit SHA with the version in a trailing comment**, not
   to a tag. The `build` job holds `packages: write` + `id-token: write`, which is enough to
@@ -129,6 +139,14 @@ Three properties are load-bearing rather than incidental, all added 2026-09:
 - **`persist-credentials: false` on every checkout.** No job here pushes to the repository, so
   the token must not be left in `.git/config` — which is also why the tag check uses the API
   instead of a local `git fetch`: there is deliberately nothing to authenticate one with.
+- **The `integration` job installs `postgresql-client-17` itself, and that major must track the
+  `postgres:17-alpine` service container beside it.** The runner image carries its own client —
+  16 on ubuntu-24.04 — and `pg_dump` refuses to dump a server newer than itself (rule 47), so
+  the moment the service image moved to 17 every backup test began failing on a guard that was
+  doing its job. `pgToolCandidates` probes `/usr/lib/postgresql/<major>/bin` FIRST, so installing
+  the versioned package is the whole fix: no `$GITHUB_PATH` edit, no env override, and CI then
+  exercises the same `source: "versioned-dir"` resolution production does. Both numbers are
+  registered as `postgres-major` sites, so `check:versions` fails if they ever drift apart.
 
 The Dependabot side of this (grouping, what is ignored, how to resolve a new pin) lives in
 `polaris-tech-lifecycle` → dependency-audit.md. `npm run check:versions` scans these files by
