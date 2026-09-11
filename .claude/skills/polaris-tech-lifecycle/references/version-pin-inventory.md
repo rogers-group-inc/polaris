@@ -43,15 +43,12 @@ see *Why two numbers* below.
 | `package.json` | `@types/node` `"^22.20.1"` | floor |
 | `src/utils/platformVersions.ts` | `NODE_MINIMUM_MAJOR` | floor |
 | four Linux setup scripts | `[[ "$(node -v)" == v24* \|\| "$(node -v)" == v22* ]]` | floor (22) |
-| two Windows setup scripts | `(node -v) -match "^v(22\|24)\."` | floor (22) |
 | `docs/INSTALL.md` | the **Supported platform versions** table, minimum column | floor |
 | `README.md` | the system-requirements table, minimum column | floor |
 | `Dockerfile` | `FROM node:24-trixie` (builder) and `node:24-trixie-slim` (runtime) | pin |
 | `Dockerfile.dev` | `FROM node:24-trixie` | pin |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y nodejs:24` | pin |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | NodeSource `deb.nodesource.com/node_24.x` | pin |
-| two Windows setup scripts | `winget install --id OpenJS.NodeJS.LTS --version 24.19.0` | pin |
-| two Windows setup scripts | `nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi` fallback | pin |
 | both workflow files | `node-version: 24` (three occurrences) | pin |
 | `docs/INSTALL.md` | three `### 3. Node.js 24 (LTS)` install sections | prose pin |
 | `CLAUDE.md` | the tech-stack table row | prose |
@@ -71,18 +68,14 @@ and lying in the Dockerfile.
   tolerate it, nothing installs it, and nothing tests it — CI runs 24.
 - `engines.node` is **advisory**: there is no `.npmrc` with `engine-strict=true`, so npm warns
   and installs anyway. The accept-regexes are the only real gate.
-- **Windows pins an exact build** (`24.19.0`), so "Node 24" is false there past that patch, and
-  the day 24 goes EOL those scripts keep installing it on every fresh host with nothing
-  objecting. This is still the single most likely way Polaris ends up provisioning
-  end-of-life software, which is why the Windows scripts are in the `node-major` playbook's file
-  list. The 2026-09 bump from 20 is the worked example: it initially missed `engines.node`,
-  `Dockerfile.dev`, both README tables and `node-version:` in CI — so the suite went green
-  against a runtime no supported install had.
-- **The winget channel, not nodejs.org, sets the Windows patch pin.** Both Windows sites name
-  the same build so the two install paths cannot diverge, and the ceiling is whatever
-  `OpenJS.NodeJS.LTS` has a manifest for — 24.19.0 on 2026-09-09, while nodejs.org was already
-  on 24.21.0. Check the winget manifest list before picking a patch: pinning a `--version`
-  winget does not carry makes that branch fail outright rather than falling through to the MSI.
+- **Every exact-build pin left with Windows on 2026-09-11.** The two `setup-windows*.ps1` scripts
+  pinned an exact Node build (`24.19.0`) through winget, which made "Node 24" false there past
+  that patch and would have kept installing an EOL runtime on every fresh host with nothing
+  objecting. The surviving Linux scripts all accept a *range*, so that failure mode is gone —
+  but the lesson generalizes: a site that names an exact patch ages on its own schedule. The
+  2026-09 bump from 20 is the worked example of the other failure: it initially missed
+  `engines.node`, `Dockerfile.dev`, both README tables and `node-version:` in CI — so the suite
+  went green against a runtime no supported install had.
 - `@types/node` tracks the **floor**, not the pin, so the compiler cannot green-light an API the
   oldest supported runtime lacks. The 2026-09 bump left it on 20 after moving `engines` to 22;
   `check:versions` is what caught that.
@@ -99,9 +92,6 @@ Currently **17** across 18 checked sites. Moved from 15 on 2026-09-09.
 | `deploy/setup-ubuntu.sh` | `PG_MAJOR=17` + the PGDG **apt** repo → `apt-get install -y postgresql-17` | pin |
 | `deploy/ha/setup-rhel-ha.sh` | `PG_MAJOR=17` — the Patroni node's server packages, `PG_BIN`, `PGDATA` and the TimescaleDB package | pin |
 | `deploy/dropins/20-postgres.conf.example` | `After=` / `Requires=postgresql-17.service` — the reference copy of the per-host drop-in | pin |
-| two Windows setup scripts | `winget install --id PostgreSQL.PostgreSQL.17` | pin |
-| two Windows setup scripts | `postgresql-17.11-1-windows-x64.exe` fallback URL | pin |
-| two Windows setup scripts | `--servicename postgresql-17`, and the `C:\Program Files\PostgreSQL\<major>\bin` probe list (newest first) | pin |
 | `compose.dev.yml` | `timescale/timescaledb:latest-pg17` | pin (floating patch) |
 | `.github/workflows/docker-publish.yml` | `image: postgres:17-alpine` service container | pin |
 | `.github/workflows/docker-publish.yml` | `postgresql-client-17` in the `integration` job. The CI **client**, and it has to agree with the service image directly above it: the job dumps that container, and pg_dump refuses a server newer than itself (rule 47). Registered 2026-09-10 — the service image had moved to 17 while the job went on using the runner's own 16, so every backup test failed and the image build was skipped for 200 commits | pin |
@@ -213,9 +203,6 @@ only the two most recent majors alive.
 | four Linux setup scripts | `go version \| grep -qE 'go1\.(2[6-9]\|[3-9][0-9])'` | accept-range |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `dnf module enable -y go-toolset` then `dnf install -y golang` | pin (module stream) |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `golang-go`, re-verified against the same regex, then `snap install --channel=1.26/stable go` — which is the branch that actually runs, since neither LTS archive reaches 1.26 | accept-range |
-| two Windows setup scripts | `(go version) -match "go1\.(2[6-9]\|[3-9][0-9])"` | accept-range |
-| two Windows setup scripts | `winget install --id GoLang.Go --version 1.27.0` | pin |
-| two Windows setup scripts | `go.dev/dl/go1.27.0.windows-amd64.msi` fallback | pin |
 | `Dockerfile` | `golang-go` from `trixie-backports`, because trixie ships 1.24. The backports SUITE must track the base image — a `bookworm-backports` line on a trixie base resolves to nothing and the build fails at `apt-get install` | pin (suite) |
 | `agent/Makefile` | `go-winres@v0.3.3` for the Windows resource files | pin |
 | `docs/INSTALL.md` | "Go 1.26+" — three occurrences, plus the supported-versions row | prose (floor) |
@@ -227,23 +214,19 @@ interpolates it. Historically the check only confirmed `go version` *ran*, so a 
 which is what "missing go.sum entry" or a bare compiler error from the in-app build means on a
 fresh host.
 
-**Why the floor and the pin differ, as of 2026-09-09.** 1.26 and 1.27 are the two supported
-majors, and **no Linux path can install 1.27**: the RHEL `go-toolset` module carries 1.26.7 and
-the Go snap's newest channel is `1.26/stable`. So the floor is 1.26 — what every platform can
-actually meet — and the Windows scripts pin 1.27.0, the newest winget has a manifest for.
-Neither Ubuntu LTS reaches the floor from its own archive (24.04 ships 1.22, 22.04 ships 1.18),
-so on a supported Ubuntu the **snap branch is the one that runs**; the apt attempt stays because
-it is cheap and correct on a newer Debian, and the version re-check after it is what decides.
+**The floor and the target are one number again, as of 2026-09-11.** 1.26 and 1.27 are the two
+supported majors, and **no surviving install path can install 1.27**: the RHEL `go-toolset`
+module carries 1.26.7 and the Go snap's newest channel is `1.26/stable`. The Windows scripts
+were the only path that pinned 1.27, so when they went, this family lost every `pin`-role site
+and the dataset's `polarisTarget` dropped to 1.26 to match — a target above what every path
+provisions reports a behind-target toolchain on every healthy host forever, which is the mistake
+Java already made here once. Neither Ubuntu LTS reaches the floor from its own archive (24.04
+ships 1.22, 22.04 ships 1.18), so on a supported Ubuntu the **snap branch is the one that
+runs**; the apt attempt stays because it is cheap and correct on a newer Debian, and the version
+re-check after it is what decides.
 
-**The Windows winget id was wrong, and silently.** It read `--id GoLang.Go.1.22`. winget
-publishes ONE `GoLang.Go` package with per-version manifests — there is no `GoLang.Go.1.22`
-package — so on any host that HAS winget the install failed, and because the MSI download is the
-`else` branch of `if ($hasWinget)`, the fallback never ran. The host ended up with no Go at all
-and the in-app agent Build failing at the compiler, which reads as a Go problem rather than an
-install-script problem. It is `--id GoLang.Go --version 1.27.0` now, and `check:versions` reads
-that form.
-
-Bumping the pin also moves `agent/VERSION` and the committed Windows resource files. That
+Bumping the pin also moves `agent/VERSION` and the committed Windows resource files (the agent
+still ships Windows binaries — only Polaris-the-server dropped Windows). That
 rebuild contract lives in `polaris-agent` → cross-cutting-polaris-agent.md; do not restate it.
 The 2026-09-09 floor move deliberately did **not** touch `agent/VERSION`: a toolchain bump is
 not an agent release, and bumping the version would tell every enrolled agent an upgrade is
@@ -307,7 +290,6 @@ Java **25**, jsign **7.5**.
 | `Dockerfile` | `openjdk-25-jre-headless`, plus a SHA-256-pinned `jsign-7.5.jar` fetched by digest | pin |
 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh` | `java-25-openjdk-headless` | pin |
 | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh` | `openjdk-25-jre-headless`, falling back to `default-jre-headless` | pin |
-| two Windows setup scripts | `Microsoft.OpenJDK.25` + `aka.ms/download-jdk/microsoft-jdk-25-windows-x64.msi` | pin |
 | `src/services/agentSigningService.ts` | `JAVA_MINIMUM` — the number the RUNNING APP states, interpolated into every "install Java N+" string and served to the UI as `availability.javaMinimum` | pin |
 | all six setup scripts | `JSIGN_VERSION="7.5"` + `JSIGN_SHA256` | pin |
 
@@ -355,7 +337,6 @@ a missing or mismatched JDK degrades signing rather than breaking the app.
 |---|---|---|
 | RHEL / Rocky / AlmaLinux | 9 | `deploy/setup-rhel.sh`, `deploy/setup-rhel-nodb.sh`, `docs/INSTALL.md`, `README.md` |
 | Ubuntu / Debian | Ubuntu 22.04+ | `deploy/setup-ubuntu.sh`, `deploy/setup-ubuntu-nodb.sh`, `docs/INSTALL.md` |
-| Windows Server | 2019 / 2022 | `deploy/setup-windows.ps1`, `deploy/setup-windows-nodb.ps1`, `README.md` |
 | Debian (container base) | 13 trixie | `Dockerfile`, `Dockerfile.dev` — moved from 12 bookworm on 2026-09-09, because trixie ships the PostgreSQL 17 client and openjdk-25 |
 
 The nginx.org `baseurl` in the RHEL scripts encodes the OS release (`centos/9`), so a RHEL 10

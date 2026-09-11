@@ -92,7 +92,7 @@ Server Settings → Maintenance shows host CPU/RAM/disk, database size with samp
 Server Settings → Maintenance → **Platform Lifecycle** reports the version of every stack component this host is actually running — Node, PostgreSQL, TimescaleDB, Go, Java, nginx, the OS, PgBouncer, Prisma, plus etcd and Patroni on a high-availability pair — and grades each against a committed, human-reviewed end-of-life dataset, with the ordered upgrade steps and the full list of files that must move together for anything past or approaching its end of life. Two states are kept distinct because they need different responses: a component **below Polaris's supported minimum** is a misconfiguration of that install, is critical, and reaches the sidebar alert; an **upstream end-of-life** is flagged red on the card and emailed once via a baseline automation, but deliberately does not hold a permanent banner open, since it clears only in a maintenance window. Supported versions and their dates are in [docs/INSTALL.md](docs/INSTALL.md) → "Supported platform versions"; the dataset is refreshed by a human, never fetched at runtime, so an air-gapped install still warns correctly.
 
 ### High availability (optional)
-A second host in another datacenter that takes over automatically when the first is lost, behind one public name. PostgreSQL is managed by **Patroni** with a three-member **etcd** — the two database nodes plus a small witness whose location is your choice — and replication is asynchronous streaming, so the recovery point is the replication lag and the recovery time is roughly 1.5 to 3 minutes. The application follows its database rather than voting on anything: `polaris-ha-role` starts `polaris.target` only where the local PostgreSQL is the Patroni primary and stops it everywhere else, because Polaris has no leader election and two live web roles would poll every device twice and duplicate every alert. `GET /health/ready` answers 200 only on a writable primary, which is what takes a demoted node out of your load balancer; `GET /health` deliberately still checks nothing, so the first-run wizard can poll it before a database exists. Server Settings → **High Availability** builds the cluster: it hands out per-node install scripts, and a node presenting its single-use token only *registers a request* that an operator approves against the recorded source IP and SSH host keys before any secret is released. Single-node installs are unaffected and need none of this. Not in scope for this release: Windows and Docker installs, external or managed PostgreSQL, PgBouncer in front of the local database, NAT between etcd members, mixed OS majors, and more than one standby. Read [docs/HA.md](docs/HA.md) before starting — it covers the witness-placement trade-off, exactly what a failover loses, the split-brain proof, the build walkthrough, the update window, and the drills.
+A second host in another datacenter that takes over automatically when the first is lost, behind one public name. PostgreSQL is managed by **Patroni** with a three-member **etcd** — the two database nodes plus a small witness whose location is your choice — and replication is asynchronous streaming, so the recovery point is the replication lag and the recovery time is roughly 1.5 to 3 minutes. The application follows its database rather than voting on anything: `polaris-ha-role` starts `polaris.target` only where the local PostgreSQL is the Patroni primary and stops it everywhere else, because Polaris has no leader election and two live web roles would poll every device twice and duplicate every alert. `GET /health/ready` answers 200 only on a writable primary, which is what takes a demoted node out of your load balancer; `GET /health` deliberately still checks nothing, so the first-run wizard can poll it before a database exists. Server Settings → **High Availability** builds the cluster: it hands out per-node install scripts, and a node presenting its single-use token only *registers a request* that an operator approves against the recorded source IP and SSH host keys before any secret is released. Single-node installs are unaffected and need none of this. Not in scope for this release: Docker installs, external or managed PostgreSQL, PgBouncer in front of the local database, NAT between etcd members, mixed OS majors, and more than one standby. Read [docs/HA.md](docs/HA.md) before starting — it covers the witness-placement trade-off, exactly what a failover loses, the split-brain proof, the build walkthrough, the update window, and the drills.
 
 ### Authentication & RBAC
 - **Local accounts** — argon2id-hashed passwords with strength rules and per-account temporary lockout.
@@ -121,8 +121,8 @@ A second host in another datacenter that takes over automatically when the first
 | RAM | 4 GB | 8 GB |
 | DB data volume | 50 GB SSD | 100 GB+ SSD |
 | App / state volume | 5 GB | 20 GB |
-| OS | Windows Server 2019+, RHEL 9, Ubuntu 22.04+ | Windows Server 2022, RHEL 9, Ubuntu 24.04 LTS |
-| PostgreSQL | 17+ | 17 |
+| OS | RHEL 9, Ubuntu 22.04+ | RHEL 9, Ubuntu 24.04 LTS |
+| PostgreSQL | 17+ (with TimescaleDB) | 17 (with TimescaleDB) |
 | Node.js | 22.12 (hard floor) | 24 LTS |
 
 > **The minimum column is a floor, not a recommendation, and one of these is close to end of
@@ -160,7 +160,7 @@ The dashboard is at `http://localhost:3000`; the API at `http://localhost:3000/a
 
 ## Production deployment
 
-Automated scripts install Node.js 24, PostgreSQL 17, the `polaris` system user, the database, app code (to `/opt/polaris` or `C:\polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
+Automated scripts install Node.js 24, PostgreSQL 17, the `polaris` system user, the database, app code (to `/opt/polaris`), a random `SESSION_SECRET`, a random `POLARIS_SECRET_KEY` (encrypts stored device + integration credentials at rest), and a hardened service — then open port 3000 in the firewall.
 
 **RHEL / Rocky / Alma 9:**
 
@@ -176,12 +176,11 @@ git clone https://github.com/rogers-group-inc/polaris.git && cd polaris
 bash deploy/setup-ubuntu.sh
 ```
 
-**Windows Server 2019 / 2022** (run as Administrator):
-
-```powershell
-git clone https://github.com/rogers-group-inc/polaris.git; cd polaris
-powershell -ExecutionPolicy Bypass -File deploy\setup-windows.ps1
-```
+> **Windows Server is not a supported Polaris host** (dropped 2026-09-11) — Polaris requires
+> TimescaleDB, which Timescale publishes no Windows installer for. Windows as a *monitored*
+> estate is unaffected: the agent, WinRM polling, the Windows DHCP integration and Windows
+> code signing all stay. Existing Windows installs: see
+> [docs/INSTALL.md](docs/INSTALL.md) → *Migrating a Windows install to Linux*.
 
 After the script finishes the app is live at `http://<server-ip>:3000` — log in with `admin` / `admin` and change the password.
 
@@ -203,7 +202,7 @@ Two things about that first launch. The wizard is **unauthenticated by construct
 
 If you instead run the multi-container `docker-compose.yml` stack, it supplies `DATABASE_URL` up front so the wizard never runs — generate `SESSION_SECRET` and `POLARIS_SECRET_KEY` into `./state/.env` yourself first. See [docs/INSTALL.md → Docker](docs/INSTALL.md#docker).
 
-Updates: `docker pull` + restart. The in-app updater under Server Settings → Maintenance is for the script-deployed RHEL / Ubuntu / Windows path; image-based deployments update by pulling a new tag. Every commit to `main` builds and publishes `:latest`, the branch name, and `:sha-<short>` to GHCR via GitHub Actions.
+Updates: `docker pull` + restart. The in-app updater under Server Settings → Maintenance is for the script-deployed RHEL / Ubuntu path; image-based deployments update by pulling a new tag. Every commit to `main` builds and publishes `:latest`, the branch name, and `:sha-<short>` to GHCR via GitHub Actions.
 
 ### High availability
 
@@ -214,11 +213,10 @@ Optional, RHEL only, and planned rather than bolted on afterwards: `deploy/ha/se
 The recommended path is **Server Settings → Maintenance → Update**, which runs the same automated flow as the CLI scripts and stops at the first failed step, leaving the host restartable. The scripts are the fallback when the in-app updater cannot run:
 
 ```bash
-sudo bash deploy/update-linux.sh                                    # Linux
-powershell -ExecutionPolicy Bypass -File deploy\update-windows.ps1  # Windows, as Admin
+sudo bash deploy/update-linux.sh
 ```
 
-The flow: snapshot the commit → `pg_dump` backup (into `data/backups/` beside the app's own; the scripts keep their last 10, and their files are not listed on the Maintenance tab) → `git pull` → `npm ci` → build → stop service → migrate → start → HTTP smoke test. On a failed step the scripts roll the code back to the recorded commit and rebuild; if the *migration* step failed they also restore the pre-update dump (TimescaleDB-aware — the restore runs between `timescaledb_pre_restore()` and `timescaledb_post_restore()`). If the in-app updater already pulled the new code before failing, pass `--force` / `-Force` so the script finishes the install, build and migration instead of reporting "already up to date".
+The flow: snapshot the commit → `pg_dump` backup (into `data/backups/` beside the app's own; the scripts keep their last 10, and their files are not listed on the Maintenance tab) → `git pull` → `npm ci` → build → stop service → migrate → start → HTTP smoke test. On a failed step the scripts roll the code back to the recorded commit and rebuild; if the *migration* step failed they also restore the pre-update dump (TimescaleDB-aware — the restore runs between `timescaledb_pre_restore()` and `timescaledb_post_restore()`). If the in-app updater already pulled the new code before failing, pass `--force` so the script finishes the install, build and migration instead of reporting "already up to date".
 
 ### Managing the service
 
@@ -232,10 +230,6 @@ single-process `polaris.service` unit is no longer shipped.
 `-u polaris-monitor@1` / `-u polaris-discovery` for the other roles). See
 [docs/INSTALL.md](docs/INSTALL.md) → "The split-role deployment (web / monitor /
 discovery)" for the layout and customization details.
-
-**Windows (NSSM):** one service per role (`PolarisWeb` / `PolarisMonitor1` /
-`PolarisDiscovery`) — `nssm status|restart PolarisWeb`, logs in
-`C:\polaris\logs\service-stdout.log`.
 
 > Local development (`npm run dev`, `POLARIS_ROLE` unset) still runs everything
 > in one process — the single-process "all" role exists only for dev, never in

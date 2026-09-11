@@ -1915,9 +1915,9 @@ router.post("/security-tokens/generate", requirePermission("serverSettingsData",
 //
 // Operator-triggered process restart. Used by the Capacity Advisor card
 // after staging env-driven values that only take effect on next boot.
-// On Linux exits with code 1 so systemd's Restart=on-failure brings the
-// process back; on Windows shells out to NSSM. Responds before the exit
-// so the client sees a clean 200 and can switch to its restart-polling UI.
+// Exits with code 1 so systemd's Restart=on-failure brings the process back.
+// Responds before the exit so the client sees a clean 200 and can switch to
+// its restart-polling UI.
 router.post("/restart", requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
   try {
     await logEvent({

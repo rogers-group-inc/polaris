@@ -108,7 +108,7 @@ Be specific about this with whoever asks:
 
 ### Not supported in this release
 
-Windows and Docker installs; external or managed PostgreSQL (the `-nodb`
+Docker installs; external or managed PostgreSQL (the `-nodb`
 install path); PgBouncer in front of the local database; NAT between etcd
 members; mixed OS majors; more than one standby.
 
