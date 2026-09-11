@@ -81,6 +81,13 @@ function buildConnectionString(db: DbConfig): string {
   if (!db.ssl) return base;
   // sslmode=no-verify keeps TLS but skips cert validation — recognized by
   // node-postgres (the driver used by @prisma/adapter-pg at runtime).
+  //
+  // It is NOT a libpq value, and this URL is also the source of the PG* env the
+  // backup path hands pg_dump/psql. That translation is `libpqSslMode()` in
+  // utils/pgEnv.ts (business rule 51) — do not "fix" this line by writing a
+  // libpq value here instead: `require` means "validate the chain" to
+  // node-postgres, which is exactly what a self-signed server cannot satisfy,
+  // so it would trade broken backups for an app that cannot connect at all.
   return `${base}?sslmode=${db.sslAllowSelfSigned ? "no-verify" : "require"}`;
 }
 

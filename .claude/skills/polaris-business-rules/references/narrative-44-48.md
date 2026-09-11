@@ -1,4 +1,4 @@
-# Business rules 44–49 — full narrative
+# Business rules 44–51 — full narrative
 
 > The filename keeps its original range: it is cited from code and from the other skills.
 
@@ -11,6 +11,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 48](#rule-48) — Nobody hands out authority they do not hold
 - [Rule 49](#rule-49) — An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved
 - [Rule 50](#rule-50) — A response the app did not write is a response with the app's headers missing
+- [Rule 51](#rule-51) — `DATABASE_URL` is a driver URL; its `sslmode` value is translated into the libpq vocabulary, never copied
 
 <a id="rule-44"></a>
 
@@ -369,3 +370,66 @@ flag, manufacturing a finding that does not exist in any real proxied install.
 Guard: `tests/integration/notFoundHeaders.test.ts` asserts the status, the JSON shape, the
 absence of the reflected path, and that a 404's CSP is byte-identical to a matched route's — a
 plain status assertion would still pass with `finalhandler` back in place.
+
+<a id="rule-51"></a>
+
+## Rule 51 — `DATABASE_URL` is a driver URL; its `sslmode` value is translated into the libpq vocabulary, never copied
+
+`utils/pgEnv.ts` exists because `pg_dump` and `psql` used to take the connection string as an
+argv element, which put the database password in `ps aux`. The fix — decompose the URL into
+libpq's `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` / `PGSSLMODE` — was
+right, and it carried one assumption that was not: that a parameter shared by name between the
+two connection vocabularies is also shared by value.
+
+It is not. `DATABASE_URL` is read by **node-postgres** (under `@prisma/adapter-pg`), and
+node-postgres accepts `no-verify`, meaning "encrypt, do not validate the chain". libpq has no
+such value. Its `sslmode` takes exactly `disable`, `allow`, `prefer`, `require`, `verify-ca`,
+`verify-full`, and anything else is a hard error before a connection is attempted:
+
+```
+pg_dump: error: invalid sslmode value: "no-verify"
+```
+
+**Polaris itself is the producer of that value.** The first-run wizard's "Allow self-signed
+certificate" toggle writes it (`setup/setupRoutes.ts → buildConnectionString`), and that is
+correct and stays — the URL's consumer is the driver, and `no-verify` is the only value in the
+driver's vocabulary that expresses "TLS against a self-signed server". The bug was never the
+wizard; it was copying its output into a different program's vocabulary.
+
+**What it cost.** On a Docker/Unraid install created through the wizard with that box ticked
+(2026-09-11), every path that spawns a client tool failed: the manual backup button, the
+scheduled backup job, the pre-update backup inside `updateService`, and restore, which takes
+the same PG* overlay through `psql`. All four surfaced as
+`Database backup failed — see the server log for details`; the real sentence was in the
+container log and nowhere else. The install had therefore been taking in-app updates with **no
+rollback point** for as long as it had existed, which is the part that makes this worse than a
+broken button.
+
+**Why no scripted install ever saw it.** `deploy/update-linux.sh` — the shell twin that runs
+the same pre-update dump on RHEL and Ubuntu — connects as the local `postgres` OS user over a
+unix socket via peer auth and never constructs a URL, so it has no `sslmode` to mistranslate.
+The failure needs a connection URL, which in practice means a remote database or a container
+deployment. A green scripted install, and a green CI run against a plaintext
+`postgres:17-alpine` service container, are both structurally incapable of catching it.
+
+**The shape of the fix.** `libpqSslMode(value)` translates rather than forwards: `no-verify`
+→ `require`, which is not a downgrade — only `verify-ca` and `verify-full` validate the
+certificate chain, so `require` is the exact libpq spelling of what `no-verify` asked for. An
+unrecognized value **throws a named AppError** rather than being dropped, and that choice is
+the load-bearing one: dropping `PGSSLMODE` would let libpq fall back to its `prefer` default,
+so an operator who asked for TLS would get opportunistic TLS, a backup that may have crossed
+the network in the clear, and no indication that anything had been reinterpreted. A refusal
+that names the offending value is recoverable; a silent downgrade of a security parameter is
+not.
+
+**Its relationship to rule 47.** They are the two halves of the same question and neither
+checks the other. Rule 47 asks *can the client binary we chose work against this server* —
+majors, install dirs, `--version`. Rule 51 asks *are the parameters we are handing it in its
+own vocabulary*. Rule 47's machinery ran perfectly here: it found `postgresql-client-17`,
+compared 17 against the server's 15, judged it compatible, and spawned it — and the child died
+on its connection string. Both failures hid behind the same operator-facing sentence, and both
+were found only by reading the log the sentence points at.
+
+Guards: `tests/unit/pgEnv.test.ts` pins the translation, the full libpq value set, the
+case/whitespace handling, and the refusal (including that the message names the offending
+value). Anyone reverting `libpqSslMode` to a passthrough fails them.

@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pgEnvFromDatabaseUrl, pgChildEnv, redactDatabaseUrl } from "../../src/utils/pgEnv.js";
+import { pgEnvFromDatabaseUrl, pgChildEnv, redactDatabaseUrl, libpqSslMode } from "../../src/utils/pgEnv.js";
 import { AppError } from "../../src/utils/errors.js";
 
 describe("pgEnvFromDatabaseUrl", () => {
@@ -55,12 +55,28 @@ describe("pgEnvFromDatabaseUrl", () => {
     expect(env).not.toHaveProperty("PGOPTIONS");
   });
 
+  it("translates the wizard's sslmode=no-verify into a value libpq accepts", () => {
+    // The self-signed toggle in the first-run wizard writes `no-verify`, which is
+    // node-postgres vocabulary. Copied through verbatim it made every pg_dump
+    // exit 1 with `invalid sslmode value: "no-verify"` — manual, scheduled and
+    // pre-update backups, and restore, on every install that ticked the box.
+    const env = pgEnvFromDatabaseUrl("postgresql://u:p@h:5432/polaris?sslmode=no-verify");
+    expect(env.PGSSLMODE).toBe("require");
+  });
+
   it("translates a non-public schema into PGOPTIONS search_path", () => {
     // libpq has no PGSCHEMA; PGOPTIONS is how psql/pg_dump reach a custom schema.
     const env = pgEnvFromDatabaseUrl("postgresql://u:p@h/polaris?schema=polaris_app");
     expect(env.PGOPTIONS).toBe("-c search_path=polaris_app");
     // schema=public is the default and needs no override.
     expect(pgEnvFromDatabaseUrl("postgresql://u:p@h/polaris?schema=public")).not.toHaveProperty("PGOPTIONS");
+  });
+
+  it("refuses an sslmode libpq cannot use rather than dropping it", () => {
+    // Dropping it would let libpq fall back to `prefer` — an operator who asked
+    // for TLS would get opportunistic TLS and no warning.
+    expect(() => pgEnvFromDatabaseUrl("postgresql://u:p@h/polaris?sslmode=verify_full")).toThrow(AppError);
+    expect(() => pgEnvFromDatabaseUrl("postgresql://u:p@h/polaris?sslmode=yes")).toThrow(/sslmode/);
   });
 
   it("throws a clear AppError rather than half-building an env", () => {
@@ -103,5 +119,26 @@ describe("redactDatabaseUrl", () => {
 
   it("does not throw on an unparseable URL", () => {
     expect(redactDatabaseUrl("garbage")).toBe("<unparseable database URL>");
+  });
+});
+
+describe("libpqSslMode", () => {
+  it("passes every value libpq actually accepts straight through", () => {
+    for (const mode of ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]) {
+      expect(libpqSslMode(mode)).toBe(mode);
+    }
+  });
+
+  it("maps no-verify onto require, which has the same security posture", () => {
+    // libpq's `require` encrypts without validating the chain — only verify-ca
+    // and verify-full check the certificate. So this is a rename, not a
+    // downgrade, and a self-signed server keeps working.
+    expect(libpqSslMode("no-verify")).toBe("require");
+    expect(libpqSslMode("  NO-VERIFY  ")).toBe("require");
+  });
+
+  it("names the offending value when it cannot be translated", () => {
+    // The operator has to be able to find it in their DATABASE_URL.
+    expect(() => libpqSslMode("no_verify")).toThrow(/no_verify/);
   });
 });

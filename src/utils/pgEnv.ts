@@ -16,6 +16,17 @@
  * from the environment, so passing them that way keeps the credential out of
  * argv entirely while changing nothing about how the tools connect.
  *
+ * The one thing that does NOT carry over unchanged is the value of `sslmode`.
+ * DATABASE_URL is a *driver* URL — node-postgres reads it, and node-postgres
+ * accepts `no-verify`, which libpq does not. The first-run wizard writes exactly
+ * that whenever the operator ticks "Allow self-signed certificate"
+ * (`setup/setupRoutes.ts → buildConnectionString`), so on 2026-09-11 a Docker
+ * install created that way had every backup fail on
+ * `pg_dump: error: invalid sslmode value: "no-verify"` — manual, scheduled and
+ * pre-update alike, plus restore, since psql gets the same overlay. The
+ * parameter NAME is shared between the two connection vocabularies; the value
+ * space is not, so it is translated rather than copied.
+ *
  * Pure and dependency-free so it can be unit-tested without a database.
  */
 
@@ -32,6 +43,42 @@ export interface PgEnv {
   PGOPTIONS?: string;
 }
 
+/** The complete `sslmode` value space libpq accepts. Anything else kills the child. */
+const LIBPQ_SSLMODES = new Set(["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]);
+
+/**
+ * Driver-only `sslmode` values → their libpq equivalent.
+ *
+ * `no-verify` is node-postgres for "encrypt, but do not validate the chain",
+ * which is precisely libpq's `require` — only `verify-ca` and `verify-full`
+ * check the certificate, so the translation preserves the security posture
+ * exactly rather than trading it for a working dump.
+ */
+const DRIVER_SSLMODE_ALIASES: Record<string, string> = {
+  "no-verify": "require",
+};
+
+/**
+ * One `sslmode` value from a driver URL → the value libpq understands.
+ *
+ * Throws rather than dropping an unrecognized value: omitting PGSSLMODE lets
+ * libpq fall back to `prefer`, which would silently downgrade an operator who
+ * asked for TLS to opportunistic TLS. A named refusal is recoverable; a backup
+ * that quietly connected in the clear is not.
+ */
+export function libpqSslMode(value: string): string {
+  const v = value.trim().toLowerCase();
+  const translated = DRIVER_SSLMODE_ALIASES[v] ?? v;
+  if (!LIBPQ_SSLMODES.has(translated)) {
+    throw new AppError(
+      500,
+      `The database URL sets sslmode="${value}", which PostgreSQL's client tools do not accept. ` +
+        `Use one of: ${[...LIBPQ_SSLMODES].join(", ")}.`,
+    );
+  }
+  return translated;
+}
+
 /**
  * Parse a `postgresql://user:pass@host:port/db?params` URL into the PG* overlay.
  *
@@ -39,7 +86,8 @@ export interface PgEnv {
  *   - percent-encoded credentials (a password with `@`, `/` or `:` in it)
  *   - the `postgres://` scheme alias
  *   - Prisma's extra query params (`schema`, `connection_limit`, `pgbouncer`,
- *     `sslmode`) — only `schema` and `sslmode` mean anything to libpq
+ *     `sslmode`) — only `schema` and `sslmode` mean anything to libpq, and
+ *     `sslmode`'s value is translated, not copied (see the file header)
  *   - a missing port (defaults to 5432)
  *
  * Throws AppError 500 on an unusable URL rather than returning a half-built
@@ -75,7 +123,7 @@ export function pgEnvFromDatabaseUrl(rawUrl: string): PgEnv {
   };
 
   const sslmode = u.searchParams.get("sslmode");
-  if (sslmode) env.PGSSLMODE = sslmode;
+  if (sslmode) env.PGSSLMODE = libpqSslMode(sslmode);
 
   // Prisma's `?schema=` sets the search_path for application queries. libpq has
   // no equivalent variable, but PGOPTIONS is forwarded as backend options, and
