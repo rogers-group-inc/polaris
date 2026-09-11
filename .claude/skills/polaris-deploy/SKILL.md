@@ -70,7 +70,7 @@ conflict, or `main` behind `origin/main`.
    (a new env var, a new runtime dependency, a changed port, a new unit, a new nginx
    location). Stage the fixes as their own commit.
 2. If a `polaris_*` metric changed, the Grafana dashboard JSON changed with it.
-3. If a dependency or Go pin moved, `Dockerfile`, every `deploy/setup-*.{sh,ps1}`,
+3. If a dependency or Go pin moved, `Dockerfile`, every `deploy/setup-*.sh`,
    `docs/INSTALL.md` and `agent/go.mod` moved in lockstep. Run `npm run check:versions` to
    prove it — the full site list per family is `polaris-tech-lifecycle` →
    version-pin-inventory.md, and it is longer than this rule implies.
@@ -78,7 +78,7 @@ conflict, or `main` behind `origin/main`.
 ## Adding an environment variable
 
 Add it to `.env.example` with a comment → `references/env-vars.md` → `docs/INSTALL.md` if
-operator-set → a default in `deploy/setup-*.{sh,ps1}` if the install scripts write `.env`
+operator-set → a default in `deploy/setup-*.sh` if the install scripts write `.env`
 → the Capacity Advisor if it sizes a pool. See `cross-cutting-deployment.md`.
 
 ## Facts that bite

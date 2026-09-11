@@ -95,7 +95,7 @@ build auto-prune + boot-time auto-build are layered on top.
   whose router-level gate only admin passes), polled every 30s by
   `pollSigningAlert()` in `public/js/app.js` with per-user-per-failure
   localStorage dismissal (`polaris.signing-alert.dismissed.<username>`).
-- `deploy/setup-{rhel,ubuntu,windows}{,-nodb}.{sh,ps1}` — install Go
+- `deploy/setup-{rhel,ubuntu}{,-nodb}.sh` — install Go
   alongside Node + mkdir `$APP_DIR/data/agents` + `$APP_DIR/.cache/go-build`;
   also install Java 25 headless + the SHA-256-pinned jsign jar to
   `$APP_DIR/tools/jsign.jar` (warn-don't-abort — signing is opt-in).
@@ -164,7 +164,7 @@ build auto-prune + boot-time auto-build are layered on top.
   `_isTransientAgentState` so the asset-details panel's auto-poll picks
   it up.
 - Bumping the pinned jsign version: update the version + SHA-256 in ALL
-  of `Dockerfile`, all six `deploy/setup-*.{sh,ps1}`, and the manual
+  of `Dockerfile`, all four `deploy/setup-*.sh`, and the manual
   install one-liners in `docs/INSTALL.md` ("Optional: Code signing").
   The default jar probe paths in `agentSigningService.JSIGN_JAR_CANDIDATES`
   are version-less (`tools/jsign.jar`), so only the download sites move.

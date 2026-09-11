@@ -174,8 +174,8 @@ POLARIS_STATE_DIR=
 # from — point at a fork or internal mirror. When UNSET, the existing `origin`
 # remote is left untouched (updates come from wherever the install was cloned).
 # The Application Updates card surfaces the active repo + its source
-# (GET /server-settings/updates/repo). The deploy/update-{linux.sh,windows.ps1}
-# fallback scripts read the same var and repoint origin in lockstep.
+# (GET /server-settings/updates/repo). The deploy/update-linux.sh
+# fallback script reads the same var and repoints origin in lockstep.
 #
 # Charset-restricted to [A-Za-z0-9._~:/@+-] (isSafeRepoUrl in updateService).
 # Anything else is IGNORED in favour of the existing origin, with an error

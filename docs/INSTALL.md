@@ -520,9 +520,11 @@ single-process `polaris.service` is no longer shipped.
 sudo bash deploy/setup-rhel.sh --public-url https://polaris.example.com
 ```
 
-What the script does, in order: installs Node + Postgres + Go + nginx
-(the nginx.org stable branch for HTTP/3 ≥ 1.30), creates the `polaris` system
-user + DB + role, clones the repo, builds, runs migrations, generates a
+What the script does, in order: installs Node + Postgres + **TimescaleDB** + Go
++ nginx (the nginx.org stable branch for HTTP/3 ≥ 1.30), creates the `polaris`
+system user + DB + role, enables the `timescaledb` extension on that database
+(the extension is required — the script aborts if any part of it fails), clones
+the repo, builds, runs migrations, generates a
 self-signed cert for the supplied hostname under `/etc/polaris-nginx/`,
 installs the split-role systemd units + a `Wants=nginx` drop-in on
 `polaris-web`, sets `POLARIS_PROXY_CERT_PATH` + `POLARIS_PUBLIC_URL` in
@@ -659,7 +661,7 @@ sudo systemctl start polaris.target 2>/dev/null || sudo systemctl start polaris
 sudo journalctl -u polaris-web -f --no-pager
 ```
 
-After step 10 succeeds, follow *Recommended: TimescaleDB* below to install the extension. On the first restart afterward, Polaris detects the extension and converts the twenty-eight monitoring sample tables to hypertables — eight source tables, sixteen `*_hourly` / `*_daily` rollup tables produced by the tiered-retention rollup job, and four detail-only standalone tables (~5-15 min for a fleet that's been running for weeks; no operator action required, just patience as conversions log in the journal).
+After step 10 succeeds, follow *Required: TimescaleDB* below to install the extension. On the first restart afterward, Polaris detects the extension and converts the twenty-eight monitoring sample tables to hypertables — eight source tables, sixteen `*_hourly` / `*_daily` rollup tables produced by the tiered-retention rollup job, and four detail-only standalone tables (~5-15 min for a fleet that's been running for weeks; no operator action required, just patience as conversions log in the journal).
 
 ### Recovery: postgres crashes on a full /var
 
@@ -771,7 +773,9 @@ sudo bash deploy/setup-ubuntu.sh --public-url https://polaris.example.com
 ```
 
 The script installs nginx stable from nginx.org's Debian/Ubuntu repo
-(distro nginx is too old for HTTP/3), generates a self-signed cert, drops
+(distro nginx is too old for HTTP/3), installs **TimescaleDB** and enables the
+extension on the polaris database (required — the script aborts if any part of
+it fails), generates a self-signed cert, drops
 the split-role units (with a `20-postgres.conf` drop-in pointing at
 Ubuntu/Debian's `postgresql.service` meta-service rather than the versioned
 unit RHEL/PGDG uses — see *The PostgreSQL dependency*),
@@ -1148,10 +1152,12 @@ with sample volume rather than asset count.
 
 4. **Create the 17 container against a NEW appdata path**, with the same `POSTGRES_USER` /
    `POSTGRES_PASSWORD` / `POSTGRES_DB` and on the same network. Give it a temporary host port so
-   it cannot collide with 15. Use `timescale/timescaledb:<ver>-pg17` if you have the extension
-   (match the version from step 1 and `ALTER EXTENSION timescaledb UPDATE;` afterwards — 2.28.x
-   was the last line supporting PostgreSQL 15 and 2.29 dropped it, so check the overlap before
-   you pick a tag), otherwise `postgres:17`.
+   it cannot collide with 15. Use `timescale/timescaledb:<ver>-pg17` — the extension is required,
+   so this is the image even if the old container was plain `postgres` (match the version from
+   step 1 and `ALTER EXTENSION timescaledb UPDATE;` afterwards — 2.28.x was the last line
+   supporting PostgreSQL 15 and 2.29 dropped it, so check the overlap before you pick a tag).
+   Start it with `-c shared_preload_libraries=timescaledb`: the image only writes that into
+   `postgresql.conf` during `initdb`.
 
 5. **Restore.** With no TimescaleDB in the *source*, the dump contains no hypertable metadata
    and needs no `timescaledb_pre_restore()` / `post_restore()` bracketing:
@@ -1360,6 +1366,12 @@ applies.
 Use the shipped `docker-compose.yml` — one image, per-service `POLARIS_ROLE`, a
 one-shot `migrate` service the app services gate on
 (`service_completed_successfully`), and `monitor` with `deploy.replicas`.
+
+**The database container must be a TimescaleDB image**, not plain `postgres` —
+the extension is required (see *Required: TimescaleDB* below for the image tag,
+the `shared_preload_libraries` server flag it needs on an existing volume, and
+the one `CREATE EXTENSION` to run against the polaris database). The stack does
+not ship a Postgres service of its own, so this is your call to get right.
 
 **Secrets are not auto-generated for the compose stack.** The `deploy/setup-*`
 scripts and the first-run wizard mint `SESSION_SECRET` and `POLARIS_SECRET_KEY`
@@ -1626,7 +1638,7 @@ curl -sH "Authorization: Bearer $METRICS_TOKEN" https://polaris.example.com/metr
 
 ---
 
-## Recommended: TimescaleDB
+## Required: TimescaleDB
 
 Polaris's monitoring data lives in twenty-eight sample tables: eight source tables (`asset_monitor_samples`, `asset_telemetry_samples`, `asset_hardware_sensor_samples`, `asset_interface_samples`, `asset_storage_samples`, `asset_ipsec_tunnel_samples`, `asset_perf_sla_samples`, `asset_process_samples`) that hold raw per-cadence samples, sixteen `*_hourly` / `*_daily` rollup tables produced by the tiered-retention rollup job (one hourly + one daily companion per source), and four detail-only standalone tables with no rollups (`asset_custom_widget_samples`, `asset_state_samples`, `asset_process_log_samples`, `asset_service_log_samples`). All are append-only / upsert-only time-series. Plain Postgres handles them fine at small scale, but once the combined size crosses ~1 GB the daily retention prune starts seq-scanning hundreds of millions of rows, contending with normal write load. **TimescaleDB** (an official Postgres extension) converts all of them to hypertables with chunk-based partitioning and native compression:
 
@@ -1634,9 +1646,13 @@ Polaris's monitoring data lives in twenty-eight sample tables: eight source tabl
 - Compressed chunks (default: anything older than 7 days) take ~10–30× less disk
 - Read queries are unchanged — Polaris uses ordinary SQL, Timescale handles transparency
 
-Polaris **detects the extension at boot**. If present, the boot-time migration converts all eighteen tables to hypertables on the next startup (source tables partitioned by `timestamp`; rollup tables by `bucketStart`) and adds the compression policy. If absent, Polaris stays on plain-Postgres prune and surfaces a `timescale_recommended` alert in the Maintenance tab once sample tables grow past 1 GB.
+**The setup scripts do all of this for you.** `deploy/setup-rhel.sh` and `deploy/setup-ubuntu.sh` install `timescaledb-2-postgresql-17`, run `timescaledb-tune`, restart PostgreSQL and `CREATE EXTENSION timescaledb` on the polaris database, and they **fail the install** if any of it doesn't work rather than leaving you with a database that can never become hypertables. The steps below are for an install that predates this (2026-09-11), for the `-nodb` external-database path, and for Docker.
 
-If you're standing up a new install on RHEL/Rocky/AlmaLinux 9, Ubuntu/Debian, or Docker, install Timescale **before** the first run so all sample tables become hypertables from the start with no conversion downtime.
+`CREATE EXTENSION` needs **superuser**, which the unprivileged `polaris` service account deliberately is not — so the app can never create the extension itself. It only detects what the install created, and logs at **error** level on every boot where it is missing.
+
+Polaris **detects the extension at boot**. If present, the boot-time migration converts all twenty-eight tables to hypertables on the next startup (source tables partitioned by `timestamp`; rollup tables by `bucketStart`) and adds the compression policy. If absent, Polaris keeps running on plain-Postgres prune — it is degraded, not dead: retention deletes row by row instead of dropping chunks, nothing is compressed, the database grows well past what the Capacity Advisor's forecast predicts, and the restore procedure's `timescaledb_pre_restore()` / `post_restore()` gates have nothing to gate. The Maintenance tab raises `timescale_recommended` whenever the extension is absent — at *watch* severity on a small install and *warning* (amber on the card) once sample tables pass 1 GB.
+
+On an existing install, add the extension **before** the first restart that follows, so the conversion happens once, in a window you chose.
 
 ### RHEL / Rocky / AlmaLinux 9
 

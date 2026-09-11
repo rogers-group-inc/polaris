@@ -296,8 +296,59 @@ else
   info "Git installed"
 fi
 
-# Enable and start PostgreSQL
+# ─── 2c. TimescaleDB (REQUIRED) ─────────────────────────────────────────────
+# Not optional and not "recommended": Polaris's twenty-eight monitoring sample
+# and rollup tables are hypertables, and without the extension the retention
+# prune degrades to row-by-row deleteMany over tables that reach tens of
+# millions of rows, compression never runs, and the restore path's
+# timescaledb_pre_restore/post_restore gates have nothing to gate. This is an
+# ERROR, not a warning: an install that silently comes up without it is one
+# whose disk forecast and restore rehearsal are both wrong.
+#
+# PGDG is a hard prerequisite here (see the AppStream reasoning above) —
+# timescaledb-2-postgresql-17 requires postgresql17-server by name, which
+# AppStream has no package for.
+if rpm -q "timescaledb-2-postgresql-${PG_MAJOR}" >/dev/null 2>&1; then
+  info "TimescaleDB already installed"
+else
+  info "Installing TimescaleDB for PostgreSQL ${PG_MAJOR}..."
+  cat > /etc/yum.repos.d/timescale_timescaledb.repo <<'REPO'
+[timescale_timescaledb]
+name=timescale_timescaledb
+baseurl=https://packagecloud.io/timescale/timescaledb/el/9/$basearch
+repo_gpgcheck=1
+gpgcheck=0
+enabled=1
+gpgkey=https://packagecloud.io/timescale/timescaledb/gpgkey
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+metadata_expire=300
+REPO
+  # timescaledb-tools carries timescaledb-tune, which is what writes
+  # shared_preload_libraries below. It normally arrives as a dependency; asking
+  # for it by name costs nothing and covers a repo that does not pull it in.
+  dnf install -y "timescaledb-2-postgresql-${PG_MAJOR}" timescaledb-tools \
+    || dnf install -y "timescaledb-2-postgresql-${PG_MAJOR}" || error \
+"TimescaleDB install failed. Polaris requires it — its sample tables are hypertables.
+  The package lives at packagecloud.io/timescale/timescaledb (EL 9), which this host
+  may not be able to reach; mirror it internally or install by hand, then re-run:
+    dnf install -y timescaledb-2-postgresql-${PG_MAJOR}"
+  info "TimescaleDB installed"
+fi
+
+# timescaledb-tune writes shared_preload_libraries (the extension cannot load
+# without it) plus memory/worker settings derived from this host. It edits
+# postgresql.conf in place and is idempotent, so it is safe on a re-run.
+if "$PG_BINDIR/pg_config" --version >/dev/null 2>&1 && command -v timescaledb-tune >/dev/null 2>&1; then
+  timescaledb-tune --pg-config="$PG_BINDIR/pg_config" --quiet --yes \
+    || warn "timescaledb-tune failed; check shared_preload_libraries = 'timescaledb' in $PG_DATADIR/postgresql.conf by hand"
+fi
+
+# Enable and start PostgreSQL. try-restart covers the re-run case: on a host
+# where PostgreSQL was already up, the tune above changed postgresql.conf and
+# the new shared_preload_libraries only takes effect on a restart.
 systemctl enable --now "$PG_SERVICE"
+systemctl try-restart "$PG_SERVICE" || true
 info "PostgreSQL is running"
 
 # ─── 3. Create system user ───────────────────────────────────────────────────
@@ -357,6 +408,17 @@ sudo -u postgres "$PG_BINDIR/psql" -tc "SELECT 1 FROM pg_roles WHERE rolname='$D
 
 sudo -u postgres "$PG_BINDIR/psql" -tc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1 || \
   sudo -u postgres "$PG_BINDIR/psql" -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+
+# CREATE EXTENSION needs superuser, which the unprivileged app user is not —
+# so this is the ONLY place it can happen, and Polaris at boot can do no more
+# than detect what this created. If it fails the install stops here: a database
+# without the extension is one whose sample tables never become hypertables.
+sudo -u postgres "$PG_BINDIR/psql" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
+  -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" || error \
+"CREATE EXTENSION timescaledb failed on database '$DB_NAME'.
+  Almost always shared_preload_libraries: confirm it names timescaledb in
+  $PG_DATADIR/postgresql.conf, restart $PG_SERVICE, and re-run this script."
+info "TimescaleDB extension enabled on '$DB_NAME' ($(sudo -u postgres "$PG_BINDIR/psql" -tAX -d "$DB_NAME" -c "SELECT extversion FROM pg_extension WHERE extname='timescaledb'" 2>/dev/null || echo 'version unknown'))"
 
 # pg-boss (queue runtime for monitor cadences at scale) lives in its own
 # `pgboss` schema. Make sure the polaris role owns it so pg-boss can create

@@ -8,6 +8,15 @@
  * work as plain Postgres tables OR as Timescale hypertables; the prune layer
  * dispatches on hypertable status so the same code path works in both modes.
  *
+ * The extension is REQUIRED as of 2026-09-11 — every install path Polaris
+ * provisions creates it (deploy/setup-{rhel,ubuntu}.sh, as postgres; the app
+ * user is not superuser and cannot). The plain-table path below is therefore
+ * no longer a supported mode but two other things: the degraded state of an
+ * external/managed database that cannot offer the extension (RDS, Aurora,
+ * Cloud SQL), and the fallback when a drop_chunks call fails on a table that
+ * IS a hypertable. Detection logs at error level when the extension is
+ * missing, because on a provisioned install that means something removed it.
+ *
  * Detection runs once at startup via `detectTimescale()` and caches the
  * result + per-table hypertable status. Subsequent calls return the cached
  * value. Re-detection happens automatically after the boot-time conversion
@@ -149,10 +158,26 @@ export async function detectTimescale(): Promise<DetectionState> {
       }
     }
     state = { extensionInstalled: installed, extensionVersion, hypertables, detectedAt: Date.now() };
-    logger.info(
-      { installed, extensionVersion, hypertables: [...hypertables] },
-      "TimescaleDB detection complete",
-    );
+    if (installed) {
+      logger.info(
+        { installed, extensionVersion, hypertables: [...hypertables] },
+        "TimescaleDB detection complete",
+      );
+    } else {
+      // Loud, because every install path Polaris provisions creates the
+      // extension (deploy/setup-{rhel,ubuntu}.sh do it as postgres — the app
+      // user is not superuser and CANNOT create it). Reaching here means
+      // either an external/managed database that does not offer it, or a
+      // provisioned install whose extension was dropped. Both run degraded:
+      // row-by-row retention instead of drop_chunks, no compression, and a
+      // restore whose documented pre/post gates do nothing.
+      logger.error(
+        { installed },
+        "TimescaleDB is NOT installed on this database. Polaris requires it: sample tables stay plain tables, " +
+          "retention prunes row by row instead of dropping chunks, compression never runs, and the database will be " +
+          "far larger than the Capacity Advisor's hypertable forecast. Fix: CREATE EXTENSION timescaledb (needs superuser).",
+      );
+    }
   } catch (err) {
     logger.warn({ err }, "TimescaleDB detection failed; treating as not available");
     state = { extensionInstalled: false, extensionVersion: null, hypertables: new Set(), detectedAt: Date.now() };
