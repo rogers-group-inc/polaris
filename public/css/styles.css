@@ -55,6 +55,12 @@
      behind it: the tight second layer is what keeps the panel's outline.
      The slide-over is right-anchored and carries its own one-sided shadow. */
   --shadow-panel: 0 24px 64px rgba(0,0,0,.6), 0 2px 10px rgba(0,0,0,.45);
+  /* Drop shadow for small interactive chrome that sits ON a page rather than
+     floating over it — buttons and the page-level search / filter fields.
+     Deliberately tighter than --shadow-sm is soft: these are 20-36px tall, so
+     a wide halo just muddies the ground under them. Per theme for the same
+     reason every other shadow is: a black cast is grubby on the daylight pair. */
+  --shadow-control: 0 2px 6px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.3);
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -107,6 +113,7 @@
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
+  --shadow-control: 0 2px 6px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.08);
 }
 /* The five headings that used to hardcode #fff and needed rescuing here now
    paint var(--color-text-primary) directly, so this block is gone. Pure white
@@ -235,6 +242,7 @@ code {
   --shadow-sm: 0 1px 4px rgba(70,50,20,.10);
   --shadow-md: 0 8px 32px rgba(70,50,20,.16);
   --shadow-panel: 0 24px 64px rgba(70,50,20,.24), 0 2px 10px rgba(70,50,20,.14);
+  --shadow-control: 0 2px 6px rgba(70,50,20,.16), 0 1px 2px rgba(70,50,20,.10);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -263,6 +271,7 @@ code {
   --shadow-sm: 0 1px 4px rgba(40,20,10,.10);
   --shadow-md: 0 8px 32px rgba(40,20,10,.18);
   --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
+  --shadow-control: 0 2px 6px rgba(40,20,10,.18), 0 1px 2px rgba(40,20,10,.11);
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -294,6 +303,7 @@ code {
   --shadow-sm: 0 1px 4px rgba(0,0,0,.4);
   --shadow-md: 0 8px 32px rgba(0,0,0,.6);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.7), 0 2px 10px rgba(0,0,0,.5);
+  --shadow-control: 0 2px 6px rgba(0,0,0,.55), 0 1px 2px rgba(0,0,0,.35);
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
@@ -1014,6 +1024,7 @@ code {
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
   outline: none;
+  box-shadow: var(--shadow-control);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .global-search input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
@@ -1034,9 +1045,12 @@ code {
 @keyframes global-search-spin {
   to { transform: rotate(360deg); }
 }
+/* box-shadow REPLACES, so the focus ring has to re-state the drop shadow or
+   the field visibly flattens the moment it is focused. Same reason the
+   .filter-bar focus rule below repeats it. */
 .global-search input[type="search"]:focus {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18);
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-control);
 }
 .global-search-dropdown {
   position: absolute;
@@ -1271,10 +1285,17 @@ code {
   font-family: var(--font-sans);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   white-space: nowrap;
 }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* .btn-icon is excluded: it is a bare glyph with no border and no background
+   until hover, so a cast shadow would hang off nothing. Some elements carry
+   BOTH classes (the widget-library close, the dashboard widget's Remove), which
+   is why this is a :not() on the base rule rather than a separate selector. */
+.btn:not(.btn-icon) { box-shadow: var(--shadow-control); }
+/* A disabled button is flat — the shadow is an affordance, and leaving it on
+   something that cannot be pressed is the one place it misleads. */
+.btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 .btn-primary {
   background: var(--color-accent);
   color: #0d0d1a;
@@ -1753,12 +1774,18 @@ code {
 .search-select-clear:hover { color: var(--color-text-primary); }
 
 /* ─── Tables ───────────────────────────────────────────────────────────────── */
+/* The sticky variants below are always applied ALONGSIDE this class, never
+   instead of it, so the background / border / shadow here reach every list
+   table — including the ones inside a modal or slide-over. */
 .table-wrapper {
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow-x: auto;
-  box-shadow: var(--shadow-sm);
+  /* Up from --shadow-sm: a full-width table is a big enough surface to carry
+     the same lift the cards and panels have, and --shadow-md is already the
+     per-theme "this floats above the page" value. */
+  box-shadow: var(--shadow-md);
 }
 /* Sticky-header variant (Assets / Events / IPAM Blocks + Networks list
    tables): the wrapper is height-bounded to the viewport by the shared
@@ -2357,6 +2384,22 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   margin-right: -4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+/* The page-level search / filter fields. Scoped to .filter-bar rather than put
+   on the shared `input, select, textarea` rule: that one dresses every field in
+   every modal and slide-over too, and a shadow on all of them reads as clutter
+   instead of emphasis. The .sf-filter inputs in a table header are left alone
+   for the same reason — they are 20px tall and already inside a shadowed
+   .table-wrapper. */
+.filter-bar input,
+.filter-bar select,
+.filter-bar .search-select-input {
+  box-shadow: var(--shadow-control);
+}
+.filter-bar input:focus,
+.filter-bar select:focus,
+.filter-bar .search-select-input:focus {
+  box-shadow: 0 0 0 2px rgba(79,195,247,0.15), var(--shadow-control);
 }
 
 /* ─── Form Elements ────────────────────────────────────────────────────────── */
