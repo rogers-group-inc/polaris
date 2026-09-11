@@ -21,7 +21,7 @@ Read the canon files here for *which file in THIS repo* to copy. Inside this rep
 | a modal, a dialog over a modal, an integration dialog, a wizard, the condition builder, a slide-over, a blocking overlay, a standalone page | [references/canon-modals-wizards.md](references/canon-modals-wizards.md) |
 | a chart, a dashboard widget, the polling-method subtabs | [references/canon-charts-widgets.md](references/canon-charts-widgets.md) |
 | anything on the phone SPA (bottom sheet, pull-to-refresh, keyboard fit) | [references/canon-mobile.md](references/canon-mobile.md) |
-| shared helpers, theme-paired assets, gated controls, the active-alert dot, kit API names | [references/canon-shared-kit.md](references/canon-shared-kit.md) |
+| shared helpers, theme-paired assets, gated controls, the active-alert dot, kit API names, the glass / elevation tokens every floating surface paints | [references/canon-shared-kit.md](references/canon-shared-kit.md) |
 | the SPA shell, navigation, the sidebar status panels and their pollers, the assets page and its slide-over tabs | [references/frontend-shell.md](references/frontend-shell.md) |
 | Discovery-rules card, SSH Deployment, script publishing, export/import, Dash wallboard, mobile PWA + push | [references/frontend-surfaces.md](references/frontend-surfaces.md) |
 | the Automations page or its 6-step wizard | [references/frontend-automations-wizard.md](references/frontend-automations-wizard.md) |
@@ -36,7 +36,7 @@ The portable UI contract, and the backend counterpart of this index, live in
 
 ## Frontend conventions (always apply)
 
-Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES modules, multi-page layout with client-side navigation in `app.js`, **three themes in two families** (`morning` / `noon` daylight, `nightfall` dark — the retired `dark`/`light` ids are recognized nowhere; branch on `isLightTheme()`, never on an id), per-user panel lock on every modal and slide-over.
+Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES modules, multi-page layout with client-side navigation in `app.js`, **three themes in two families** (`morning` / `noon` daylight, `nightfall` dark — the retired `dark`/`light` ids are recognized nowhere; branch on `isLightTheme()`, never on an id), per-user panel lock on every modal and slide-over. Modals, slide-overs and menus are **frosted glass** — a translucent mix of the theme's own ground under a shared `backdrop-filter`, with the daylight pair mixing thinner than the dark one; the token set and the four things that silently break it are in polaris-ui-canon → canon-shared-kit.md § Floating-surface tokens. Never give a new floating surface a background of its own.
 
 **Pages** (nav entry → page → gate). Every sidebar entry whose page can 403 carries a permission gate (`perm: [key, level]`, or `anyPerm: [[key, level], …]` for a multi-key page like IPAM) — **kept in lockstep with `pageRequiredPermission` in `src/app.ts`**, which bounces a typed URL for the same page. An ungated entry advertises a page whose first list fetch is the only thing telling the operator they can't be there.
 
