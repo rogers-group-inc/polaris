@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-09-09",
+  "reviewedAt": "2026-09-11",
   "reviewedBy": "david.moore@rogersgroupinc.com",
   "notes": "Read by scripts/check-deps.mjs and by the quarterly pass in .claude/skills/polaris-tech-lifecycle/references/dependency-audit.md. NEVER read by anything under src/ at runtime: npm majors publish no end-of-life dates, and which major an install runs is fixed by its build, so this is a repo fact rather than a per-install monitoring signal. targetMajor is the major this repo intends to be on; check-deps fails when the installed major is below it.",
   "npm": [
@@ -35,6 +35,8 @@
     { "name": "qs", "floor": "^6.16.0", "reason": "qs.stringify DoS, reached through Express.", "runtimeReachable": true, "reviewedAt": "2026-09-09" },
     { "name": "fflate", "floor": "^0.8.3", "reason": "Transitive advisory.", "runtimeReachable": true, "reviewedAt": "2026-09-09" },
     { "name": "@xmldom/xmldom", "floor": "^0.8.15", "reason": "Reached through the SAML stack - this one is in a runtime auth path.", "runtimeReachable": true, "reviewedAt": "2026-09-09" },
-    { "name": "fast-uri", "floor": "^3.1.7", "reason": "Path traversal / host confusion via percent-encoding, via ajv and Prisma engine tooling.", "runtimeReachable": true, "reviewedAt": "2026-09-09" }
+    { "name": "fast-uri", "floor": "^3.1.7", "reason": "Path traversal / host confusion via percent-encoding, via ajv and Prisma engine tooling.", "runtimeReachable": true, "reviewedAt": "2026-09-09" },
+    { "name": "mysql2", "floor": "^3.24.4", "reason": "GHSA-3f6p-5ww8-9rcr: the client honours a server's auth-plugin switch to mysql_clear_password, so a hostile or MITM server harvests the plaintext password. Patched in 3.22.0. Reached only through prisma, a devDependency that bundles every driver it can speak - Polaris has no MySQL datasource and npm prune --omit=dev drops the subtree, so it is not in the runtime image. Floored anyway because npm audit's suggested fix is a prisma DOWNGRADE, which it will keep offering every run.", "runtimeReachable": false, "reviewedAt": "2026-09-11" },
+    { "name": "deepmerge-ts", "floor": "^8.0.2", "reason": "Stack exhaustion when merging recursive object graphs. @prisma/config EXACT-pins 7.1.5, so only an override moves it and doing so forces a major on a pinned transitive of the Prisma CLI - verified 2026-09-11 against the three CLI paths that load prisma.config.ts (generate, validate, migrate status). Same reachability as mysql2: devDependency-only, pruned from the runtime image, and the merged graph is our own prisma.config.ts rather than attacker input.", "runtimeReachable": false, "reviewedAt": "2026-09-11" }
   ]
 }
