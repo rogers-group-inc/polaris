@@ -72,6 +72,11 @@
      the band still separates from the body without going opaque. */
   --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 50%, transparent);
   --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 50%, transparent);
+  /* Same glass for context menus and button dropdowns, off --color-surface,
+     which is the ground those already stood on. Same 50% and the same
+     --panel-glass-blur, so a row menu opened over a frosted modal reads as the
+     same material rather than a second, different kind of translucency. */
+  --menu-glass-bg: color-mix(in srgb, var(--color-surface) 50%, transparent);
   /* Slight, not heavy: enough to smear text under the panel illegible while
      leaving shapes and colour behind it recognisable. saturate() compensates
      for the wash-out a large blur radius causes. */
@@ -1362,16 +1367,22 @@ code {
   position: relative;
   display: inline-block;
 }
+/* Frosted on the same terms as the modal and slide-over. This one rule is
+   every context menu in the app: .row-context-menu (showRowMenu) only adds
+   position/z-index on top of it. No containing-block hazard here the way there
+   was on the panels — a menu holds nothing but buttons. */
 .btn-dropdown-menu {
   display: none;
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
   min-width: 180px;
-  background: var(--color-surface);
+  background: var(--menu-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-panel);
   z-index: 200;
   padding: 4px 0;
 }
@@ -1389,8 +1400,12 @@ code {
   cursor: pointer;
   transition: background 0.12s;
 }
+/* --color-hover-tint, not the opaque --color-bg-secondary it used while the
+   menu was solid: a fully opaque row inside a 50% menu reads as a solid bar
+   laid over the glass. The tint token exists for exactly this (it is white-ish
+   in the dark family and black-ish in the daylight one, so it shows on both). */
 .btn-dropdown-menu button:hover {
-  background: var(--color-bg-secondary);
+  background: var(--color-hover-tint);
 }
 .btn-dropdown-menu .dropdown-heading {
   padding: 0.35rem 0.85rem 0.15rem;
@@ -4877,10 +4892,15 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   z-index: 1300;
   min-width: 176px;
   padding: 4px;
-  background: var(--color-bg-elevated, #1c1f24);
+  /* Mixed off its OWN --color-bg-elevated rather than reusing --menu-glass-bg,
+     so this menu keeps the one-step-lighter ground it has always had and only
+     gains the glass. */
+  background: color-mix(in srgb, var(--color-bg-elevated, #1c1f24) 50%, transparent);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border: 1px solid var(--color-border, rgba(255,255,255,0.10));
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.40);
+  box-shadow: var(--shadow-panel);
   display: flex;
   flex-direction: column;
   gap: 1px;
