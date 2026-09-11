@@ -49,6 +49,27 @@
   --radius-lg: 12px;
   --shadow-sm: 0 1px 4px rgba(0,0,0,.3);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
+  /* Drop shadow for a frosted panel that floats free of a screen edge — the
+     modal. It paints --panel-glass-bg, only 70% opaque, so --shadow-md's
+     single soft halo no longer reads as an edge against the blurred page
+     behind it: the tight second layer is what keeps the panel's outline.
+     The slide-over is right-anchored and carries its own one-sided shadow. */
+  --shadow-panel: 0 24px 64px rgba(0,0,0,.6), 0 2px 10px rgba(0,0,0,.45);
+  /* ── Frosted panel surfaces ────────────────────────────────────────────────
+     Modals and slide-overs are 70% of the theme's own panel colour over a
+     blurred backdrop, so the page stays faintly legible behind them. Declared
+     ONCE here rather than per theme: a custom property substitutes var() at
+     the element it is declared on, and every theme block below also targets
+     the root element, so each theme's own --color-bg-* values are what get
+     mixed in. A new theme inherits the glass for free.
+     -chrome is the header/footer band (bg-tertiary), mixed to the same 70% so
+     the band still separates from the body without going opaque. */
+  --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 70%, transparent);
+  --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 70%, transparent);
+  /* Slight, not heavy: enough to smear text under the panel illegible while
+     leaving shapes and colour behind it recognisable. saturate() compensates
+     for the wash-out a large blur radius causes. */
+  --panel-glass-blur: blur(12px) saturate(1.3);
   --sidebar-width: 220px;
 }
 
@@ -85,6 +106,7 @@
   --color-fill-subtle: rgba(0,0,0,0.05);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
+  --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
 }
 /* The five headings that used to hardcode #fff and needed rescuing here now
    paint var(--color-text-primary) directly, so this block is gone. Pure white
@@ -122,8 +144,8 @@
 :is([data-theme="morning"],[data-theme="noon"]) .badge-level-critical      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
 :is([data-theme="morning"],[data-theme="noon"]) .integration-type-badge { background: rgba(230,81,0,0.10); color: #e65100; border-color: rgba(230,81,0,0.30); }
 :is([data-theme="morning"],[data-theme="noon"]) .integration-flag-badge { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .modal-overlay { background: rgba(0,0,0,.35); }
-:is([data-theme="morning"],[data-theme="noon"]) .slideover-overlay { background: rgba(0,0,0,.2); }
+:is([data-theme="morning"],[data-theme="noon"]) .modal-overlay { background: rgba(0,0,0,.2); }
+:is([data-theme="morning"],[data-theme="noon"]) .slideover-overlay { background: rgba(0,0,0,.14); }
 :is([data-theme="morning"],[data-theme="noon"]) .sidebar-nav a:hover { background: rgba(2,136,209,0.08); }
 :is([data-theme="morning"],[data-theme="noon"]) .sidebar-nav a.active { background: rgba(2,136,209,0.12); }
 :is([data-theme="morning"],[data-theme="noon"]) .sidebar-bottom-link:hover { background: rgba(2,136,209,0.08); }
@@ -212,6 +234,7 @@ code {
   --color-deprecated: #8d8272;
   --shadow-sm: 0 1px 4px rgba(70,50,20,.10);
   --shadow-md: 0 8px 32px rgba(70,50,20,.16);
+  --shadow-panel: 0 24px 64px rgba(70,50,20,.24), 0 2px 10px rgba(70,50,20,.14);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -239,6 +262,7 @@ code {
   --color-deprecated: #7d7369;
   --shadow-sm: 0 1px 4px rgba(40,20,10,.10);
   --shadow-md: 0 8px 32px rgba(40,20,10,.18);
+  --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -269,6 +293,7 @@ code {
   --color-deprecated: #6b7093;
   --shadow-sm: 0 1px 4px rgba(0,0,0,.4);
   --shadow-md: 0 8px 32px rgba(0,0,0,.6);
+  --shadow-panel: 0 24px 64px rgba(0,0,0,.7), 0 2px 10px rgba(0,0,0,.5);
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
@@ -2522,10 +2547,15 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 
 /* ─── Modal ────────────────────────────────────────────────────────────────── */
+/* The scrim is deliberately lighter than a solid dim: the modal itself is now
+   only 70% opaque, and its backdrop-filter samples THIS layer along with the
+   page under it. At the old .6 the 30% showing through the panel was very
+   nearly black, so the frosting read as "the modal got darker" instead of
+   "the page is behind it". */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.6);
+  background: rgba(0,0,0,.3);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -2545,10 +2575,22 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   z-index: 1075;
 }
 .modal {
-  background: var(--color-bg-primary);
+  /* Frosted, not solid: 70% of the panel colour over a blurred backdrop.
+     backdrop-filter here is free of the usual containing-block hazard because
+     .modal ALREADY carries a transform (the translateY reveal below), so the
+     `position: fixed` popovers mounted inside a modal body — .sf-multi-popover
+     in a TableSF header, .monitor-confirm-popover — were already resolving
+     against the modal box and are unmoved by this. Do NOT drop the transform
+     without re-checking them.
+     The backdrop-filter also needs .modal-overlay.open to land on opacity
+     EXACTLY 1: any value below it makes the overlay a backdrop root and the
+     blur would sample nothing but the scrim. */
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-panel);
   width: 100%;
   max-width: 480px;
   max-height: 85vh;
@@ -2655,7 +2697,9 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   align-items: center;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  /* Mixed to the same 70% as the panel — an opaque band inside a frosted
+     modal reads as a sticker laid on the glass. */
+  background: var(--panel-glass-chrome);
 }
 .modal-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text-primary); }
 .modal-body { padding: 1.25rem; overflow-y: auto; overscroll-behavior: contain; flex: 1 1 auto; min-height: 0; }
@@ -3444,7 +3488,12 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .modal-body > .page-tabs {
   position: sticky;
   top: 0;
-  background: var(--color-bg-primary);
+  /* Frosted like the panel it pins to, with its OWN blur: at 70% the strip no
+     longer hides what scrolls under it by opacity alone, so the blur is what
+     does the occluding the comment below assumes. */
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   z-index: 5;
   margin-left: -1.25rem;
   margin-right: -1.25rem;
@@ -3755,7 +3804,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.45);
+  /* Lightened alongside .modal-overlay's for the same reason — see there. */
+  background: rgba(0,0,0,.28);
   /* Sits above .modal-overlay (z-index 1000) so an asset details slide-in
      opened from inside a modal (Device Map topology, conflict review) is
      visible. The monitor-confirm popover (1100) still wins because it
@@ -3775,9 +3825,18 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   top: 0;
   height: 100vh;
   width: clamp(520px, 42vw, 1100px);
-  background: var(--color-bg-primary);
+  /* Frosted on the same terms as .modal — and likewise already transformed
+     (the translateX reveal), so the fixed-position popovers inside a
+     slide-over's tables are unaffected. See .modal for the full note. */
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border-left: 1px solid var(--color-border);
-  box-shadow: -8px 0 32px rgba(0,0,0,.4);
+  /* Directional, not --shadow-panel's halo: the slide-over is full-height and
+     pinned to the right edge, so only its LEFT edge ever casts. Deepened from
+     the pre-frosting -8px/.4 because a 70%-opaque panel needs more separation
+     from the page it now shows through to. */
+  box-shadow: -12px 0 40px rgba(0,0,0,.45), -2px 0 10px rgba(0,0,0,.3);
   transform: translateX(100%);
   transition: transform 0.25s ease;
   display: flex;
@@ -3796,7 +3855,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-header {
   padding: 1rem 1.25rem 1rem 2.5rem;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  background: var(--panel-glass-chrome);
   flex-shrink: 0;
 }
 .slideover-header-top {
@@ -3892,7 +3951,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-footer {
   padding: 0.75rem 1.25rem 0.75rem 2.5rem;
   border-top: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  background: var(--panel-glass-chrome);
   flex-shrink: 0;
   display: flex;
   align-items: center;
