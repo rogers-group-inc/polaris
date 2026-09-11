@@ -15,6 +15,36 @@ monitoring costume — and the operator who would see it cannot act on it. Only 
 
 So: **the platform runtimes are graded in the app; the dependencies are graded in CI and here.**
 
+## The scanner feeds — four of them, and none is a superset
+
+"Fix code scanning and dependabot" is a task about four separate feeds that overlap partially
+and disagree often. Triage each on its own; clearing one says nothing about the others.
+
+| Feed | Covers | Read it with |
+|---|---|---|
+| **Dependabot alerts** | advisories against the dependency tree | `gh api repos/:owner/:repo/dependabot/alerts` |
+| **CodeQL / code scanning** | defects in **our own source**, server and browser | `gh api repos/:owner/:repo/code-scanning/alerts` |
+| **`npm audit`** | advisories again, but a different verdict set from Dependabot's | `npm run audit:deps` |
+| **Aikido** | SAST + secrets + IaC + container, via its MCP plugin | the `aikido:issues` skill |
+
+Three things that cost time if you don't know them:
+
+- **Filter Dependabot on `state == "open"`.** GitHub also carries `auto_dismissed` alerts — its
+  own low-impact-dev-dependency rule — which never appear in the UI's default list but are very
+  much still in `npm audit`. On 2026-09-11 `mysql2` was open and `deepmerge-ts` auto-dismissed,
+  and only fixing both got `npm audit` to zero.
+- **A CodeQL alert can be a false positive that is HIDING a true one.** See `src/utils/wildcard.ts`
+  (2026-09-11): the alert sat on the escaped path because its escaping was a loop the analyzer
+  could not follow, while the deliberately-raw path beside it drew nothing. Before dismissing one
+  as a false positive, check whether its presence is suppressing the finding you'd actually want.
+  Prefer rewriting into an idiom the analyzer recognizes over dismissing — a dismissal is invisible
+  in the source, and the next reader re-litigates it.
+- **A behaviour-preserving rewrite of a sanitizer or a guard regex needs a differential test, not
+  a green suite.** Both 2026-09-11 regex fixes were proven by running old and new over a generated
+  corpus and diffing the output. For `scripts/check-versions.mjs` this was the only possible proof:
+  that rule has matched nothing since the 2026-09-09 incident removed every bare
+  `dnf install -y postgresql`, so `check:versions` passes whether the regex works or not.
+
 ## The quarterly pass
 
 ```

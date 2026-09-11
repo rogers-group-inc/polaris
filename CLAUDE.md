@@ -24,7 +24,7 @@ invariants and "when changing this" checklists are what make a change land right
 | `polaris-ui-canon` | any change under `public/`; HTML/CSS/JS/theme/widget/chart/mobile/Dash work | auto |
 | `polaris-monitoring-discovery` | probes, cadence, collectors, MIBs, discovery phases, integrations, background jobs, metrics, runbooks | auto |
 | `polaris-agent` | anything under `agent/`, agent install/build/upgrade, cert pins, `ManagedAgent`, sample streams | auto |
-| `polaris-tech-lifecycle` | EOL dates, a version pin or minimum version, bumping Node / Postgres / Go / a dependency major, `npm audit`, Dependabot | auto |
+| `polaris-tech-lifecycle` | EOL dates, a version pin or minimum version, bumping Node / Postgres / Go / a dependency major, `npm audit`, Dependabot, CodeQL | auto |
 | `polaris-worktree-workflow` | the start of every coding task; "worktree", "lock", "dev environment", "merge", "push" | auto + `/polaris-worktree-workflow` |
 | `polaris-deploy` | a task is done: it runs docs-sync, audits deploy surfaces, commits, merges and pushes; env vars, systemd/nginx/Docker, the updater | `/polaris-deploy` only |
 | `polaris-docs-sync` | a commit made outside `/polaris-deploy`; after `check:docs` fails | `/polaris-docs-sync` only |
