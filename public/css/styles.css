@@ -49,6 +49,47 @@
   --radius-lg: 12px;
   --shadow-sm: 0 1px 4px rgba(0,0,0,.3);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
+  /* Drop shadow for a frosted panel that floats free of a screen edge — the
+     modal. It paints --panel-glass-bg, only 50% opaque, so --shadow-md's
+     single soft halo no longer reads as an edge against the blurred page
+     behind it: the tight second layer is what keeps the panel's outline.
+     The slide-over is right-anchored and carries its own one-sided shadow. */
+  --shadow-panel: 0 24px 64px rgba(0,0,0,.6), 0 2px 10px rgba(0,0,0,.45);
+  /* Drop shadow for small interactive chrome that sits ON a page rather than
+     floating over it — buttons and the page-level search / filter fields.
+     Deliberately tighter than --shadow-sm is soft: these are 20-36px tall, so
+     a wide halo just muddies the ground under them. Per theme for the same
+     reason every other shadow is: a black cast is grubby on the daylight pair.
+     The third layer is an inset TOP RIM, and it is what actually makes these
+     read as raised in the dark family: the page ground there is #0d0d1c, so a
+     black drop shadow has almost nothing to darken and stays invisible however
+     far its alpha is pushed. A 1px light edge is how a dark UI shows
+     elevation. In the daylight pair the drop does the work and the white rim
+     is all but invisible, which is correct — it is kept in every theme so the
+     token stays one value rather than a per-family fork. */
+  --shadow-control: 0 3px 8px rgba(0,0,0,.85), 0 1px 3px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.08);
+  /* ── Frosted panel surfaces ────────────────────────────────────────────────
+     Modals and slide-overs are 50% of the theme's own panel colour over a
+     blurred backdrop, so the page stays faintly legible behind them. Declared
+     ONCE here rather than per theme: a custom property substitutes var() at
+     the element it is declared on, and every theme block below also targets
+     the root element, so each theme's own --color-bg-* values are what get
+     mixed in. A new theme inherits the glass for free.
+     -chrome is the header/footer band (bg-tertiary), mixed to the same 50% so
+     the band still separates from the body without going opaque. */
+  --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 50%, transparent);
+  --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 50%, transparent);
+  /* Same glass for context menus and button dropdowns, off --color-surface,
+     which is the ground those already stood on. Same 50% and the same
+     --panel-glass-blur, so a row menu opened over a frosted modal reads as the
+     same material rather than a second, different kind of translucency. Thinner
+     than the panels' 50% by choice — a menu is small and short-lived, so it can
+     show more of what it covers without costing legibility. */
+  --menu-glass-bg: color-mix(in srgb, var(--color-surface) 40%, transparent);
+  /* Slight, not heavy: enough to smear text under the panel illegible while
+     leaving shapes and colour behind it recognisable. saturate() compensates
+     for the wash-out a large blur radius causes. */
+  --panel-glass-blur: blur(12px) saturate(1.3);
   --sidebar-width: 220px;
 }
 
@@ -85,6 +126,19 @@
   --color-fill-subtle: rgba(0,0,0,0.05);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
+  --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
+  --shadow-control: 0 2px 5px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.6);
+  /* Thinner glass than the dark family's 50% / 40%. These are the only tokens
+     :root derives that the daylight pair re-derives rather than inheriting, and
+     the reason is contrast, not taste: a light panel over a light page has far
+     less to hide behind, so the same mix that reads as frosted on an indigo
+     ground reads as nearly solid here. The mix still resolves against each
+     theme's OWN --color-bg-* — morning and noon override those below this
+     block and both pick up their own values, exactly as they do for the 50%
+     version in :root. */
+  --panel-glass-bg: color-mix(in srgb, var(--color-bg-primary) 40%, transparent);
+  --panel-glass-chrome: color-mix(in srgb, var(--color-bg-tertiary) 40%, transparent);
+  --menu-glass-bg: color-mix(in srgb, var(--color-surface) 30%, transparent);
 }
 /* The five headings that used to hardcode #fff and needed rescuing here now
    paint var(--color-text-primary) directly, so this block is gone. Pure white
@@ -122,8 +176,8 @@
 :is([data-theme="morning"],[data-theme="noon"]) .badge-level-critical      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
 :is([data-theme="morning"],[data-theme="noon"]) .integration-type-badge { background: rgba(230,81,0,0.10); color: #e65100; border-color: rgba(230,81,0,0.30); }
 :is([data-theme="morning"],[data-theme="noon"]) .integration-flag-badge { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .modal-overlay { background: rgba(0,0,0,.35); }
-:is([data-theme="morning"],[data-theme="noon"]) .slideover-overlay { background: rgba(0,0,0,.2); }
+:is([data-theme="morning"],[data-theme="noon"]) .modal-overlay { background: rgba(0,0,0,.2); }
+:is([data-theme="morning"],[data-theme="noon"]) .slideover-overlay { background: rgba(0,0,0,.14); }
 :is([data-theme="morning"],[data-theme="noon"]) .sidebar-nav a:hover { background: rgba(2,136,209,0.08); }
 :is([data-theme="morning"],[data-theme="noon"]) .sidebar-nav a.active { background: rgba(2,136,209,0.12); }
 :is([data-theme="morning"],[data-theme="noon"]) .sidebar-bottom-link:hover { background: rgba(2,136,209,0.08); }
@@ -212,6 +266,8 @@ code {
   --color-deprecated: #8d8272;
   --shadow-sm: 0 1px 4px rgba(70,50,20,.10);
   --shadow-md: 0 8px 32px rgba(70,50,20,.16);
+  --shadow-panel: 0 24px 64px rgba(70,50,20,.24), 0 2px 10px rgba(70,50,20,.14);
+  --shadow-control: 0 2px 5px rgba(70,50,20,.22), 0 1px 2px rgba(70,50,20,.14), inset 0 1px 0 rgba(255,255,255,.55);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -239,6 +295,8 @@ code {
   --color-deprecated: #7d7369;
   --shadow-sm: 0 1px 4px rgba(40,20,10,.10);
   --shadow-md: 0 8px 32px rgba(40,20,10,.18);
+  --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
+  --shadow-control: 0 2px 5px rgba(40,20,10,.24), 0 1px 2px rgba(40,20,10,.15), inset 0 1px 0 rgba(255,255,255,.6);
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -269,6 +327,8 @@ code {
   --color-deprecated: #6b7093;
   --shadow-sm: 0 1px 4px rgba(0,0,0,.4);
   --shadow-md: 0 8px 32px rgba(0,0,0,.6);
+  --shadow-panel: 0 24px 64px rgba(0,0,0,.7), 0 2px 10px rgba(0,0,0,.5);
+  --shadow-control: 0 3px 8px rgba(0,0,0,.9), 0 1px 3px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.08);
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
@@ -286,6 +346,13 @@ code {
   flex-shrink: 0;
   background: var(--color-bg-tertiary);
   border-right: 1px solid var(--color-border);
+  /* Cast RIGHT, onto the content area — the sidebar is full-height and the
+     leftmost element of .layout, so that is the only edge with anything to
+     separate from. Same one-sided idiom (and same hardcoded rgba, dark in
+     every theme) as the slide-over's; it lands above the content without a
+     z-index change because .sidebar is already z-index 100, and the
+     element's own overflow-y does not clip its own shadow. */
+  box-shadow: 8px 0 24px rgba(0,0,0,.22), 1px 0 4px rgba(0,0,0,.14);
   padding: 1.25rem 0;
   position: sticky;
   top: 0;
@@ -982,6 +1049,7 @@ code {
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
   outline: none;
+  box-shadow: var(--shadow-control);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .global-search input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
@@ -1002,9 +1070,12 @@ code {
 @keyframes global-search-spin {
   to { transform: rotate(360deg); }
 }
+/* box-shadow REPLACES, so the focus ring has to re-state the drop shadow or
+   the field visibly flattens the moment it is focused. Same reason the
+   .filter-bar focus rule below repeats it. */
 .global-search input[type="search"]:focus {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18);
+  box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.18), var(--shadow-control);
 }
 .global-search-dropdown {
   position: absolute;
@@ -1239,10 +1310,17 @@ code {
   font-family: var(--font-sans);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   white-space: nowrap;
 }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* .btn-icon is excluded: it is a bare glyph with no border and no background
+   until hover, so a cast shadow would hang off nothing. Some elements carry
+   BOTH classes (the widget-library close, the dashboard widget's Remove), which
+   is why this is a :not() on the base rule rather than a separate selector. */
+.btn:not(.btn-icon) { box-shadow: var(--shadow-control); }
+/* A disabled button is flat — the shadow is an affordance, and leaving it on
+   something that cannot be pressed is the one place it misleads. */
+.btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 .btn-primary {
   background: var(--color-accent);
   color: #0d0d1a;
@@ -1309,16 +1387,22 @@ code {
   position: relative;
   display: inline-block;
 }
+/* Frosted on the same terms as the modal and slide-over. This one rule is
+   every context menu in the app: .row-context-menu (showRowMenu) only adds
+   position/z-index on top of it. No containing-block hazard here the way there
+   was on the panels — a menu holds nothing but buttons. */
 .btn-dropdown-menu {
   display: none;
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
   min-width: 180px;
-  background: var(--color-surface);
+  background: var(--menu-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-panel);
   z-index: 200;
   padding: 4px 0;
 }
@@ -1336,8 +1420,12 @@ code {
   cursor: pointer;
   transition: background 0.12s;
 }
+/* --color-hover-tint, not the opaque --color-bg-secondary it used while the
+   menu was solid: a fully opaque row inside a 50% menu reads as a solid bar
+   laid over the glass. The tint token exists for exactly this (it is white-ish
+   in the dark family and black-ish in the daylight one, so it shows on both). */
 .btn-dropdown-menu button:hover {
-  background: var(--color-bg-secondary);
+  background: var(--color-hover-tint);
 }
 .btn-dropdown-menu .dropdown-heading {
   padding: 0.35rem 0.85rem 0.15rem;
@@ -1721,12 +1809,18 @@ code {
 .search-select-clear:hover { color: var(--color-text-primary); }
 
 /* ─── Tables ───────────────────────────────────────────────────────────────── */
+/* The sticky variants below are always applied ALONGSIDE this class, never
+   instead of it, so the background / border / shadow here reach every list
+   table — including the ones inside a modal or slide-over. */
 .table-wrapper {
   background: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow-x: auto;
-  box-shadow: var(--shadow-sm);
+  /* Up from --shadow-sm: a full-width table is a big enough surface to carry
+     the same lift the cards and panels have, and --shadow-md is already the
+     per-theme "this floats above the page" value. */
+  box-shadow: var(--shadow-md);
 }
 /* Sticky-header variant (Assets / Events / IPAM Blocks + Networks list
    tables): the wrapper is height-bounded to the viewport by the shared
@@ -2326,6 +2420,22 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
+/* The page-level search / filter fields. Scoped to .filter-bar rather than put
+   on the shared `input, select, textarea` rule: that one dresses every field in
+   every modal and slide-over too, and a shadow on all of them reads as clutter
+   instead of emphasis. The .sf-filter inputs in a table header are left alone
+   for the same reason — they are 20px tall and already inside a shadowed
+   .table-wrapper. */
+.filter-bar input,
+.filter-bar select,
+.filter-bar .search-select-input {
+  box-shadow: var(--shadow-control);
+}
+.filter-bar input:focus,
+.filter-bar select:focus,
+.filter-bar .search-select-input:focus {
+  box-shadow: 0 0 0 2px rgba(79,195,247,0.15), var(--shadow-control);
+}
 
 /* ─── Form Elements ────────────────────────────────────────────────────────── */
 .form-group {
@@ -2522,10 +2632,15 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 
 /* ─── Modal ────────────────────────────────────────────────────────────────── */
+/* The scrim is deliberately lighter than a solid dim: the modal itself is now
+   only 50% opaque, and its backdrop-filter samples THIS layer along with the
+   page under it. At the old .6 the half showing through the panel was very
+   nearly black, so the frosting read as "the modal got darker" instead of
+   "the page is behind it". */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.6);
+  background: rgba(0,0,0,.3);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -2545,10 +2660,22 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   z-index: 1075;
 }
 .modal {
-  background: var(--color-bg-primary);
+  /* Frosted, not solid: 50% of the panel colour over a blurred backdrop.
+     backdrop-filter here is free of the usual containing-block hazard because
+     .modal ALREADY carries a transform (the translateY reveal below), so the
+     `position: fixed` popovers mounted inside a modal body — .sf-multi-popover
+     in a TableSF header, .monitor-confirm-popover — were already resolving
+     against the modal box and are unmoved by this. Do NOT drop the transform
+     without re-checking them.
+     The backdrop-filter also needs .modal-overlay.open to land on opacity
+     EXACTLY 1: any value below it makes the overlay a backdrop root and the
+     blur would sample nothing but the scrim. */
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-panel);
   width: 100%;
   max-width: 480px;
   max-height: 85vh;
@@ -2655,7 +2782,9 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   align-items: center;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  /* Mixed to the same 50% as the panel — an opaque band inside a frosted
+     modal reads as a sticker laid on the glass. */
+  background: var(--panel-glass-chrome);
 }
 .modal-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text-primary); }
 .modal-body { padding: 1.25rem; overflow-y: auto; overscroll-behavior: contain; flex: 1 1 auto; min-height: 0; }
@@ -3444,7 +3573,12 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .modal-body > .page-tabs {
   position: sticky;
   top: 0;
-  background: var(--color-bg-primary);
+  /* Frosted like the panel it pins to, with its OWN blur: at 50% the strip no
+     longer hides what scrolls under it by opacity alone, so the blur is what
+     does the occluding the comment below assumes. */
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   z-index: 5;
   margin-left: -1.25rem;
   margin-right: -1.25rem;
@@ -3673,6 +3807,12 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 /* Tag picker (enforced mode) */
 .tag-picker {
   border: 1px solid var(--color-border);
+  /* Same ground as the Notes textarea beside it — the shared
+     `input, select, textarea` rule paints --color-bg-secondary, so naming
+     the token keeps the two matched in every theme. It had NO background at
+     all, which read fine while the modal behind it was opaque and became a
+     window onto the blurred page the moment the modal went translucent. */
+  background: var(--color-bg-secondary);
   border-radius: var(--radius-md);
   padding: 10px;
   display: flex;
@@ -3755,7 +3895,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.45);
+  /* Lightened alongside .modal-overlay's for the same reason — see there. */
+  background: rgba(0,0,0,.28);
   /* Sits above .modal-overlay (z-index 1000) so an asset details slide-in
      opened from inside a modal (Device Map topology, conflict review) is
      visible. The monitor-confirm popover (1100) still wins because it
@@ -3775,9 +3916,18 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   top: 0;
   height: 100vh;
   width: clamp(520px, 42vw, 1100px);
-  background: var(--color-bg-primary);
+  /* Frosted on the same terms as .modal — and likewise already transformed
+     (the translateX reveal), so the fixed-position popovers inside a
+     slide-over's tables are unaffected. See .modal for the full note. */
+  background: var(--panel-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border-left: 1px solid var(--color-border);
-  box-shadow: -8px 0 32px rgba(0,0,0,.4);
+  /* Directional, not --shadow-panel's halo: the slide-over is full-height and
+     pinned to the right edge, so only its LEFT edge ever casts. Deepened from
+     the pre-frosting -8px/.4 because a 50%-opaque panel needs more separation
+     from the page it now shows through to. */
+  box-shadow: -12px 0 40px rgba(0,0,0,.45), -2px 0 10px rgba(0,0,0,.3);
   transform: translateX(100%);
   transition: transform 0.25s ease;
   display: flex;
@@ -3796,7 +3946,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-header {
   padding: 1rem 1.25rem 1rem 2.5rem;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  background: var(--panel-glass-chrome);
   flex-shrink: 0;
 }
 .slideover-header-top {
@@ -3892,7 +4042,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-footer {
   padding: 0.75rem 1.25rem 0.75rem 2.5rem;
   border-top: 1px solid var(--color-border);
-  background: var(--color-bg-tertiary);
+  background: var(--panel-glass-chrome);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -4768,10 +4918,16 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   z-index: 1300;
   min-width: 176px;
   padding: 4px;
-  background: var(--color-bg-elevated, #1c1f24);
+  /* --menu-glass-bg, same as every other menu. It used to mix its own
+     --color-bg-elevated to keep a one-step-lighter ground; at these opacities
+     the blur dominates and that step was invisible, while the private mix meant
+     this one menu silently ignored a change to the shared token. */
+  background: var(--menu-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border: 1px solid var(--color-border, rgba(255,255,255,0.10));
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.40);
+  box-shadow: var(--shadow-panel);
   display: flex;
   flex-direction: column;
   gap: 1px;

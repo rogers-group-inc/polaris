@@ -72,4 +72,50 @@ under the same names.
 - **The client gate is UX, never enforcement.** Every one of these has a route-layer twin (`requirePermission` / `requireOwnership` + `assertOwnership`), and the pair must be edited together — the same rule `NAV_ITEMS` and `pageRequiredPermission` follow.
 - **Never gate on the role NAME.** `isAdmin()` and friends survive for the few places that genuinely display a role identity; a capability check on a name is wrong for every custom role and silently wrong after a rename.
 
+## Floating-surface tokens (glass, elevation)
+
+**What it is:** The one vocabulary every surface that floats above the page paints itself
+with — modal, slide-over, context menu, button dropdown — plus the elevation shadows for
+chrome that merely sits ON the page. Added 2026-09 when those surfaces went translucent;
+before that each rule picked its own background and shadow.
+
+**Canonical implementation:** the token block at the top of
+[public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body),
+`--panel-glass-chrome` (their header/footer bands), `--menu-glass-bg` (every menu),
+`--panel-glass-blur` (the `backdrop-filter` value all of them share), `--shadow-panel` (a
+frosted surface floating free of a screen edge) and `--shadow-control` (buttons, page search
+and filter fields, anything small resting on the page).
+
+**Key conventions:**
+- **Derive, never hardcode a new background.** The glass tokens are `color-mix()` declared
+  ONCE on `:root`; a custom property substitutes `var()` at the element it is declared on, and
+  every theme block also targets the root element, so each theme's own `--color-bg-*` values
+  are what get mixed. A new theme inherits the glass for free — and a new surface takes
+  `--menu-glass-bg` + `--panel-glass-blur` + `--shadow-panel` rather than inventing a mix.
+  `.widget-export-menu` mixed its own `--color-bg-elevated` for exactly one commit, which was
+  enough for it to silently ignore the next change to the shared token.
+- **The daylight pair overrides the glass, and only the glass** (panels 40%, menus 30%, in the
+  `:is([data-theme="morning"],[data-theme="noon"])` base block). A light panel over a light
+  page has far less to hide behind, so the dark family's mix reads as nearly solid there.
+- **An overlay wrapping a frosted surface must reach opacity EXACTLY 1.** Any value below it
+  makes the overlay a backdrop root, and the child's `backdrop-filter` then samples nothing but
+  the scrim. This binds every standalone overlay a stacking surface builds for itself, not just
+  the shared `#modal-overlay`.
+- **`backdrop-filter` makes an element a containing block for `position: fixed` descendants.**
+  It was free to add to `.modal` and `.slideover` only because both already carry a transform
+  for their reveal animation, so the fixed popovers mounted inside them
+  (`.sf-multi-popover` in a TableSF header, `.monitor-confirm-popover`) were already resolving
+  against the panel. Dropping either transform now moves those popovers.
+- **`box-shadow` replaces, it does not compose.** Every `:focus` rule on an element carrying
+  `--shadow-control` re-states the shadow after the focus ring, or the field visibly flattens
+  the moment it is focused.
+- **In the dark family the drop shadow is the inset rim.** The nightfall ground is `#0d0d1c`,
+  so a black shadow has almost nothing to darken and stays invisible however far its alpha is
+  pushed; `--shadow-control`'s third layer is a 1px inset top highlight, and that is what
+  actually reads as raised. Any future elevation token for the dark themes needs the same.
+- **A transparent box inside a frosted panel becomes a window.** `.tag-picker` declared a
+  border and no background, which was invisible while modals were opaque and showed the
+  blurred page through the tag chips the moment they were not. When adding a container inside
+  a panel, name a background token even when the panel's own colour looks right.
+
 ## Theme-paired image asset with one resolver
