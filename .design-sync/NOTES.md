@@ -1,5 +1,13 @@
 # Claude Design sync — repo notes
 
+**Entry point: `/design-sync`** (the bundled skill). It reads this file and
+`config.json` before doing anything and honors what it finds, which is why everything
+Polaris-specific about this sync lives here rather than in a project skill. There was a
+`/polaris-design-sync` skill; it was retired 2026-09-11 as a duplicate layer, and its
+unique content — the trigger table, the upload procedure, the detail-routing table — was
+folded into this file in the same commit. **Keep it here.** If a future session finds the
+sync under-documented, the fix is a section in this file, not a new skill.
+
 ## Read this first: the converter does not apply here
 
 `/design-sync`'s converter (both the storybook and package shapes) needs a built JS
@@ -30,6 +38,48 @@ resolve to nothing.
 
 Stage 2 — a thin React wrapper package over these classes, to live in `design-kit/` in
 this repo — was scoped and deferred, not rejected. Decision recorded 2026-09-09.
+
+## What triggers a re-sync
+
+| Change | Re-sync? |
+|---|---|
+| the external kit lifted into `design/css/` (a `docs(design): sync the kit` commit) | **yes** — this is the trigger |
+| a card added or edited in `.design-sync/cards/` | yes |
+| `.design-sync/conventions.md` edited | yes |
+| a new theme id, or a token renamed in the kit | yes, and re-validate every name in the conventions header |
+| `public/css/styles.css` changed and `design/` did not | **no** — see Re-sync risks |
+
+Check the kit actually moved before rebuilding: `git log --oneline -- design/css/`, and
+compare the `design/` tree hash against the last upload (`git rev-parse <sync-commit>:design`).
+Identical hash means a re-sync would upload the same bytes.
+
+## The upload procedure
+
+1. **Build.** `node .design-sync/build.mjs` from the repo root. It wipes and rebuilds
+   `ds-bundle/`, which is gitignored and never a source — edit the inputs, never the output.
+2. **Validate** (see Verification below) *before* uploading. The published copy is what
+   other people design against.
+3. **Authorize.** `DesignSync(list_projects)`. If it refuses, stop and ask for
+   `/design-login` from a standalone terminal — it cannot be granted from a VS Code session.
+4. **Confirm the target type.** `DesignSync(get_project)` must report
+   `type: PROJECT_TYPE_DESIGN_SYSTEM`. That type is immutable at creation, so pushing to a
+   regular project never makes it a design system.
+5. **Plan, then write.** `finalize_plan` with `localDir` set to the absolute `ds-bundle/`
+   path and every file listed in `writes` (`deletes` is required even when empty), then
+   `write_files` with a `localPath` per file so contents never pass through context.
+6. **Verify.** `DesignSync(list_files)` and count what landed.
+7. **Record.** A *new* project's id goes into `config.json` and the Status section below in
+   the same commit. A re-sync overwrites in place against the existing `projectId` and
+   changes neither.
+
+## Where the detail lives
+
+| You need | Read |
+|---|---|
+| the class and token vocabulary shipped to the design agent | `.design-sync/conventions.md` |
+| how the bundle is assembled, and what is generated vs copied | `.design-sync/build.mjs` |
+| the portable UI contract itself (tokens, themes, shell, tables, modals, badges, z-index) | `design/POLARIS-UI-GUIDE.md` — a drop-in zone, never edited in this repo |
+| which file in *this* repo implements a UI pattern | the `polaris-ui-canon` skill |
 
 ## Gotchas found while building this
 

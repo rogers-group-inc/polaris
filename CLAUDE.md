@@ -10,7 +10,7 @@ Version policy: `<major>.<minor>` lives in `package.json` and is the single sour
 
 ## Skills — where the project memory lives
 
-This file is the always-loaded floor. Everything deeper lives in twelve project skills under
+This file is the always-loaded floor. Everything deeper lives in eleven project skills under
 `.claude/skills/` and loads on demand — each `SKILL.md` routes to its `references/` with
 "read X when Y" tables. **Load the skill before you design, not at commit time**: the
 invariants and "when changing this" checklists are what make a change land right the first time.
@@ -28,12 +28,12 @@ invariants and "when changing this" checklists are what make a change land right
 | `polaris-worktree-workflow` | the start of every coding task; "worktree", "lock", "dev environment", "merge", "push" | auto + `/polaris-worktree-workflow` |
 | `polaris-deploy` | a task is done: it runs docs-sync, audits deploy surfaces, commits, merges and pushes; env vars, systemd/nginx/Docker, the updater | `/polaris-deploy` only |
 | `polaris-docs-sync` | a commit made outside `/polaris-deploy`; after `check:docs` fails | `/polaris-docs-sync` only |
-| `polaris-design-sync` | publishing the UI kit to the Claude Design project; after the external kit is lifted into `design/` | `/polaris-design-sync` only |
 
 In-place references the skills point at: `.env.example` (runtime variables, with comments),
 `docs/INSTALL.md` (install + disk sizing), `DEVELOPMENT.md` (local dev stack),
 `design/POLARIS-UI-GUIDE.md` (the portable UI contract — a drop-in zone, never edited here),
-`agent/README.md`, `CONTRIBUTING.md`.
+`.design-sync/NOTES.md` (shipping the UI kit to Claude Design — triggers, procedure, auth
+gate; `/design-sync` reads it), `agent/README.md`, `CONTRIBUTING.md`.
 
 External plugins (separate repos; clone, then `claude --plugin-dir <clone>`):
 `fortinet-api-conventions` — https://github.com/davidmoore-rogers/fortinet-api-conventions (FortiManager / FortiOS / FortiSwitch / FortiAP API traps) and
