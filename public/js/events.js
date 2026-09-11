@@ -1099,7 +1099,7 @@ function getAlertsFormData() {
       "<th>Previous gate</th><th>Now serving</th><th>Status</th></tr></thead>" +
       "<tbody>" + rows + "</tbody></table></div>" +
       '<div style="padding:0.5rem 0.75rem;display:flex;gap:0.5rem;align-items:center">' +
-      '<button class="btn btn-primary btn-sm" data-chassis-migrate="' + id + '">Copy selected to the new gate</button>' +
+      '<button class="btn btn-primary btn-sm" data-chassis-migrate="' + escapeHtml(id) + '">Copy selected to the new gate</button>' +
       '<span style="color:var(--color-text-tertiary);font-size:0.75rem">' +
       "Copied reservations are queued for push when DHCP push is enabled." +
       "</span></div>";

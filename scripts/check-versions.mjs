@@ -572,7 +572,9 @@ const UNVERSIONED = [
     // server newer than itself: setup-rhel-nodb.sh installed exactly this and
     // every backup on such a host failed with "server version mismatch" while
     // `command -v pg_dump` said all was well (prod, 2026-09-09).
-    re: /dnf install -y postgresql(?![0-9"${}\w-])/g,
+    // No `0-9` in the lookahead class: `\w` already covers the digits, and
+    // spelling both made it an "overly large range" (js/overly-large-range).
+    re: /dnf install -y postgresql(?!["${}\w-])/g,
     what: "the PostgreSQL client tools",
     pinned: "postgresql${PG_MAJOR} from PGDG (17 today) — RHEL 9's unversioned AppStream package is PostgreSQL 13, and pg_dump refuses a server newer than itself",
     pairedWith: /dnf install -y "?postgresql(?:\$\{PG_(?:CLIENT_)?MAJOR\}|1\d)\b/,
