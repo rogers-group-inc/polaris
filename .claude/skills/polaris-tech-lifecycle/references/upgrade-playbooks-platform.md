@@ -93,9 +93,35 @@ Restore a production-sized backup onto the new major and compare the capacity sn
 (hypertable list, chunk count, database size) against the old one. CI cannot help: its Postgres
 has no TimescaleDB.
 
+### On Docker / Unraid
+Steps 3, 4, 6, 7 and 8 above assume packages and systemd units, and none of them exist when
+PostgreSQL is its own container: the image carries exactly one major's binaries, there is no
+side-by-side install and no `pg_upgrade`. The move is **dump → restore into a NEW container with
+a NEW data directory**, with the old container kept as the rollback; a tag swap over the existing
+data directory exits on `database files are incompatible with server`, and a copy of the old
+appdata restores only back into the old major. The full operator procedure is `docs/INSTALL.md` →
+*On Docker / Unraid, where PostgreSQL is its own container*.
+
+Two of its traps are worth knowing before you advise on one, because both are silent until
+cutover and neither exists on the scripted path:
+
+- **A new data directory is a new `postgresql.conf`.** Every tuning value is gone. `ssl` and
+  `max_connections` are the two that fail rather than merely under-perform: if the old container
+  had TLS and the new one does not, the unchanged `DATABASE_URL` dies on
+  `The server does not support SSL connections` (node-postgres asks, the server refuses, no
+  fallback), and `max_connections` reverts to the image default of 100. On Docker both are set
+  as server flags on the container's arguments (`-c ssl=on -c max_connections=150`), not by
+  editing a file the image does not keep.
+- **Adopting TimescaleDB is cheapest during this move** when the source has none, because the
+  hard part — matching extension versions across the restore — only exists when the source
+  already has it. Restore the plain dump, `CREATE EXTENSION timescaledb`, and let Polaris convert
+  the sample tables on its next boot (5–15 min on a database with weeks of samples).
+
 ### Rollback
 Keep the old data directory and the old major installed until the new one has run a full
 retention cycle. Rollback is "point the units back", which is why keeping both installed matters.
+On Docker it is "stop the new container, start the old one, point `DATABASE_URL` back", which
+works for exactly as long as you keep the old container and its appdata.
 
 ## TimescaleDB
 
