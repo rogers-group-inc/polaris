@@ -3796,6 +3796,12 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 /* Tag picker (enforced mode) */
 .tag-picker {
   border: 1px solid var(--color-border);
+  /* Same ground as the Notes textarea beside it — the shared
+     `input, select, textarea` rule paints --color-bg-secondary, so naming
+     the token keeps the two matched in every theme. It had NO background at
+     all, which read fine while the modal behind it was opaque and became a
+     window onto the blurred page the moment the modal went translucent. */
+  background: var(--color-bg-secondary);
   border-radius: var(--radius-md);
   padding: 10px;
   display: flex;
