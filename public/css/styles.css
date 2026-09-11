@@ -59,8 +59,15 @@
      floating over it — buttons and the page-level search / filter fields.
      Deliberately tighter than --shadow-sm is soft: these are 20-36px tall, so
      a wide halo just muddies the ground under them. Per theme for the same
-     reason every other shadow is: a black cast is grubby on the daylight pair. */
-  --shadow-control: 0 2px 6px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.3);
+     reason every other shadow is: a black cast is grubby on the daylight pair.
+     The third layer is an inset TOP RIM, and it is what actually makes these
+     read as raised in the dark family: the page ground there is #0d0d1c, so a
+     black drop shadow has almost nothing to darken and stays invisible however
+     far its alpha is pushed. A 1px light edge is how a dark UI shows
+     elevation. In the daylight pair the drop does the work and the white rim
+     is all but invisible, which is correct — it is kept in every theme so the
+     token stays one value rather than a per-family fork. */
+  --shadow-control: 0 3px 8px rgba(0,0,0,.85), 0 1px 3px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.08);
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -75,8 +82,10 @@
   /* Same glass for context menus and button dropdowns, off --color-surface,
      which is the ground those already stood on. Same 50% and the same
      --panel-glass-blur, so a row menu opened over a frosted modal reads as the
-     same material rather than a second, different kind of translucency. */
-  --menu-glass-bg: color-mix(in srgb, var(--color-surface) 50%, transparent);
+     same material rather than a second, different kind of translucency. Thinner
+     than the panels' 50% by choice — a menu is small and short-lived, so it can
+     show more of what it covers without costing legibility. */
+  --menu-glass-bg: color-mix(in srgb, var(--color-surface) 40%, transparent);
   /* Slight, not heavy: enough to smear text under the panel illegible while
      leaving shapes and colour behind it recognisable. saturate() compensates
      for the wash-out a large blur radius causes. */
@@ -118,7 +127,7 @@
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
-  --shadow-control: 0 2px 6px rgba(0,0,0,.12), 0 1px 2px rgba(0,0,0,.08);
+  --shadow-control: 0 2px 5px rgba(0,0,0,.18), 0 1px 2px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.6);
 }
 /* The five headings that used to hardcode #fff and needed rescuing here now
    paint var(--color-text-primary) directly, so this block is gone. Pure white
@@ -247,7 +256,7 @@ code {
   --shadow-sm: 0 1px 4px rgba(70,50,20,.10);
   --shadow-md: 0 8px 32px rgba(70,50,20,.16);
   --shadow-panel: 0 24px 64px rgba(70,50,20,.24), 0 2px 10px rgba(70,50,20,.14);
-  --shadow-control: 0 2px 6px rgba(70,50,20,.16), 0 1px 2px rgba(70,50,20,.10);
+  --shadow-control: 0 2px 5px rgba(70,50,20,.22), 0 1px 2px rgba(70,50,20,.14), inset 0 1px 0 rgba(255,255,255,.55);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -276,7 +285,7 @@ code {
   --shadow-sm: 0 1px 4px rgba(40,20,10,.10);
   --shadow-md: 0 8px 32px rgba(40,20,10,.18);
   --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
-  --shadow-control: 0 2px 6px rgba(40,20,10,.18), 0 1px 2px rgba(40,20,10,.11);
+  --shadow-control: 0 2px 5px rgba(40,20,10,.24), 0 1px 2px rgba(40,20,10,.15), inset 0 1px 0 rgba(255,255,255,.6);
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -308,7 +317,7 @@ code {
   --shadow-sm: 0 1px 4px rgba(0,0,0,.4);
   --shadow-md: 0 8px 32px rgba(0,0,0,.6);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.7), 0 2px 10px rgba(0,0,0,.5);
-  --shadow-control: 0 2px 6px rgba(0,0,0,.55), 0 1px 2px rgba(0,0,0,.35);
+  --shadow-control: 0 3px 8px rgba(0,0,0,.9), 0 1px 3px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.08);
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
@@ -4895,7 +4904,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   /* Mixed off its OWN --color-bg-elevated rather than reusing --menu-glass-bg,
      so this menu keeps the one-step-lighter ground it has always had and only
      gains the glass. */
-  background: color-mix(in srgb, var(--color-bg-elevated, #1c1f24) 50%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated, #1c1f24) 40%, transparent);
   -webkit-backdrop-filter: var(--panel-glass-blur);
   backdrop-filter: var(--panel-glass-blur);
   border: 1px solid var(--color-border, rgba(255,255,255,0.10));
