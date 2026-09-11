@@ -311,6 +311,13 @@ code {
   flex-shrink: 0;
   background: var(--color-bg-tertiary);
   border-right: 1px solid var(--color-border);
+  /* Cast RIGHT, onto the content area — the sidebar is full-height and the
+     leftmost element of .layout, so that is the only edge with anything to
+     separate from. Same one-sided idiom (and same hardcoded rgba, dark in
+     every theme) as the slide-over's; it lands above the content without a
+     z-index change because .sidebar is already z-index 100, and the
+     element's own overflow-y does not clip its own shadow. */
+  box-shadow: 8px 0 24px rgba(0,0,0,.22), 1px 0 4px rgba(0,0,0,.14);
   padding: 1.25rem 0;
   position: sticky;
   top: 0;
