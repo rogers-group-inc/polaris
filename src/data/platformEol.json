@@ -372,6 +372,8 @@
         "Check the TimescaleDB package for the target major exists (timescaledb-2-postgresql-N) before planning anything else.",
         "Take a verified backup and confirm a restore into a scratch database first.",
         "Install the target major side by side from PGDG, then pg_upgrade (or dump/restore for a small install).",
+        "On Docker, steps 3 and 5-7 do not apply: the image carries one major's binaries, so it is dump then restore into a NEW container with a NEW data directory, with the old container kept as the rollback. A tag swap over the existing data directory refuses to start, and a copy of the old appdata restores only back into the old major. See docs/INSTALL.md - On Docker / Unraid, where PostgreSQL is its own container.",
+        "On Docker, remember a new data directory is a new postgresql.conf: ssl and max_connections revert to the image defaults, and both are set as container arguments (-c ssl=on -c max_connections=N), not in a file the image keeps. If the old container had TLS and the new one does not, the unchanged DATABASE_URL fails on 'The server does not support SSL connections'.",
         "Re-run the timescaledb extension update and confirm every hypertable and chunk survived.",
         "Rewrite the per-host drop-in /etc/systemd/system/<unit>.d/20-postgres.conf with the new unit name - the SHIPPED units name no PostgreSQL unit and must not be edited. On Windows, the service name and the bin-path probe list.",
         "Bump PG_MAJOR / PG_CLIENT_MAJOR in every setup script (RHEL, Ubuntu and both -nodb variants), plus the installer pin on Windows. All four are checked by check:versions.",

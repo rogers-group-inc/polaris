@@ -191,7 +191,7 @@ After the script finishes the app is live at `http://<server-ip>:3000` — log i
 docker pull ghcr.io/rogers-group-inc/polaris:latest
 ```
 
-Multi-stage image, ~940 MB, x86_64. PostgreSQL is **not** included — run a `postgres:17` container alongside it (or point at any reachable Postgres). Expose container port `3000` (HTTP-only; terminate TLS in a reverse proxy in front of the container — see `docker-compose.yml` for the nginx-fronted reference stack). All persistent state lives under `/app/state`, so a single bind mount is enough:
+Multi-stage image, ~940 MB, x86_64. PostgreSQL is **not** included — run a `postgres:17` container alongside it (or point at any reachable Postgres). Already running an older major in a container? Changing the image tag is not an upgrade — see [docs/INSTALL.md → On Docker / Unraid, where PostgreSQL is its own container](docs/INSTALL.md#on-docker--unraid-where-postgresql-is-its-own-container). Expose container port `3000` (HTTP-only; terminate TLS in a reverse proxy in front of the container — see `docker-compose.yml` for the nginx-fronted reference stack). All persistent state lives under `/app/state`, so a single bind mount is enough:
 
 | Container path | Host path | Notes |
 |---|---|---|

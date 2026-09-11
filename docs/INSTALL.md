@@ -1155,6 +1155,152 @@ On **Ubuntu/Debian**, the same shape with `pg_upgradecluster 15 main` after inst
 `postgresql-17` from PGDG, and the drop-in stays `postgresql.service` throughout — Debian's
 wrapper follows whichever cluster is configured.
 
+#### On Docker / Unraid, where PostgreSQL is its own container
+
+None of the above applies: there are no packages to install side by side and no `pg_upgrade` to
+run, because the official image ships exactly one major's binaries. The move is a **dump and
+restore into a new container with a new data directory**, and the old container is the rollback.
+
+**A tag swap is not an upgrade.** Point a `postgres:17` image at a data directory `initdb`
+created under 15 and it exits immediately with `database files are incompatible with server` —
+the entrypoint deliberately refuses to convert it. Nothing is destroyed and flipping the tag
+back brings 15 up again, but the upgrade never happens on its own. For the same reason, a copy
+of the old appdata directory is a **rollback artifact, not a migration artifact**: it can only
+ever be restored back into 15.
+
+Polaris is down from step 3 to step 8. The dump and the restore are the clock, and they scale
+with sample volume rather than asset count.
+
+1. **Take stock.** `docker exec -it <pg15> psql -U polaris -d polaris -c '\dx'` — note whether
+   `timescaledb` is present, and if so its exact `extversion`. Record `POSTGRES_USER` /
+   `POSTGRES_PASSWORD` / `POSTGRES_DB`, the network and port, any tuning you applied, and the
+   row counts on `assets` and `asset_monitor_samples` as your before-figure for step 7.
+
+2. **Back up.** Server Settings → **Maintenance** writes to `data/backups/` on the bind mount.
+   Two things about that file: it is named by backup **id** (`bk-<epoch-ms>`), not by the
+   `polaris-backup-<version>-<timestamp>.gz` name shown in the UI, and it is gzipped plain SQL
+   (or AES-256-GCM behind a `POLARIS\0` header if you set a passphrase, in which case only the
+   in-app Restore card can read it). Take it immediately before step 3 — Polaris keeps
+   collecting until it stops, and anything written after the backup does not make the trip.
+   Copy `/mnt/user/appdata/polaris` off the host too: it holds `.env`, and `.env` holds
+   `POLARIS_SECRET_KEY`, without which every stored credential in the restored database is
+   undecryptable.
+
+3. **Stop the Polaris container.** Leave PostgreSQL 15 running — you still have to read from it.
+
+4. **Create the 17 container against a NEW appdata path**, with the same `POSTGRES_USER` /
+   `POSTGRES_PASSWORD` / `POSTGRES_DB` and on the same network. Give it a temporary host port so
+   it cannot collide with 15. Use `timescale/timescaledb:<ver>-pg17` if you have the extension
+   (match the version from step 1 and `ALTER EXTENSION timescaledb UPDATE;` afterwards — 2.28.x
+   was the last line supporting PostgreSQL 15 and 2.29 dropped it, so check the overlap before
+   you pick a tag), otherwise `postgres:17`.
+
+5. **Restore.** With no TimescaleDB in the *source*, the dump contains no hypertable metadata
+   and needs no `timescaledb_pre_restore()` / `post_restore()` bracketing:
+
+   ```bash
+   # gzipped plain SQL, from an unencrypted in-app backup
+   gunzip -c /mnt/user/appdata/polaris/data/backups/bk-<id> \
+     | docker exec -i <pg17> psql -U polaris -d polaris \
+         --no-psqlrc --quiet --single-transaction -v ON_ERROR_STOP=1
+
+   # custom-format dump taken with an external `pg_dump -Fc`
+   docker run --rm -it --network <net> -v /mnt/user/backups:/out \
+     postgres:17 pg_restore -h <pg17> -U polaris -d polaris \
+     --no-owner --no-privileges /out/polaris-pg15.dump
+   ```
+
+   Those psql flags are the ones `backupService` uses: `--single-transaction` with
+   `ON_ERROR_STOP=1` means the restore commits or rolls back as one unit, so a failure leaves an
+   empty database to retry into rather than a half-populated one. Early
+   `NOTICE: ... does not exist, skipping` lines are the dump's `DROP ... IF EXISTS` statements
+   meeting an empty database. If the source *did* have TimescaleDB, bracket the restore per
+   *Restoring* below — that pair is not optional and skipping it leaves hypertables whose chunks
+   are invisible.
+
+6. **Adopting TimescaleDB during the move** (source had none) is the cheapest it will ever be,
+   because the hard part — matching extension versions across the restore — only exists when the
+   source already has it. Restore the plain dump first, then
+   `CREATE EXTENSION IF NOT EXISTS timescaledb;`, and let Polaris convert the sample tables to
+   hypertables on its first boot in step 8. `\dx` afterwards shows `plpgsql`, `pg_trgm` and
+   `timescaledb`.
+
+7. **Verify against the still-running 15, then ANALYZE.** Compare the step-1 counts:
+
+   ```bash
+   docker exec -it <pg17> psql -U polaris -d polaris \
+     -c "SELECT (SELECT count(*) FROM assets) AS assets,
+                (SELECT count(*) FROM asset_monitor_samples) AS samples;"
+   docker exec -it <pg17> psql -U polaris -d polaris -c 'ANALYZE;'
+   ```
+
+   `assets` must match exactly; `asset_monitor_samples` may be slightly higher on 15 if anything
+   was collected between the backup and the stop. The `ANALYZE` is not housekeeping — a restored
+   database has no planner statistics, and without it the first hours on 17 look like a
+   performance regression that is not real.
+
+8. **Cut over.** Stop the 15 container, then edit `DATABASE_URL` in
+   `/mnt/user/appdata/polaris/.env` (owned by uid 1000 after the entrypoint's first-boot
+   `chown`, so `sudo`) to name the new host — see *What the new container does not inherit*
+   below before you decide what to do with `sslmode`. Start Polaris and watch the container log
+   for `[entrypoint] Applying Prisma migrations`, which should be a no-op; a container that
+   stays up means it passed, because the entrypoint exits fatally rather than run against a
+   stale schema. If you adopted TimescaleDB in step 6, the hypertable conversion runs on this
+   boot and takes 5–15 minutes on a database that has been collecting for weeks. Then log in,
+   open an asset with monitoring history (proves the samples arrived and, with Timescale, that
+   the chunks are visible), and hit **Test** on one integration (proves `POLARIS_SECRET_KEY`
+   still decrypts).
+
+9. **Keep the 15 container and its appdata** until 17 has run a full retention cycle. Rollback
+   is "stop 17, start 15, point `DATABASE_URL` back", and it works for exactly as long as you
+   keep them.
+
+##### What the new container does not inherit
+
+A new data directory means a brand-new `postgresql.conf`. Everything you tuned on the old
+container is gone, and two of those defaults will bite you rather than merely under-perform.
+
+**TLS.** If the old container had `ssl = on` and the new one does not, the `DATABASE_URL` that
+worked yesterday fails at step 8 with `The server does not support SSL connections` —
+node-postgres asks for TLS, the server refuses, and there is no fallback. Check
+`SHOW ssl;` on the new container. Either drop the `sslmode` parameter from the URL (the
+connection then runs in the clear, which on a single host over a private bridge network is a
+defensible posture — but it *is* a change, so make it deliberately), or enable TLS:
+
+```bash
+# 1. A self-signed cert in the data directory. PostgreSQL resolves the default
+#    ssl_cert_file / ssl_key_file relative to PGDATA, so this needs no path config
+#    and persists, because that directory is the appdata bind mount.
+cd /mnt/user/appdata/<pg17-appdata>
+openssl req -new -x509 -days 3650 -nodes -text \
+  -out server.crt -keyout server.key -subj "/CN=polaris-db"
+
+# 2. Ownership, from inside the container. Unraid's appdata defaults to nobody:users,
+#    and PostgreSQL refuses to start on "private key file has group or world access".
+docker exec -u root <pg17> sh -c \
+  'chown postgres:postgres /var/lib/postgresql/data/server.crt /var/lib/postgresql/data/server.key \
+   && chmod 600 /var/lib/postgresql/data/server.key'
+
+# 3. Turn it on — Unraid: the container's "Post Arguments" field.
+-c ssl=on
+```
+
+A self-signed certificate is what the first-run wizard's **Allow self-signed certificate**
+toggle is for, and `sslmode=no-verify` in the URL is the correct value to keep. It reaches
+`pg_dump` and `psql` correctly — see *`pg_dump`: invalid sslmode value "no-verify"* above and
+business rule 51.
+
+**`max_connections`.** The image default is 100, and Polaris needs roughly
+`(prismaPool + pgbossPool) / 0.65`. Server Settings → Maintenance → **Capacity Advisor** shows
+the recommendation but marks the row *manual*, because Polaris cannot edit `postgresql.conf`.
+On Docker, set it the same way as TLS — append to the container's arguments and restart:
+
+```
+-c ssl=on -c max_connections=150
+```
+
+Confirm with `SHOW max_connections;`; the Advisor row flips to an OK pill once it agrees.
+
 ### Upgrading a legacy single-process install
 
 Installs provisioned before the Phase 3 cutover ran a single
