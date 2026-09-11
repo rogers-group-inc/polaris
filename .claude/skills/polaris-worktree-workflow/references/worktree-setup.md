@@ -72,7 +72,11 @@ verify on the new base (`prisma generate`, `typecheck`, unit suite) before pushi
 
 ## Reference
 
-The `EnterWorktree` tool refuses complex compound shell commands that name `git` (it cannot
-verify they stay inside the worktree). Run git as plain, separate commands from the worktree
-root, and keep the Bash tool's persistent cwd there (`cd` back explicitly after any `cd` into a
-subdirectory).
+A worktree-isolated session's Bash guard refuses any command it cannot statically prove stays
+inside the worktree — and that is **wider than "compound commands naming `git`"**, which is how
+this was described until 2026-09-11. A plain `cat >> file <<'EOF' … EOF` heredoc, naming no git
+and touching nothing outside the worktree, is refused on its own with *"too complex to verify
+that it stays inside the worktree"*; so is that heredoc chained to anything else. Appending to a
+file is therefore an `Edit` (anchor on the last existing block), not a shell append. Run git as
+plain, separate commands from the worktree root, and keep the Bash tool's persistent cwd there
+(`cd` back explicitly after any `cd` into a subdirectory).
