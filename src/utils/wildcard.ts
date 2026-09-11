@@ -57,13 +57,19 @@ export function compileWildcard(pattern: string): RegExp {
   }
   const hit = compiledWildcards.get(pattern);
   if (hit) return hit;
-  let out = "";
-  for (const ch of pattern) {
-    if (ch === "*") out += ".*";
-    else if (ch === "?") out += ".";
-    else if ("^$.|+()[]{}\\".includes(ch)) out += "\\" + ch;
-    else out += ch;
-  }
+  // Escape first, then translate the two wildcards — identical output to the
+  // char-by-char switch this replaces (the escape pass escapes the same set and
+  // can never emit a `*` or `?`, so the translate passes only ever see the
+  // operator's own wildcards). Written this way because it is the house idiom
+  // for glob-to-regex (nocDashboardService, notificationEngine, snmpIdentity)
+  // and because a loop is opaque to static analysis: CodeQL could not see the
+  // escaping at all and raised js/regex-injection on the compile below — an
+  // alert that, left standing, would have masked the raw-regex path in
+  // compilePattern, which is the one site here that genuinely is unescaped.
+  const out = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
   try {
     const re = new RegExp("^" + out + "$");
     if (compiledWildcards.size >= COMPILED_CACHE_MAX) compiledWildcards.clear();

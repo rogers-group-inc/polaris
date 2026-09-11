@@ -38,6 +38,7 @@ under the same names.
 
 **When adding a new instance:**
 - Reuse `escapeHtml` / `mobileFormatDate` from `api.js` directly — they're global. Only fork a copy if your page genuinely doesn't load `api.js` (today only the setup wizard), and leave a comment saying why.
+- **"A dynamic value" includes attribute values, and includes ids you wrote yourself and read back.** The renderer that builds a `data-*` attribute, then a handler that pulls it out with `getAttribute` and feeds it to the next render, is a round trip that looks internal and isn't — CodeQL calls it `js/xss-through-dom`, and it caught exactly that in the chassis-diff panel in [public/js/events.js](public/js/events.js), where every cell was escaped and the `data-chassis-migrate` id on the button was not. Escaping the write side is enough and does not double-escape: the parser decodes the attribute, so `getAttribute` still returns the original value.
 - Need a debounce on a desktop list page? Use `table-sf.js`'s `debounce`. On mobile, follow `debounceSearch` in `mobile/tabs.js`.
 - Coloring a status surface? Pick the existing palette (`MONITOR_STATE_COLORS` for flat pills, `HEALTH_NODE_COLORS` for graph nodes) instead of minting new hex values.
 - Generating a MAC for a reservation? Call `window.PolarisPlaceholderMac.generate(prefix)` and pass the prefix off the IP-panel payload (`subnet.macPlaceholderPrefix`). Never hand-roll one — a MAC outside the configured prefix is invisible to discovery's adoption pass, which is the whole point of generating it.

@@ -103,6 +103,8 @@
     "qs": "^6.16.0",
     "fflate": "^0.8.3",
     "@xmldom/xmldom": "^0.8.15",
-    "fast-uri": "^3.1.7"
+    "fast-uri": "^3.1.7",
+    "mysql2": "^3.24.4",
+    "deepmerge-ts": "^8.0.2"
   }
 }
