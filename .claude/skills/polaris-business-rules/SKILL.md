@@ -1,6 +1,6 @@
 ---
 name: polaris-business-rules
-description: "The 50 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups, SSH host keys, login restriction, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
+description: "The 51 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups and the database sslmode handed to pg_dump/psql, SSH host keys, login restriction, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
 user-invocable: false
 ---
 
@@ -12,7 +12,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(51 is the next free number.)
+(52 is the next free number.)
 
 ## How to read
 
@@ -23,7 +23,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 | touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38 |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46 |
 | touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45 |
-| touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43, 47 |
+| touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43, 47, 51 |
 | touch Polaris Agent install, upgrade or its stored credential | 43, 49 |
 | add or retire a rule | the numbering paragraph above; add the invariant to the right `invariants-*.md`, the narrative to the right `narrative-*.md`, and cite the number from code. **Never rename the reference files** — `invariants-30-43.md` / `narrative-36-43.md` keep their names whatever range they hold, since other skills and code link to them. **Re-check the next free number on `main` at merge time**: another worktree may have taken it while yours was open, and the branch merging second renumbers (the merge protocol says how) |
 

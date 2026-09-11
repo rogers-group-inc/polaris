@@ -261,6 +261,52 @@ Package removal leaves data directories alone — the PGDG cluster under
 Do **not** work around it with a symlink in `/usr/local/bin`; the comment in
 `deploy/setup-rhel.sh` explains how that shadows the alternatives system on the next major.
 
+---
+
+## `pg_dump`: invalid sslmode value "no-verify"
+
+```
+pg_dump: error: invalid sslmode value: "no-verify"
+```
+
+Same operator-facing symptom as the section above — **Backup failed: Database backup failed —
+see the server log for details** — and a different cause. The client is fine; the connection
+parameters were in the wrong vocabulary.
+
+`DATABASE_URL` is read by node-postgres, which accepts `sslmode=no-verify` ("encrypt, do not
+validate the certificate"). libpq — what `pg_dump` and `psql` use — does not: it takes only
+`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`. The first-run wizard writes
+`no-verify` whenever **Allow self-signed certificate** is ticked, so any install created that
+way against a TLS-enabled database hit it on *every* backup — manual, scheduled and pre-update —
+and on restore.
+
+Affected installs are the ones that connect by URL: **Docker / Unraid, and any install pointed
+at a remote or containerised PostgreSQL**. The scripted RHEL and Ubuntu installs are structurally
+immune — `deploy/update-linux.sh` dumps over a unix socket as the local `postgres` user and never
+builds a URL.
+
+**Fixed in-app** (business rule 51): `libpqSslMode()` in `src/utils/pgEnv.ts` translates
+`no-verify` to libpq's `require`, which has the identical security posture — only `verify-ca`
+and `verify-full` validate the chain. Update Polaris and the backup works with no configuration
+change. Your `DATABASE_URL` is correct as written and should be left alone.
+
+**If you cannot update yet**, the only safe workaround depends on whether the server actually
+uses TLS:
+
+```bash
+docker exec -it <postgres-container> psql -U polaris -d polaris -c "SHOW ssl;"
+```
+
+- `off` — the parameter is doing nothing. Remove `?sslmode=no-verify` from `DATABASE_URL` in
+  `/app/state/.env` and restart.
+- `on` — leave it. Editing it to `require` fixes `pg_dump` and breaks the app: node-postgres
+  reads `require` as *validate the chain*, which a self-signed certificate cannot satisfy, so
+  Prisma and pg-boss stop connecting. Take backups with an external client
+  (`pg_dump` defaults to `sslmode=prefer`) until you can update.
+
+Setting `PGSSLMODE` in the environment does not help either — `pgChildEnv` applies the URL's
+overlay last and deliberately overwrites any inherited `PG*` variable.
+
 ## Disk sizing — read this first
 
 The single most common operational footgun on a fresh Polaris install is undersized `/var` (Linux) or undersized `C:` (Windows) — both are where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.
