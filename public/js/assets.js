@@ -16398,13 +16398,17 @@ function macAddressesViewHTML(macAddresses) {
   var rows = shown.map(function (m) {
     var sourceLabel = formatMacSource(m.source);
     var count = macEntryCount(m);
+    // Source/date first, MAC last and flush right (margin-left:auto): the value
+    // column is right-aligned, so keeping the address as the trailing item lines
+    // every MAC up on the same edge instead of letting a longer description
+    // shove it sideways as the slide-over is resized.
     return '<div style="display:flex;gap:12px;align-items:center;padding:3px 0">' +
-      '<code class="copy-cell" style="font-size:0.82rem" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</code>' +
-      '<span style="font-size:0.75rem;color:var(--color-text-tertiary)">' +
+      '<span style="font-size:0.75rem;color:var(--color-text-tertiary);min-width:0">' +
         (count > 1 ? count + ' MACs &middot; ' : '') +
         (sourceLabel ? escapeHtml(sourceLabel) : '') +
         (m.lastSeen ? (sourceLabel ? ' &middot; ' : '') + formatDate(m.lastSeen) : '') +
       '</span>' +
+      '<code class="copy-cell" style="font-size:0.82rem;margin-left:auto;flex-shrink:0;white-space:nowrap" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</code>' +
     '</div>';
   }).join("");
 
