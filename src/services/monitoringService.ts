@@ -2267,7 +2267,7 @@ function fortinetUptimeSecondsFromStatus(res: any): number | null {
 // probe rate stays bounded by controller-count, not device-count — important
 // for FMG proxy mode (concurrency = 1).
 
-interface FortinetControllerEntry {
+export interface FortinetControllerEntry {
   /** True when the controller reports this device as currently online. */
   connected: boolean;
   /** Raw status string the controller reported, surfaced in failure errors. */
@@ -2282,7 +2282,7 @@ interface FortinetControllerEntry {
   apTelemetry?: import("../utils/fortiapMonitorRow.js").FortiapTelemetrySnapshot;
 }
 
-interface FortinetControllerFetchResult {
+export interface FortinetControllerFetchResult {
   inventory: Map<string, FortinetControllerEntry>;
   /**
    * Wall-clock duration of the upstream call that produced this inventory.
@@ -2461,7 +2461,21 @@ function unwrapFortiosRows(raw: unknown): unknown[] {
   return Array.isArray((raw as any)?.results) ? (raw as any).results : [];
 }
 
-async function fetchFortinetControllerInventory(
+/**
+ * Exported for `fortinetLinkStateService`, which sweeps the same two
+ * controller tables for every FortiGate-managed switch/AP — not just the ones
+ * whose `responseTimePolling` resolves to `rest_api`. Sharing this function
+ * (rather than the service issuing its own call) is what lets the sweep ride
+ * the probe path's reads where both are running: they land on the same 30s
+ * cache entry whenever their independent 60s timers fall in one window, which
+ * is some of the time, not all of it. The point is the CEILING either way —
+ * two calls per controller per tick regardless of how many devices hang off
+ * it.
+ *
+ * Keep the cache module-local to monitoringService: a second cache in the
+ * other service would double the upstream rate it exists to bound.
+ */
+export async function fetchFortinetControllerInventory(
   integration: { id: string; type: string; config: Record<string, unknown> },
   deviceName: string,
   kind: "switches" | "aps",

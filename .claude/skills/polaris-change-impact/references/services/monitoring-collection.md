@@ -346,3 +346,32 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `FLUSH_INTERVAL_MS` matches `sampleWriteBuffer` for consistent UI lag — keep them aligned.
 
 ---
+
+## services/fortinetLinkStateService.ts
+
+**What it owns:** Business rule 59 — the controller's own view of its link to each managed FortiSwitch (FortiLink session) and FortiAP (CAPWAP tunnel), projected onto four `Asset` columns: `fortilinkStatus` (`"up"` | `"down"` | `"unknown"`, null = never swept), `fortilinkStatusRaw` (the raw FortiOS word, display only), `fortilinkCheckedAt` (when the controller last ANSWERED about the device) and `fortilinkChangedAt` (last transition). Both Fortinet transports have always parsed this field into the AssetSource observed blob; this service is the projection that was missing, and it is what makes the signal reachable by the asset-details row and the automation engine.
+
+**Public API:** `sweepFortinetLinkState()` → `FortilinkSweepResult` (`controllersRead` / `controllersFailed` / `transitions` / `unchanged`); the `FortilinkStatus` type.
+
+**Cross-service deps:** `monitoringService.fetchFortinetControllerInventory` (exported for this caller — the shared 30s per-controller cache is what bounds the upstream rate; do NOT give this service a cache of its own), `utils/fortiapMonitorRow.isFortiapStatusOnline` (the AP status vocabulary, shared with the probe path so the two cannot disagree about one AP on one firmware), `utils/pollingCompatibility.isFortinetIntegrationType`, `eventLogService.buildFortilinkChangedEvent` + `logEventsBatch`, `metrics.recordFortilinkState`.
+
+**Used by:** `jobs/sweepFortinetLinkState.ts` (60s, scheduler role only; `POLARIS_FORTILINK_SWEEP_SEC` overrides, floored at 30s so an operator cannot set a cadence below the inventory cache's own TTL).
+
+**Writes:** `Asset` (the four columns, via at most three `updateMany`s per destination value plus one `checkedAt` refresh for the confirmed remainder, plus one `update` per asset whose raw word alone moved), `Event` (`asset.fortilink.changed`, batched).
+
+**Reads:** `Integration` (enabled fortimanager/fortigate rows), `Asset` (non-decommissioned switch/AP with a serial, tight select).
+
+**Invariants:**
+- **An unreadable controller writes NOTHING** — not `down`, not even the `checkedAt` refresh. An expired token or a dark FMG must not report a fleet-wide link outage, and a frozen `fortilinkCheckedAt` is exactly what the UI reads to present the value as last-known rather than current. Per-controller failures are isolated (`Promise.allSettled`): one unreachable gate must not stop the rest of the fleet being swept.
+- **Answered-but-absent is `unknown`, never `down`.** Diverges from `probeFortinetController`, which treats absent as failure — correct for a probe, wrong here, because a post-config-push window looks identical and down-detection authority is business rule 36's.
+- **Never touches `monitorStatus` / `consecutiveFailures` / anything the five-state machine owns.** The column's whole value is that it may DISAGREE with the monitor pill.
+- **A confirmation refreshes `checkedAt` and leaves `changedAt` alone**, which is what makes "down for 2h 13m" the outage length and not the poll age.
+- Cost tracks CONTROLLER count, not fleet size: ≤2 calls per controller per tick (switches + APs) at any fleet size. The overlap with the REST probe path is partial, not total — both are 60s timers against a 30s cache, so they coalesce only when their ticks land in one window (~1.5 calls/min per kind on a controller the probe path already reads, not 1).
+- Unmonitored assets are deliberately swept (the controller call is per-controller either way, and the details row should be right on a device nobody polls). Whether one can ALERT is business rule 37's question, answered by the engine's own `monitored` gate.
+
+**When changing this:**
+- Controller resolution deliberately uses the device NAME (`fortinetTopology.controllerFortigate`, falling back to the integration host for a standalone FortiGate) rather than `fortinetParentKey`'s serial-first resolution. That is not an oversight: the name is the key FortiOS/FMG is addressed by on the wire AND the key the shared inventory cache is bucketed on. Resolving it any other way misses the cache and doubles the upstream rate.
+- Adding a value to `FortilinkStatus` means adding it to `FIELD_META.fortilinkStatus.values` (the wizard's closed picker), to `fortilinkRowHTML` in `public/js/assets.js`, and to `stateEnumValueLabel` in `public/js/automations-wizard.js` — the picker is closed precisely so a typo cannot author a rule that never matches.
+- Keep the writes batched by destination value. The temptation on adding a fifth column is one `update` per asset; at 2000 managed devices on a 60s tick that is the difference between a handful of statements and two thousand.
+
+---

@@ -1076,6 +1076,13 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // AP derived through the owning gate's ARP cache, since every MAC-keyed
       // writer of those columns can never reach them. Scheduler role only.
       "./jobs/resolveIpUpstreamChain.js",
+      // Controller-link sweep (business rule 59): asks each FortiGate whether
+      // it still has a FortiLink / CAPWAP session to the switches and APs it
+      // manages, for every managed device rather than only the REST-probed
+      // ones. Scheduler role only — a second replica sweeping would double the
+      // upstream rate against the controllers the shared inventory cache
+      // exists to protect.
+      "./jobs/sweepFortinetLinkState.js",
       "./jobs/dependencyReconciler.js",
       "./jobs/maintenanceScheduler.js",
       "./jobs/retryQueuedReservationPushes.js",

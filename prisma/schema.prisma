@@ -926,6 +926,46 @@ model Asset {
   // recovers on the drain the way it always did, and its next `down` arms it.
   awaitingRecoveryConfirm  Boolean     @default(false)
 
+  // ── Controller link state (business rule 59) ──────────────────────────────
+  // What the parent FortiGate says about its OWN session to this managed
+  // device: the FortiLink session for a FortiSwitch, the CAPWAP tunnel for a
+  // FortiAP. Swept per-controller by jobs/sweepFortinetLinkState.ts; only ever
+  // written by `fortinetLinkStateService`, and deliberately NOT part of
+  // `fortinetTopology` — that blob is rewritten wholesale by discovery every
+  // cycle, and a 60s sweep read-modify-writing it would lose-update the
+  // discovery stamp (the same trap the region blob hit).
+  //
+  // NEVER feeds monitorStatus. It is the independent second opinion: a switch
+  // that answers ICMP perfectly while its FortiLink session is dead is exactly
+  // the fault this column exists to surface, and folding it into the monitor
+  // machine would erase the disagreement that makes it useful.
+  //
+  //   "up"      — controller reports the device connected
+  //   "down"    — controller reports it present but not connected
+  //   "unknown" — controller answered and the device was ABSENT from its
+  //               table. Not "down": a brief post-config-push window looks
+  //               identical, and down-detection authority is rule 36's.
+  //   null      — never swept (not FortiGate-managed, or pre-feature row)
+  //
+  // A controller we could not READ writes nothing at all — the sweep skips,
+  // it does not accuse. So a dark FMG leaves the whole fleet's last known
+  // state standing rather than reporting a fleet-wide link outage.
+  fortilinkStatus          String?
+  // The raw word the controller used ("Connected" / "Disconnected" for a
+  // switch; "online" / "offline" / "discovered" for an AP). Display only —
+  // every predicate reads fortilinkStatus. Kept because the three AP values
+  // that all map to "down" mean quite different things to an operator.
+  fortilinkStatusRaw       String?
+  // When the controller last ANSWERED about this device, refreshed on every
+  // successful sweep whether or not the value moved. The automation engine
+  // uses it as the reading anchor, so a `forPolls` hold counts real
+  // observations instead of monitor-loop ticks that never looked.
+  fortilinkCheckedAt       DateTime?
+  // When fortilinkStatus last changed value. Drives the "down for 12m" on the
+  // asset details row and is the timestamp on the asset.fortilink.changed
+  // Event.
+  fortilinkChangedAt       DateTime?
+
   // Per-stream polling-method overrides. Each accepts the 5-way enum
   // "rest_api" | "snmp" | "winrm" | "ssh" | "icmp" or null (= inherit from
   // the class override / integration tier / source default). The resolver

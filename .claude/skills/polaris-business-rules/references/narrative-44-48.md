@@ -1,4 +1,4 @@
-# Business rules 44–58 — full narrative
+# Business rules 44–59 — full narrative
 
 > The filename keeps its original range: it is cited from code and from the other skills.
 
@@ -17,6 +17,9 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 54](#rule-54) — A region tag dies when its name is retired, and only then
 - [Rule 55](#rule-55) — An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got
 - [Rule 56](#rule-56) — What ignoring an alert costs is answered where the thing that costs it lives
+- [Rule 57](#rule-57) — A sub-asset alerts only if the operator pinned it
+- [Rule 58](#rule-58) — A tag that names no region strands the ranking, so level routing abstains
+- [Rule 59](#rule-59) — The controller's view of its own link is a second opinion, and an unreadable controller has no view at all
 
 <a id="rule-44"></a>
 
@@ -1080,3 +1083,98 @@ the asset, each `region:` tag checked against the `mapRegions` blob, then the us
 `region_tags ∪ role.region_tags` carry that name. Region routing has no read-only surface that
 answers "who would this reach" — until it does, that join is the answer, and rule 54's
 `mapRegionRetiredNames` list is where a stranded name is most likely to be explained.
+---
+
+<a id="rule-59"></a>
+
+## Rule 59 — The controller's view of its own link is a second opinion, and an unreadable controller has no view at all
+
+A managed FortiSwitch or FortiAP has two independent health stories, and Polaris had only
+ever told one of them. The monitor loop asks the DEVICE, on whichever transport the operator
+chose. The parent FortiGate separately knows whether it still has a FortiLink session to that
+switch, or a CAPWAP tunnel to that AP. Those answers can differ, and the case where they
+differ is the interesting one: **a switch whose FortiLink session is dead still answers every
+ICMP echo and every SNMP get perfectly well.** It is up by every measure Polaris had, and it
+is not doing its job — no switch-controller config reaches it, no VLAN change lands, the gate
+has stopped managing it. The monitor loop is structurally unable to see this, because it is
+asking the switch, and the switch is fine.
+
+**The data was never missing; it had nowhere to go.** Both Fortinet transports have always
+parsed the field — `sw.status === "Connected"` off `switch-controller/managed-switch/status`,
+`ap.status` off `wifi/managed_ap` — and both already store it in the AssetSource observed
+blob. It reached the Sources tab and stopped there. It was never projected onto the Asset, so
+no details row could show it and no automation could read it.
+
+**It is a column, not a key on `fortinetTopology`.** That blob is rewritten wholesale by
+discovery on every cycle; a 60-second sweep read-modify-writing it would lose-update the
+discovery stamp, which is the trap the region blob hit. Four scalar columns instead —
+`fortilinkStatus` / `fortilinkStatusRaw` / `fortilinkCheckedAt` / `fortilinkChangedAt` — which
+also lets `resolveAssetStateReadings` read the field straight off the scope row the way
+`monitorStatus` and `dependencySuppressed` are read, with no query of its own.
+
+### It runs for every managed device, which is the whole reason it exists
+
+`probeFortinetController` already turns this signal into up/down, but only for assets whose
+resolved `responseTimePolling` is `rest_api` — and for those the link state IS their
+`monitorStatus`, so a separate field would be saying the same thing twice. The devices where
+it says something new are the ICMP- and SNMP-polled ones, which that probe never touches. So
+`jobs/sweepFortinetLinkState.ts` sweeps every FortiGate-managed switch and AP regardless of
+polling method, and `services/fortinetLinkStateService.ts` holds the decisions.
+
+Cost is bounded by CONTROLLER count, not fleet size: at most two calls per controller per
+tick whether it manages 3 devices or 300, through the same 30s per-controller cache in
+`monitoringService` that keeps the probe path survivable on FMG proxy mode at concurrency 1.
+State the overlap honestly — the sweep and the monitor loop run on independent 60s timers, so
+they coalesce only when their ticks land in the same 30s window. A controller already serving
+REST-probed devices goes from ~1 call per minute per kind to ~1.5, not to 1 and not to 2; one
+serving only ICMP-polled devices was being asked nothing and now costs the full 2.
+`POLARIS_FORTILINK_SWEEP_SEC` raises the interval where that matters.
+
+### Three refusals, each of which is a false alarm not sent
+
+**An unreadable controller writes nothing.** Not `down` for every device behind it, not even a
+`checkedAt` refresh. This is the loudest false alarm the feature could produce: an expired API
+token or a dark FMG would otherwise report a fleet-wide link outage, which is precisely the
+moment Polaris knows least. The sweep skips, the same contract as `ProbeResult.skipped`, and a
+`fortilinkCheckedAt` that stops advancing is what the details row reads to present the value
+as last-known rather than current. Per-controller failures are isolated — one unreachable
+FortiGate must not stop the other forty-nine from being swept.
+
+**Answered-but-absent is `unknown`, never `down`.** The probe path treats "not in the
+controller's table" as a failure, and for a probe that is right. Here it is not: a brief
+post-config-push window looks identical — the same reason discovery's decommission sweep
+trusts the CMDB roster over the live status query — and down-detection authority belongs to
+rule 36. `unknown` is offered in the automation picker rather than hidden, because on a
+FortiSwitch it usually means the switch has aged out of the managed table entirely, and an
+operator who wants to hear about that writes `!= up`.
+
+**It never touches `monitorStatus`, `consecutiveFailures`, or anything else the five-state
+machine owns.** The value of the column is exactly that it can DISAGREE with the monitor pill.
+Folding it in would erase the disagreement and leave the feature pointless.
+
+### What the automation reads, and the anchor that makes a hold mean something
+
+`fortilinkStatus` is an `asset_state` field, so "controller link is down for 3 polls" gets the
+whole machinery — scope, device filters, severity bands, auto-reset, escalation, acknowledge.
+Two departures from the four Asset-column fields beside it:
+
+**A null value produces NO READING, rather than a reading of null.** Null means the sweep has
+never spoken about this device — it is not FortiGate-managed, or it is a pre-feature row
+awaiting its first tick. A null reading would make `!= up` true for every workstation, VM and
+printer caught by a fleet-wide scope, which is the inverse of what an operator writing that
+rule means. Producing no reading also lets the vanished-state sweep clear a live alert on a
+device that stops being managed, the way an un-pinned interface clears under rule 57.
+
+**The reading anchor is `fortilinkCheckedAt`, not `lastMonitorAt`.** A `forPolls` hold has to
+count times the CONTROLLER answered. The monitor loop's clock says nothing about that, and on
+an ICMP-polled switch — the case this field exists for — it would advance every 60s while the
+controller had not been read since the token expired, satisfying a three-poll hold on one real
+observation. Confirmations refresh `checkedAt` and leave `changedAt` alone, which is what
+makes "down for 2h 13m" on the details row the outage length rather than the age of the last
+sweep.
+
+Rule 37 still governs who may be alerted about: a FortiGate-managed switch with
+`monitored = false` shows the row in asset details and never fires. That is the intended
+reading of the monitoring toggle, but it is worth saying out loud, because the switch an
+operator most wants a FortiLink alarm on is not always one they thought to turn monitoring on
+for.

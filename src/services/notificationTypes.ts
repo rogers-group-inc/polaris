@@ -376,6 +376,14 @@ export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLab
 // Current Asset (or current-state child row) field conditions.
 export const ASSET_STATE_FIELDS = [
   "monitorStatus", "status", "consecutiveFailures", "dependencySuppressed", "quarantined",
+  // Controller link state for a FortiGate-managed switch / AP — business rule
+  // 58. "up" | "down" | "unknown", and null on every asset that isn't
+  // FortiGate-managed. Deliberately a SEPARATE field from monitorStatus rather
+  // than a value inside it: the two can disagree, and the disagreement is the
+  // whole point. A switch reading monitorStatus=up with fortilinkStatus=down
+  // is answering ICMP while its FortiLink session to the gate is dead, which
+  // is a fault the monitor loop cannot see because it is asking the switch.
+  "fortilinkStatus",
   "ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus", "ipsecStatus", "sdwanRuleStatus", "sdwanSelectedMember",
 ] as const;
 
@@ -392,6 +400,7 @@ export const CHANGE_TYPES = [
   "process_started", "process_stopped",
   "sdwan_failover", "mclag_peer_lost", "wireless_station_connected",
   "firmware_changed", "switch_port_changed", "wireless_ap_changed", "gateway_firewall_changed",
+  "fortilink_changed",
 ] as const;
 
 // Map a change type → the audit Event action the persist functions emit and
@@ -417,6 +426,12 @@ export const CHANGE_TYPE_ACTIONS: Record<(typeof CHANGE_TYPES)[number], string> 
   switch_port_changed: "asset.switch_port.changed",
   wireless_ap_changed: "asset.wireless_ap.changed",
   gateway_firewall_changed: "asset.gateway_firewall.changed",
+  // The `asset.*.changed` family: written unconditionally by the sweep, so
+  // this entry only gives the wizard a picker over an Event that is already in
+  // the log. The asset_state field is the better route for "notify me WHILE
+  // the link is down" (it has a reading, so it gets auto-reset and a forPolls
+  // hold); this one is for "tell me each time it moves".
+  fortilink_changed: "asset.fortilink.changed",
 };
 
 const dimensionFilterSchema = z
@@ -3510,6 +3525,19 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   consecutiveFailures: { label: "Missed polls outstanding", kind: "number" },
   dependencySuppressed: { label: "Dependency-suppressed", kind: "bool", values: ["true", "false"] },
   quarantined: { label: "Quarantined", kind: "bool", values: ["true", "false"] },
+  // Business rule 59. Closed enum, same reasoning as poeStatus: the sweep
+  // normalizes every controller word into exactly three values, so the wizard
+  // offers a picker rather than a free-text box that can hold "Disconnected"
+  // — the raw FortiOS word, which is stored for display and is NOT what this
+  // field compares against.
+  //
+  // "unknown" is offered deliberately, not hidden as an internal state: it is
+  // the reading for a device the controller answered about but did not list,
+  // which on a FortiSwitch usually means the switch has been unplugged long
+  // enough to age out of the managed-switch table entirely. An operator who
+  // wants "tell me when the gate stops seeing this switch at all" writes
+  // `!= up` rather than `== down`.
+  fortilinkStatus: { label: "Controller link (FortiLink / CAPWAP)", kind: "enum", values: ["up", "down", "unknown"] },
   ifOperStatus: { label: "Interface oper status", kind: "dynamic" },
   ifAdminStatus: { label: "Interface admin status", kind: "dynamic" },
   // The port's CURRENT L3 address, compared as a string. Its reason for
@@ -3549,6 +3577,7 @@ export const CHANGE_TYPE_META: Record<string, string> = {
   switch_port_changed: "Switch port changed",
   wireless_ap_changed: "Wireless AP changed (roam)",
   gateway_firewall_changed: "Gateway FortiGate changed",
+  fortilink_changed: "Controller link changed (FortiLink / CAPWAP)",
 };
 
 // Which dimensionFilter inputs are relevant per asset_metric metric, so the

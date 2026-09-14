@@ -2883,6 +2883,128 @@
       ],
       "title": "Refused boots (24h)",
       "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 180
+      },
+      "id": 120,
+      "panels": [],
+      "title": "Controller link sweep (FortiLink / CAPWAP — business rule 59)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Controller inventory reads by the FortiLink/CAPWAP link-state sweep — one per (controller FortiGate, switches|aps table) per 60s tick. `failure` is the line that matters, and it is a SILENT failure by design: business rule 59 refuses to write anything for a controller it cannot read, so those managed switches and APs hold their last reported link state, `Asset.fortilinkCheckedAt` stops advancing, and no alert can fire because no reading was produced. A sustained failure rate therefore means link alerting is DARK for that controller's devices — not that their links are healthy. Cross-check the integration auto-test panel above: a token or reachability problem usually shows in both. Steady state is a flat success line at (controllers × 2) per minute.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 181
+      },
+      "id": 121,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(polaris_fortilink_controller_read_total[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Controller reads by outcome",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Managed FortiSwitch / FortiAP controller-link state changes in the last hour — one per device whose fortilinkStatus moved, which is also one asset.fortilink.changed Event on the Events page. Flat zero in a healthy fleet. A spike is either a real FortiLink / CAPWAP event (a gate rebooting takes its whole switch stack with it) or a controller that started answering about a DIFFERENT device set, which reads as a burst of transitions into `unknown` rather than `down` — the Events page distinguishes the two.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 181
+      },
+      "id": 122,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(polaris_fortilink_transition_total[1h]))",
+          "legendFormat": "link changes",
+          "refId": "A"
+        }
+      ],
+      "title": "Link state changes (1h)",
+      "type": "stat"
     }
   ],
   "refresh": "30s",

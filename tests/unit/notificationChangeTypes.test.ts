@@ -3,6 +3,8 @@ import {
   CHANGE_TYPES,
   CHANGE_TYPE_ACTIONS,
   CHANGE_TYPE_META,
+  ASSET_STATE_FIELDS,
+  FIELD_META,
 } from "../../src/services/notificationTypes.js";
 
 // The change-trigger vocabulary is three parallel structures: the enum the
@@ -37,7 +39,7 @@ describe("change trigger vocabulary", () => {
   });
 
   it("keeps the asset.*.changed family pointed at the unconditional events", () => {
-    // These four differ from the change.* family: their events are written
+    // These five differ from the change.* family: their events are written
     // unconditionally by the write sites (eventLogService builders) rather
     // than through subscription-gated maybeEmitChangeEvents. The picker entry
     // only selects an always-present event, so the action strings must match
@@ -46,5 +48,36 @@ describe("change trigger vocabulary", () => {
     expect(CHANGE_TYPE_ACTIONS.switch_port_changed).toBe("asset.switch_port.changed");
     expect(CHANGE_TYPE_ACTIONS.wireless_ap_changed).toBe("asset.wireless_ap.changed");
     expect(CHANGE_TYPE_ACTIONS.gateway_firewall_changed).toBe("asset.gateway_firewall.changed");
+    // Business rule 58 — written by the controller-link sweep.
+    expect(CHANGE_TYPE_ACTIONS.fortilink_changed).toBe("asset.fortilink.changed");
+  });
+});
+
+describe("asset_state field vocabulary", () => {
+  it("gives every state field a wizard label", () => {
+    // A field in the enum but missing from FIELD_META validates at the API and
+    // renders as a blank picker row — the same silent half-shipped state the
+    // change-type maps above guard against.
+    for (const key of ASSET_STATE_FIELDS) {
+      expect(FIELD_META[key], `missing FIELD_META for "${key}"`).toBeTruthy();
+    }
+  });
+
+  it("offers the three controller-link values as a closed enum", () => {
+    // Closed rather than "dynamic" on purpose: the sweep normalizes every
+    // controller word into exactly these three, so a free-text box would let
+    // an operator author `== Disconnected` (the RAW FortiOS word, stored for
+    // display only) and get a rule that can never match.
+    const meta = FIELD_META.fortilinkStatus!;
+    expect(meta.kind).toBe("enum");
+    expect(meta.values).toEqual(["up", "down", "unknown"]);
+  });
+
+  it("keeps controller link separate from monitor status", () => {
+    // The two are allowed to disagree — a switch answering ICMP with a dead
+    // FortiLink session is the fault the field exists for. Folding "fortilink
+    // down" into the monitorStatus vocabulary would erase that.
+    expect(FIELD_META.monitorStatus!.values).not.toContain("fortilink_down");
+    expect(ASSET_STATE_FIELDS).toContain("fortilinkStatus");
   });
 });

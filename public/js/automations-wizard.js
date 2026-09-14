@@ -1509,7 +1509,16 @@ async function openAutomationWizard(existing, opts) {
   // else (POLARIS_MONITOR_STATUS_LABELS in api.js). Everything else is its own
   // label already, so it passes straight through.
   function stateEnumValueLabel(field, value) {
-    return field === "monitorStatus" ? monStatusWord(value) : String(value == null ? "" : value);
+    if (field === "monitorStatus") return monStatusWord(value);
+    // Controller link (business rule 59) reads as a sentence in the trigger
+    // prose — "Controller link is Down" — so it takes the same capitalized
+    // form the asset-details badge uses rather than the stored lowercase.
+    // The option VALUE is untouched, so what saves is unchanged.
+    if (field === "fortilinkStatus") {
+      var s2 = String(value == null ? "" : value);
+      return s2 ? s2.charAt(0).toUpperCase() + s2.slice(1) : s2;
+    }
+    return String(value == null ? "" : value);
   }
   function optLabeled(list, sel, labelFor) {
     return (list || []).map(function (v) {
