@@ -1071,7 +1071,8 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       });
     }
 
-    // Devices discovery could not read AT ALL this run, named in one place.
+    // Business rule 53. Devices discovery could not read AT ALL this run,
+    // named in one place.
     // Fires before the abort/complete branch because a gate that was never
     // read is equally unread either way.
     //

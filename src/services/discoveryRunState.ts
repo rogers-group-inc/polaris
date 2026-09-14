@@ -49,8 +49,9 @@ export interface RunAccumulator {
    * only ever has one reader. Bounded by the device roster, so a fleet-sized
    * Set of names at 2000 gates is still kilobytes.
    *
-   * Why it exists at all: a skipped gate is otherwise invisible. Its per-device
-   * skip line is one Event among the thousands a run writes, the count is
+   * Why it exists at all (business rule 53): a skipped gate is otherwise
+   * invisible. Its per-device skip line is one Event among the thousands a
+   * run writes, the count is
    * folded into "done" in the progress bar, and nothing on the ASSET says it
    * has not been read — so a gate silently frozen at stale data looks exactly
    * like a healthy one (prod 2026-09, an 1801F HA pair on old firmware).
