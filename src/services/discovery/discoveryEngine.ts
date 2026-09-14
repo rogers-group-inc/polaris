@@ -3267,7 +3267,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             devGeocodedLng = geo.longitude;
             if (verboseLogging) {
               logger.info(
-                { verbose: true, integrationId, deviceName: device.name, geoSource, location: geoString, lat: devGeocodedLat, lng: devGeocodedLng, cached: geo.cached },
+                { verbose: true, integrationId, deviceName: device.name, geoSource, location: geoString, lat: devGeocodedLat, lng: devGeocodedLng, provider: geo.provider, cached: geo.cached },
                 "discovery.location.geocoded",
               );
             }

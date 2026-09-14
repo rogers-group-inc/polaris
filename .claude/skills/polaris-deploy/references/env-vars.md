@@ -243,6 +243,25 @@ GOTOOLCHAIN=local
 # NULL-MAC AssetSources into the canonical asset) log what it WOULD merge with no
 # writes. Use when investigating unexpected merge behavior. Unset for normal ops.
 POLARIS_GHOST_MERGE_DRY_RUN=
+
+# Ordered geocoder provider chain used by discovery's location → coords path
+# (geocoderService). Tried left to right, first VALID hit wins. The two fail in
+# opposite directions, which is why both ship on: `nominatim` (OpenStreetMap)
+# resolves place names, POIs and non-US strings but misses many real US street
+# addresses; `census` (US Census TIGER) resolves US street addresses OSM has
+# never heard of and returns nothing for a city/state string or anywhere
+# outside the US — its hit is street-segment INTERPOLATED (right block + side,
+# not the rooftop), which is why it trails rather than leads. Reorder to prefer
+# Census where every geocoded string is a US street address; set EMPTY to
+# disable outbound geocoding on an air-gapped install (coords then fall through
+# to the metavar and CMDB tiers). Unknown names are dropped with a warning.
+POLARIS_GEOCODER_PROVIDERS=nominatim,census
+
+# Endpoint overrides for the two providers — point at an internal mirror or a
+# proxy. Each must speak its provider's own API (Nominatim /search with
+# q/format/limit; Census onelineaddress with address/benchmark/format).
+POLARIS_GEOCODER_NOMINATIM_URL=
+POLARIS_GEOCODER_CENSUS_URL=
 ```
 
 > Notification delivery secrets (SMTP password, M365 client secret, Pushbullet
