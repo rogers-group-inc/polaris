@@ -3497,6 +3497,22 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 :is([data-theme="morning"],[data-theme="noon"]) .dep-tree-test-banner strong { color: #7b1fa2; }
 
 /* ─── Charts / Dashboard-specific ──────────────────────────────────────────── */
+/* The plot surface every SVG chart in the asset slide-over is drawn onto
+   (Response Time, CPU & Memory, Active Sessions, Temperature, Interfaces,
+   IPsec, SD-WAN, Storage, Processes). Nine call sites in assets.js were each
+   stamping the same four properties inline and none of them carried a shadow,
+   so the charts read as flat cutouts beside the .table-wrapper tables stacked
+   with them in the same tab. It is a big opaque box resting on the panel, so
+   it takes --shadow-card — not the tables' --shadow-md, which is the value for
+   surfaces that float OVER the page. Sizing and the centred placeholder text
+   stay at the call site: the min-height differs per chart. */
+.chart-box {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  box-shadow: var(--shadow-card);
+}
 .overview-grid {
   display: grid;
   grid-template-columns: 1fr 1.8fr;

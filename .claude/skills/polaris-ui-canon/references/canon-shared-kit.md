@@ -86,7 +86,8 @@ before that each rule picked its own background and shadow.
 frosted surface floating free of a screen edge), `--shadow-control` (buttons, page search
 and filter fields, anything small resting on the page) and `--shadow-card` (the big opaque
 content surfaces resting on the page — every card, the dashboard widgets, the map and graph
-canvases).
+canvases, and `.chart-box`, the plot surface every SVG chart in the asset slide-over is drawn
+into).
 
 **Key conventions:**
 - **Four elevation tokens, one per kind of surface — pick by what the surface IS.**
