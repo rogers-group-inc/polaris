@@ -70,6 +70,36 @@ hawk:
     ajax: true
     ajaxBrowser: CHROME_HEADLESS
     maxDurationMinutes: 5
+    # Seed the ASSETS mount explicitly. Measured 2026-09-14 (scan
+    # 59f63074-4861-4b8d-b14f-b4dbdcc6d441): base + ajax spidering reached 120
+    # URLs and NOT ONE of them was under /api/v1/assets -- the largest route
+    # group in the app (~95 endpoints) was scanned zero times, and a scan that
+    # reports "no findings" while never touching it says less than it appears
+    # to. The ajax spider drives the pages, but the assets surface is reached
+    # by XHR the crawler does not replay.
+    #
+    # seedPaths is URLs only -- no methods, bodies or params -- so this buys
+    # the GET surface and nothing more. The real fix is an OpenAPI spec (the
+    # app serves none today, and hand-deriving one for ~95 routes is its own
+    # piece of work); until that exists this is the difference between the
+    # group being scanned and not.
+    #
+    # Per-asset sub-routes need a real id. SCAN_ASSET_ID supplies one from the
+    # install being scanned; left unset they resolve to a non-existent uuid and
+    # answer 404, which is harmless but tests nothing -- so set it:
+    #   SCAN_ASSET_ID=$(psql ... -c 'select id from assets limit 1') hawk scan
+    seedPaths:
+      - /api/v1/assets
+      - /api/v1/assets?limit=50
+      - /api/v1/assets/ip-context?ip=10.0.0.1
+      - /api/v1/assets/pin-filter-schema
+      - /api/v1/assets/quarantine-availability
+      - /api/v1/assets/${SCAN_ASSET_ID:00000000-0000-0000-0000-000000000000}
+      - /api/v1/assets/${SCAN_ASSET_ID:00000000-0000-0000-0000-000000000000}/vips
+      - /api/v1/assets/${SCAN_ASSET_ID:00000000-0000-0000-0000-000000000000}/upstream
+      - /api/v1/assets/${SCAN_ASSET_ID:00000000-0000-0000-0000-000000000000}/contacts
+      - /api/v1/assets/${SCAN_ASSET_ID:00000000-0000-0000-0000-000000000000}/mclag-peers
+      - /api/v1/assets/${SCAN_ASSET_ID:00000000-0000-0000-0000-000000000000}/virtualization
   scan:
     concurrentRequests: '20'
     throttlePassiveBacklog: '10000'

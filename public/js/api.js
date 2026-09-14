@@ -861,6 +861,10 @@ const api = {
     // The upstream switch / AP / firewall the General tab names, resolved to
     // asset rows so those values can carry verbs.
     upstream:             (id) => request("GET", `/assets/${id}/upstream`),
+    // Firewall VIPs / virtual servers publishing this device — the external
+    // address and the gate it lives on. Needs reservations:read on top of
+    // assets:read (the facts are stamped on IPAM reservations).
+    vips:                 (id) => request("GET", `/assets/${id}/vips`),
     virtualization:       (id) => request("GET", `/assets/${id}/virtualization`),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
     // Agent API surface"). `agent.get` returns 404 when no agent is

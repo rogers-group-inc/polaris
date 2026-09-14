@@ -69,7 +69,7 @@ Reservation
   sourceType      ReservationSourceType @default(manual)
   createdBy       String?
   conflictMessage String?         -- human-readable conflict summary
-  vipInfo         Json?           -- VIP detail blob for sourceType="vip" rows (FortiGate device + mapped target); cleared when a VIP IP is succeeded by a dhcp_* lease/reservation (Phase 5 VIP succession)
+  vipInfo         Json?           -- VIP detail blob: { name, device, extip, role: "external"|"mapped"|"realserver", isVirtualServer }. Stamped on sourceType="vip" rows AND on a dhcp_lease/dhcp_reservation row the VIP collides with (Phase 3c), so its presence — not sourceType — is what says "a VIP touches this address". `device` is FortiManager's DEVICE NAME, so resolving it to an Asset goes through utils/fortinetParentKey.ts, never Asset.hostname. Read by public/js/ip-panel.js (the VIP/VS badge) and services/assetVipService.ts (the asset-details VIP rows); cleared when a VIP IP is succeeded by a dhcp_* lease/reservation (Phase 5 VIP succession)
   -- DHCP reservation push to FortiGate. Populated only when the subnet was
   -- discovered by an FMG integration with `pushReservations=true` AND the
   -- reservation is sourceType=manual + per-IP (full-subnet reservations are
