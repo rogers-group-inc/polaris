@@ -14,6 +14,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { findRulesMatchingAsset } from "./notificationRuleService.js";
+import { effectiveFollowUpForSeverity, parseSeverityBands } from "./notificationTypes.js";
 import { higherAlertSeverity } from "../utils/alertSeverity.js";
 
 // Both moved to utils/tagNormalize (a leaf) so regionHierarchyService can use
@@ -69,13 +70,34 @@ function regionScopeWhere(viewerRegionTags: string[]): Prisma.NotificationWhereI
  * read false: there is no policy left to enforce, and refusing to let anyone
  * close them out would be worse than a missing note.
  */
-const ACK_POLICY_INCLUDE = { rule: { select: { requireAckNote: true } } } as const;
+const ACK_POLICY_INCLUDE = {
+  // severity + severityBands ride along because the policy is per SEVERITY: a
+  // band may demand a note the base severity does not (effectiveFollowUp-
+  // ForSeverity resolves which). Two small columns on a page of rows, and the
+  // alternative — asking the client to fetch the automation and work it out —
+  // would put the same resolution in four places (Alerts tab, phone, ack page,
+  // push action) and let them disagree.
+  rule: { select: { requireAckNote: true, severity: true, severityBands: true } },
+} as const;
 
-type RowWithRulePolicy = { rule?: { requireAckNote: boolean } | null };
+type RulePolicyRow = { requireAckNote: boolean; severity: string; severityBands: unknown };
+type RowWithRulePolicy = { severity: string; rule?: RulePolicyRow | null };
+
+/** The note policy in force for ONE alert, at the severity it is sitting at.
+ *  Rule-less rows (test alerts, deleted automations) read false — see the
+ *  ACK_POLICY_INCLUDE note. */
+export function ackNotePolicyOf(row: RowWithRulePolicy): boolean {
+  if (!row.rule) return false;
+  return effectiveFollowUpForSeverity(
+    { severity: row.rule.severity, severityBands: parseSeverityBands(row.rule.severityBands), requireAckNote: row.rule.requireAckNote },
+    row.severity,
+  ).requireAckNote;
+}
 
 export function withAckPolicy<T extends RowWithRulePolicy>(row: T): Omit<T, "rule"> & { requireAckNote: boolean } {
+  const requireAckNote = ackNotePolicyOf(row);
   const { rule, ...rest } = row;
-  return { ...rest, requireAckNote: rule?.requireAckNote === true };
+  return { ...rest, requireAckNote };
 }
 
 /**
@@ -169,12 +191,12 @@ export async function getNotificationForViewer(
       clearedAt: true,
       // A rule-less alert (a test fire, or one whose automation was deleted —
       // ruleId is SetNull) has no note policy left to enforce.
-      rule: { select: { name: true, requireAckNote: true } },
+      rule: { select: { name: true, requireAckNote: true, severity: true, severityBands: true } },
     },
   });
   if (!row) return null;
   const { rule, ...rest } = row;
-  return { ...rest, ruleName: rule?.name ?? null, requireAckNote: rule?.requireAckNote === true };
+  return { ...rest, ruleName: rule?.name ?? null, requireAckNote: ackNotePolicyOf(row) };
 }
 
 /**
@@ -254,11 +276,17 @@ export async function acknowledgeNotifications(
   // rather than in the modal: this one function backs the Alerts tab, the
   // mobile list, the emailed one-click link and the web-push action button,
   // and three of those four can acknowledge without ever rendering a form.
-  // One indexed count, and only when no note was given.
+  // One query, and only when no note was given. It FETCHES rather than counts
+  // because the policy is per severity now (ackNotePolicyOf): "does this rule
+  // demand a note" is a JSON question about the band the alert is sitting in,
+  // which no SQL predicate on the rule row can answer. Bounded by the ids the
+  // operator selected — not by fleet size — and it reads three small columns.
   if (trimmed.length === 0) {
-    const needy = await prisma.notification.count({
-      where: { id: { in: ids }, acknowledged: false, rule: { requireAckNote: true } },
+    const candidates = await prisma.notification.findMany({
+      where: { id: { in: ids }, acknowledged: false },
+      select: { severity: true, rule: { select: { requireAckNote: true, severity: true, severityBands: true } } },
     });
+    const needy = candidates.filter(ackNotePolicyOf).length;
     const problem = ackNoteProblem(needy, ids.length, trimmed);
     if (problem) throw new AppError(400, problem);
   }

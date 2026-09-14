@@ -616,10 +616,10 @@ describe("automation wizard DOM render", () => {
     // Edit mode unlocks every step, so jump via the stepper.
     (doc.querySelectorAll("#aw-stepper .stepper-step")[4] as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
-    const on = doc.querySelector("#aw-repeat-on") as unknown as { checked: boolean } | null;
-    const every = doc.querySelector("#aw-repeat-every") as unknown as { value: string } | null;
-    const stopOn = doc.querySelector("#aw-repeat-stopon") as unknown as { value: string } | null;
-    const after = doc.querySelector("#aw-repeat-stopafter") as unknown as { value: string } | null;
+    const on = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-on") as unknown as { checked: boolean } | null;
+    const every = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-every") as unknown as { value: string } | null;
+    const stopOn = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-stopon") as unknown as { value: string } | null;
+    const after = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-stopafter") as unknown as { value: string } | null;
     expect(on?.checked).toBe(true);
     expect(every?.value).toBe("20");
     expect(stopOn?.value).toBe("clear");
@@ -653,7 +653,7 @@ describe("automation wizard DOM render", () => {
     // Edit mode unlocks every step, so jump via the stepper.
     (doc.querySelectorAll("#aw-stepper .stepper-step")[4] as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
-    const after = doc.querySelector("#aw-repeat-stopafter") as unknown as { value: string } | null;
+    const after = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-stopafter") as unknown as { value: string } | null;
     expect(after?.value).toBe("");
 
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
@@ -682,10 +682,10 @@ describe("automation wizard DOM render", () => {
     // Edit mode unlocks every step, so jump via the stepper.
     (doc.querySelectorAll("#aw-stepper .stepper-step")[4] as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
-    const on = doc.querySelector("#aw-repeat-on") as unknown as { checked: boolean } | null;
+    const on = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-on") as unknown as { checked: boolean } | null;
     expect(on?.checked).toBe(false);
     // The fields stay hidden until it is turned on.
-    const fields = doc.querySelector("#aw-repeat-fields") as unknown as { hidden: boolean } | null;
+    const fields = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-fields") as unknown as { hidden: boolean } | null;
     expect(fields?.hidden).toBe(true);
 
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
@@ -1091,7 +1091,7 @@ describe("automation wizard DOM render", () => {
     });
     (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
 
-    const box = doc.querySelector("#aw-inapp-card #aw-require-ack-note") as unknown as
+    const box = doc.querySelector("#aw-step-5 .aw-followup .aw-require-ack-note") as unknown as
       { checked: boolean };
     expect(box).toBeTruthy();
     // Off for every automation that predates the feature.
@@ -1129,6 +1129,248 @@ describe("automation wizard DOM render", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);
     expect((savedPayloads[0]! as Record<string, any>).requireAckNote).toBe(true);
+  });
+
+  it("the follow-up pair sits in each severity section, below its actions and its escalation", async () => {
+    // It used to sit on the in-app-alert card at the top of the step, where it
+    // read as one answer for the whole automation. The questions it answers —
+    // "will this keep chasing me" and "what does closing it out cost" — are
+    // per severity, and the order they get asked in is who do I tell, who do I
+    // tell next, how hard do I keep at it.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    const w = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-fu-place",
+      name: "Placement",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
+      escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 30, actions: [{ type: "notify", channelId: "c1", addresses: ["boss@example.com"] }] }] },
+      severityBands: [{ threshold: 95, severity: "critical", actions: [] }],
+      bandNotify: { onIncrease: true, onDecrease: false, onResolved: true, resolvedMode: "reuse" },
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Gone from the mandatory in-app card.
+    expect(doc.querySelector("#aw-inapp-card .aw-require-ack-note")).toBeNull();
+    expect(doc.querySelector("#aw-inapp-card .aw-repeat-on")).toBeNull();
+
+    // The base section's block is the LAST child of the section, after the
+    // collapsible body that holds the action list and the escalation chain —
+    // so a folded section still shows it.
+    const baseSec = (doc.querySelector("#aw-actions") as unknown as { closest: (s: string) => Element }).closest(".form-group");
+    const baseBlock = baseSec.querySelector(":scope > .aw-followup");
+    expect(baseBlock).toBeTruthy();
+    expect(baseSec.lastElementChild).toBe(baseBlock);
+    // …and the escalation editor it follows is inside the body, i.e. above it.
+    expect(baseSec.querySelector(".aw-collapse-body .aw-esc-sec")).toBeTruthy();
+
+    // Turning the per-severity toggle on gives every band one of its own.
+    const multi = doc.querySelector("#aw-band-actions-multi") as unknown as
+      { checked: boolean; dispatchEvent: (e: unknown) => void };
+    multi.checked = true;
+    multi.dispatchEvent(new w.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(doc.querySelectorAll("#aw-step-5 .aw-followup").length).toBe(2);
+    const bandSec = doc.querySelector("#aw-step-5 .aw-band-actions")!;
+    expect(bandSec.lastElementChild!.classList.contains("aw-followup")).toBe(true);
+  });
+
+  it("a band's follow-up pair saves onto the band, and is stripped when the toggle is off", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    const w = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-fu-save",
+      name: "Per-severity follow-up",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
+      severityBands: [{ threshold: 95, severity: "critical", actions: [] }],
+      bandNotify: { onIncrease: true, onDecrease: false, onResolved: true, resolvedMode: "reuse" },
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const multi = doc.querySelector("#aw-band-actions-multi") as unknown as
+      { checked: boolean; dispatchEvent: (e: unknown) => void };
+    multi.checked = true;
+    multi.dispatchEvent(new w.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Critical: demand a note and chase every 5 minutes. The base stays as it
+    // was — one answer per severity is the whole point.
+    const bandBlock = doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup")!;
+    const tick = (el: Element) => {
+      (el as unknown as { checked: boolean }).checked = true;
+      (el as unknown as { dispatchEvent: (e: unknown) => void }).dispatchEvent(new w.Event("change", { bubbles: true }));
+    };
+    tick(bandBlock.querySelector(".aw-require-ack-note")!);
+    tick(bandBlock.querySelector(".aw-repeat-on")!);
+    await new Promise((r) => setTimeout(r, 10));
+    const every = bandBlock.querySelector(".aw-repeat-every") as unknown as
+      { value: string; dispatchEvent: (e: unknown) => void };
+    every.value = "5";
+    every.dispatchEvent(new w.Event("input", { bubbles: true }));
+
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const p = savedPayloads[0]! as Record<string, any>;
+    expect(p.requireAckNote).toBe(false);
+    expect(p.repeat).toBeNull();
+    expect(p.severityBands[0].followUp).toEqual({
+      requireAckNote: true,
+      repeat: { everyMin: 5, stopOn: "acknowledge" },
+    });
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("unticking per-severity actions strips the bands' follow-up with their actions", async () => {
+    // The same on/off contract band ACTIONS have: toggle off and the rule's
+    // single answer governs every severity again.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    const w = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-fu-strip",
+      name: "Strip",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
+      severityBands: [{
+        threshold: 95, severity: "critical", actions: [],
+        followUp: { requireAckNote: true, repeat: { everyMin: 5, stopOn: "clear" } },
+      }],
+      bandNotify: { onIncrease: true, onDecrease: false, onResolved: true, resolvedMode: "reuse" },
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const multi = doc.querySelector("#aw-band-actions-multi") as unknown as
+      { checked: boolean; dispatchEvent: (e: unknown) => void };
+    expect(multi.checked).toBe(true);
+    multi.checked = false;
+    multi.dispatchEvent(new w.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    expect((savedPayloads[0]! as Record<string, any>).severityBands[0].followUp).toBeUndefined();
+  });
+
+  it("a band section seeds from the base as it is NOW, not as it was at the last render", async () => {
+    // While the toggle is off the band blocks show a seed of the rule's pair.
+    // Collecting that seed onto the band would freeze whatever the base said
+    // when the step last rendered — so an operator who sets the base to 5
+    // minutes and THEN asks for per-severity actions would find the critical
+    // section quietly offering the old cadence.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    const w = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-fu-seed",
+      name: "Seed",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
+      severityBands: [{ threshold: 95, severity: "critical", actions: [] }],
+      bandNotify: { onIncrease: true, onDecrease: false, onResolved: true, resolvedMode: "reuse" },
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Base: reminders on, every 5 minutes. The toggle is still off.
+    const baseBlock = doc.querySelector("#aw-step-5 .aw-followup")!;
+    const on = baseBlock.querySelector(".aw-repeat-on") as unknown as
+      { checked: boolean; dispatchEvent: (e: unknown) => void };
+    on.checked = true;
+    on.dispatchEvent(new w.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    const every = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-every") as unknown as
+      { value: string; dispatchEvent: (e: unknown) => void };
+    every.value = "5";
+    every.dispatchEvent(new w.Event("input", { bubbles: true }));
+
+    // Now ask for per-severity actions: the critical section shows the base as
+    // it stands, not the 15-minute default it was seeded with at first render.
+    const multi = doc.querySelector("#aw-band-actions-multi") as unknown as
+      { checked: boolean; dispatchEvent: (e: unknown) => void };
+    multi.checked = true;
+    multi.dispatchEvent(new w.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    const bandEvery = doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup .aw-repeat-every") as unknown as
+      { value: string };
+    expect((doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup .aw-repeat-on") as unknown as { checked: boolean }).checked).toBe(true);
+    expect(bandEvery.value).toBe("5");
+  });
+
+  it("a band's follow-up survives a round trip through the trigger step", async () => {
+    // collectBands rebuilds severityBands from the step-3 rows, so anything
+    // edited on step 5 has to ride the row stash back — the trap that already
+    // ate band actions and band escalation once each.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    const w = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-fu-trip",
+      name: "Round trip",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
+      severityBands: [{
+        threshold: 95, severity: "critical", actions: [],
+        followUp: { requireAckNote: true, repeat: { everyMin: 5, stopOn: "clear" } },
+      }],
+      bandNotify: { onIncrease: true, onDecrease: false, onResolved: true, resolvedMode: "reuse" },
+    });
+    // A stored followUp is enough to re-open with the per-severity sections on,
+    // even though this band has no actions of its own.
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect((doc.querySelector("#aw-band-actions-multi") as unknown as { checked: boolean }).checked).toBe(true);
+    const bandBlock = doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup")!;
+    expect((bandBlock.querySelector(".aw-require-ack-note") as unknown as { checked: boolean }).checked).toBe(true);
+    expect((bandBlock.querySelector(".aw-repeat-every") as unknown as { value: string }).value).toBe("5");
+
+    // Out to step 3 and back, then save.
+    (doc.querySelector('.stepper-step[data-step="3"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    void w;
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    expect((savedPayloads[0]! as Record<string, any>).severityBands[0].followUp).toEqual({
+      requireAckNote: true,
+      repeat: { everyMin: 5, stopOn: "clear" },
+    });
   });
 
   it("email customization is a checkbox: unchecked stores NO templates", async () => {
@@ -2467,7 +2709,7 @@ describe("trigger filter rows", () => {
       await openOnStep4(metricRule({}));
       (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
       await new Promise((r) => setTimeout(r, 20));
-      const box = doc.querySelector("#aw-step-5 #aw-repeat-on");
+      const box = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-on");
       expect(box).toBeTruthy();
       const label = (box as unknown as { parentElement: { textContent: string } }).parentElement.textContent.trim();
       expect(label).toBe("Repeat this notification");

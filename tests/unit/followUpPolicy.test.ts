@@ -70,6 +70,56 @@ describe("followUpPolicy — repeat", () => {
     expect(followUpPolicy(rule({ repeat: { everyMin: 5, stopOn: "clear", stopAfterHours: 1 } }), "warning").repeat)
       .toContain("for up to 1 hour.");
   });
+
+  it("advertises the BAND's cadence, not the rule's, once a band states one", () => {
+    // Same reason the escalation half is severity-resolved: the sentence is
+    // read by whoever is holding the phone for THIS alert, and a critical that
+    // promised the warning tier's hourly reminder would be describing a chase
+    // that isn't coming.
+    const banded = rule({
+      repeat: { everyMin: 60, stopOn: "acknowledge" },
+      severityBands: [{
+        threshold: 95, severity: "critical", actions: [],
+        followUp: { requireAckNote: false, repeat: { everyMin: 5, stopOn: "clear" } },
+      }],
+    });
+    expect(followUpPolicy(banded, "warning").repeat).toBe("Reminders every 1 hour until acknowledged.");
+    expect(followUpPolicy(banded, "critical").repeat).toBe("Reminders every 5 minutes until cleared.");
+  });
+
+  it("a band that repeats where the rule does not says so only at that severity", () => {
+    const banded = rule({
+      repeat: null,
+      severityBands: [{
+        threshold: 95, severity: "critical", actions: [],
+        followUp: { requireAckNote: false, repeat: { everyMin: 10, stopOn: "acknowledge" } },
+      }],
+    });
+    expect(followUpPolicy(banded, "warning").repeat).toBe("");
+    expect(followUpPolicy(banded, "critical").repeat).toBe("Reminders every 10 minutes until acknowledged.");
+  });
+
+  it("a band that declares NO reminders silences the rule's at that severity", () => {
+    // `repeat: null` inside a followUp is an answer, not an absence — that is
+    // the distinction the followUp wrapper exists to carry.
+    const banded = rule({
+      repeat: { everyMin: 15, stopOn: "acknowledge" },
+      severityBands: [{
+        threshold: 95, severity: "critical", actions: [],
+        followUp: { requireAckNote: true, repeat: null },
+      }],
+    });
+    expect(followUpPolicy(banded, "warning").repeat).toContain("every 15 minutes");
+    expect(followUpPolicy(banded, "critical").repeat).toBe("");
+  });
+
+  it("a band with no followUp keeps inheriting the rule's reminders", () => {
+    const banded = rule({
+      repeat: { everyMin: 15, stopOn: "acknowledge" },
+      severityBands: [{ threshold: 95, severity: "critical", actions: [] }],
+    });
+    expect(followUpPolicy(banded, "critical").repeat).toContain("every 15 minutes");
+  });
 });
 
 describe("followUpPolicy — escalation", () => {

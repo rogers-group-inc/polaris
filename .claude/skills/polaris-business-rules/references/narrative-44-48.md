@@ -1,4 +1,4 @@
-# Business rules 44–51 — full narrative
+# Business rules 44–52 — full narrative
 
 > The filename keeps its original range: it is cited from code and from the other skills.
 
@@ -12,6 +12,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 49](#rule-49) — An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved
 - [Rule 50](#rule-50) — A response the app did not write is a response with the app's headers missing
 - [Rule 51](#rule-51) — `DATABASE_URL` is a driver URL; its `sslmode` value is translated into the libpq vocabulary, never copied
+- [Rule 52](#rule-52) — A follow-up policy belongs to the severity the alert is sitting at, and silence means inherit
 
 <a id="rule-44"></a>
 
@@ -433,3 +434,84 @@ were found only by reading the log the sentence points at.
 Guards: `tests/unit/pgEnv.test.ts` pins the translation, the full libpq value set, the
 case/whitespace handling, and the refusal (including that the message names the offending
 value). Anyone reverting `libpqSslMode` to a passthrough fails them.
+
+<a id="rule-52"></a>
+
+## Rule 52 — A follow-up policy belongs to the severity the alert is sitting at, and silence means inherit
+
+**The invariant.** `NotificationRule.requireAckNote` and `NotificationRule.repeat` are the two
+settings that decide what *ignoring* an alert costs: whether it keeps coming back, and what
+closing it out demands of whoever does. A severity band may state its own pair as
+`followUp` = `{requireAckNote, repeat?}`; `effectiveFollowUpForSeverity` in
+`services/notificationTypes.ts` resolves which one is in force for a given alert severity, the
+way `effectiveActionsForSeverity` already resolves actions. A band that carries no `followUp`
+inherits the rule's. Every reader of either setting goes through that resolver.
+
+**What was wrong with rule-level.** Both settings were columns on the rule, which is the right
+shape exactly as long as every severity of an automation deserves the same answer. A banded
+automation is the case where it does not. The operator who configures different ACTIONS at
+critical than at warning is stating, in the only vocabulary the builder offered, that the two
+severities are different kinds of event — and the follow-up questions are the same question
+asked about the chase: *will this keep bothering me*, and *what does it cost to close*. One CPU
+automation cannot honestly answer "every hour, no note needed" for a 70 % warning and a 98 %
+critical at once. Operators worked around it by splitting one automation into two, which then
+drifted apart in scope and threshold, which is worse than the thing it worked around.
+
+**Why the settings sit in a wrapper object, not two loose band keys.** Because both need a
+third state neither boolean nor config can carry on its own: *nothing was said here*. A band
+declaring `repeat: null` is making a real statement — "no reminders while this is only a
+warning" — and it has to be distinguishable from a band that never mentioned reminders at all.
+Every banded automation stored before this feature is the second case, and if the two collapsed
+into one, the release would have silently switched reminders and note requirements OFF at the
+higher tiers of every rule that had them on. That is the failure mode that would have been
+discovered during an incident, by an alert that quietly stopped chasing anybody the moment it
+got worse. One presence test — `followUp == null` — keeps them apart, and `repeat: null` inside
+a present `followUp` stays an answer.
+
+**Where the resolution had to reach.** Three places, and none of them was optional:
+
+- *The reminder sweep* (`services/notificationEscalationService.ts`). Two of its gates are
+  computed before the per-notification loop and both had to widen from `rule.repeat` to
+  `allRepeatsOf(rule)`: the rule-inclusion test (an automation that repeats only at critical has
+  a null rule-level repeat and would never have been loaded) and the `minAfterMin` due-candidate
+  cutoff (which bounds the notification query). Its quiet-time cache is now keyed rule **+
+  severity**: a band's quiet windows live inside that band's own `repeat`, so a rule-keyed answer
+  would have held a critical reminder through the warning tier's overnight window — the exact
+  silence business rule 44 exists to make visible.
+- *`followUpPolicy`*, which composes the "what happens if you do nothing" sentence snapshotted
+  into `Notification.templateCtx` at fire time. Its escalation half was already
+  severity-resolved for this reason; leaving the repeat half rule-level would have had a
+  critical alert advertise the warning tier's cadence in the very email a reader plans their
+  night around.
+- *Every acknowledge path* (`ackNotePolicyOf` in `services/notificationService.ts`) — the Alerts
+  tab, the mobile list, the emailed one-click link and the push action button. Three of those
+  four acknowledge without ever rendering a form, so the enforcement in
+  `acknowledgeNotifications` is the control and the required field is a courtesy. That check
+  used to be one indexed `count` with `rule: { requireAckNote: true }` in the WHERE clause; it
+  cannot stay that way, because the question is now about the band the alert is in, which lives
+  in a JSON column and which no SQL predicate on the rule row can answer. It FETCHES the
+  candidate rows and resolves in memory instead — bounded by the ids the operator selected, not
+  by fleet size, and reading three small columns.
+
+**The builder contract mirrors band actions exactly.** A `followUp` is written onto every band
+while "use different actions for each severity level" is on, and stripped from all of them when
+it is off — so the toggle means the same thing for the follow-up pair as it already meant for
+actions and chains. Each band section seeds from the rule's pair, so ticking the toggle changes
+nothing by itself; the operator edits from there. Two traps were found writing it, both worth
+stating because both are invisible until an automation misbehaves:
+
+- The pair is rendered OUTSIDE each section's collapsible body. With several severities the
+  Actions step arrives folded, and a folded section that hides whether it repeats hides the
+  setting most likely to surprise somebody at 3am.
+- A band section rendered while the toggle was OFF shows a *seed* of the rule's pair, not the
+  band's own answer, so it must not be read back. The block carries a `data-fu-live` mark
+  stamped at render time and only a marked block is collected — the toggle's own state at
+  collect time is useless, because by then it has already flipped.
+
+**Guards.** `tests/unit/followUpPolicy.test.ts` pins the severity resolution of the advertised
+sentence (band clock wins, band-only repeat, `repeat: null` silences, absent inherits);
+`tests/unit/notificationRepeat.test.ts` pins the sweep (band clock, band-only repeat is swept at
+all, base stays on the rule's, band quiet time); `tests/unit/ackNotePolicy.test.ts` pins
+`ackNotePolicyOf` including the unparseable-JSON fallback; and `tests/unit/automationsWizardDom.test.ts`
+pins the placement, the per-band save, the strip-on-untick, the step-3 round trip and the
+stale-seed trap.

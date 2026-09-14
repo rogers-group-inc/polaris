@@ -82,6 +82,7 @@ import {
   advanceRun,
   sustainedSeverityByRun,
   scopeIsUnconstrained,
+  allRepeatsOf,
 } from "./notificationTypes.js";
 import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
@@ -1295,7 +1296,9 @@ function ruleWantsContext(rule: DbRule): boolean {
   // minimal context built from the row and silently lose {value}, {threshold},
   // {trigger.summary} and every {asset.*} token. The reminder would not look
   // like the email it is reminding you about.
-  return !!(rule.emailComposition || ruleHasAnyEscalation(rule) || rule.repeat);
+  // allRepeatsOf, not `rule.repeat`: an automation that repeats ONLY at one
+  // severity band has a null rule-level repeat and still needs the snapshot.
+  return !!(rule.emailComposition || ruleHasAnyEscalation(rule) || allRepeatsOf(rule).length > 0);
 }
 
 function ruleWantsAssetDetail(rule: DbRule): boolean {

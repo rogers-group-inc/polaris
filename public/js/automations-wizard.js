@@ -4536,38 +4536,94 @@ async function openAutomationWizard(existing, opts) {
    * button, because a test Notification carries ruleId null on purpose so the
    * sweep can't enlist it.
    */
-  function repeatControlHtml() {
+  function repeatControlHtml(r) {
     var m = repeatMeta();
-    var r = draft.repeat || null;
+    r = r || null;
     return '' +
       '<label style="display:block;margin:0.6rem 0 0;font-weight:400">' +
-        '<input type="checkbox" id="aw-repeat-on"' + (r ? " checked" : "") + '> ' +
+        '<input type="checkbox" class="aw-repeat-on"' + (r ? " checked" : "") + '> ' +
         'Repeat this notification' +
       '</label>' +
-      '<div id="aw-repeat-fields" style="margin:4px 0 0 1.4rem"' + (r ? "" : ' hidden') + '>' +
+      '<div class="aw-repeat-fields" style="margin:4px 0 0 1.4rem"' + (r ? "" : ' hidden') + '>' +
         '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
           '<span style="font-size:0.85rem">Re-send every</span>' +
-          '<input type="number" id="aw-repeat-every" class="input" min="' + m.minEveryMin + '" max="' + m.maxEveryMin + '" ' +
+          '<input type="number" class="input aw-repeat-every" min="' + m.minEveryMin + '" max="' + m.maxEveryMin + '" ' +
                  'value="' + escapeHtml(r && r.everyMin != null ? String(r.everyMin) : "15") + '" style="width:5rem">' +
           '<span style="font-size:0.85rem">minutes, until</span>' +
-          '<select id="aw-repeat-stopon" class="input" style="width:auto">' +
+          '<select class="input aw-repeat-stopon" style="width:auto">' +
             '<option value="acknowledge"' + (!r || r.stopOn !== "clear" ? " selected" : "") + '>Acknowledged</option>' +
             '<option value="clear"' + (r && r.stopOn === "clear" ? " selected" : "") + '>Cleared only</option>' +
           '</select>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">' +
           '<span style="font-size:0.85rem">…and give up after</span>' +
-          '<input type="number" id="aw-repeat-stopafter" class="input" min="1" max="' + m.maxStopAfterHours + '" ' +
+          '<input type="number" class="input aw-repeat-stopafter" min="1" max="' + m.maxStopAfterHours + '" ' +
                  'placeholder="never" value="' + escapeHtml(r && r.stopAfterHours != null ? String(r.stopAfterHours) : "") + '" style="width:5rem">' +
           '<span style="font-size:0.85rem">hours (optional)</span>' +
         '</div>' +
-        quietControlHtml() +
-        '<p id="aw-repeat-note" style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0"></p>' +
+        quietControlHtml(r) +
+        '<p class="aw-repeat-note" style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0"></p>' +
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0">' +
           'Reminders re-send the notifications only — API calls and scripts run once, when the alert first fires. ' +
           'The Test delivery button can’t exercise reminders.' +
         '</p>' +
       '</div>';
+  }
+
+  /**
+   * The follow-up pair — "require a note when acknowledging" and "repeat this
+   * notification" — for ONE severity section.
+   *
+   * It used to sit on the mandatory in-app-alert card at the top of the step,
+   * which read as "a property of the alert record" and was true only while
+   * every severity shared one answer. It doesn't: what a warning costs you to
+   * ignore is not what a critical does, and the operator asking for different
+   * ACTIONS per severity is asking the same question about the chase. So the
+   * pair moved down to where the rest of "what happens" already lives — below
+   * the section's action list and below its escalation chain, which is the
+   * order the questions get asked in: who do I tell, then who do I tell next,
+   * then how hard do I keep at it.
+   *
+   * OUTSIDE the collapsible body on purpose (the caller places it after
+   * `.aw-collapse-body` closes): with several severity sections this step
+   * arrives folded, and a folded section that hides whether it repeats hides
+   * the setting most likely to surprise someone at 3am.
+   *
+   * All ids in here are CLASSES: there is one block per severity now, and a
+   * duplicated id would silently wire every section's checkbox to the first
+   * section's state.
+   */
+  function followUpBlockHtml(cfg, live) {
+    cfg = cfg || {};
+    // `live` marks a block whose contents are the SECTION's own answer rather
+    // than a seed of the rule's — see the collect note in collectStep5. It has
+    // to be stamped at render time, because that is when the distinction is
+    // known: a band section rendered while the per-severity toggle was off
+    // shows the base's values, and reads back as the band's only if nothing
+    // remembers where they came from.
+    return '<div class="aw-followup"' + (live ? ' data-fu-live="1"' : "") +
+        ' style="border-top:1px solid var(--color-border);margin-top:0.6rem;padding-top:0.5rem">' +
+      // A property of the ALERT record — who may close it out and on what
+      // terms — enforced on every acknowledge path (the Alerts tab, the phone,
+      // the emailed link, the push button), not just the ones that send email.
+      '<label style="display:block;margin:0;font-weight:400">' +
+        '<input type="checkbox" class="aw-require-ack-note"' + (cfg.requireAckNote ? " checked" : "") + '> ' +
+        'Require a note when acknowledging' +
+      '</label>' +
+      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">Acknowledging asks what the problem was and what the fix was, and won’t go through empty. Escalation still stops on acknowledge.</p>' +
+      repeatControlHtml(cfg.repeat || null) +
+    '</div>';
+  }
+
+  /** The follow-up settings a severity section should SHOW.
+   *
+   *  A band with none of its own seeds from the rule's, so ticking "use
+   *  different actions for each severity level" changes nothing by itself —
+   *  the sections start out saying what the automation already did, and the
+   *  operator edits from there. */
+  function bandFollowUpOf(b) {
+    if (b && b.followUp) return b.followUp;
+    return { requireAckNote: draft.requireAckNote === true, repeat: draft.repeat || null };
   }
 
   // ─── Quiet time ───────────────────────────────────────────────────────────
@@ -4609,15 +4665,15 @@ async function openAutomationWizard(existing, opts) {
   }
 
   /** The window the day/hours editor owns — the first one it can express. */
-  function quietEditableWindow() {
-    var q = (draft.repeat && draft.repeat.quiet) || null;
+  function quietEditableWindow(r) {
+    var q = (r && r.quiet) || null;
     return ((q && q.windows) || []).filter(quietWindowEditable)[0] || null;
   }
 
   /** The rest: windows only the API can express, shown but never rewritten. */
-  function quietExtraWindows() {
-    var q = (draft.repeat && draft.repeat.quiet) || null;
-    var editable = quietEditableWindow();
+  function quietExtraWindows(r) {
+    var q = (r && r.quiet) || null;
+    var editable = quietEditableWindow(r);
     return ((q && q.windows) || []).filter(function (w) { return w !== editable; });
   }
 
@@ -4632,11 +4688,11 @@ async function openAutomationWizard(existing, opts) {
     '</div>';
   }
 
-  function quietControlHtml() {
-    var q = (draft.repeat && draft.repeat.quiet) || null;
+  function quietControlHtml(r) {
+    var q = (r && r.quiet) || null;
     var wins = (q && q.windows) || [];
-    var editable = quietEditableWindow();
-    var extras = quietExtraWindows();
+    var editable = quietEditableWindow(r);
+    var extras = quietExtraWindows(r);
     var clock = quietMeta().serverClock;
     // The zone is NOT decoration: the hours are the server's wall clock, and an
     // operator in another zone picking 22:00 from their own head is the trap
@@ -4645,20 +4701,20 @@ async function openAutomationWizard(existing, opts) {
       Math.floor(Math.abs(clock.offsetMinutes) / 60))) : "";
     return '' +
       '<label style="display:block;margin:0.5rem 0 0;font-weight:400">' +
-        '<input type="checkbox" id="aw-quiet-on"' + (wins.length ? " checked" : "") + '> ' +
+        '<input type="checkbox" class="aw-quiet-on"' + (wins.length ? " checked" : "") + '> ' +
         'Quiet time' +
       '</label>' +
-      '<div id="aw-quiet-fields" style="margin:4px 0 0 1.4rem"' + (wins.length ? "" : ' hidden') + '>' +
+      '<div class="aw-quiet-fields" style="margin:4px 0 0 1.4rem"' + (wins.length ? "" : ' hidden') + '>' +
         // The SAME editor the Maintenance modal uses — one day per row, each
         // off, all day, or carrying its own hour ranges.
-        '<div id="aw-quiet-editor">' +
+        '<div class="aw-quiet-editor">' +
           window.PolarisRecurrence.dayEditorHtml({
             shape: editable,
             allOff: !editable && extras.length > 0,
             zone: zone,
           }) +
         '</div>' +
-        '<div id="aw-quiet-extras">' + extras.map(quietExtraRowHtml).join("") + '</div>' +
+        '<div class="aw-quiet-extras">' + extras.map(quietExtraRowHtml).join("") + '</div>' +
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">' +
           'Reminders due during a quiet period are <strong>held, not skipped</strong>: when it ends, the next reminder ' +
           'goes out straight away and says how long the alert has been active. The first alert, escalations and ' +
@@ -4668,9 +4724,9 @@ async function openAutomationWizard(existing, opts) {
   }
 
   /** Stash each read-only row's source shape so it is re-sent verbatim. */
-  function stashQuietWindows(panel) {
-    var extras = quietExtraWindows();
-    var rows = panel.querySelectorAll("#aw-quiet-extras .aw-quiet-extra");
+  function stashQuietWindows(block, r) {
+    var extras = quietExtraWindows(r);
+    var rows = block.querySelectorAll(".aw-quiet-extras .aw-quiet-extra");
     for (var i = 0; i < rows.length; i++) rows[i]._quietWindow = extras[i] || null;
   }
 
@@ -4683,49 +4739,90 @@ async function openAutomationWizard(existing, opts) {
    * (see `allOff`). validateStep5 is what refuses a ticked Quiet time with
    * nothing behind it at all.
    */
-  function collectQuiet(panel) {
-    var on = panel.querySelector("#aw-quiet-on");
+  function collectQuiet(block) {
+    var on = block.querySelector(".aw-quiet-on");
     if (!on || !on.checked) return null;
     var out = [];
-    var host = panel.querySelector("#aw-quiet-editor");
+    var host = block.querySelector(".aw-quiet-editor");
     if (host) {
       var got = window.PolarisRecurrence.collectDayEditor(host);
       if (!got.error && !got.empty) {
         out.push(Object.assign({ version: 1, kind: "recurring" }, got));
       }
     }
-    panel.querySelectorAll("#aw-quiet-extras .aw-quiet-extra").forEach(function (row) {
+    block.querySelectorAll(".aw-quiet-extras .aw-quiet-extra").forEach(function (row) {
       if (row._quietWindow) out.push(row._quietWindow);
     });
     return out.length ? { windows: out } : null;
   }
 
   /** The day editor's own problem with what is typed, or "" when it is fine. */
-  function quietEditorProblem(panel) {
-    var host = panel && panel.querySelector("#aw-quiet-editor");
+  function quietEditorProblem(block) {
+    var host = block && block.querySelector(".aw-quiet-editor");
     if (!host) return "";
     var got = window.PolarisRecurrence.collectDayEditor(host);
     if (got.error) return "Quiet time — " + got.error;
     // "No days" is only a problem when nothing else supplies a window.
-    if (got.empty && panel.querySelectorAll("#aw-quiet-extras .aw-quiet-extra").length === 0) {
+    if (got.empty && block.querySelectorAll(".aw-quiet-extras .aw-quiet-extra").length === 0) {
       return "Quiet time: pick the days and hours, or untick Quiet time.";
     }
     return "";
   }
 
+  /**
+   * One follow-up block → `{ requireAckNote, repeat }`, the shape a band's
+   * `followUp` stores and the rule's two fields mirror.
+   */
+  function collectFollowUp(block) {
+    var ackEl = block.querySelector(".aw-require-ack-note");
+    var out = { requireAckNote: !!(ackEl && ackEl.checked), repeat: null };
+    var repOn = block.querySelector(".aw-repeat-on");
+    if (!repOn || !repOn.checked) return out;
+    var every = Number((block.querySelector(".aw-repeat-every") || {}).value);
+    var stopOnEl = block.querySelector(".aw-repeat-stopon");
+    var afterRaw = (block.querySelector(".aw-repeat-stopafter") || {}).value;
+    var rep = {
+      everyMin: isNaN(every) ? 0 : every,
+      stopOn: stopOnEl && stopOnEl.value === "clear" ? "clear" : "acknowledge",
+    };
+    // Blank means unbounded, which is the default the operator asked for —
+    // so the key is omitted rather than sent as 0.
+    if (afterRaw !== "" && afterRaw != null && !isNaN(Number(afterRaw))) {
+      rep.stopAfterHours = Number(afterRaw);
+    }
+    // Quiet time rides INSIDE repeat — it modifies the reminder clock and
+    // nothing else, so it cannot outlive the control that owns it: turning
+    // reminders off drops the windows with them.
+    var quiet = collectQuiet(block);
+    if (quiet) rep.quiet = quiet;
+    out.repeat = rep;
+    return out;
+  }
+
+  /** Every follow-up block on the step, base section first. */
+  function followUpBlocks(panel) {
+    return Array.prototype.slice.call((panel || document).querySelectorAll(".aw-followup"));
+  }
+
   /** The live volume line + the two conditional warnings. */
-  function syncRepeatNote() {
-    var panel = document.getElementById("aw-step-5");
-    if (!panel) return;
-    var on = panel.querySelector("#aw-repeat-on");
-    var fields = panel.querySelector("#aw-repeat-fields");
+  function syncRepeatNote(block) {
+    // No argument = refresh every section's note, which is what a change
+    // OUTSIDE a block (the reset mode, a new escalation chain, a dynamic
+    // recipient) has to do: the warnings below read the whole draft, so one
+    // section's edit can change what another section's note should say.
+    if (!block) {
+      followUpBlocks(document.getElementById("aw-step-5")).forEach(syncRepeatNote);
+      return;
+    }
+    var on = block.querySelector(".aw-repeat-on");
+    var fields = block.querySelector(".aw-repeat-fields");
     if (fields) fields.hidden = !(on && on.checked);
-    var note = panel.querySelector("#aw-repeat-note");
+    var note = block.querySelector(".aw-repeat-note");
     if (!note || !on || !on.checked) return;
 
-    var every = Number((panel.querySelector("#aw-repeat-every") || {}).value) || 0;
-    var stopAfter = Number((panel.querySelector("#aw-repeat-stopafter") || {}).value) || 0;
-    var quiet = collectQuiet(panel);
+    var every = Number((block.querySelector(".aw-repeat-every") || {}).value) || 0;
+    var stopAfter = Number((block.querySelector(".aw-repeat-stopafter") || {}).value) || 0;
+    var quiet = collectQuiet(block);
     var bits = [];
     if (every >= 1) {
       var perDay = Math.round((24 * 60) / every);
@@ -4830,16 +4927,9 @@ async function openAutomationWizard(existing, opts) {
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0 0 6px">' + cardHelp + '</p>' +
         tokenPaletteHtml("aw-token-palette") +
         '<input type="text" id="aw-msg" class="tpl-field" value="' + escapeHtml(draft.messageTemplate || "") + '" placeholder="' + (isEC ? "{rule}: {value}" : "{asset} {metric} = {value} (threshold {threshold})") + '" style="width:100%;margin-top:4px">' +
-        // Belongs on this card, not on a Notify row: it is a property of the
-        // ALERT record — who may close it out and on what terms — and it is
-        // enforced on every acknowledge path (the Alerts tab, the phone, the
-        // emailed link, the push button), not just the ones that send email.
-        '<label style="display:block;margin:0.6rem 0 0;font-weight:400">' +
-          '<input type="checkbox" id="aw-require-ack-note"' + (draft.requireAckNote ? " checked" : "") + '> ' +
-          'Require a note when acknowledging' +
-        '</label>' +
-        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">Acknowledging asks what the problem was and what the fix was, and won’t go through empty. Escalation still stops on acknowledge.</p>' +
-        repeatControlHtml() +
+        // The follow-up pair ("require a note" / "repeat this notification")
+        // used to live here. It moved into each severity section — see
+        // followUpBlockHtml.
       '</div>';
 
     // Per-severity action sections: with severity bands, each tier CAN get its
@@ -4889,6 +4979,9 @@ async function openAutomationWizard(existing, opts) {
       // what the engine resolves for an alert sitting at the base severity.
       escSectionHtml() +
       '</div>' +
+      // Outside the collapsible body: folded, a section still has to say
+      // whether it repeats and whether closing it out needs a note.
+      followUpBlockHtml({ requireAckNote: draft.requireAckNote, repeat: draft.repeat }, true) +
     '</div>';
     bands.forEach(function (b, i) {
       // A tier may override the comparison and the hold; both belong in the
@@ -4922,6 +5015,7 @@ async function openAutomationWizard(existing, opts) {
         // resolves while the alert sits in THIS band.
         escSectionHtml() +
         '</div>' +
+        followUpBlockHtml(bandFollowUpOf(b), perSev) +
       '</div>';
     });
     // ── When this resets ────────────────────────────────────────────────
@@ -5031,36 +5125,43 @@ async function openAutomationWizard(existing, opts) {
       refreshMirrorNote(panel);
     });
 
-    var repToggle = panel.querySelector("#aw-repeat-on");
-    if (repToggle) {
-      ["#aw-repeat-on", "#aw-repeat-every", "#aw-repeat-stopon", "#aw-repeat-stopafter"].forEach(function (sel) {
-        var el = panel.querySelector(sel);
-        if (el) el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", function () {
-          if (sel === "#aw-repeat-on") { collectStep5(); }
-          syncRepeatNote();
+    // One follow-up block per severity section, each wired to its own state.
+    // `collectStep5` on every change (not just on the toggle) because a band's
+    // block writes onto `band.followUp`, and a re-render — which the per-
+    // severity toggle can cause at any moment — reads the draft, not the DOM.
+    followUpBlocks(panel).forEach(function (block, bi) {
+      // The base block's windows come from the rule's repeat; each band's from
+      // its own (seeded from the rule's when it has none yet).
+      var cfg = bi === 0 ? (draft.repeat || null) : bandFollowUpOf(bands[bi - 1]).repeat;
+      [".aw-require-ack-note", ".aw-repeat-on", ".aw-repeat-every", ".aw-repeat-stopon", ".aw-repeat-stopafter"].forEach(function (sel) {
+        var el = block.querySelector(sel);
+        if (!el) return;
+        el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", function () {
+          collectStep5();
+          syncRepeatNote(block);
         });
       });
       // Quiet time: the shared editor owns its own rows and their handlers
       // (window.PolarisRecurrence.wire delegates on the host, so adding and removing
       // hour ranges needs nothing from here) and calls back on every change.
-      stashQuietWindows(panel);
-      var quietOn = panel.querySelector("#aw-quiet-on");
-      var quietFields = panel.querySelector("#aw-quiet-fields");
-      var quietHost = panel.querySelector("#aw-quiet-editor");
+      stashQuietWindows(block, cfg);
+      var quietOn = block.querySelector(".aw-quiet-on");
+      var quietFields = block.querySelector(".aw-quiet-fields");
+      var quietHost = block.querySelector(".aw-quiet-editor");
       if (quietOn) {
         quietOn.addEventListener("change", function () {
           if (quietFields) quietFields.hidden = !quietOn.checked;
           collectStep5();
-          syncRepeatNote();
+          syncRepeatNote(block);
         });
       }
       if (quietHost) {
         window.PolarisRecurrence.wire(quietHost, function () {
           collectStep5();
-          syncRepeatNote();
+          syncRepeatNote(block);
         });
       }
-      var quietExtras = panel.querySelector("#aw-quiet-extras");
+      var quietExtras = block.querySelector(".aw-quiet-extras");
       if (quietExtras) {
         quietExtras.addEventListener("click", function (ev) {
           var btn = ev.target.closest && ev.target.closest(".aw-quiet-extra-remove");
@@ -5071,11 +5172,11 @@ async function openAutomationWizard(existing, opts) {
           var row = btn.closest(".aw-quiet-extra");
           if (row) row.remove();
           collectStep5();
-          syncRepeatNote();
+          syncRepeatNote(block);
         });
       }
-      syncRepeatNote();
-    }
+      syncRepeatNote(block);
+    });
     var perSevCb = panel.querySelector("#aw-band-actions-multi");
     if (perSevCb) {
       perSevCb.addEventListener("change", function () {
@@ -5096,7 +5197,10 @@ async function openAutomationWizard(existing, opts) {
   function bandActionsPerSeverityOn() {
     if (typeof draft.bandActionsPerSeverity === "boolean") return draft.bandActionsPerSeverity;
     return (draft.severityBands || []).some(function (b) {
-      return (b.actions && b.actions.length) || (b.escalation && b.escalation.tiers && b.escalation.tiers.length);
+      // `followUp` counts: a band that states its own reminder clock or note
+      // policy is per-severity even with no actions of its own, and re-opening
+      // with the toggle inferred OFF would strip it on the next save.
+      return (b.actions && b.actions.length) || (b.escalation && b.escalation.tiers && b.escalation.tiers.length) || !!b.followUp;
     });
   }
 
@@ -5630,6 +5734,9 @@ async function openAutomationWizard(existing, opts) {
     // section) — stashed on the row so collectBands round-trips them.
     row._bandActions = (band.actions && band.actions.length ? band.actions : []) || [];
     row._bandEscalation = band.escalation || null;
+    // Same round-trip as the two above: the band's follow-up pair is edited on
+    // the Actions step, and collectBands rebuilds severityBands from these rows.
+    row._bandFollowUp = band.followUp || null;
     // Keyed by severity: tiers carry strictly-increasing distinct severities, so
     // this is unique, and re-picking a severity carries the fold state with the
     // tier it belongs to.
@@ -7304,37 +7411,18 @@ async function openAutomationWizard(existing, opts) {
     // The alert/event message rides the mandatory in-app card on this step.
     var msgEl = panel.querySelector("#aw-msg");
     if (msgEl) draft.messageTemplate = msgEl.value.trim() || null;
-    var ackNoteEl = panel.querySelector("#aw-require-ack-note");
-    if (ackNoteEl) draft.requireAckNote = ackNoteEl.checked;
     // Re-notify cooldown was retired in 2026-08 (see the fromRule note): the
     // draft always carries null, so saving through the wizard clears one an
     // older rule still stored.
     draft.cooldownSec = null;
-    // Repeat, also a property of the alert record.
-    var repOn = panel.querySelector("#aw-repeat-on");
-    if (repOn) {
-      if (!repOn.checked) {
-        draft.repeat = null;
-      } else {
-        var every = Number((panel.querySelector("#aw-repeat-every") || {}).value);
-        var stopOnEl = panel.querySelector("#aw-repeat-stopon");
-        var afterRaw = (panel.querySelector("#aw-repeat-stopafter") || {}).value;
-        var rep = {
-          everyMin: isNaN(every) ? 0 : every,
-          stopOn: stopOnEl && stopOnEl.value === "clear" ? "clear" : "acknowledge",
-        };
-        // Blank means unbounded, which is the default the operator asked for —
-        // so the key is omitted rather than sent as 0.
-        if (afterRaw !== "" && afterRaw != null && !isNaN(Number(afterRaw))) {
-          rep.stopAfterHours = Number(afterRaw);
-        }
-        // Quiet time rides INSIDE repeat — it modifies the reminder clock and
-        // nothing else, so it cannot outlive the control that owns it: turning
-        // reminders off drops the windows with them.
-        var quiet = collectQuiet(panel);
-        if (quiet) rep.quiet = quiet;
-        draft.repeat = rep;
-      }
+    // The BASE severity section's follow-up pair IS the rule-level pair — the
+    // one the engine resolves for an alert sitting at the base severity, and
+    // the one every band inherits when it says nothing of its own.
+    var baseBlock = followUpBlocks(panel)[0];
+    if (baseBlock) {
+      var baseFU = collectFollowUp(baseBlock);
+      draft.requireAckNote = baseFU.requireAckNote;
+      draft.repeat = baseFU.repeat;
     }
     // The BASE severity section's chain is the rule-level escalation (the engine
     // resolves it for an alert sitting at the base severity).
@@ -7356,9 +7444,28 @@ async function openAutomationWizard(existing, opts) {
       band.actions = collectActionsFrom(sec.querySelector(".ba-actions"));
       var bandEsc = collectEscSection(sec.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"));
       if (bandEsc) band.escalation = bandEsc; else delete band.escalation;
+      // The band's own follow-up pair — written whenever it matches what a band
+      // says, including when that equals the rule's, because "same as the base"
+      // and "says nothing" are different states to the server (the second one
+      // INHERITS, and would follow a later edit of the base it was never meant
+      // to track).
+      //
+      // ONLY from a block marked live, unlike band actions. A section RENDERED
+      // while the per-severity toggle was off shows a SEED of the rule's pair,
+      // not the band's own answer, so reading it back would freeze whatever the
+      // base said at that render — and the operator who then edits the base and
+      // ticks the toggle would find the sections quietly disagreeing with it.
+      // The mark is what distinguishes the two, and it has to be the RENDER's
+      // answer: by the time this runs the checkbox has already flipped.
+      // Leaving the draft alone also preserves a STORED per-band pair through
+      // an accidental untick, which is what keeping band actions achieves by
+      // the opposite means.
+      var bandBlock = sec.querySelector('.aw-followup[data-fu-live="1"]');
+      if (bandBlock) band.followUp = collectFollowUp(bandBlock);
       if (bandRows[i]) {
         bandRows[i]._bandActions = band.actions;
         bandRows[i]._bandEscalation = bandEsc || null;
+        bandRows[i]._bandFollowUp = band.followUp || null;
       }
     });
     var resetHost = panel.querySelector("#aw-reset-actions");
@@ -7490,6 +7597,7 @@ async function openAutomationWizard(existing, opts) {
         actions: row._bandActions || [],
       };
       if (row._bandEscalation) band.escalation = row._bandEscalation;
+      if (row._bandFollowUp) band.followUp = row._bandFollowUp;
       // Persist a per-tier operator only when it differs from the base.
       if (leaf.operator && leaf.operator !== baseOp) band.operator = leaf.operator;
       bands.push(band);
@@ -7518,6 +7626,9 @@ async function openAutomationWizard(existing, opts) {
     var bands = draft.severityBands || null;
     if (!bands || !bands.length) return null;
     if (bandActionsPerSeverityOn()) return bands;
+    // Toggle off: the bands save bare — no actions, no chain, and no follow-up
+    // of their own — so the server runs the base actions and the rule's single
+    // reminder clock / note policy at every severity.
     return bands.map(function (b) {
       var out = { threshold: b.threshold, severity: b.severity, forDurationSec: b.forDurationSec, actions: [] };
       if (b.operator) out.operator = b.operator;
@@ -7604,14 +7715,27 @@ async function openAutomationWizard(existing, opts) {
     // arriving overnight to find out. `quietEditorProblem` names the day, and
     // the overlapping pair of hours, in the same words the server would.
     var panel5 = document.getElementById("aw-step-5");
-    var repeatOn = panel5 && panel5.querySelector("#aw-repeat-on");
-    var quietOn = panel5 && panel5.querySelector("#aw-quiet-on");
-    // Only while reminders are ON: with the repeat control unticked the whole
-    // block is hidden and its windows are dropped on purpose, so a leftover
-    // tick in the DOM must not block the save.
-    if (repeatOn && repeatOn.checked && quietOn && quietOn.checked) {
-      var quietProblem = quietEditorProblem(panel5);
-      if (quietProblem) return quietProblem;
+    // Each severity section states its own quiet time, so each gets checked —
+    // but only the sections that SAVE. With the per-severity toggle off the
+    // band blocks are hidden and payloadBands drops what they hold, so a
+    // half-typed day in one of them must not block the save.
+    var blocks = followUpBlocks(panel5);
+    var checked = bandActionsPerSeverityOn() ? blocks : blocks.slice(0, 1);
+    for (var q = 0; q < checked.length; q++) {
+      var repeatOn = checked[q].querySelector(".aw-repeat-on");
+      var quietOn = checked[q].querySelector(".aw-quiet-on");
+      // Only while reminders are ON: with the repeat control unticked the whole
+      // block is hidden and its windows are dropped on purpose, so a leftover
+      // tick in the DOM must not block the save.
+      if (repeatOn && repeatOn.checked && quietOn && quietOn.checked) {
+        var quietProblem = quietEditorProblem(checked[q]);
+        if (quietProblem) {
+          // Name the severity, or the operator has one message and four places
+          // to look for the day it is about.
+          var sevLabel = q === 0 ? "" : ((draft.severityBands || [])[q - 1] || {}).severity;
+          return (sevLabel ? sevLabel + " — " : "") + quietProblem;
+        }
+      }
     }
     return null;
   }
@@ -7673,25 +7797,45 @@ async function openAutomationWizard(existing, opts) {
     var msgRow = draft.messageTemplate
       ? '<dt>Message</dt><dd><code style="font-size:0.8rem">' + escapeHtml(draft.messageTemplate) + '</code></dd>'
       : "";
-    // Only when ON: a review grid that lists every default reads as noise, and
-    // this one is off on every automation that predates the feature.
-    var ackNoteRow = draft.requireAckNote
-      ? '<dt>Acknowledging</dt><dd>requires a note</dd>'
+    // The follow-up pair, one line per severity that states its own. Only what
+    // is ON: a review grid that lists every default reads as noise, and both
+    // settings are off on every automation that predates them.
+    //
+    // Each severity's line is prefixed with the severity ONLY when the bands
+    // carry their own — otherwise there is one answer and naming a severity
+    // would imply the others differ.
+    var followUpTiers = [{ label: "", fu: { requireAckNote: draft.requireAckNote, repeat: draft.repeat } }];
+    if (perSevActions) {
+      (draft.severityBands || []).forEach(function (b) {
+        if (b.followUp) followUpTiers.push({ label: b.severity, fu: b.followUp });
+      });
+      if (followUpTiers.length > 1) followUpTiers[0].label = draft.severity;
+    }
+    var sevPrefix = function (t) {
+      return t.label ? '<span style="color:' + escapeHtml(sevColor(t.label)) + '">' + escapeHtml(t.label) + '</span> — ' : "";
+    };
+    var ackNoteLines = followUpTiers.filter(function (t) { return t.fu && t.fu.requireAckNote; })
+      .map(function (t) { return sevPrefix(t) + "requires a note"; });
+    var ackNoteRow = ackNoteLines.length
+      ? '<dt>Acknowledging</dt><dd>' + ackNoteLines.join("<br>") + '</dd>'
       : "";
     // The quiet time is part of the REMINDER answer, not a row of its own:
     // "every 15 min" and "paused overnight" together are what the reader is
     // checking before they save.
-    var quietWins = (draft.repeat && draft.repeat.quiet && draft.repeat.quiet.windows) || [];
-    var repeatRow = draft.repeat
-      ? '<dt>Reminders</dt><dd>every ' + escapeHtml(String(draft.repeat.everyMin)) + ' min until ' +
-          (draft.repeat.stopOn === "clear" ? "cleared" : "acknowledged") +
-          (draft.repeat.stopAfterHours ? ", giving up after " + escapeHtml(String(draft.repeat.stopAfterHours)) + "h" : " — no limit") +
-          (quietWins.length
-            ? '<br><span style="color:var(--color-text-tertiary)">held during ' +
-                quietWins.map(function (w) { return escapeHtml(quietSummary(w)); }).join("; ") +
-                ' (server time); the next reminder after that says how long the alert has been active</span>'
-            : "") +
-        '</dd>'
+    var repeatLines = followUpTiers.filter(function (t) { return t.fu && t.fu.repeat; }).map(function (t) {
+      var r = t.fu.repeat;
+      var quietWins = (r.quiet && r.quiet.windows) || [];
+      return sevPrefix(t) + 'every ' + escapeHtml(String(r.everyMin)) + ' min until ' +
+        (r.stopOn === "clear" ? "cleared" : "acknowledged") +
+        (r.stopAfterHours ? ", giving up after " + escapeHtml(String(r.stopAfterHours)) + "h" : " — no limit") +
+        (quietWins.length
+          ? '<br><span style="color:var(--color-text-tertiary)">held during ' +
+              quietWins.map(function (w) { return escapeHtml(quietSummary(w)); }).join("; ") +
+              ' (server time); the next reminder after that says how long the alert has been active</span>'
+          : "");
+    });
+    var repeatRow = repeatLines.length
+      ? '<dt>Reminders</dt><dd>' + repeatLines.join("<br>") + '</dd>'
       : "";
     var resetRow = (draft.resetActions && draft.resetActions.length)
       ? '<dt>When it resets</dt><dd>' + draft.resetActions.map(function (a) { return escapeHtml(actionSummary(a)); }).join("<br>") + '</dd>'
@@ -7937,9 +8081,14 @@ function _awDraftFromRule(r) {
     resetActions: Array.isArray(r.resetActions) && r.resetActions.length ? JSON.parse(JSON.stringify(r.resetActions)) : null,
     repeat: r.repeat ? JSON.parse(JSON.stringify(r.repeat)) : null,
     // Per-severity actions are opt-in on the Actions step; a stored rule opts in
-    // iff any band actually carries its own actions/escalation.
+    // iff any band actually carries its own actions, escalation or follow-up
+    // pair. `followUp` counts on its own: a band may state only its own reminder
+    // clock, and re-opening with the toggle off would strip it on the next save.
+    // Same predicate as bandActionsPerSeverityOn's fallback — keep them in step.
     bandActionsPerSeverity: (Array.isArray(r.severityBands) ? r.severityBands : []).some(function (b) {
-      return (b && b.actions && b.actions.length) || (b && b.escalation && b.escalation.tiers && b.escalation.tiers.length);
+      return (b && b.actions && b.actions.length) ||
+        (b && b.escalation && b.escalation.tiers && b.escalation.tiers.length) ||
+        !!(b && b.followUp);
     }),
   };
 }

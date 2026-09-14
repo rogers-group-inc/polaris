@@ -14,7 +14,8 @@
 
 **Invariants:**
 - **The URL names the ALERT and nothing else.** No recipient, no user id, no token. The moment it names a person, the composed body stops being shareable and the per-recipient fan-out has to come back.
-- **`acknowledgeNotifications` is the only write path**, and the only place `requireAckNote` is enforced. Every surface's required field is a local courtesy.
+- **`acknowledgeNotifications` is the only write path**, and the only place the note policy is enforced. Every surface's required field is a local courtesy.
+- **The note policy is answered for the ALERT'S SEVERITY, not the rule's** (business rule 52): a severity band may carry its own `followUp.requireAckNote`, so both the page's form (`getNotificationForViewer`) and the write path resolve through `ackNotePolicyOf` — one helper, so the form and the refusal cannot disagree. A band that states nothing inherits the rule's flag.
 - **Loading is a GET, acknowledging is a POST.** Mail gateways prefetch every link; a state-changing GET would acknowledge Polaris's whole outbound alert volume at scan time.
 - **The PAGE gate is `alerts:read`, the ACTION gate is `alerts:write`.** A reader who cannot acknowledge must land on the page and be told so, not be bounced to "/".
 - **A withheld button is a KNOWN refusal, never a guess.** Only an address resolving to a Polaris account whose role holds `alerts` < write loses it; an unknown address keeps it, and so does an address two accounts share when either may act. The role policy underneath is migration `20260828030000_alerts_ack_write_capable_roles` — every role holding write anywhere else holds `alerts:write` — so the withholding lands on genuinely read-only roles.

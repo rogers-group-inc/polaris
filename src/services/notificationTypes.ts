@@ -1800,6 +1800,34 @@ export const repeatConfigSchema = z
 
 export type RepeatConfig = z.infer<typeof repeatConfigSchema>;
 
+/**
+ * A severity band's OWN follow-up policy: whether acknowledging at this
+ * severity needs a note, and whether the alert keeps reminding while it sits
+ * here.
+ *
+ * WHY IT IS ONE OBJECT rather than two loose fields. Both settings answer "what
+ * does ignoring this cost", and both need a third state the two booleans alone
+ * can't carry: *inherit the rule's*. A bare `repeat: null` on a band is a real
+ * answer — "no reminders while the alert is only a warning" — so it cannot
+ * double as "nothing was said here", and every pre-feature banded rule stores
+ * exactly that absence. Wrapping them means ONE presence test: `followUp ==
+ * null` is inherit, and anything else is the band speaking for itself, `repeat:
+ * null` included.
+ *
+ * The builder writes a `followUp` onto EVERY band the moment "use different
+ * actions for each severity level" is on (seeded from the rule's, so turning
+ * the toggle on changes nothing by itself), and strips it from all of them when
+ * the toggle is off — the same on/off contract `actions` already has.
+ */
+export const bandFollowUpSchema = z
+  .object({
+    requireAckNote: z.boolean().default(false),
+    repeat: repeatConfigSchema.optional().nullable(),
+  })
+  .strict();
+
+export type BandFollowUp = z.infer<typeof bandFollowUpSchema>;
+
 /** Re-exported so the sweep and the schema route can name the quiet-time
  *  shape without reaching past this module for half of one config. */
 export type { QuietConfig };
@@ -1854,6 +1882,9 @@ export const severityBandSchema = z
     actions: z.array(escalatableActionSchema).max(20).default([]),
     // Per-band time escalation (same shape as rule-level; accepts legacy or v2).
     escalation: z.union([escalationSchema, escalationV2Schema]).optional().nullable(),
+    // Per-band follow-up policy — see bandFollowUpSchema. NULL/absent = this
+    // band inherits the rule's, which is every pre-feature row.
+    followUp: bandFollowUpSchema.optional().nullable(),
   })
   .strict();
 export type SeverityBand = z.infer<typeof severityBandSchema>;
@@ -2493,24 +2524,30 @@ function validateSeverityBands(
  *
  * Band actions count: a banded automation whose notifies live only on its
  * severity bands still has something to re-send once it is firing in a band.
+ *
+ * A band's OWN repeat is checked the same way and against the same pool — a
+ * band with no actions of its own falls back to the rule's at fire time, so
+ * "this band has no Notify" is not the question; "this automation has none
+ * anywhere" is.
  */
 function validateRepeat(
   v: { repeat?: RepeatConfig | null; actions?: AutomationAction[] | null; severityBands?: SeverityBand[] | null },
   ctx: z.RefinementCtx,
 ): void {
-  if (!v.repeat) return;
+  const bandRepeats = (v.severityBands ?? []).map((b, i) => ({ i, repeat: b.followUp?.repeat ?? null })).filter((x) => x.repeat);
+  if (!v.repeat && bandRepeats.length === 0) return;
   const repeatable = new Set<string>(REPEATABLE_ACTION_TYPES);
   const hasNotify =
     (v.actions ?? []).some((a) => repeatable.has(a.type)) ||
     (v.severityBands ?? []).some((b) => (b.actions ?? []).some((a) => repeatable.has(a.type)));
   if (!hasNotify) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["repeat"],
-      message:
-        "Repeating an alert re-sends its notifications, so the automation needs at least one Notify action. " +
-        "API calls and scripts deliberately run only once, when the alert first fires.",
-    });
+    const message =
+      "Repeating an alert re-sends its notifications, so the automation needs at least one Notify action. " +
+      "API calls and scripts deliberately run only once, when the alert first fires.";
+    if (v.repeat) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["repeat"], message });
+    for (const b of bandRepeats) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["severityBands", b.i, "followUp", "repeat"], message });
+    }
   }
 }
 
@@ -2829,13 +2866,7 @@ export function normalizeRuleToV2(row: {
     if (!isEventDrivenTrigger(row.trigger)) actions = [...actions, { type: "event" as const }];
   }
 
-  const bands = Array.isArray(row.severityBands)
-    ? row.severityBands
-        .map((b) => severityBandSchema.safeParse(b))
-        .filter((r): r is { success: true; data: SeverityBand } => r.success)
-        .map((r) => r.data)
-    : [];
-  const severityBands = bands.length ? bands : null;
+  const severityBands = parseSeverityBands(row.severityBands);
   const bandNotify = row.bandNotify && bandNotifySchema.safeParse(row.bandNotify).success
     ? bandNotifySchema.parse(row.bandNotify)
     : null;
@@ -3021,6 +3052,64 @@ export function effectiveActionsForSeverity(
   return rule.actions ?? [];
 }
 
+/**
+ * The follow-up policy in force at a given alert severity: the band's own when
+ * it declares one, else the rule's.
+ *
+ * The SAME resolution `effectiveActionsForSeverity` performs, and it has to be:
+ * the reminder that re-sends a band's actions must run on the clock that band
+ * states, and the note demanded of whoever closes the alert out has to be the
+ * one the severity they are looking at asks for.
+ *
+ * The band test is PRESENCE, not truthiness (see bandFollowUpSchema): a band
+ * that declares `repeat: null` is saying "no reminders while it sits here",
+ * which is a different answer from a pre-feature band that says nothing and
+ * inherits whatever the rule does.
+ */
+export function effectiveFollowUpForSeverity(
+  rule: { severity: string; severityBands?: SeverityBand[] | null; requireAckNote?: boolean | null; repeat?: RepeatConfig | null },
+  severity: string,
+): { requireAckNote: boolean; repeat: RepeatConfig | null } {
+  if (severity !== rule.severity) {
+    const band = (rule.severityBands ?? []).find((b) => b.severity === severity);
+    if (band?.followUp) {
+      return { requireAckNote: band.followUp.requireAckNote === true, repeat: band.followUp.repeat ?? null };
+    }
+  }
+  return { requireAckNote: rule.requireAckNote === true, repeat: rule.repeat ?? null };
+}
+
+/**
+ * The `severityBands` JSON column → typed bands, dropping any a schema change
+ * has outgrown rather than throwing (the same posture normalizeRuleToV2 takes
+ * with every other JSON column: a row the reader can't fully understand still
+ * has to render).
+ *
+ * Exported because the ack surfaces need the bands WITHOUT normalizing a whole
+ * rule — they select two columns off `rule`, not the dozen normalizeRuleToV2
+ * wants.
+ */
+export function parseSeverityBands(raw: unknown): SeverityBand[] | null {
+  if (!Array.isArray(raw)) return null;
+  const bands = raw
+    .map((b) => severityBandSchema.safeParse(b))
+    .filter((r): r is { success: true; data: SeverityBand } => r.success)
+    .map((r) => r.data);
+  return bands.length ? bands : null;
+}
+
+/** Every repeat config a rule can present — the rule's plus each band's own.
+ *  Used for rule inclusion in the sweep and for the due-candidate cutoff, both
+ *  of which must see a rule that repeats ONLY at one band. */
+export function allRepeatsOf(
+  rule: { severityBands?: SeverityBand[] | null; repeat?: RepeatConfig | null },
+): RepeatConfig[] {
+  const out: RepeatConfig[] = [];
+  if (rule.repeat) out.push(rule.repeat);
+  for (const b of rule.severityBands ?? []) if (b.followUp?.repeat) out.push(b.followUp.repeat);
+  return out;
+}
+
 export function escalationChainsForSeverity(
   rule: RuleActionCarrier & { severity: string },
   severity: string,
@@ -3097,7 +3186,10 @@ export function followUpPolicy(
   severity: string,
 ): FollowUpPolicy {
   let repeat = "";
-  const r = rule.repeat;
+  // SEVERITY-RESOLVED like the escalation half below: a band that states its
+  // own reminder clock (or states that it has none) must be what the message
+  // advertises, or a critical alert promises the warning tier's cadence.
+  const r = effectiveFollowUpForSeverity(rule, severity).repeat;
   if (r && r.everyMin > 0) {
     // The cut-off is stated because it is the difference between "this will
     // chase you until you deal with it" and "this goes quiet at 8 hours",

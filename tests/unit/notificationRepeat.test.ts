@@ -323,6 +323,90 @@ describe("the sweep's repeat pass", () => {
   });
 });
 
+describe("per-severity reminders", () => {
+  const band = (followUp: unknown) => [{ threshold: 95, severity: "critical", actions: [], followUp }];
+
+  it("uses the BAND's clock while the alert sits in that band", async () => {
+    // Every 30 min at warning, every 5 at critical — the reason the pair moved
+    // into the severity sections at all. Reading the rule's config here would
+    // make the critical reminder arrive on the warning's cadence.
+    seedRule({
+      actions: [NOTIFY],
+      repeat: { everyMin: 30, stopOn: "acknowledge" },
+      severityBands: band({ requireAckNote: false, repeat: { everyMin: 5, stopOn: "acknowledge" } }),
+    });
+    // 10 minutes in: two intervals of the band's clock, none of the rule's.
+    seedNotif({ severity: "critical", triggeredAt: minsAgo(10) });
+    expect(await runEscalationSweep(NOW)).toBe(1);
+    expect(db.deliveries).toHaveLength(1);
+  });
+
+  it("a band that declares NO reminders silences the rule's at that severity", async () => {
+    // `repeat: null` inside a followUp is an answer, not an absence.
+    seedRule({
+      actions: [NOTIFY],
+      repeat: { everyMin: 15, stopOn: "acknowledge" },
+      severityBands: band({ requireAckNote: true, repeat: null }),
+    });
+    seedNotif({ severity: "critical" });
+    expect(await runEscalationSweep(NOW)).toBe(0);
+    expect(db.deliveries).toHaveLength(0);
+  });
+
+  it("sweeps an automation that repeats ONLY at one band", async () => {
+    // Rule-level repeat is null, so both the rule-inclusion test and the
+    // due-candidate cutoff have to see the band's interval or the sweep never
+    // looks at this alert at all.
+    seedRule({
+      actions: [NOTIFY],
+      repeat: null,
+      severityBands: band({ requireAckNote: false, repeat: { everyMin: 15, stopOn: "acknowledge" } }),
+    });
+    seedNotif({ severity: "critical" });
+    expect(await runEscalationSweep(NOW)).toBe(1);
+    expect(db.deliveries).toHaveLength(1);
+  });
+
+  it("leaves the base severity on the rule's clock", async () => {
+    seedRule({
+      actions: [NOTIFY],
+      repeat: null,
+      severityBands: band({ requireAckNote: false, repeat: { everyMin: 15, stopOn: "acknowledge" } }),
+    });
+    seedNotif({ severity: "warning" });
+    expect(await runEscalationSweep(NOW)).toBe(0);
+  });
+
+  it("a band with no followUp keeps inheriting the rule's reminders", async () => {
+    // Every pre-feature banded automation. Falling through to "no reminders"
+    // here would silence them the moment the alert climbed a tier.
+    seedRule({
+      actions: [NOTIFY],
+      repeat: { everyMin: 15, stopOn: "acknowledge" },
+      severityBands: [{ threshold: 95, severity: "critical", actions: [] }],
+    });
+    seedNotif({ severity: "critical" });
+    expect(await runEscalationSweep(NOW)).toBe(1);
+  });
+
+  it("holds the band's reminder for the BAND's quiet time, not the rule's", async () => {
+    // The windows live inside the repeat config, so a per-band clock brings its
+    // own quiet time. Keying the sweep's quiet cache on the rule alone would
+    // have held this critical through the warning tier's overnight window.
+    const allDay = {
+      windows: [{ version: 1, kind: "recurring", freq: "daily", hours: [] }],
+    };
+    seedRule({
+      actions: [NOTIFY],
+      repeat: { everyMin: 15, stopOn: "acknowledge", quiet: allDay },
+      severityBands: band({ requireAckNote: false, repeat: { everyMin: 5, stopOn: "acknowledge" } }),
+    });
+    seedNotif({ severity: "critical", triggeredAt: minsAgo(10) });
+    expect(await runEscalationSweep(NOW)).toBe(1);
+    expect(db.deliveries).toHaveLength(1);
+  });
+});
+
 /**
  * Quiet time (business rule 44).
  *

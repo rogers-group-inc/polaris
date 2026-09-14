@@ -51,8 +51,10 @@ describe("ackNoteProblem", () => {
 });
 
 describe("withAckPolicy", () => {
+  const baseRule = { requireAckNote: true, severity: "warning", severityBands: null };
+
   it("flattens the joined rule into a plain boolean and drops the join", () => {
-    const row = withAckPolicy({ id: "n1", message: "down", rule: { requireAckNote: true } });
+    const row = withAckPolicy({ id: "n1", message: "down", severity: "warning", rule: baseRule });
     expect(row.requireAckNote).toBe(true);
     expect("rule" in row).toBe(false);
     expect(row.id).toBe("n1");
@@ -62,11 +64,55 @@ describe("withAckPolicy", () => {
     // A test fire (ruleId is always null) or an alert whose automation was
     // deleted (SetNull). There is no policy left to enforce, and refusing to
     // let anyone close those out would be worse than a missing note.
-    expect(withAckPolicy({ id: "n2", rule: null }).requireAckNote).toBe(false);
-    expect(withAckPolicy({ id: "n3" }).requireAckNote).toBe(false);
+    expect(withAckPolicy({ id: "n2", severity: "warning", rule: null }).requireAckNote).toBe(false);
+    expect(withAckPolicy({ id: "n3", severity: "warning" }).requireAckNote).toBe(false);
   });
 
   it("reads false for a rule that doesn't require one", () => {
-    expect(withAckPolicy({ id: "n4", rule: { requireAckNote: false } }).requireAckNote).toBe(false);
+    expect(withAckPolicy({ id: "n4", severity: "warning", rule: { ...baseRule, requireAckNote: false } }).requireAckNote).toBe(false);
+  });
+
+  it("answers for the severity the alert is SITTING at, not the rule's base", () => {
+    // The point of the per-severity pair: a warning may close out with a click
+    // while the same automation's critical demands the operator say what they
+    // did. Reading the rule-level flag would let the critical through silently.
+    const rule = {
+      requireAckNote: false,
+      severity: "warning",
+      severityBands: [{ threshold: 95, severity: "critical", actions: [], followUp: { requireAckNote: true } }],
+    };
+    expect(withAckPolicy({ id: "n5", severity: "warning", rule }).requireAckNote).toBe(false);
+    expect(withAckPolicy({ id: "n6", severity: "critical", rule }).requireAckNote).toBe(true);
+  });
+
+  it("a band that states nothing inherits the rule's answer", () => {
+    // Every pre-feature banded automation is this row: bands exist, none of
+    // them carries a followUp, and the rule's flag has to keep governing every
+    // severity — otherwise the feature silently switched note-requiring
+    // automations off at their higher tiers.
+    const rule = {
+      requireAckNote: true,
+      severity: "warning",
+      severityBands: [{ threshold: 95, severity: "critical", actions: [] }],
+    };
+    expect(withAckPolicy({ id: "n7", severity: "critical", rule }).requireAckNote).toBe(true);
+  });
+
+  it("a band CAN turn the requirement off where the rule turns it on", () => {
+    const rule = {
+      requireAckNote: true,
+      severity: "warning",
+      severityBands: [{ threshold: 95, severity: "critical", actions: [], followUp: { requireAckNote: false } }],
+    };
+    expect(withAckPolicy({ id: "n8", severity: "critical", rule }).requireAckNote).toBe(false);
+    expect(withAckPolicy({ id: "n9", severity: "warning", rule }).requireAckNote).toBe(true);
+  });
+
+  it("survives a severityBands column it cannot parse", () => {
+    // parseSeverityBands drops what a schema change has outgrown rather than
+    // throwing — an alert must stay acknowledgeable when its automation's JSON
+    // is from a newer shape.
+    const rule = { requireAckNote: true, severity: "warning", severityBands: "not-an-array" };
+    expect(withAckPolicy({ id: "n10", severity: "critical", rule }).requireAckNote).toBe(true);
   });
 });

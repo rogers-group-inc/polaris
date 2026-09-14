@@ -78,6 +78,8 @@ import { scopeRegionTagsOf } from "./notificationRecipientService.js";
 import {
   normalizeRuleToV2,
   effectiveActionsForSeverity,
+  effectiveFollowUpForSeverity,
+  allRepeatsOf,
   REPEAT_STATE_KEY,
   REPEATABLE_ACTION_TYPES,
   type RepeatConfig,
@@ -263,8 +265,9 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
       repeat: v2.repeat,
     };
     // Include the rule if ANY chain exists (rule-level, per-action, or band)
-    // OR it repeats — a repeat-only automation has no chains at all.
-    if (allEscalationsOf(rule).length > 0 || rule.repeat) rules.set(r.id, rule);
+    // OR it repeats anywhere — a repeat-only automation has no chains at all,
+    // and one that repeats only at its critical band has no rule-level repeat.
+    if (allEscalationsOf(rule).length > 0 || allRepeatsOf(rule).length > 0) rules.set(r.id, rule);
   }
   if (rules.size === 0) return 0;
 
@@ -277,7 +280,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
   // rule, so the empty case is guarded rather than assumed away.
   const dueMins = [
     ...Array.from(rules.values()).flatMap((r) => allEscalationsOf(r).flatMap((e) => e.tiers.map((t) => t.afterMin))),
-    ...Array.from(rules.values()).flatMap((r) => (r.repeat ? [r.repeat.everyMin] : [])),
+    ...Array.from(rules.values()).flatMap((r) => allRepeatsOf(r).map((x) => x.everyMin)),
   ];
   if (dueMins.length === 0) return 0;
   const minAfterMin = Math.min(...dueMins);
@@ -319,14 +322,24 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
   let tierRuns = 0;
   let repeatRuns = 0;
 
-  // Is each repeating rule quiet at THIS instant? Per rule, not per
-  // notification: the answer is a property of the rule's windows and `now`
-  // alone, and an all-assets automation with hundreds of live alerts would
-  // otherwise re-evaluate the same recurrence for every one of them.
-  const quietRules = new Map<string, boolean>();
-  for (const r of rules.values()) {
-    if (r.repeat?.quiet) quietRules.set(r.id, isQuietNow(r.repeat.quiet, now));
-  }
+  // Is each repeating rule quiet at THIS instant? Per rule AND SEVERITY, not
+  // per notification: the answer is a property of the windows in force at that
+  // severity and `now` alone, and an all-assets automation with hundreds of
+  // live alerts would otherwise re-evaluate the same recurrence for every one
+  // of them. A band that states its own reminder clock states its own quiet
+  // time with it (the windows live inside the repeat config), so the key has to
+  // carry the severity — keying on the rule alone would hold a critical
+  // reminder through the warning tier's overnight window.
+  const quietAt = new Map<string, boolean>();
+  const isQuietFor = (rule: EscalationRule, severity: string): boolean => {
+    const key = `${rule.id}|${severity}`;
+    const hit = quietAt.get(key);
+    if (hit !== undefined) return hit;
+    const quiet = effectiveFollowUpForSeverity(rule, severity).repeat?.quiet ?? null;
+    const answer = quiet ? isQuietNow(quiet, now) : false;
+    quietAt.set(key, answer);
+    return answer;
+  };
   /** Reminders whose hold STARTED this sweep — one Event each, written after
    *  the loop so the notification pass stays free of extra awaits. */
   const quietPausedEvents: {
@@ -411,17 +424,24 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     // BOTH. The reminder is deliberately NOT suppressed in that sweep —
     // skipping it would drift the clock and make "every 15 minutes" a lie. The
     // wizard warns about the pairing at authoring time instead.
-    if (rule.repeat) {
+    // SEVERITY-RESOLVED, like the chains above: the band the alert currently
+    // sits in states its own reminder clock, and falls back to the rule's when
+    // it says nothing. A band transition therefore changes the cadence mid-
+    // incident, which is the point — `startAt` is already band-entry when
+    // banded, so the new clock starts from the transition rather than from a
+    // fire that happened under the old one.
+    const repeatCfg = effectiveFollowUpForSeverity(rule, n.severity).repeat;
+    if (repeatCfg) {
       // stopOn mirrors escalation's: "acknowledge" stops on ack OR clear (the
       // query already excludes cleared), "clear" ignores acknowledgement.
-      const stopsOnAck = rule.repeat.stopOn !== "clear";
+      const stopsOnAck = repeatCfg.stopOn !== "clear";
       const prevRepeat = state.tiers[REPEAT_STATE_KEY];
-      if (!(stopsOnAck && n.acknowledged) && repeatIsDue(rule.repeat, startAt, prevRepeat, now)) {
-        // QUIET TIME. Resolved once per rule per sweep (quietRules), because a
-        // recurrence answer is per rule and per instant — nothing about it
-        // varies by notification, and an all-assets automation with 400 live
-        // alerts must not evaluate the same windows 400 times.
-        if (quietRules.get(rule.id)) {
+      if (!(stopsOnAck && n.acknowledged) && repeatIsDue(repeatCfg, startAt, prevRepeat, now)) {
+        // QUIET TIME. Resolved once per rule + severity per sweep (isQuietFor),
+        // because a recurrence answer is a property of those two and `now` —
+        // nothing about it varies by notification, and an all-assets automation
+        // with 400 live alerts must not evaluate the same windows 400 times.
+        if (isQuietFor(rule, n.severity)) {
           // HELD, not skipped: `lastSentAt` stays where it was, so this
           // reminder is still due on the first sweep after the window ends.
           const held = (state.quietHeldCount ?? 0) + 1;
@@ -432,7 +452,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
             // the timeline of the outage they describe. The resume time is the
             // detail worth having — it is the answer to "why has this alert
             // gone silent", and it is not derivable from the row.
-            const resumesAt = quietResumesAt(rule.repeat.quiet, now);
+            const resumesAt = quietResumesAt(repeatCfg.quiet, now);
             quietPausedEvents.push({
               notificationId: n.id,
               ruleName: rule.name,

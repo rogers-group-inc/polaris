@@ -1,6 +1,6 @@
 ---
 name: polaris-business-rules
-description: "The 51 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups and the database sslmode handed to pg_dump/psql, SSH host keys, login restriction, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
+description: "The 52 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP (upstream placement of a device), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups and the database sslmode handed to pg_dump/psql, SSH host keys, login restriction, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
 user-invocable: false
 ---
 
@@ -12,7 +12,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(52 is the next free number.)
+(53 is the next free number.)
 
 ## How to read
 
@@ -34,7 +34,7 @@ Reference files (all verbatim):
 - [references/narrative-12-24.md](references/narrative-12-24.md) — full narrative, rules 12–24
 - [references/narrative-25-35.md](references/narrative-25-35.md) — full narrative, rules 25–35
 - [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–43 (the filename is a stable citation key — see the numbering note)
-- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–49 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
+- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–52 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -96,6 +96,8 @@ before changing anything the invariant constrains.
 | 48 | Nobody hands out authority they do not hold | invariants-30-43 | narrative-44-48 |
 | 49 | An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved | invariants-30-43 | narrative-44-48 |
 | 50 | A response the app did not write is a response with the app's headers missing | invariants-30-43 | narrative-44-48 |
+| 51 | `DATABASE_URL` is a driver URL; its `sslmode` is translated into libpq's vocabulary, never copied | invariants-30-43 | narrative-44-48 |
+| 52 | A follow-up policy belongs to the severity the alert is sitting at, and silence means inherit | invariants-30-43 | narrative-44-48 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),
