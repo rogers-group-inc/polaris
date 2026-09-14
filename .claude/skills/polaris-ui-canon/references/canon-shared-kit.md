@@ -84,16 +84,21 @@ before that each rule picked its own background and shadow.
 `--panel-glass-chrome` (their header/footer bands), `--menu-glass-bg` (every menu),
 `--panel-glass-blur` (the `backdrop-filter` value all of them share), `--shadow-panel` (a
 frosted surface floating free of a screen edge), `--shadow-control` (buttons, page search
-and filter fields, anything small resting on the page) and `--shadow-card` (the big opaque
+and filter fields, anything small resting on the page), `--shadow-card` (the big opaque
 content surfaces resting on the page — every card, the dashboard widgets, the map and graph
 canvases, and `.chart-box`, the plot surface every SVG chart in the asset slide-over is drawn
-into).
+into) and `--shadow-pill` (badges and widget pills, nothing else).
 
 **Key conventions:**
-- **Four elevation tokens, one per kind of surface — pick by what the surface IS.**
+- **Five elevation tokens, one per kind of surface — pick by what the surface IS.**
   `--shadow-panel` floats free over a scrim; `--shadow-md` floats over the page (menus,
   dropdowns, `.table-wrapper`); `--shadow-control` is small chrome resting on it;
-  `--shadow-card` is a big opaque box resting on it. `--shadow-sm` is retired — nothing in
+  `--shadow-card` is a big opaque box resting on it; `--shadow-pill` is the tightest of
+  them, for `.badge` and `.widget-pill` only. A pill is not a control — it takes far less
+  lift than `--shadow-control`, because at 0.72rem in a dense table anything blurrier
+  reads as a smudge. It is also the one elevation defined per FAMILY rather than per
+  theme (`:root` and the daylight base), since separating a tinted chip from the surface
+  under it is the same job in every theme. `--shadow-sm` is retired — nothing in
   `public/` paints it, and it survives in the token block only because the portable kit
   declares it. A new card takes `--shadow-card`; reaching for `--shadow-sm` reproduces
   exactly the bug that retired it (a 4px blur at .10 alpha under a 300px-wide box is

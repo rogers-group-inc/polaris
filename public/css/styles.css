@@ -53,6 +53,12 @@
      portable kit (design/POLARIS-UI-GUIDE.md) declares it; reach for
      --shadow-card on a new card, not for this. */
   --shadow-sm: 0 1px 4px rgba(0,0,0,.3);
+  /* Pill lift — the tightest elevation in the system, for badges and widget
+     pills. Deliberately far smaller than --shadow-control: a pill is not a
+     control, and at 0.72rem in a dense table anything blurrier reads as a
+     smudge. One value per FAMILY rather than per theme; it is separating a
+     chip from the surface under it, which is the same job in every theme. */
+  --shadow-pill: 0 1px 2px rgba(0,0,0,.45);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
   /* Drop shadow for a frosted panel that floats free of a screen edge — the
      modal. It paints --panel-glass-bg, only 50% opaque, so --shadow-md's
@@ -145,6 +151,7 @@
   --color-sev-notice: #94a3b8;
   --color-hover-tint: rgba(0,0,0,0.05);
   --color-fill-subtle: rgba(0,0,0,0.05);
+  --shadow-pill: 0 1px 2px rgba(60,40,10,.22);
   --shadow-sm: 0 1px 4px rgba(0,0,0,.08);
   --shadow-md: 0 8px 32px rgba(0,0,0,.12);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.18), 0 2px 10px rgba(0,0,0,.10);
@@ -401,47 +408,55 @@ code {
 
 
 /* ─── Morning ────────────────────────────────────────────────────────────────
-   Dawn quadrant of the clockface: gilt sun on aged parchment. Warm neutrals,
-   burnished-gold accent, everything a half-step softer than the retired `light`
-   so long reading sessions in a bright room don't glare. */
+   Dawn quadrant of the clockface: gilt sun on aged parchment, pushed into
+   amber. Yellow-brown grounds, an orange accent, warm near-black text,
+   everything still a half-step softer than noon so long reading sessions in a
+   bright room don’t glare.
+
+   The warmth is doing a job, not a mood: morning and noon are the two daylight
+   themes and they used to sit a few percent apart, which made half the theme
+   dial’s travel look like nothing happening. Morning now owns the only neutrals
+   in the system carrying real yellow, and noon owns the neutral whites — so the
+   pair reads as amber against white at a glance. */
 [data-theme="morning"] {
-  --color-bg-primary: #f7efe1;
-  --color-bg-secondary: #efe4d1;
-  --color-bg-tertiary: #f3e9d9;
-  --color-surface: #fffaf1;
-  --color-bg-elevated: #f1e6d4;
-  --color-border: #dcccb2;
-  --color-border-light: #eaddc9;
-  --color-text-primary: #2e2415;
-  --color-text-secondary: #6b5a41;
-  --color-text-tertiary: #9c8a6c;
-  --color-accent: #b5811a;
-  --color-primary: #b5811a;
-  --color-accent-hover: #96690f;
+  --color-bg-primary: #f7e6c8;
+  --color-bg-secondary: #eed9b2;
+  --color-bg-tertiary: #f2e0bd;
+  --color-surface: #fff8e8;
+  --color-bg-elevated: #f0dcb6;
+  --color-border: #d9bd8c;
+  --color-border-light: #ead7b3;
+  --color-text-primary: #33210a;
+  --color-text-secondary: #6e4f22;
+  --color-text-tertiary: #9c7c48;
+  --color-accent: #b25e0a;
+  --color-primary: #b25e0a;
+  --color-accent-hover: #914a05;
   --color-success: #4b7a2f;
-  --color-warning: #cf7a15;
+  --color-warning: #d07a00;
   --color-danger: #b0301d;
   --color-danger-hover: #8e2314;
-  --color-deprecated: #8d8272;
-  --shadow-sm: 0 1px 4px rgba(70,50,20,.10);
-  --shadow-md: 0 8px 32px rgba(70,50,20,.16);
-  --shadow-panel: 0 24px 64px rgba(70,50,20,.24), 0 2px 10px rgba(70,50,20,.14);
-  --shadow-control: 0 2px 5px rgba(70,50,20,.22), 0 1px 2px rgba(70,50,20,.14), inset 0 1px 0 rgba(255,255,255,.55);
-  --shadow-card: 0 8px 32px rgba(70,50,20,.16), 0 2px 6px rgba(70,50,20,.13), inset 0 1px 0 rgba(255,255,255,.55);
+  --color-deprecated: #8a7a5e;
+  --shadow-sm: 0 1px 4px rgba(70,45,10,.10);
+  --shadow-md: 0 8px 32px rgba(70,45,10,.16);
+  --shadow-panel: 0 24px 64px rgba(70,45,10,.24), 0 2px 10px rgba(70,45,10,.14);
+  --shadow-control: 0 2px 5px rgba(70,45,10,.22), 0 1px 2px rgba(70,45,10,.14), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-card: 0 8px 32px rgba(70,45,10,.16), 0 2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
-   Sun at its height, the clockface's red-rust flank: near-white ground, the
-   highest text contrast of any theme, terracotta accent. The one to reach for
-   on a projector or in direct sunlight. */
+   Sun at its height: neutral near-white ground, the highest text contrast of
+   any theme, terracotta accent. The one to reach for on a projector or in
+   direct sunlight. Deliberately the COOL daylight theme — its neutrals carry
+   almost no hue, which is what keeps it distinct from morning’s amber. */
 [data-theme="noon"] {
-  --color-bg-primary: #fbf6f0;
-  --color-bg-secondary: #f2ebe2;
-  --color-bg-tertiary: #f7f1e9;
+  --color-bg-primary: #fbfaf9;
+  --color-bg-secondary: #f1efec;
+  --color-bg-tertiary: #f7f5f3;
   --color-surface: #ffffff;
-  --color-bg-elevated: #f6efe5;
-  --color-border: #ded1c1;
-  --color-border-light: #eee5d9;
+  --color-bg-elevated: #f6f4f1;
+  --color-border: #dbd6d0;
+  --color-border-light: #ebe7e2;
   --color-text-primary: #201612;
   --color-text-secondary: #5a453c;
   --color-text-tertiary: #8f7367;
@@ -1160,9 +1175,15 @@ code {
   border-radius: 999px;
   font-size: 0.7rem;
   font-weight: 600;
+  box-shadow: var(--shadow-pill);
 }
 .advisor-pill-change { background: rgba(255,214,0,0.18); color: var(--color-warning); }
 .advisor-pill-ok     { background: rgba(46,204,113,0.15); color: #2ecc71; }
+/* Same story as .widget-pill-* further down: a pale ink on a 15-18% tint is a
+   dark-theme pairing. On the daylight palettes these measured 1.63-3.66:1, so
+   the tint takes a body and the ink goes dark. */
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-pill-change { background: rgba(255,214,0,0.30); color: #6b4400; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-pill-ok     { background: rgba(46,204,113,0.30); color: #1b5e20; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-pill-ok { background: rgba(39,174,96,0.15); color: #27ae60; }
 .advisor-cold-badge {
   display: inline-block;
@@ -2723,6 +2744,10 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   font-weight: 600;
   text-transform: capitalize;
   white-space: nowrap;
+  /* Lifts the chip off the row so a pale tint still reads as an object on a
+     daylight ground. Tinted fills sit only a few percent from the surface
+     they are on; without an edge the pill dissolves into the row. */
+  box-shadow: var(--shadow-pill);
 }
 .badge-clickable { cursor: pointer; user-select: none; transition: filter 0.12s ease, transform 0.12s ease; }
 .badge-clickable:hover  { filter: brightness(1.18); }
@@ -5467,7 +5492,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    swap would leave the text fighting its own tint. If these ever need to follow the
    theme, give the tier ladder its OWN tokens (--color-tier-*) carrying both halves;
    do not reach for the semantic four. */
-.widget-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.3px; }
+.widget-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.3px; box-shadow: var(--shadow-pill); }
 .widget-pill-ok    { background: rgba(76,175,80,0.18);  color: #81c784; }
 .widget-pill-watch { background: rgba(79,195,247,0.18); color: #4fc3f7; }
 .widget-pill-amber { background: rgba(255,193,7,0.18);  color: #ffd54f; }
@@ -5484,6 +5509,39 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .recent-item-title .widget-pill-orange  { color: var(--color-sev-serious); }
 .recent-item-title .widget-pill-neutral { color: var(--color-sev-notice); }
 .recent-item-title .widget-pill-red   { color: #ef5350; }
+
+/* ─── Widget pills on a daylight ground ──────────────────────────────
+   The six variants above are dark-theme colours: pale inks on an 18% tint,
+   which is right on indigo and unreadable on cream. Measured against the
+   palest ground each theme uses, `widget-pill-amber` scored 1.08:1 in morning
+   and 1.24:1 in noon — not low contrast, invisible. (AA wants 4.5:1 at this
+   size; nightfall already clears it at 3.9–7.7:1, which is why this is a
+   family override and not an edit to the values above.)
+
+   Two changes, because neither alone is enough: the tint goes to 30% so the
+   chip has a body on a light ground, and the ink goes to a dark hued tone
+   rather than the theme accent — the accents are mid-tone and still only
+   reached ~2.8–4.4:1 on these tints. One set serves all three daylight
+   palettes (worst case 5.2:1, on afternoon) rather than three near-identical
+   blocks. Hue is preserved per variant, so the severity vocabulary
+   — green ok, blue watch, amber attention, orange serious, red problem,
+   slate neutral — survives the shift. ───────────────────────────────── */
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-ok { background: rgba(76,175,80,0.30); color: #1b5e20; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-watch { background: rgba(79,195,247,0.30); color: #01466f; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-amber { background: rgba(255,193,7,0.30); color: #6b4400; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-orange { background: rgba(255,138,0,0.30); color: #7a3f00; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-neutral { background: rgba(148,163,184,0.30); color: #2b373d; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .widget-pill-red { background: rgba(255,23,68,0.30); color: #8c0d1c; }
+
+/* The .recent-item-title rules above re-assert the dark inks at the same
+   specificity these have, so the daylight set has to be re-stated one level
+   deeper to win inside an alert title. */
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-ok { color: #1b5e20; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-watch { color: #01466f; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-amber { color: #6b4400; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-orange { color: #7a3f00; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-neutral { color: #2b373d; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .recent-item-title .widget-pill-red { color: #8c0d1c; }
 
 /* ─── Site Map widget markers ─────────────────────────────────────────────
  * Lifted from map.css so the siteMap dashboard widget renders correctly on
