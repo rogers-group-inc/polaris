@@ -248,6 +248,24 @@ if command -v psql &>/dev/null; then
       warn "pg_dump on PATH is PostgreSQL ${_dump_major} but the server is PostgreSQL ${_srv_major} — pg_dump refuses a newer server, so BACKUPS WILL FAIL."
       warn "  Fix: dnf install -y postgresql${_srv_major} (PGDG), then check that $(command -v pg_dump) is not the AppStream package: rpm -qf $(command -v pg_dump)"
     fi
+    # TimescaleDB is REQUIRED, but this install path does not own the database
+    # server, so it cannot install a package there — all it can do is try the
+    # CREATE (it succeeds when the extension is available and the connecting
+    # role is superuser / rds_superuser, and is a no-op when it already exists)
+    # and say plainly what a failure costs. Not fatal here for the same reason:
+    # refusing to finish would leave the operator with a half-installed app and
+    # no way to fix the database from this host anyway.
+    if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" &>/dev/null; then
+      info "TimescaleDB extension present ($(psql "$DATABASE_URL" -tAX -c "SELECT extversion FROM pg_extension WHERE extname='timescaledb'" 2>/dev/null | tr -d '[:space:]' || echo 'version unknown'))"
+    else
+      warn "TimescaleDB is NOT enabled on this database, and Polaris requires it."
+      warn "  Without it the 28 sample + rollup tables stay plain tables: retention prunes row"
+      warn "  by row instead of dropping chunks, compression never runs, and the documented"
+      warn "  restore procedure's pre/post gates do nothing. Expect a much larger database."
+      warn "  Have your DBA run, on this database:  CREATE EXTENSION timescaledb;"
+      warn "  (it needs the package installed server-side and timescaledb in shared_preload_libraries)."
+      warn "  Managed services differ — RDS, Aurora and Cloud SQL do not offer it at all; see docs/INSTALL.md."
+    fi
     # pg-boss (queue runtime for monitor cadences at scale) lives in its own
     # `pgboss` schema. The role we're connecting as needs to own that schema
     # — try the grants ourselves; if our role isn't the schema owner / a

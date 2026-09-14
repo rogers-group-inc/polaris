@@ -246,7 +246,7 @@ describe("the upgrade playbook", () => {
             docAnchor: "docs/INSTALL.md#supported-platform-versions",
             risk: "medium",
             steps: ["Bump engines.node", "Bump both Dockerfiles"],
-            files: ["package.json", "deploy/setup-windows.ps1"],
+            files: ["package.json", "deploy/setup-rhel.sh"],
           },
         }),
       ],
@@ -258,7 +258,7 @@ describe("the upgrade playbook", () => {
     expect(html).toContain("Bump engines.node");
     expect(html).toContain("Bump both Dockerfiles");
     expect(html).toContain("package.json");
-    expect(html).toContain("deploy/setup-windows.ps1");
+    expect(html).toContain("deploy/setup-rhel.sh");
     expect(html).toContain("docs/INSTALL.md#supported-platform-versions");
   });
 

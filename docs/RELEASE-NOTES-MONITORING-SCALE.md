@@ -1,5 +1,12 @@
 # Release notes — Monitoring scale work
 
+> **Historical record — two statements below have since been superseded.**
+> TimescaleDB stopped being optional on **2026-09-11**: every install path now
+> provisions it and the setup scripts fail without it (`docs/INSTALL.md` →
+> *Required: TimescaleDB*). The `pgboss_recommended` alert and its inline
+> "Enable on next restart" button were folded into the Capacity Advisor's
+> queue-mode lever and no longer exist. The rest stands as written.
+
 Window: this release bundles ~17 commits across two phases of monitoring-stack work plus four post-deploy hotfixes. Code touched the cursor queue, persistence layer, and most discovery write paths. Rough scope: ~3,500 lines across four schema migrations.
 
 ## TL;DR for the operator

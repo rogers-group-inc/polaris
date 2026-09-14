@@ -480,7 +480,7 @@ app.use(async (req, res, next) => {
 // hides the docs briefly rather than exposing them; the login gate above
 // makes the opposite call for the opposite reason. On managed proxy installs
 // nginx renders a matching `location = /api` allow block, but THIS gate is
-// authoritative on every install type (Windows/NSSM, dev, Docker included).
+// authoritative on every install type (dev and Docker included).
 // This is an unmounted app.use, so req.path is the full path — /api/v1/*
 // never matches the exact-path Set.
 const API_DOCS_PATHS = new Set(["/api", "/api/", "/api.html"]);

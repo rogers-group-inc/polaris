@@ -105,9 +105,12 @@ function glob(dir, re) {
  */
 const HA_DEPLOY = () => glob("deploy/ha", /\.(sh|service|timer|conf|example)$/);
 
+// Every setup script is a Linux one since 2026-09-11, when Windows was dropped
+// as a Polaris host. ALL_SETUP is kept as a distinct name because the families
+// that use it mean "every install path", not "the Linux ones specifically" —
+// if another platform is ever added, it widens here and the families follow.
 const LINUX_SETUP = () => glob("deploy", /^setup-(rhel|ubuntu)(-nodb)?\.sh$/);
-const WINDOWS_SETUP = () => glob("deploy", /^setup-windows(-nodb)?\.ps1$/);
-const ALL_SETUP = () => [...LINUX_SETUP(), ...WINDOWS_SETUP()];
+const ALL_SETUP = () => LINUX_SETUP();
 const UNITS = () => glob("deploy", /^polaris-.*\.service$/);
 const WORKFLOWS = () => glob(".github/workflows", /\.ya?ml$/);
 
@@ -152,12 +155,6 @@ const FAMILIES = [
         re: /node -v\)" == v(\d+)\*/g, pick: (m) => m[1] },
       { files: LINUX_SETUP, label: "install source", kind: "pin",
         re: /nodejs:(\d+)\b|node_(\d+)\.x/g, pick: (m) => m[1] ?? m[2] },
-      { files: WINDOWS_SETUP, label: "node accept floor", kind: "accept-range",
-        re: /node -v\) -match "\^v\((\d+)\|/g, pick: (m) => m[1] },
-      { files: WINDOWS_SETUP, label: "winget pin", kind: "pin",
-        re: /OpenJS\.NodeJS\.LTS --version (\d+)\./g, pick: (m) => m[1] },
-      { files: WINDOWS_SETUP, label: "MSI fallback URL", kind: "pin",
-        re: /nodejs\.org\/dist\/v(\d+)\./g, pick: (m) => m[1] },
       { files: WORKFLOWS, label: "node-version", kind: "pin",
         re: /node-version:\s*(\d+)/g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md", "README.md", "CLAUDE.md"], label: "prose floor", kind: "prose", role: "floor",
@@ -179,19 +176,15 @@ const FAMILIES = [
       { file: "README.md", label: "system-requirements table", kind: "prose", role: "floor",
         re: /\|\s*Node\.js\s*\|\s*(\d+)\+/g, pick: (m) => m[1] },
     ],
-    // The Linux scripts accept a *range* (v20 or v22) while Windows pins one
-    // exact build. That is not a contradiction the equality check can see, but
-    // it does mean "Node 20+" is false on Windows past the pinned patch.
+    // The setup scripts accept a *range* (v22 or v24) while the Dockerfiles and
+    // CI pin one major. That is not a contradiction the equality check can see,
+    // but a major nothing installs is one no install path ever tests.
     extra(found) {
       const warns = [];
       const linuxCeiling = new Set();
       for (const rel of LINUX_SETUP()) {
         const src = read(rel) ?? "";
         for (const m of src.matchAll(/\|\| "\$\(node -v\)" == v(\d+)\*/g)) linuxCeiling.add(m[1]);
-      }
-      for (const rel of WINDOWS_SETUP()) {
-        const src = read(rel) ?? "";
-        for (const m of src.matchAll(/node -v\) -match "\^v\(\d+\|(\d+)\)/g)) linuxCeiling.add(m[1]);
       }
       const pins = found.filter((f) => f.kind === "pin").map((f) => f.value);
       for (const ceil of linuxCeiling) {
@@ -210,27 +203,21 @@ const FAMILIES = [
     id: "go-pin",
     label: "Go toolchain",
     agree: "major.minor",
-    minSites: 8,
+    minSites: 5,
     sites: [
       // FLOOR, not pin. The go directive is a MINIMUM toolchain — the same
-      // shape as engines.node — and from 2026-09-09 the family has two numbers
-      // like Node's: 1.26 required, 1.27 pinned on Windows. Demanding one
-      // number would force a lie, because no Linux path can install 1.27 (the
-      // RHEL go-toolset module and the Go snap both stop at 1.26).
+      // shape as engines.node. Every PIN site this family had lived in the
+      // Windows setup scripts, which went away with Windows-as-a-host on
+      // 2026-09-11; what remains is floors only, and the dataset's Go target
+      // dropped to the minimum to match, because no surviving install path
+      // provisions anything newer (the RHEL go-toolset module and the Go snap
+      // both stop at 1.26). A target above what every path installs makes
+      // every healthy host report behind-target forever — the same rule Java
+      // already follows here.
       { file: "agent/go.mod", label: "go directive", kind: "pin", role: "floor",
         re: /^go (\d+\.\d+)/gm, pick: (m) => m[1] },
       { files: LINUX_SETUP, label: "go version accept floor", kind: "accept-range",
         re: /go1\\\.\((\d)\[(\d)-9\]/g, pick: (m) => `1.${m[1]}${m[2]}` },
-      { files: WINDOWS_SETUP, label: "go accept floor", kind: "accept-range",
-        re: /go1\\\.\((\d)\[(\d)-9\]/g, pick: (m) => `1.${m[1]}${m[2]}` },
-      // `--id GoLang.Go --version N`, not `--id GoLang.Go.N`: winget publishes
-      // ONE GoLang.Go package with per-version manifests. The old form named a
-      // package that does not exist, so the install failed on every host that
-      // HAS winget — and silently, since the MSI fallback is the else branch.
-      { files: WINDOWS_SETUP, label: "winget version", kind: "pin",
-        re: /GoLang\.Go --version (\d+\.\d+)/g, pick: (m) => m[1] },
-      { files: WINDOWS_SETUP, label: "MSI fallback URL", kind: "pin",
-        re: /go\.dev\/dl\/go(\d+\.\d+)\./g, pick: (m) => m[1] },
       { files: ["docs/INSTALL.md"], label: "prose floor", kind: "prose", role: "floor",
         re: /Go (\d+\.\d+)\+/g, pick: (m) => m[1] },
       // The minimum the app enforces at the agent-build preflight, and the
@@ -281,12 +268,6 @@ const FAMILIES = [
       // replicate from the primary at all.
       { file: "deploy/ha/setup-rhel-ha.sh", label: "PG_MAJOR", kind: "pin",
         re: /^PG_MAJOR=(\d+)/gm, pick: (m) => m[1] },
-      { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
-        re: /PostgreSQL\.PostgreSQL\.(\d+)/g, pick: (m) => m[1] },
-      { files: WINDOWS_SETUP, label: "installer URL", kind: "pin",
-        re: /postgresql-(\d+)\.\d+-\d+-windows/g, pick: (m) => m[1] },
-      { files: WINDOWS_SETUP, label: "--servicename", kind: "pin",
-        re: /--servicename postgresql-(\d+)/g, pick: (m) => m[1] },
       { file: "compose.dev.yml", label: "dev image tag", kind: "pin",
         re: /timescaledb:latest-pg(\d+)/g, pick: (m) => m[1] },
       { files: WORKFLOWS, label: "CI service image", kind: "pin",
@@ -336,10 +317,6 @@ const FAMILIES = [
         re: /openjdk-(\d+)-jre-headless|java-(\d+)-openjdk/g, pick: (m) => m[1] ?? m[2] },
       { files: LINUX_SETUP, label: "JDK package", kind: "pin",
         re: /java-(\d+)-openjdk|openjdk-(\d+)-jre/g, pick: (m) => m[1] ?? m[2] },
-      { files: WINDOWS_SETUP, label: "winget id", kind: "pin",
-        re: /Microsoft\.OpenJDK\.(\d+)/g, pick: (m) => m[1] },
-      { files: WINDOWS_SETUP, label: "JDK MSI URL", kind: "pin",
-        re: /microsoft-jdk-(\d+)-windows/g, pick: (m) => m[1] },
       // The number the RUNNING APP states. Every "install Java N+" string
       // interpolates it, and nothing else in this family reads src/ — which is
       // how the copy went on saying "Java 17+" while all ten install sites
@@ -361,8 +338,6 @@ const FAMILIES = [
         re: /jsign\/releases\/download\/(\d+\.\d+)\//g, pick: (m) => m[1] },
       { files: LINUX_SETUP, label: "JSIGN_VERSION", kind: "pin",
         re: /JSIGN_VERSION="?(\d+\.\d+)"?/g, pick: (m) => m[1] },
-      { files: WINDOWS_SETUP, label: "JSIGN_VERSION", kind: "pin",
-        re: /JSIGN_VERSION\s*=\s*"(\d+\.\d+)"/g, pick: (m) => m[1] },
     ],
   },
 ];
@@ -541,7 +516,7 @@ for (const family of FAMILIES) {
  * drifts, just silently and per-host — `default-jre-headless` is Java 17 on
  * Ubuntu 22.04 and Java 21 on 24.04, so two supported Polaris hosts sign agent
  * binaries with different JDK majors and only one of them matches what the
- * Dockerfile and the RHEL and Windows scripts pin.
+ * Dockerfile and the RHEL scripts pin.
  */
 // Only unversioned installs with NO version verification anywhere near them.
 // The Go installs look unversioned too (`dnf install -y golang`,
@@ -723,9 +698,9 @@ if (rawDataset === null) {
     // targeted 21 after that target was dropped to 17. Both were caught by
     // reading, which is not a mechanism.
     //
-    // Only `dated` technologies are compared. TimescaleDB ("2.x" / "current"),
-    // Windows Server and PgBouncer state prose in those columns on purpose,
-    // because they have no dated lifecycle to mirror.
+    // Only `dated` technologies are compared. TimescaleDB ("2.x" / "current")
+    // and PgBouncer state prose in those columns on purpose, because they have
+    // no dated lifecycle to mirror.
     const INSTALL_DOC = "docs/INSTALL.md";
     const ROW_TO_TECH = {
       "Node.js": "node",

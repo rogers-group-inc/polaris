@@ -1366,269 +1366,257 @@ export async function applyUpdate(
  * file), so this is always called from the web process.
  */
 export async function restartService() {
-  const isWindows = process.platform === "win32";
+  // Windows was dropped as a supported Polaris host on 2026-09-11, together
+  // with deploy/setup-windows.ps1 and the NSSM per-role services this branch
+  // used to restart. The only win32 process that can still reach here is a dev
+  // box, where the watcher (or the operator's terminal) brings us back after
+  // the self-exit below.
+  if (process.platform === "win32") {
+    setTimeout(() => { process.exit(0); }, 5000);
+    return;
+  }
 
-  if (isWindows) {
-    // Restart each per-role NSSM service, web LAST so its status page survives
-    // through the workers' restart. Detached so it survives this process's exit.
-    const cmd = "C:\\nssm\\nssm.exe restart PolarisDiscovery & C:\\nssm\\nssm.exe restart PolarisMonitor1 & C:\\nssm\\nssm.exe restart PolarisWeb";
-    const child = spawn("cmd.exe", ["/c", cmd], {
+  // Restart the full group via a transient unit so the restart survives our
+  // own exit (a detached child stays in web's cgroup and would be killed when
+  // web restarts; systemd-run runs it as an independent transient unit).
+  // Requires a polkit/sudo grant for the polaris user to manage polaris.target
+  // — see docs/INSTALL.md. Falls back to a plain exit so at least web cycles.
+  //
+  // Auto-sync shipped unit files before restarting. A Polaris update that
+  // ships unit-file changes (new env var on a worker role, hardening
+  // directive, etc.) only lands the new content in /opt/polaris/deploy/;
+  // /etc/systemd/system/ still holds whatever the operator cp'd in at
+  // install time. Without the sync + daemon-reload below, the restart
+  // would cycle the processes against the OLD unit definitions and ship
+  // no env changes. cmp-only-overwrite means a no-op when nothing
+  // changed; operator customization should live in <unit>.d/*.conf
+  // drop-ins (per docs/INSTALL.md) — those survive any cp. The transient
+  // unit's contents run as root via the manage-units polkit grant, so
+  // the polaris user doesn't need direct cp access to /etc/systemd/system/.
+  // Chained with && so a failed cp or daemon-reload aborts the restart
+  // and leaves the system running the old code/units pair (the rollback
+  // path knows how to repair from there).
+  // Proxy mode: in addition to the systemd unit-file sync, also stage +
+  // validate any updated nginx config from deploy/nginx/polaris.conf into
+  // /etc/nginx/conf.d/polaris.conf, then reload nginx BEFORE the target
+  // restart. Order matters: if Polaris restarts first and the new build
+  // expects a new nginx behavior (new location block etc.), there'd be a
+  // brief window of 404s. Failure mode: if nginx -t rejects the staged
+  // config, we LOG and skip the reload (existing nginx config keeps
+  // running) rather than fail the whole restart. Mirrors
+  // deploy/update-linux.sh:sync_nginx_config() so manual + in-app paths
+  // land the same end state.
+  const proxyMode = Boolean(process.env.POLARIS_PROXY_CERT_PATH);
+  // Render the operator's proxyConfig into /etc/nginx/conf.d/polaris.conf
+  // before spawning the transient unit. Only fires when managedMode=true
+  // — pre-adoption installs see their hand-edited file left alone, and
+  // the GUI's drift banner stays up until the operator clicks Adopt.
+  //
+  // Drift check: if live file's sha256 doesn't match proxyConfig.lastAppliedHash,
+  // somebody hand-edited the config after our last write. Refuse to clobber
+  // and log a warning; the next operator visit to the GUI sees the drift
+  // banner and forces explicit re-adoption.
+  //
+  // Optimistic hash update: record lastAppliedHash to the freshly-
+  // rendered sha256 BEFORE the transient unit runs. If `nginx -t` fails
+  // and the unit reverts, the DB hash will diverge from the (reverted)
+  // live file — the GUI's getDriftStatus picks that up on the next visit.
+  const STAGED_UPDATE_CONF = "/run/polaris-nginx-stage/polaris.conf.from-update";
+  let nginxSync = "";
+  if (proxyMode) {
+    try {
+      const cfg = await getProxyConfig();
+      if (!cfg.managedMode) {
+        logger.info("In-app update: skipping nginx config render — proxyConfig.managedMode is false (operator hasn't adopted)");
+      } else {
+        // The /api docs allow-block renders from its own Setting. A read
+        // failure here must not abort the nginx sync mid-update — fall back
+        // to the shipped default (rfc1918+loopback), which the app-level
+        // gate would be enforcing anyway.
+        const apiDocsAllow = await getApiDocsSettings()
+          .then(deriveApiDocsNginxAllow)
+          .catch(() => deriveApiDocsNginxAllow(defaultApiDocsSettings()));
+        const rendered = renderNginxConfig({
+          config: cfg,
+          serverName: deriveNginxServerName(),
+          polarisPort: derivePolarisPort(),
+          dashPort: resolveDashPort(),
+          apiDocsAllow,
+        });
+        let driftDetected = false;
+        try {
+          const live = readFileSync("/etc/nginx/conf.d/polaris.conf", "utf8");
+          const liveSha = createHash("sha256").update(live).digest("hex");
+          if (cfg.lastAppliedHash && liveSha !== cfg.lastAppliedHash) {
+            driftDetected = true;
+            logger.warn(
+              { liveSha, expected: cfg.lastAppliedHash },
+              "In-app update: /etc/nginx/conf.d/polaris.conf has been hand-edited since the last apply — refusing to clobber; GUI will surface drift banner",
+            );
+          }
+        } catch {
+          // Live file unreadable; transient unit's existence check skips the swap.
+        }
+        if (!driftDetected) {
+          mkdirSync("/run/polaris-nginx-stage", { recursive: true });
+          writeFileSync(STAGED_UPDATE_CONF, rendered.contents, { mode: 0o644 });
+          await saveProxyConfig({
+            lastAppliedAt: new Date().toISOString(),
+            lastAppliedHash: rendered.sha256,
+          });
+          nginxSync = [
+            `if [ -f ${STAGED_UPDATE_CONF} ]; then`,
+            `  cp -p /etc/nginx/conf.d/polaris.conf /etc/nginx/conf.d/polaris.conf.bak.$(date +%s) 2>/dev/null || true`,
+            `  cp -f ${STAGED_UPDATE_CONF} /etc/nginx/conf.d/polaris.conf.new`,
+            `  mv -f /etc/nginx/conf.d/polaris.conf.new /etc/nginx/conf.d/polaris.conf`,
+            `  rm -f ${STAGED_UPDATE_CONF}`,
+            `  if nginx -t >/dev/null 2>&1; then`,
+            `    systemctl reload nginx && logger -t polaris-updater "Synced nginx config from rendered template (sha256=${rendered.sha256.slice(0, 12)}) and reloaded"`,
+            `  else`,
+            `    logger -t polaris-updater "ERROR: nginx -t failed on rendered config; reverting"`,
+            `    latest_bak=$(ls -1t /etc/nginx/conf.d/polaris.conf.bak.* 2>/dev/null | head -1)`,
+            `    [ -n "$latest_bak" ] && cp -f "$latest_bak" /etc/nginx/conf.d/polaris.conf`,
+            `  fi`,
+            `fi`,
+          ].join("\n");
+        }
+      }
+    } catch (err: any) {
+      logger.warn({ err: err?.message }, "In-app update: nginx config render failed — falling back to no-op (leaving live config untouched)");
+    }
+  }
+  // Sync the in-app nginx GUI helpers (wrapper + sudoers + tmpfiles entry +
+  // polaris↔nginx group membership). Runs unconditionally on every update;
+  // cmp -s + usermod-guard make each step idempotent. Outside proxy mode
+  // the wrapper and sudoers are inert, the tmpfiles dir is unused, and
+  // the usermod is gated on `getent group nginx` so it's a no-op.
+  const nginxHelperSync = [
+    `if [ -f ${APP_DIR}/deploy/scripts/polaris-nginx-apply.sh ] && ! cmp -s ${APP_DIR}/deploy/scripts/polaris-nginx-apply.sh /usr/local/sbin/polaris-nginx-apply 2>/dev/null; then`,
+    `  install -o root -g root -m 0755 ${APP_DIR}/deploy/scripts/polaris-nginx-apply.sh /usr/local/sbin/polaris-nginx-apply`,
+    `  logger -t polaris-updater "Synced /usr/local/sbin/polaris-nginx-apply"`,
+    `fi`,
+    `if [ -f ${APP_DIR}/deploy/sudoers.d/polaris-nginx ] && ! cmp -s ${APP_DIR}/deploy/sudoers.d/polaris-nginx /etc/sudoers.d/polaris-nginx 2>/dev/null; then`,
+    `  install -o root -g root -m 0440 ${APP_DIR}/deploy/sudoers.d/polaris-nginx /etc/sudoers.d/polaris-nginx`,
+    `  logger -t polaris-updater "Synced /etc/sudoers.d/polaris-nginx"`,
+    `fi`,
+    `if [ -f ${APP_DIR}/deploy/tmpfiles.d/polaris-nginx.conf ] && ! cmp -s ${APP_DIR}/deploy/tmpfiles.d/polaris-nginx.conf /etc/tmpfiles.d/polaris-nginx.conf 2>/dev/null; then`,
+    `  install -o root -g root -m 0644 ${APP_DIR}/deploy/tmpfiles.d/polaris-nginx.conf /etc/tmpfiles.d/polaris-nginx.conf`,
+    `  systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true`,
+    `  logger -t polaris-updater "Synced /etc/tmpfiles.d/polaris-nginx.conf"`,
+    `fi`,
+    `if getent group nginx >/dev/null 2>&1 && ! id -nG polaris 2>/dev/null | grep -qw nginx; then`,
+    `  usermod -aG nginx polaris`,
+    `  logger -t polaris-updater "Added polaris user to nginx group (cert file readability)"`,
+    `fi`,
+  ].join("\n");
+
+  logger.info(
+    { proxyMode },
+    "Syncing unit files (and nginx config in proxy mode) and restarting polaris.target for update...",
+  );
+  const syncScript = [
+    "set -e",
+    nginxHelperSync,
+    nginxSync,
+    // install-if-missing, not just overwrite-on-change: a unit that ships
+    // for the first time in an update (e.g. polaris-dash.service) must land
+    // on upgraded hosts too — cmp-only would leave nginx proxying /dash to
+    // a port nothing listens on. polaris.target's Wants= picks a newly
+    // installed unit up on the same restart.
+    `for f in ${APP_DIR}/deploy/polaris-web.service ${APP_DIR}/deploy/polaris-monitor@.service ${APP_DIR}/deploy/polaris-discovery.service ${APP_DIR}/deploy/polaris-dash.service ${APP_DIR}/deploy/polaris-migrate.service ${APP_DIR}/deploy/polaris.target; do`,
+    `  name="$(basename "$f")"`,
+    `  target="/etc/systemd/system/$name"`,
+    `  if [ ! -f "$target" ] || ! cmp -s "$f" "$target"; then`,
+    // Carry an installed unit's local-PostgreSQL dependency into a drop-in
+    // before overwriting it. Units shipped before 2026-09-09 named it inline
+    // (Requires=postgresql-15.service); the shipped units no longer do,
+    // because the unit name is a host fact and this file is overwritten
+    // verbatim. Without this the first update after that change silently
+    // drops the ordering, and polaris-migrate racing PostgreSQL at boot
+    // takes the whole target down. Never overwrites an existing drop-in, so
+    // an operator-set name wins. Lockstep with
+    // deploy/update-linux.sh -> preserve_postgres_dependency().
+    // Never on an HA node: 10-ha.conf resets After=/Requires= to
+    // patroni.service, and drop-ins apply in lexical order, so a 20- file
+    // would re-add postgres after that reset and race Patroni for the data
+    // directory. The inline dependency was neutralized by the same reset.
+    `    if [ -f "$target" ] && [ ! -f "/etc/systemd/system/$name.d/20-postgres.conf" ] \\`,
+    `       && [ ! -f /etc/polaris/ha-node ] && [ ! -f "/etc/systemd/system/$name.d/10-ha.conf" ]; then`,
+    `      pgunit="$(sed -nE 's/^Requires=.*\\b(postgresql[^[:space:]]*)\\.service.*/\\1/p' "$target" | head -1)"`,
+    `      if [ -n "$pgunit" ]; then`,
+    `        mkdir -p "/etc/systemd/system/$name.d"`,
+    `        printf '[Unit]\\nAfter=%s.service\\nRequires=%s.service\\n' "$pgunit" "$pgunit" > "/etc/systemd/system/$name.d/20-postgres.conf"`,
+    `        logger -t polaris-updater "Preserved $name's PostgreSQL dependency ($pgunit.service) as a drop-in"`,
+    `      fi`,
+    `    fi`,
+    `    cp -f "$f" "$target"`,
+    `    logger -t polaris-updater "Synced unit file: $name (operator edits to the main unit file are clobbered; use $name.d/*.conf drop-ins for customization)"`,
+    `  fi`,
+    `done`,
+    // HA artifacts (docs/HA.md). These live OUTSIDE the tree once installed
+    // — polaris-ha-role.sh is installed to /usr/local/sbin/polaris-ha-role,
+    // the units to /etc/systemd/system, the drop-ins to <unit>.d/ — so an
+    // update that changes any of them had no way to reach an HA host at all.
+    // The reconciler script was the sharp end of that: the standby pulls the
+    // new TREE, but the tree copy is not what runs.
+    //
+    // REFRESH-ONLY-IF-PRESENT, deliberately unlike the base units above.
+    // setup-rhel-ha.sh owns installation because it knows the node's role —
+    // a witness has no polaris-* drop-ins and must not grow them, and a
+    // non-HA host (no marker) must not grow HA units at all. The cost of
+    // that choice: a genuinely NEW HA artifact in a future release needs
+    // setup-rhel-ha.sh re-run to land the first time.
+    // Lockstep: deploy/update-linux.sh sync_ha_artifacts().
+    `if [ -f /etc/polaris/ha-node ]; then`,
+    `  sync_ha() {`,
+    `    if [ ! -f "$1" ] || [ ! -f "$2" ]; then return 0; fi`,
+    `    if cmp -s "$1" "$2"; then return 0; fi`,
+    `    install -o root -g root -m "$3" "$1" "$2"`,
+    `    logger -t polaris-updater "Synced HA artifact: $2"`,
+    `  }`,
+    `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.sh /usr/local/sbin/polaris-ha-role 0755`,
+    `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.service /etc/systemd/system/polaris-ha-role.service 0644`,
+    `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.timer /etc/systemd/system/polaris-ha-role.timer 0644`,
+    `  sync_ha ${APP_DIR}/deploy/ha/patroni.service.d/10-polaris.conf /etc/systemd/system/patroni.service.d/10-polaris.conf 0644`,
+    `  for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do`,
+    `    sync_ha ${APP_DIR}/deploy/ha/dropins/$u.service.d/10-ha.conf /etc/systemd/system/$u.service.d/10-ha.conf 0644`,
+    `  done`,
+    `fi`,
+    `systemctl daemon-reload`,
+    `systemctl restart polaris.target`,
+    // HA (docs/HA.md): the updater only ever runs on the ACTIVE node, so
+    // the standby is now one commit behind. Poke it to pull the new tree
+    // immediately rather than waiting up to a minute for its own reconcile
+    // timer — that window is when a failover would start the standby on
+    // code older than the freshly-migrated schema. Best-effort, and inert
+    // on a non-HA install (no marker file, no script).
+    // Lockstep: deploy/update-linux.sh calls notify-peer at the end too.
+    `if [ -f /etc/polaris/ha-node ] && [ -x /usr/local/sbin/polaris-ha-role ]; then`,
+    `  /usr/local/sbin/polaris-ha-role notify-peer || logger -t polaris-updater "HA: notify-peer failed; the standby will sync on its own timer"`,
+    `fi`,
+  ].filter(Boolean).join("\n");
+  try {
+    const child = spawn("systemd-run", ["--no-block", "/bin/sh", "-c", syncScript], {
       detached: true,
       stdio: "ignore",
-      windowsHide: true,
     });
-    // spawn() reports a missing/unspawnable binary asynchronously via the
-    // 'error' event, NOT via the synchronous try/catch below. Without this
-    // listener an ENOENT (no cmd.exe on PATH, etc.) bubbles as an unhandled
-    // error and crashes the process before the self-exit timeout fires.
+    // spawn() reports a missing binary asynchronously via the 'error' event,
+    // NOT through this try/catch. Without the listener an ENOENT (no
+    // systemd-run on PATH — dev containers without systemd, npm-run-dev on
+    // a non-systemd host, etc.) bubbles as an unhandled error and crashes
+    // the process before the self-exit timeout fires, leaving the container
+    // / watcher with no listener bound on 3000. With the listener attached,
+    // we log + drop into the same self-exit path the prod-failure case uses
+    // and let the supervisor (systemd in prod, podman restart policy in the
+    // dev container, the operator's terminal in npm-run-dev-on-host) bring
+    // the process back.
     child.on("error", (err) => {
-      logger.warn({ err: err.message }, "nssm restart spawn failed; relying on self-exit + supervisor (NSSM / dev watcher / podman restart policy) to bring the process back");
+      logger.warn({ err: err.message }, "systemd-run for group restart unavailable; relying on self-exit + supervisor (systemd / podman / dev watcher) to bring the process back");
     });
     child.unref();
-    setTimeout(() => { process.exit(0); }, 5000);
-  } else {
-    // Restart the full group via a transient unit so the restart survives our
-    // own exit (a detached child stays in web's cgroup and would be killed when
-    // web restarts; systemd-run runs it as an independent transient unit).
-    // Requires a polkit/sudo grant for the polaris user to manage polaris.target
-    // — see docs/INSTALL.md. Falls back to a plain exit so at least web cycles.
-    //
-    // Auto-sync shipped unit files before restarting. A Polaris update that
-    // ships unit-file changes (new env var on a worker role, hardening
-    // directive, etc.) only lands the new content in /opt/polaris/deploy/;
-    // /etc/systemd/system/ still holds whatever the operator cp'd in at
-    // install time. Without the sync + daemon-reload below, the restart
-    // would cycle the processes against the OLD unit definitions and ship
-    // no env changes. cmp-only-overwrite means a no-op when nothing
-    // changed; operator customization should live in <unit>.d/*.conf
-    // drop-ins (per docs/INSTALL.md) — those survive any cp. The transient
-    // unit's contents run as root via the manage-units polkit grant, so
-    // the polaris user doesn't need direct cp access to /etc/systemd/system/.
-    // Chained with && so a failed cp or daemon-reload aborts the restart
-    // and leaves the system running the old code/units pair (the rollback
-    // path knows how to repair from there).
-    // Proxy mode: in addition to the systemd unit-file sync, also stage +
-    // validate any updated nginx config from deploy/nginx/polaris.conf into
-    // /etc/nginx/conf.d/polaris.conf, then reload nginx BEFORE the target
-    // restart. Order matters: if Polaris restarts first and the new build
-    // expects a new nginx behavior (new location block etc.), there'd be a
-    // brief window of 404s. Failure mode: if nginx -t rejects the staged
-    // config, we LOG and skip the reload (existing nginx config keeps
-    // running) rather than fail the whole restart. Mirrors
-    // deploy/update-linux.sh:sync_nginx_config() so manual + in-app paths
-    // land the same end state.
-    const proxyMode = Boolean(process.env.POLARIS_PROXY_CERT_PATH);
-    // Render the operator's proxyConfig into /etc/nginx/conf.d/polaris.conf
-    // before spawning the transient unit. Only fires when managedMode=true
-    // — pre-adoption installs see their hand-edited file left alone, and
-    // the GUI's drift banner stays up until the operator clicks Adopt.
-    //
-    // Drift check: if live file's sha256 doesn't match proxyConfig.lastAppliedHash,
-    // somebody hand-edited the config after our last write. Refuse to clobber
-    // and log a warning; the next operator visit to the GUI sees the drift
-    // banner and forces explicit re-adoption.
-    //
-    // Optimistic hash update: record lastAppliedHash to the freshly-
-    // rendered sha256 BEFORE the transient unit runs. If `nginx -t` fails
-    // and the unit reverts, the DB hash will diverge from the (reverted)
-    // live file — the GUI's getDriftStatus picks that up on the next visit.
-    const STAGED_UPDATE_CONF = "/run/polaris-nginx-stage/polaris.conf.from-update";
-    let nginxSync = "";
-    if (proxyMode) {
-      try {
-        const cfg = await getProxyConfig();
-        if (!cfg.managedMode) {
-          logger.info("In-app update: skipping nginx config render — proxyConfig.managedMode is false (operator hasn't adopted)");
-        } else {
-          // The /api docs allow-block renders from its own Setting. A read
-          // failure here must not abort the nginx sync mid-update — fall back
-          // to the shipped default (rfc1918+loopback), which the app-level
-          // gate would be enforcing anyway.
-          const apiDocsAllow = await getApiDocsSettings()
-            .then(deriveApiDocsNginxAllow)
-            .catch(() => deriveApiDocsNginxAllow(defaultApiDocsSettings()));
-          const rendered = renderNginxConfig({
-            config: cfg,
-            serverName: deriveNginxServerName(),
-            polarisPort: derivePolarisPort(),
-            dashPort: resolveDashPort(),
-            apiDocsAllow,
-          });
-          let driftDetected = false;
-          try {
-            const live = readFileSync("/etc/nginx/conf.d/polaris.conf", "utf8");
-            const liveSha = createHash("sha256").update(live).digest("hex");
-            if (cfg.lastAppliedHash && liveSha !== cfg.lastAppliedHash) {
-              driftDetected = true;
-              logger.warn(
-                { liveSha, expected: cfg.lastAppliedHash },
-                "In-app update: /etc/nginx/conf.d/polaris.conf has been hand-edited since the last apply — refusing to clobber; GUI will surface drift banner",
-              );
-            }
-          } catch {
-            // Live file unreadable; transient unit's existence check skips the swap.
-          }
-          if (!driftDetected) {
-            mkdirSync("/run/polaris-nginx-stage", { recursive: true });
-            writeFileSync(STAGED_UPDATE_CONF, rendered.contents, { mode: 0o644 });
-            await saveProxyConfig({
-              lastAppliedAt: new Date().toISOString(),
-              lastAppliedHash: rendered.sha256,
-            });
-            nginxSync = [
-              `if [ -f ${STAGED_UPDATE_CONF} ]; then`,
-              `  cp -p /etc/nginx/conf.d/polaris.conf /etc/nginx/conf.d/polaris.conf.bak.$(date +%s) 2>/dev/null || true`,
-              `  cp -f ${STAGED_UPDATE_CONF} /etc/nginx/conf.d/polaris.conf.new`,
-              `  mv -f /etc/nginx/conf.d/polaris.conf.new /etc/nginx/conf.d/polaris.conf`,
-              `  rm -f ${STAGED_UPDATE_CONF}`,
-              `  if nginx -t >/dev/null 2>&1; then`,
-              `    systemctl reload nginx && logger -t polaris-updater "Synced nginx config from rendered template (sha256=${rendered.sha256.slice(0, 12)}) and reloaded"`,
-              `  else`,
-              `    logger -t polaris-updater "ERROR: nginx -t failed on rendered config; reverting"`,
-              `    latest_bak=$(ls -1t /etc/nginx/conf.d/polaris.conf.bak.* 2>/dev/null | head -1)`,
-              `    [ -n "$latest_bak" ] && cp -f "$latest_bak" /etc/nginx/conf.d/polaris.conf`,
-              `  fi`,
-              `fi`,
-            ].join("\n");
-          }
-        }
-      } catch (err: any) {
-        logger.warn({ err: err?.message }, "In-app update: nginx config render failed — falling back to no-op (leaving live config untouched)");
-      }
-    }
-    // Sync the in-app nginx GUI helpers (wrapper + sudoers + tmpfiles entry +
-    // polaris↔nginx group membership). Runs unconditionally on every update;
-    // cmp -s + usermod-guard make each step idempotent. Outside proxy mode
-    // the wrapper and sudoers are inert, the tmpfiles dir is unused, and
-    // the usermod is gated on `getent group nginx` so it's a no-op.
-    const nginxHelperSync = [
-      `if [ -f ${APP_DIR}/deploy/scripts/polaris-nginx-apply.sh ] && ! cmp -s ${APP_DIR}/deploy/scripts/polaris-nginx-apply.sh /usr/local/sbin/polaris-nginx-apply 2>/dev/null; then`,
-      `  install -o root -g root -m 0755 ${APP_DIR}/deploy/scripts/polaris-nginx-apply.sh /usr/local/sbin/polaris-nginx-apply`,
-      `  logger -t polaris-updater "Synced /usr/local/sbin/polaris-nginx-apply"`,
-      `fi`,
-      `if [ -f ${APP_DIR}/deploy/sudoers.d/polaris-nginx ] && ! cmp -s ${APP_DIR}/deploy/sudoers.d/polaris-nginx /etc/sudoers.d/polaris-nginx 2>/dev/null; then`,
-      `  install -o root -g root -m 0440 ${APP_DIR}/deploy/sudoers.d/polaris-nginx /etc/sudoers.d/polaris-nginx`,
-      `  logger -t polaris-updater "Synced /etc/sudoers.d/polaris-nginx"`,
-      `fi`,
-      `if [ -f ${APP_DIR}/deploy/tmpfiles.d/polaris-nginx.conf ] && ! cmp -s ${APP_DIR}/deploy/tmpfiles.d/polaris-nginx.conf /etc/tmpfiles.d/polaris-nginx.conf 2>/dev/null; then`,
-      `  install -o root -g root -m 0644 ${APP_DIR}/deploy/tmpfiles.d/polaris-nginx.conf /etc/tmpfiles.d/polaris-nginx.conf`,
-      `  systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true`,
-      `  logger -t polaris-updater "Synced /etc/tmpfiles.d/polaris-nginx.conf"`,
-      `fi`,
-      `if getent group nginx >/dev/null 2>&1 && ! id -nG polaris 2>/dev/null | grep -qw nginx; then`,
-      `  usermod -aG nginx polaris`,
-      `  logger -t polaris-updater "Added polaris user to nginx group (cert file readability)"`,
-      `fi`,
-    ].join("\n");
-
-    logger.info(
-      { proxyMode },
-      "Syncing unit files (and nginx config in proxy mode) and restarting polaris.target for update...",
-    );
-    const syncScript = [
-      "set -e",
-      nginxHelperSync,
-      nginxSync,
-      // install-if-missing, not just overwrite-on-change: a unit that ships
-      // for the first time in an update (e.g. polaris-dash.service) must land
-      // on upgraded hosts too — cmp-only would leave nginx proxying /dash to
-      // a port nothing listens on. polaris.target's Wants= picks a newly
-      // installed unit up on the same restart.
-      `for f in ${APP_DIR}/deploy/polaris-web.service ${APP_DIR}/deploy/polaris-monitor@.service ${APP_DIR}/deploy/polaris-discovery.service ${APP_DIR}/deploy/polaris-dash.service ${APP_DIR}/deploy/polaris-migrate.service ${APP_DIR}/deploy/polaris.target; do`,
-      `  name="$(basename "$f")"`,
-      `  target="/etc/systemd/system/$name"`,
-      `  if [ ! -f "$target" ] || ! cmp -s "$f" "$target"; then`,
-      // Carry an installed unit's local-PostgreSQL dependency into a drop-in
-      // before overwriting it. Units shipped before 2026-09-09 named it inline
-      // (Requires=postgresql-15.service); the shipped units no longer do,
-      // because the unit name is a host fact and this file is overwritten
-      // verbatim. Without this the first update after that change silently
-      // drops the ordering, and polaris-migrate racing PostgreSQL at boot
-      // takes the whole target down. Never overwrites an existing drop-in, so
-      // an operator-set name wins. Lockstep with
-      // deploy/update-linux.sh -> preserve_postgres_dependency().
-      // Never on an HA node: 10-ha.conf resets After=/Requires= to
-      // patroni.service, and drop-ins apply in lexical order, so a 20- file
-      // would re-add postgres after that reset and race Patroni for the data
-      // directory. The inline dependency was neutralized by the same reset.
-      `    if [ -f "$target" ] && [ ! -f "/etc/systemd/system/$name.d/20-postgres.conf" ] \\`,
-      `       && [ ! -f /etc/polaris/ha-node ] && [ ! -f "/etc/systemd/system/$name.d/10-ha.conf" ]; then`,
-      `      pgunit="$(sed -nE 's/^Requires=.*\\b(postgresql[^[:space:]]*)\\.service.*/\\1/p' "$target" | head -1)"`,
-      `      if [ -n "$pgunit" ]; then`,
-      `        mkdir -p "/etc/systemd/system/$name.d"`,
-      `        printf '[Unit]\\nAfter=%s.service\\nRequires=%s.service\\n' "$pgunit" "$pgunit" > "/etc/systemd/system/$name.d/20-postgres.conf"`,
-      `        logger -t polaris-updater "Preserved $name's PostgreSQL dependency ($pgunit.service) as a drop-in"`,
-      `      fi`,
-      `    fi`,
-      `    cp -f "$f" "$target"`,
-      `    logger -t polaris-updater "Synced unit file: $name (operator edits to the main unit file are clobbered; use $name.d/*.conf drop-ins for customization)"`,
-      `  fi`,
-      `done`,
-      // HA artifacts (docs/HA.md). These live OUTSIDE the tree once installed
-      // — polaris-ha-role.sh is installed to /usr/local/sbin/polaris-ha-role,
-      // the units to /etc/systemd/system, the drop-ins to <unit>.d/ — so an
-      // update that changes any of them had no way to reach an HA host at all.
-      // The reconciler script was the sharp end of that: the standby pulls the
-      // new TREE, but the tree copy is not what runs.
-      //
-      // REFRESH-ONLY-IF-PRESENT, deliberately unlike the base units above.
-      // setup-rhel-ha.sh owns installation because it knows the node's role —
-      // a witness has no polaris-* drop-ins and must not grow them, and a
-      // non-HA host (no marker) must not grow HA units at all. The cost of
-      // that choice: a genuinely NEW HA artifact in a future release needs
-      // setup-rhel-ha.sh re-run to land the first time.
-      // Lockstep: deploy/update-linux.sh sync_ha_artifacts().
-      `if [ -f /etc/polaris/ha-node ]; then`,
-      `  sync_ha() {`,
-      `    if [ ! -f "$1" ] || [ ! -f "$2" ]; then return 0; fi`,
-      `    if cmp -s "$1" "$2"; then return 0; fi`,
-      `    install -o root -g root -m "$3" "$1" "$2"`,
-      `    logger -t polaris-updater "Synced HA artifact: $2"`,
-      `  }`,
-      `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.sh /usr/local/sbin/polaris-ha-role 0755`,
-      `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.service /etc/systemd/system/polaris-ha-role.service 0644`,
-      `  sync_ha ${APP_DIR}/deploy/ha/polaris-ha-role.timer /etc/systemd/system/polaris-ha-role.timer 0644`,
-      `  sync_ha ${APP_DIR}/deploy/ha/patroni.service.d/10-polaris.conf /etc/systemd/system/patroni.service.d/10-polaris.conf 0644`,
-      `  for u in polaris-web polaris-monitor@ polaris-discovery polaris-dash polaris-migrate; do`,
-      `    sync_ha ${APP_DIR}/deploy/ha/dropins/$u.service.d/10-ha.conf /etc/systemd/system/$u.service.d/10-ha.conf 0644`,
-      `  done`,
-      `fi`,
-      `systemctl daemon-reload`,
-      `systemctl restart polaris.target`,
-      // HA (docs/HA.md): the updater only ever runs on the ACTIVE node, so
-      // the standby is now one commit behind. Poke it to pull the new tree
-      // immediately rather than waiting up to a minute for its own reconcile
-      // timer — that window is when a failover would start the standby on
-      // code older than the freshly-migrated schema. Best-effort, and inert
-      // on a non-HA install (no marker file, no script).
-      // Lockstep: deploy/update-linux.sh calls notify-peer at the end too.
-      `if [ -f /etc/polaris/ha-node ] && [ -x /usr/local/sbin/polaris-ha-role ]; then`,
-      `  /usr/local/sbin/polaris-ha-role notify-peer || logger -t polaris-updater "HA: notify-peer failed; the standby will sync on its own timer"`,
-      `fi`,
-    ].filter(Boolean).join("\n");
-    try {
-      const child = spawn("systemd-run", ["--no-block", "/bin/sh", "-c", syncScript], {
-        detached: true,
-        stdio: "ignore",
-      });
-      // spawn() reports a missing binary asynchronously via the 'error' event,
-      // NOT through this try/catch. Without the listener an ENOENT (no
-      // systemd-run on PATH — dev containers without systemd, npm-run-dev on
-      // a non-systemd host, etc.) bubbles as an unhandled error and crashes
-      // the process before the self-exit timeout fires, leaving the container
-      // / watcher with no listener bound on 3000. With the listener attached,
-      // we log + drop into the same self-exit path the prod-failure case uses
-      // and let the supervisor (systemd in prod, podman restart policy in the
-      // dev container, the operator's terminal in npm-run-dev-on-host) bring
-      // the process back.
-      child.on("error", (err) => {
-        logger.warn({ err: err.message }, "systemd-run for group restart unavailable; relying on self-exit + supervisor (systemd / podman / dev watcher) to bring the process back");
-      });
-      child.unref();
-    } catch (err: any) {
-      logger.warn({ err: err?.message }, "systemd-run for group restart failed; falling back to self-exit");
-    }
-    setTimeout(() => { process.exit(0); }, 3000);
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, "systemd-run for group restart failed; falling back to self-exit");
   }
+  setTimeout(() => { process.exit(0); }, 3000);
 }
 

@@ -1437,20 +1437,27 @@ function computeReasons(
   // (10-30× storage reduction, instant chunk drops vs. seq-scan deleteMany).
   // The suggestion adapts to deployment context so the install hint matches
   // the operator's actual environment.
+  // No size gate since 2026-09-11, when the extension became REQUIRED: every
+  // install Polaris provisions creates it, so its absence is a broken install
+  // from the first byte, not something that becomes a problem at 1 GB. The
+  // threshold now only decides how loudly to say so.
   const TIMESCALE_RECOMMEND_BYTES = 1024 * 1024 * 1024; // 1 GB
   const sampleTableBytes = snap.database.sampleTables.reduce((sum, t) => sum + t.bytes, 0);
-  if (!snap.database.timescale.extensionInstalled && sampleTableBytes > TIMESCALE_RECOMMEND_BYTES) {
+  if (!snap.database.timescale.extensionInstalled) {
     const ctx = getDeploymentContext();
     const suggestion = !ctx.dbIsLocal
-      ? "Ask your database administrator to install the timescaledb extension on the polaris database. Some managed services (RDS for Postgres) don't support it; Timescale Cloud and Azure Postgres Flexible Server do."
+      ? "Ask your database administrator to install the timescaledb extension on the polaris database. Some managed services (RDS for Postgres, Aurora, Cloud SQL) don't support it at all; Timescale Cloud, Crunchy Bridge and Azure Postgres Flexible Server do."
       : ctx.runtimeIsContainer
         ? "Switch your Postgres container to the timescale/timescaledb:latest-pg<major> image, matching the major your volume already holds (latest-pg17 for a fresh install). Existing data is preserved on the volume."
-        : "Install TimescaleDB on this server. See docs/INSTALL.md → Recommended: TimescaleDB.";
+        : "Install TimescaleDB on this server. See docs/INSTALL.md → Required: TimescaleDB.";
     reasons.push({
-      severity: "watch",
+      severity: sampleTableBytes > TIMESCALE_RECOMMEND_BYTES ? "warning" : "watch",
       code: "timescale_recommended",
       family: "timescale",
-      message: `Sample tables are ${formatBytes(sampleTableBytes)} without TimescaleDB compression (~10× shrink available).`,
+      message:
+        sampleTableBytes > TIMESCALE_RECOMMEND_BYTES
+          ? `Sample tables are ${formatBytes(sampleTableBytes)} without TimescaleDB — required, and worth ~10× on disk (compression) plus chunk-drop retention.`
+          : "TimescaleDB is not installed. Polaris requires it: retention prunes row by row, nothing compresses, and the restore gates do nothing.",
       suggestion,
     });
   }

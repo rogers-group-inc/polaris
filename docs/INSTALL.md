@@ -1,10 +1,21 @@
 # Polaris — Install Guide
 
-This guide covers fresh installs on **RHEL / Rocky / AlmaLinux 9**, **Ubuntu / Debian**, and **Windows Server**. The runtime itself is platform-portable; the only differences between platforms are package names, service managers, and where PostgreSQL puts its data directory.
+This guide covers fresh installs on **RHEL / Rocky / AlmaLinux 9** and **Ubuntu / Debian**. The only differences between the two are package names and where PostgreSQL puts its data directory.
+
+> **Windows Server is not a supported Polaris host.** It was dropped on 2026-09-11 along with
+> `deploy/setup-windows.ps1`, `setup-windows-nodb.ps1`, `update-windows.ps1` and the NSSM service
+> layout. The reason is TimescaleDB: Polaris now *requires* the extension on every install it
+> provisions, and Timescale publishes no Windows installer — the Windows route was a manual
+> copy of DLLs and control files into the PostgreSQL tree, which is not something to stake a
+> monitoring database's retention and restore path on. **This does not touch Windows as a
+> monitored estate:** the Polaris Agent still installs on Windows hosts, WinRM polling and the
+> Windows Server DHCP integration are unchanged, and agent code signing for Windows binaries
+> still works. If you are running Polaris itself on Windows, see
+> *Migrating a Windows install to Linux* below.
 
 If you're upgrading an existing install rather than installing fresh, use the in-app updater under **Server Settings → Maintenance → Updates**. Don't follow this document for upgrades.
 
-> **Update source repo.** By default both the in-app updater and the `deploy/update-{linux.sh,windows.ps1}` fallback scripts update from the install's existing `origin` git remote — i.e. whatever it was cloned from. To force a different source (a fork or an internal mirror), set `POLARIS_UPDATE_REPO=<git-url>` in `/opt/polaris/.env` (Linux) or `C:\polaris\.env` (Windows); it's applied to the `origin` remote before every fetch/pull. Leave it unset to keep using the cloned-from origin. The active repo and its source are shown on the Application Updates card (Server Settings → Maintenance). The URL may contain letters, digits and `. _ ~ : / @ + -` only — enough for `https://`, `ssh://`, `git://` and the `git@host:owner/repo.git` form; a value with any other character is ignored (the updater keeps using the existing origin) and logs an error naming it, so check the log if an override appears not to take.
+> **Update source repo.** By default both the in-app updater and the `deploy/update-linux.sh` fallback script update from the install's existing `origin` git remote — i.e. whatever it was cloned from. To force a different source (a fork or an internal mirror), set `POLARIS_UPDATE_REPO=<git-url>` in `/opt/polaris/.env`; it's applied to the `origin` remote before every fetch/pull. Leave it unset to keep using the cloned-from origin. The active repo and its source are shown on the Application Updates card (Server Settings → Maintenance). The URL may contain letters, digits and `. _ ~ : / @ + -` only — enough for `https://`, `ssh://`, `git://` and the `git@host:owner/repo.git` form; a value with any other character is ignored (the updater keeps using the existing origin) and logs an error naming it, so check the log if an override appears not to take.
 
 ---
 
@@ -17,13 +28,12 @@ states a floor, it states the same one as this table.
 |---|---|---|---|---|
 | **Node.js** | 22 | **24** | 22 → 2027-04-30 · 24 → 2028-04-30 | LTS lines only. The minimum is the dependency tree's floor (`engines.node` is `>=22.12.0`); every install script provisions **24**. `engines.node` is advisory — npm warns and installs anyway — so the scripts' accept-checks are the real gate. A host left on 22 has under a year of runway. |
 | **PostgreSQL** | 17 | **17** | 17 → 2029-11-08 · 18 → 2030-11-14 | Five-year policy; a major dies each November. Every install path provisions 17 from PGDG (RHEL *and* Debian/Ubuntu — the distro metapackages are 14/16 and were never the stated major). An existing 15 install keeps working, but it caps TimescaleDB at the 2.28.x line and is below this minimum; see *Moving an existing install to PostgreSQL 17*. |
-| **TimescaleDB** | 2.x | current | no published date | Lifecycle is a PostgreSQL-compatibility horizon, not a date. 2.28.x was the last line supporting PostgreSQL 15, which is what capped the extension before the move to 17; 2.29+ supports 16/17/18, and 2.30 is current on both PGDG-supported majors. |
-| **Go** (agent build only) | 1.26 | **1.27** | 1.25 → 2026-08-19 · 1.26 and 1.27 → current | Go supports only the two most recent majors, so this ages faster than anything else here — the floor is the older of the two supported majors. Needed only to build agent binaries in-app. The Windows scripts install 1.27; on Linux the RHEL go-toolset module and the Go snap both carry 1.26, which is why the floor and the pin differ. |
+| **TimescaleDB** | 2.x | current | no published date | **Required, not optional** — every install path provisions it and Polaris converts its sample tables to hypertables at first boot. Lifecycle is a PostgreSQL-compatibility horizon, not a date. 2.28.x was the last line supporting PostgreSQL 15, which is what capped the extension before the move to 17; 2.29+ supports 16/17/18, and 2.30 is current on both PGDG-supported majors. |
+| **Go** (agent build only) | 1.26 | **1.26** | 1.25 → 2026-08-19 · 1.26 and 1.27 → current | Go supports only the two most recent majors, so this ages faster than anything else here — the floor is the older of the two supported majors. Needed only to build agent binaries in-app. Target equals the minimum: the RHEL go-toolset module and the Go snap both carry 1.26, and since Windows was dropped on 2026-09-11 no install path provisions 1.27. A host that already has 1.27 is accepted. |
 | **nginx** | 1.30 | **1.30** | 1.28 → 2026-04-14 · 1.30 → current | Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. The setup scripts install the **stable** branch from nginx.org, and 1.30 is the oldest branch still receiving fixes. HTTP/3 needs 1.25 at minimum, so the floor is a support statement now rather than a feature one. |
 | **Java** (agent signing only) | 25 | 25 | 21 → 2028-09-30 · 25 → 2030-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. Target equals the minimum on purpose — a target above what every install path provisions reports a behind-target JDK on every healthy host, which teaches operators to ignore this card. Moved 17 → 25 on 2026-09-09, the current LTS: jsign is Java 8 bytecode and needs none of it, but 25 is available on every supported platform and buys three more years before this row moves again. |
 | **RHEL / Rocky / AlmaLinux** | 9 | 9 | 9 → 2032-05-31 (full support ends 2027-05-31) | |
 | **Ubuntu** | 22.04 LTS | **24.04 LTS** | 22.04 → 2027-06-01 · 24.04 → 2029-05-31 | LTS only. Extended dates require Ubuntu Pro; don't treat them as free runway. |
-| **Windows Server** | 2019 | 2022 | see Microsoft's product lifecycle | |
 | **PgBouncer** (optional) | 1.21 | 1.21 | no published date | Polaris cannot read its version — confirm the floor by hand. |
 
 **Polaris warns you about this itself.** Server Settings → **Maintenance → Platform Lifecycle**
@@ -157,7 +167,7 @@ it failed, the checkout is ahead of the process that is still serving. The in-ap
 against the **running** build, so Check for Updates still offers Apply Update — with a note that
 the code is already on disk — and Apply finishes the install, build, migration and restart. The
 script's `git pull` is a no-op in that state and it will report "Already up to date" — pass
-`--force` (`-Force` on Windows) so it finishes the install, build and migration steps anyway.
+`--force` so it finishes the install, build and migration steps anyway.
 If you need to repair the dependency tree without a full update:
 
 ```bash
@@ -185,25 +195,6 @@ it by hand and re-run the update:
 sudo -u polaris git -C /opt/polaris status --short    # expect only staged "M" rows
 sudo -u polaris git -C /opt/polaris reset --hard HEAD
 ```
-
-### Windows
-
-Windows has no PEM bundle: the internal root lives in the certificate store, so export it to a
-file and point `NODE_EXTRA_CA_CERTS` at that file in `C:\polaris\.env`.
-
-```powershell
-# Export the internal root (adjust the thumbprint / subject to match yours)
-Get-ChildItem Cert:\LocalMachine\Root |
-  Where-Object { $_.Subject -like "*YourInternalCA*" } |
-  ForEach-Object { [IO.File]::WriteAllText("C:\polaris\internal-root.pem",
-    "-----BEGIN CERTIFICATE-----`n" +
-    [Convert]::ToBase64String($_.RawData, 'InsertLineBreaks') +
-    "`n-----END CERTIFICATE-----`n") }
-```
-
-Then set `NODE_EXTRA_CA_CERTS=C:\polaris\internal-root.pem` and restart the Polaris service.
-The Windows setup scripts do not detect this automatically — there is no single system PEM to
-point at.
 
 ---
 
@@ -309,7 +300,7 @@ overlay last and deliberately overwrites any inherited `PG*` variable.
 
 ## Disk sizing — read this first
 
-The single most common operational footgun on a fresh Polaris install is undersized `/var` (Linux) or undersized `C:` (Windows) — both are where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.
+The single most common operational footgun on a fresh Polaris install is undersized `/var` — where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.
 
 **Budget more than your retention window.** When TimescaleDB is installed, sample data is reclaimed a whole *chunk* at a time — a chunk can only be dropped once all of it is past the cutoff, and the prune runs once every 24 h. Each tier therefore keeps its configured window **plus one chunk interval plus one prune cycle**. Most sample tables use TimescaleDB's default 7-day chunk interval (only the interface, storage and IPsec detail tables are narrowed to 1 day), so a 7-day detail retention holds up to ~15 days on disk and a 3-day retention holds up to ~11. Size for that, not for the number in the retention setting.
 
@@ -317,7 +308,7 @@ The largest single driver is usually **how many interfaces operators pin** for f
 
 | Volume | Minimum | Recommended | What lives here |
 |---|---|---|---|
-| **DB data volume** | 50 GB | 100 GB+ | PostgreSQL `data_directory`. On RHEL: `/var/lib/pgsql/data`. On Ubuntu: `/var/lib/postgresql/<ver>/main`. On Windows: `C:\Program Files\PostgreSQL\<ver>\data`. |
+| **DB data volume** | 50 GB | 100 GB+ | PostgreSQL `data_directory`. On RHEL: `/var/lib/pgsql/data`. On Ubuntu: `/var/lib/postgresql/<ver>/main`. |
 | **App / state volume** | 5 GB | 20 GB | Polaris install dir, encrypted DB backups (`data/backups/`), uploaded device icons, update staging (one extra copy of the bundle per update). |
 | **`/var/log` (Linux only, if separate)** | 5 GB | 10 GB | systemd journal, audit logs, syslog forwarding spool. |
 | **`/var/log/audit` (RHEL STIG only, if separate)** | 5 GB | 10 GB | auditd events. Fills faster than expected on busy hosts. |
@@ -529,9 +520,11 @@ single-process `polaris.service` is no longer shipped.
 sudo bash deploy/setup-rhel.sh --public-url https://polaris.example.com
 ```
 
-What the script does, in order: installs Node + Postgres + Go + nginx
-(the nginx.org stable branch for HTTP/3 ≥ 1.30), creates the `polaris` system
-user + DB + role, clones the repo, builds, runs migrations, generates a
+What the script does, in order: installs Node + Postgres + **TimescaleDB** + Go
++ nginx (the nginx.org stable branch for HTTP/3 ≥ 1.30), creates the `polaris`
+system user + DB + role, enables the `timescaledb` extension on that database
+(the extension is required — the script aborts if any part of it fails), clones
+the repo, builds, runs migrations, generates a
 self-signed cert for the supplied hostname under `/etc/polaris-nginx/`,
 installs the split-role systemd units + a `Wants=nginx` drop-in on
 `polaris-web`, sets `POLARIS_PROXY_CERT_PATH` + `POLARIS_PUBLIC_URL` in
@@ -668,7 +661,7 @@ sudo systemctl start polaris.target 2>/dev/null || sudo systemctl start polaris
 sudo journalctl -u polaris-web -f --no-pager
 ```
 
-After step 10 succeeds, follow *Recommended: TimescaleDB* below to install the extension. On the first restart afterward, Polaris detects the extension and converts the twenty-eight monitoring sample tables to hypertables — eight source tables, sixteen `*_hourly` / `*_daily` rollup tables produced by the tiered-retention rollup job, and four detail-only standalone tables (~5-15 min for a fleet that's been running for weeks; no operator action required, just patience as conversions log in the journal).
+After step 10 succeeds, follow *Required: TimescaleDB* below to install the extension. On the first restart afterward, Polaris detects the extension and converts the twenty-eight monitoring sample tables to hypertables — eight source tables, sixteen `*_hourly` / `*_daily` rollup tables produced by the tiered-retention rollup job, and four detail-only standalone tables (~5-15 min for a fleet that's been running for weeks; no operator action required, just patience as conversions log in the journal).
 
 ### Recovery: postgres crashes on a full /var
 
@@ -780,7 +773,9 @@ sudo bash deploy/setup-ubuntu.sh --public-url https://polaris.example.com
 ```
 
 The script installs nginx stable from nginx.org's Debian/Ubuntu repo
-(distro nginx is too old for HTTP/3), generates a self-signed cert, drops
+(distro nginx is too old for HTTP/3), installs **TimescaleDB** and enables the
+extension on the polaris database (required — the script aborts if any part of
+it fails), generates a self-signed cert, drops
 the split-role units (with a `20-postgres.conf` drop-in pointing at
 Ubuntu/Debian's `postgresql.service` meta-service rather than the versioned
 unit RHEL/PGDG uses — see *The PostgreSQL dependency*),
@@ -792,94 +787,69 @@ documented above for setup-rhel.sh apply here too.
 
 ---
 
-## Windows Server
+## Migrating a Windows install to Linux
 
-### 1. PostgreSQL
+Windows Server stopped being a supported Polaris host on 2026-09-11 (see the note at the top of
+this guide for why). An existing Windows install keeps running — nothing reaches out and stops
+it — but it receives no further install or update scripts, the in-app updater's NSSM restart
+path is gone, and it cannot gain TimescaleDB, so its sample tables prune row-by-row and its
+backups restore without the hypertable gates. Move it.
 
-Download the EnterpriseDB installer from <https://www.postgresql.org/download/windows/> and run it. Default install path is `C:\Program Files\PostgreSQL\<version>\` with PGDATA at `C:\Program Files\PostgreSQL\<version>\data`.
-
-The installer registers PostgreSQL as a Windows service. Verify free space on the drive holding PGDATA (usually `C:`):
-
-```powershell
-Get-PSDrive -Name C
-```
-
-If `C:` has less than 50 GB free, **install PGDATA on a different drive** during the EnterpriseDB installer flow (the installer prompts for the data directory location). Don't try to expand `C:` after the fact.
-
-### 2. Database + user
+The migration is a dump on Windows, a normal Linux install, and a restore. Plan for downtime
+equal to the dump plus the restore; both scale with your sample-table volume.
 
 ```powershell
-# Replace <version> with your installed major version (15 or newer)
-& "C:\Program Files\PostgreSQL\<version>\bin\psql.exe" -U postgres
+# ── On the Windows host ──────────────────────────────────────────────────────
+# 1. Stop the Polaris services so nothing writes during the dump.
+nssm stop PolarisWeb; nssm stop PolarisMonitor1; nssm stop PolarisDiscovery
+
+# 2. Plain-SQL dump of the whole database. --no-owner because the Linux install
+#    owns its objects as the `polaris` role, which is not the role name here.
+& "C:\Program Files\PostgreSQL\17\bin\pg_dump.exe" -U postgres -d polaris `
+    --no-owner --format=plain --file=C:\polaris-migration.sql
 ```
 
-```sql
-CREATE USER polaris WITH PASSWORD 'change-me';
-CREATE DATABASE polaris OWNER polaris;
-\c polaris
-CREATE SCHEMA IF NOT EXISTS pgboss;
-ALTER SCHEMA pgboss OWNER TO polaris;
-GRANT ALL ON SCHEMA pgboss TO polaris;
-GRANT ALL ON ALL TABLES    IN SCHEMA pgboss TO polaris;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA pgboss TO polaris;
-GRANT ALL ON ALL FUNCTIONS IN SCHEMA pgboss TO polaris;
-ALTER DEFAULT PRIVILEGES IN SCHEMA pgboss GRANT ALL ON TABLES    TO polaris;
-ALTER DEFAULT PRIVILEGES IN SCHEMA pgboss GRANT ALL ON SEQUENCES TO polaris;
-ALTER DEFAULT PRIVILEGES IN SCHEMA pgboss GRANT ALL ON FUNCTIONS TO polaris;
-\q
+Copy `C:\polaris-migration.sql` and the install's `.env` to the new Linux host, then:
+
+```bash
+# ── On the new Linux host ────────────────────────────────────────────────────
+# 3. Do a normal fresh install first — RHEL or Ubuntu section above. It
+#    provisions PostgreSQL 17 + TimescaleDB and creates the polaris role and
+#    database. Do NOT run the first-run wizard; the restore below supplies the
+#    schema and data it would have created.
+sudo systemctl stop polaris.target
+
+# 4. Restore. TimescaleDB is installed by now but the dump carries no
+#    hypertables (Windows never had the extension), so no restore gates are
+#    needed — this is a plain-table restore into a Timescale-enabled database.
+sudo -u postgres psql -d polaris -v ON_ERROR_STOP=1 -f /path/to/polaris-migration.sql
+
+# 5. Give the polaris role ownership of everything the restore created.
+sudo -u postgres psql -d polaris <<'SQL'
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+    EXECUTE format('ALTER TABLE public.%I OWNER TO polaris', r.tablename);
+  END LOOP;
+END $$;
+SQL
+
+# 6. Carry POLARIS_SECRET_KEY across from the old .env — VERBATIM. Every stored
+#    credential, SNMP community and integration token is sealed with it; a new
+#    key silently invalidates all of them and there is no escrow. Keep the new
+#    host's own DATABASE_URL.
+sudo -u polaris vi /opt/polaris/.env
+
+# 7. Start, and watch the first boot convert the restored sample tables to
+#    hypertables (a few minutes on a fleet with months of history).
+sudo systemctl start polaris.target
+sudo journalctl -u polaris-web -f
 ```
 
-Edit `pg_hba.conf` (in the data directory) to add a line for the polaris user, then restart the PostgreSQL service from `services.msc`.
-
-The `pgboss` schema grants are required for pg-boss queue mode (operators with thousands of monitored assets). Without them Polaris falls back to in-process cursor mode — fine for small/medium fleets, won't keep up at thousands.
-
-### 3. Node.js 24 (LTS)
-
-Download the **24.x LTS** installer from <https://nodejs.org/> and run it. Node
-**22.12 is the hard floor** (`pg-boss` requires `>=22.12.0`); Node 20 is
-end-of-life as of April 2026.
-
-### 4. Polaris
-
-Extract the release zip to a directory of your choice (e.g. `C:\Polaris`). From an admin PowerShell:
-
-```powershell
-cd C:\Polaris
-npm ci --omit=dev
-```
-
-### 5. NSSM service wrapper
-
-Polaris on Windows runs under [NSSM](https://nssm.cc/) (Non-Sucking Service Manager). Download nssm.exe and register the service:
-
-```powershell
-nssm install Polaris "C:\Program Files\nodejs\node.exe" "C:\Polaris\dist\index.js"
-nssm set Polaris AppDirectory "C:\Polaris"
-nssm set Polaris DependOnService postgresql-x64-<version>
-nssm set Polaris Start SERVICE_AUTO_START
-nssm start Polaris
-```
-
-`DependOnService` is the Windows equivalent of systemd's `Requires=` — Polaris won't try to start until PostgreSQL is up. Adjust the version suffix to match your install (`postgresql-x64-15` etc.).
-
-Browse to `http://<host>:3000` to run the setup wizard.
-
-> **The wizard is unauthenticated, by construction** — it exists to create the
-> first account, so there is nobody to authenticate yet. Until you finish it,
-> whoever reaches that port first chooses the admin password, the database and
-> the secrets. On a server reachable by anyone but you, set
-> `POLARIS_SETUP_BIND=127.0.0.1` in the environment before the first start and
-> complete the wizard over an RDP session or an SSH tunnel
-> (`ssh -L 3000:127.0.0.1:3000 you@host`); the boot banner states which
-> interface it bound to. Unset, it binds all interfaces — the default, because
-> a container can only reach the wizard through a published port. Once
-> `DATABASE_URL` is set the wizard never runs again and the variable is inert.
-
-Windows runs single-process (`POLARIS_ROLE` unset = `all`), so the Dash
-wallboard listener boots in-process and serves `http://<host>:3001/dash`
-once enabled under Server Settings → Web Server → Dash Wallboard (no
-separate service; open TCP/3001 in Windows Firewall if wallboard viewers
-are remote).
+Then re-point anything that names the old host: the agents' `POLARIS_PUBLIC_URL` (agents
+enrolled against the Windows host's address need re-enrolling or an updated URL), DNS or the
+load-balancer VIP, and any syslog/SFTP archival target that allow-listed the old address.
 
 ---
 
@@ -928,14 +898,6 @@ sums packets over each automation's own History window, so only how quickly it
 reacts moves. fping is not in RHEL BaseOS or AppStream, so on a Satellite-managed
 host with no EPEL content view this is the practical answer rather than a
 workaround.
-
-**Windows Server has no fping build**, so those installs always use the per-host
-fallback. It is slower there than on Linux for a reason worth knowing: Windows
-`ping` paces at a fixed ~1s per echo and has no interval flag, where POSIX
-`ping -i 0.2` completes the same burst in ~0.8s. A 2000-asset Windows install
-therefore lands nearer a 2–3 minute loss cadence. Response-time polling and down
-detection are unaffected — they are a different measurement on a different
-clock (business rule 30).
 
 **Permissions.** The packaged binary ships with the `cap_net_raw` file
 capability, so the unprivileged `polaris` service user runs it with no sudo
@@ -1190,10 +1152,12 @@ with sample volume rather than asset count.
 
 4. **Create the 17 container against a NEW appdata path**, with the same `POSTGRES_USER` /
    `POSTGRES_PASSWORD` / `POSTGRES_DB` and on the same network. Give it a temporary host port so
-   it cannot collide with 15. Use `timescale/timescaledb:<ver>-pg17` if you have the extension
-   (match the version from step 1 and `ALTER EXTENSION timescaledb UPDATE;` afterwards — 2.28.x
-   was the last line supporting PostgreSQL 15 and 2.29 dropped it, so check the overlap before
-   you pick a tag), otherwise `postgres:17`.
+   it cannot collide with 15. Use `timescale/timescaledb:<ver>-pg17` — the extension is required,
+   so this is the image even if the old container was plain `postgres` (match the version from
+   step 1 and `ALTER EXTENSION timescaledb UPDATE;` afterwards — 2.28.x was the last line
+   supporting PostgreSQL 15 and 2.29 dropped it, so check the overlap before you pick a tag).
+   Start it with `-c shared_preload_libraries=timescaledb`: the image only writes that into
+   `postgresql.conf` during `initdb`.
 
 5. **Restore.** With no TimescaleDB in the *source*, the dump contains no hypertable metadata
    and needs no `timescaledb_pre_restore()` / `post_restore()` bracketing:
@@ -1397,33 +1361,17 @@ which of them a node's role gets. So if a release adds a NEW HA file, re-run
 that script on each node to install it — the release notes will say when that
 applies.
 
-### Windows (NSSM)
-
-Register one service per role with the same `AppDirectory`, role via
-`AppEnvironmentExtra`, and a migrate step before the app services start
-(`npx --no-install prisma migrate deploy`). NSSM's `DependOnService` only orders
-start, it doesn't wait for a one-shot to finish — run migrate as a script step,
-not a service. Example:
-
-```powershell
-nssm install PolarisWeb       "C:\Program Files\nodejs\node.exe" "dist\index.js"
-nssm set     PolarisWeb       AppEnvironmentExtra "NODE_ENV=production" "POLARIS_ROLE=web"
-nssm install PolarisMonitor1  "C:\Program Files\nodejs\node.exe" "dist\index.js"
-nssm set     PolarisMonitor1  AppEnvironmentExtra "NODE_ENV=production" "POLARIS_ROLE=monitor" "POLARIS_METRICS_PORT=9101"
-nssm install PolarisDiscovery "C:\Program Files\nodejs\node.exe" "dist\index.js"
-nssm set     PolarisDiscovery AppEnvironmentExtra "NODE_ENV=production" "POLARIS_ROLE=discovery" "POLARIS_METRICS_PORT=9110"
-```
-
-Add `POLARIS_METRICS_PORT` to each non-web role so Prometheus can scrape its
-in-process metrics; see the systemd section above for the role → port mapping
-and [docs/grafana/README.md](grafana/README.md#multi-process-split-role-deployments)
-for the scrape job.
-
 ### Docker
 
 Use the shipped `docker-compose.yml` — one image, per-service `POLARIS_ROLE`, a
 one-shot `migrate` service the app services gate on
 (`service_completed_successfully`), and `monitor` with `deploy.replicas`.
+
+**The database container must be a TimescaleDB image**, not plain `postgres` —
+the extension is required (see *Required: TimescaleDB* below for the image tag,
+the `shared_preload_libraries` server flag it needs on an existing volume, and
+the one `CREATE EXTENSION` to run against the polaris database). The stack does
+not ship a Postgres service of its own, so this is your call to get right.
 
 **Secrets are not auto-generated for the compose stack.** The `deploy/setup-*`
 scripts and the first-run wizard mint `SESSION_SECRET` and `POLARIS_SECRET_KEY`
@@ -1622,9 +1570,8 @@ card (unchanged).
 > Access** card on Server Settings → API Tokens (loopback / RFC1918 /
 > custom private subnets — public networks are refused), NOT from the nginx
 > Proxy card, and it is defense in depth only: Polaris enforces the same
-> source-IP scope itself, on every install type. Windows/NSSM installs, dev
-> boxes, and the Docker stack have no managed nginx and rely on that app-level
-> gate alone — which is the authoritative layer everywhere, so nothing extra
+> source-IP scope itself, on every install type. Dev boxes and the Docker stack
+> have no managed nginx and rely on that app-level gate alone — which is the authoritative layer everywhere, so nothing extra
 > is needed there.
 
 A yellow drift banner reads "nginx config not Polaris-managed yet" until
@@ -1691,7 +1638,7 @@ curl -sH "Authorization: Bearer $METRICS_TOKEN" https://polaris.example.com/metr
 
 ---
 
-## Recommended: TimescaleDB
+## Required: TimescaleDB
 
 Polaris's monitoring data lives in twenty-eight sample tables: eight source tables (`asset_monitor_samples`, `asset_telemetry_samples`, `asset_hardware_sensor_samples`, `asset_interface_samples`, `asset_storage_samples`, `asset_ipsec_tunnel_samples`, `asset_perf_sla_samples`, `asset_process_samples`) that hold raw per-cadence samples, sixteen `*_hourly` / `*_daily` rollup tables produced by the tiered-retention rollup job (one hourly + one daily companion per source), and four detail-only standalone tables with no rollups (`asset_custom_widget_samples`, `asset_state_samples`, `asset_process_log_samples`, `asset_service_log_samples`). All are append-only / upsert-only time-series. Plain Postgres handles them fine at small scale, but once the combined size crosses ~1 GB the daily retention prune starts seq-scanning hundreds of millions of rows, contending with normal write load. **TimescaleDB** (an official Postgres extension) converts all of them to hypertables with chunk-based partitioning and native compression:
 
@@ -1699,9 +1646,13 @@ Polaris's monitoring data lives in twenty-eight sample tables: eight source tabl
 - Compressed chunks (default: anything older than 7 days) take ~10–30× less disk
 - Read queries are unchanged — Polaris uses ordinary SQL, Timescale handles transparency
 
-Polaris **detects the extension at boot**. If present, the boot-time migration converts all eighteen tables to hypertables on the next startup (source tables partitioned by `timestamp`; rollup tables by `bucketStart`) and adds the compression policy. If absent, Polaris stays on plain-Postgres prune and surfaces a `timescale_recommended` alert in the Maintenance tab once sample tables grow past 1 GB.
+**The setup scripts do all of this for you.** `deploy/setup-rhel.sh` and `deploy/setup-ubuntu.sh` install `timescaledb-2-postgresql-17`, run `timescaledb-tune`, restart PostgreSQL and `CREATE EXTENSION timescaledb` on the polaris database, and they **fail the install** if any of it doesn't work rather than leaving you with a database that can never become hypertables. The steps below are for an install that predates this (2026-09-11), for the `-nodb` external-database path, and for Docker.
 
-If you're standing up a new install on RHEL/Rocky/AlmaLinux 9, Ubuntu/Debian, or Docker, install Timescale **before** the first run so all sample tables become hypertables from the start with no conversion downtime.
+`CREATE EXTENSION` needs **superuser**, which the unprivileged `polaris` service account deliberately is not — so the app can never create the extension itself. It only detects what the install created, and logs at **error** level on every boot where it is missing.
+
+Polaris **detects the extension at boot**. If present, the boot-time migration converts all twenty-eight tables to hypertables on the next startup (source tables partitioned by `timestamp`; rollup tables by `bucketStart`) and adds the compression policy. If absent, Polaris keeps running on plain-Postgres prune — it is degraded, not dead: retention deletes row by row instead of dropping chunks, nothing is compressed, the database grows well past what the Capacity Advisor's forecast predicts, and the restore procedure's `timescaledb_pre_restore()` / `post_restore()` gates have nothing to gate. The Maintenance tab raises `timescale_recommended` whenever the extension is absent — at *watch* severity on a small install and *warning* (amber on the card) once sample tables pass 1 GB.
+
+On an existing install, add the extension **before** the first restart that follows, so the conversion happens once, in a window you chose.
 
 ### RHEL / Rocky / AlmaLinux 9
 
@@ -1786,10 +1737,6 @@ Polaris converts its own sample and rollup tables to hypertables on the next boo
 docker exec -it <postgres-container> psql -U polaris -d polaris \
   -c "SELECT count(*) FROM timescaledb_information.hypertables;"
 ```
-
-### Windows Server
-
-The official Timescale Windows installer is bundled with the EnterpriseDB Postgres installer. Run the EDB installer with the timescaledb extension checked, or download `timescaledb_x.y.z_pg17_windows_amd64.zip` from packagecloud, copy `timescaledb*.dll` into `C:\Program Files\PostgreSQL\17\lib`, copy `timescaledb*.sql` and the control file into `C:\Program Files\PostgreSQL\17\share\extension`, then add `timescaledb` to `shared_preload_libraries` in `postgresql.conf`, restart the Windows service, and run `CREATE EXTENSION timescaledb` against the polaris database.
 
 ### Managed / remote Postgres
 
@@ -1987,7 +1934,7 @@ The Polaris Agent is a small Go binary you can install on Linux / macOS / Window
 
 ### Build the binaries
 
-**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu,windows}.{sh,ps1}` and their `-nodb` variants) provision Go 1.26+ alongside Node 24, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
+**The default path:** the install scripts in this guide (`deploy/setup-{rhel,ubuntu}.sh` and their `-nodb` variants) provision Go 1.26+ alongside Node 24, so a freshly-installed Polaris server is ready to produce agent binaries on demand. From the web UI:
 
 1. Sign in as admin
 2. Integrations → **Polaris Agents** tab → **Polaris Agent** card → **Build agent binaries (vX.Y.Z)**
@@ -2074,7 +2021,7 @@ SmartScreen is usually not the constraint in the first place: it only fires on f
 
 ### Polaris host prerequisites
 
-The install scripts in this guide (and the Docker image) provision the toolchain automatically: a headless **Java 25** runtime and the **jsign** jar (v7.5, SHA-256-pinned) at `<app dir>/tools/jsign.jar` (`/opt/polaris/tools/jsign.jar` on Linux, `C:\polaris\tools\jsign.jar` on Windows). Existing installs that predate this feature add them manually:
+The install scripts in this guide (and the Docker image) provision the toolchain automatically: a headless **Java 25** runtime and the **jsign** jar (v7.5, SHA-256-pinned) at `<app dir>/tools/jsign.jar` (`/opt/polaris/tools/jsign.jar`). Existing installs that predate this feature add them manually:
 
 ```sh
 # RHEL/Rocky/Alma
@@ -2088,7 +2035,7 @@ sudo curl -fsSL -o /opt/polaris/tools/jsign.jar \
 echo "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c  /opt/polaris/tools/jsign.jar" | sha256sum -c -
 ```
 
-On Windows Server: `winget install Microsoft.OpenJDK.25` (or the MSI from https://aka.ms/download-jdk) and drop `jsign-7.5.jar` at `C:\polaris\tools\jsign.jar`. No Polaris restart needed — the availability probe re-checks on every page load.
+No Polaris restart needed — the availability probe re-checks on every page load.
 
 **Then install the keystore.** Either upload it through the UI, or place it on the host by hand.
 
@@ -2386,10 +2333,6 @@ sudo apt install -y pgbouncer
 ```
 
 Same `pgbouncer.ini` shape; on Debian/Ubuntu it lives at `/etc/pgbouncer/pgbouncer.ini`. Same userlist + service enable pattern. Same Polaris `.env` lines.
-
-### Windows Server
-
-PgBouncer isn't officially packaged for Windows. If you've crossed the threshold where you need it, the practical path is to move PostgreSQL + Polaris to Linux. (The Windows install path is documented but is a smaller-fleet target.)
 
 ### After enabling PgBouncer
 

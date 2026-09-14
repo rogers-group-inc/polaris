@@ -9,10 +9,10 @@ The former CLAUDE.md → Common Claude Code Tasks list, verbatim, followed by th
 - **Implement a monitoring collector (or notice one missing)** — flip its entry in `src/utils/pollingCapability.ts` in the SAME commit, and its `_collectorExists` mirror in `public/js/integrations.js`. That table is a hand-maintained claim about code elsewhere: nothing detects automatically that a collector appeared, and a stale entry either hides a method that now works or keeps offering one that silently gathers nothing. `tests/unit/pollingCapability.test.ts` doubles as the list of what is currently unimplemented.
 - **Add bulk reservation import via CSV** — Route `POST /api/v1/reservations/import`, service function handles row validation and upsert.
 - **Write integration tests** — Vitest + Supertest against a test database (Docker Compose).
-- **Add a new environment variable** — Add to `.env.example` with a comment, document in the CLAUDE.md "Environment Variables" block, update `docs/INSTALL.md` if operator-set, and seed a default in `deploy/setup-*.{sh,ps1}` if the install scripts write `.env`. See `TOUCHES.md → cross-cutting/deployment`.
+- **Add a new environment variable** — Add to `.env.example` with a comment, document in the CLAUDE.md "Environment Variables" block, update `docs/INSTALL.md` if operator-set, and seed a default in `deploy/setup-*.sh` if the install scripts write `.env`. See `TOUCHES.md → cross-cutting/deployment`.
 - **Add, rename, or remove a `polaris_*` metric** — Update `src/metrics.ts` (define + helper), the Observability section of this file, the writers list in `TOUCHES.md → cross-cutting/observability-metrics`, AND add/edit/remove the corresponding panel in `docs/grafana/polaris-monitoring-dashboard.json` (with the bullet in `docs/grafana/README.md`). Prometheus picks up new series automatically — Grafana does not.
 - **Add a new Polaris Agent sample stream** — Add a Zod variant to `SamplesBodySchema` in `src/api/routes/agents.ts`, map to the enqueue helper, mirror in the Go agent collector under `agent/internal/collectors/`, and bump `agent/VERSION`. See `TOUCHES.md → cross-cutting/polaris-agent`.
-- **Bump a runtime dependency or Go pin** — Update `Dockerfile`, every `deploy/setup-*.{sh,ps1}`, and `docs/INSTALL.md` per-platform notes; for Go, bump `agent/go.mod` in lockstep. See `TOUCHES.md → cross-cutting/deployment`.
+- **Bump a runtime dependency or Go pin** — Update `Dockerfile`, every `deploy/setup-*.sh`, and `docs/INSTALL.md` per-platform notes; for Go, bump `agent/go.mod` in lockstep. See `TOUCHES.md → cross-cutting/deployment`.
 
 ## Skills-era routing (2026-09-06 onward)
 
@@ -28,7 +28,7 @@ and "the CLAUDE.md Environment Variables block" means `polaris-deploy/references
 | new or changed job | `polaris-monitoring-discovery/references/background-jobs.md` + `file-map/src-jobs.md` |
 | new or changed route / gate | `polaris-api-rbac/references/endpoints-*.md`; `routes-overview.md` for a new group; a new function key also `cross-cutting/dynamic-roles-permission-matrix.md` + `auth-rbac.md` + a migration seeding it on every Role |
 | new util | `file-map/src-utils-*.md`; `tests/unit/<name>.test.ts` |
-| environment variable | `.env.example`, `polaris-deploy/references/env-vars.md`, `docs/INSTALL.md`, `deploy/setup-*.{sh,ps1}` |
+| environment variable | `.env.example`, `polaris-deploy/references/env-vars.md`, `docs/INSTALL.md`, `deploy/setup-*.sh` |
 | `polaris_*` metric | `src/metrics.ts`, `polaris-monitoring-discovery/references/observability.md`, `cross-cutting/observability-metrics.md`, `docs/grafana/polaris-monitoring-dashboard.json` + `docs/grafana/README.md` |
 | agent code / sample stream | `agent/VERSION`; `polaris-agent/references/cross-cutting-polaris-agent.md`; `agent-server-side.md` if the server flow changed |
 | polling method or collector | `src/utils/pollingCapability.ts` + `_collectorExists` in `public/js/integrations.js`; `polling-methods-streams.md`; `cross-cutting/polling-method-resolver.md` |

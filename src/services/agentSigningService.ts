@@ -92,8 +92,9 @@ export const DEFAULT_TSA_URL = "http://timestamp.digicert.com";
  * Where resolveJsignJar() looks when the operator hasn't set an explicit
  * path. MUST stay in lockstep with where the deploy surfaces drop the jar:
  * Dockerfile + setup-{rhel,ubuntu}.sh → /opt/polaris/tools/jsign.jar;
- * setup-windows.ps1 → <app dir>\tools\jsign.jar (covered by the cwd probe);
- * POLARIS_STATE_DIR layouts → <state>/tools/jsign.jar.
+ * POLARIS_STATE_DIR layouts → <state>/tools/jsign.jar. The cwd probe below
+ * predates the Windows host path's removal (2026-09-11) and stays: it covers
+ * any layout whose app dir is the working directory.
  */
 export const JSIGN_JAR_CANDIDATES: string[] = [
   resolvePath(process.cwd(), "tools", "jsign.jar"),

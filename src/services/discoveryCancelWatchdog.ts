@@ -25,7 +25,7 @@
  *   3. writes an `integration.discover.force_exit` Event,
  *   4. exits the process with code 1.
  *
- * systemd (`Restart=on-failure`, polaris-discovery.service) / NSSM restart
+ * systemd (`Restart=on-failure`, polaris-discovery.service) restarts
  * the process within seconds — the same exit-and-let-the-service-manager-
  * cycle-us pattern the operator /restart endpoint and the agent cert-pin
  * reload already use. If pg-boss redelivers the interrupted job, runDiscovery

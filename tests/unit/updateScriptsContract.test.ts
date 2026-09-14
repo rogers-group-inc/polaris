@@ -1,18 +1,20 @@
 /**
  * tests/unit/updateScriptsContract.test.ts
  *
- * Structural guards over the two operator-facing fallback updaters,
- * deploy/update-linux.sh and deploy/update-windows.ps1. They are shell, so
- * nothing in `npm test` exercises them — and on 2026-09-09 the Linux one turned
- * out to have been a silent no-op on every standard install since it was
- * written: its two `git rev-parse` calls ran as root against a checkout owned
+ * Structural guards over the operator-facing fallback updater,
+ * deploy/update-linux.sh. It is shell, so nothing in `npm test` exercises it —
+ * and on 2026-09-09 it turned out to have been a silent no-op on every standard
+ * install since it was written: its two `git rev-parse` calls ran as root against a checkout owned
  * by the app user, git refused ("dubious ownership"), `2>/dev/null || echo
  * unknown` hid that, and "unknown" == "unknown" made the "already up to date"
  * branch fire unconditionally with exit 0.
  *
- * These tests read the scripts as text and pin the shape of the fix, the same
+ * These tests read the script as text and pin the shape of the fix, the same
  * way scripts/check-versions.mjs pins version declarations: cheap, no shell
  * required, and loud the moment someone reintroduces a bare `git` call.
+ *
+ * The PowerShell half of this file went away on 2026-09-11 with
+ * deploy/update-windows.ps1, when Windows stopped being a supported host.
  */
 
 import { describe, it, expect } from "vitest";
@@ -22,7 +24,6 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const linux = readFileSync(join(ROOT, "deploy", "update-linux.sh"), "utf8");
-const windows = readFileSync(join(ROOT, "deploy", "update-windows.ps1"), "utf8");
 
 /** Code lines only — a comment quoting the bad pattern must not trip the guard. */
 function codeLines(src: string): string[] {
@@ -42,25 +43,14 @@ describe("update-linux.sh — git runs as the app user", () => {
   });
 });
 
-describe("the 'already up to date' exit is guarded in both scripts", () => {
-  it("linux: an unknown commit on either side keeps going instead of declaring success", () => {
+describe("the 'already up to date' exit is guarded", () => {
+  it("an unknown commit on either side keeps going instead of declaring success", () => {
     expect(linux).toMatch(/"\$OLD_COMMIT" == "unknown" \|\| "\$NEW_COMMIT" == "unknown"/);
   });
 
-  it("linux: --force finishes an update whose pull already happened", () => {
+  it("--force finishes an update whose pull already happened", () => {
     expect(linux).toMatch(/--force\)\s+FORCE=1/);
     expect(linux).toMatch(/"\$OLD_COMMIT" == "\$NEW_COMMIT" && "\$FORCE" -eq 0/);
-  });
-
-  it("windows: a failed rev-parse is normalised to the sentinel, not compared as $null", () => {
-    expect(windows).toMatch(/if \(-not \$OldCommit\) \{ \$OldCommit = "unknown" \}/);
-    expect(windows).toMatch(/if \(-not \$NewCommit\) \{ \$NewCommit = "unknown" \}/);
-    expect(windows).toMatch(/\$OldCommit -eq "unknown" -or \$NewCommit -eq "unknown"/);
-  });
-
-  it("windows: -Force mirrors --force", () => {
-    expect(windows).toMatch(/\[switch\]\$Force/);
-    expect(windows).toMatch(/\$OldCommit -eq \$NewCommit -and -not \$Force/);
   });
 });
 
@@ -108,14 +98,10 @@ describe("update-linux.sh resolves pg_dump / psql by the server's major", () => 
 
 // One backup directory — the app's (<state>/data/backups). Two directories with
 // two retention rules cost real time on 2026-09-09.
-describe("both scripts write pre-update backups beside the app's own", () => {
-  it("linux: data/backups, created owned by the app user", () => {
+describe("the script writes pre-update backups beside the app's own", () => {
+  it("data/backups, created owned by the app user", () => {
     expect(linux).toMatch(/^BACKUP_DIR="\/opt\/polaris\/data\/backups"/m);
     expect(linux).toMatch(/install -d -o "\$APP_USER" -g "\$APP_USER" "\$BACKUP_DIR"/);
-  });
-
-  it("windows: data\\backups", () => {
-    expect(windows).toMatch(/\$backupDir = Join-Path \$AppDir "data\\backups"/);
   });
 });
 
@@ -124,23 +110,17 @@ describe("both scripts write pre-update backups beside the app's own", () => {
 // wrong directory was offered prisma@8.0.0-rc.13 against a Prisma 7 database;
 // only the prompt stood in the way. The updaters call the project's own CLI by
 // path so a half-populated node_modules fails with ENOENT instead.
-describe("both scripts run the project's own Prisma CLI, never npx", () => {
-  it("linux", () => {
+describe("the script runs the project's own Prisma CLI, never npx", () => {
+  it("calls the local CLI by path", () => {
     expect(codeLines(linux).filter((l) => /npx prisma/.test(l))).toEqual([]);
     expect(linux).toMatch(/node node_modules\/prisma\/build\/index\.js generate/);
     expect(linux).toMatch(/node node_modules\/prisma\/build\/index\.js migrate deploy/);
-  });
-
-  it("windows", () => {
-    expect(codeLines(windows).filter((l) => /npx prisma/.test(l))).toEqual([]);
-    expect(windows).toMatch(/node node_modules\/prisma\/build\/index\.js generate/);
-    expect(windows).toMatch(/node node_modules\/prisma\/build\/index\.js migrate deploy/);
   });
 });
 
 // A Polaris database with TimescaleDB must be restored between
 // timescaledb_pre_restore() and timescaledb_post_restore(), each in its own
-// psql session. The in-app restore learned this in 2026-08; both scripts kept a
+// psql session. The in-app restore learned this in 2026-08; the script kept a
 // bare `psql --single-transaction 2>/dev/null` (then reported success
 // unconditionally) until 2026-09-09.
 describe("the rollback restore is TimescaleDB-aware and reports honestly", () => {
@@ -153,15 +133,6 @@ describe("the rollback restore is TimescaleDB-aware and reports honestly", () =>
     expect(silenced).toEqual([]);
   });
 
-  it("windows: restores through Restore-Database, with both gates, and the dead pg_restore probe is gone", () => {
-    expect(windows).toMatch(/^function Restore-Database \{/m);
-    expect(windows).toMatch(/Restore-Database -DumpFile \$BackupFile/);
-    expect(windows).toMatch(/SELECT timescaledb_pre_restore\(\);/);
-    expect(windows).toMatch(/SELECT timescaledb_post_restore\(\);/);
-    expect(windows).not.toMatch(/pg_restore\.exe/);
-    const silenced = codeLines(windows).filter((l) => /psql/.test(l) && /2>\$null/.test(l) && /single-transaction/.test(l));
-    expect(silenced).toEqual([]);
-  });
 });
 
 // A failed update on 2026-09-10 (prod) rolled back with `git checkout <old> -- .`,
@@ -171,13 +142,8 @@ describe("the rollback restore is TimescaleDB-aware and reports honestly", () =>
 // be overwritten by merge". `reset --hard` moves HEAD back too (and removes
 // files the new commit had added), so the rolled-back checkout is clean.
 describe("the code rollback moves HEAD back, it does not restore files by path", () => {
-  it("linux: reset --hard, and no `checkout <old> -- .` on any code line", () => {
+  it("reset --hard, and no `checkout <old> -- .` on any code line", () => {
     expect(linux).toMatch(/sudo -u "\$APP_USER" git reset --hard "\$OLD_COMMIT"/);
     expect(codeLines(linux).filter((l) => /git checkout "?\$OLD_COMMIT"? -- \./.test(l))).toEqual([]);
-  });
-
-  it("windows: reset --hard, and no `checkout <old> -- .` on any code line", () => {
-    expect(windows).toMatch(/& git reset --hard \$OldCommit/);
-    expect(codeLines(windows).filter((l) => /git checkout \$OldCommit -- \./.test(l))).toEqual([]);
   });
 });

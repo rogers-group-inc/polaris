@@ -127,6 +127,16 @@ works for exactly as long as you keep the old container and its appdata.
 
 **Risk: high**, for the same reason as Postgres: the data is the product.
 
+**It is REQUIRED as of 2026-09-11, not recommended.** `deploy/setup-rhel.sh` and
+`deploy/setup-ubuntu.sh` install `timescaledb-2-postgresql-<major>`, run `timescaledb-tune` and
+`CREATE EXTENSION` on the polaris database, and **abort the install** if any of it fails. The
+two `-nodb` scripts cannot install packages on someone else's database server, so they attempt
+the `CREATE EXTENSION` and warn loudly with the consequence when it is refused. The app can
+never create the extension itself — that needs superuser and the service account is not one —
+so it only detects, and logs at **error** level on a boot where the extension is missing.
+A plain-Postgres Polaris is a degraded install, not a supported mode: row-by-row retention, no
+compression, and restore gates that gate nothing.
+
 ### Order
 1. Read the chunk-bloat runbook in `polaris-monitoring-discovery` first. An extension move and a
    chunk-interval change **must not land together** — if something regresses you will not know

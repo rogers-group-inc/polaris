@@ -217,12 +217,10 @@ function probeOs(): ObservedComponent {
   const container = runtimeIsContainer();
   const plat = osPlatform();
 
-  if (plat === "win32") {
-    // Reported, never graded: the build-number-to-product table rots and
-    // Windows Server lifecycles run ~10 years, which is not this risk.
-    return { id: "os:windows", observedVersion: null, observedRaw: osRelease(), probeStatus: "undetectable", probeNote: `Windows build ${osRelease()}` };
-  }
-
+  // No win32 branch: Windows stopped being a supported Polaris host on
+  // 2026-09-11, so the dataset has no os:windows entry to grade against and a
+  // win32 process here is a dev box. It falls through to the os:unknown return
+  // below, which reports the platform string and grades nothing.
   try {
     const raw = readFileSync("/etc/os-release", "utf8");
     const { id, versionId } = parseOsRelease(raw);

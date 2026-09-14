@@ -124,7 +124,7 @@ Forgetting to bump VERSION means:
 - Operators won't see the new behavior until they manually click Build.
 
 When bumping `agent/go.mod`'s `go 1.x` directive, also bump the install
-scripts' Go-version pin in `deploy/setup-{rhel,ubuntu,windows}{,-nodb}.{sh,ps1}`
+scripts' Go-version pin in `deploy/setup-{rhel,ubuntu}{,-nodb}.sh`
 and the Dockerfile's `golang-go` source (currently trixie-backports — the suite must track the base image, or the apt line resolves to nothing)
 in lockstep, or operators will get cryptic "missing go.sum entry"
 errors when the build runs.

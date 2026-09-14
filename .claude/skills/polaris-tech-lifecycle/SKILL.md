@@ -6,7 +6,7 @@ description: "Version lifecycle of the Polaris tech stack: the committed end-of-
 # Polaris tech-stack lifecycle
 
 Polaris pins the same handful of technologies in a dozen places at once. A Node major is
-declared in `package.json`, both Dockerfiles, six `deploy/setup-*` scripts, two workflow files
+declared in `package.json`, both Dockerfiles, four `deploy/setup-*` scripts, two workflow files
 and four operator docs — 23 declaration sites for one number. Until this skill existed nothing
 cross-checked them and nothing recorded when a pinned version stops receiving security fixes,
 so a bump could land in nine sites of twelve and the tenth would keep provisioning the old
