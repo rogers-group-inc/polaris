@@ -1437,10 +1437,11 @@ function computeReasons(
   // (10-30× storage reduction, instant chunk drops vs. seq-scan deleteMany).
   // The suggestion adapts to deployment context so the install hint matches
   // the operator's actual environment.
-  // No size gate since 2026-09-11, when the extension became REQUIRED: every
-  // install Polaris provisions creates it, so its absence is a broken install
-  // from the first byte, not something that becomes a problem at 1 GB. The
-  // threshold now only decides how loudly to say so.
+  // No size gate since 2026-09-11, when the extension became REQUIRED
+  // (business rule 52): every install Polaris provisions creates it, so its
+  // absence is a broken install from the first byte, not something that
+  // becomes a problem at 1 GB. The threshold now only decides how loudly to
+  // say so.
   const TIMESCALE_RECOMMEND_BYTES = 1024 * 1024 * 1024; // 1 GB
   const sampleTableBytes = snap.database.sampleTables.reduce((sum, t) => sum + t.bytes, 0);
   if (!snap.database.timescale.extensionInstalled) {
