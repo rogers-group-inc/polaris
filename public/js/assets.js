@@ -11525,7 +11525,10 @@ function _intermittencyStates(samples, threshold, recoveryPolls) {
  * hour and only the trailing 30 cells are shown, so both counters are warmed
  * up across the window boundary — a dip that started before the visible
  * window keeps its correct red/yellow, and a recovery that started before it
- * keeps its blue. Runs once on tab open; not
+ * keeps its blue. A miss the upstream explains is drawn in the dependency grey
+ * instead of amber or the Down colour, the same override the response-time
+ * chart applies (business rule 38) — the two are stacked, so a suppressed
+ * outage has to read the same on both. Runs once on tab open; not
  * auto-refreshed (the sample chart above already auto-refreshes and this
  * mostly serves as an at-a-glance intermittency indicator).
  */
@@ -11578,12 +11581,27 @@ async function _renderIntermittencyBar(assetId, effP) {
     slot.innerHTML = '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">No samples in the last 30 minutes</span>';
     return;
   }
-  var states = _intermittencyStates(allSamples, threshold, recoveryPolls).slice(-30);
+  // The replay answers "which state is this probe in", never "why" — dependency
+  // suppression is orthogonal to the leaky bucket and deliberately does not
+  // enter it (business rule 38: the probe keeps running while suppressed, which
+  // is what detects the parent's recovery, so the misses are real misses). The
+  // flag therefore rides ALONGSIDE the replay, zipped back on by index before
+  // the 30-cell window is trimmed — exactly as the response-time chart below
+  // layers grey over the point colour it has already computed.
+  var states = _intermittencyStates(allSamples, threshold, recoveryPolls).map(function (st, i) {
+    var s = allSamples[i];
+    // Only a FAILED probe can carry the flag — the server writes it on misses
+    // alone — so a probe that ANSWERED under a dark parent keeps its green or
+    // blue. That is not a technicality: an answer is real evidence the device
+    // is there, and greying it would hide the one cell that says so.
+    st.dep = !st.success && !!(s && s.dependencyDown === true);
+    return st;
+  }).slice(-30);
 
   // Color map mirrors badge-monitor-* hues so the bar reads as the same
   // visual vocabulary as the pill above it. This bar only ever emits
-  // up / recovering / warning / down per sample; unknown remains the
-  // fallback color.
+  // up / recovering / warning / down per sample, plus the dependency grey
+  // layered over a miss; unknown remains the fallback color.
   //
   // `recovering` is BLUE, agreeing with the pill above rather than contradicting
   // it: on this strip it means "this probe answered while misses are still
@@ -11612,6 +11630,15 @@ async function _renderIntermittencyBar(assetId, effP) {
     warning:    "rgba(255,193,7,0.75)",
     down:       _hexWithAlpha(downHex, 0.75),
     unknown:    "rgba(117,117,117,0.45)",
+    // NOT a replay state — an OVERLAY on a miss, the same grey and the same
+    // precedence the response-time chart gives it in _chartPointColor. A probe
+    // that missed while the parent was dark is not being counted against this
+    // device at all, so how close it sits to the threshold says nothing worth
+    // colouring: the strip goes quiet rather than drawing 30 cells of alarm
+    // about an outage Polaris has already explained. Shares _CHART_DEP_COLOR
+    // with the chart directly below and the alert email, at the strip's own
+    // alpha so it carries the same visual weight as its neighbours.
+    dep:        _hexWithAlpha(_CHART_DEP_COLOR, 0.75),
   };
   // Each cell flexes to 1fr so the bar always fills the column regardless
   // of how many samples landed in the hour. Tooltip carries the timestamp +
@@ -11623,7 +11650,7 @@ async function _renderIntermittencyBar(assetId, effP) {
   // AFTER that probe, plus the direction it moved.
   var cellHTML = states.map(function (st) {
     var ts = new Date(st.timestamp).toLocaleTimeString();
-    var color = colors[st.status] || colors.unknown;
+    var color = st.dep ? colors.dep : (colors[st.status] || colors.unknown);
     var n = st.missed || 0;
     var what;
     if (!st.success)        what = "Missed " + n + " (+1)";
@@ -11634,7 +11661,12 @@ async function _renderIntermittencyBar(assetId, effP) {
     else if (st.confirming) what = "Received " + st.confirming.done + "/" + st.confirming.need +
                                    " — " + n + " missed outstanding (−1)";
     else                    what = "Received — recovered";
-    if (st.status === "down") what += " · Down";
+    // Dependency-down outranks the Down label, matching the Status pill above:
+    // assetMonitorBadge reads "Dep. Down", not "Down", while the parent is dark
+    // (the five-state machine keeps running underneath either way). The cell is
+    // grey, the pill says Dep. Down, and now the tooltip agrees with both.
+    if (st.dep) what += " · Dep. Down — upstream parent was down";
+    else if (st.status === "down") what += " · Down";
     return '<div title="' + escapeHtml(ts + " · " + what) + '" style="flex:1;background:' + color + '"></div>';
   }).join("");
   // Name the automation the bar is drawn from. Both counts are its counts —
@@ -11649,6 +11681,13 @@ async function _renderIntermittencyBar(assetId, effP) {
     legend = 'Down after ' + threshold + ' missed · Up after ' +
       (recoveryPolls > threshold ? recoveryPolls : threshold) + ' received' +
       (downAutomation ? ' — ' + escapeHtml(downAutomation) : '');
+  }
+  // Name the grey when any of the 30 visible cells is one, so the colour is
+  // self-explaining on the one page an operator opens BECAUSE something looks
+  // wrong. Without it a strip full of grey reads as "no data" — the opposite of
+  // what it means, which is that Polaris knows exactly why these polls missed.
+  if (states.some(function (st) { return st.dep; })) {
+    legend += ' · Grey — missed while the upstream parent was down';
   }
   slot.innerHTML =
     '<div style="display:flex;height:14px;width:100%;border:1px solid var(--color-border);border-radius:3px;overflow:hidden;gap:1px;background:var(--color-bg-primary)">' +

@@ -37,7 +37,13 @@ A fresh worktree has no `.env`, no `node_modules` and no `src/generated/prisma`.
    (`npx vitest run tests/unit --no-file-parallelism`).
 5. A wall of implicit-`any` typecheck errors or "81 files failed, 0 tests" in a brand-new
    worktree means the generated client is missing, not that the change is broken — run
-   `npx prisma generate` (with `DATABASE_URL` set to anything well-formed) first.
+   `npx prisma generate` (with `DATABASE_URL` set to anything well-formed) first. The same
+   absence wears a THIRD face that reads like a broken import in your own test: a single unit
+   file failing to collect with `Error: Cannot find module './generated/prisma/client.js'
+   imported from src/db.ts`, pointed at by whatever that test imports transitively (a service
+   → `src/db.ts`). When only the client is missing, `cp -r <main-checkout>/src/generated/prisma
+   src/generated/` (~12 MB) is the quick way past it — a COPY, never a junction (step 3), and
+   it costs nothing at removal time.
 6. **Nothing tells you step 2 was skipped.** The worktrees live INSIDE the main checkout
    (`<repo>/.claude/worktrees/<slug>`), so Node's `node_modules` lookup walks up the tree and
    finds the main checkout's — `npm run lint`, `npm run typecheck` and `npx vitest` all run in
