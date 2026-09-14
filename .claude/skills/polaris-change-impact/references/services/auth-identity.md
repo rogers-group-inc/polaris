@@ -354,7 +354,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `isApiDocsSourceAllowed` **FAILS CLOSED** — the deliberate opposite of `isLoginSourceAllowed`: this fronts an unauthenticated disclosure surface, so a settings-read blip hides the docs briefly rather than exposing them. (`docsSourceAllowed` is the pure form and swallows nothing.)
 - Loopback is ALWAYS allowed while enabled (`isLoopbackIp` short-circuit — a scope that locks the host out of its own docs serves nobody); disabled denies everyone, loopback included — off means off, so the toggle can fully retire the surface.
 - Custom entries must pass `normalizeAllowlistCidr` AND `isRfc1918Cidr` — enforced at save (400 naming the entry) and re-applied on read, so a hand-edited Setting row cannot smuggle a public CIDR. The parse also uses a LOCAL scope guard, never `isIpScope` (which would admit "all").
-- `deriveApiDocsNginxAllow` is pure and deterministic (loopback pair first) — it feeds the sha256-deterministic renderer. nginx is defense in depth only; the app gate is authoritative on every install type (Windows/NSSM, dev, Docker have no managed nginx at all).
+- `deriveApiDocsNginxAllow` is pure and deterministic (loopback pair first) — it feeds the sha256-deterministic renderer. nginx is defense in depth only; the app gate is authoritative on every install type (dev and Docker have no managed nginx at all).
 - The gate DROPS unauthorized sources (socket destroy — dash/login stealth posture) and covers `/api.html` explicitly, because `express.static` would otherwise serve `public/api.html` around the gate.
 
 **When changing this:**

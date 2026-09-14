@@ -842,26 +842,45 @@ export interface ProbeLossSeries {
   /** Per-bucket loss ratio, for the plotted line. */
   points: SparkPoint[];
   /**
-   * failed / total over the window — the same quantity the engine's
-   * `probeLossPct` metric reports, made of the same probes (rows stamped
-   * `assetDown` are out of both), so the caption states the number the alert
-   * fired on. Null when the window held no countable probes at all.
+   * failed / total over the window, made of EVERY countable probe in it —
+   * the misses taken while the device was `warning` or `down` included. What
+   * the caption prints. Null when the window held no countable probes at all.
+   *
+   * This is deliberately NOT the engine's `probeLossPct` (see `engineRatioPct`
+   * below and the header of `probeLossSeriesFrom`): the chart answers "what
+   * happened to this device's packets over the hour", which is a question
+   * about the window, while the metric answers "how lossy is this link",
+   * which is a question the device's own outage does not belong in.
    */
   ratioPct: number | null;
+  /**
+   * The same window with business rule 29h applied — the failures of every
+   * run that reached `down` dropped whole, onset included. The JS mirror of
+   * what `probeLossQuery` computes, and therefore the number the alert
+   * actually fired on.
+   *
+   * Nothing renders it. It exists so the SQL/JS parity test has a production
+   * consumer of `outageRunFailures` to compare the query against, and so the
+   * divergence between the caption and the alert's own value is stated in the
+   * code rather than left for a reader to infer. Null on the same terms as
+   * `ratioPct`, and additionally when the whole window was one outage.
+   */
+  engineRatioPct: number | null;
 }
 
 /**
  * Probe loss over time, as both a bucketed line and the window's own ratio.
  *
- * Pure so the arithmetic that has to agree with the engine can be tested
- * without a database. `rows` must be ascending by timestamp.
+ * Pure so the arithmetic can be tested without a database — including the
+ * engine's own, which `engineRatioPct` still mirrors. `rows` must be ascending
+ * by timestamp.
  *
- * TWO ratios come out of this, and conflating them is what made an alert read
- * "18.3 %" over a chart captioned "avg 6.7 %": the per-bucket values are the
- * line's shape, while `ratioPct` weighs every probe equally across the window.
- * A 4-minute burst of total loss among 30 quiet 2-minute buckets is 2/30 ≈
- * 6.7 % of BUCKETS but ~18 % of PROBES — and it is the probe ratio the
- * automation compares to its threshold, so that is what the caption prints.
+ * A BUCKET MEAN IS NOT A PROBE RATIO, and conflating them is what made an alert
+ * read "18.3 %" over a chart captioned "avg 6.7 %": the per-bucket values are
+ * the line's shape, while `ratioPct` weighs every probe equally across the
+ * window. A 4-minute burst of total loss among 30 quiet 2-minute buckets is
+ * 2/30 ≈ 6.7 % of BUCKETS but ~18 % of PROBES — and it is the probe ratio that
+ * describes the hour, so that is what the caption prints.
  *
  * IT COUNTS PACKETS WHEREVER IT CAN, mirroring `probeLossQuery`: a burst row
  * from the ICMP sweep carries `packetsSent` / `packetsReceived` and describes N
@@ -873,23 +892,32 @@ export interface ProbeLossSeries {
  * a little under the engine's reading on a mixed asset, which is the honest
  * trade — the line has to be continuous, the number has to be comparable.
  *
- * IT STEPS OVER THE SAME OUTAGE THE QUERY DOES (business rule 29h), by the same
- * rule: a maximal run of consecutive failures containing any row stamped
- * `assetDown` is an outage entire — ONSET INCLUDED — and its failures are not
- * loss. `outageRunFailures` below is the JS mirror of the query's `runId` /
- * `runOutage` window functions, and it must stay one: the two are what make the
- * caption and the engine's reading the same number.
+ * IT NO LONGER STEPS OVER THE OUTAGE THE QUERY DOES (2026-09-14). Business
+ * rule 29h still governs the ENGINE — the failures of a run that reached `down`
+ * are the outage rather than the link, and `probeLossQuery` drops them so a
+ * recovered device cannot re-alert as loss — but the CHART is a picture of an
+ * hour, and a picture that omits the worst of it is not one. Every countable
+ * probe in the window is in both the line and the caption, the misses taken
+ * while the device was `warning` and `down` included.
  *
- * Dropped from BOTH halves of this, the line and the caption. Dropping it from
- * only one is the failure this chart exists to avoid — an alert reading 0.0 %
- * over a chart captioned "avg 40 %" tells an operator the number is made up.
- * The stretch leaves a GAP in the line rather than a zero, which is the same
- * treatment an unpolled stretch already gets: nothing was measured about this
- * link while the device was dark, and drawing 0 % there would claim it was
- * perfect at the one moment it was unreachable. A window that was ENTIRELY one
- * outage therefore draws nothing and captions null, and `pruneEmptyChartSection`
- * removes it — which is right: an empty chart is not a claim, where a flat 0 %
- * line under an alert about an outage would be.
+ * What forced it: a response-time chart showing a run of yellow then red dots
+ * sat directly above a packet-loss chart reading a flat 0 % across the same
+ * minutes. The exclusion is invisible to the operator — nothing on the loss
+ * chart says "these probes are accounted for elsewhere" — so the two charts in
+ * one alert simply contradicted each other, and the loss chart is the one that
+ * looked broken. Its whole job is to say what happened to the packets.
+ *
+ * THE COST IS REAL AND ACCEPTED: the caption can now read "avg 40 %" under an
+ * alert that fired at 8 %, which is exactly the mismatch rule 29g built this
+ * parity to prevent. The trade is that the caption describes the WINDOW and the
+ * alert value describes the METRIC, and only one of those two numbers is
+ * reconstructible from the picture. `engineRatioPct` carries the other, so the
+ * divergence is computed rather than hidden.
+ *
+ * NOTHING IS DROPPED, so no stretch of the line goes missing and a window that
+ * was entirely one outage now draws a flat 100 % and captions 100 % — where it
+ * used to draw nothing and be removed by `pruneEmptyChartSection`. That is the
+ * honest picture of a device that answered nothing for an hour.
  *
  * THE ANCHOR IS GONE (2026-09-01), and with it `measuredFromMs` and the marker
  * the chart drew for it. `ratioPct` used to discard everything before the
@@ -905,9 +933,11 @@ export interface ProbeLossSeries {
  * The row indices to leave out of a loss reading: the FAILURES of every maximal
  * run of consecutive failures that contains a row stamped `assetDown`.
  *
- * The JS mirror of `probeLossQuery`'s `runId` / `runOutage` window functions,
- * and the reason the chart's caption and the engine's reading are the same
- * number (business rule 29h). `assetDown` is only stampable from the probe that
+ * The JS mirror of `probeLossQuery`'s `runId` / `runOutage` window functions
+ * (business rule 29h). Since 2026-09-14 it no longer shapes what the chart
+ * draws — the line and the caption count every probe — and feeds only
+ * `ProbeLossSeries.engineRatioPct`, which is what keeps this mirror honest
+ * against the SQL. `assetDown` is only stampable from the probe that
  * DECLARES an outage onward — at the first missed poll nobody knows yet which
  * it is — so the run is what recovers the onset. Bounded by successes rather
  * than by counting back `missedPolls - 1` rows, because that count belongs to
@@ -948,15 +978,17 @@ export function probeLossSeriesFrom(
   bucketMs: number = LOSS_BUCKET_MS,
 ): ProbeLossSeries {
   const buckets = new Map<number, { sent: number; recv: number }>();
-  const skip = outageRunFailures(rows);
+  // Business rule 29h, kept for `engineRatioPct` alone: the failures of a run
+  // that reached DOWN are the outage rather than the link, so the METRIC steps
+  // over them. The chart does not — every probe below lands in the line, in the
+  // caption and in the buckets, whatever state the device was in when it ran.
+  const outage = outageRunFailures(rows);
   let sent = 0;
   let recv = 0;
+  let engineSent = 0;
+  let engineRecv = 0;
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
-    // The failures of a run that reached DOWN are the outage, not the link
-    // (business rule 29h). Skipped entirely rather than counted as received,
-    // so they leave a gap in the line instead of a stretch of implausible 0 %.
-    if (skip.has(i)) continue;
     // NULL is the single-probe equivalent, never zero — reading it as zero
     // would drop the response-time poll's own rows out of the denominator.
     const s = typeof r.packetsSent === "number" && r.packetsSent > 0 ? r.packetsSent : 1;
@@ -970,6 +1002,10 @@ export function probeLossSeriesFrom(
     buckets.set(key, b);
     sent += s;
     recv += v;
+    if (!outage.has(i)) {
+      engineSent += s;
+      engineRecv += v;
+    }
   }
   const points = thin(
     Array.from(buckets.entries())
@@ -979,6 +1015,7 @@ export function probeLossSeriesFrom(
   return {
     points,
     ratioPct: sent ? Math.round(((sent - recv) / sent) * 1000) / 10 : null,
+    engineRatioPct: engineSent ? Math.round(((engineSent - engineRecv) / engineSent) * 1000) / 10 : null,
   };
 }
 
@@ -1112,7 +1149,7 @@ export async function buildAlertCharts(
   let cpu: SparkPoint[] = [];
   let mem: SparkPoint[] = [];
   let rt: SparkPoint[] = [];
-  let loss: ProbeLossSeries = { points: [], ratioPct: null };
+  let loss: ProbeLossSeries = { points: [], ratioPct: null, engineRatioPct: null };
   let sensor: SensorSeries = { points: [], alarmSpans: [], unit: "", sensorClass: null };
   let fail: FailSpanSeries = { spans: [], recoverySpans: [], failedCount: 0 };
   let sdwan: SdwanSeries | null = null;
@@ -1192,8 +1229,12 @@ export async function buildAlertCharts(
       : meta.label;
     const unit = isSensor ? (sensor.unit ? ` ${sensor.unit}` : "") : meta.unit;
     // The loss chart's caption quotes the window's PROBE ratio, not the mean of
-    // its buckets — the number the automation actually fired on. See
-    // probeLossSeriesFrom.
+    // its buckets, which weights unequal buckets wrongly. It counts every probe
+    // in the window — the misses taken while the device was `warning` or `down`
+    // included — so on a device that was down inside the window it reads HIGHER
+    // than the value the automation fired on (business rule 29h applies to the
+    // metric, not to the picture). `loss.engineRatioPct` is that other number.
+    // See probeLossSeriesFrom.
     const avgOverride = isLoss ? loss.ratioPct : null;
     const withFailSpans = FAIL_SPAN_TOKENS.has(token) && fail.spans.length > 0;
     const withRecoverSpans = RECOVER_SPAN_TOKENS.has(token) && fail.recoverySpans.length > 0;
