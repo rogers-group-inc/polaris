@@ -17,8 +17,8 @@
  *      optimization). Suppression fires only on the confirmed-down edge:
  *      `warning` and `recovering` flapping does NOT propagate. Release is
  *      asymmetric — see the hysteresis note on `evaluateSuppression`: a parent
- *      that is merely `recovering` has not come back yet, so it holds its
- *      children suppressed until it reaches `up`.
+ *      short of `up` has not come back yet, whether it reads `recovering` or
+ *      `warning`, so it holds its children suppressed until it reaches `up`.
  *
  * The DAG has two halves. The Fortinet INFRA half (firewall / switch /
  * access_point) is layered by BFS from the FortiGate roots — see
@@ -751,31 +751,53 @@ export function buildEndpointDependencyEdges(
  * itself suppressed. Unmonitored parents are transparent — they're skipped
  * and the walk continues to their parents (if any).
  *
- * HYSTERESIS — entering and leaving suppression read the parent differently:
+ * HYSTERESIS — entering and leaving suppression ask DIFFERENT questions, and
+ * that asymmetry is the whole of business rule 38a:
  *
- *   enter   (child not currently suppressed): a parent blocks only when it is
- *           confirmed `down`. `warning` and `recovering` are flapping states
- *           and must not drag a healthy subtree into Dep. Down.
- *   release (child currently suppressed):     `recovering` counts as down too.
- *           The parent has answered once but has NOT been confirmed back — it
- *           is still short of the covering automation's success threshold, and
- *           on a failure it drops straight back to `down`. Releasing there
- *           un-suppresses the whole subtree on the strength of a single packet:
- *           every child's own probes are still failing, so they immediately
- *           start their own down runs and the outage re-alerts device by device
- *           as plain Down — exactly the alert storm suppression exists to
- *           prevent. Holding until the parent is genuinely back collapses that
- *           into one recovery.
+ *   enter   (child not currently suppressed): "is this parent confirmed down?"
+ *           Only `down` qualifies. `warning` and `recovering` are flapping
+ *           states and must not drag a healthy subtree into Dep. Down on one
+ *           missed or one answered packet.
+ *   release (child currently suppressed):     "is this parent genuinely BACK?"
+ *           Only `up` qualifies — the bucket has drained to zero, which is the
+ *           number of answered polls the operator's own automation asked for.
+ *           Anything short of that (`down`, `recovering`, `warning`) holds the
+ *           subtree. Releasing early un-suppresses a subtree whose own probes
+ *           are all still failing: every child immediately starts its own down
+ *           run and the outage re-alerts device by device as plain Down —
+ *           exactly the alert storm suppression exists to prevent. Holding
+ *           until the parent is genuinely back collapses that into one
+ *           recovery.
  *
- * Only `down` and `recovering` are asymmetric. Every other state stays "ok" on
- * both sides deliberately: `unknown` (never probed) and `passive` (business
- * rule 36 — no automation renders a verdict on it) are not claims that the
- * parent is unreachable, and gating release on them would strand a subtree in
- * Dep. Down with nothing that could ever clear it.
+ * `RELEASES_SUPPRESSION` is that release whitelist, and it is a whitelist on
+ * purpose: a seventh monitor state added later holds the subtree until someone
+ * decides it means "back", rather than quietly leaking it.
+ *
+ * The two non-verdicts are in the whitelist alongside `up`: `unknown` (never
+ * probed) and `passive` (business rule 36 — no automation renders a verdict on
+ * it) are not claims that the parent is unreachable, and gating release on them
+ * would strand a subtree in Dep. Down with nothing that could ever clear it.
+ * `warning` used to sit with them on that reasoning and no longer does — it is
+ * the one state where the parent has just MISSED a poll, the least plausible
+ * moment to call it recovered, and it cannot strand anything because it is
+ * transient by construction (keep missing and the bucket reaches the threshold
+ * → `down`; keep answering and it drains → `up`). The gap it opened was real:
+ * a parent flapping through `down → recovering → recovering → warning` (a miss
+ * once the bucket has drained below threshold-1, per `nextFailureBucket`) put
+ * its whole subtree back on the air mid-outage, one reconciler tick later.
  *
  * Iteratively re-evaluates in BFS layer order until stable. Bounded — at
  * most one pass per layer.
  */
+/**
+ * The parent monitor states that let an ALREADY-SUPPRESSED child out of Dep.
+ * Down. See the hysteresis note on `evaluateSuppression`: `up` is the parent
+ * genuinely back, `unknown` and `passive` are the two states that render no
+ * verdict at all and would otherwise strand a subtree forever. Everything else
+ * — `down`, `recovering`, `warning` — holds.
+ */
+const RELEASES_SUPPRESSION: ReadonlySet<string> = new Set(["up", "unknown", "passive"]);
+
 export interface SuppressionAssetState {
   id: string;
   layer: number | null;
@@ -903,14 +925,15 @@ export function evaluateSuppression(
         if (grand.length === 0) return true;
         return grand.some(g => isParentOk(g));
       }
-      // Monitored: ok iff not down AND not suppressed. `recovering` counts as
-      // down when the CHILD is already suppressed — a parent mid-recovery has
-      // not come back yet, and releasing on it re-alerts the whole subtree as
-      // plain Down (see the hysteresis note above). `s` is the child under
-      // evaluation; the same rule applies through the transparent walk, since
-      // an unmonitored mid-chain switch is only as recovered as its own parent.
+      // Monitored: ok iff back AND not suppressed. Entering asks one question
+      // ("is this parent confirmed down?"); LEAVING asks the opposite one and
+      // answers it from a whitelist — the parent has to be genuinely back, not
+      // merely not-yet-condemned (see the hysteresis note above). `s` is the
+      // child under evaluation; the same rule applies through the transparent
+      // walk, since an unmonitored mid-chain switch is only as recovered as its
+      // own parent.
       const notBack = s.currentlySuppressed
-        ? (ps.monitorStatus === "down" || ps.monitorStatus === "recovering")
+        ? !RELEASES_SUPPRESSION.has(ps.monitorStatus ?? "unknown")
         : ps.monitorStatus === "down";
       const okStatus = !notBack;
       const suppressed = result.get(parentId) ?? false;

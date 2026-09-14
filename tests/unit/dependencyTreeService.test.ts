@@ -696,12 +696,14 @@ describe("evaluateSuppression", () => {
 
 // ─── Release hysteresis ─────────────────────────────────────────────────────
 // Entering suppression needs a CONFIRMED-down parent; leaving it needs a
-// parent that is genuinely back. `recovering` is neither: it has answered once
-// but is still short of the covering automation's success threshold and drops
-// straight back to `down` on the next miss. Releasing there un-suppresses the
-// whole subtree on the strength of one packet, and every child — whose own
-// probes are still failing — immediately starts its own down run and re-alerts
-// as plain Down, which is the storm suppression exists to prevent.
+// parent that is genuinely back — `up`, the bucket drained to zero, which is
+// the number of answered polls the operator's own automation asked for.
+// `recovering` and `warning` are neither: mid-flap the parent is still short of
+// that threshold and drops back to `down` on the next miss. Releasing there
+// un-suppresses the whole subtree on the strength of one packet, and every
+// child — whose own probes are still failing — immediately starts its own down
+// run and re-alerts as plain Down, which is the storm suppression exists to
+// prevent. Only the two non-verdicts (`unknown`, `passive`) still release.
 
 describe("evaluateSuppression — release hysteresis", () => {
   function st3(
@@ -765,14 +767,62 @@ describe("evaluateSuppression — release hysteresis", () => {
   it("never strands a subtree behind a parent that renders no verdict", () => {
     // `passive` (business rule 36) and `unknown` are not claims that the
     // parent is unreachable. Gating release on them would leave the child in
-    // Dep. Down with nothing that could ever clear it.
-    for (const status of ["passive", "unknown", "warning"]) {
+    // Dep. Down with nothing that could ever clear it. A null status reads as
+    // `unknown` — a row written before the column existed says nothing either.
+    for (const status of ["passive", "unknown", null]) {
       const out = evaluateSuppression(
         [st3("fg", 1, status), st3("sw", 2, "down", true)],
         parents,
       );
-      expect(out.get("sw"), status).toBe(false);
+      expect(out.get("sw"), String(status)).toBe(false);
     }
+  });
+
+  it("holds a suppressed child while the parent is only WARNING", () => {
+    // The flap that reached production: a parent deep in an outage answers
+    // twice (bucket cap → cap-1 → cap-2, `recovering` both times, correctly
+    // held) and then misses. Once the bucket has drained below threshold-1
+    // that miss reads `warning`, not `down` (nextFailureBucket), and `warning`
+    // used to count as "back" — so the whole subtree came out of Dep. Down
+    // mid-outage and re-alerted device by device as plain Down. A parent that
+    // has just MISSED a poll is the least plausible moment to call it
+    // recovered, and `warning` cannot strand anything: keep missing and it
+    // reaches `down`, keep answering and it drains to `up`.
+    const out = evaluateSuppression(
+      [st3("fg", 1, "warning"), st3("sw", 2, "down", true)],
+      parents,
+    );
+    expect(out.get("sw")).toBe(true);
+  });
+
+  it("holds through a whole down → recovering → warning → down flap, releasing only at up", () => {
+    // One child, walked across the parent's real state sequence. `sw` stays
+    // suppressed for every state but the last.
+    const suppressedAt = (parentStatus: string): boolean | undefined =>
+      evaluateSuppression(
+        [st3("fg", 1, parentStatus), st3("sw", 2, "down", true)],
+        parents,
+      ).get("sw");
+    expect(suppressedAt("down")).toBe(true);
+    expect(suppressedAt("recovering")).toBe(true);
+    expect(suppressedAt("warning")).toBe(true);
+    expect(suppressedAt("down")).toBe(true);
+    expect(suppressedAt("up")).toBe(false);
+  });
+
+  it("holds a suppressed child behind a WARNING parent reached through an unmonitored switch", () => {
+    // The transparent walk is only as recovered as the monitored ancestor it
+    // lands on — the release rule has to survive the recursion, not just the
+    // top-level parent lookup.
+    const out = evaluateSuppression(
+      [
+        st3("fg", 1, "warning"),
+        { id: "sw", layer: 2, monitorStatus: null, monitored: false, currentlySuppressed: false },
+        st3("ap", 3, "down", true),
+      ],
+      new Map([["sw", ["fg"]], ["ap", ["sw"]]]),
+    );
+    expect(out.get("ap")).toBe(true);
   });
 });
 
