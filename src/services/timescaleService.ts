@@ -8,7 +8,7 @@
  * work as plain Postgres tables OR as Timescale hypertables; the prune layer
  * dispatches on hypertable status so the same code path works in both modes.
  *
- * The extension is REQUIRED as of 2026-09-11 — every install path Polaris
+ * The extension is REQUIRED as of 2026-09-11 (business rule 52) — every install path Polaris
  * provisions creates it (deploy/setup-{rhel,ubuntu}.sh, as postgres; the app
  * user is not superuser and cannot). The plain-table path below is therefore
  * no longer a supported mode but two other things: the degraded state of an
