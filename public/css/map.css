@@ -311,6 +311,18 @@
 .fg-cluster.monitor-passive     { background: #5c6bc0; }
 
 /* ─── Topology modal layout ─────────────────────────────────────────────────── */
+/* The header band takes the same 90% ground as .topology-info below, for the
+   same reason: --panel-glass-chrome is 50% of --color-bg-tertiary in the dark
+   family (40% on the daylight pair), and over the modal's blur the page behind
+   it still read through the title, the endpoint search box and the icon row.
+   Scoped to this overlay because every other modal's header is a band over its
+   own scrolling content, not chrome standing in front of a full-bleed graph.
+   Keep the tertiary base — the band is meant to sit a step off the panel — and
+   lift only the opacity, so a new theme keeps its own chrome colour. */
+#topology-overlay .modal-header {
+  background: color-mix(in srgb, var(--color-bg-tertiary) 90%, transparent);
+}
+
 .topology-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
