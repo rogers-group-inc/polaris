@@ -407,6 +407,16 @@ async function computeMembership(region: MapRegion): Promise<RegionMembership> {
 
 // --- Tag mutation primitives ---
 
+/**
+ * Add the tag to the named assets, skipping the ones that already carry it.
+ *
+ * **Chunked at 50 like every other tag mutator here.** Steady state this writes
+ * almost nothing — the skip makes a re-run a no-op — but the two cases that
+ * matter are the two that touch the whole membership at once: the first apply
+ * of a newly drawn region, and the add half of a RENAME, where the old tag has
+ * just been stripped and so not one member carries the new one. On a
+ * ~1,500-asset region that was a single transaction of ~1,500 updates.
+ */
 async function addTagToAssets(assetIds: string[], tag: string): Promise<number> {
   if (assetIds.length === 0) return 0;
   const rows = await prisma.asset.findMany({
@@ -419,9 +429,9 @@ async function addTagToAssets(assetIds: string[], tag: string): Promise<number> 
     if (tags.includes(tag)) continue;
     updates.push({ id: row.id, tags: [...tags, tag] });
   }
-  if (updates.length > 0) {
+  for (const c of chunk50(updates)) {
     await prisma.$transaction(
-      updates.map((u) => prisma.asset.update({ where: { id: u.id }, data: { tags: u.tags } })),
+      c.map((u) => prisma.asset.update({ where: { id: u.id }, data: { tags: u.tags } })),
     );
   }
   return updates.length;
@@ -439,47 +449,73 @@ async function addTagToSubnets(subnetIds: string[], tag: string): Promise<number
     if (tags.includes(tag)) continue;
     updates.push({ id: row.id, tags: [...tags, tag] });
   }
-  if (updates.length > 0) {
+  for (const c of chunk50(updates)) {
     await prisma.$transaction(
-      updates.map((u) => prisma.subnet.update({ where: { id: u.id }, data: { tags: u.tags } })),
+      c.map((u) => prisma.subnet.update({ where: { id: u.id }, data: { tags: u.tags } })),
     );
   }
   return updates.length;
 }
 
+/**
+ * Strip the tag from EVERY subnet carrying it — the rename / delete path, where
+ * the tag string itself is going away. Chunked like its drift-path sibling: see
+ * `removeTagFromAllAssets` for why.
+ */
 async function removeTagFromAllSubnets(tag: string): Promise<number> {
   const rows = await prisma.subnet.findMany({
     where: { tags: { has: tag } },
     select: { id: true, tags: true },
   });
   if (rows.length === 0) return 0;
-  await prisma.$transaction(
-    rows.map((row) => {
-      const tags = Array.isArray(row.tags) ? row.tags : [];
-      return prisma.subnet.update({
-        where: { id: row.id },
-        data: { tags: tags.filter((t) => t !== tag) },
-      });
-    }),
-  );
+  for (const c of chunk50(rows)) {
+    await prisma.$transaction(
+      c.map((row) => {
+        const tags = Array.isArray(row.tags) ? row.tags : [];
+        return prisma.subnet.update({
+          where: { id: row.id },
+          data: { tags: tags.filter((t) => t !== tag) },
+        });
+      }),
+    );
+  }
   return rows.length;
 }
 
+/**
+ * Strip the tag from EVERY asset carrying it — the rename / delete path.
+ *
+ * **Chunked at 50, like `removeTagFromAssets` below.** This used to build ONE
+ * `$transaction` holding an update per matching row, which is fine for the
+ * region sizes the feature was written against and not fine for a real fleet: a
+ * prod rename of a region covering ~1,100 assets threw here, and because the
+ * caller (`applyRename`) runs AFTER `updateRegion` has already committed the
+ * renamed blob, the failure left 1,492 assets and 114 subnets carrying a tag
+ * naming no region — invisible to every reconcile, since the provenance rows
+ * are keyed by region id and the id had not changed. Cleaning it up took SQL.
+ *
+ * Chunking trades all-or-nothing for progress: a failure part-way now leaves
+ * SOME rows stripped. That is the better failure — a partial strip is the same
+ * shape of mess a partial rename already was, and it converges, whereas the
+ * unchunked version reliably did nothing at all at the size where it mattered.
+ */
 async function removeTagFromAllAssets(tag: string): Promise<number> {
   const rows = await prisma.asset.findMany({
     where: { tags: { has: tag } },
     select: { id: true, tags: true },
   });
   if (rows.length === 0) return 0;
-  await prisma.$transaction(
-    rows.map((row) => {
-      const tags = Array.isArray(row.tags) ? row.tags : [];
-      return prisma.asset.update({
-        where: { id: row.id },
-        data: { tags: tags.filter((t) => t !== tag) },
-      });
-    }),
-  );
+  for (const c of chunk50(rows)) {
+    await prisma.$transaction(
+      c.map((row) => {
+        const tags = Array.isArray(row.tags) ? row.tags : [];
+        return prisma.asset.update({
+          where: { id: row.id },
+          data: { tags: tags.filter((t) => t !== tag) },
+        });
+      }),
+    );
+  }
   return rows.length;
 }
 
