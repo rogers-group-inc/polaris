@@ -597,7 +597,7 @@ function assertNotRegionCategory(category: string | null | undefined, verb: stri
  * It renders in the asset edit modal's picker looking exactly like a real
  * region tag, so operators apply it, and what they get is a string that means
  * nothing and that nothing maintains. It is then indistinguishable from a tag
- * stranded by a half-applied rename, which is the ambiguity business rule 52
+ * stranded by a half-applied rename, which is the ambiguity business rule 54
  * had to design around. And the auto-assign device-filter ban in
  * `readPostedTagFilter` is ALSO keyed on category, so filing under "General" is
  * a way to put a `TagAutoAssignment` filter on a `region:` name — precisely the

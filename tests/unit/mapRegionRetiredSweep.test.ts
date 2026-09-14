@@ -1,7 +1,7 @@
 /**
  * tests/unit/mapRegionRetiredSweep.test.ts
  *
- * Business rule 52: a `region:<name>` tag is stripped when no region answers to
+ * Business rule 54: a `region:<name>` tag is stripped when no region answers to
  * that name AND Polaris recorded retiring it.
  *
  * The second half is the whole design, and it is what these tests are mostly

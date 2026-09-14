@@ -18,7 +18,7 @@
  *     the map put it here".
  *   - Adding a tag naming NO region is refused. That string is maintained by
  *     nothing, renders like a real region tag, and is indistinguishable from
- *     one stranded by a half-applied rename — the ambiguity business rule 52
+ *     one stranded by a half-applied rename — the ambiguity business rule 54
  *     has to design around.
  *
  * The last test pins the scale property: a write that adds no region tag must

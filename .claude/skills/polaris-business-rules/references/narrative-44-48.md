@@ -1,4 +1,4 @@
-# Business rules 44–52 — full narrative
+# Business rules 44–54 — full narrative
 
 > The filename keeps its original range: it is cited from code and from the other skills.
 
@@ -12,7 +12,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 49](#rule-49) — An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved
 - [Rule 50](#rule-50) — A response the app did not write is a response with the app's headers missing
 - [Rule 51](#rule-51) — `DATABASE_URL` is a driver URL; its `sslmode` value is translated into the libpq vocabulary, never copied
-- [Rule 52](#rule-52) — A region tag dies when its name is retired, and only then
+- [Rule 54](#rule-54) — A region tag dies when its name is retired, and only then
 
 <a id="rule-44"></a>
 
@@ -435,9 +435,9 @@ Guards: `tests/unit/pgEnv.test.ts` pins the translation, the full libpq value se
 case/whitespace handling, and the refusal (including that the message names the offending
 value). Anyone reverting `libpqSslMode` to a passthrough fails them.
 
-<a id="rule-52"></a>
+<a id="rule-54"></a>
 
-## Rule 52 — A region tag dies when its name is retired, and only then
+## Rule 54 — A region tag dies when its name is retired, and only then
 
 Two strip paths already existed for `region:<name>` tags, and between them they covered
 everything except the case that actually bit.

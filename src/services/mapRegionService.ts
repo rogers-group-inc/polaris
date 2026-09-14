@@ -76,7 +76,7 @@ const SETTING_KEY = "mapRegions";
  * transaction that renames or deletes the region — before the tag rotation is
  * even attempted — so it survives a rotation that dies part-way, and the sweep
  * in `sweepRetiredRegionTags` can strip that name's tag later knowing Polaris
- * itself retired it. That is what keeps business rule 52 compatible with the
+ * itself retired it. That is what keeps business rule 54 compatible with the
  * older invariant it sits beside: a hand-applied `region:Narnia` on some
  * operator's printer is NOT swept, because no region named Narnia was ever
  * retired. Only names Polaris watched go away are fair game.
@@ -141,7 +141,7 @@ export interface ReconcileSummary extends Record<string, unknown> {
   /** Subnets that lost it — drifted-out members, plus rename / delete strips. */
   subnetsRemoved: number;
   /**
-   * The fleet-wide retired-name sweep (business rule 52). Present ONLY on
+   * The fleet-wide retired-name sweep (business rule 54). Present ONLY on
    * `reconcileMapRegions`, which is the only caller that runs it — the
    * per-region helpers return a summary about one region and have nothing to
    * say about names that no longer belong to any.
@@ -1065,7 +1065,7 @@ export async function applyOneRegion(region: MapRegion): Promise<ReconcileSummar
  * What it blocks is the third case: inventing `region:Narnia`. That string is
  * unmaintained by anything, renders in the picker as though it were real, and
  * is indistinguishable from a tag stranded by a half-applied rename — the
- * ambiguity business rule 52 has to design around. The registry guard in
+ * ambiguity business rule 54 has to design around. The registry guard in
  * `serverSettings.ts` closes the same door on the `Tag` catalogue.
  *
  * **No DB read on the common path**: a write that adds no region tag at all —
@@ -1117,7 +1117,7 @@ export interface RetiredTagSweep extends Record<string, unknown> {
  * This is the ONLY path that removes a region tag naming no current region, and
  * it is bounded by the retired-name list rather than by "the tag matches no
  * region" — see RETIRED_SETTING_KEY for why that distinction is the whole
- * design, and business rule 52 for the contract.
+ * design, and business rule 54 for the contract.
  *
  * Ordering: the strips run OUTSIDE the blob lock (they are the thousands-of-rows
  * half and must not hold a lock every region write needs), and only the
