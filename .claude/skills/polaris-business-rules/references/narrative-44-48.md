@@ -1,4 +1,4 @@
-# Business rules 44–54 — full narrative
+# Business rules 44–55 — full narrative
 
 > The filename keeps its original range: it is cited from code and from the other skills.
 
@@ -133,7 +133,11 @@ Every writer of the two "last seen" columns was keyed by MAC. Discovery Phase 7.
 
 **MAC-less assets only.** A MAC-bearing asset already has writers, and their label format differs from this one (`<switchId>/<portName>` from the FortiSwitch MAC map, `<hostname>/<ifName>` here). A second writer on the same column would move it back and forth every tick and audit both halves as changes forever — the ping-pong the asset-change-events baseline exists to prevent within a single discovery run. This sweep therefore writes only what no other writer can. Widening it means reconciling the formats first, and is not a small change.
 
-**The MAC is derived, never adopted.** The obvious "better" version writes the ARP MAC onto the asset so every downstream matcher works for free. It also makes the row eligible for MAC-keyed dedupe and merge (`mergeDuplicateHostnameAssets` collapses rows sharing a MAC; Entra cross-links by Ethernet MAC), so one wrong adoption — a recycled address inside the freshness window, a gate misresolved — merges two devices and permanently deletes one row's monitoring history. Rule 26 gates the reservation-side adoption behind a double opt-in for the same reason. Adoption here is a deliberate follow-up behind an opt-in Setting, not a default, and the touches entry names what it must go through when it comes.
+**The MAC is derived, and since 2026-09 it is adopted.** The original rule refused: writing the ARP MAC onto the asset makes every downstream matcher work for free, but it also makes the row eligible for MAC-keyed dedupe and merge (`mergeDuplicateHostnameAssets` collapses rows sharing a MAC; Entra cross-links by Ethernet MAC), so one wrong adoption — a recycled address inside the freshness window, a gate misresolved — merges two devices and permanently deletes one row's monitoring history. Rule 26 gates the reservation-side adoption behind a double opt-in for the same reason, and adoption here was left as a follow-up behind an opt-in Setting.
+
+It shipped instead as a default, on an explicit operator decision, with the hazard answered in code rather than by a toggle. The reasoning that made that acceptable: every wire-level ambiguity is ALREADY refused upstream of the adoption — `pickArpMac` scopes to the owning gate, returns `"ambiguous"` when two MACs answer one address, and the claim and evidence freshness gates have both already passed. What those refusals cannot see is a MAC that is not ambiguous on the wire but is already spoken for in Polaris, and that is the only remaining way this pass manufactures a merge candidate. `partitionAdoptableMacs` is that check: it refuses a MAC another asset already carries, and refuses BOTH when two candidates in one pass resolve to the same MAC — two asset rows at one address being rule 40's duplicate-IP conflict, whose answer is a Conflict row for an operator, not a silent merge.
+
+A refusal drops the adoption ONLY. The switch and AP stamps derived from the same MAC still land, because a stamp is reversible and a merge is not — the asymmetry is the whole reason the two are separable. Every adoption is audited as its own `asset.mac.adopted` Event naming the address the answer came from, so an operator chasing a bad merge can see what the sweep believed, and a provenance row lands in `AssetMacAddress` with source `ip-upstream-arp` (not a hardware source) so the MAC list says where it came from. Adoption is also what ends the asset's eligibility: the candidate query is `macAddress IS NULL`, so a placed row drops out of the next pass entirely rather than being re-derived and re-compared forever. **The residual risk is real and deliberate**: a gate misresolved under rule 41, or an address recycled inside `CLAIM_FRESH_DAYS`, still adopts — the collision check catches the duplicate only when the other device is already in inventory.
 
 **Nothing is cleared.** An address the network cannot currently account for is absence of evidence, not a move; the last known switch port stays until the chain places the device somewhere else.
 
@@ -748,3 +752,33 @@ Guards: `tests/unit/mapRegionRetiredSweep.test.ts` pins both halves — that a r
 delete record the name, that a polygon-only edit does not, that an unretired name is never
 swept, reclamation, retry-on-failure, and the racing-writer case. The chunking that removed
 the original trigger is pinned separately by `tests/unit/mapRegionTagChunking.test.ts`.
+
+<a id="rule-55"></a>
+
+## Rule 55 — An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got
+
+**The invariant.** IPAM is the last source consulted for a device's upstream FortiGate, never a replacement for evidence. `resolveOwningGateContexts` (`services/ipUpstreamChainService.ts`) is the one implementation of "which gate is this address behind" — containing subnet → `fortigateSerial` then `fortigateDevice` through `utils/fortinetParentKey.ts`, rule 41's precedence, never a hostname match — and it has three consumers: the rule 45 sweep scoping its ARP lookup, `assetUpstreamService` answering the Last Seen Firewall row, and `dependencyTreeService` placing an otherwise unparentable endpoint. The two new consumers are strictly fallbacks, each labelled, each gated on the claim being current under rule 40.
+
+### What was missing
+
+The Last Seen Firewall row is fed by the freshest `AssetFortigateSighting`. A device no gate has ever reported — an Active Directory workstation, an Azure Arc server, a vCenter VM, an active-scan find, a hand-typed row — has no sighting, so the row read `-` forever, even where Polaris held the subnet its address sits in and knew which FortiGate owns that subnet. The same gap ran deeper than cosmetics: `syncEndpointDependencyEdges` uses that same sighting as its third and last tier, so an endpoint with no switch, no AP and no sighting got no dependency parent at all. "No parent" means "never suppressed", so when its site gate went down, every switch and AP behind that gate correctly read "Dep. Down" while the servers behind it alerted device by device as plain Down — the alert storm the endpoint half was built to stop, still happening to the assets least able to prove where they live.
+
+### Why it goes last, and why that makes it safe
+
+A sighting is a record: a gate reported this device. The IPAM answer is an inference: this address belongs to a network, and that network is served by this gate. They are not the same claim, and a row headed "Last Seen" must not present the second as the first — so the entry carries `source: "subnet"` and the containing `subnetCidr`, and deliberately carries NO `lastSeen`. An inference has no moment. The UI prints "(owns 10.42.8.0/24)" beside the name rather than a timestamp.
+
+Ordering last is also what bounds the blast radius on the alerting side. The tier is consulted only for endpoints the three observed tiers left unplaced, and an unplaced endpoint has no parent — so this can only ever ADD a parent, never move an existing edge somewhere less accurate. The failure mode is therefore a missed alert (a device held in Dep. Down behind a gate it does not really sit behind), never a false one, and even that requires the gate to be CONFIRMED down under rule 38's asymmetric hysteresis rather than merely flapping.
+
+### The two refusals
+
+**A stale claim is not an address.** The endpoint's claim on its address must be current under rule 40's model — operator-owned never expires, a discovered one needs its `AssetIpHistory` row inside `CLAIM_FRESH_DAYS`. This is the recycled-DHCP case that breaks the chain everywhere it appears: the laptop that left three weeks ago still records `10.1.1.50`, and without the gate it would be parented to whichever FortiGate serves that range today and have its alerts suppressed behind a device it has no relationship with. The history row is what the check reads first, because the `src/db.ts` extension bumps it on every write staging `ipAddress` — it tracks discovery cadence rather than change, which is exactly the signal wanted here.
+
+**An unknown address answers nothing.** An address in no known (non-deprecated) network, or one whose owning gate Polaris holds no Asset row for, yields no row and no parent rather than a guess. For the display row that is doubly true: the row exists to carry verbs, and with no Asset row there is nothing to open.
+
+### The same two sources, ranked oppositely, on purpose
+
+`ipContextService.pickNamedGate` puts the subnet ABOVE a sighting on the Add Asset panel, and that is not an inconsistency to reconcile. That panel answers "what is at this address today", where the gate that serves the address now is the better answer and a sighting is a historical fact that survives the device moving. This row answers "where was this device last seen", where evidence outranks inference. Two questions, two rankings, one shared resolver underneath so the gate-identification precedence itself cannot drift between them.
+
+### Permissions
+
+The sighting half reads `AssetFortigateSighting`, gated `assetsQuarantine:read` on its own endpoint; the fallback reads `Subnet`, gated `subnets:read`. Two different grants, so `visibility` reports them separately — a caller holding one and not the other has to be able to tell "no gate owns this address" from "you were not shown that half", the `/ip-context` precedent.
