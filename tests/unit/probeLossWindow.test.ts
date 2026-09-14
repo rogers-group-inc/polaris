@@ -144,33 +144,47 @@ describe("probeLossSeriesFrom", () => {
     ...Array.from({ length: clean }, (_, i) => ({ timestamp: min(onset + declared + i), success: true })),
   ];
 
-  it("drops the whole outage RUN — the caption an operator saw as a false alert", () => {
-    // PROD, 2026-09-03. A FortiSwitch was dark for twelve minutes, came back,
-    // and its 30-minute window still read 40 % — under any sensible
-    // ignoreAtOrAbove ceiling — so a "High packet loss" WARNING arrived
-    // minutes AFTER the recovery, about the outage the down alert had already
-    // reported. Twelve dark minutes at missedPolls=3 is 2 unstamped onset
-    // misses and 10 stamped ones; the run is what recovers the onset.
-    expect(probeLossSeriesFrom(outageThen(2, 10, 18), 2 * 60_000).ratioPct).toBe(0);
+  it("CHARTS the whole outage run, while the metric still drops it", () => {
+    // The two numbers, on the probes that forced each of them apart.
+    //
+    // engineRatioPct is business rule 29h and the incident behind it (PROD,
+    // 2026-09-03): a FortiSwitch dark for twelve minutes came back, and its
+    // 30-minute window still read 40 % — under any sensible ignoreAtOrAbove
+    // ceiling — so a "High packet loss" WARNING arrived minutes AFTER the
+    // recovery, about the outage the down alert had already reported. Twelve
+    // dark minutes at missedPolls=3 is 2 unstamped onset misses and 10 stamped
+    // ones; the run is what recovers the onset.
+    //
+    // ratioPct is what the CHART draws, and it is the plain 12-of-30. The
+    // exclusion is invisible on a chart, so applying it there put a flat 0 %
+    // line directly under a response-time chart showing the same minutes as a
+    // run of yellow and red dots — two charts in one alert contradicting each
+    // other, with the loss chart looking like the broken one.
+    const s = probeLossSeriesFrom(outageThen(2, 10, 18), 2 * 60_000);
+    expect(s.ratioPct).toBe(40);
+    expect(s.engineRatioPct).toBe(0);
   });
 
   it("would still have read over 10 % if only the STAMPED rows were dropped", () => {
-    // Why the run, and not the marker alone. The onset can never be stamped —
-    // at the first missed poll nobody knows yet whether it begins an outage —
-    // and dropping only the stamped rows leaves those fully-lost probes in a
-    // denominator the exclusion has already shrunk: 2 lost of 20 counted, which
-    // still trips the seeded rule's 10 % threshold a full window after the
-    // device came back.
+    // Why the metric drops the run, and not the marker alone. The onset can
+    // never be stamped — at the first missed poll nobody knows yet whether it
+    // begins an outage — and dropping only the stamped rows leaves those
+    // fully-lost probes in a denominator the exclusion has already shrunk: 2
+    // lost of 20 counted, which still trips the seeded rule's 10 % threshold a
+    // full window after the device came back.
     const rows = outageThen(2, 10, 18).filter((r) => r.assetDown !== true);
-    expect(probeLossSeriesFrom(rows, 2 * 60_000).ratioPct).toBe(10);
+    expect(probeLossSeriesFrom(rows, 2 * 60_000).engineRatioPct).toBe(10);
   });
 
-  it("leaves the outage as a GAP in the line, never as a stretch of 0 %", () => {
-    // Nothing was measured about the LINK while the device was dark, so the
-    // line says nothing there — the same treatment a polling gap gets. Drawing
-    // 0 % would claim the link was perfect at the one moment it was unreachable.
+  it("draws the dark minutes at 100 % rather than leaving a gap", () => {
+    // The line used to start after the outage, so the operator saw a chart
+    // that began mid-window with no explanation. It now covers the whole
+    // window and reads 100 % across the stretch where nothing came back.
     const s = probeLossSeriesFrom(outageThen(2, 10, 18), 2 * 60_000);
-    expect(s.points.every((p) => p.t >= min(12).getTime())).toBe(true);
+    expect(s.points[0]!.t).toBe(min(0).getTime());
+    const dark = s.points.filter((p) => p.t < min(12).getTime());
+    expect(dark.length).toBeGreaterThan(0);
+    expect(dark.every((p) => p.v === 100)).toBe(true);
   });
 
   it("keeps a failure run that never reached DOWN — nothing in it is stamped", () => {
@@ -183,10 +197,13 @@ describe("probeLossSeriesFrom", () => {
       { timestamp: min(2), success: false },
       ...Array.from({ length: 7 }, (_, i) => ({ timestamp: min(3 + i), success: true })),
     ];
-    expect(probeLossSeriesFrom(rows, 2 * 60_000).ratioPct).toBe(20);
+    // Nothing is stamped, so both numbers agree — most of the fleet is here.
+    const s = probeLossSeriesFrom(rows, 2 * 60_000);
+    expect(s.ratioPct).toBe(20);
+    expect(s.engineRatioPct).toBe(20);
   });
 
-  it("drops only the run that reached DOWN, never the loss on either side of it", () => {
+  it("the metric drops only the run that reached DOWN, never the loss either side", () => {
     // A device that is genuinely lossy AND had an outage keeps its lossiness.
     const rows = [
       { timestamp: min(0), success: false },                      // isolated loss
@@ -198,8 +215,11 @@ describe("probeLossSeriesFrom", () => {
       { timestamp: min(6), success: false },                      // isolated loss
       { timestamp: min(7), success: true },
     ];
-    // Five countable probes, two of them lost.
-    expect(probeLossSeriesFrom(rows, 2 * 60_000).ratioPct).toBe(40);
+    const s = probeLossSeriesFrom(rows, 2 * 60_000);
+    // Metric: five countable probes, two of them lost. Chart: all eight, five
+    // of them lost — the outage's three failures are back in the numerator.
+    expect(s.engineRatioPct).toBe(40);
+    expect(s.ratioPct).toBe(62.5);
   });
 
   it("keeps the answered probe that opens an outage run — it answered", () => {
@@ -208,7 +228,9 @@ describe("probeLossSeriesFrom", () => {
       { timestamp: min(1), success: false, assetDown: true },
       { timestamp: min(2), success: true },
     ];
-    expect(probeLossSeriesFrom(rows, 2 * 60_000).ratioPct).toBe(0);
+    const s = probeLossSeriesFrom(rows, 2 * 60_000);
+    expect(s.engineRatioPct).toBe(0);
+    expect(s.ratioPct).toBe(33.3);
   });
 
   it("keeps the misses BELOW the threshold — only the ones drawn as Down are dropped", () => {
@@ -228,29 +250,59 @@ describe("probeLossSeriesFrom", () => {
       ...Array.from({ length: 12 }, (_, i) => ({ timestamp: min(i), success: false, assetDown: null })),
       ...Array.from({ length: 18 }, (_, i) => ({ timestamp: min(12 + i), success: true })),
     ];
-    expect(probeLossSeriesFrom(rows, 2 * 60_000).ratioPct).toBe(40);
+    const s = probeLossSeriesFrom(rows, 2 * 60_000);
+    expect(s.ratioPct).toBe(40);
+    expect(s.engineRatioPct).toBe(40);
   });
 
-  it("captions null for a window that was entirely one outage", () => {
-    // Nothing countable is not 0 % — an empty chart is not a claim, where a
-    // flat 0 % line under an alert about an outage would be.
+  it("captions 100 % for a window that was entirely one outage", () => {
+    // The metric has nothing countable left, which is not the same claim as
+    // 0 % — it yields null and the asset drops out of the reading. The CHART
+    // draws the hour it was asked about: an unbroken 100 %.
     const dark = Array.from({ length: 10 }, (_, i) => ({ timestamp: min(i), success: false, assetDown: i > 1 || undefined }));
     const s0 = probeLossSeriesFrom(dark, 2 * 60_000);
-    expect(s0.ratioPct).toBeNull();
-    expect(s0.points).toHaveLength(0);
+    expect(s0.engineRatioPct).toBeNull();
+    expect(s0.ratioPct).toBe(100);
+    expect(s0.points.length).toBeGreaterThan(0);
+    expect(s0.points.every((p) => p.v === 100)).toBe(true);
   });
 
-  it("drops the outage's BURST rows whole, packets and all", () => {
-    // A sweep burst fired into an outage measures the outage, not the link —
-    // and it carries five echoes, so counting it would dominate the ratio it is
-    // excluded from.
+  it("counts the outage's BURST rows in the chart, packets and all", () => {
+    // A sweep burst carries five echoes, so which side of the split it lands
+    // on dominates the number. The metric excludes it (it measures the outage,
+    // not the link); the chart counts every echo it fired.
     const rows = [
       { timestamp: min(0), success: false, packetsSent: 5, packetsReceived: 0, assetDown: true },
       { timestamp: min(2), success: true, packetsSent: 5, packetsReceived: 5 },
       { timestamp: min(4), success: true, packetsSent: 5, packetsReceived: 4 },
     ];
     const s = probeLossSeriesFrom(rows, 2 * 60_000);
-    expect(s.ratioPct).toBe(10); // 1 lost of 10 counted echoes, not 6 of 15
+    expect(s.engineRatioPct).toBe(10); // 1 lost of 10 counted echoes
+    expect(s.ratioPct).toBe(40);       // 6 lost of all 15
+  });
+
+  it("holds the SQL-parity pattern, so a DB-less run still pins both ratios", () => {
+    // The same probe pattern tests/integration/probeLossQuery.test.ts feeds to
+    // `queryProbeLossRatios` and compares against `engineRatioPct`. Duplicated
+    // here on purpose: that test needs a database, so without this the numbers
+    // the parity assertion rests on go unchecked on a DB-less run — and the
+    // integration test asserts the SQL EQUALS the JS, which stays true if both
+    // drift together. This pins the JS half to literals.
+    //
+    // [S F S F F F F S S F S S] — the outage is the run at indices 3..6,
+    // stamped from the third consecutive miss (5 and 6); index 9 is an
+    // isolated miss and stays loss under both readings.
+    const pattern = [true, false, true, false, false, false, false, true, true, false, true, true];
+    const rows = pattern.map((success, i) => ({
+      timestamp: min(i),
+      success,
+      ...(i === 5 || i === 6 ? { assetDown: true } : {}),
+    }));
+    const s = probeLossSeriesFrom(rows, 2 * 60_000);
+    // Metric: 12 probes less the 4-failure outage run = 8 countable, 2 lost.
+    expect(s.engineRatioPct).toBe(25);
+    // Chart: all 12, 6 of them lost.
+    expect(s.ratioPct).toBe(50);
   });
 
   it("counts an outage that started mid-window", () => {
@@ -298,7 +350,7 @@ describe("probeLossSeriesFrom", () => {
   });
 
   it("has no ratio for an empty window", () => {
-    expect(probeLossSeriesFrom([], 2 * 60_000)).toEqual({ points: [], ratioPct: null });
+    expect(probeLossSeriesFrom([], 2 * 60_000)).toEqual({ points: [], ratioPct: null, engineRatioPct: null });
   });
 });
 
