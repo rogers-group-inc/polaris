@@ -12,9 +12,10 @@
  *    name rather than a prefix, so the registry entry is load-bearing: miss it
  *    and the compose pass blanks the token before the delivery pass that fills
  *    it (the {chart.trigger} regression, in a new place);
- *  - BCC IS NEVER NAMED. A blind copy that shows up in a footer everyone reads
- *    has stopped being blind, and the only reason the extraction is safe is
- *    that both email paths put To — and only To — in `target`;
+ *  - BCC IS NEVER NAMED (business rule 60). A blind copy that shows up in a
+ *    footer everyone reads has stopped being blind, and the only reason the
+ *    extraction is safe is that both email paths put To — and only To — in
+ *    `target`;
  *  - the text form carries no colon, or `pruneEmptyTextLines` deletes it;
  *  - the overflow rule, so a wide distribution list doesn't mail a roster.
  */

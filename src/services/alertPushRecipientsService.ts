@@ -38,7 +38,9 @@
  * The EMAIL list is addresses by nature, so it names the account where one
  * owns the address and prints the address itself otherwise. It never names a
  * Bcc: a blind copy that appears in a footer everyone can read has stopped
- * being blind, and this footnote is not worth that.
+ * being blind, and this footnote is not worth that (business rule 60 — and
+ * note the invariant lives in `expandDeliveries`, which is what guarantees
+ * `target` is the To line, not in the parsing here).
  */
 
 import { prisma } from "../db.js";
@@ -194,7 +196,9 @@ export function renderEmailRecipients(names: string[], opts: { html: boolean }):
  * path writes one address. So parsing `target` can never leak a Bcc, which is
  * the one thing this footer must not do: naming a blind recipient to the To
  * line would unblind them, and a footnote about who else knows is not worth
- * breaking that promise for.
+ * breaking that promise for. Business rule 60 — the guarantee is upstream, so
+ * a change to what `expandDeliveries` writes into `target` breaks this with
+ * nothing failing near it.
  */
 export function toAddressesOf(target: string | null | undefined): string[] {
   return String(target ?? "")
