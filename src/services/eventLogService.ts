@@ -510,7 +510,7 @@ export function buildFirewallChangedEvent(
 /**
  * Controller link state change for a FortiGate-managed switch / AP — the
  * FortiLink session (FortiSwitch) or CAPWAP tunnel (FortiAP) going up or down
- * as the CONTROLLER sees it (business rule 58).
+ * as the CONTROLLER sees it (business rule 59).
  *
  * Written unconditionally by the sweep, like the rest of the `asset.*.changed`
  * family: the transition is edge-triggered and rare, and an operator wants it

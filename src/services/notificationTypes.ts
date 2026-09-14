@@ -3525,7 +3525,7 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   consecutiveFailures: { label: "Missed polls outstanding", kind: "number" },
   dependencySuppressed: { label: "Dependency-suppressed", kind: "bool", values: ["true", "false"] },
   quarantined: { label: "Quarantined", kind: "bool", values: ["true", "false"] },
-  // Business rule 58. Closed enum, same reasoning as poeStatus: the sweep
+  // Business rule 59. Closed enum, same reasoning as poeStatus: the sweep
   // normalizes every controller word into exactly three values, so the wizard
   // offers a picker rather than a free-text box that can hold "Disconnected"
   // — the raw FortiOS word, which is stored for display and is NOT what this

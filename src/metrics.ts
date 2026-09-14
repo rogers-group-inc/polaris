@@ -370,7 +370,7 @@ const fortilinkControllerReadTotal = new Counter({
 
 const fortilinkTransitionTotal = new Counter({
   name: "polaris_fortilink_transition_total",
-  help: "Managed FortiSwitch/FortiAP controller-link state changes observed by the sweep (business rule 58). One count per device whose fortilinkStatus moved, which is also one asset.fortilink.changed Event. Flat in a healthy fleet — a spike means either a real FortiLink/CAPWAP event or a controller that started answering about a different device set.",
+  help: "Managed FortiSwitch/FortiAP controller-link state changes observed by the sweep (business rule 59). One count per device whose fortilinkStatus moved, which is also one asset.fortilink.changed Event. Flat in a healthy fleet — a spike means either a real FortiLink/CAPWAP event or a controller that started answering about a different device set.",
   registers: [registry],
 });
 

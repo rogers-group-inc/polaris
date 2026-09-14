@@ -349,7 +349,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/fortinetLinkStateService.ts
 
-**What it owns:** Business rule 58 — the controller's own view of its link to each managed FortiSwitch (FortiLink session) and FortiAP (CAPWAP tunnel), projected onto four `Asset` columns: `fortilinkStatus` (`"up"` | `"down"` | `"unknown"`, null = never swept), `fortilinkStatusRaw` (the raw FortiOS word, display only), `fortilinkCheckedAt` (when the controller last ANSWERED about the device) and `fortilinkChangedAt` (last transition). Both Fortinet transports have always parsed this field into the AssetSource observed blob; this service is the projection that was missing, and it is what makes the signal reachable by the asset-details row and the automation engine.
+**What it owns:** Business rule 59 — the controller's own view of its link to each managed FortiSwitch (FortiLink session) and FortiAP (CAPWAP tunnel), projected onto four `Asset` columns: `fortilinkStatus` (`"up"` | `"down"` | `"unknown"`, null = never swept), `fortilinkStatusRaw` (the raw FortiOS word, display only), `fortilinkCheckedAt` (when the controller last ANSWERED about the device) and `fortilinkChangedAt` (last transition). Both Fortinet transports have always parsed this field into the AssetSource observed blob; this service is the projection that was missing, and it is what makes the signal reachable by the asset-details row and the automation engine.
 
 **Public API:** `sweepFortinetLinkState()` → `FortilinkSweepResult` (`controllersRead` / `controllersFailed` / `transitions` / `unchanged`); the `FortilinkStatus` type.
 

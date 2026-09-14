@@ -1510,7 +1510,7 @@ async function openAutomationWizard(existing, opts) {
   // label already, so it passes straight through.
   function stateEnumValueLabel(field, value) {
     if (field === "monitorStatus") return monStatusWord(value);
-    // Controller link (business rule 58) reads as a sentence in the trigger
+    // Controller link (business rule 59) reads as a sentence in the trigger
     // prose — "Controller link is Down" — so it takes the same capitalized
     // form the asset-details badge uses rather than the stored lowercase.
     // The option VALUE is untouched, so what saves is unchanged.

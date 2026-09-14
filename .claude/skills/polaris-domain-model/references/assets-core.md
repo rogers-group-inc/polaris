@@ -109,7 +109,7 @@ Asset
   consecutiveFailures Int         @default(0)
   consecutiveSuccesses Int        @default(0) -- Drives recovering/warning -> up. Reset to 0 on any failure; failureThreshold doubles as the recovery threshold (same number of confirmations gates up <-> down both ways).
   -- Controller link state for a FortiGate-managed FortiSwitch / FortiAP
-  -- (business rule 58). What the PARENT GATE says about its own session to the
+  -- (business rule 59). What the PARENT GATE says about its own session to the
   -- device -- the FortiLink session for a switch, the CAPWAP tunnel for an AP
   -- -- as distinct from what the monitor loop sees on the operator's chosen
   -- transport. The two are allowed to disagree and the disagreement is the

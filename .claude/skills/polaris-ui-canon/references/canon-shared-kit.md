@@ -86,7 +86,8 @@ before that each rule picked its own background and shadow.
 frosted surface floating free of a screen edge), `--shadow-control` (buttons, page search
 and filter fields, anything small resting on the page) and `--shadow-card` (the big opaque
 content surfaces resting on the page — every card, the dashboard widgets, the map and graph
-canvases).
+canvases, and `.chart-box`, the plot surface every SVG chart in the asset slide-over is drawn
+into).
 
 **Key conventions:**
 - **Four elevation tokens, one per kind of surface — pick by what the surface IS.**
@@ -139,6 +140,11 @@ canvases).
   the more visible one: a whole 320px column of detail rows read through the glass while the
   graph half beside it painted an opaque `--color-bg-secondary`, so the two halves of one
   modal looked like different materials. It now mixes `--color-bg-primary` at 90% — a pane
-  that holds text wants a near-solid ground, not the panel's own 50/40% glass.
+  that holds text wants a near-solid ground, not the panel's own 50/40% glass. The same
+  modal's header band followed for the same reason (`#topology-overlay .modal-header`, 90%
+  of `--color-bg-tertiary`): `--panel-glass-chrome` is the shared header value and it is fine
+  over a modal's own scrolling body, but this header stands in front of a full-bleed graph, so
+  the title, the endpoint search box and the icon row read through it. Both rules lift only the
+  opacity of the theme's own token — never a literal colour — so a new theme keeps its palette.
 
 ## Theme-paired image asset with one resolver

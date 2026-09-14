@@ -29,6 +29,7 @@ import { createTtlCache } from "../utils/ttlCache.js";
 import { stripRegionPrefix } from "./notificationService.js";
 import {
   deviceRegionsAtLevels,
+  orphanedRegionTags,
   regionLevelIndex,
   type RegionLevelIndex,
 } from "./regionHierarchyService.js";
@@ -876,8 +877,38 @@ export async function expandDeliveries(
     // and documented in polaris-change-impact (services/alerting-delivery.md); do NOT "unify" them, that changes who
     // existing rules deliver to.
     if (t.recipientDeviceRegionLevels?.length && assetRegionTags?.length) {
-      const names = deviceRegionsAtLevels(assetRegionTags, t.recipientDeviceRegionLevels, await regionLevels());
-      if (names.length) addUsers(await resolveUsersByRegions(names));
+      const index = await regionLevels();
+      // Every one of the three ways this arm can reach nobody is SILENT — the
+      // rule stays enabled, the alert still delivers to its other recipients,
+      // and only the tier is missing. Each gets its own line, because the fix
+      // differs: rotate a stale tag, redraw a region, or tag a person.
+      const orphaned = orphanedRegionTags(assetRegionTags, index);
+      if (orphaned.length > 0) {
+        // Business rule 58. Named at warn because the pre-58 behaviour was to
+        // page whatever was left — usually the containing division — and
+        // nothing said so.
+        logger.warn(
+          { notificationId, channelId: t.channelId, levels: t.recipientDeviceRegionLevels, orphaned, assetRegionTags },
+          "region-level routing abstained: the asset carries region tag(s) naming no map region, so its innermost region cannot be determined — rotate the stale tag or redraw the region",
+        );
+      } else {
+        const names = deviceRegionsAtLevels(assetRegionTags, t.recipientDeviceRegionLevels, index);
+        if (names.length === 0) {
+          logger.warn(
+            { notificationId, channelId: t.channelId, levels: t.recipientDeviceRegionLevels, assetRegionTags },
+            "region-level routing resolved no regions at the requested level(s) — the asset's nesting is shallower than the level asked for",
+          );
+        } else {
+          const levelUsers = await resolveUsersByRegions(names);
+          if (levelUsers.length === 0) {
+            logger.warn(
+              { notificationId, channelId: t.channelId, levels: t.recipientDeviceRegionLevels, regions: names },
+              "region-level routing matched regions but no users carry them — nobody is scoped to these regions",
+            );
+          }
+          addUsers(levelUsers);
+        }
+      }
     }
     if (t.recipientScopeRegion && scopeRegionTags?.length) addUsers(await resolveRecipientUsers(scopeRegionTags));
     // Registry tags. Matches the FLATTENED region-plus-other scope, not
@@ -997,9 +1028,24 @@ export async function expandDeliveries(
       const targetUsers = await usersForTarget(t, "email");
       const owners = buildAddressOwnerMap(targetUsers, t.addresses, contactAddrs);
 
+      // No recipients = no send (Graph rejects an empty To). Said out loud, in
+      // the two forms the operator has to fix differently: an action that
+      // resolved nobody at all, and one that resolved PEOPLE who have no
+      // address on their account — the second looks correct everywhere in the
+      // UI, since the builder only warns about missing push devices. Matches
+      // the web_push branch's warning below rather than returning silently.
+      if (owners.size === 0) {
+        logger.warn(
+          { notificationId, channelId: channel.id, matchedUsers: targetUsers.length },
+          targetUsers.length === 0
+            ? "email target matched no recipients — nothing delivered"
+            : "email target matched users but none have an email address — nothing delivered",
+        );
+        continue;
+      }
+
       if (composedBody) {
         const to = Array.from(owners.keys());
-        if (to.length === 0) continue; // no recipients = no send (Graph rejects empty To)
         // ONE row per (timezone, acknowledge-capability) pair — never one per
         // person (the per-recipient fan-out business rule 25 retired).
         //

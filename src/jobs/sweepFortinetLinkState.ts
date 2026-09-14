@@ -2,7 +2,7 @@
  * src/jobs/sweepFortinetLinkState.ts
  *
  * Periodic controller-link sweep for FortiGate-managed FortiSwitches and
- * FortiAPs (business rule 58): asks each controller FortiGate whether it still
+ * FortiAPs (business rule 59): asks each controller FortiGate whether it still
  * has a FortiLink session / CAPWAP tunnel to each device it manages, and
  * projects the answer onto `Asset.fortilinkStatus`. The whole decision set —
  * the three refusals, the normalization, the batched writes — lives in

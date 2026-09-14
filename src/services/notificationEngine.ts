@@ -192,7 +192,7 @@ interface ScopeAssetRow extends ScopeAsset {
   quarantinedAt: Date | null;
   ipAddress: string | null;
   // Controller link state + when the controller last answered about this
-  // device (business rule 58). The timestamp is the READING ANCHOR for the
+  // device (business rule 59). The timestamp is the READING ANCHOR for the
   // field, not decoration — see the resolver.
   fortilinkStatus: string | null;
   fortilinkCheckedAt: Date | null;
@@ -269,7 +269,7 @@ const SCOPE_SELECT = {
   id: true, hostname: true, assetType: true, tags: true, discoveredByIntegrationId: true,
   monitorStatus: true, status: true, consecutiveFailures: true, dependencySuppressed: true,
   quarantinedAt: true, ipAddress: true,
-  // Business rule 58 — two small columns, and the only way the fortilinkStatus
+  // Business rule 59 — two small columns, and the only way the fortilinkStatus
   // state field can be read off the scope row like the other Asset-column
   // fields instead of needing a query of its own.
   fortilinkStatus: true, fortilinkCheckedAt: true,
@@ -1081,7 +1081,7 @@ async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asse
     case "dependencySuppressed": return assets.map((a) => ({ ...mk(a, "", "", a.dependencySuppressed), readingAt: probeAt(a) }));
     case "quarantined": return assets.map((a) => ({ ...mk(a, "", "", a.quarantinedAt !== null || a.status === "quarantined"), readingAt: probeAt(a) }));
     case "fortilinkStatus": {
-      // Business rule 58. Two departures from the four columns above, both
+      // Business rule 59. Two departures from the four columns above, both
       // because this field has a writer of its own on a cadence of its own.
       //
       // (1) An asset with no value produces NO READING, rather than a reading

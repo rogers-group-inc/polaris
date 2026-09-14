@@ -926,7 +926,7 @@ model Asset {
   // recovers on the drain the way it always did, and its next `down` arms it.
   awaitingRecoveryConfirm  Boolean     @default(false)
 
-  // ── Controller link state (business rule 58) ──────────────────────────────
+  // ── Controller link state (business rule 59) ──────────────────────────────
   // What the parent FortiGate says about its OWN session to this managed
   // device: the FortiLink session for a FortiSwitch, the CAPWAP tunnel for a
   // FortiAP. Swept per-controller by jobs/sweepFortinetLinkState.ts; only ever

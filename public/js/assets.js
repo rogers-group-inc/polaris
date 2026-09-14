@@ -6931,7 +6931,7 @@ function assetSystemViewHTML(a) {
     '<div id="asset-system-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
       '<span>Loading…</span>' +
     '</div>' +
-    '<div id="asset-system-chart" style="background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px;padding:0.5rem;min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+    '<div id="asset-system-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
       'Loading samples…' +
     '</div>' +
     '</div>' +
@@ -6950,7 +6950,7 @@ function assetSystemViewHTML(a) {
             '<label style="display:flex;align-items:center;gap:4px">To <input type="datetime-local" id="asset-sessions-to" class="form-input" style="padding:2px 6px"></label>' +
             '<button class="btn btn-sm btn-primary" id="btn-asset-sessions-custom-apply">Apply</button>' +
           '</div>' +
-          '<div id="asset-system-sessions-chart" style="background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px;padding:0.5rem;min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+          '<div id="asset-system-sessions-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
             'Loading samples…' +
           '</div>' +
         '</div>'
@@ -9560,10 +9560,7 @@ async function openSensorDetailPanel(asset, sensorName) {
     '</div>';
   var box = document.getElementById("sensor-chart");
   if (box) {
-    box.style.background = "var(--color-bg-primary)";
-    box.style.border = "1px solid var(--color-border)";
-    box.style.borderRadius = "6px";
-    box.style.padding = "0.5rem";
+    box.classList.add("chart-box");
     box.style.minHeight = "240px";
     box.style.display = "flex";
     box.style.alignItems = "center";
@@ -11516,7 +11513,7 @@ function assetMonitoringViewHTML(a) {
     customPanel +
     '<div id="asset-monitor-stale"></div>' +
     '<div id="asset-monitor-stats" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem"></div>' +
-    '<div id="asset-monitor-chart" style="background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px;padding:0.5rem;min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+    '<div id="asset-monitor-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
       'Loading samples…' +
     '</div>' +
     '</div>'
@@ -12395,10 +12392,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
       '<div id="iface-err-chart" class="iface-chart-box"></div>' +
     '</div>';
   document.querySelectorAll(".iface-chart-box").forEach(function (el) {
-    el.style.background = "var(--color-bg-primary)";
-    el.style.border = "1px solid var(--color-border)";
-    el.style.borderRadius = "6px";
-    el.style.padding = "0.5rem";
+    el.classList.add("chart-box");
     el.style.minHeight = "180px";
     el.style.display = "flex";
     el.style.alignItems = "center";
@@ -13249,10 +13243,7 @@ async function openIpsecTunnelDetailPanel(asset, tunnelName) {
       '<div id="ipsec-out-chart" class="ipsec-chart-box"></div>' +
     '</div>';
   document.querySelectorAll(".ipsec-chart-box").forEach(function (el) {
-    el.style.background = "var(--color-bg-primary)";
-    el.style.border = "1px solid var(--color-border)";
-    el.style.borderRadius = "6px";
-    el.style.padding = "0.5rem";
+    el.classList.add("chart-box");
     el.style.minHeight = "140px";
     el.style.display = "flex";
     el.style.alignItems = "center";
@@ -13917,10 +13908,7 @@ function _wireSdwanTab(a, rules, links) {
   _updateStreamSourceBadgesFromEffective(a.id, a);
   // Style chart boxes (same treatment as the IPsec panel).
   document.querySelectorAll(".sdwan-chart-box").forEach(function (el) {
-    el.style.background = "var(--color-bg-primary)";
-    el.style.border = "1px solid var(--color-border)";
-    el.style.borderRadius = "6px";
-    el.style.padding = "0.5rem";
+    el.classList.add("chart-box");
     el.style.minHeight = "140px";
     el.style.display = "flex";
     el.style.alignItems = "center";
@@ -14321,10 +14309,7 @@ async function openStorageDetailPanel(asset, focusMountPath, storage) {
       sectionsHtml +
     '</div>';
   document.querySelectorAll(".storage-chart-box").forEach(function (el) {
-    el.style.background = "var(--color-bg-primary)";
-    el.style.border = "1px solid var(--color-border)";
-    el.style.borderRadius = "6px";
-    el.style.padding = "0.5rem";
+    el.classList.add("chart-box");
     el.style.minHeight = "180px";
     el.style.display = "flex";
     el.style.alignItems = "center";
@@ -16348,7 +16333,7 @@ function authorizationRowHTML(asset) {
 
 // Render the Controller Link row on the asset details General tab — what the
 // parent FortiGate says about its OWN session to this managed device
-// (business rule 58): the FortiLink session for a FortiSwitch, the CAPWAP
+// (business rule 59): the FortiLink session for a FortiSwitch, the CAPWAP
 // tunnel for a FortiAP. Swept every 60s by sweepFortinetLinkState, straight
 // off Asset.fortilinkStatus.
 //
@@ -19159,10 +19144,7 @@ async function openProcessDetailPanel(asset, name, cfg, procRow, isPinned) {
       '</div>' +
     '</div>';
   document.querySelectorAll(".proc-chart-box").forEach(function (el) {
-    el.style.background = "var(--color-bg-primary)";
-    el.style.border = "1px solid var(--color-border)";
-    el.style.borderRadius = "6px";
-    el.style.padding = "0.5rem";
+    el.classList.add("chart-box");
     el.style.minHeight = "160px";
   });
 

@@ -2,7 +2,7 @@
  * src/services/fortinetLinkStateService.ts
  *
  * Controller link state for FortiGate-managed FortiSwitches and FortiAPs —
- * business rule 58.
+ * business rule 59.
  *
  * What it answers: does the parent FortiGate currently have a session to this
  * device? The FortiLink session for a managed FortiSwitch, the CAPWAP tunnel

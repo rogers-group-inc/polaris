@@ -2894,7 +2894,7 @@
       },
       "id": 120,
       "panels": [],
-      "title": "Controller link sweep (FortiLink / CAPWAP — business rule 58)",
+      "title": "Controller link sweep (FortiLink / CAPWAP — business rule 59)",
       "type": "row"
     },
     {
@@ -2902,7 +2902,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Controller inventory reads by the FortiLink/CAPWAP link-state sweep — one per (controller FortiGate, switches|aps table) per 60s tick. `failure` is the line that matters, and it is a SILENT failure by design: business rule 58 refuses to write anything for a controller it cannot read, so those managed switches and APs hold their last reported link state, `Asset.fortilinkCheckedAt` stops advancing, and no alert can fire because no reading was produced. A sustained failure rate therefore means link alerting is DARK for that controller's devices — not that their links are healthy. Cross-check the integration auto-test panel above: a token or reachability problem usually shows in both. Steady state is a flat success line at (controllers × 2) per minute.",
+      "description": "Controller inventory reads by the FortiLink/CAPWAP link-state sweep — one per (controller FortiGate, switches|aps table) per 60s tick. `failure` is the line that matters, and it is a SILENT failure by design: business rule 59 refuses to write anything for a controller it cannot read, so those managed switches and APs hold their last reported link state, `Asset.fortilinkCheckedAt` stops advancing, and no alert can fire because no reading was produced. A sustained failure rate therefore means link alerting is DARK for that controller's devices — not that their links are healthy. Cross-check the integration auto-test panel above: a token or reachability problem usually shows in both. Steady state is a flat success line at (controllers × 2) per minute.",
       "fieldConfig": {
         "defaults": {
           "color": {

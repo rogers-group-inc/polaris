@@ -1,5 +1,5 @@
 -- Controller link state for FortiGate-managed FortiSwitches and FortiAPs
--- (business rule 58).
+-- (business rule 59).
 --
 -- What the parent FortiGate says about its own session to the device: the
 -- FortiLink session for a switch, the CAPWAP tunnel for an AP. Both transports
