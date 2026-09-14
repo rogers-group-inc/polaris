@@ -895,3 +895,75 @@ contributes nothing, absent inherits, bands);  `tests/unit/ackNotePolicy.test.ts
 `tests/unit/automationsWizardDom.test.ts` pins the placement, the label, two clocks on two
 rows, the absence of the control on reset and tier actions, the migrate-on-edit, the
 strip-on-untick, the step-3 round trip and the stale-seed trap.
+
+<a id="rule-57"></a>
+
+## Rule 57 — A sub-asset alerts only if the operator pinned it
+
+**The invariant.** Rule 37 settled the device-level question: an automation only fires about
+a device Polaris is actually polling. This is the same question one level down. A switch is
+not one thing that alerts — it is forty-eight ports, each with its own dimension, its own
+firing state and its own alert. A server is its filesystems. A gate is its tunnels. For all
+of them the answer is the operator's pin, and nothing else: `Asset.monitoredInterfaces`,
+`Asset.monitoredIpsecTunnels`, `Asset.monitoredStorage`, tested by
+`services/notificationEngine.ts` -> `interfaceIsPinned()` / `tunnelIsPinned()` /
+`storageIsPinned()` in every resolver that reads a dimensioned sample table.
+
+**Why the sample table is not the gate, and never was.** The tempting shortcut is to let
+retention answer it: only pinned members get fast samples, so only pinned members have rows
+to read. It is wrong on both halves. Every one of these streams ALSO writes the unpinned
+members at `cadence:"slow"` — 24 hours, no rollups — and slow rows are rewritten on every
+system-info scrape, so they are permanently inside the engine's lookback and never age out
+of it. And where a table WAS made pinned-only (interfaces, in the 2026-08 cutover), the gate
+was then a property of a storage decision rather than a rule: the window between un-pinning a
+port and its last rows expiring could still raise an alert, and any future change to
+retention would silently re-open alerting on ports nobody selected.
+
+**Each dimension was closed separately, and each one had already fired in production.**
+IPsec went first: the full scrape writes every tunnel the gate reports, so a "tunnel down"
+rule alerted on tunnels nobody had chosen, always. The four interface COUNTER metrics
+followed — they had only ever been gated incidentally, by the pinned-only sample table.
+Storage was last, in 2026-09, and was the worst of the three because a device reports every
+filesystem it has: a single fleet-wide "disk over 90%" automation alerted on removable
+volumes, ISO mounts, recovery partitions, mapped network drives and archive shares that are
+full by design and will be full forever. None of those had been marked for monitoring. The
+operator's complaint was not "this alert is wrong" — each one was arithmetically true — it
+was that Polaris was answering a question nobody had asked it.
+
+### The corollary the vanished-state sweep needs
+
+An absent pin is a **configuration edge the operator made**, not a collection gap. The
+distinction matters because `clearVanishedStates` deliberately FREEZES a firing row on a tick
+where its asset produced no readings — a scrape that failed must not read as a recovery. An
+unpin produces exactly the same silence, so without a second signal, un-pinning a device's
+only alerting interface stranded its alert firing forever.
+
+`pinTestForTrigger` is that signal: it hands the pin predicate for the rule's own metric or
+field to the sweep, which tests the scope row's pin arrays directly and clears the row
+(`system:out-of-scope`) even when the asset produced nothing at all. Zero extra queries on
+the steady-state tick — the arrays are already in `SCOPE_SELECT`. It is also what makes the
+Assets page's **Mass Pinning** section safe to unpin in bulk with no alert-cleanup path of
+its own, on every facet.
+
+### Two places the rule must also be told
+
+**The builder's pickers list the PIN SET, not the inventory**
+(`services/notificationDimensionService.ts`, nouns "monitored interfaces" / "monitored IPsec
+tunnels" / "monitored storage mounts"). Offering an unpinned member would offer a filter that
+can never fire — the one thing that service exists to prevent — and the noun carries the word
+"monitored" so the wizard's empty state reads as the gate ("these devices report no monitored
+interfaces") rather than as a claim that the device has no ports.
+
+**A new dimensioned sample stream inherits all of it.** A fourth pin array needs four things
+together or it ships ungated: the predicate, the gate in every resolver that reads its table,
+the `pinTestForTrigger` arm, and the `DIMENSION_SOURCES` entry that lists it.
+
+### The consequence, which is announced rather than discovered
+
+Turning one of these gates on makes a rule scoped to devices with an EMPTY pin set go silent,
+and retires its live alerts as `system:out-of-scope`. That is the correct reading of an empty
+pin set — nothing on this device was marked for monitoring — but it is a fleet-wide behaviour
+change on the day it ships, and the fleet it changes is the one that never pinned anything.
+Each of the three cutovers carried the same warning, and the storage one is the reason it is
+written into the rule: check the storage automations against their scoped devices' pin arrays
+BEFORE the release, not after the alerts stop.

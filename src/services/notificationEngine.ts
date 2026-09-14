@@ -497,7 +497,7 @@ function triggerNeedsAnsweringDevice(trigger: Trigger): boolean {
  * `Asset.monitoredInterfaces` (the same join the Down Interfaces widget uses).
  * A device reports every port it has, most of them idle or unplugged, so an
  * ungated interface rule turns one switch into a page of alerts about ports
- * nobody selected. The pin IS the operator's statement of which ports matter,
+ * nobody selected (business rule 57). The pin IS the operator's statement of which ports matter,
  * so it is the default and there is no opt-out: an interface an operator cares
  * about enough to alert on is one they pinned, and un-pinning is how alerting
  * stops (the vanished-state sweep then clears the alert).
@@ -557,7 +557,7 @@ export function tunnelIsPinned(asset: { monitoredIpsecTunnels?: string[] } | und
 }
 
 /**
- * The storage analogue of interfaceIsPinned: only mounts the operator PINNED
+ * The storage analogue of interfaceIsPinned (business rule 57): only mounts the operator PINNED
  * (`Asset.monitoredStorage`) may produce readings, on all three storage
  * metrics (`storageUsedBytes` / `storageUsedPct` / `storageDaysUntilFull`).
  *
