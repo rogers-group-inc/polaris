@@ -25,7 +25,14 @@ import { notificationsPageUrl, pushDeepLinkUrl, ackUrlForEmail, ackUrlForPush, a
 import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, type ChartToken, type RenderedChart } from "./alertChartService.js";
 import { buildInterfaceLldpBlocks, interfaceTokensIn, substituteInterfaceTokens } from "./alertInterfaceService.js";
 import { buildAlertBrandBlock, brandTokensIn, substituteBrandTokens, BRAND_LOGO_CID } from "./alertBrandService.js";
-import { buildPushRecipientBlock, pushRecipientTokensIn, substitutePushRecipientTokens, type PushRecipientBlock } from "./alertPushRecipientsService.js";
+import {
+  buildRecipientBlocks,
+  pushRecipientTokensIn,
+  substitutePushRecipientTokens,
+  emailRecipientTokensIn,
+  substituteEmailRecipientTokens,
+  type PushRecipientBlock,
+} from "./alertPushRecipientsService.js";
 import { pruneEmptyChartSection, pruneEmptyTextLines } from "../utils/alertEmailTemplate.js";
 import { logEvent } from "./eventLogService.js";
 import { type ChannelType, probeLossWindowSecFromTrigger } from "./notificationTypes.js";
@@ -90,13 +97,14 @@ interface DeliveryRow {
 interface RenderMemo {
   charts: Map<string, Promise<Map<ChartToken, RenderedChart>>>;
   lossWindow: Map<string, Promise<number | null>>;
-  /** Keyed by notification alone — unlike the charts, the push-recipient line
-   *  has no per-body variant, so every composed row of one alert shares it. */
-  pushRecipients: Map<string, Promise<PushRecipientBlock>>;
+  /** Keyed by notification alone — unlike the charts, the recipient lines
+   *  have no per-body variant, so every composed row of one alert shares them.
+   *  Both transports resolve together: one indexed read answers both. */
+  recipients: Map<string, Promise<{ push: PushRecipientBlock; email: PushRecipientBlock }>>;
 }
 
 function newRenderMemo(): RenderMemo {
-  return { charts: new Map(), lossWindow: new Map(), pushRecipients: new Map() };
+  return { charts: new Map(), lossWindow: new Map(), recipients: new Map() };
 }
 
 /** Memoized read-through: one build per (alert, exact chart set) per drain. */
@@ -229,18 +237,34 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
     // whole drain. The attachment only rides along when the substituted HTML
     // actually references it (the block degrades to text, or to nothing, when
     // the logo can't be read).
-    // Who else this alert buzzed. Built here for a reason the other deferred
-    // blocks only share by coincidence: the web_push delivery rows it counts
-    // are created by `expandDeliveries` AFTER this body was composed, so fire
-    // time is not merely the wrong place to read them — they do not exist yet.
+    // Who else this alert reached — buzzed, and mailed. Built here for a reason
+    // the other deferred blocks only share by coincidence: the delivery rows
+    // these lines count are created by `expandDeliveries` AFTER this body was
+    // composed, so fire time is not merely the wrong place to read them — they
+    // do not exist yet. The email half reads rows the drain is in the middle of
+    // sending, this one included, which is the point: the footer names the
+    // whole audience of the alert, not the subset that happens to have drained.
     // Memoized per alert, since a rule with two notify actions drains two
     // email rows that would otherwise ask the identical question twice.
-    if (pushRecipientTokensIn(text, html).size > 0) {
-      const block = await memoize(memo.pushRecipients, d.notification.id, () =>
-        buildPushRecipientBlock(d.notification.id),
+    const wantsPushLine = pushRecipientTokensIn(text, html).size > 0;
+    const wantsEmailLine = emailRecipientTokensIn(text, html).size > 0;
+    if (wantsPushLine || wantsEmailLine) {
+      // ONE memoized build for both lines even when only one is referenced:
+      // the read is the same indexed query either way, and a body carrying
+      // just one of the tokens is the uncommon case (both live in the default
+      // footer). Splitting the memo per token would double the queries on the
+      // common one to save nothing on the rare one.
+      const blocks = await memoize(memo.recipients, d.notification.id, () =>
+        buildRecipientBlocks(d.notification.id),
       );
-      text = pruneEmptyTextLines(substitutePushRecipientTokens(text, block.text));
-      if (html) html = substitutePushRecipientTokens(html, block.html);
+      if (wantsPushLine) {
+        text = pruneEmptyTextLines(substitutePushRecipientTokens(text, blocks.push.text));
+        if (html) html = substitutePushRecipientTokens(html, blocks.push.html);
+      }
+      if (wantsEmailLine) {
+        text = pruneEmptyTextLines(substituteEmailRecipientTokens(text, blocks.email.text));
+        if (html) html = substituteEmailRecipientTokens(html, blocks.email.html);
+      }
     }
 
     if (brandTokensIn(text, html).size > 0) {

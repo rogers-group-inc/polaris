@@ -1060,6 +1060,13 @@ export async function expandDeliveries(
           for (const v of splitAckVariants(zg.to, zg.cc, zg.bcc, await ackCapable())) {
             const body = v.ack ? bodyForZone(zg.timeZone) : bodyForZoneNoAck(zg.timeZone);
             const { cc, bcc } = dedupeEmailRecipients(v.to, v.cc, v.bcc);
+            // `target` IS THE TO LINE, and only the To line — business rule 60
+            // depends on it. The alert email's `{email.recipients}` footer names
+            // who else was mailed by parsing this string (plus `meta.cc`, never
+            // `meta.bcc`), so folding a Bcc address in here would print a blind
+            // recipient to every reader of the alert. Nothing near that footer
+            // would fail; it would simply start unblinding people. Bcc travels
+            // in `meta.bcc` below, where no reader surfaces it.
             add(channel.id, "email", v.to.join(", "), {
               composed: true,
               to: v.to,

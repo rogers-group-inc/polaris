@@ -20,6 +20,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 57](#rule-57) — A sub-asset alerts only if the operator pinned it
 - [Rule 58](#rule-58) — A tag that names no region strands the ranking, so level routing abstains
 - [Rule 59](#rule-59) — The controller's view of its own link is a second opinion, and an unreadable controller has no view at all
+- [Rule 60](#rule-60) — A footer that tells the reader who else knows must never name a Bcc
 
 <a id="rule-44"></a>
 
@@ -1178,3 +1179,71 @@ Rule 37 still governs who may be alerted about: a FortiGate-managed switch with
 reading of the monitoring toggle, but it is worth saying out loud, because the switch an
 operator most wants a FortiLink alarm on is not always one they thought to turn monitoring on
 for.
+
+
+---
+
+<a id="rule-60"></a>
+
+## Rule 60 — A footer that tells the reader who else knows must never name a Bcc
+
+An alert that routes to both email and web push reaches two audiences that cannot see each
+other. The person reading the email has no way of telling whether the on-call phone buzzed
+thirty seconds ago or whether they are the only one who has heard about this, and that
+question decides whether they pick the device up or leave it to whoever is already on it.
+`{push.recipients}` put the push half of that answer in the footer.
+
+The mail half was missing, and the reason it could not simply be read off the To header is
+the part worth writing down. **No single copy's To line is the whole audience of an alert.**
+A composed send splits per recipient TIMEZONE, because the body is re-rendered per zone. It
+splits again per acknowledge CAPABILITY whenever a recipient's role holds `alerts` below
+`write`, which is rule 25's `splitAckVariants`. A second notify action on the same automation
+mails its own recipient list. A reminder, and every escalation tier, adds people the first
+copy never had — which is exactly the situation an operator is trying to reason about when
+they look. So a reader who checks the To line to see who else is on it gets a confidently
+partial answer, and the partiality is invisible: the header looks complete.
+
+Prod 2026-09-14 is the case that made it concrete. A FortiGate-down alert routed its reminder
+to the site's two people at region level 1 and escalated hourly to the division at level 2.
+Reading any one of those emails, none of the four recipients could see the other three: the
+two site people were on a second copy split off by acknowledge capability, and the division
+pair were only ever on the escalation. Each copy's To line was accurate and each was a quarter
+of the picture.
+
+So `{email.recipients}` renders beside its push sibling in the same 11px footer block, sourced
+from the alert's own email delivery rows, deduped by address across every copy, every notify
+action and every pass. Both lines scope to the ALERT rather than to the send, and both count
+ROWS rather than outcomes — the email and the push drain in the same pass, sometimes the same
+chunk, and a push service's 202 was never proof of delivery anyway ("sent to" is the honest
+verb, the same reachability posture `preferenceWithholds` takes).
+
+**The Bcc rule is the load-bearing half, and it is not where it looks.** A blind copy that
+appears in a footer every recipient reads has stopped being blind, and the operator who Bcc'd
+someone has been overruled by a footnote they never asked for. The obvious reading is that the
+renderer filters Bcc out. It does not — it is never handed one. Both email paths put To, and
+only To, in `NotificationDelivery.target`: the composed path joins the whole To line into a
+single row, and the plain per-address path writes one address. `toAddressesOf` therefore
+cannot reach a Bcc no matter what it parses. Cc IS named, being visible to everyone on that
+copy already, and it comes from `meta.cc` alone; `meta.bcc` is read by nothing.
+
+**That makes the invariant a property of `expandDeliveries`, not of the service that renders
+the line.** The day a delivery row folds Bcc into `target`, or into `meta.cc`, this footer
+unblinds it — silently, with no error, and with no test failing anywhere near the change that
+caused it. `tests/unit/alertEmailRecipients.test.ts` pins both halves for that reason, and
+this rule is the note on the door.
+
+Two smaller decisions ride along. The email half deduplicates by ADDRESS rather than by
+account, and prints the owning account's name only where one holds the address: a typed
+address or an address-book contact has no account to name, which is the same "unknown means
+deliver" posture rules 25 and 39 take, read the other way round. And the account lookup asks
+for each address as WRITTEN and lower-cased rather than reading the whole user table, because
+`User.email` carries no citext and an account stored with different capitalisation would
+otherwise print as a bare address beside its colleagues' names.
+
+Finally, the deferral registration differs between the two tokens, and the asymmetry is
+deliberate rather than an oversight to tidy up. `isDeferredToken` matches the `push.` PREFIX,
+so `{push.recipients}` is covered by the prefix. `email.recipients` is an ENUMERATED name in
+`DEFERRED_TOKEN_NAMES`, beside `ack`, because an `email.` prefix would also swallow any future
+`{email.*}` token that is NOT deferred. A token that is not registered is blanked at compose
+time, before the delivery pass that would have filled it — the `{chart.trigger}` regression,
+and the reason both tokens carry a test asserting they survive the compose passes literal.
