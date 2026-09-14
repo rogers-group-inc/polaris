@@ -60,7 +60,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/discoveryCancelWatchdog.ts
 
-**What it owns:** The force-exit backstop for discovery cancellation. Armed when a run's abort signal fires, disarmed when `runDiscovery` reaches its finally. If the run hasn't unwound within the grace window (2 min), it logs the in-flight devices with ages, writes an `integration.discover.force_exit` Event, finalizes the `DiscoveryRun` row as `aborted`, and exits the process with code 1 (systemd `Restart=on-failure` / NSSM restart it).
+**What it owns:** The force-exit backstop for discovery cancellation. Armed when a run's abort signal fires, disarmed when `runDiscovery` reaches its finally. If the run hasn't unwound within the grace window (2 min), it logs the in-flight devices with ages, writes an `integration.discover.force_exit` Event, finalizes the `DiscoveryRun` row as `aborted`, and exits the process with code 1 (systemd `Restart=on-failure` restarts it).
 
 **Public API:** `armDiscoveryCancelWatchdog` (returns the disarm fn), `formatStuckDevices`, `CANCEL_FORCE_EXIT_GRACE_MS`, `FORCE_EXIT_CLEANUP_TIMEOUT_MS`, `ActiveDeviceSnapshot`, `CancelWatchdogOptions`.
 
