@@ -12,7 +12,7 @@ this repo's equivalent is:
 | `polaris-ui.js` (the runtime) | `app.js` (+ `api.js` for fetch/escapeHtml) | `public/js/` |
 | `renderSidebar()` | `renderNav()` | `public/js/app.js` |
 | `renderStatusPanel()` / `setSidebarUpdate()` | `renderQueryStatus()` + the per-concern `.query-status` panels | `public/js/app.js` |
-| `getTheme` / `setTheme` / `getCurrentTheme` | `_getTheme` / `_setTheme` / `_getCurrentTheme` (same `THEMES` / `DEFAULT_THEME` / `isLightTheme` / `openThemeMenu` / `toggleTheme`) | `public/js/app.js` |
+| `getTheme` / `setTheme` / `getCurrentTheme` / `advanceTheme` | `_getTheme` / `_setTheme` / `_getCurrentTheme` / `advanceTheme` (same `THEMES` / `TRANSIT_THEMES` / `THEME_WHEEL_ANGLE` / `DEFAULT_THEME` / `isLightTheme`; `openThemeMenu` and `toggleTheme` survive only as aliases of `advanceTheme` — there is no theme menu to open) | `public/js/app.js` |
 | `brandLogoSrc` / `applyBrandLogo` / `watchBrandLogo` | `PolarisBrandLogo.resolve` / `.applyTo` / `.onThemeChange` (adds custom logos, the accent composite, favicons) | `public/js/brand-logo.js` |
 | `createWizard()` | hand-rolled steppers — the Automations 6-step builder is the canonical (see "Wizard (stepper modal)" below) | `public/js/automations-wizard.js` |
 | `polaris-ui.css` | `styles.css` | `public/css/` |

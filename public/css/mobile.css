@@ -98,7 +98,7 @@
    topology node colors in topology-render.js) deliberately stay literal
    in their component blocks — they're status colors, not theme colors,
    and need the same hue regardless of basemap. */
-:is([data-theme="morning"],[data-theme="noon"]) {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) {
   --md-primary:                 #005ac1;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #d8e2ff;
