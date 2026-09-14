@@ -469,6 +469,18 @@
   padding-bottom: 2px;
 }
 .topology-info {
+  /* Named, not inherited: the details pane declared no background, so once the
+     modal went frosted (--panel-glass-bg, 50% in the dark family and 40% on the
+     daylight pair) the blurred page behind the modal showed straight through
+     the detail rows and they were hard to read. The graph half never had the
+     problem — it paints an opaque --color-bg-secondary — so the two halves of
+     the same modal read as different materials. 90% rather than fully opaque
+     keeps a trace of the frosting the modal is built on while leaving the text
+     essentially on a solid ground. This is the "transparent box inside a
+     frosted panel becomes a window" case from polaris-ui-canon →
+     canon-shared-kit.md; derive from the theme's own --color-bg-primary so a
+     new theme picks up its own value. */
+  background: color-mix(in srgb, var(--color-bg-primary) 90%, transparent);
   padding: 1rem 1.25rem;
   overflow-y: auto;
   font-size: 0.88rem;

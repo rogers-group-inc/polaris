@@ -397,13 +397,23 @@
 
   // Cytoscape stylesheet — node colors per role, edge styles per source
   // (controller / interface-inferred / LLDP), selected/dimmed/pulse states,
-  // and the operator-uploaded icon overlay. `theme` is "dark" or "light";
-  // text + edge color swap accordingly so the graph reads well on either
-  // basemap. `opts.includeEndpointOverlay` adds the synthetic endpoint
-  // and dim styles used by desktop's connection-path overlay — mobile
-  // doesn't carry that feature so it leaves it off.
+  // and the operator-uploaded icon overlay. `theme` is a FAMILY, "dark" or
+  // "light" — never a theme id, since there are three themes and one palette
+  // per family. Text + edge color swap accordingly so the graph reads well on
+  // whichever ground the graph pane paints. `opts.includeEndpointOverlay` adds
+  // the synthetic endpoint and dim styles used by desktop's connection-path
+  // overlay — mobile doesn't carry that feature so it leaves it off.
   function topologyStylesheet(theme, opts) {
     opts = opts || {};
+    // Anything that isn't a family is resolved from the document rather than
+    // silently taking the else-branch: `theme === "dark"` on its own turns a
+    // theme id ("nightfall") — or a stale per-user basemap preference that has
+    // nothing to do with this canvas — into the LIGHT palette, which is how
+    // #1a1a1a node labels ended up on nightfall's #0d0d1a graph pane.
+    if (theme !== "dark" && theme !== "light") {
+      var themeId = document.documentElement.getAttribute("data-theme");
+      theme = (themeId === "morning" || themeId === "noon") ? "light" : "dark";
+    }
     var isDark = theme === "dark";
     var textColor = isDark ? "#eef0f4" : "#1a1a1a";
     var edgeColor = isDark ? "#6a7388" : "#9aa2b1";

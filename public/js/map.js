@@ -123,14 +123,22 @@
     applyBasemapTheme();
     var themeObserver = new MutationObserver(function (muts) {
       for (var i = 0; i < muts.length; i++) {
-        if (muts[i].attributeName === "data-theme") { applyBasemapTheme(); break; }
+        if (muts[i].attributeName === "data-theme") {
+          applyBasemapTheme();
+          // The topology graph's palette is app-themed (see the note at its
+          // `appThemeFamily()` call), and the Cytoscape stylesheet is read once
+          // at render time rather than reactively — so an open modal has to be
+          // re-rendered here or it keeps the palette of the theme it opened in.
+          repaintOpenTopology();
+          break;
+        }
       }
     });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
     // Per-user map theme toggle in the toolbar — separate from the
-    // global app theme. Click flips the saved preference, swaps the
-    // basemap, and re-renders the topology modal if it's open.
+    // global app theme. Click flips the saved preference and swaps the
+    // basemap; the topology modal is app-themed and does not follow it.
     var mapThemeBtn = document.getElementById("map-theme-toggle");
     if (mapThemeBtn) mapThemeBtn.addEventListener("click", toggleMapTheme);
 
@@ -196,6 +204,13 @@
     var u = (typeof currentUsername === "string" && currentUsername) ? currentUsername : "anon";
     return "polaris-prefs-map-" + u;
   }
+  // The app theme's FAMILY — "light" for the daylight pair, "dark" for
+  // nightfall. Every palette on this page that is NOT a basemap pair keys off
+  // this: the Cytoscape topology stylesheet, whose canvas is an app-themed
+  // CSS pane. Never compare a theme id; there are three themes, two families.
+  function appThemeFamily() {
+    return (typeof isLightTheme === "function" && isLightTheme()) ? "light" : "dark";
+  }
   function getMapTheme() {
     try {
       var raw = localStorage.getItem(_mapThemePrefKey());
@@ -209,7 +224,7 @@
     // The app theme's FAMILY, not its id: this value indexes a basemap pair,
     // and there are three themes but only two basemaps. An id comparison here
     // put nightfall on the light OpenStreetMap tiles.
-    return (typeof isLightTheme === "function" && isLightTheme()) ? "light" : "dark";
+    return appThemeFamily();
   }
   function setMapTheme(theme) {
     try {
@@ -246,9 +261,13 @@
     var next = getMapTheme() === "dark" ? "light" : "dark";
     setMapTheme(next);
     applyBasemapTheme();
-    // If the topology modal is open, re-render so its colors follow
-    // the new map theme too — Cytoscape stylesheet reads the theme at
-    // render time, not reactively.
+    // Deliberately NOT re-rendering the topology modal: this toggle picks the
+    // basemap pair, and the topology graph follows the app theme instead.
+  }
+  // Re-render an open topology modal in place. Its Cytoscape stylesheet is
+  // evaluated once per render, so any palette input that changes underneath it
+  // has to come back through here.
+  function repaintOpenTopology() {
     var overlay = document.getElementById("topology-overlay");
     if (overlay && overlay.classList.contains("open") && topoState.data) {
       renderTopologyGraph(topoState.data);
@@ -1987,10 +2006,15 @@
       elements = window.PolarisTopologyRender.partitionElementsForFloor(elements, topoState.activeView);
     }
 
-    // Topology graph follows the per-user MAP theme (not the global app
-    // theme) so the toolbar toggle drives both the basemap and the
-    // modal coherently.
-    var theme = getMapTheme();
+    // The topology graph follows the APP theme's family, not the per-user MAP
+    // theme. It used to take getMapTheme() on the theory that one toolbar
+    // toggle should drive the basemap and the modal together — but the
+    // topology modal has no basemap: its canvas is .topology-graph painting
+    // --color-bg-secondary, an APP-themed token. So an operator on nightfall
+    // who preferred the light OpenStreetMap tiles got the light Cytoscape
+    // palette — #1a1a1a node labels — on a #0d0d1a pane. The two must come
+    // from the same place, and the pane is the one the CSS owns.
+    var theme = appThemeFamily();
 
     // Refresh path: tear down the previous cytoscape before mounting the
     // new one. Without this, a Refresh click stacks two graphs and the
