@@ -469,13 +469,31 @@ region names nothing answered to — silently, since a scope naming no region sc
 
 ### Why not just strip every tag that matches no region
 
-Because `PUT /assets/:id` accepts `tags: string[]` and writes it as given. The `Tag` registry
-refuses hand-created rows in the "Map Regions" category, and the notification scope pickers
-exclude that category — but none of that stops an operator, or a script, putting
-`region:Narnia` directly onto an asset. The standing contract is explicit that manual
-attachments and tags predating provenance "persist across runs forever", and a background job
-that quietly deleted them would be a worse bug than the one being fixed: unlike a stranded
-tag, a destroyed one leaves no evidence it was ever there.
+Because the standing contract is explicit that manual attachments and tags predating
+provenance "persist across runs forever", and a background job that quietly deleted them would
+be a worse bug than the one being fixed: unlike a stranded tag, a destroyed one leaves no
+evidence it was ever there.
+
+When this rule was written, making one was easy. `PUT /assets/:id` accepted `tags: string[]`
+and wrote it as given; the `Tag` registry refused hand-created rows in the "Map Regions"
+*category* but never checked the NAME, so `region:Narnia` filed under "General" was accepted —
+and since the auto-assign device-filter ban was keyed on category too, that was also the way to
+get a `TagAutoAssignment` filter onto a `region:` name, i.e. two managed-sync reconcilers on one
+string, which is exactly what that ban exists to prevent.
+
+Both doors are shut now. The registry refuses the prefix by name in every category
+(`assertNotRegionPrefix`), and asset writes run `assertAddedRegionTagsNameARegion` — a **diff**,
+not a ban, because the edit modal PUTs the whole `tags` array back and a blanket refusal would
+make every asset in a region unsaveable, and because hand-applying a *live* region's tag to a
+device its polygon misses is documented behavior that has to keep working.
+
+That does not retire this rule, for two reasons. Neither guard is retroactive and neither
+touches `Asset.tags` in the database, so on any install with history "matches no region" and
+"was retired by Polaris" still describe different sets — and the whole point of the sweep is
+the install that already has the mess. And the guards live at the route: anything writing
+through a token, a future import path, a migration, is one missed validation from putting the
+prefix back in play. Bounding the sweep by evidence does not depend on every write path
+staying correct forever.
 
 So the sweep is bounded by **evidence rather than absence**. `mapRegionRetiredNames` is a
 companion Setting blob holding `{name, regionId, retiredAt, reason}`, and a name lands on it

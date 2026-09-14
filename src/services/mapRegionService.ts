@@ -1047,6 +1047,55 @@ export async function applyOneRegion(region: MapRegion): Promise<ReconcileSummar
  * must not stop the rest: a region whose membership query throws is logged and
  * skipped, leaving its tags exactly as they were.
  */
+/**
+ * Refuse an asset write that ADDS a `region:<name>` tag naming no current
+ * region. Throws `AppError(400)` listing the offending tags.
+ *
+ * Deliberately a diff, not a blanket ban on the prefix. Two things have to stay
+ * true at once:
+ *
+ *   - **An existing region tag must round-trip.** The asset edit modal PUTs the
+ *     whole `tags` array back, region tags included, so refusing the prefix
+ *     outright would make every asset in a region unsaveable.
+ *   - **Hand-applying a LIVE region's tag stays legal.** Tagging a device the
+ *     polygon does not cover is documented behavior that survives every
+ *     reconcile (the add direction is authoritative only for members) — so the
+ *     test is "does a region answer to this name", not "did the map put it here".
+ *
+ * What it blocks is the third case: inventing `region:Narnia`. That string is
+ * unmaintained by anything, renders in the picker as though it were real, and
+ * is indistinguishable from a tag stranded by a half-applied rename — the
+ * ambiguity business rule 52 has to design around. The registry guard in
+ * `serverSettings.ts` closes the same door on the `Tag` catalogue.
+ *
+ * **No DB read on the common path**: a write that adds no region tag at all —
+ * which is nearly all of them, including every bulk edit that does not touch
+ * regions — returns before `listRegions()`.
+ */
+export async function assertAddedRegionTagsNameARegion(
+  previousTags: readonly string[],
+  nextTags: readonly string[],
+): Promise<void> {
+  const before = new Set(previousTags.map((t) => t.trim().toLowerCase()));
+  const added = nextTags.filter((t) => {
+    const k = t.trim().toLowerCase();
+    return k.startsWith(TAG_PREFIX) && !before.has(k);
+  });
+  if (added.length === 0) return;
+
+  const live = new Set((await listRegions()).map((r) => regionTag(r.name).trim().toLowerCase()));
+  const unknown = added.filter((t) => !live.has(t.trim().toLowerCase()));
+  if (unknown.length === 0) return;
+
+  throw new AppError(
+    400,
+    `${unknown.map((t) => `"${t}"`).join(", ")} ` +
+      `${unknown.length === 1 ? "names no map region" : "name no map region"}. ` +
+      `The "${TAG_PREFIX}" prefix belongs to the Device Map — draw the region there first, ` +
+      `or use a tag name without that prefix.`,
+  );
+}
+
 /** What the retired-name sweep did on one pass. */
 export interface RetiredTagSweep extends Record<string, unknown> {
   /** Retired names that still had a tag out there, and no longer do. */
