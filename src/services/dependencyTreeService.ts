@@ -688,7 +688,7 @@ export function switchNameFromLastSeenSwitch(v: string | null | undefined): stri
  * wired switch port → wireless AP → the FortiGate that last saw it → the
  * FortiGate that owns the network its address is in.
  *
- * The fourth tier is an INFERENCE, not an observation (business rule 54): no
+ * The fourth tier is an INFERENCE, not an observation (business rule 55): no
  * gate ever reported
  * this device, so IPAM is asked which gate serves its address. It sits last
  * because the three above it are records of the device actually being seen,
@@ -1274,7 +1274,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 /**
  * The owning FortiGate for each of these endpoints' addresses, per IPAM —
- * the last-resort parent tier (business rule 54).
+ * the last-resort parent tier (business rule 55).
  *
  * Two gates on the way in, both borrowed rather than restated:
  *

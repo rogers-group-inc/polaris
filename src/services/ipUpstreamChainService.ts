@@ -349,7 +349,7 @@ export interface OwningGate {
  * address sits in no known, non-deprecated network.
  *
  * The single implementation of "which gate is this address behind" per IPAM
- * (business rule 54).
+ * (business rule 55).
  * Three consumers: this sweep (scoping the ARP lookup), `assetUpstreamService`
  * (the Last Seen Firewall fallback) and `dependencyTreeService` (the last-
  * resort endpoint parent). Keep it one function — the three would otherwise

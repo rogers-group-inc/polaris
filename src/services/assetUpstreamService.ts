@@ -198,7 +198,7 @@ export async function resolveAssetUpstream(
   const fwName = sighting?.fortigateDevice?.trim() || "";
 
   // No gate has ever reported this device — fall back to the gate that owns
-  // the network its address sits in (business rule 54). Strictly a fallback: a sighting is a
+  // the network its address sits in (business rule 55). Strictly a fallback: a sighting is a
   // record of the device being seen, this is an inference from IPAM, and the
   // entry says which it is so the row can never read as evidence it isn't.
   // Skipped for a firewall (same reason the sighting half is) and for an

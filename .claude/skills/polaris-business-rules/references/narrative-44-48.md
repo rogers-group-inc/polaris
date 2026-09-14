@@ -1,4 +1,4 @@
-# Business rules 44–54 — full narrative
+# Business rules 44–55 — full narrative
 
 > The filename keeps its original range: it is cited from code and from the other skills.
 
@@ -645,9 +645,9 @@ are named at the end of every run.
 Guard: `tests/unit/fmgWarmCacheKeying.test.ts` covers the divergent-name case, the cross-gate
 name collision, case-insensitive dedup against `fmgNameKey`, and the missing-stamp fallback.
 
-<a id="rule-54"></a>
+<a id="rule-55"></a>
 
-## Rule 54 — An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got
+## Rule 55 — An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got
 
 **The invariant.** IPAM is the last source consulted for a device's upstream FortiGate, never a replacement for evidence. `resolveOwningGateContexts` (`services/ipUpstreamChainService.ts`) is the one implementation of "which gate is this address behind" — containing subnet → `fortigateSerial` then `fortigateDevice` through `utils/fortinetParentKey.ts`, rule 41's precedence, never a hostname match — and it has three consumers: the rule 45 sweep scoping its ARP lookup, `assetUpstreamService` answering the Last Seen Firewall row, and `dependencyTreeService` placing an otherwise unparentable endpoint. The two new consumers are strictly fallbacks, each labelled, each gated on the claim being current under rule 40.
 
