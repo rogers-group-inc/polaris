@@ -71,54 +71,51 @@ describe("followUpPolicy — repeat", () => {
       .toContain("for up to 1 hour.");
   });
 
-  it("advertises the BAND's cadence, not the rule's, once a band states one", () => {
-    // Same reason the escalation half is severity-resolved: the sentence is
-    // read by whoever is holding the phone for THIS alert, and a critical that
-    // promised the warning tier's hourly reminder would be describing a chase
-    // that isn't coming.
+  it("advertises the SOONEST of several actions' clocks", () => {
+    // One alert carries ONE of these sentences (it is snapshotted into
+    // templateCtx, not composed per delivery) while its notify actions may
+    // chase on different clocks. Same rule the escalation half already follows:
+    // the honest answer to "when will this come back at me" is whichever
+    // reminder arrives first, not whichever action is listed first.
+    const twoClocks = rule({
+      repeat: null,
+      actions: [
+        { ...notify("c1"), repeat: { everyMin: 60, stopOn: "acknowledge" } },
+        { ...notify("c2"), repeat: { everyMin: 5, stopOn: "clear" } },
+      ],
+    });
+    expect(followUpPolicy(twoClocks, "warning").repeat).toBe("Reminders every 5 minutes until cleared.");
+  });
+
+  it("an action that says `repeat: null` contributes no sentence", () => {
+    // An explicit null is an answer, not an absence, so it must not fall back
+    // to the rule's clock the way a missing key does.
+    const silenced = rule({
+      repeat: { everyMin: 15, stopOn: "acknowledge" },
+      actions: [{ ...notify(), repeat: null }],
+    });
+    expect(followUpPolicy(silenced, "warning").repeat).toBe("");
+  });
+
+  it("an action that says NOTHING still advertises the rule's clock", () => {
+    // Every automation authored before reminders became per-action.
+    const inherited = rule({ repeat: { everyMin: 15, stopOn: "acknowledge" }, actions: [notify()] });
+    expect(followUpPolicy(inherited, "warning").repeat).toContain("every 15 minutes");
+  });
+
+  it("describes the BAND's actions once the alert has climbed into one", () => {
+    // Severity still chooses which action list is in force; the clock rides the
+    // action that list selected.
     const banded = rule({
-      repeat: { everyMin: 60, stopOn: "acknowledge" },
+      repeat: null,
+      actions: [{ ...notify(), repeat: { everyMin: 60, stopOn: "acknowledge" } }],
       severityBands: [{
-        threshold: 95, severity: "critical", actions: [],
-        followUp: { requireAckNote: false, repeat: { everyMin: 5, stopOn: "clear" } },
+        threshold: 95, severity: "critical",
+        actions: [{ ...notify(), repeat: { everyMin: 5, stopOn: "clear" } }],
       }],
     });
     expect(followUpPolicy(banded, "warning").repeat).toBe("Reminders every 1 hour until acknowledged.");
     expect(followUpPolicy(banded, "critical").repeat).toBe("Reminders every 5 minutes until cleared.");
-  });
-
-  it("a band that repeats where the rule does not says so only at that severity", () => {
-    const banded = rule({
-      repeat: null,
-      severityBands: [{
-        threshold: 95, severity: "critical", actions: [],
-        followUp: { requireAckNote: false, repeat: { everyMin: 10, stopOn: "acknowledge" } },
-      }],
-    });
-    expect(followUpPolicy(banded, "warning").repeat).toBe("");
-    expect(followUpPolicy(banded, "critical").repeat).toBe("Reminders every 10 minutes until acknowledged.");
-  });
-
-  it("a band that declares NO reminders silences the rule's at that severity", () => {
-    // `repeat: null` inside a followUp is an answer, not an absence — that is
-    // the distinction the followUp wrapper exists to carry.
-    const banded = rule({
-      repeat: { everyMin: 15, stopOn: "acknowledge" },
-      severityBands: [{
-        threshold: 95, severity: "critical", actions: [],
-        followUp: { requireAckNote: true, repeat: null },
-      }],
-    });
-    expect(followUpPolicy(banded, "warning").repeat).toContain("every 15 minutes");
-    expect(followUpPolicy(banded, "critical").repeat).toBe("");
-  });
-
-  it("a band with no followUp keeps inheriting the rule's reminders", () => {
-    const banded = rule({
-      repeat: { everyMin: 15, stopOn: "acknowledge" },
-      severityBands: [{ threshold: 95, severity: "critical", actions: [] }],
-    });
-    expect(followUpPolicy(banded, "critical").repeat).toContain("every 15 minutes");
   });
 });
 

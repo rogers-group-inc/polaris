@@ -188,8 +188,8 @@ describe("the sweep's repeat pass", () => {
     expect(runs).toBe(1);
     expect(db.deliveries).toHaveLength(1);
     expect(db.deliveries[0].target).toBe("oncall@example.com");
-    // Progress is recorded under the reserved key, beside any tier keys.
-    expect(db.notifUpdates[0].data.escalationState.tiers.repeat.count).toBe(1);
+    // Progress is recorded per ACTION, beside that action's tier keys.
+    expect(db.notifUpdates[0].data.escalationState.tiers["a0:repeat"].count).toBe(1);
   });
 
   it("labels the email a REMINDER, never an escalation", async () => {
@@ -205,14 +205,19 @@ describe("the sweep's repeat pass", () => {
     expect(meta.escalation).toBeUndefined();
   });
 
-  it("counts up across sweeps", async () => {
+  it("counts up across sweeps, adopting a pre-per-action alert's clock", async () => {
+    // The seeded state uses the BARE `repeat` key — what a notification raised
+    // before reminders became per-action carries. Reading it as the inheriting
+    // action's starting point is what stops the upgrade from firing a fresh
+    // "[REMINDER 1]" at everyone holding a live alert, and from re-starting the
+    // interval from zero.
     seedRule({ actions: [NOTIFY], repeat: { everyMin: 15, stopOn: "acknowledge" } });
     seedNotif({
       escalationState: { tiers: { repeat: { firstSentAt: minsAgo(40).toISOString(), lastSentAt: minsAgo(20).toISOString(), count: 2 } } },
     });
     await runEscalationSweep(NOW);
     expect(db.deliveries[0].meta.subject).toContain("[REMINDER 3]");
-    expect(db.notifUpdates[0].data.escalationState.tiers.repeat.count).toBe(3);
+    expect(db.notifUpdates[0].data.escalationState.tiers["a0:repeat"].count).toBe(3);
   });
 
   it("keeps an operator's own subject template verbatim", async () => {
@@ -305,8 +310,9 @@ describe("the sweep's repeat pass", () => {
     expect(subjects.some((s: string) => s.includes("[REMINDER 1]"))).toBe(true);
     expect(subjects.some((s: string) => s.includes("[ESCALATION 1]"))).toBe(true);
     const state = db.notifUpdates[0].data.escalationState.tiers;
-    // Distinct state keys — the repeat key can never collide with a tier's.
-    expect(state.repeat.count).toBe(1);
+    // Distinct state keys — an action's reminder key can never collide with a
+    // level chain's bare numeric tier key, nor with its own `a0:t0`.
+    expect(state["a0:repeat"].count).toBe(1);
     expect(state["0"].count).toBe(1);
   });
 
@@ -323,87 +329,132 @@ describe("the sweep's repeat pass", () => {
   });
 });
 
-describe("per-severity reminders", () => {
-  const band = (followUp: unknown) => [{ threshold: 95, severity: "critical", actions: [], followUp }];
+describe("per-action reminders", () => {
+  const PAGE = { type: "notify", channelId: "ch-email", addresses: ["oncall@example.com"] };
+  const DIGEST = { type: "notify", channelId: "ch-email", addresses: ["digest@example.com"] };
 
-  it("uses the BAND's clock while the alert sits in that band", async () => {
-    // Every 30 min at warning, every 5 at critical — the reason the pair moved
-    // into the severity sections at all. Reading the rule's config here would
-    // make the critical reminder arrive on the warning's cadence.
+  it("gives each notify action its own clock", async () => {
+    // The whole reason the control sits on the action row: page the on-call
+    // every five minutes and leave the digest alone. 10 minutes in, only the
+    // page is due.
     seedRule({
-      actions: [NOTIFY],
-      repeat: { everyMin: 30, stopOn: "acknowledge" },
-      severityBands: band({ requireAckNote: false, repeat: { everyMin: 5, stopOn: "acknowledge" } }),
+      repeat: null,
+      actions: [
+        { ...PAGE, repeat: { everyMin: 5, stopOn: "acknowledge" } },
+        { ...DIGEST, repeat: { everyMin: 60, stopOn: "acknowledge" } },
+      ],
     });
-    // 10 minutes in: two intervals of the band's clock, none of the rule's.
-    seedNotif({ severity: "critical", triggeredAt: minsAgo(10) });
+    seedNotif({ triggeredAt: minsAgo(10) });
+
     expect(await runEscalationSweep(NOW)).toBe(1);
     expect(db.deliveries).toHaveLength(1);
+    expect(db.deliveries[0].target).toBe("oncall@example.com");
+    // Progress is keyed by the action's position, so the two never share a
+    // lastSentAt — the failure that would make the slower one ride the faster
+    // one's clock.
+    const tiers = db.notifUpdates[0].data.escalationState.tiers;
+    expect(tiers["a0:repeat"].count).toBe(1);
+    expect(tiers["a1:repeat"]).toBeUndefined();
   });
 
-  it("a band that declares NO reminders silences the rule's at that severity", async () => {
-    // `repeat: null` inside a followUp is an answer, not an absence.
+  it("an action that says `repeat: null` does not chase, even where the rule does", async () => {
+    // An explicit null is an answer, not an absence — which is what the builder
+    // writes onto every notify row the operator leaves unticked.
     seedRule({
-      actions: [NOTIFY],
       repeat: { everyMin: 15, stopOn: "acknowledge" },
-      severityBands: band({ requireAckNote: true, repeat: null }),
+      actions: [{ ...PAGE, repeat: null }],
     });
-    seedNotif({ severity: "critical" });
+    seedNotif();
     expect(await runEscalationSweep(NOW)).toBe(0);
     expect(db.deliveries).toHaveLength(0);
   });
 
-  it("sweeps an automation that repeats ONLY at one band", async () => {
-    // Rule-level repeat is null, so both the rule-inclusion test and the
-    // due-candidate cutoff have to see the band's interval or the sweep never
-    // looks at this alert at all.
-    seedRule({
-      actions: [NOTIFY],
-      repeat: null,
-      severityBands: band({ requireAckNote: false, repeat: { everyMin: 15, stopOn: "acknowledge" } }),
-    });
-    seedNotif({ severity: "critical" });
+  it("an action that says NOTHING inherits the rule's clock", async () => {
+    // Every automation authored before reminders became per-action. Falling
+    // through to "no reminders" here would silence all of them on upgrade.
+    seedRule({ repeat: { everyMin: 15, stopOn: "acknowledge" }, actions: [PAGE] });
+    seedNotif();
     expect(await runEscalationSweep(NOW)).toBe(1);
     expect(db.deliveries).toHaveLength(1);
   });
 
-  it("leaves the base severity on the rule's clock", async () => {
-    seedRule({
-      actions: [NOTIFY],
-      repeat: null,
-      severityBands: band({ requireAckNote: false, repeat: { everyMin: 15, stopOn: "acknowledge" } }),
-    });
-    seedNotif({ severity: "warning" });
-    expect(await runEscalationSweep(NOW)).toBe(0);
-  });
-
-  it("a band with no followUp keeps inheriting the rule's reminders", async () => {
-    // Every pre-feature banded automation. Falling through to "no reminders"
-    // here would silence them the moment the alert climbed a tier.
-    seedRule({
-      actions: [NOTIFY],
-      repeat: { everyMin: 15, stopOn: "acknowledge" },
-      severityBands: [{ threshold: 95, severity: "critical", actions: [] }],
-    });
-    seedNotif({ severity: "critical" });
+  it("sweeps an automation whose ONLY reminder is on one action", async () => {
+    // Rule-level repeat is null, so both the rule-inclusion test and the
+    // due-candidate cutoff have to see the action's interval — both run before
+    // any notification is looked at, so missing it means never looking.
+    seedRule({ repeat: null, actions: [{ ...PAGE, repeat: { everyMin: 15, stopOn: "acknowledge" } }] });
+    seedNotif();
     expect(await runEscalationSweep(NOW)).toBe(1);
+    expect(db.deliveries).toHaveLength(1);
   });
 
-  it("holds the band's reminder for the BAND's quiet time, not the rule's", async () => {
-    // The windows live inside the repeat config, so a per-band clock brings its
-    // own quiet time. Keying the sweep's quiet cache on the rule alone would
-    // have held this critical through the warning tier's overnight window.
-    const allDay = {
-      windows: [{ version: 1, kind: "recurring", freq: "daily", hours: [] }],
-    };
+  it("takes the BAND's actions, and their clocks, while the alert sits in a band", async () => {
+    // Severity still selects WHICH actions repeat — the band fallback is
+    // unchanged. What changed is that the clock rides the action it selected.
     seedRule({
-      actions: [NOTIFY],
-      repeat: { everyMin: 15, stopOn: "acknowledge", quiet: allDay },
-      severityBands: band({ requireAckNote: false, repeat: { everyMin: 5, stopOn: "acknowledge" } }),
+      repeat: null,
+      actions: [{ ...DIGEST, repeat: { everyMin: 60, stopOn: "acknowledge" } }],
+      severityBands: [{
+        threshold: 95, severity: "critical",
+        actions: [{ ...PAGE, repeat: { everyMin: 5, stopOn: "acknowledge" } }],
+      }],
     });
     seedNotif({ severity: "critical", triggeredAt: minsAgo(10) });
     expect(await runEscalationSweep(NOW)).toBe(1);
     expect(db.deliveries).toHaveLength(1);
+    expect(db.deliveries[0].target).toBe("oncall@example.com");
+  });
+
+  it("holds one action's reminder for ITS quiet time without silencing the other", async () => {
+    // The windows live inside each action's repeat, so the sweep's quiet cache
+    // is keyed per action. Keying it on the rule alone would hold the page
+    // through the window the digest was given.
+    // Covers the whole clock, so the sweep's `now` is inside it whatever the
+    // server's zone — this test is about WHOSE windows are consulted, not about
+    // when they open (the quiet-time block below owns that).
+    const allDay = { windows: [{ version: 1, kind: "recurring", freq: "daily", startTime: "00:00", endTime: "23:59" }] };
+    seedRule({
+      repeat: null,
+      actions: [
+        { ...PAGE, repeat: { everyMin: 5, stopOn: "acknowledge" } },
+        { ...DIGEST, repeat: { everyMin: 5, stopOn: "acknowledge", quiet: allDay } },
+      ],
+    });
+    seedNotif({ triggeredAt: minsAgo(10) });
+
+    expect(await runEscalationSweep(NOW)).toBe(1);
+    expect(db.deliveries).toHaveLength(1);
+    expect(db.deliveries[0].target).toBe("oncall@example.com");
+    // The digest is HELD, and the hold is stamped.
+    expect(db.notifUpdates[0].data.escalationState.quietHeldSince).toBeTruthy();
+  });
+
+  it("does not let a quiet-free action claim it resumed from a quiet period", async () => {
+    // The hold stamp is per notification while the windows are per action, so
+    // the "reminders resumed" sentence is gated on this action HAVING windows.
+    // Without that gate the page would announce a silence it never observed.
+    // Covers the whole clock, so the sweep's `now` is inside it whatever the
+    // server's zone — this test is about WHOSE windows are consulted, not about
+    // when they open (the quiet-time block below owns that).
+    const allDay = { windows: [{ version: 1, kind: "recurring", freq: "daily", startTime: "00:00", endTime: "23:59" }] };
+    seedRule({
+      repeat: null,
+      actions: [
+        { ...PAGE, repeat: { everyMin: 5, stopOn: "acknowledge" } },
+        { ...DIGEST, repeat: { everyMin: 5, stopOn: "acknowledge", quiet: allDay } },
+      ],
+    });
+    seedNotif({
+      triggeredAt: minsAgo(10),
+      escalationState: { tiers: {}, quietHeldSince: minsAgo(30).toISOString(), quietHeldCount: 6 },
+    });
+
+    await runEscalationSweep(NOW);
+    expect(db.deliveries).toHaveLength(1);
+    expect(db.deliveries[0].meta.repeat.quietResumed).toBeUndefined();
+    expect(db.deliveries[0].meta.text).not.toContain("Reminders resumed after a quiet period");
+    // …and the hold it did not observe is still open for the action that did.
+    expect(db.notifUpdates[0].data.escalationState.quietHeldSince).toBeTruthy();
   });
 });
 
@@ -497,7 +548,7 @@ describe("the repeat pass's quiet time", () => {
     const state = db.notifUpdates[0].data.escalationState;
     expect(state.quietHeldSince).toBeUndefined();
     expect(state.quietHeldCount).toBeUndefined();
-    expect(state.tiers.repeat.count).toBe(1);
+    expect(state.tiers["a0:repeat"].count).toBe(1);
   });
 
   it("says nothing about quiet time on an ordinary reminder", async () => {

@@ -616,10 +616,10 @@ describe("automation wizard DOM render", () => {
     // Edit mode unlocks every step, so jump via the stepper.
     (doc.querySelectorAll("#aw-stepper .stepper-step")[4] as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
-    const on = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-on") as unknown as { checked: boolean } | null;
-    const every = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-every") as unknown as { value: string } | null;
-    const stopOn = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-stopon") as unknown as { value: string } | null;
-    const after = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-stopafter") as unknown as { value: string } | null;
+    const on = doc.querySelector("#aw-step-5 .aw-repeat .aw-repeat-on") as unknown as { checked: boolean } | null;
+    const every = doc.querySelector("#aw-step-5 .aw-repeat .aw-repeat-every") as unknown as { value: string } | null;
+    const stopOn = doc.querySelector("#aw-step-5 .aw-repeat .aw-repeat-stopon") as unknown as { value: string } | null;
+    const after = doc.querySelector("#aw-step-5 .aw-repeat .aw-repeat-stopafter") as unknown as { value: string } | null;
     expect(on?.checked).toBe(true);
     expect(every?.value).toBe("20");
     expect(stopOn?.value).toBe("clear");
@@ -629,7 +629,11 @@ describe("automation wizard DOM render", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);
     const payload = savedPayloads[0]! as Record<string, any>;
-    expect(payload.repeat).toEqual({ everyMin: 20, stopOn: "clear", stopAfterHours: 8 });
+    // MIGRATE-ON-EDIT: a rule-level clock renders on the notify row that
+    // inherits it, and saving from this step writes it onto the action and
+    // retires the column. Same behaviour, stated where it now belongs.
+    expect(payload.actions[0].repeat).toEqual({ everyMin: 20, stopOn: "clear", stopAfterHours: 8 });
+    expect(payload.repeat).toBeNull();
     expect(() => ruleInputSchema.parse(payload)).not.toThrow();
   });
 
@@ -653,17 +657,17 @@ describe("automation wizard DOM render", () => {
     // Edit mode unlocks every step, so jump via the stepper.
     (doc.querySelectorAll("#aw-stepper .stepper-step")[4] as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
-    const after = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-stopafter") as unknown as { value: string } | null;
+    const after = doc.querySelector("#aw-step-5 .aw-repeat .aw-repeat-stopafter") as unknown as { value: string } | null;
     expect(after?.value).toBe("");
 
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     const payload = savedPayloads[0]! as Record<string, any>;
-    expect(payload.repeat).toEqual({ everyMin: 15, stopOn: "acknowledge" });
-    expect(payload.repeat).not.toHaveProperty("stopAfterHours");
+    expect(payload.actions[0].repeat).toEqual({ everyMin: 15, stopOn: "acknowledge" });
+    expect(payload.actions[0].repeat).not.toHaveProperty("stopAfterHours");
   });
 
-  it("repeat control: an automation that does not repeat saves repeat: null", async () => {
+  it("repeat control: an action that does not repeat saves repeat: null", async () => {
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
@@ -682,15 +686,20 @@ describe("automation wizard DOM render", () => {
     // Edit mode unlocks every step, so jump via the stepper.
     (doc.querySelectorAll("#aw-stepper .stepper-step")[4] as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
-    const on = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-on") as unknown as { checked: boolean } | null;
+    const on = doc.querySelector("#aw-step-5 .aw-repeat .aw-repeat-on") as unknown as { checked: boolean } | null;
     expect(on?.checked).toBe(false);
     // The fields stay hidden until it is turned on.
-    const fields = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-fields") as unknown as { hidden: boolean } | null;
+    const fields = doc.querySelector("#aw-step-5 .aw-repeat .aw-repeat-fields") as unknown as { hidden: boolean } | null;
     expect(fields?.hidden).toBe(true);
 
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
-    expect((savedPayloads[0] as Record<string, any>).repeat).toBeNull();
+    const p = savedPayloads[0] as Record<string, any>;
+    // Explicit null on the action, not an absent key: the operator has seen the
+    // control and said no, which is what stops it inheriting a rule-level clock
+    // an API caller might set later.
+    expect(p.actions[0].repeat).toBeNull();
+    expect(p.repeat).toBeNull();
   });
 
   it("action rows fold to their summary, closed by default — and a row you ADD opens", async () => {
@@ -1131,12 +1140,13 @@ describe("automation wizard DOM render", () => {
     expect((savedPayloads[0]! as Record<string, any>).requireAckNote).toBe(true);
   });
 
-  it("the follow-up pair sits in each severity section, below its actions and its escalation", async () => {
+  it("the ack-note checkbox sits in each severity section, below its actions and its escalation", async () => {
     // It used to sit on the in-app-alert card at the top of the step, where it
-    // read as one answer for the whole automation. The questions it answers —
-    // "will this keep chasing me" and "what does closing it out cost" — are
-    // per severity, and the order they get asked in is who do I tell, who do I
-    // tell next, how hard do I keep at it.
+    // read as one answer for the whole automation. What closing an alert out
+    // costs is per severity, and the place to say so is after the actions and
+    // the escalation chain — who do I tell, who do I tell next, and what does
+    // closing it cost. (Reminders were here too, briefly; they belong to the
+    // notify ACTION and live on its row.)
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     const w = g.window as InstanceType<typeof Window>;
@@ -1183,7 +1193,7 @@ describe("automation wizard DOM render", () => {
     expect(bandSec.lastElementChild!.classList.contains("aw-followup")).toBe(true);
   });
 
-  it("a band's follow-up pair saves onto the band, and is stripped when the toggle is off", async () => {
+  it("a band's ack-note answer saves onto the band", async () => {
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     const w = g.window as InstanceType<typeof Window>;
@@ -1209,31 +1219,22 @@ describe("automation wizard DOM render", () => {
     multi.dispatchEvent(new w.Event("change", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 10));
 
-    // Critical: demand a note and chase every 5 minutes. The base stays as it
-    // was — one answer per severity is the whole point.
+    // Critical demands a note; the base does not. One answer per severity is
+    // the whole point.
     const bandBlock = doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup")!;
     const tick = (el: Element) => {
       (el as unknown as { checked: boolean }).checked = true;
       (el as unknown as { dispatchEvent: (e: unknown) => void }).dispatchEvent(new w.Event("change", { bubbles: true }));
     };
     tick(bandBlock.querySelector(".aw-require-ack-note")!);
-    tick(bandBlock.querySelector(".aw-repeat-on")!);
     await new Promise((r) => setTimeout(r, 10));
-    const every = bandBlock.querySelector(".aw-repeat-every") as unknown as
-      { value: string; dispatchEvent: (e: unknown) => void };
-    every.value = "5";
-    every.dispatchEvent(new w.Event("input", { bubbles: true }));
 
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);
     const p = savedPayloads[0]! as Record<string, any>;
     expect(p.requireAckNote).toBe(false);
-    expect(p.repeat).toBeNull();
-    expect(p.severityBands[0].followUp).toEqual({
-      requireAckNote: true,
-      repeat: { everyMin: 5, stopOn: "acknowledge" },
-    });
+    expect(p.severityBands[0].followUp).toEqual({ requireAckNote: true });
     expect(() => ruleInputSchema.parse(p)).not.toThrow();
   });
 
@@ -1256,7 +1257,7 @@ describe("automation wizard DOM render", () => {
       actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
       severityBands: [{
         threshold: 95, severity: "critical", actions: [],
-        followUp: { requireAckNote: true, repeat: { everyMin: 5, stopOn: "clear" } },
+        followUp: { requireAckNote: true },
       }],
       bandNotify: { onIncrease: true, onDecrease: false, onResolved: true, resolvedMode: "reuse" },
     });
@@ -1275,11 +1276,11 @@ describe("automation wizard DOM render", () => {
   });
 
   it("a band section seeds from the base as it is NOW, not as it was at the last render", async () => {
-    // While the toggle is off the band blocks show a seed of the rule's pair.
+    // While the toggle is off the band blocks show a seed of the rule's answer.
     // Collecting that seed onto the band would freeze whatever the base said
-    // when the step last rendered — so an operator who sets the base to 5
-    // minutes and THEN asks for per-severity actions would find the critical
-    // section quietly offering the old cadence.
+    // when the step last rendered — so an operator who turns the note
+    // requirement on and THEN asks for per-severity actions would find the
+    // critical section quietly disagreeing with it.
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     const w = g.window as InstanceType<typeof Window>;
@@ -1300,29 +1301,107 @@ describe("automation wizard DOM render", () => {
     (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
 
-    // Base: reminders on, every 5 minutes. The toggle is still off.
+    // Base: require a note. The toggle is still off, so the band block on
+    // screen is a seed rendered before this click.
     const baseBlock = doc.querySelector("#aw-step-5 .aw-followup")!;
-    const on = baseBlock.querySelector(".aw-repeat-on") as unknown as
+    const on = baseBlock.querySelector(".aw-require-ack-note") as unknown as
       { checked: boolean; dispatchEvent: (e: unknown) => void };
     on.checked = true;
     on.dispatchEvent(new w.Event("change", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 10));
-    const every = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-every") as unknown as
-      { value: string; dispatchEvent: (e: unknown) => void };
-    every.value = "5";
-    every.dispatchEvent(new w.Event("input", { bubbles: true }));
 
     // Now ask for per-severity actions: the critical section shows the base as
-    // it stands, not the 15-minute default it was seeded with at first render.
+    // it stands, not the unticked default it was seeded with at first render.
     const multi = doc.querySelector("#aw-band-actions-multi") as unknown as
       { checked: boolean; dispatchEvent: (e: unknown) => void };
     multi.checked = true;
     multi.dispatchEvent(new w.Event("change", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 10));
-    const bandEvery = doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup .aw-repeat-every") as unknown as
-      { value: string };
-    expect((doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup .aw-repeat-on") as unknown as { checked: boolean }).checked).toBe(true);
-    expect(bandEvery.value).toBe("5");
+    const bandAck = doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup .aw-require-ack-note") as unknown as
+      { checked: boolean };
+    expect(bandAck.checked).toBe(true);
+  });
+
+  it("two notify actions carry two independent reminder clocks", async () => {
+    // The reason the control moved onto the row: "page the on-call every five
+    // minutes, and mail the digest once" is one automation with two honest
+    // answers, and a single per-automation cadence could not say it.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    const w = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-two-clocks",
+      name: "Two clocks",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [
+        { type: "notify", channelId: "c1", addresses: ["oncall@example.com"], repeat: { everyMin: 5, stopOn: "acknowledge" } },
+        { type: "notify", channelId: "c1", addresses: ["digest@example.com"] },
+      ],
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Each notify row has its own block, and they disagree: the first states
+    // five minutes, the second inherits nothing (the rule has no repeat).
+    const blocks = Array.from(doc.querySelectorAll("#aw-actions > .aw-action .aw-repeat"));
+    expect(blocks.length).toBe(2);
+    expect((blocks[0]!.querySelector(".aw-repeat-on") as unknown as { checked: boolean }).checked).toBe(true);
+    expect((blocks[0]!.querySelector(".aw-repeat-every") as unknown as { value: string }).value).toBe("5");
+    expect((blocks[1]!.querySelector(".aw-repeat-on") as unknown as { checked: boolean }).checked).toBe(false);
+
+    // Turn the digest on at an hour; the page's five minutes must not move.
+    const on = blocks[1]!.querySelector(".aw-repeat-on") as unknown as
+      { checked: boolean; dispatchEvent: (e: unknown) => void };
+    on.checked = true;
+    on.dispatchEvent(new w.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    const every = blocks[1]!.querySelector(".aw-repeat-every") as unknown as
+      { value: string; dispatchEvent: (e: unknown) => void };
+    every.value = "60";
+    every.dispatchEvent(new w.Event("input", { bubbles: true }));
+
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const p = savedPayloads[0]! as Record<string, any>;
+    expect(p.actions[0].repeat.everyMin).toBe(5);
+    expect(p.actions[1].repeat.everyMin).toBe(60);
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("offers no reminder control on a reset action or an escalation tier's action", async () => {
+    // Neither has anything to chase: a reset announces a recovery, and a tier
+    // already carries its own repeatEveryMin. The server schema agrees — a
+    // `repeat` key on either fails .strict() parsing — so the control must not
+    // be reachable there at all.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-no-rep-here",
+      name: "No repeat here",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
+      escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 30, actions: [{ type: "notify", channelId: "c1", addresses: ["boss@example.com"] }] }] },
+      resetActions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(doc.querySelectorAll("#aw-reset-actions .aw-repeat").length).toBe(0);
+    expect(doc.querySelectorAll("#aw-step-5 .aw-tier .aw-repeat").length).toBe(0);
+    // …and exactly one on the firing list's single notify row.
+    expect(doc.querySelectorAll("#aw-actions > .aw-action .aw-repeat").length).toBe(1);
   });
 
   it("a band's follow-up survives a round trip through the trigger step", async () => {
@@ -1345,7 +1424,7 @@ describe("automation wizard DOM render", () => {
       actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.com"] }],
       severityBands: [{
         threshold: 95, severity: "critical", actions: [],
-        followUp: { requireAckNote: true, repeat: { everyMin: 5, stopOn: "clear" } },
+        followUp: { requireAckNote: true },
       }],
       bandNotify: { onIncrease: true, onDecrease: false, onResolved: true, resolvedMode: "reuse" },
     });
@@ -1356,7 +1435,6 @@ describe("automation wizard DOM render", () => {
     expect((doc.querySelector("#aw-band-actions-multi") as unknown as { checked: boolean }).checked).toBe(true);
     const bandBlock = doc.querySelector("#aw-step-5 .aw-band-actions .aw-followup")!;
     expect((bandBlock.querySelector(".aw-require-ack-note") as unknown as { checked: boolean }).checked).toBe(true);
-    expect((bandBlock.querySelector(".aw-repeat-every") as unknown as { value: string }).value).toBe("5");
 
     // Out to step 3 and back, then save.
     (doc.querySelector('.stepper-step[data-step="3"]') as unknown as { click: () => void }).click();
@@ -1367,10 +1445,7 @@ describe("automation wizard DOM render", () => {
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);
-    expect((savedPayloads[0]! as Record<string, any>).severityBands[0].followUp).toEqual({
-      requireAckNote: true,
-      repeat: { everyMin: 5, stopOn: "clear" },
-    });
+    expect((savedPayloads[0]! as Record<string, any>).severityBands[0].followUp).toEqual({ requireAckNote: true });
   });
 
   it("email customization is a checkbox: unchecked stores NO templates", async () => {
@@ -2703,16 +2778,18 @@ describe("trigger filter rows", () => {
       expect((savedPayloads[0] as Record<string, any>).cooldownSec).toBeNull();
     });
 
-    it("labels the repeat checkbox without restating what the fields below say", async () => {
-      // "until it's handled" duplicated — less precisely — the "until
-      // Acknowledged / Cleared only" select the checkbox reveals.
+    it("labels the repeat checkbox for what it repeats, without restating the fields below", async () => {
+      // Two edits to this label, both removing a wrong answer. "until it's
+      // handled" duplicated — less precisely — the "until Acknowledged /
+      // Cleared only" select the checkbox reveals; "this notification" named
+      // the alert, when what repeats is the notify ACTION the checkbox sits on.
       await openOnStep4(metricRule({}));
       (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
       await new Promise((r) => setTimeout(r, 20));
-      const box = doc.querySelector("#aw-step-5 .aw-followup .aw-repeat-on");
+      const box = doc.querySelector("#aw-step-5 .aw-repeat .aw-repeat-on");
       expect(box).toBeTruthy();
       const label = (box as unknown as { parentElement: { textContent: string } }).parentElement.textContent.trim();
-      expect(label).toBe("Repeat this notification");
+      expect(label).toBe("Repeat this action");
     });
 
     it("a NEW event automation whose action has a known counterpart starts on the event reset", async () => {

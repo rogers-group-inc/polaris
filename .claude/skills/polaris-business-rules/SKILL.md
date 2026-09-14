@@ -97,7 +97,7 @@ before changing anything the invariant constrains.
 | 49 | An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved | invariants-30-43 | narrative-44-48 |
 | 50 | A response the app did not write is a response with the app's headers missing | invariants-30-43 | narrative-44-48 |
 | 51 | `DATABASE_URL` is a driver URL; its `sslmode` is translated into libpq's vocabulary, never copied | invariants-30-43 | narrative-44-48 |
-| 52 | A follow-up policy belongs to the severity the alert is sitting at, and silence means inherit | invariants-30-43 | narrative-44-48 |
+| 52 | What ignoring an alert costs is answered where the thing that costs it lives: the note by severity, the reminder by action | invariants-30-43 | narrative-44-48 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

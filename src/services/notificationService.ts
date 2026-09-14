@@ -14,7 +14,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { findRulesMatchingAsset } from "./notificationRuleService.js";
-import { effectiveFollowUpForSeverity, parseSeverityBands } from "./notificationTypes.js";
+import { effectiveAckNoteForSeverity, parseSeverityBands } from "./notificationTypes.js";
 import { higherAlertSeverity } from "../utils/alertSeverity.js";
 
 // Both moved to utils/tagNormalize (a leaf) so regionHierarchyService can use
@@ -88,10 +88,10 @@ type RowWithRulePolicy = { severity: string; rule?: RulePolicyRow | null };
  *  ACK_POLICY_INCLUDE note. */
 export function ackNotePolicyOf(row: RowWithRulePolicy): boolean {
   if (!row.rule) return false;
-  return effectiveFollowUpForSeverity(
+  return effectiveAckNoteForSeverity(
     { severity: row.rule.severity, severityBands: parseSeverityBands(row.rule.severityBands), requireAckNote: row.rule.requireAckNote },
     row.severity,
-  ).requireAckNote;
+  );
 }
 
 export function withAckPolicy<T extends RowWithRulePolicy>(row: T): Omit<T, "rule"> & { requireAckNote: boolean } {

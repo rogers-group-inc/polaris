@@ -4536,13 +4536,38 @@ async function openAutomationWizard(existing, opts) {
    * button, because a test Notification carries ruleId null on purpose so the
    * sweep can't enlist it.
    */
+  /**
+   * "Repeat this action" — one notify action's own reminder clock.
+   *
+   * It began life as "Repeat this notification" on the mandatory in-app-alert
+   * card, i.e. one answer for the whole automation. That is the wrong owner: a
+   * reminder re-sends NOTIFY actions and nothing else, and an automation that
+   * pages the on-call and mails a digest has two honest answers — chase the
+   * page every five minutes, leave the digest alone. So the control lives on
+   * the notify action row, and the label names what it actually repeats.
+   *
+   * Rendered only on rows in a list that FIRES (`row._awRepeatable`): an
+   * escalation tier already carries its own `repeatEveryMin`, and a reset or
+   * resolved action announces a recovery, which there is nothing to chase
+   * about. The server schema agrees — `repeat` exists only on the escalatable
+   * notify variant.
+   *
+   * Class-scoped throughout, because a severity can hold several notify rows
+   * and an id would wire all of them to the first one's state.
+   */
+  function repeatBlockHtml(r) {
+    return '<div class="aw-repeat" style="border-top:1px solid var(--color-border);margin-top:0.5rem;padding-top:0.4rem">' +
+      repeatControlHtml(r || null) +
+    '</div>';
+  }
+
   function repeatControlHtml(r) {
     var m = repeatMeta();
     r = r || null;
     return '' +
       '<label style="display:block;margin:0.6rem 0 0;font-weight:400">' +
         '<input type="checkbox" class="aw-repeat-on"' + (r ? " checked" : "") + '> ' +
-        'Repeat this notification' +
+        'Repeat this action' +
       '</label>' +
       '<div class="aw-repeat-fields" style="margin:4px 0 0 1.4rem"' + (r ? "" : ' hidden') + '>' +
         '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
@@ -4611,7 +4636,6 @@ async function openAutomationWizard(existing, opts) {
         'Require a note when acknowledging' +
       '</label>' +
       '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">Acknowledging asks what the problem was and what the fix was, and won’t go through empty. Escalation still stops on acknowledge.</p>' +
-      repeatControlHtml(cfg.repeat || null) +
     '</div>';
   }
 
@@ -4623,7 +4647,7 @@ async function openAutomationWizard(existing, opts) {
    *  operator edits from there. */
   function bandFollowUpOf(b) {
     if (b && b.followUp) return b.followUp;
-    return { requireAckNote: draft.requireAckNote === true, repeat: draft.repeat || null };
+    return { requireAckNote: draft.requireAckNote === true };
   }
 
   // ─── Quiet time ───────────────────────────────────────────────────────────
@@ -4770,14 +4794,22 @@ async function openAutomationWizard(existing, opts) {
   }
 
   /**
-   * One follow-up block → `{ requireAckNote, repeat }`, the shape a band's
-   * `followUp` stores and the rule's two fields mirror.
+   * One follow-up block → `{ requireAckNote }`, the shape a band's `followUp`
+   * stores and the rule's column mirrors.
    */
   function collectFollowUp(block) {
     var ackEl = block.querySelector(".aw-require-ack-note");
-    var out = { requireAckNote: !!(ackEl && ackEl.checked), repeat: null };
+    return { requireAckNote: !!(ackEl && ackEl.checked) };
+  }
+
+  /** One `.aw-repeat` block → that action's repeat config, or null for "this
+   *  action does not repeat". Never undefined: an action the builder has shown
+   *  the control for states its answer explicitly, so it stops inheriting the
+   *  rule's. */
+  function collectRepeat(block) {
+    if (!block) return null;
     var repOn = block.querySelector(".aw-repeat-on");
-    if (!repOn || !repOn.checked) return out;
+    if (!repOn || !repOn.checked) return null;
     var every = Number((block.querySelector(".aw-repeat-every") || {}).value);
     var stopOnEl = block.querySelector(".aw-repeat-stopon");
     var afterRaw = (block.querySelector(".aw-repeat-stopafter") || {}).value;
@@ -4795,13 +4827,70 @@ async function openAutomationWizard(existing, opts) {
     // reminders off drops the windows with them.
     var quiet = collectQuiet(block);
     if (quiet) rep.quiet = quiet;
-    out.repeat = rep;
-    return out;
+    return rep;
   }
 
   /** Every follow-up block on the step, base section first. */
   function followUpBlocks(panel) {
     return Array.prototype.slice.call((panel || document).querySelectorAll(".aw-followup"));
+  }
+
+  /** Every repeat block on the step — one per notify row in a firing list. */
+  function repeatBlocks(panel) {
+    return Array.prototype.slice.call((panel || document).querySelectorAll(".aw-repeat"));
+  }
+
+  /**
+   * Wire ONE repeat block: the four inputs, the quiet-time editor and the live
+   * volume note.
+   *
+   * `cfg` is the config the block was RENDERED from — needed only to re-stash
+   * the API-authored quiet windows the editor shows read-only and re-sends
+   * verbatim. Everything else is read back out of the DOM.
+   *
+   * Called from addActionRow rather than from the step render, because a notify
+   * row can be added, have its type changed, or have its channels re-rendered
+   * at any point after the panel is built.
+   */
+  function wireRepeatBlock(block, cfg) {
+    if (!block) return;
+    [".aw-repeat-on", ".aw-repeat-every", ".aw-repeat-stopon", ".aw-repeat-stopafter"].forEach(function (sel) {
+      var el = block.querySelector(sel);
+      if (!el) return;
+      el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", function () {
+        syncRepeatNote(block);
+      });
+    });
+    // Quiet time: the shared editor owns its own rows and their handlers
+    // (window.PolarisRecurrence.wire delegates on the host, so adding and removing
+    // hour ranges needs nothing from here) and calls back on every change.
+    stashQuietWindows(block, cfg || null);
+    var quietOn = block.querySelector(".aw-quiet-on");
+    var quietFields = block.querySelector(".aw-quiet-fields");
+    var quietHost = block.querySelector(".aw-quiet-editor");
+    if (quietOn) {
+      quietOn.addEventListener("change", function () {
+        if (quietFields) quietFields.hidden = !quietOn.checked;
+        syncRepeatNote(block);
+      });
+    }
+    if (quietHost) {
+      window.PolarisRecurrence.wire(quietHost, function () { syncRepeatNote(block); });
+    }
+    var quietExtras = block.querySelector(".aw-quiet-extras");
+    if (quietExtras) {
+      quietExtras.addEventListener("click", function (ev) {
+        var btn = ev.target.closest && ev.target.closest(".aw-quiet-extra-remove");
+        if (!btn) return;
+        // Removing an API-authored window is explicit, and only removal is
+        // offered: this wizard cannot express one, so any "edit" it allowed
+        // would be a rewrite into something else.
+        var row = btn.closest(".aw-quiet-extra");
+        if (row) row.remove();
+        syncRepeatNote(block);
+      });
+    }
+    syncRepeatNote(block);
   }
 
   /** The live volume line + the two conditional warnings. */
@@ -4811,7 +4900,7 @@ async function openAutomationWizard(existing, opts) {
     // recipient) has to do: the warnings below read the whole draft, so one
     // section's edit can change what another section's note should say.
     if (!block) {
-      followUpBlocks(document.getElementById("aw-step-5")).forEach(syncRepeatNote);
+      repeatBlocks(document.getElementById("aw-step-5")).forEach(syncRepeatNote);
       return;
     }
     var on = block.querySelector(".aw-repeat-on");
@@ -5061,9 +5150,9 @@ async function openAutomationWizard(existing, opts) {
     var host = panel.querySelector("#aw-actions");
     // escalatable=false: the chain lives on the section now (see escSectionHtml
     // above), so an action row carries no footer of its own.
-    (draft.actions || []).forEach(function (a) { addActionRow(host, a, false); });
+    (draft.actions || []).forEach(function (a) { addActionRow(host, a, false, true); });
     panel.querySelector("#aw-add-action").addEventListener("click", function () {
-      foldActionRow(addActionRow(host, null, false), false);
+      foldActionRow(addActionRow(host, null, false, true), false);
       syncResetMirror(panel);
     });
     // The reset list follows the trigger list as it is BUILT: picking a channel
@@ -5079,8 +5168,8 @@ async function openAutomationWizard(existing, opts) {
 
     panel.querySelectorAll(".aw-band-actions").forEach(function (sec, i) {
       var bHost = sec.querySelector(".ba-actions");
-      (((draft.severityBands || [])[i] || {}).actions || []).forEach(function (a) { addActionRow(bHost, a, false); });
-      sec.querySelector(".ba-add").addEventListener("click", function () { foldActionRow(addActionRow(bHost, null, false), false); });
+      (((draft.severityBands || [])[i] || {}).actions || []).forEach(function (a) { addActionRow(bHost, a, false, true); });
+      sec.querySelector(".ba-add").addEventListener("click", function () { foldActionRow(addActionRow(bHost, null, false, true), false); });
     });
     // Reset list: hydrate, then keep it following the trigger actions.
     var resetHost = panel.querySelector("#aw-reset-actions");
@@ -5125,57 +5214,15 @@ async function openAutomationWizard(existing, opts) {
       refreshMirrorNote(panel);
     });
 
-    // One follow-up block per severity section, each wired to its own state.
-    // `collectStep5` on every change (not just on the toggle) because a band's
-    // block writes onto `band.followUp`, and a re-render — which the per-
-    // severity toggle can cause at any moment — reads the draft, not the DOM.
-    followUpBlocks(panel).forEach(function (block, bi) {
-      // The base block's windows come from the rule's repeat; each band's from
-      // its own (seeded from the rule's when it has none yet).
-      var cfg = bi === 0 ? (draft.repeat || null) : bandFollowUpOf(bands[bi - 1]).repeat;
-      [".aw-require-ack-note", ".aw-repeat-on", ".aw-repeat-every", ".aw-repeat-stopon", ".aw-repeat-stopafter"].forEach(function (sel) {
-        var el = block.querySelector(sel);
-        if (!el) return;
-        el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", function () {
-          collectStep5();
-          syncRepeatNote(block);
-        });
-      });
-      // Quiet time: the shared editor owns its own rows and their handlers
-      // (window.PolarisRecurrence.wire delegates on the host, so adding and removing
-      // hour ranges needs nothing from here) and calls back on every change.
-      stashQuietWindows(block, cfg);
-      var quietOn = block.querySelector(".aw-quiet-on");
-      var quietFields = block.querySelector(".aw-quiet-fields");
-      var quietHost = block.querySelector(".aw-quiet-editor");
-      if (quietOn) {
-        quietOn.addEventListener("change", function () {
-          if (quietFields) quietFields.hidden = !quietOn.checked;
-          collectStep5();
-          syncRepeatNote(block);
-        });
-      }
-      if (quietHost) {
-        window.PolarisRecurrence.wire(quietHost, function () {
-          collectStep5();
-          syncRepeatNote(block);
-        });
-      }
-      var quietExtras = block.querySelector(".aw-quiet-extras");
-      if (quietExtras) {
-        quietExtras.addEventListener("click", function (ev) {
-          var btn = ev.target.closest && ev.target.closest(".aw-quiet-extra-remove");
-          if (!btn) return;
-          // Removing an API-authored window is explicit, and only removal is
-          // offered: this wizard cannot express one, so any "edit" it allowed
-          // would be a rewrite into something else.
-          var row = btn.closest(".aw-quiet-extra");
-          if (row) row.remove();
-          collectStep5();
-          syncRepeatNote(block);
-        });
-      }
-      syncRepeatNote(block);
+    // One follow-up block per severity section — just the ack-note checkbox
+    // now, the reminder half having moved onto the notify rows (wired by
+    // addActionRow, since a row can appear long after this render).
+    // `collectStep5` on every change because a band's block writes onto
+    // `band.followUp`, and a re-render — which the per-severity toggle can
+    // cause at any moment — reads the draft, not the DOM.
+    followUpBlocks(panel).forEach(function (block) {
+      var ack = block.querySelector(".aw-require-ack-note");
+      if (ack) ack.addEventListener("change", function () { collectStep5(); });
     });
     var perSevCb = panel.querySelector("#aw-band-actions-multi");
     if (perSevCb) {
@@ -6242,7 +6289,7 @@ async function openAutomationWizard(existing, opts) {
     }
   }
 
-  function addActionRow(host, action, escalatable) {
+  function addActionRow(host, action, escalatable, repeatable) {
     action = action || { type: "notify", channelId: channels.length ? channels[0].id : "" };
     var types = availableActionTypes();
     var row = document.createElement("div");
@@ -6264,6 +6311,10 @@ async function openAutomationWizard(existing, opts) {
       // goes "unhandled" — and the server schema gives `event` no escalation
       // key at all, so rendering the footer would produce an unsavable action.
       (escalatable && action.type !== "event" ? escSectionHtml() : "");
+    // Whether this row's list FIRES, which is what decides if a notify action
+    // may carry a reminder clock. Stashed rather than passed down because
+    // renderActionFields is also the re-render path for a channel change.
+    row._awRepeatable = !!repeatable;
     host.appendChild(row);
     // Set the value explicitly rather than trusting the `selected` attribute
     // written via innerHTML: the collector reads .value, and relying on
@@ -6285,7 +6336,7 @@ async function openAutomationWizard(existing, opts) {
       var host2 = row.parentNode;
       var anchor = row.nextSibling;
       row.remove();
-      var rebuilt = addActionRow(host2, next === "event" ? { type: "event" } : { type: next, escalation: esc }, escalatable);
+      var rebuilt = addActionRow(host2, next === "event" ? { type: "event" } : { type: next, escalation: esc }, escalatable, repeatable);
       foldActionRow(rebuilt, false); // mid-edit: the operator just changed its type
       // addActionRow appends; move the rebuilt row back to where it was.
       if (anchor) host2.insertBefore(host2.lastChild, anchor);
@@ -6297,6 +6348,12 @@ async function openAutomationWizard(existing, opts) {
     // the panel render would otherwise have unwired ones (wireTokenPalette is
     // idempotent — it marks what it has already bound).
     wireTokenPalette(row);
+    if (row._awRepeatable) {
+      wireRepeatBlock(
+        row.querySelector(":scope > .aw-action-fields > .aw-repeat"),
+        action.repeat !== undefined ? action.repeat : (draft.repeat || null),
+      );
+    }
     if (escalatable && action.type !== "event") wireEscSection(row.querySelector(":scope > .aw-esc-sec"), action.escalation || null);
     row.querySelector(":scope > div > .aw-collapse").addEventListener("click", function () {
       foldActionRow(row, !row._awFolded);
@@ -6891,7 +6948,16 @@ async function openAutomationWizard(existing, opts) {
               '<textarea class="na-html tpl-field" data-body-mode="html" rows="14" style="width:100%;display:none;font-family:var(--font-mono);font-size:0.8rem">' + escapeHtml(compValue(comp, "bodyHtmlTemplate")) + '</textarea>' +
             '</div>' +
           '</div>' +
-        '</div>';
+        '</div>' +
+        // Last in the row, under everything that decides WHAT this action sends
+        // and to whom — "and keep doing it" is the question you ask after those,
+        // not before. Seeded from the rule's `repeat` when the action states
+        // none, which is every automation authored before reminders became
+        // per-action: it opens showing the cadence it has been running on, and
+        // saving from here writes that answer onto the action itself.
+        (row._awRepeatable
+          ? repeatBlockHtml(action.repeat !== undefined ? action.repeat : (draft.repeat || null))
+          : "");
       box.innerHTML = html;
       var renderRecipients = function () {
         // The action's channels, as a SET of capabilities rather than one type.
@@ -7228,6 +7294,14 @@ async function openAutomationWizard(existing, opts) {
     // .aw-esc-sec, and :scope keeps a nested tier's sections out of reach).
     var esc = collectEscSection(row.querySelector(":scope > .aw-esc-sec"));
     if (esc) a.escalation = esc;
+    // Per-action reminders, on rows in a list that FIRES only. Written even
+    // when it is null, which is the point: a row the operator has seen the
+    // control on has stated an answer, so it stops inheriting the rule's
+    // `repeat` — and `repeatForAction` distinguishes "said no" from "said
+    // nothing" by exactly that presence.
+    if (row._awRepeatable && t === "notify") {
+      a.repeat = collectRepeat(row.querySelector(":scope > .aw-action-fields > .aw-repeat"));
+    }
     return a;
   }
   function collectActionCore(t, box) {
@@ -7415,15 +7489,11 @@ async function openAutomationWizard(existing, opts) {
     // draft always carries null, so saving through the wizard clears one an
     // older rule still stored.
     draft.cooldownSec = null;
-    // The BASE severity section's follow-up pair IS the rule-level pair — the
-    // one the engine resolves for an alert sitting at the base severity, and
-    // the one every band inherits when it says nothing of its own.
+    // The BASE severity section's ack-note answer IS the rule-level one — what
+    // the engine resolves for an alert sitting at the base severity, and what
+    // every band inherits when it says nothing of its own.
     var baseBlock = followUpBlocks(panel)[0];
-    if (baseBlock) {
-      var baseFU = collectFollowUp(baseBlock);
-      draft.requireAckNote = baseFU.requireAckNote;
-      draft.repeat = baseFU.repeat;
-    }
+    if (baseBlock) draft.requireAckNote = collectFollowUp(baseBlock).requireAckNote;
     // The BASE severity section's chain is the rule-level escalation (the engine
     // resolves it for an alert sitting at the base severity).
     var baseSecC = panel.querySelector("#aw-actions") && panel.querySelector("#aw-actions").closest(".form-group");
@@ -7431,6 +7501,15 @@ async function openAutomationWizard(existing, opts) {
       ? collectEscSection(baseSecC.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"))
       : null;
     draft.actions = collectActionsFrom(host);
+    // MIGRATE-ON-EDIT. Every notify row on this step has just written its own
+    // answer, so the rule-level column that used to be the single clock is
+    // retired for this automation — leaving it would be dead data that
+    // `repeatForAction` can never reach and that a later reader would have to
+    // guess the meaning of. It is cleared HERE and not in buildPayload on
+    // purpose: an operator who edits the name on step 1 and saves never runs
+    // this collect, so their automation keeps inheriting exactly as it did.
+    // Nothing is rewritten behind anyone's back — only what they have looked at.
+    draft.repeat = null;
     // Per-severity sections write back onto their bands — and onto the step-3
     // band DOM rows' stash, so a later step-3 re-collect (collectBands) can't
     // lose them. Sections render in draft.severityBands order, which matches
@@ -7715,25 +7794,28 @@ async function openAutomationWizard(existing, opts) {
     // arriving overnight to find out. `quietEditorProblem` names the day, and
     // the overlapping pair of hours, in the same words the server would.
     var panel5 = document.getElementById("aw-step-5");
-    // Each severity section states its own quiet time, so each gets checked —
-    // but only the sections that SAVE. With the per-severity toggle off the
-    // band blocks are hidden and payloadBands drops what they hold, so a
-    // half-typed day in one of them must not block the save.
-    var blocks = followUpBlocks(panel5);
-    var checked = bandActionsPerSeverityOn() ? blocks : blocks.slice(0, 1);
-    for (var q = 0; q < checked.length; q++) {
-      var repeatOn = checked[q].querySelector(".aw-repeat-on");
-      var quietOn = checked[q].querySelector(".aw-quiet-on");
+    // Each repeating notify action states its own quiet time, so each gets
+    // checked — but only the ones that SAVE. With the per-severity toggle off
+    // the band sections are hidden and payloadBands drops their actions
+    // wholesale, so a half-typed day inside one must not block the save.
+    var blocks = repeatBlocks(panel5).filter(function (b) {
+      return bandActionsPerSeverityOn() || !b.closest(".aw-band-actions");
+    });
+    for (var q = 0; q < blocks.length; q++) {
+      var repeatOn = blocks[q].querySelector(".aw-repeat-on");
+      var quietOn = blocks[q].querySelector(".aw-quiet-on");
       // Only while reminders are ON: with the repeat control unticked the whole
       // block is hidden and its windows are dropped on purpose, so a leftover
       // tick in the DOM must not block the save.
       if (repeatOn && repeatOn.checked && quietOn && quietOn.checked) {
-        var quietProblem = quietEditorProblem(checked[q]);
+        var quietProblem = quietEditorProblem(blocks[q]);
         if (quietProblem) {
-          // Name the severity, or the operator has one message and four places
-          // to look for the day it is about.
-          var sevLabel = q === 0 ? "" : ((draft.severityBands || [])[q - 1] || {}).severity;
-          return (sevLabel ? sevLabel + " — " : "") + quietProblem;
+          // Name the action, or the operator has one message and several rows
+          // to look through for the day it is about.
+          var owner = blocks[q].closest(".aw-action");
+          var summary = owner && owner.querySelector(".aw-action-summary");
+          var label = summary && summary.textContent ? summary.textContent.trim() : "";
+          return (label ? label + " — " : "") + quietProblem;
         }
       }
     }
@@ -7804,32 +7886,44 @@ async function openAutomationWizard(existing, opts) {
     // Each severity's line is prefixed with the severity ONLY when the bands
     // carry their own — otherwise there is one answer and naming a severity
     // would imply the others differ.
-    var followUpTiers = [{ label: "", fu: { requireAckNote: draft.requireAckNote, repeat: draft.repeat } }];
+    var followUpTiers = [{ label: "", fu: { requireAckNote: draft.requireAckNote } }];
     if (perSevActions) {
       (draft.severityBands || []).forEach(function (b) {
         if (b.followUp) followUpTiers.push({ label: b.severity, fu: b.followUp });
       });
       if (followUpTiers.length > 1) followUpTiers[0].label = draft.severity;
     }
-    var sevPrefix = function (t) {
-      return t.label ? '<span style="color:' + escapeHtml(sevColor(t.label)) + '">' + escapeHtml(t.label) + '</span> — ' : "";
+    var sevPrefix = function (label) {
+      return label ? '<span style="color:' + escapeHtml(sevColor(label)) + '">' + escapeHtml(label) + '</span> — ' : "";
     };
     var ackNoteLines = followUpTiers.filter(function (t) { return t.fu && t.fu.requireAckNote; })
-      .map(function (t) { return sevPrefix(t) + "requires a note"; });
+      .map(function (t) { return sevPrefix(t.label) + "requires a note"; });
     var ackNoteRow = ackNoteLines.length
       ? '<dt>Acknowledging</dt><dd>' + ackNoteLines.join("<br>") + '</dd>'
       : "";
-    // The quiet time is part of the REMINDER answer, not a row of its own:
-    // "every 15 min" and "paused overnight" together are what the reader is
-    // checking before they save.
-    var repeatLines = followUpTiers.filter(function (t) { return t.fu && t.fu.repeat; }).map(function (t) {
-      var r = t.fu.repeat;
+    // Reminders are per ACTION now, so the row names the action it belongs to
+    // — a reader checking "will this chase me" needs to know which of two
+    // notifies does. The quiet time rides the same line rather than a row of
+    // its own: "every 15 min" and "paused overnight" together are the one
+    // answer they are after.
+    var repeatSources = (draft.actions || []).map(function (a) { return { label: "", action: a }; });
+    if (perSevActions) {
+      (draft.severityBands || []).forEach(function (b) {
+        (b.actions || []).forEach(function (a) { repeatSources.push({ label: b.severity, action: a }); });
+      });
+    }
+    var repeatLines = repeatSources.filter(function (x) {
+      return x.action && x.action.type === "notify" && x.action.repeat;
+    }).map(function (x) {
+      var r = x.action.repeat;
       var quietWins = (r.quiet && r.quiet.windows) || [];
-      return sevPrefix(t) + 'every ' + escapeHtml(String(r.everyMin)) + ' min until ' +
+      return sevPrefix(x.label) + escapeHtml(actionSummary(x.action)) +
+        '<br><span style="margin-left:1rem">every ' + escapeHtml(String(r.everyMin)) + ' min until ' +
         (r.stopOn === "clear" ? "cleared" : "acknowledged") +
         (r.stopAfterHours ? ", giving up after " + escapeHtml(String(r.stopAfterHours)) + "h" : " — no limit") +
+        '</span>' +
         (quietWins.length
-          ? '<br><span style="color:var(--color-text-tertiary)">held during ' +
+          ? '<br><span style="margin-left:1rem;color:var(--color-text-tertiary)">held during ' +
               quietWins.map(function (w) { return escapeHtml(quietSummary(w)); }).join("; ") +
               ' (server time); the next reminder after that says how long the alert has been active</span>'
           : "");
