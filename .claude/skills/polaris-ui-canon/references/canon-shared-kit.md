@@ -135,5 +135,10 @@ canvases).
   border and no background, which was invisible while modals were opaque and showed the
   blurred page through the tag chips the moment they were not. When adding a container inside
   a panel, name a background token even when the panel's own colour looks right.
+  The Device Map topology modal's details aside (`.topology-info`) was the second case and
+  the more visible one: a whole 320px column of detail rows read through the glass while the
+  graph half beside it painted an opaque `--color-bg-secondary`, so the two halves of one
+  modal looked like different materials. It now mixes `--color-bg-primary` at 90% — a pane
+  that holds text wants a near-solid ground, not the panel's own 50/40% glass.
 
 ## Theme-paired image asset with one resolver
