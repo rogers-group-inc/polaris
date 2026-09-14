@@ -68,3 +68,26 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 **When adding a new instance:** reuse the threshold, the rAF coalescing, and the top-align flip verbatim — the failure modes above are all silent. Anything inside a scroll container that already has room to scroll doesn't need this at all; the browser's own scroll-into-view handles it.
 
 ---
+
+## Theme strip (the phone's theme control)
+
+**What it is:** The desktop theme dial's clockface unrolled into a flat strip that travels LEFT under a fixed centre marker, on the More tab under “Appearance”. One tap steps to the next selectable theme; there is no menu and no on/off state. It replaced a two-line Dark/Light row.
+
+**Canonical implementation:** `window.PolarisTheme` in [public/js/mobile/app.js](public/js/mobile/app.js) — `set()` / `advance()` / `seatStrips()` / `get()`, with `_paintThemeStrips()` and `_advanceThemeStrips()` doing the travel; markup in `renderMenu()` in [public/js/mobile/more-tab.js](public/js/mobile/more-tab.js); `.theme-strip*` rules in [public/css/mobile.css](public/css/mobile.css). The desktop counterpart is `advanceTheme()` + `.theme-wheel` in [public/js/app.js](public/js/app.js) — same clock, same palettes, same one-way rule, different geometry.
+
+**Key conventions:**
+- **The art is repeated THREE times in the track.** `_paintThemeStrips` anchors the track one strip width left of the marker, so copy two sits under it and copies one and three cover the window on either side. With two copies the right-hand half of the window falls off the end of the art as the position approaches the seam, and bare surface shows beside the engraving. (The kit's own CSS comment and apply-prompt say “twice”; its JS says three and its arithmetic requires three. Three is right.)
+- **The seam is what makes a finite strip endless.** The art loops, so travelling past the end of one copy lands on identical pixels in the next; once a leg lands past it the JS subtracts exactly ONE strip width with the transition switched off. It has to be a whole strip (anything else lands on different pixels and the jump is visible) and it must never run mid-transition — `_advanceThemeStrips` settles an owed normalisation before measuring the next leg, or that leg starts a full strip width from where it looks.
+- **Positions are quarter-spaced** (`THEME_STRIP_POS`): the engraving is a 24-hour clock, so six hours is a quarter of it and the two faces land half a strip apart. Editing one position alone puts the marker beside a face instead of on it — keep the spacing and move the anchor.
+- **Forward only.** A target “behind” the current position is reached by continuing off the end of the strip, never by running backwards; that is the whole reason the day reads as moving forward.
+- **Widths are MEASURED, not assumed** — the art is a 2x asset sized by height, so its rendered width depends on the row height and the device pixel ratio. Before the image loads there is nothing to measure, so the painter re-seats on its `load` event rather than giving up; otherwise the first tap travels from the strip's left edge instead of from the theme showing.
+- **The tap is delegated** from `document`. Never add a listener to a `.theme-strip` as well — one tap would advance two themes.
+- **A strip rendered after boot must be seated.** The More tab is built on demand, so `renderMenu` calls `PolarisTheme.seatStrips()`; without it the track has no position until something else paints it.
+- **The caption span carries BOTH classes** — `.name` is what the CSS styles, `.theme-strip-name` is what `PolarisTheme.set` repaints by class so every strip on the page updates. An id there matches only one and the caption silently stops following the theme.
+- **`PolarisTheme.get()` answers a FAMILY and resolves it through the theme list**, never by naming ids. map-tab's basemap pair and topology-tab's node palette both read it, and the `afternoon` waypoint has to answer “light” or both flip to dark halfway through the sweep.
+- **A transit palette is applied but never persisted**, so a reload mid-sweep lands on a real theme rather than on a waypoint nothing can name.
+- **`data-theme` now changes once PER LEG, not once per tap.** Anything watching it with a MutationObserver — map-tab's basemap swap and topology-tab's graph re-render both do — runs twice across a noon → nightfall sweep. Both are safe today (the strip lives on the More tab, so neither surface is open when it is tapped, and morning/noon/afternoon are all one basemap family so the tiles swap once), but a new observer that does expensive work per change has to expect a waypoint, and a new TRANSIT theme in a different family would make the basemap flip mid-sweep. Prefer the `themechange` event or a family comparison over reacting to every attribute write.
+
+**When adding a new instance:** there should only be one, but a second surface rendering a `.theme-strip` needs no wiring — the delegated listener and the class-wide repaint already cover it; just call `PolarisTheme.seatStrips()` once it is in the DOM. Adding a THEME means a `MOBILE_THEMES` (or `MOBILE_TRANSIT_THEMES`) entry, a `THEME_STRIP_POS` position, a `--md-*` block in mobile.css, and the desktop's matching `THEMES` / `THEME_WHEEL_ANGLE` / token block — the two surfaces' theme lists move together.
+
+---

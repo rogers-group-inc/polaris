@@ -98,7 +98,7 @@
    topology node colors in topology-render.js) deliberately stay literal
    in their component blocks — they're status colors, not theme colors,
    and need the same hue regardless of basemap. */
-:is([data-theme="morning"],[data-theme="noon"]) {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) {
   --md-primary:                 #005ac1;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #d8e2ff;
@@ -141,6 +141,102 @@
   --md-sev-serious:             #b35c00;
 
   --user-pin-stroke:            #1f2937;
+}
+
+/* ─── Daylight palettes, mapped from the desktop set ───────────────────────
+   These are NOT new colours. Each value is the desktop theme’s own token
+   (styles.css) under mobile’s Material name, so one palette is decided once
+   and both surfaces read the same hues:
+
+     --md-surface              ← --color-bg-primary
+     --md-surface-cont-lowest  ← --color-surface
+     --md-surface-cont-low     ← --color-bg-tertiary
+     --md-surface-cont         ← --color-bg-elevated
+     --md-surface-cont-high    ← --color-bg-secondary
+     --md-surface-cont-highest ← --color-border-light
+     --md-on-surface           ← --color-text-primary
+     --md-on-surface-variant   ← --color-text-secondary
+     --md-outline              ← --color-text-tertiary
+     --md-outline-variant      ← --color-border
+     --md-primary              ← --color-accent
+     --md-success/warning/error ← --color-success/warning/danger
+
+   Mobile used to ship ONE light palette for every daylight id. The theme
+   strip ended that: it makes the day visible, so morning, noon and the
+   afternoon waypoint each need their own hues — with one palette, two thirds
+   of the strip’s journey changed nothing on screen. Everything not listed in
+   a block below stays on the shared daylight block above, which these must
+   follow in SOURCE ORDER: `[data-theme="morning"]` and the `:is(…)` base have
+   the same specificity, so order is the only thing making these win.
+   ─────────────────────────────────────────────────────────────────── */
+
+/* Morning — parchment and burnished gold, softest contrast. */
+[data-theme="morning"] {
+  --md-primary:                 #b5811a;
+  --md-on-primary:              #ffffff;
+  --md-primary-container:       #eaddc9;
+  --md-on-primary-container:    #2e2415;
+
+  --md-surface:                 #f7efe1;
+  --md-surface-cont-lowest:     #fffaf1;
+  --md-surface-cont-low:        #f3e9d9;
+  --md-surface-cont:            #f1e6d4;
+  --md-surface-cont-high:       #efe4d1;
+  --md-surface-cont-highest:    #eaddc9;
+  --md-on-surface:              #2e2415;
+  --md-on-surface-variant:      #6b5a41;
+  --md-outline:                 #9c8a6c;
+  --md-outline-variant:         #dcccb2;
+
+  --md-success:                 #4b7a2f;
+  --md-warning:                 #cf7a15;
+  --md-error:                   #b0301d;
+}
+/* Noon — near-white, terracotta, the highest contrast of any palette. */
+[data-theme="noon"] {
+  --md-primary:                 #b5451c;
+  --md-on-primary:              #ffffff;
+  --md-primary-container:       #eee5d9;
+  --md-on-primary-container:    #201612;
+
+  --md-surface:                 #fbf6f0;
+  --md-surface-cont-lowest:     #ffffff;
+  --md-surface-cont-low:        #f7f1e9;
+  --md-surface-cont:            #f6efe5;
+  --md-surface-cont-high:       #f2ebe2;
+  --md-surface-cont-highest:    #eee5d9;
+  --md-on-surface:              #201612;
+  --md-on-surface-variant:      #5a453c;
+  --md-outline:                 #8f7367;
+  --md-outline-variant:         #ded1c1;
+
+  --md-success:                 #2f7d4f;
+  --md-warning:                 #c96a00;
+  --md-error:                   #9b1c1c;
+}
+/* Afternoon — TRANSIT ONLY, never selectable: the strip fades THROUGH this
+   between noon and nightfall, so it has to be the strongest shift of the four
+   or the middle of the sweep passes unseen. */
+[data-theme="afternoon"] {
+  --md-primary:                 #c33d15;
+  --md-on-primary:              #ffffff;
+  --md-primary-container:       #e4c2b0;
+  --md-on-primary-container:    #33150e;
+
+  --md-surface:                 #f0d7cb;
+  --md-surface-cont-lowest:     #fceae0;
+  --md-surface-cont-low:        #ebd0c2;
+  --md-surface-cont:            #e9cabb;
+  --md-surface-cont-high:       #e3c5b7;
+  --md-surface-cont-highest:    #e4c2b0;
+  --md-on-surface:              #33150e;
+  --md-on-surface-variant:      #6d3324;
+  --md-outline:                 #a06050;
+  --md-outline-variant:         #d4a894;
+
+  --md-success:                 #4a7238;
+  --md-warning:                 #c05a00;
+  --md-error:                   #9e1a14;
 }
 
 * { box-sizing: border-box; }
@@ -1636,4 +1732,157 @@ button, .list-item, .chip { touch-action: manipulation; }
     font: 500 16px/1.4 "Inter", "Roboto", system-ui, sans-serif;
     letter-spacing: 0.25px;
   }
+}
+
+/* ─── Theme strip ───────────────────────────────────────────────
+   The phone’s version of the desktop’s theme dial, unrolled. Same clock, same
+   palettes, same one-way rule — a flat 24-hour engraving
+   (/img/brand/time-strip.png) that always travels LEFT, so the window advances
+   forward through the day: sun face → red afternoon → moon face → dawn rays →
+   sun again. Positions live in THEME_STRIP_POS (mobile/app.js) as fractions of
+   the strip’s width, and a tap moves the strip to the next selectable theme’s
+   position.
+
+   THE FINITE-STRIP TRICK: the track holds the SAME image THREE times, side by
+   side, and the art is drawn to loop (the dawn rays at the right run straight
+   into the sun face at the left). Travel past the end of one copy therefore
+   shows identical content in the next, and once a leg lands past the seam the
+   JS subtracts exactly one strip width with the transition switched off. The
+   jump is invisible because the pixel under every point is the same — that,
+   and not a longer image, is what makes an endless leftward strip out of a
+   finite one.
+
+   THREE copies and not two: paintThemeStrips anchors the track one strip width
+   left of the marker, so copy two sits under it and copies one and three cover
+   the window on either side. With two copies the right-hand half of the window
+   falls off the end of the art as _stripPos approaches 1 — just before the
+   seam is normalised away — and bare surface shows beside the engraving. Never
+   let the track hold fewer than three, and never normalise mid-transition.
+
+   The marker does not move; the strip does. Height is a touch target in its
+   own right (72px, comfortably over the 44px floor). ─────────────────── */
+.theme-strip {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 72px;
+  padding: 0;
+  border: none;
+  background: var(--md-surface-cont-low);
+  overflow: hidden;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.theme-strip-track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  display: flex;
+  width: max-content;
+  /* Duration MUST equal THEME_FADE_MS — the strip and the palette have to
+     arrive together, and a multi-leg turn makes any mismatch obvious. The
+     easing is overridden per leg by the data-theme-fading phase rules. */
+  transition: transform 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.theme-strip-track img {
+  height: 100%;
+  width: auto;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* Centre marker: two short rules top and bottom rather than a full-height
+   line, so the engraving is never cut in half by its own selector. */
+.theme-strip-marker {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--md-primary), var(--md-primary)) top / 2px 10px no-repeat,
+    linear-gradient(var(--md-primary), var(--md-primary)) bottom / 2px 10px no-repeat;
+}
+/* Edge fades, on the window and never on the track — a mask on the track
+   travels with it and would fade a moving slice of the art instead of the
+   ends of the window. */
+.theme-strip::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to right,
+    var(--md-surface) 0%, rgba(0,0,0,0) 18%,
+    rgba(0,0,0,0) 82%, var(--md-surface) 100%);
+}
+.theme-strip-row { background: var(--md-surface); }
+.theme-strip-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px 14px;
+}
+.theme-strip-caption .name {
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: .15px;
+  color: var(--md-on-surface);
+}
+.theme-strip-caption .hint {
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: .4px;
+  color: var(--md-on-surface-variant);
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-strip-track { transition: none; }
+}
+
+/* ─── Theme crossfade (mobile) ──────────────────────────────────────
+   The same contract as the desktop layer in styles.css, repeated here because
+   a phone document loads only this stylesheet. The palette eases from one time
+   of day to the next while the strip travels, and the transition exists ONLY
+   during a change — data-theme-fading is put on <html> by PolarisTheme.set()
+   and dropped when the fade lands. Color properties only, never `all`: `all`
+   would animate layout on anything that also changes size with the theme.
+   Keep the duration in step with THEME_FADE_MS. ──────────────────────── */
+html[data-theme-fading] *:not(.theme-strip-track),
+html[data-theme-fading] *:not(.theme-strip-track)::before,
+html[data-theme-fading] *:not(.theme-strip-track)::after {
+  transition: background-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              border-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              fill 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              stroke 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              box-shadow 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+/* Phase easing for a multi-leg turn: accelerate once at the start, run at
+   constant speed through the waypoint, decelerate once at the end, so
+   noon → afternoon → nightfall is one sweep and not two changes with a stop
+   between them. The `:not(.theme-strip-track)` is load-bearing — it is what
+   gives these rules the specificity of the block above, whose shorthand
+   `transition` would otherwise re-assert the full ease. The track is then
+   matched again by name so it keeps the same curve. */
+html[data-theme-fading="in"] *:not(.theme-strip-track),
+html[data-theme-fading="in"] *:not(.theme-strip-track)::before,
+html[data-theme-fading="in"] *:not(.theme-strip-track)::after,
+html[data-theme-fading="in"] .theme-strip-track { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+html[data-theme-fading="mid"] *:not(.theme-strip-track),
+html[data-theme-fading="mid"] *:not(.theme-strip-track)::before,
+html[data-theme-fading="mid"] *:not(.theme-strip-track)::after,
+html[data-theme-fading="mid"] .theme-strip-track { transition-timing-function: linear; }
+html[data-theme-fading="out"] *:not(.theme-strip-track),
+html[data-theme-fading="out"] *:not(.theme-strip-track)::before,
+html[data-theme-fading="out"] *:not(.theme-strip-track)::after,
+html[data-theme-fading="out"] .theme-strip-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme-fading] *:not(.theme-strip-track),
+  html[data-theme-fading] *:not(.theme-strip-track)::before,
+  html[data-theme-fading] *:not(.theme-strip-track)::after { transition: none; }
 }

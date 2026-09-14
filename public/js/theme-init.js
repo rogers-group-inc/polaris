@@ -10,6 +10,9 @@
 // A retired theme id (the old "dark"/"light") fails the KNOWN check and falls
 // back the same way as no preference at all.
 (function () {
+  // The selectable themes only. "afternoon" is deliberately absent: it is a
+  // transit palette the dial fades through, never a saved preference, so a
+  // reload mid-turn lands on a real theme instead of a waypoint.
   var KNOWN = ["morning", "noon", "nightfall"];
   var saved = null;
   try { saved = localStorage.getItem("polaris-theme"); } catch (e) {}

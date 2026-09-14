@@ -2,27 +2,55 @@
  * public/js/app.js — Shared UI utilities: nav, toasts, modals, helpers
  */
 
-// ─── Theme ──────────────────────────────────────────────────────────────────
+// ─── Theme ────────────────────────────────────────────────
 //
-// Three themes in two families: `nightfall` is dark, `morning`/`noon` share
-// the daylight overrides in styles.css. Listed in day order, which is the order
-// the picker shows them in. The retired `dark`/`light` ids are not recognized
-// anywhere any more — a browser holding one falls through to DEFAULT_THEME.
+// Three SELECTABLE themes in two families: `nightfall` is dark, `morning`/
+// `noon` share the daylight overrides in styles.css. Listed in day order,
+// which is the order the dial steps through them. The retired `dark`/`light`
+// ids are not recognized anywhere any more — a browser holding one falls
+// through to DEFAULT_THEME.
 //
-// Adding a theme = one entry here, one token block in styles.css, one id in
-// theme-init.js's KNOWN list. Nothing else.
+// Adding a theme = one entry here, one angle in THEME_WHEEL_ANGLE, one token
+// block in styles.css, one id in theme-init.js's KNOWN list. Nothing else.
 var THEMES = [
   { id: "morning",   label: "Morning",   family: "light", icon: _sunriseIcon },
   { id: "noon",      label: "Noon",      family: "light", icon: _sunIcon },
   { id: "nightfall", label: "Nightfall", family: "dark",  icon: _starIcon },
 ];
+
+// Transit palettes: real themes with real token blocks that NOTHING can
+// select. They exist so the dial has somewhere to be between two selectable
+// themes — advanceTheme() fades THROUGH each one that lies on the way and
+// carries on without stopping, so noon → nightfall crosses the golden hour
+// instead of cutting from near-white to indigo. Not in THEMES, so no picker,
+// no keyboard step, and never persisted (see _setTheme).
+var TRANSIT_THEMES = [
+  { id: "afternoon", label: "Afternoon", family: "light", icon: _sunIcon, transit: true },
+];
+
+// Where each palette sits on the sidebar dial (/img/brand/time-wheel.png), in
+// degrees clockwise from the top of the artwork:
+//
+//     0   sun face at the crest              -> noon
+//    90   red-rust late afternoon            -> afternoon  (transit only)
+//   180   moon face at the bottom            -> nightfall
+//   270   dawn gold on the left flank        -> morning
+//
+// These are not decoration: each palette was sampled from its own position on
+// this engraving, so the angle and the tokens have to agree. Clockwise is
+// forward in time, which is why the ids read in day order. An angle with no
+// palette at all has no entry and the dial turns straight past it; a TRANSIT
+// angle is passed through with its palette showing.
+var THEME_WHEEL_ANGLE = { morning: 270, noon: 0, afternoon: 90, nightfall: 180 };
+var THEME_WHEEL_ART = "/img/brand/time-wheel.png";
+
 // The fallback for an unknown or retired saved value. Deliberately NOT
 // THEMES[0]: display order and the default move independently, so reordering
-// the picker never changes what a new install lands on.
+// the dial never changes what a new install lands on.
 var DEFAULT_THEME = "nightfall";
 
 // No saved preference (fresh browser, or a user who has never touched the
-// picker) follows the OS; matching on "light" leaves nightfall as the fallback
+// dial) follows the OS; matching on "light" leaves nightfall as the fallback
 // for a browser that states no preference. Mirrors js/theme-init.js, which
 // does the same for the login + setup pages. Deliberately does not persist:
 // staying unsaved is what keeps the user tracking their system, and _setTheme
@@ -39,14 +67,22 @@ var DEFAULT_THEME = "nightfall";
   document.documentElement.setAttribute("data-theme", saved);
 })();
 
+// SELECTABLE ids only — transit palettes are deliberately absent, so a saved
+// "afternoon" (which nothing should ever write) is rejected here the same way
+// a retired "dark" is, and the browser lands on a real theme.
 function _themeExists(id) {
   for (var i = 0; i < THEMES.length; i++) if (THEMES[i].id === id) return true;
   return false;
 }
 
-/** The theme record for `id`, or DEFAULT_THEME's when it names nothing. */
+/**
+ * The theme record for `id`, or DEFAULT_THEME's when it names nothing.
+ * Resolves selectable AND transit ids — _setTheme has to be able to apply a
+ * waypoint, and isLightTheme has to answer correctly while one is showing.
+ */
 function _getTheme(id) {
   for (var i = 0; i < THEMES.length; i++) if (THEMES[i].id === id) return THEMES[i];
+  for (var j = 0; j < TRANSIT_THEMES.length; j++) if (TRANSIT_THEMES[j].id === id) return TRANSIT_THEMES[j];
   for (var k = 0; k < THEMES.length; k++) if (THEMES[k].id === DEFAULT_THEME) return THEMES[k];
   return THEMES[0];
 }
@@ -57,51 +93,179 @@ function _getCurrentTheme() {
 
 // True for the daylight family. Use this instead of comparing against a theme
 // id anywhere a surface picks an image, a basemap or a chart palette by
-// brightness — an id check misses morning and noon.
+// brightness — an id check misses morning, noon and the afternoon waypoint.
 function isLightTheme(id) {
   return _getTheme(id || _getCurrentTheme()).family === "light";
 }
 window.isLightTheme = isLightTheme;
 
-function _setTheme(theme) {
+// Accumulated rotation of the dial, in degrees — not normalised, deliberately.
+// null until the sidebar parks it.
+var _wheelRotation = null;
+
+// The rotation that brings `id`'s angle under the notch, always stepping DOWN
+// from where the dial is now so it turns one way only: the wrap from nightfall
+// round to morning has to keep going forward through the day, not rewind
+// through the afternoon. (Rotation is negative because the artwork's own day
+// runs clockwise, so advancing the dial under a fixed notch runs counter to
+// it — same as any physical wheel selector.)
+function _wheelRotationFor(id, from) {
+  var target = -(THEME_WHEEL_ANGLE[id] || 0);
+  while (target >= from) target -= 360;
+  return target;
+}
+
+// Every dial on the page, not one by id: a second shell or a specimen card can
+// each hold one, and they all read the same clock.
+function _themeWheelRings() { return document.querySelectorAll(".theme-wheel-ring"); }
+
+// Parks every dial at `deg` (or at the current theme's angle) with no
+// animation. For first paint, and for a dial added after boot.
+function _seatThemeWheels(deg) {
+  if (deg !== undefined) _wheelRotation = deg;
+  if (_wheelRotation === null) _wheelRotation = -(THEME_WHEEL_ANGLE[_getCurrentTheme()] || 0);
+  var rings = _themeWheelRings();
+  for (var i = 0; i < rings.length; i++) {
+    var el = rings[i], prev = el.style.transition;
+    el.style.transition = "none";
+    el.style.transform = "rotate(" + _wheelRotation + "deg)";
+    void el.offsetWidth;
+    el.style.transition = prev;
+  }
+}
+
+// Matches the crossfade duration in styles.css (the data-theme-fading block).
+// Change one, change the other.
+var THEME_FADE_MS = 800;
+var _themeFadeTimer = null;
+
+// Arms the palette crossfade for the length of one change. Called before
+// data-theme moves, so the new values are what gets transitioned TO.
+function _beginThemeFade(phase) {
+  try {
+    if (window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  } catch (e) { /* no matchMedia — fade anyway */ }
+  var root = document.documentElement;
+  root.setAttribute("data-theme-fading", phase || "solo");
+  if (_themeFadeTimer) clearTimeout(_themeFadeTimer);
+  _themeFadeTimer = setTimeout(function () {
+    root.removeAttribute("data-theme-fading");
+    _themeFadeTimer = null;
+  }, THEME_FADE_MS + 80);
+}
+
+/**
+ * Applies a theme. `phase` positions this change within a multi-leg turn:
+ * "solo" (or omitted), "in", "mid", "out" — see the data-theme-fading block
+ * in styles.css.
+ */
+function _setTheme(theme, phase) {
   var t = _getTheme(theme);
+  var prevId = document.documentElement.getAttribute("data-theme") || DEFAULT_THEME;
+  // Only fade a real change — re-applying the current theme (a page re-boot,
+  // another tab syncing) should be instant.
+  if (t.id !== prevId) _beginThemeFade(phase);
   document.documentElement.setAttribute("data-theme", t.id);
-  try { localStorage.setItem("polaris-theme", t.id); } catch (e) {}
-  // The sidebar control is a long-lived button labelled with the CURRENT theme
-  // (it opens the full list rather than flipping between two), so it has to be
-  // repainted here — nothing else rebuilds it.
-  var btn = document.getElementById("btn-theme-toggle");
-  if (btn) {
-    var svg = btn.querySelector("svg");
-    if (svg) svg.outerHTML = t.icon();
-    var label = btn.querySelector("span");
-    if (label) label.textContent = t.label;
+  // Waypoints are never saved: a reload mid-turn must land on a real theme.
+  if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
+  // The dial is TRANSFORMED, never rebuilt — see the .theme-wheel comment in
+  // styles.css. Writing style.transform on the live node is what lets the user
+  // watch it turn; re-rendering the <img> would snap it.
+  var i;
+  // First change of the page's life: park the dial on the theme that WAS
+  // showing before animating to the new one. Without this seat the first click
+  // had nothing to turn from and snapped straight to the destination — a bug
+  // you only ever see once per load, which is exactly why it survived. Seating
+  // from the outgoing theme (not the incoming one) is what leaves a from-value
+  // for the transition to run from.
+  if (_wheelRotation === null) _seatThemeWheels(-(THEME_WHEEL_ANGLE[prevId] || 0));
+  _wheelRotation = _wheelRotationFor(t.id, _wheelRotation);
+  var rings = _themeWheelRings();
+  for (i = 0; i < rings.length; i++) rings[i].style.transform = "rotate(" + _wheelRotation + "deg)";
+  var labels = document.querySelectorAll(".theme-wheel-label");
+  for (i = 0; i < labels.length; i++) labels[i].textContent = t.label;
+  var dials = document.querySelectorAll(".theme-wheel");
+  for (i = 0; i < dials.length; i++) {
+    dials[i].setAttribute("aria-label", "Time of day: " + t.label + ". Turn the dial.");
   }
   // Anything that cached colors at render time — canvases, Leaflet layers,
   // Cytoscape stylesheets, hand-rolled SVG charts — listens for this rather
-  // than hooking the picker.
+  // than hooking the dial.
   document.dispatchEvent(new CustomEvent("themechange", { detail: { theme: t.id, family: t.family } }));
 }
 
-// The footer control opens the full list: past two themes a toggle buries the
-// rest behind a cycle through the ones you didn't want.
-function openThemeMenu(anchor) {
-  var current = _getCurrentTheme();
-  showRowMenu(anchor, THEMES.map(function (t) {
-    return {
-      label: t.label + (t.id === current ? "  ✓" : ""),
-      icon: t.icon(),
-      onSelect: function () { _setTheme(t.id); },
-    };
-  }), { label: "Theme" });
-}
+// Forward distance from angle `a` to angle `b` in the dial's own direction of
+// travel, 0–360. Used to work out which waypoints lie on the way.
+function _wheelForwardGap(a, b) { return ((b - a) % 360 + 360) % 360; }
 
-// Kept for callers that predate the theme list: steps to the next theme.
-function toggleTheme() {
-  var i = THEMES.indexOf(_getTheme(_getCurrentTheme()));
-  _setTheme(THEMES[(i + 1) % THEMES.length].id);
-}
+// Where the dial is headed: the destination of a chain still in flight, or
+// simply what is showing. Clicking mid-turn steps on from the DESTINATION, not
+// from the waypoint currently painted — otherwise a click during the golden
+// hour would treat afternoon as the current theme and never reach nightfall.
+var _themeDest = null;
+var _themeChainTimer = null;
 
+// One click, one step — but the step can have waypoints. The dial replaced the
+// row-menu picker: a menu made the operator read three words and aim at one,
+// where the wheel shows where they are in the day and moves them along it.
+//
+// It lands only on THEMES entries. Any TRANSIT_THEMES angle between here and
+// there is faded through on the way: noon → nightfall passes the red-rust
+// flank at 90°, so the room goes near-white → golden hour → indigo in one
+// gesture and stops at nightfall. The dial turns in the same steps, so the
+// palette and the artwork are always showing the same hour.
+function advanceTheme() {
+  if (_themeChainTimer) { clearTimeout(_themeChainTimer); _themeChainTimer = null; }
+  var from = _themeDest || _getCurrentTheme();
+  var i = THEMES.indexOf(_getTheme(from));
+  var dest = THEMES[(i + 1) % THEMES.length].id;
+
+  var a = THEME_WHEEL_ANGLE[from] || 0;
+  var span = _wheelForwardGap(a, THEME_WHEEL_ANGLE[dest] || 0) || 360;
+  var stops = TRANSIT_THEMES
+    .filter(function (t) {
+      var d = _wheelForwardGap(a, THEME_WHEEL_ANGLE[t.id] || 0);
+      return d > 0 && d < span;
+    })
+    .sort(function (x, y) {
+      return _wheelForwardGap(a, THEME_WHEEL_ANGLE[x.id] || 0) -
+             _wheelForwardGap(a, THEME_WHEEL_ANGLE[y.id] || 0);
+    })
+    .map(function (t) { return t.id; });
+
+  _themeDest = dest;
+  var queue = stops.concat([dest]);
+  var legs = queue.length;
+  var n = 0;
+  (function step() {
+    // No gap and no re-easing between legs: the next fade starts the instant
+    // the last one lands, and the phase splits one ease across the whole turn,
+    // so noon → afternoon → nightfall reads as a single continuous sweep
+    // rather than two changes with a stop in the middle.
+    var phase = legs === 1 ? "solo" : (n === 0 ? "in" : (n === legs - 1 ? "out" : "mid"));
+    n++;
+    _setTheme(queue.shift(), phase);
+    if (!queue.length) { _themeDest = null; return; }
+    _themeChainTimer = setTimeout(step, THEME_FADE_MS);
+  })();
+}
+window.advanceTheme = advanceTheme;
+
+// Aliases for callers that predate the dial. `openThemeMenu` no longer opens
+// anything — there is no theme menu to open.
+function toggleTheme() { advanceTheme(); }
+function openThemeMenu() { advanceTheme(); }
+
+// Delegated, so a dial rendered by anything — renderSidebar, a second shell —
+// turns without being wired up. Never add a direct listener to a .theme-wheel
+// as well, or one click advances two steps.
+if (!document.documentElement.hasAttribute("data-theme-wheel-wired")) {
+  document.documentElement.setAttribute("data-theme-wheel-wired", "");
+  document.addEventListener("click", function (e) {
+    if (e.target && e.target.closest && e.target.closest(".theme-wheel")) advanceTheme();
+  });
+}
 function _sunIcon() {
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
 }
@@ -519,7 +683,7 @@ function _saveTimezone(tz) {
 
 /**
  * The three-way chooser, opened from the account menu against the same anchor
- * (the openThemeMenu pattern). A menu-item click is real user activation, so
+ * (the showRowMenu pattern). A menu-item click is real user activation, so
  * picking "Push" here CAN raise the browser's permission prompt — which is
  * exactly why the choice lives in a menu rather than in a dialog with a Save
  * button several awaits away from the click.
@@ -697,6 +861,10 @@ function renderNav() {
     return true;
   });
 
+  // Seat the dial at its starting angle BEFORE the markup is built, so the
+  // ring renders already rotated and first paint has no transition to play.
+  _wheelRotation = -(THEME_WHEEL_ANGLE[_getCurrentTheme()] || 0);
+
   sidebar.innerHTML = `
     <div class="sidebar-brand">
       <img src="/img/brand/polaris-vert-dark.png" alt="" class="sidebar-logo brand-mark brand-mark-sidebar" style="visibility:hidden">
@@ -736,7 +904,7 @@ function renderNav() {
       ${(isAdmin() || canManageAssets() || permAtLeast("credentials", "write")) ? `<div style="padding:0.5rem 0.5rem 0;border-top:1px solid var(--color-border-light)">
         <a href="/server-settings.html" class="sidebar-bottom-link${current === '/server-settings.html' ? ' active' : ''}">${ICONS.settings}<span>Server Settings</span></a>
       </div>` : ''}
-      <!-- The theme picker sits here, below Server Settings and above the
+      <!-- The theme dial sits here, below Server Settings and above the
            version line. Push enrollment and logout stay in the user menu
            behind the page-header badge (renderUserBadge) — push in
            particular must stay reachable for an alerts:read role that cannot
@@ -745,22 +913,22 @@ function renderNav() {
            Settings block above rendered: without it this block owns the
            separator from the nav.
 
-           The button is labelled with the CURRENT theme and opens the full
-           list (openThemeMenu) — with three themes a two-way toggle would make
-           the third reachable only by cycling past one you didn't want. -->
+           One click steps to the next theme and the ring turns to bring that
+           theme's hour under the notch; noon → nightfall fades through the
+           afternoon waypoint on the way. No menu opens. The click is handled
+           by the delegated listener next to advanceTheme() — do NOT wire one
+           here as well, or a click advances two steps. -->
       <div style="padding:${(isAdmin() || canManageAssets()) ? '0.25rem' : '0.5rem'} 0.5rem 0.5rem;${(isAdmin() || canManageAssets()) ? '' : 'border-top:1px solid var(--color-border-light);'}">
-        <button type="button" id="btn-theme-toggle" class="theme-toggle" aria-haspopup="menu" aria-expanded="false">${_getTheme(_getCurrentTheme()).icon()}<span>${_getTheme(_getCurrentTheme()).label}</span></button>
+        <button type="button" id="btn-theme-wheel" class="theme-wheel" aria-label="Time of day: ${_getTheme(_getCurrentTheme()).label}. Turn the dial.">
+          <span class="theme-wheel-window"><img class="theme-wheel-ring" id="theme-wheel-ring" alt="" draggable="false" src="${THEME_WHEEL_ART}" style="transform:rotate(${_wheelRotation}deg)"></span>
+          <span class="theme-wheel-notch"></span>
+          <span class="theme-wheel-label" id="theme-wheel-label">${_getTheme(_getCurrentTheme()).label}</span>
+        </button>
       </div>
       <div id="sidebar-version" style="padding:0 0.75rem 0.75rem;text-align:center;font-size:0.7rem;color:var(--color-text-tertiary);letter-spacing:0.02em"></div>
     </div>
   `;
 
-  var themeBtn = document.getElementById("btn-theme-toggle");
-  if (themeBtn) {
-    themeBtn.addEventListener("click", function () {
-      openThemeMenu(themeBtn);
-    });
-  }
 
   wireNotificationPrefs();
   wireTotpState();

@@ -351,7 +351,9 @@
     var displayName = user.displayName || user.username || "user";
     var role = user.role || "?";
 
-    var themeIsDark = (window.PolarisTheme ? PolarisTheme.get() : "dark") === "dark";
+    // The strip names the CURRENT theme; the art carries the rest of the
+    // meaning, so there is no icon and no on/off state to derive.
+    var themeName = (window.PolarisTheme && PolarisTheme.currentLabel) ? PolarisTheme.currentLabel() : "Nightfall";
     var standalone = !!(window.PolarisInstall && PolarisInstall.isStandalone());
 
     body.innerHTML = ''
@@ -389,13 +391,31 @@
       + '</button>'
 
       + '<div class="section-head">Appearance</div>'
-      + '<button class="list-item two-line" id="theme-toggle-row">'
-      + '  <span class="leading"><svg viewBox="0 0 24 24" id="theme-toggle-icon"><use href="#' + (themeIsDark ? "i-sun" : "i-moon") + '"/></svg></span>'
-      + '  <div class="content">'
-      + '    <div class="headline">Theme</div>'
-      + '    <div class="supporting" id="theme-current-label">' + (themeIsDark ? "Dark" : "Light") + '</div>'
+      // The phone's counterpart to the desktop theme dial: one flat engraving
+      // of the 24-hour clock that travels LEFT under a fixed marker. The art is
+      // repeated THREE times on purpose — the track is anchored one strip width
+      // left of the marker, so copies one and three cover the window on either
+      // side at every position a leg can reach, and travelling off the end of
+      // one copy lands on identical pixels in the next (which is what lets the
+      // JS subtract a strip width unseen). Two copies leave bare surface beside
+      // the art just before the seam is normalised away.
+      + '<div class="theme-strip-row">'
+      + '  <button class="theme-strip" id="theme-strip" type="button" aria-label="Time of day: ' + escapeHtml(themeName) + '. Tap to move through the day.">'
+      + '    <span class="theme-strip-track">'
+      + '      <img src="/img/brand/time-strip.png" alt="" draggable="false">'
+      + '      <img src="/img/brand/time-strip.png" alt="" draggable="false">'
+      + '      <img src="/img/brand/time-strip.png" alt="" draggable="false">'
+      + '    </span>'
+      + '    <span class="theme-strip-marker"></span>'
+      + '  </button>'
+      + '  <div class="theme-strip-caption">'
+      // `.name` is what the CSS styles; `.theme-strip-name` is what
+      // PolarisTheme.set repaints. It needs BOTH — the setter queries by class
+      // so every strip on the page updates, and an id would match only one.
+      + '    <span class="name theme-strip-name">' + escapeHtml(themeName) + '</span>'
+      + '    <span class="hint">Tap to move through the day</span>'
       + '  </div>'
-      + '</button>'
+      + '</div>'
 
       + '<div class="section-head">Account</div>'
       + '<div class="list-item two-line">'
@@ -425,23 +445,11 @@
       });
     });
 
-    var themeToggle = document.getElementById("theme-toggle-row");
-    if (themeToggle) {
-      themeToggle.addEventListener("click", function () {
-        var nowDark = (window.PolarisTheme ? PolarisTheme.get() : "dark") === "dark";
-        var next = nowDark ? "light" : "dark";
-        if (window.PolarisTheme) PolarisTheme.set(next);
-        // Update the row in place — supporting label + icon — instead of
-        // re-rendering the whole tab.
-        var label = document.getElementById("theme-current-label");
-        if (label) label.textContent = next === "dark" ? "Dark" : "Light";
-        var iconSvg = document.getElementById("theme-toggle-icon");
-        if (iconSvg) {
-          var useEl = iconSvg.querySelector("use");
-          if (useEl) useEl.setAttribute("href", next === "dark" ? "#i-sun" : "#i-moon");
-        }
-      });
-    }
+    // The tap is handled by the delegated listener in mobile/app.js — wiring
+    // one here as well would advance two themes per tap. All this tab owes the
+    // strip is a seat: the More tab is built on demand, so the track enters the
+    // DOM long after boot and has no position until something measures it.
+    if (window.PolarisTheme && PolarisTheme.seatStrips) PolarisTheme.seatStrips();
 
     wireNotifPrefRow();
     wireInstallRow();

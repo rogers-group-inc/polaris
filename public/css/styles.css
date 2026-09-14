@@ -122,7 +122,7 @@
    Keep the neutral values here rather than duplicating them per theme.
    `:is(...)` and not a comma split: `[data-theme="light"] .badge-x` rewritten
    as two comma-separated selectors would drop the descendant on the second. */
-:is([data-theme="morning"],[data-theme="noon"]) {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) {
   --color-bg-primary: #f3f4f8;
   --color-bg-secondary: #e8e9f0;
   --color-bg-tertiary: #edeef4;
@@ -164,85 +164,223 @@
 /* The five headings that used to hardcode #fff and needed rescuing here now
    paint var(--color-text-primary) directly, so this block is gone. Pure white
    was wrong in the dark family too — nightfall's text is #e4e7f6, not #fff. */
-:is([data-theme="morning"],[data-theme="noon"]) .btn-primary {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .btn-primary {
   color: #fff;
 }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-available  { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-active     { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-reserved   { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-deprecated { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-conflict   { background: rgba(198,40,40,0.10); color: var(--color-danger); border-color: rgba(198,40,40,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-released   { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-expired    { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-v4         { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-v6         { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-vlan       { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-admin      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-network-admin { background: rgba(230,126,0,0.10); color: #e67e00; border-color: rgba(230,126,0,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-assets-admin { background: rgba(0,151,167,0.10); color: #00838f; border-color: rgba(0,151,167,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-readonly { background: rgba(117,117,117,0.10); color: #616161; border-color: rgba(117,117,117,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-available  { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-active     { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-reserved   { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-deprecated { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-conflict   { background: rgba(198,40,40,0.10); color: var(--color-danger); border-color: rgba(198,40,40,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-released   { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-expired    { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-v4         { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-v6         { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-vlan       { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-admin      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-network-admin { background: rgba(230,126,0,0.10); color: #e67e00; border-color: rgba(230,126,0,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-assets-admin { background: rgba(0,151,167,0.10); color: #00838f; border-color: rgba(0,151,167,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-readonly { background: rgba(117,117,117,0.10); color: #616161; border-color: rgba(117,117,117,0.30); }
 /* .badge-maintenance's daylight override lives with the monitor-state block
    below, for the same reason as its base rule — see the note there. */
-:is([data-theme="morning"],[data-theme="noon"]) .badge-decommissioned { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-passive         { background: rgba(69,90,100,0.10); color: #455a64; border-color: rgba(96,125,139,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-disabled       { background: rgba(211,47,47,0.10); color: #c62828; border-color: rgba(211,47,47,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-storage        { background: rgba(156,39,176,0.10); color: #7b1fa2; border-color: rgba(156,39,176,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-quarantined    { background: rgba(183,28,28,0.12); color: #b71c1c; border-color: rgba(183,28,28,0.35); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-level-info    { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-level-warning { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-level-error   { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-level-notice        { background: rgba(100,116,139,0.10); border-color: rgba(100,116,139,0.30); color: #475569; }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-level-informational { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-level-serious       { background: rgba(234,88,12,0.10); border-color: rgba(234,88,12,0.30); color: #c2410c; }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-level-critical      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .integration-type-badge { background: rgba(230,81,0,0.10); color: #e65100; border-color: rgba(230,81,0,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .integration-flag-badge { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .modal-overlay { background: rgba(0,0,0,.2); }
-:is([data-theme="morning"],[data-theme="noon"]) .slideover-overlay { background: rgba(0,0,0,.14); }
-:is([data-theme="morning"],[data-theme="noon"]) .sidebar-nav a:hover { background: rgba(2,136,209,0.08); }
-:is([data-theme="morning"],[data-theme="noon"]) .sidebar-nav a.active { background: rgba(2,136,209,0.12); }
-:is([data-theme="morning"],[data-theme="noon"]) .sidebar-bottom-link:hover { background: rgba(2,136,209,0.08); }
-:is([data-theme="morning"],[data-theme="noon"]) .sidebar-bottom-link.active { background: rgba(2,136,209,0.12); }
-:is([data-theme="morning"],[data-theme="noon"]) .sidebar-bottom-link-logout:hover { background: rgba(198,40,40,0.08); color: var(--color-danger); }
-:is([data-theme="morning"],[data-theme="noon"]) tbody tr:hover { background: rgba(2,136,209,0.04); }
-:is([data-theme="morning"],[data-theme="noon"]) .ip-table tbody tr:hover { background: rgba(2,136,209,0.04); }
-:is([data-theme="morning"],[data-theme="noon"]) tr.row-panel-active,
-:is([data-theme="morning"],[data-theme="noon"]) tr.row-panel-active:hover { background: rgba(2,136,209,0.08) !important; box-shadow: inset 3px 0 0 #0288d1; }
-:is([data-theme="morning"],[data-theme="noon"]) .toast-success { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .toast-error   { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) input:focus, :is([data-theme="morning"],[data-theme="noon"]) select:focus, :is([data-theme="morning"],[data-theme="noon"]) textarea:focus {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-decommissioned { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-passive         { background: rgba(69,90,100,0.10); color: #455a64; border-color: rgba(96,125,139,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-disabled       { background: rgba(211,47,47,0.10); color: #c62828; border-color: rgba(211,47,47,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-storage        { background: rgba(156,39,176,0.10); color: #7b1fa2; border-color: rgba(156,39,176,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-quarantined    { background: rgba(183,28,28,0.12); color: #b71c1c; border-color: rgba(183,28,28,0.35); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-info    { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-warning { background: rgba(245,127,23,0.10); border-color: rgba(245,127,23,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-error   { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-notice        { background: rgba(100,116,139,0.10); border-color: rgba(100,116,139,0.30); color: #475569; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-informational { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-serious       { background: rgba(234,88,12,0.10); border-color: rgba(234,88,12,0.30); color: #c2410c; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-level-critical      { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .integration-type-badge { background: rgba(230,81,0,0.10); color: #e65100; border-color: rgba(230,81,0,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .integration-flag-badge { background: rgba(2,136,209,0.10); border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .modal-overlay { background: rgba(0,0,0,.2); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .slideover-overlay { background: rgba(0,0,0,.14); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .sidebar-nav a:hover { background: rgba(2,136,209,0.08); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .sidebar-nav a.active { background: rgba(2,136,209,0.12); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .sidebar-bottom-link:hover { background: rgba(2,136,209,0.08); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .sidebar-bottom-link.active { background: rgba(2,136,209,0.12); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .sidebar-bottom-link-logout:hover { background: rgba(198,40,40,0.08); color: var(--color-danger); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) tbody tr:hover { background: rgba(2,136,209,0.04); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .ip-table tbody tr:hover { background: rgba(2,136,209,0.04); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) tr.row-panel-active,
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) tr.row-panel-active:hover { background: rgba(2,136,209,0.08) !important; box-shadow: inset 3px 0 0 #0288d1; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .toast-success { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .toast-error   { background: rgba(198,40,40,0.10); border-color: rgba(198,40,40,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) input:focus, :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) select:focus, :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) textarea:focus {
   box-shadow: 0 0 0 2px rgba(2,136,209,0.20);
 }
 
-/* ─── Theme toggle ─────────────────────────────────────────────────────────── */
-.theme-toggle {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-md);
-  color: var(--color-text-secondary);
-  font-size: 0.9rem;
-  font-weight: 450;
-  cursor: pointer;
+/* ─── Theme wheel ──────────────────────────────────────────────
+   A dial, not a menu. Replaced the row-menu theme picker: a menu made the
+   operator read three words and aim at one, where the wheel shows where they
+   are in the day and moves them along it.
+
+   The art (/img/brand/time-wheel.png) is a 24-hour clockface: the engraved sun
+   face at the top, the moon face at the bottom, dawn gold on the upper-left
+   flank, the red-rust of late afternoon down the right. Every theme’s palette
+   was drawn from one of those positions, so each theme OWNS its angle on the
+   ring (THEME_WHEEL_ANGLE in app.js) and a click turns the ring to bring that
+   angle under the notch at the crest.
+
+   Only the crest is in the rail: a 260px ring in a 78px window, so ~30% shows
+   and the rest reads as continuing on past the sidebar. The label sits in the
+   ring’s transparent middle, under the arc.
+
+   Two things not to break:
+   - The dial turns, the notch does not, and it only ever turns ONE way. See
+     _wheelRotationFor() in app.js, which keeps stepping downward so the wrap
+     nightfall round to morning carries forward through the day instead of
+     rewinding through the afternoon.
+   - Rotation is written straight to the ring’s style.transform. Never
+     re-render the <img> on a theme change — a replaced node starts its
+     transition over from the new value and the turn is never seen, which is
+     the entire point of the control. ─────────────────────────────────── */
+.theme-wheel {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 78px;
+  padding: 0;
   border: none;
   background: none;
-  width: 100%;
-  transition: background 0.15s, color 0.15s;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
 }
-.theme-toggle svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.7; }
-.theme-toggle:hover {
-  background: rgba(79,195,247,0.08);
-  color: var(--color-text-primary);
+/* Non-rotating clip layer. The fade HAS to live here and not on the ring: a
+   mask on the ring is in the ring’s own coordinate space and would spin with
+   it. Standard mask-image first (the only one Firefox reads), webkit copy for
+   older Safari. */
+.theme-wheel-window {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .theme-toggle:hover {
-  background: rgba(2,136,209,0.08);
+.theme-wheel-ring {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  width: 260px;
+  height: 260px;
+  margin-left: -130px;
+  transform-origin: 50% 50%;
+  pointer-events: none;
+  user-select: none;
+  /* Slow and eased-out: the turn is the whole feedback, so it has to be
+     watchable, and the arriving emblem readable as it settles. The duration is
+     the SAME as the palette crossfade (THEME_FADE_MS) on purpose — dial and
+     light have to arrive together, or a multi-leg turn visibly drifts apart.
+     The easing is overridden per leg below. */
+  transition: transform 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
+.theme-wheel-notch {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--color-accent);
+}
+.theme-wheel-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 11px;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  transition: color 0.15s;
+}
+.theme-wheel:hover .theme-wheel-label { color: var(--color-text-primary); }
+.theme-wheel:hover .theme-wheel-ring { filter: brightness(1.12); }
+.theme-wheel:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  .theme-wheel-ring { transition: none; }
+}
+
+/* ─── Theme crossfade ──────────────────────────────────────────
+   The palette eases from one time of day to the next instead of cutting, so
+   the room changes light while the dial turns.
+
+   Only present DURING a change: _setTheme() puts data-theme-fading on <html>,
+   swaps data-theme, and drops the attribute when the fade is done. A permanent
+   transition on every color property makes hover states feel laggy and fights
+   the transitions components declare for themselves.
+
+   Two deliberate choices:
+   - Color properties only, never the shorthand `all`. `all` would animate
+     layout on anything that also changes size with the theme.
+   - .theme-wheel-ring is EXCLUDED. This rule outspecifies the ring’s own
+     `transition: transform`, and replacing it would kill the dial’s rotation —
+     the one animation that must survive a theme change.
+   Keep the duration in step with THEME_FADE_MS in app.js. ───────────────── */
+html[data-theme-fading] *:not(.theme-wheel-ring),
+html[data-theme-fading] *:not(.theme-wheel-ring)::before,
+html[data-theme-fading] *:not(.theme-wheel-ring)::after {
+  transition: background-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              border-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              fill 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              stroke 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              box-shadow 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme-fading] *:not(.theme-wheel-ring),
+  html[data-theme-fading] *:not(.theme-wheel-ring)::before,
+  html[data-theme-fading] *:not(.theme-wheel-ring)::after { transition: none; }
+}
+
+/* ─── Multi-leg turns ──────────────────────────────────────────
+   A click from noon to nightfall is two legs — noon→afternoon, afternoon→
+   nightfall — run back to back with no gap. Left alone, each leg would ease
+   out and in again, so the dial would visibly slow to a stop at the golden
+   hour and set off again: a pause where the design wants one continuous
+   sweep. The phase on data-theme-fading says where in the sweep this leg sits,
+   and the easing is split across the legs so acceleration happens once at the
+   start and deceleration once at the end:
+
+     solo  a single-leg change — the full ease, unchanged
+     in    first leg of several — accelerate, arrive at full speed
+     mid   an interior leg — constant speed throughout
+     out   last leg of several — arrive decelerating
+
+   Applies to the palette and the dial alike, so they stay locked together.
+
+   The `:not(.theme-wheel-ring)` below is load-bearing, not copied by habit:
+   it is what raises these rules to the crossfade block’s specificity. Without
+   it the crossfade’s shorthand `transition:` wins and re-asserts the full ease
+   on every color property, so the light eases to a stop at the waypoint while
+   the wheel glides past — the exact pause the phase exists to remove. The ring
+   is then matched again by name so it keeps the same curve. ─────────────── */
+html[data-theme-fading="in"] *:not(.theme-wheel-ring),
+html[data-theme-fading="in"] *:not(.theme-wheel-ring)::before,
+html[data-theme-fading="in"] *:not(.theme-wheel-ring)::after,
+html[data-theme-fading="in"] .theme-wheel-ring { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+html[data-theme-fading="mid"] *:not(.theme-wheel-ring),
+html[data-theme-fading="mid"] *:not(.theme-wheel-ring)::before,
+html[data-theme-fading="mid"] *:not(.theme-wheel-ring)::after,
+html[data-theme-fading="mid"] .theme-wheel-ring { transition-timing-function: linear; }
+html[data-theme-fading="out"] *:not(.theme-wheel-ring),
+html[data-theme-fading="out"] *:not(.theme-wheel-ring)::before,
+html[data-theme-fading="out"] *:not(.theme-wheel-ring)::after,
+html[data-theme-fading="out"] .theme-wheel-ring { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 
 /* ─── Reset ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 14px; color-scheme: dark; }
-:is([data-theme="morning"],[data-theme="noon"]) { color-scheme: light; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) { color-scheme: light; }
 body {
   font-family: var(--font-sans);
   color: var(--color-text-primary);
@@ -320,6 +458,47 @@ code {
   --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
   --shadow-control: 0 2px 5px rgba(40,20,10,.24), 0 1px 2px rgba(40,20,10,.15), inset 0 1px 0 rgba(255,255,255,.6);
   --shadow-card: 0 8px 32px rgba(40,20,10,.18), 0 2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
+}
+
+/* ─── Afternoon — the clockface’s red-rust flank, an hour before dusk. NOT
+   SELECTABLE: no THEMES entry, no picker slot, never persisted. It exists so
+   the dial has somewhere to be between noon and nightfall — a click on noon
+   fades THROUGH this palette and carries on to nightfall without stopping.
+   Daylight family, so it inherits the base above (which is why its selector
+   is in the widened :is() list), but the reddest thing in the system: the
+   ground carries real red, not warm beige, and the accent is a fired clay a
+   long way past noon’s terracotta. It can afford to commit — nobody reads at
+   this palette, they only pass through it, so it is tuned for the strength of
+   the shift rather than for hours of legibility.
+
+   Carries the full five-shadow set like its siblings, not the kit’s sm+md
+   pair: --shadow-card is declared per theme here and NOT by the daylight
+   base, so a partial block would leave every card and widget taking :root’s
+   dark shadow for the length of the fade. ──────────────────────────────── */
+[data-theme="afternoon"] {
+  --color-bg-primary: #f0d7cb;
+  --color-bg-secondary: #e3c5b7;
+  --color-bg-tertiary: #ebd0c2;
+  --color-surface: #fceae0;
+  --color-bg-elevated: #e9cabb;
+  --color-border: #d4a894;
+  --color-border-light: #e4c2b0;
+  --color-text-primary: #33150e;
+  --color-text-secondary: #6d3324;
+  --color-text-tertiary: #a06050;
+  --color-accent: #c33d15;
+  --color-primary: #c33d15;
+  --color-accent-hover: #a22d0c;
+  --color-success: #4a7238;
+  --color-warning: #c05a00;
+  --color-danger: #9e1a14;
+  --color-danger-hover: #7e0f0a;
+  --color-deprecated: #8a6a5f;
+  --shadow-sm: 0 1px 4px rgba(90,30,10,.14);
+  --shadow-md: 0 8px 32px rgba(90,30,10,.22);
+  --shadow-panel: 0 24px 64px rgba(90,30,10,.28), 0 2px 10px rgba(90,30,10,.16);
+  --shadow-control: 0 2px 5px rgba(90,30,10,.26), 0 1px 2px rgba(90,30,10,.16), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-card: 0 8px 32px rgba(90,30,10,.20), 0 2px 6px rgba(90,30,10,.15), inset 0 1px 0 rgba(255,255,255,.55);
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -696,11 +875,11 @@ code {
 .integration-failed-name {
   color: var(--color-text-primary);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .integration-failed-status {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .integration-failed-status {
   border-color: rgba(198,40,40,0.40);
   background: rgba(198,40,40,0.07);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .integration-failed-status:hover {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .integration-failed-status:hover {
   background: rgba(198,40,40,0.12);
 }
 
@@ -718,7 +897,7 @@ code {
   flex-shrink: 0;
   color: var(--color-warning);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .signing-failure-alert {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .signing-failure-alert {
   border-color: rgba(230,145,0,0.40);
   background: rgba(230,145,0,0.07);
 }
@@ -744,11 +923,11 @@ code {
   flex-shrink: 0;
   color: var(--color-warning);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .fmg-proxy-advice {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .fmg-proxy-advice {
   border-color: rgba(230,145,0,0.40);
   background: rgba(230,145,0,0.07);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .fmg-proxy-advice:hover {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .fmg-proxy-advice:hover {
   background: rgba(230,145,0,0.12);
 }
 
@@ -807,8 +986,8 @@ code {
   display: flex;
   justify-content: flex-end;
 }
-:is([data-theme="morning"],[data-theme="noon"]) .pg-tuning-header { color: var(--color-warning); }
-:is([data-theme="morning"],[data-theme="noon"]) .pg-tuning-values { color: var(--color-warning); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .pg-tuning-header { color: var(--color-warning); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .pg-tuning-values { color: var(--color-warning); }
 
 /* ─── Capacity Critical Alert (sidebar, non-dismissible) ───────────────────── */
 .capacity-critical-alert {
@@ -822,7 +1001,7 @@ code {
 }
 .capacity-critical-alert .pg-tuning-header { color: var(--color-danger); }
 .capacity-critical-alert .pg-tuning-text { color: var(--color-text-primary); }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-critical-alert {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-critical-alert {
   border-color: rgba(198,40,40,0.40);
   background: rgba(198,40,40,0.08);
 }
@@ -863,10 +1042,10 @@ code {
 .capacity-pill-watch { background: rgba(79,195,247,0.18); color: var(--color-accent); }
 .capacity-pill-amber { background: rgba(255,214,0,0.18);  color: var(--color-warning); }
 .capacity-pill-red   { background: rgba(239,83,80,0.18);  color: var(--color-danger); }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-pill-ok    { background: rgba(39,174,96,0.15);  color: #27ae60; }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-pill-watch { background: rgba(2,136,209,0.13);  color: #0288d1; }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-pill-amber { background: rgba(245,127,23,0.15); color: var(--color-warning); }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-pill-red   { background: rgba(198,40,40,0.13);  color: var(--color-danger); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-pill-ok    { background: rgba(39,174,96,0.15);  color: #27ae60; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-pill-watch { background: rgba(2,136,209,0.13);  color: #0288d1; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-pill-amber { background: rgba(245,127,23,0.15); color: var(--color-warning); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-pill-red   { background: rgba(198,40,40,0.13);  color: var(--color-danger); }
 
 /* Volume free/used bars inside Application host card */
 .capacity-bar { background: rgba(46,204,113,0.55); transition: width 0.2s; }
@@ -891,10 +1070,10 @@ code {
 .capacity-reason-watch { border-color: rgba(79,195,247,0.35); background: rgba(79,195,247,0.06); }
 .capacity-reason-amber { border-color: rgba(255,214,0,0.35);  background: rgba(255,214,0,0.06); }
 .capacity-reason-red   { border-color: rgba(239,83,80,0.40);  background: rgba(239,83,80,0.07); }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-reason-ok    { border-color: rgba(39,174,96,0.30);   background: rgba(39,174,96,0.05); }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-reason-watch { border-color: rgba(2,136,209,0.30);  background: rgba(2,136,209,0.06); }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-reason-amber { border-color: rgba(245,127,23,0.30); background: rgba(245,127,23,0.06); }
-:is([data-theme="morning"],[data-theme="noon"]) .capacity-reason-red   { border-color: rgba(198,40,40,0.30);  background: rgba(198,40,40,0.06); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-ok    { border-color: rgba(39,174,96,0.30);   background: rgba(39,174,96,0.05); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-watch { border-color: rgba(2,136,209,0.30);  background: rgba(2,136,209,0.06); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-amber { border-color: rgba(245,127,23,0.30); background: rgba(245,127,23,0.06); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .capacity-reason-red   { border-color: rgba(198,40,40,0.30);  background: rgba(198,40,40,0.06); }
 .capacity-reason-head {
   display: flex;
   align-items: flex-start;
@@ -961,7 +1140,7 @@ code {
 .capacity-advisor-card { border-left: 3px solid var(--color-accent); }
 .advisor-header-amber { font-size: 0.78rem; color: var(--color-warning); font-weight: 600; }
 .advisor-header-ok    { font-size: 0.78rem; color: #2ecc71; font-weight: 600; }
-:is([data-theme="morning"],[data-theme="noon"]) .advisor-header-ok { color: #27ae60; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-header-ok { color: #27ae60; }
 
 .advisor-table tbody tr.advisor-divider td {
   padding-top: 0.85rem;
@@ -972,7 +1151,7 @@ code {
 .advisor-table tbody tr.advisor-row-change td {
   background: rgba(255,214,0,0.04);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .advisor-table tbody tr.advisor-row-change td {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-table tbody tr.advisor-row-change td {
   background: rgba(245,127,23,0.04);
 }
 .advisor-pill {
@@ -984,7 +1163,7 @@ code {
 }
 .advisor-pill-change { background: rgba(255,214,0,0.18); color: var(--color-warning); }
 .advisor-pill-ok     { background: rgba(46,204,113,0.15); color: #2ecc71; }
-:is([data-theme="morning"],[data-theme="noon"]) .advisor-pill-ok { background: rgba(39,174,96,0.15); color: #27ae60; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .advisor-pill-ok { background: rgba(39,174,96,0.15); color: #27ae60; }
 .advisor-cold-badge {
   display: inline-block;
   padding: 1px 6px;
@@ -1393,7 +1572,7 @@ code {
   border-color: rgba(255,214,0,0.4);
   font-weight: 600;
 }
-:is([data-theme="morning"],[data-theme="noon"]) .btn-warning {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .btn-warning {
   background: rgba(245,127,23,0.12);
   color: var(--color-warning);
   border-color: rgba(245,127,23,0.35);
@@ -2533,7 +2712,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   color: var(--color-text-secondary);
 }
 .merge-banner .btn { flex-shrink: 0; }
-:is([data-theme="morning"],[data-theme="noon"]) .merge-banner { background: rgba(211,47,47,0.06); border-color: rgba(211,47,47,0.20); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .merge-banner { background: rgba(211,47,47,0.06); border-color: rgba(211,47,47,0.20); }
 
 /* ─── Badges ───────────────────────────────────────────────────────────────── */
 .badge {
@@ -2617,7 +2796,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .badge-assets-admin { background: rgba(0,188,212,0.12); color: #00bcd4; border: 1px solid rgba(0,188,212,0.25); }
 .badge-readonly { background: rgba(158,158,158,0.12); color: #9e9e9e; border: 1px solid rgba(158,158,158,0.25); }
 .badge-user      { background: rgba(0,200,83,0.18); color: var(--color-success); border: 1px solid rgba(0,200,83,0.40); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-user { background: rgba(46,125,50,0.14); border-color: rgba(46,125,50,0.40); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-user { background: rgba(46,125,50,0.14); border-color: rgba(46,125,50,0.40); }
 
 .vip-badge {
   display: inline-block;
@@ -2634,7 +2813,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   cursor: default;
   text-transform: uppercase;
 }
-:is([data-theme="morning"],[data-theme="noon"]) .vip-badge {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .vip-badge {
   background: rgba(156,39,176,0.10);
   color: #7b1fa2;
   border-color: rgba(156,39,176,0.30);
@@ -3285,16 +3464,16 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
  * absence of a judgement, which is exactly what the state means, and it keeps
  * indigo from being confused with the lavender Maintenance fill at pill size. */
 .badge-monitor-passive { background: transparent; color: #9fa8da; border: 1px solid rgba(92,107,192,0.55); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-monitored       { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-unmonitored      { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-monitor-down     { background: rgba(211,47,47,0.10); color: #c62828; border-color: rgba(211,47,47,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-monitor-warning  { background: rgba(245,127,23,0.10); color: #f57f17; border-color: rgba(245,127,23,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-monitor-recovering { background: rgba(2,136,209,0.10); color: #0277bd; border-color: rgba(2,136,209,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-monitor-dep-down   { background: rgba(96,125,139,0.10); color: #455a64; border-color: rgba(96,125,139,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-monitor-dep-test   { background: rgba(123,31,162,0.10); color: #7b1fa2; border-color: rgba(123,31,162,0.45); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-maintenance        { background: rgba(103,58,183,0.10); color: #5e35b1; border-color: rgba(103,58,183,0.35); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-monitor-standby    { background: rgba(0,150,136,0.10); color: #00695c; border-color: rgba(0,150,136,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .badge-monitor-passive    { background: transparent; color: #3949ab; border-color: rgba(57,73,171,0.45); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitored       { background: rgba(46,125,50,0.10); border-color: rgba(46,125,50,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-unmonitored      { background: rgba(117,117,117,0.10); border-color: rgba(117,117,117,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitor-down     { background: rgba(211,47,47,0.10); color: #c62828; border-color: rgba(211,47,47,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitor-warning  { background: rgba(245,127,23,0.10); color: #f57f17; border-color: rgba(245,127,23,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitor-recovering { background: rgba(2,136,209,0.10); color: #0277bd; border-color: rgba(2,136,209,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitor-dep-down   { background: rgba(96,125,139,0.10); color: #455a64; border-color: rgba(96,125,139,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitor-dep-test   { background: rgba(123,31,162,0.10); color: #7b1fa2; border-color: rgba(123,31,162,0.45); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-maintenance        { background: rgba(103,58,183,0.10); color: #5e35b1; border-color: rgba(103,58,183,0.35); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitor-standby    { background: rgba(0,150,136,0.10); color: #00695c; border-color: rgba(0,150,136,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .badge-monitor-passive    { background: transparent; color: #3949ab; border-color: rgba(57,73,171,0.45); }
 
 /* Event level badges */
 .badge-level-info    { background: rgba(79,195,247,0.12); color: var(--color-accent); border: 1px solid rgba(79,195,247,0.25); font-size: 0.7rem; letter-spacing: 0.5px; }
@@ -3488,13 +3667,13 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   color: var(--color-text-secondary);
 }
 .dep-tree-test-banner strong { color: #ce93d8; margin-right: 4px; }
-:is([data-theme="morning"],[data-theme="noon"]) .dep-tree-row-self { background: rgba(79,195,247,0.06); border-color: rgba(79,195,247,0.30); }
-:is([data-theme="morning"],[data-theme="noon"]) .dep-tree-pip-down { color: #c62828; }
-:is([data-theme="morning"],[data-theme="noon"]) .dep-tree-pip-dep  { color: #455a64; }
-:is([data-theme="morning"],[data-theme="noon"]) .dep-tree-pip-dep-test { color: #7b1fa2; }
-:is([data-theme="morning"],[data-theme="noon"]) .dep-tree-pip-passive  { color: #3949ab; }
-:is([data-theme="morning"],[data-theme="noon"]) .dep-tree-test-banner { background: rgba(123,31,162,0.06); border-color: rgba(123,31,162,0.45); }
-:is([data-theme="morning"],[data-theme="noon"]) .dep-tree-test-banner strong { color: #7b1fa2; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .dep-tree-row-self { background: rgba(79,195,247,0.06); border-color: rgba(79,195,247,0.30); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .dep-tree-pip-down { color: #c62828; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .dep-tree-pip-dep  { color: #455a64; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .dep-tree-pip-dep-test { color: #7b1fa2; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .dep-tree-pip-passive  { color: #3949ab; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .dep-tree-test-banner { background: rgba(123,31,162,0.06); border-color: rgba(123,31,162,0.45); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .dep-tree-test-banner strong { color: #7b1fa2; }
 
 /* ─── Charts / Dashboard-specific ──────────────────────────────────────────── */
 /* The plot surface every SVG chart in the asset slide-over is drawn onto
@@ -4217,14 +4396,14 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    purple, but a DHCP reservation is something Polaris can manage and these
    are not, so they must not be the same dot. */
 .ip-dot-device-config    { background: #9575cd; box-shadow: 0 0 4px rgba(149,117,205,0.5); }
-:is([data-theme="morning"],[data-theme="noon"]) .ip-dot-dhcp-reservation { background: #9c27b0; box-shadow: 0 0 4px rgba(156,39,176,0.3); }
-:is([data-theme="morning"],[data-theme="noon"]) .ip-dot-dhcp-lease       { background: #ef6c00; box-shadow: 0 0 4px rgba(239,108,0,0.3); }
-:is([data-theme="morning"],[data-theme="noon"]) .ip-dot-conflict         { background: #d32f2f; box-shadow: 0 0 4px rgba(211,47,47,0.3); }
-:is([data-theme="morning"],[data-theme="noon"]) .ip-dot-device-config    { background: #5e35b1; box-shadow: 0 0 4px rgba(94,53,177,0.3); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .ip-dot-dhcp-reservation { background: #9c27b0; box-shadow: 0 0 4px rgba(156,39,176,0.3); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .ip-dot-dhcp-lease       { background: #ef6c00; box-shadow: 0 0 4px rgba(239,108,0,0.3); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .ip-dot-conflict         { background: #d32f2f; box-shadow: 0 0 4px rgba(211,47,47,0.3); }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .ip-dot-device-config    { background: #5e35b1; box-shadow: 0 0 4px rgba(94,53,177,0.3); }
 
 .conflict-label { cursor: help; color: #ef5350; font-weight: 600; }
 .conflict-icon { font-size: 0.85em; }
-:is([data-theme="morning"],[data-theme="noon"]) .conflict-label { color: #d32f2f; }
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .conflict-label { color: #d32f2f; }
 
 /* Click-to-copy cells in the IP panel (IP / hostname / MAC). Subtle hover
    underline so the affordance is discoverable without screaming for attention;
@@ -4242,7 +4421,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   text-underline-offset: 2px;
   background: rgba(79, 195, 247, 0.08);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .copy-on-click:hover {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .copy-on-click:hover {
   background: rgba(25, 118, 210, 0.08);
 }
 
@@ -4310,7 +4489,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   color: var(--color-text-primary);
   font-weight: 600;
 }
-:is([data-theme="morning"],[data-theme="noon"]) .mac-tooltip-latest {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .mac-tooltip-latest {
   background: rgba(2, 136, 209, 0.08);
 }
 .mac-tooltip-meta {
@@ -4371,14 +4550,14 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   background: rgba(79, 195, 247, 0.12);
   color: var(--color-accent);
 }
-:is([data-theme="morning"],[data-theme="noon"]) .copy-cell:hover {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .copy-cell:hover {
   background: rgba(2, 136, 209, 0.10);
 }
 .copy-cell-flash {
   background: rgba(79, 195, 247, 0.25) !important;
   color: var(--color-accent) !important;
 }
-:is([data-theme="morning"],[data-theme="noon"]) .copy-cell-flash {
+:is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .copy-cell-flash {
   background: rgba(2, 136, 209, 0.18) !important;
 }
 
