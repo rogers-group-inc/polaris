@@ -323,10 +323,13 @@ d("queryProbeLossRatios — a miss taken while DOWN is the outage, not loss", ()
 d("queryProbeLossRatios — SQL/JS parity on the outage run", () => {
   it("agrees with alertChartService's mirror on the same probes", async () => {
     // The exclusion is implemented twice by necessity — two window functions
-    // in this query, and `outageRunFailures` in the browser-free JS the alert
-    // email's loss chart uses. They are what make the number in an alert and
-    // the caption under its chart the same number, so they are pinned against
-    // each other rather than each against its own expectation.
+    // in this query, and `outageRunFailures` in the browser-free JS of
+    // alertChartService. Since 2026-09-14 the JS mirror no longer shapes what
+    // the loss chart draws (the chart counts every probe, business rule 29h
+    // applies to the metric alone), so it is `engineRatioPct` that carries it
+    // and `engineRatioPct` the query is pinned against. Pinning the two
+    // implementations to each other rather than each to its own expectation is
+    // still the point: a drift in either would otherwise pass.
     //
     // Primary rows only: the chart deliberately keeps poll rows once burst rows
     // exist (a picture of the window has to be continuous) while the query
@@ -356,7 +359,9 @@ d("queryProbeLossRatios — SQL/JS parity on the outage run", () => {
     // Eight countable probes (12 less the four-failure outage run), two lost.
     expect(Number(sql[0]!.total)).toBe(8);
     expect(sqlPct).toBe(25);
-    expect(js.ratioPct).toBe(sqlPct);
+    expect(js.engineRatioPct).toBe(sqlPct);
+    // And the chart, over the same probes, counts all six failures of twelve.
+    expect(js.ratioPct).toBe(50);
   });
 
   it("agrees when nothing is stamped, which is most of the fleet", async () => {
@@ -374,6 +379,8 @@ d("queryProbeLossRatios — SQL/JS parity on the outage run", () => {
     const js = probeLossSeriesFrom(rows.map((r) => ({ timestamp: r.timestamp, success: r.success })), 2 * 60 * 1000);
 
     expect(Number(sql[0]!.total)).toBe(10);
+    expect(js.engineRatioPct).toBe(sqlPct);
+    // With nothing stamped there is no exclusion, so the chart agrees too.
     expect(js.ratioPct).toBe(sqlPct);
   });
 });

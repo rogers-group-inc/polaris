@@ -196,6 +196,10 @@
   border-radius: var(--radius-lg);
   overflow: hidden;
   background: var(--color-bg-secondary);
+  /* The canvas is a card like any other list surface — it read as a hole cut
+     in the page without this. Safe under overflow:hidden, which clips the
+     Leaflet panes inside rather than the shadow outside. */
+  box-shadow: var(--shadow-card);
 }
 
 /* Leaflet tweaks for the dark family. Written as "not a daylight theme" rather

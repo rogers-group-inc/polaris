@@ -39,6 +39,24 @@ export interface RunAccumulator {
   completedCount: number;
   skippedOfflineCount: number;
   skippedErrorCount: number;
+  /**
+   * Names of the devices behind `skippedErrorCount` — a gate discovery could
+   * not read at all this run (no mgmt IP resolvable, direct REST unreachable).
+   *
+   * In memory only, deliberately: the count is what the live UI needs, and the
+   * names are needed exactly once, in the end-of-run summary Event, which this
+   * process writes before the run ends. Persisting them would be a column that
+   * only ever has one reader. Bounded by the device roster, so a fleet-sized
+   * Set of names at 2000 gates is still kilobytes.
+   *
+   * Why it exists at all (business rule 53): a skipped gate is otherwise
+   * invisible. Its per-device skip line is one Event among the thousands a
+   * run writes, the count is
+   * folded into "done" in the progress bar, and nothing on the ASSET says it
+   * has not been read — so a gate silently frozen at stale data looks exactly
+   * like a healthy one (prod 2026-09, an 1801F HA pair on old firmware).
+   */
+  skippedErrorDevices: Set<string>;
   activeDevices: Map<string, number>; // device name → startedAt epoch ms
   // NOTE: slow-alert flags are NOT tracked here. Slow detection runs in the
   // web/scheduler role (checkForSlowRuns) and owns the slowAlerted /
@@ -56,6 +74,7 @@ export function newRunAccumulator(integrationId: string, integrationName: string
     completedCount: 0,
     skippedOfflineCount: 0,
     skippedErrorCount: 0,
+    skippedErrorDevices: new Set(),
     activeDevices: new Map(),
   };
 }

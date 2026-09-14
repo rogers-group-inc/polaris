@@ -12,6 +12,8 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 49](#rule-49) — An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved
 - [Rule 50](#rule-50) — A response the app did not write is a response with the app's headers missing
 - [Rule 51](#rule-51) — `DATABASE_URL` is a driver URL; its `sslmode` value is translated into the libpq vocabulary, never copied
+- [Rule 52](#rule-52) — TimescaleDB is part of the install, not a tuning option
+- [Rule 53](#rule-53) — A device a run could not read keeps the data it already had, so it is named, never folded in with one the run skipped
 
 <a id="rule-44"></a>
 
@@ -438,6 +440,212 @@ Guards: `tests/unit/pgEnv.test.ts` pins the translation, the full libpq value se
 case/whitespace handling, and the refusal (including that the message names the offending
 value). Anyone reverting `libpqSslMode` to a passthrough fails them.
 
+<a id="rule-52"></a>
+
+## Rule 52 — TimescaleDB is part of the install, not a tuning option
+
+Two statements lived in the repository at the same time and could not both be true.
+
+`services/backupService.ts`'s own header asserted that "every documented production install
+enables TimescaleDB" — which is why the restore path wraps itself in
+`timescaledb_pre_restore()` / `timescaledb_post_restore()` (rule 20c), and why the capacity
+card's disk forecast assumes chunk-drop retention and ~10× compression. Meanwhile
+`docs/INSTALL.md` filed the extension under *Recommended: TimescaleDB*, in a section most
+operators never reached, and **no install path installed it**. `setup-rhel.sh` and
+`setup-ubuntu.sh` named `timescaledb` only in comments — as the reason they choose the PGDG
+repository over RHEL's AppStream — and then never installed the package the comment was
+justifying. A fresh scripted install therefore landed on plain PostgreSQL, and the one of the
+two statements that was false was the one operators were actually living in.
+
+The consequences were not cosmetic, and none of them announced itself. Retention pruned row by
+row instead of dropping chunks. Nothing compressed, so the steady-state size projection on the
+Maintenance tab was wrong by an order of magnitude in the direction that matters. The restore
+gates ran against a database with no extension to gate, so the rehearsal proved something other
+than what would happen in a real restore. And the one signal that could have surfaced it — the
+`timescale_recommended` reason in `capacityService` — was gated at 1 GB of sample tables, so a
+new install stayed silent for exactly as long as it took to accumulate the data whose storage
+was the problem.
+
+### Why the scripts are the only place this can happen
+
+`CREATE EXTENSION timescaledb` requires superuser. The Polaris application user deliberately is
+not one, so the app can never fix this about itself — it can only ever **detect**. That
+asymmetry is the whole shape of the rule: provisioning belongs to the setup scripts, which run
+as root and own the database server, and the app's job is to say loudly that provisioning did
+not happen.
+
+So each step in `setup-rhel.sh` / `setup-ubuntu.sh` **errors out rather than warning**: install
+`timescaledb-2-postgresql-17` and `timescaledb-tools`, run `timescaledb-tune` (which is what
+writes `shared_preload_libraries` — without it the extension is installed and cannot load,
+the most confusing of the failure states), try-restart PostgreSQL so a re-run picks the config
+change up, then `CREATE EXTENSION` on the polaris database. An install that comes up without
+the extension is one whose disk forecast and restore rehearsal are both wrong, which is not a
+condition worth continuing past.
+
+The two `-nodb` scripts are the deliberate exception. They do not own the database server —
+that is what `-nodb` means — so they attempt the create and warn with the consequence and the
+managed-service caveat, rather than aborting a host they have no way to fix from.
+
+`detectTimescale()` now logs the absence at **error** level rather than an info line reading
+`installed:false`. On an install Polaris provisioned, a missing extension does not mean "the
+operator chose not to"; it means something removed it.
+
+### What the plain-table path is now
+
+The plain-table code path stays, and keeping it is not a hedge on the rule. It is two specific
+things: the degraded state of an **external or managed database** that cannot offer the
+extension at all (RDS for PostgreSQL, Aurora and Cloud SQL have no TimescaleDB; Timescale
+Cloud, Crunchy Bridge and Azure Postgres Flexible Server do), and the **fallback when
+`drop_chunks` fails on a table that IS a hypertable**. Neither is a supported way to run an
+install Polaris provisioned.
+
+`capacityService`'s `timescale_recommended` reason therefore lost its size gate entirely. It
+fires at zero bytes; the 1 GB threshold survives only to choose between `watch` and `warning`,
+and the sub-1 GB message says what is actually wrong ("Polaris requires it: retention prunes
+row by row, nothing compresses, and the restore gates do nothing") rather than quoting a
+storage figure that is not yet alarming.
+
+### The corollary for host-fact probes
+
+Anything that reports the extension as a **host fact** must distinguish "absent" from "could
+not tell". `services/haService.ts` → `probeHostFacts()` shells out to `rpm -qa` for
+`timescaledb-2-postgresql-*`, and its catch used to be annotated `/* Timescale is optional */`.
+It never was optional in the sense that comment implied, and after this rule it is not optional
+in any sense: the only way that catch fires is `rpm` itself being unavailable or failing, which
+is a fact about the probe and not about the host. A null `tsdbVersion` means **nothing to
+compare** — which matters because the figure exists to catch a version skew between the two HA
+nodes, and the surrounding comment already warns that a silent "none" on both sides looks like
+agreement.
+
+### Not yet proven on a host
+
+The scripted half of this rule has never been run end to end: no RHEL or Ubuntu box was
+available when it landed on 2026-09-11. `bash -n` passes on all four scripts and the capacity,
+timescale and lifecycle unit tests cover the app half, but **a fresh-install smoke on one
+platform is still outstanding**, and until it happens the strongest claim available is that the
+scripts are syntactically sound and say the right things.
+<a id="rule-53"></a>
+
+## Rule 53 — A device a run could not read keeps the data it already had, so it is named, never folded in with one the run skipped
+
+An 1801F HA pair in production showed pre-upgrade firmware. The FortiGate answered every
+monitoring poll. FortiManager was healthy, had the pair online, and showed the correct
+version in its own device record. Nothing was broken anywhere an operator could see, and the
+firmware had been wrong for weeks.
+
+A firewall's `Asset.osVersion` has exactly one writer: the FMG/FortiGate discovery pass, which
+upserts the `fortigate-firewall` AssetSource and projects it. There is no second path. SNMP
+cannot help — `parseVendorSysDescr` knows one vendor's sysDescr layout and it is not Fortinet,
+so a FortiGate polled over SNMP contributes no `snmp-sysdescr` row at all. And the projection
+write is deliberately guarded:
+
+```ts
+if (fwProjected.osVersion !== null) updateData.osVersion = fwProjected.osVersion;
+```
+
+That guard is correct and must stay: it is what stops a mid-rejoin scrape with no version from
+BLANKING a good one (the 2026-07-14 FortiAP incident). Its unavoidable other edge is that a
+device nothing read this cycle is indistinguishable, at the write site, from a device read
+successfully that had nothing new to say. Both leave the old value in place.
+
+So the question is never "why did the value not change" but "did anything read the device at
+all" — and in direct mode the answer was no, every run, for one specific reason.
+
+### Why the gate was never read
+
+Direct mode resolves each FortiGate's management IP from two producers. The warm cache
+(`buildFmgWarmCacheIps`) supplies monitor-up firewalls from their own `Asset.ipAddress` with no
+FMG round-trip; `resolveDeviceMgmtIp` handles the rest. `processDevice` reads the result by
+`fmgNameKey(deviceName)` — **FortiManager's** name for the device.
+
+The warm cache was keyed on `Asset.hostname` — the gate's own `system global hostname`. Those
+two names are under no obligation to match, and on this estate at least one gate was already
+known to diverge. This is the mismatch `utils/fortinetParentKey.ts` exists to prevent, in a
+shape that file did not list: not a child's stamp resolved to a parent, but **a map built from
+Asset rows and read back by FMG device name**. Every divergent gate's entry was filed under a
+key nothing ever asked for.
+
+A warm-cache miss is supposed to be a slowdown, not a failure — that is what the resolver is
+for. But `resolveDeviceMgmtIp` reads exactly one interface, the one named by the integration's
+fleet-wide `mgmtInterface` setting, out of `/pm/config/device/<name>/global/system/interface`,
+and `_extractV4` rejects `0.0.0.0`:
+
+```ts
+if (!ip || ip === "0.0.0.0" || !isValidIpv4(ip)) return null;
+```
+
+`0.0.0.0` on a dedicated management interface is the **normal** state of a FortiGate HA
+cluster. The per-member management addresses are not in `system interface`; they live under
+`config system ha` → `set ha-mgmt-interfaces`, which this query never reads. A standalone 61F
+has a real address there and resolves fine. An HA pair does not.
+
+Two misses, and `processDevice` logs `discover.device.skip` at error level and returns null.
+The gate is dropped from the entire run — no firmware, no subnets, no leases, no switch or AP
+roster — and everything it had stays exactly as it was. The next run does the same thing.
+
+### Why nobody noticed
+
+Monitoring never uses either of those inputs. `buildFortinetConfig` dials `Asset.ipAddress` and
+prefers a per-asset REST credential over the integration-level token. Different address,
+different credential, different code path. The pair polled green the whole time.
+
+**"It is being monitored fine" is not evidence that anything has read it.** The two answer
+different questions, and on this estate they routinely answer differently.
+
+The skip was not invisible, exactly — `onProgress` persists every progress line as an Event, so
+`integration.discover.device.skip` was on file. It was just unfindable: one Event among the
+thousands a run writes, filed under the *integration* rather than the gate, with nothing on the
+asset itself to suggest it had gone unread. The count reached the UI and was then thrown away —
+`/discoveries` lists only *running* runs, and both surfaces summed the two skip kinds into a
+single "skipped" figure. That summing is what finished the job: **offline is routine here.**
+Staged gates awaiting site deployment sit offline in FMG for weeks with cloned configs, and
+discovery reads their cached CMDB on purpose. An operator who sees "3 skipped" on this fleet is
+right to read it as "3 staged gates", which is exactly what it usually is.
+
+### The rule
+
+Both halves are load-bearing, and the second is the one that survives the next bug of this
+shape rather than this specific one:
+
+- **Never sum the two skip states.** `skippedOfflineCount` is a device the run decided not to
+  read. `skippedErrorCount` is a device the run *could not* read. They have opposite
+  implications for whether the data on screen is trustworthy. `public/js/app.js` and
+  `public/js/widgets/discoveryActivity.js` render them as separate `· N offline` /
+  `· N unread` parts.
+- **Name the unread ones.** `RunAccumulator.skippedErrorDevices` collects the device behind
+  each error increment, and `runDiscovery` writes one warning-level
+  `integration.discover.devices_unread` Event before the abort/complete branch — first 20
+  names plus "and N more", the full list in `details.devices`. In memory rather than a column:
+  the run that collects the names is the run that writes them, so a persisted field would have
+  exactly one reader.
+- **A completion retracts an earlier error for the same device.** `processDevice` logs its
+  first direct-REST failure *before* deciding whether to re-resolve the mgmt IP and retry, so a
+  gate that fails once and then succeeds was being counted as skipped. Without the retraction
+  it would be reported unread despite having been read perfectly, and `done` (completed +
+  skipped) would exceed the device roster.
+
+### Two fixes that look obvious and are forbidden
+
+Both were considered and both are already ruled out elsewhere in the codebase's documented
+decisions:
+
+- **Falling back to `rawDevice.ip`.** FMG's device-record `ip` field can be a public or NAT
+  address; it is what FMG uses to reach the device, not what Polaris should. The mgmt-IP
+  resolver reads `system interface` for exactly this reason.
+- **Falling back to the FMG proxy transport.** Direct mode fails loudly per-device on a
+  precondition failure by design. A silent fallback turns "I disabled proxy" into "I disabled
+  proxy except when something else is wrong, in which case it silently re-enables itself and
+  overruns FMG's session limit".
+
+Fix the key, or surface the skip. The fix here was both: the warm cache is now keyed on
+`fortinetTopology.deviceName` with the hostname as an alias (every device name claimed before
+any alias, so one gate's hostname cannot displace another's real name), and the unread gates
+are named at the end of every run.
+
+Guard: `tests/unit/fmgWarmCacheKeying.test.ts` covers the divergent-name case, the cross-gate
+name collision, case-insensitive dedup against `fmgNameKey`, and the missing-stamp fallback.
+
+<a id="rule-54"></a>
 
 ## Rule 54 — An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got
 

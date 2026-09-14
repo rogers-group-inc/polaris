@@ -1902,21 +1902,27 @@ function renderQueryStatus() {
         if (d.slowDevices) d.slowDevices.forEach(function (name) { slowSet[name] = true; });
         var nameClass = d.slow ? 'query-status-name query-status-name-slow' : 'query-status-name';
         var nameTitle = d.slow ? ' title="This discovery is running longer than normal"' : '';
-        // FMG-only progress summary: "N/M complete · K skipped (offline)".
+        // FMG-only progress summary: "N/M complete · K offline · J unread".
         // Standalone FortiGate discoveries are a single device — counts add
-        // no information there. Skip-error count is rolled into the offline
-        // count only when non-zero so the common case stays compact.
+        // no information there. Each skip count is shown only when non-zero so
+        // the common case stays compact.
+        //
+        // The two are NOT interchangeable and must never be summed into one
+        // "skipped" figure again. Offline is routine on a Fortinet estate — a
+        // staged gate awaiting deployment sits offline in FMG for weeks and
+        // discovery deliberately pulls its cached CMDB config instead. UNREAD
+        // means discovery never reached the device at all: it silently keeps
+        // the data from whenever it was last read, while monitoring dials its
+        // IP and reports it healthy. Rolling the two together is what let an
+        // 1801F HA pair sit on stale firmware unnoticed (prod 2026-09).
         var progressLine = '';
         if (d.type === 'fortimanager' && d.totalDevices != null) {
           var done = d.completedCount || 0;
           var skipOff = d.skippedOfflineCount || 0;
           var skipErr = d.skippedErrorCount || 0;
-          var skipTotal = skipOff + skipErr;
           var parts = [done + '/' + d.totalDevices + ' complete'];
-          if (skipTotal > 0) {
-            var skipLabel = skipErr > 0 ? skipTotal + ' skipped' : skipOff + ' skipped (offline)';
-            parts.push(skipLabel);
-          }
+          if (skipOff > 0) parts.push(skipOff + ' offline');
+          if (skipErr > 0) parts.push(skipErr + ' unread');
           progressLine = '<span class="query-status-progress">' + escapeHtml(parts.join(' · ')) + '</span>';
         }
         return '<li><div style="min-width:0;flex:1">' +

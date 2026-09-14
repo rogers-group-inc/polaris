@@ -314,7 +314,13 @@ async function probeHostFacts(): Promise<HostFactsProbe> {
       const { stdout } = await execFileAsync("rpm", ["-qa", "--qf", "%{VERSION} ", "timescaledb-2-postgresql-*"], { timeout: 5000 });
       const version = stdout.trim().split(/\s+/)[0] ?? "";
       if (version && !/not installed/i.test(version)) facts.tsdbVersion = version;
-    } catch { /* Timescale is optional */ }
+    } catch {
+      // rpm itself was unavailable or failed — NOT evidence that the extension
+      // is absent, and absence would be a broken install rather than a
+      // configuration choice (business rule 52). Either way tsdbVersion stays
+      // null, which reads downstream as "nothing to compare" and not as "no
+      // TimescaleDB here".
+    }
     try {
       const { stdout } = await execFileAsync("chronyc", ["tracking"], { timeout: 3000 });
       const line = stdout.split("\n").find((l) => /System time/i.test(l));

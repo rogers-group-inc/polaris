@@ -29,8 +29,15 @@
       if (r.totalDevices != null) {
         var done = (r.completedCount || 0) + (r.skippedOfflineCount || 0) + (r.skippedErrorCount || 0);
         var pct = Math.min(100, Math.round((done / Math.max(1, r.totalDevices)) * 100));
+        // "unread" is the device discovery could not reach at all — it keeps
+        // its previous data while looking healthy everywhere else, so it earns
+        // a label of its own rather than just advancing the bar. Same wording
+        // as the sidebar's discovery line in app.js; keep the two in step.
+        var counts = done + ' / ' + r.totalDevices +
+          (r.skippedOfflineCount ? ' · ' + r.skippedOfflineCount + ' offline' : '') +
+          (r.skippedErrorCount ? ' · ' + r.skippedErrorCount + ' unread' : '');
         progress = '<div class="util-bar-track" style="margin-top:4px"><div class="util-bar-fill" style="width:' + pct + '%;background:#4fc3f7"></div></div>' +
-          '<div style="font-size:0.72rem;color:var(--color-text-tertiary);margin-top:2px">' + done + ' / ' + r.totalDevices + (r.skippedOfflineCount ? ' · ' + r.skippedOfflineCount + ' offline' : '') + '</div>';
+          '<div style="font-size:0.72rem;color:var(--color-text-tertiary);margin-top:2px">' + counts + '</div>';
       }
       return '<div class="recent-item" style="cursor:default">' +
         '<div style="flex:1">' +

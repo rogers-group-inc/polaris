@@ -40,7 +40,7 @@ one FortiGate held a run "running" 5+ hours through a cancel) —
 `discoveryCancelWatchdog` is armed on abort and disarmed in runDiscovery's
 finally: if the run hasn't unwound 2 minutes after abort, it logs the stuck
 devices, finalizes the row `aborted`, writes `integration.discover.force_exit`,
-and exits 1 so systemd/NSSM restarts the process (same exit-and-restart pattern
+and exits 1 so systemd restarts the process (same exit-and-restart pattern
 as the operator /restart endpoint). Under `all`/cursor-mode-fallback the exit
 takes the whole process — matching /restart semantics. If pg-boss redelivers
 the interrupted job, runDiscovery sees `cancelRequested` still set at startup
