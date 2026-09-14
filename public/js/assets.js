@@ -5768,6 +5768,11 @@ function _assetGeneralTabHTML(a) {
           : viewRow("Hostname", a.hostname, false, false, true))) +
       viewRow("DNS Name", a.dnsName, false, false, true) +
       ipViewRow(a) +
+      // Firewall VIP / virtual-server rows — async-fetched (needs
+      // reservations:read), and absent for the overwhelming majority of assets
+      // that aren't published through one. Mounted directly under the address
+      // they qualify: "this device answers on 203.0.113.10, via that gate".
+      '<div id="asset-vip-mount-' + escapeHtml(a.id) + '" style="display:contents"></div>' +
       viewRow("MAC Address", a.macAddress, true, false, true) +
       macAddressesViewHTML(a.macAddresses) +
       viewRow("Asset Tag", a.assetTag) +
@@ -5920,6 +5925,21 @@ function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, manag
         mclagMount.innerHTML = html;
         _wireDependencyTreeLinks(mclagMount);
       }).catch(function (err) { console.warn("Failed to load MCLAG peers", err); });
+    }
+    // VIP rows (General tab) — the firewall VIPs / virtual servers that publish
+    // this device, so the external address it answers on and the gate holding
+    // that VIP are on the same screen as the internal address. Needs
+    // reservations:read on top of assets:read (the facts are stamped on IPAM
+    // reservations), so a 403 — or an asset behind no VIP, which is nearly all
+    // of them — just leaves the rows off.
+    var vipMount = document.getElementById("asset-vip-mount-" + a.id);
+    if (vipMount && permAtLeast("reservations", "read")) {
+      api.assets.vips(a.id).then(function (res) {
+        var vips = (res && res.vips) || [];
+        if (!vips.length) return;
+        vipMount.innerHTML = assetVipRowsHTML(vips);
+        _wireDependencyTreeLinks(vipMount);
+      }).catch(function (err) { console.warn("Failed to load asset VIPs", err); });
     }
     // Contacts row (General tab) — the address-book entries responsible for
     // this device, so an operator can see who an automation would email without
@@ -16311,6 +16331,49 @@ function lastSeenRowHTML(a) {
   }
   return '<div class="detail-row"><span class="detail-label">Last Seen</span>' +
     '<span class="detail-value">' + valueInner + '</span></div>';
+}
+
+// Render the General-tab VIP / Virtual Server rows from GET /assets/:id/vips —
+// one per firewall VIP publishing this device: the EXTERNAL address it answers
+// on, the VIP object's name, and the gate the VIP is configured on. Before
+// this, the external address of a published server was only discoverable by
+// finding its reservation in Networks and reading the badge tooltip.
+//
+// The gate is rendered by the name the VIP config carries (FortiManager's
+// device name) whether or not it resolved to an asset — the same posture the
+// upstream rows take, since an unresolved gate is a legitimate state and the
+// name is useful without a row. When it DID resolve, the name becomes a link
+// to that asset (wired by _wireDependencyTreeLinks, the MCLAG-peer precedent).
+//
+// The trailing note names the side the ASSET sits on, so the row reads
+// correctly whichever address of a multi-homed server matched.
+function assetVipRowsHTML(vips) {
+  if (!Array.isArray(vips) || vips.length === 0) return "";
+  return vips.map(function (v) {
+    var label = v.isVirtualServer ? "Virtual Server" : "VIP";
+    var extHTML = v.extip
+      ? '<span class="copy-cell" style="font-family:var(--font-mono)" title="External address — click to copy" data-copy="' +
+        escapeHtml(v.extip) + '">' + escapeHtml(v.extip) + '</span>'
+      : '<span style="color:var(--color-text-tertiary)">no external IP</span>';
+    var deviceText = escapeHtml(v.device || "-");
+    var gateHTML = deviceText;
+    if (v.asset && v.asset.id) {
+      // The asset's own hostname can differ from FortiManager's device name —
+      // show it in the tooltip rather than swapping the displayed value.
+      var tip = (v.asset.hostname && v.asset.hostname !== v.device)
+        ? ' title="' + escapeHtml(v.asset.hostname) + '"' : '';
+      gateHTML = '<a href="#" class="dep-tree-link" data-asset-id="' + escapeHtml(v.asset.id) + '"' + tip + '>' +
+        deviceText + '</a>';
+    }
+    var note = v.role === "external"
+      ? "this address is the external side"
+      : (v.role === "realserver" ? "pool member " + v.ip : "maps to " + v.ip);
+    return '<div class="detail-row"><span class="detail-label">' + label + '</span>' +
+      '<span class="detail-value">' + extHTML +
+      ' · ' + escapeHtml(v.name || "") + ' on ' + gateHTML +
+      ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(' + escapeHtml(note) + ')</span>' +
+      '</span></div>';
+  }).join("");
 }
 
 function viewRow(label, value, mono, alignRight, copy) {

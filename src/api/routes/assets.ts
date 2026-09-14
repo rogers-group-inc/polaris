@@ -62,6 +62,7 @@ import { getArpEntryRetentionDays } from "../../services/sampleRetentionService.
 import { getCredential } from "../../services/credentialService.js";
 import { resolveConnectionPath } from "../../services/connectionPathService.js";
 import { resolveAssetUpstream } from "../../services/assetUpstreamService.js";
+import { resolveAssetVips } from "../../services/assetVipService.js";
 import { shapeManagementAccessForClient } from "../../services/fortinetManagementAccessService.js";
 import { propagateAfterStatusChange, FORTINET_INFRA_ASSET_TYPES } from "../../services/dependencyTreeService.js";
 import { pickSampleTierForAsset } from "../../services/sampleQueryRouter.js";
@@ -3171,6 +3172,28 @@ router.get("/:id/upstream", requirePermission("assets", "read"), async (req, res
     res.json(result);
   } catch (err) { next(err); }
 });
+
+// GET /assets/:id/vips — the firewall VIPs / virtual servers that publish this
+// device, for the General tab's VIP rows: the external address, and the gate
+// the VIP is configured on (resolved to an Asset when Polaris holds one).
+//
+// The facts live on the Reservations discovery stamps for every address a VIP
+// touches (`Reservation.vipInfo`, discoveryEngine Phase 3c), so reading this
+// exposes IPAM content — chained gate, the `/assets/:id/contacts` precedent.
+// Nothing in the UI renders a "no VIP" row, so there is no "not shown" vs
+// "none found" ambiguity for a `visibility` flag to resolve.
+router.get(
+  "/:id/vips",
+  requirePermission("assets", "read"),
+  requirePermission("reservations", "read"),
+  async (req, res, next) => {
+    try {
+      const result = await resolveAssetVips(req.params.id as string);
+      if (!result) throw new AppError(404, "Asset not found");
+      res.json(result);
+    } catch (err) { next(err); }
+  },
+);
 
 // GET /assets/:id/virtualization — current-state vCenter facts for the
 // asset-details Virtualization section. Assembled per role from the

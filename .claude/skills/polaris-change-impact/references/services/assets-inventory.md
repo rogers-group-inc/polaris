@@ -295,6 +295,38 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetVipService.ts
+
+**What it owns:** `resolveAssetVips(assetId)` — the firewall VIPs and load-balance virtual servers that PUBLISH one asset, for the asset-details General tab's VIP rows: the external address the device answers on, and the gate the VIP is configured on. Before it, the external address of a published server was reachable only by finding its reservation in Networks and reading the VIP badge's tooltip.
+
+**Public API:** `resolveAssetVips(assetId)`, the pure `parseVipInfo(raw)`, and the `AssetVips` / `AssetVipEntry` / `AssetVipRole` types.
+
+**Cross-service deps:** `subnetService` (`buildIpContexts` — containment + the active reservation per address), `utils/fortinetParentKey` (`parentAssetWhereOr` + `buildInfraParentIndex` + `resolveInfraParentAsset`).
+
+**Reads:** `Asset` (+ `AssetAssociatedIp` via `associatedIpRows`), `Subnet` (through `buildIpContexts`), `Reservation.vipInfo`.
+
+**Writes:** nothing — no device I/O, no rows, no Events. Every fact is one discovery already stamped (`discoveryEngine` Phase 3c writes `Reservation.vipInfo` = `{ name, device, extip, role, isVirtualServer }` for the VIP's external IP, each mapped IP and each virtual-server realserver).
+
+**Used by:**
+- `src/api/routes/assets.ts → GET /api/v1/assets/:id/vips` — the only caller. Gated `assets:read` AND `reservations:read`, chained (the `/assets/:id/contacts` precedent: reading it exposes IPAM content).
+- `public/js/assets.js → _mountAssetViewAsyncSections` + `assetVipRowsHTML` — the General-tab rows.
+
+**Invariants:**
+- **Containment goes through `buildIpContexts`, never a fresh `cidr >>= ip` query** — the same rule `ipContextService` states, for the same reason: a second implementation would let this row disagree with the View-Lease button about which reservation belongs to an address. The reservation IDS that helper returns are what the `vipInfo` read is keyed on, which is also what stops a same-address reservation in a subnet that does NOT contain the asset's address from contributing a row.
+- **The gate NAME resolves through `utils/fortinetParentKey.ts`, never against `Asset.hostname`.** `vipInfo.device` is FortiManager's device name (discovery copies it straight off the VIP's owning device), so the hostname match is exactly the conflation that module exists to prevent.
+- **Unresolved is a state, not an error** — `asset: null` with the name kept. A VIP on a gate Polaris holds no Asset row for is still worth naming, and the row renders the name as plain text.
+- **The DISPLAYED gate name is the VIP config's spelling**, not the resolved asset's hostname (which rides the link's `title`) — the `assetUpstreamService` posture, and what an operator comparing the row against the FortiGate config needs.
+- **ASSOCIATED addresses count, not just the primary one.** A multi-homed server can be a VIP target on one interface and a virtual-server pool member on another; each address contributes its own entry, and the entry names the address it was found on so the rows stay readable.
+- **One reservation per (subnet, address) means ONE VIP per address** — a server published through several VIPs on one address shows the most recently discovered one, because that is all the schema records. Not a bug to work around here: fixing it means a VIP table, not a second lookup.
+- **`parseVipInfo` rejects a stamp missing the VIP name or the gate name** (the two halves the row exists to answer) and tolerates a missing `extip`; an unrecognized `role` falls back to `"mapped"`, the reading that understates rather than asserting something about the device's exposure that nothing checked.
+- **One query per stage, never per address or per gate** — the asset + its associated IPs, one containment join, one `vipInfo` read, one candidate query over every distinct gate name.
+
+**When changing this:** a new `vipInfo` field means `parseVipInfo` AND the row renderer — the blob is written in three places in `discoveryEngine.ts` Phase 3c (create, VIP-rename refresh, DHCP-collision update) and all three must stamp it or the row shows it only for VIPs discovered since. If the VIP badge in `public/js/ip-panel.js` and this row ever disagree about what a stamp means, they are reading the same column and one of them is wrong. A caller that wants the gate's VERBS (Open HTTPS / SSH) needs `shapeManagementAccessForClient` on the ref, the way `assetUpstreamService` does it — the row deliberately carries only a link today.
+
+**Tests:** `tests/integration/assetVips.test.ts` (against a real DB: the gate resolved by FMG device name with a mismatched hostname, an unresolved gate, associated addresses, a same-address reservation in a non-containing subnet, the `reservations:read` gate, 404), `tests/unit/assetVipService.test.ts` (`parseVipInfo`), `tests/unit/assetVipRowsDom.test.ts` (the rows).
+
+---
+
 ## services/ipUpstreamChainService.ts
 
 **What it owns:** The IP-keyed upstream chain (business rule 45): for an asset that has an address and NO MAC, derive `lastSeenSwitch` / `lastSeenAp` by walking IP → containing subnet's owning FortiGate → THAT gate's `AssetArpEntry` → MAC → `AssetMacTableEntry` (lowest-cardinality learned port) / `AssetWirelessStation` (by MAC, or by the station's own recorded address). Every other writer of those two columns is keyed by MAC, so an asset from AD / Azure Arc / a vCenter cluster / an active scan / the operator form could never acquire them — this service reads the current-state tables those writers leave behind and joins the chain. No device I/O.
