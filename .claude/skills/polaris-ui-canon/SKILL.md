@@ -20,7 +20,7 @@ Read the canon files here for *which file in THIS repo* to copy. Inside this rep
 | a list page, table, column chooser, pagination, row verbs, a filter box | [references/canon-tables-lists.md](references/canon-tables-lists.md) |
 | a modal, a dialog over a modal, an integration dialog, a wizard, the condition builder, a slide-over, a blocking overlay, a standalone page | [references/canon-modals-wizards.md](references/canon-modals-wizards.md) |
 | a chart, a dashboard widget, the polling-method subtabs | [references/canon-charts-widgets.md](references/canon-charts-widgets.md) |
-| anything on the phone SPA (bottom sheet, pull-to-refresh, keyboard fit) | [references/canon-mobile.md](references/canon-mobile.md) |
+| anything on the phone SPA (bottom sheet, pull-to-refresh, keyboard fit, the theme strip) | [references/canon-mobile.md](references/canon-mobile.md) |
 | shared helpers, theme-paired assets, gated controls, the active-alert dot, kit API names, the glass tokens every floating surface paints, and which of the four elevation shadows a surface takes — a card's included | [references/canon-shared-kit.md](references/canon-shared-kit.md) |
 | the SPA shell, navigation, the sidebar status panels and their pollers, the assets page and its slide-over tabs | [references/frontend-shell.md](references/frontend-shell.md) |
 | Discovery-rules card, SSH Deployment, script publishing, export/import, Dash wallboard, mobile PWA + push | [references/frontend-surfaces.md](references/frontend-surfaces.md) |
@@ -74,6 +74,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | `public/js/brand-logo.js` | `PolarisBrandLogo` | which logo variant a theme gets (business rule 27) |
 | `public/js/dashboard-saved.js` | `PolarisSavedDashboards` | the "Dashboards ▾" menu on BOTH the Dashboard page and the Dash wallboard — save / publish / load a named canvas, and (wallboard only) pin a published one. Its counterpart seam is `window.PolarisDashboard` in `dashboard.js` |
 | `public/js/mobile/alerts.js` | `PolarisMobileAlerts` | the phone's alert severity vocabulary (the third mirror of `ALERT_SEVERITY_RANK`), the Assets-list alert flag, the per-asset alerts sheet (acknowledge / clear), and the sheet-based acknowledge-note prompt the More tab shares |
+| `public/js/mobile/app.js` | `PolarisTheme` | the phone's theme: `get()` answers the FAMILY (map-tab's basemap, topology-tab's palette), `set()` writes a real id and never persists a transit one, `advance()` is the strip's one-tap sweep, `seatStrips()` positions a strip rendered after boot. Its `MOBILE_THEMES` / `MOBILE_TRANSIT_THEMES` / `THEME_STRIP_POS` move in lockstep with the desktop's `THEMES` / `TRANSIT_THEMES` / `THEME_WHEEL_ANGLE` — same clock, two geometries |
 | `public/js/region-pills.js` | `PolarisRegionPills` | the only browser-side reader of the region catalogue |
 | `public/js/region-tree.js` | `PolarisRegionTree` | region containment tree + overlay styling |
 | `public/js/totp-self.js` | `PolarisTotpSelf` | self-service TOTP enroll/confirm/disable modals |

@@ -9,7 +9,7 @@
 // rather than /login.html, so session expiry pops a familiar screen.
 
 // Apply persisted theme BEFORE the IIFE below runs, so the first paint
-// uses the right surface color (no dark-flash on a light-mode user's
+// uses the right surface color (no dark-flash on a light-mode user’s
 // reload). Same `polaris-theme` localStorage key the desktop uses, so a
 // preference set on either surface flows to the other.
 // Nothing saved (first launch of the installed app, typically) follows the OS
@@ -17,12 +17,35 @@
 // js/theme-init.js and app.js, and a retired id (the old "dark"/"light") names
 // no token block, so it falls back the same way as no preference at all.
 //
-// The desktop's three themes come in two FAMILIES, and mobile.css carries one
-// palette per family — so this SPA reads and writes family-wise (see
-// PolarisTheme below) while still storing a real theme id, which is what keeps
-// the shared `polaris-theme` key valid for the desktop app.
+// The three SELECTABLE themes each carry their own Material palette in
+// mobile.css. They used to share ONE palette per family, which is why this SPA
+// read and wrote family-wise; the theme strip ended that, because a control
+// that shows the day passing has to have something change when it passes.
+// `PolarisTheme.get()` still answers the FAMILY, because that IS the
+// granularity its remaining callers want (map-tab’s basemap pair,
+// topology-tab’s node palette) — what was retired is the two-way light/dark
+// TOGGLE, not the family question.
+var MOBILE_THEMES = [
+  { id: "morning",   label: "Morning",   family: "light" },
+  { id: "noon",      label: "Noon",      family: "light" },
+  { id: "nightfall", label: "Nightfall", family: "dark" },
+];
+
+// Transit palettes: real token blocks that nothing can select and nothing ever
+// persists. The strip fades THROUGH each one that lies on the way, so noon →
+// nightfall crosses the golden hour instead of cutting. Mirrors TRANSIT_THEMES
+// in the desktop app.js — the two lists and their CSS blocks move together.
+var MOBILE_TRANSIT_THEMES = [
+  { id: "afternoon", label: "Afternoon", family: "light", transit: true },
+];
+
+// Back-compat for any caller still handing us a family rather than an id.
 var MOBILE_THEME_IDS = { light: "morning", dark: "nightfall" };
+
 (function () {
+  // The selectable themes only. "afternoon" is deliberately absent: it is a
+  // transit palette the strip travels through, never a saved preference, so a
+  // reload mid-sweep lands on a real theme instead of a waypoint.
   var KNOWN = ["morning", "noon", "nightfall"];
   var saved = null;
   try { saved = localStorage.getItem("polaris-theme"); } catch (e) {}
@@ -35,34 +58,238 @@ var MOBILE_THEME_IDS = { light: "morning", dark: "nightfall" };
   document.documentElement.setAttribute("data-theme", saved);
 })();
 
-// Tiny shared get/set so map-tab and more-tab can flip theme without
-// duplicating the localStorage key. `get` answers the FAMILY ("light"|"dark")
-// — that is the granularity every caller here wants (one basemap pair, one
-// Material palette pair, one two-way toggle row) — while `set` writes a
-// concrete theme id the desktop also understands. `getId` is the raw value for
-// anything that needs it.
+// Resolves selectable AND transit ids — PolarisTheme.set has to be able to
+// apply a waypoint, and get() has to answer the right FAMILY while one shows.
+function _mobileTheme(id) {
+  var i;
+  for (i = 0; i < MOBILE_THEMES.length; i++) if (MOBILE_THEMES[i].id === id) return MOBILE_THEMES[i];
+  for (i = 0; i < MOBILE_TRANSIT_THEMES.length; i++) if (MOBILE_TRANSIT_THEMES[i].id === id) return MOBILE_TRANSIT_THEMES[i];
+  return MOBILE_THEMES[2]; // nightfall — the default, as on the desktop
+}
+
+// ─── Theme strip ────────────────────────────────────────────────
+//
+// Where each palette sits along /img/brand/time-strip.png, as a fraction of
+// the strip’s width. The anchor was set by eye on the two FACES (the marker has
+// to sit on the face, not beside it) and then stepped by exactly a quarter: the
+// engraving is a 24-hour clock unrolled, so six hours is a quarter of it, and
+// the two faces land half a strip apart the way noon and midnight should.
+// Changing one means changing all four — keep the quarter spacing and move the
+// anchor. The desktop’s THEME_WHEEL_ANGLE is the same clock in degrees.
+var THEME_STRIP_POS = { noon: 0.056, afternoon: 0.306, nightfall: 0.556, morning: 0.806 };
+
+// Where the strip is now, in strip widths. May exceed 1 between a leg landing
+// and the seam being normalised away. null until first paint.
+var _stripPos = null;
+var _stripSeamTimer = null;
+
+function _themeStripTracks() { return document.querySelectorAll(".theme-strip-track"); }
+
+// Writes _stripPos to every strip on the page. `animate` false parks it with
+// the transition suppressed — used for the first paint, for the seam jump, and
+// on resize, where a visible slide would be a bug rather than feedback.
+function _paintThemeStrips(animate) {
+  var tracks = _themeStripTracks();
+  for (var i = 0; i < tracks.length; i++) {
+    var track = tracks[i];
+    var copy = track.firstElementChild;
+    var win = track.parentElement;
+    if (!copy || !win) continue;
+    // Measured, not assumed: the art is a 2x asset sized by height, so its
+    // rendered width depends on the row’s height and the device’s pixel ratio.
+    var stripW = copy.getBoundingClientRect().width;
+    // Before the art loads there is no width to measure and nothing to position
+    // against. Seat on load rather than giving up, or the first tap travels from
+    // the strip’s left edge instead of from the theme showing.
+    if (!stripW) {
+      if (!copy.complete) {
+        copy.addEventListener("load", function () { _paintThemeStrips(false); }, { once: true });
+      }
+      continue;
+    }
+    // Anchored one strip width left: copy two sits under the marker and copies
+    // one and three cover the window either side, so no position leaves bare
+    // surface beside the art.
+    var x = win.getBoundingClientRect().width / 2 - (_stripPos + 1) * stripW;
+    if (animate) {
+      track.style.transform = "translateX(" + x + "px)";
+    } else {
+      var prev = track.style.transition;
+      track.style.transition = "none";
+      track.style.transform = "translateX(" + x + "px)";
+      void track.offsetWidth;
+      track.style.transition = prev;
+    }
+  }
+}
+
+// Travels to `id`’s position, always leftward. Seats itself on `prevId` first if
+// this is the page’s first change, so there is a from-value to travel from.
+function _advanceThemeStrips(id, prevId) {
+  var target = THEME_STRIP_POS[id];
+  if (target === undefined) return;
+  if (_stripSeamTimer) {
+    // A seam normalisation still owed from the previous leg: settle it now,
+    // unanimated, before measuring this one — otherwise this leg would start
+    // from a position a full strip width away from where it looks.
+    clearTimeout(_stripSeamTimer);
+    _stripSeamTimer = null;
+    if (_stripPos !== null && _stripPos >= 1) { _stripPos -= 1; _paintThemeStrips(false); }
+  }
+  if (_stripPos === null) {
+    var seat = THEME_STRIP_POS[prevId];
+    _stripPos = seat === undefined ? target : seat;
+    _paintThemeStrips(false);
+    if (seat === undefined) return;
+  }
+  // Forward-only: a target that is “behind” is reached by continuing off the end
+  // of the strip and into the identical copy, never by running backwards. This
+  // is the whole reason the day keeps moving one way.
+  var forward = target - _stripPos;
+  while (forward <= 0) forward += 1;
+  _stripPos += forward;
+  _paintThemeStrips(true);
+  if (_stripPos >= 1) {
+    _stripSeamTimer = setTimeout(function () {
+      _stripSeamTimer = null;
+      _stripPos -= 1;
+      _paintThemeStrips(false);
+    }, THEME_FADE_MS);
+  }
+}
+
+// A resized window (or a rotated phone) moves the centre marker, so the strip
+// has to be re-seated under it — without animation, because nothing about a
+// resize is a theme change.
+if (!window.__polarisStripResize) {
+  window.__polarisStripResize = true;
+  window.addEventListener("resize", function () {
+    if (_stripPos !== null) _paintThemeStrips(false);
+  });
+}
+
+// Matches the crossfade duration in mobile.css. Change one, change the other.
+var THEME_FADE_MS = 800;
+var _themeFadeTimer = null;
+
+// Arms the palette crossfade for the length of one change. Called before
+// data-theme moves, so the new values are what gets transitioned TO.
+function _beginThemeFade(phase) {
+  try {
+    if (window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  } catch (e) { /* no matchMedia — fade anyway */ }
+  var root = document.documentElement;
+  root.setAttribute("data-theme-fading", phase || "solo");
+  if (_themeFadeTimer) clearTimeout(_themeFadeTimer);
+  _themeFadeTimer = setTimeout(function () {
+    root.removeAttribute("data-theme-fading");
+    _themeFadeTimer = null;
+  }, THEME_FADE_MS + 80);
+}
+
+// Where the strip is headed: the destination of a sweep still in flight, or
+// simply what is showing. Tapping mid-sweep steps on from the DESTINATION, not
+// from the waypoint currently painted.
+var _themeDest = null;
+var _themeChainTimer = null;
+
+// Shared get/set so map-tab, topology-tab and more-tab can read or flip the
+// theme without duplicating the localStorage key. `get` answers the FAMILY
+// ("light"|"dark") — the granularity every remaining caller wants — while `set`
+// writes a concrete theme id the desktop also understands, and `advance` is the
+// strip’s one-tap sweep. `getId` is the raw value for anything that needs it.
 window.PolarisTheme = {
   getId: function () { return document.documentElement.getAttribute("data-theme") || "nightfall"; },
   get: function () {
-    var id = document.documentElement.getAttribute("data-theme");
-    return (id === "morning" || id === "noon") ? "light" : "dark";
+    // Resolved through the theme list rather than by naming ids, so the
+    // afternoon waypoint answers “light” while it shows. An id comparison here
+    // flipped the basemap and the topology palette to dark mid-sweep.
+    return _mobileTheme(document.documentElement.getAttribute("data-theme")).family;
   },
-  set: function (family) {
-    // Accepts a family ("light"/"dark") or a concrete theme id, so a caller
-    // that already knows which theme it wants can say so.
-    var theme = MOBILE_THEME_IDS[family] || family;
-    document.documentElement.setAttribute("data-theme", theme);
-    try { localStorage.setItem("polaris-theme", theme); } catch (e) {}
-    // Keep the installed app's chrome (Android status bar / task switcher)
-    // in step with the theme. --md-surface-cont per theme; the dark value
-    // matches the manifest's theme_color. The manifest colour itself is
-    // frozen at install time and only affects the launch splash, so a
-    // light-mode user still gets a dark splash — cosmetic and unavoidable.
+  set: function (theme, phase) {
+    // Accepts a theme id, or a family for a legacy caller that only knows
+    // "light"/"dark".
+    var t = _mobileTheme(MOBILE_THEME_IDS[theme] || theme);
+    var prevId = document.documentElement.getAttribute("data-theme") || "nightfall";
+    // Only fade a real change — re-applying the current theme should be instant.
+    if (t.id !== prevId) _beginThemeFade(phase);
+    document.documentElement.setAttribute("data-theme", t.id);
+    // Waypoints are never saved: a reload mid-sweep must land on a real theme.
+    if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
+    _advanceThemeStrips(t.id, prevId);
+    var names = document.querySelectorAll(".theme-strip-name");
+    for (var i = 0; i < names.length; i++) names[i].textContent = t.label;
+    var strips = document.querySelectorAll(".theme-strip");
+    for (i = 0; i < strips.length; i++) {
+      strips[i].setAttribute("aria-label", "Time of day: " + t.label + ". Tap to move through the day.");
+    }
+    // Keep the installed app’s chrome (Android status bar / task switcher) in
+    // step with the theme. The manifest colour itself is frozen at install time
+    // and only affects the launch splash, so a light-mode user still gets a dark
+    // splash — cosmetic and unavoidable.
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", window.PolarisTheme.get() === "dark" ? "#1d2024" : "#eef0f7");
+    if (meta) meta.setAttribute("content", t.family === "dark" ? "#1d2024" : "#eef0f7");
+  },
+  // One tap, one step — but the step can have waypoints. Lands only on a
+  // selectable theme; any transit position between here and there is faded
+  // through on the way, so noon → nightfall passes the red afternoon and the
+  // phone goes near-white → golden hour → indigo in one gesture.
+  advance: function () {
+    if (_themeChainTimer) { clearTimeout(_themeChainTimer); _themeChainTimer = null; }
+    var from = _themeDest || window.PolarisTheme.getId();
+    var i = MOBILE_THEMES.indexOf(_mobileTheme(from));
+    var dest = MOBILE_THEMES[(i + 1) % MOBILE_THEMES.length].id;
+
+    // Which waypoints lie between here and there, in the strip’s own direction
+    // of travel. Same forward-gap arithmetic as the desktop dial, in fractions
+    // of a strip rather than degrees.
+    var a = THEME_STRIP_POS[from];
+    var gap = function (x, y) { return ((y - x) % 1 + 1) % 1; };
+    var span = gap(a, THEME_STRIP_POS[dest]) || 1;
+    var stops = MOBILE_TRANSIT_THEMES
+      .filter(function (t) {
+        var d = gap(a, THEME_STRIP_POS[t.id]);
+        return d > 0 && d < span;
+      })
+      .sort(function (x, y) { return gap(a, THEME_STRIP_POS[x.id]) - gap(a, THEME_STRIP_POS[y.id]); })
+      .map(function (t) { return t.id; });
+
+    _themeDest = dest;
+    var queue = stops.concat([dest]);
+    var legs = queue.length;
+    var n = 0;
+    (function step() {
+      // No gap and no re-easing between legs: the phase splits one ease across
+      // the whole sweep, so it reads as one continuous movement rather than two
+      // changes with a stop in the middle.
+      var phase = legs === 1 ? "solo" : (n === 0 ? "in" : (n === legs - 1 ? "out" : "mid"));
+      n++;
+      window.PolarisTheme.set(queue.shift(), phase);
+      if (!queue.length) { _themeDest = null; return; }
+      _themeChainTimer = setTimeout(step, THEME_FADE_MS);
+    })();
+  },
+  // The name of the theme showing, for a caller rendering the strip caption.
+  currentLabel: function () { return _mobileTheme(window.PolarisTheme.getId()).label; },
+  // Seats every strip on the page at the current theme with no animation — for
+  // a strip rendered after boot (the More tab is built on demand).
+  seatStrips: function () {
+    if (_stripPos === null) _stripPos = THEME_STRIP_POS[window.PolarisTheme.getId()];
+    if (_stripPos === undefined) _stripPos = THEME_STRIP_POS.nightfall;
+    _paintThemeStrips(false);
   },
 };
 
+// Delegated, so a strip rendered by anything turns without being wired up.
+// Never add a direct listener to a .theme-strip as well, or one tap advances
+// two steps.
+if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
+  document.documentElement.setAttribute("data-theme-strip-wired", "");
+  document.addEventListener("click", function (e) {
+    if (e.target && e.target.closest && e.target.closest(".theme-strip")) window.PolarisTheme.advance();
+  });
+}
 (function () {
   var app = document.getElementById("app");
   var currentUser = null;
