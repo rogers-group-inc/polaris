@@ -82,7 +82,7 @@
     "@types/xml2js": "^0.4.14",
     "@vitest/coverage-v8": "^5.0.0",
     "cytoscape": "^3.34.3",
-    "cytoscape-dagre": "^2.5.0",
+    "cytoscape-dagre": "^4.0.1",
     "dagre": "^0.8.5",
     "eslint": "^10.10.0",
     "happy-dom": "^20.14.0",
