@@ -36,6 +36,12 @@ Invoking this skill on a finished worktree is the user's go-ahead for everything
 push separately; the only things that stop the pipeline are a failing check, a merge
 conflict, or `main` behind `origin/main`.
 
+0. **Restore `WORKLOCK` if the worktree has none.** The usual way to reach this pipeline is a
+   task already finished the CLAUDE.md way — `WORKLOCK` deleted, work committed — and the
+   PreToolUse hook then refuses step 1's and step 2's edits inside the worktree. Write the lock
+   back (`printf '%s %s\n' "$(date -u +%FT%TZ)" "deploy pipeline" > WORKLOCK`) before editing,
+   and delete it again at step 4. Its absence here means the work is committed, not that a new
+   worktree is needed — which is what the hook's own message will otherwise tell you.
 1. **Docs-sync review — run it, never ask the user to.** Read
    `.claude/skills/polaris-docs-sync/SKILL.md` and follow its procedure over the whole branch
    (`git diff main...HEAD`). The Skill tool refuses that skill by design

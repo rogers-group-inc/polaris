@@ -168,11 +168,18 @@ d("ip upstream chain sweep", () => {
     const a = await prisma.asset.findUniqueOrThrow({ where: { id }, select: { lastSeenSwitch: true, lastSeenAp: true, macAddress: true } });
     expect(a.lastSeenSwitch).toBe("FS-248E-01/port15");
     expect(a.lastSeenAp).toBe("AP-LOBBY-1");
-    // The MAC is derived, never adopted.
-    expect(a.macAddress).toBeNull();
+    // The derived MAC is ADOPTED onto the asset (2026-09). It was withheld
+    // until then because a MAC makes the row eligible for MAC-keyed dedupe and
+    // merge; the refusals that keep that safe are now the collision checks in
+    // `partitionAdoptableMacs`, not a blanket no.
+    expect(a.macAddress).toBe(MAC);
 
     const events = await prisma.event.findMany({ where: { resourceId: id, actor: "system:upstream-chain" }, select: { action: true } });
-    expect(events.map((e) => e.action).sort()).toEqual(["asset.switch_port.changed", "asset.wireless_ap.changed"]);
+    expect(events.map((e) => e.action).sort()).toEqual([
+      "asset.mac.adopted",
+      "asset.switch_port.changed",
+      "asset.wireless_ap.changed",
+    ]);
   });
 
   it("ignores another gate's ARP row for the same address (overlapping RFC1918)", async () => {
@@ -272,11 +279,40 @@ d("ip upstream chain sweep", () => {
     await maclessAsset();
     await arp(gateA, MAC);
     await fdb(sw, MAC, "port15");
-    await resolveIpUpstreamForMaclessAssets();
+    const first = await resolveIpUpstreamForMaclessAssets();
+    expect(first.macAdopted).toBe(1);
+
+    // Adoption is also what ENDS the asset's eligibility: the candidate query
+    // is `macAddress IS NULL`, so a row the sweep has placed drops out of the
+    // next pass entirely rather than being re-derived and re-compared forever.
     const again = await resolveIpUpstreamForMaclessAssets();
+    expect(again.candidates).toBe(0);
     expect(again.switchStamps).toBe(0);
     expect(again.apStamps).toBe(0);
+    expect(again.macAdopted).toBe(0);
     const events = await prisma.event.count({ where: { actor: "system:upstream-chain" } });
-    expect(events).toBe(1);
+    expect(events).toBe(2); // the switch-port move + the adoption
+  });
+
+  it("refuses to adopt a MAC another asset already carries, but still stamps the port", async () => {
+    // Two asset rows at one address is rule 40's duplicate-IP conflict, whose
+    // answer is a Conflict row for an operator. Adopting here would instead
+    // make the pair a silent merge candidate and delete one row's monitoring
+    // history — so the adoption is dropped and the reversible stamp is kept.
+    const id = await maclessAsset();
+    await prisma.asset.create({
+      data: { hostname: "incumbent", assetType: "workstation", status: "active", macAddress: MAC },
+    });
+    await arp(gateA, MAC);
+    await fdb(sw, MAC, "port15");
+
+    const r = await resolveIpUpstreamForMaclessAssets();
+    expect(r.macAdopted).toBe(0);
+    expect(r.macCollisions).toBe(1);
+    expect(r.switchStamps).toBe(1);
+
+    const a = await prisma.asset.findUniqueOrThrow({ where: { id }, select: { macAddress: true, lastSeenSwitch: true } });
+    expect(a.macAddress).toBeNull();
+    expect(a.lastSeenSwitch).toBe("FS-248E-01/port15");
   });
 });

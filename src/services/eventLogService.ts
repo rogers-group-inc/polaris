@@ -453,6 +453,34 @@ export function buildConnectionChangedEvent(
 }
 
 /**
+ * A MAC-less asset was given the MAC its address answers on.
+ *
+ * Written by the rule 45 IP-upstream sweep when the owning gate's ARP cache
+ * resolved exactly one MAC for the asset's address. This is the one write in
+ * that sweep that is not reversible in practice — a MAC makes the row eligible
+ * for MAC-keyed dedupe and merge — so it is always audited, never folded into
+ * the switch/AP change events, and names the address the answer came from so
+ * an operator chasing a bad merge can see what the sweep believed.
+ */
+export function buildMacAdoptedEvent(
+  ctx: AssetChangeEventContext,
+  ip: string,
+  mac: string,
+): LogEventInput {
+  const label = ctx.assetName || ctx.assetId;
+  return {
+    action: "asset.mac.adopted",
+    resourceType: "asset",
+    resourceId: ctx.assetId,
+    resourceName: ctx.assetName || undefined,
+    actor: ctx.actor || "system:upstream-chain",
+    level: "info",
+    message: `Asset "${label}" adopted MAC ${mac}, resolved from the owning FortiGate's ARP entry for ${ip}`,
+    details: changeDetails(ctx, { macAddress: { from: null, to: mac } }),
+  };
+}
+
+/**
  * The FortiGate an asset currently sits behind changed — i.e. the freshest
  * AssetFortigateSighting row now names a different gate. Callers decide WHEN
  * that's true (see computeFreshestGateChanges in assetSightingService); this

@@ -1,4 +1,4 @@
-# Business rules 44–52 — full narrative
+# Business rules 44–56 — full narrative
 
 > The filename keeps its original range: it is cited from code and from the other skills.
 
@@ -12,7 +12,11 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 49](#rule-49) — An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved
 - [Rule 50](#rule-50) — A response the app did not write is a response with the app's headers missing
 - [Rule 51](#rule-51) — `DATABASE_URL` is a driver URL; its `sslmode` value is translated into the libpq vocabulary, never copied
-- [Rule 52](#rule-52) — What ignoring an alert costs is answered where the thing that costs it lives
+- [Rule 52](#rule-52) — TimescaleDB is part of the install, not a tuning option
+- [Rule 53](#rule-53) — A device a run could not read keeps the data it already had, so it is named, never folded in with one the run skipped
+- [Rule 54](#rule-54) — A region tag dies when its name is retired, and only then
+- [Rule 55](#rule-55) — An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got
+- [Rule 56](#rule-56) — What ignoring an alert costs is answered where the thing that costs it lives
 
 <a id="rule-44"></a>
 
@@ -131,7 +135,11 @@ Every writer of the two "last seen" columns was keyed by MAC. Discovery Phase 7.
 
 **MAC-less assets only.** A MAC-bearing asset already has writers, and their label format differs from this one (`<switchId>/<portName>` from the FortiSwitch MAC map, `<hostname>/<ifName>` here). A second writer on the same column would move it back and forth every tick and audit both halves as changes forever — the ping-pong the asset-change-events baseline exists to prevent within a single discovery run. This sweep therefore writes only what no other writer can. Widening it means reconciling the formats first, and is not a small change.
 
-**The MAC is derived, never adopted.** The obvious "better" version writes the ARP MAC onto the asset so every downstream matcher works for free. It also makes the row eligible for MAC-keyed dedupe and merge (`mergeDuplicateHostnameAssets` collapses rows sharing a MAC; Entra cross-links by Ethernet MAC), so one wrong adoption — a recycled address inside the freshness window, a gate misresolved — merges two devices and permanently deletes one row's monitoring history. Rule 26 gates the reservation-side adoption behind a double opt-in for the same reason. Adoption here is a deliberate follow-up behind an opt-in Setting, not a default, and the touches entry names what it must go through when it comes.
+**The MAC is derived, and since 2026-09 it is adopted.** The original rule refused: writing the ARP MAC onto the asset makes every downstream matcher work for free, but it also makes the row eligible for MAC-keyed dedupe and merge (`mergeDuplicateHostnameAssets` collapses rows sharing a MAC; Entra cross-links by Ethernet MAC), so one wrong adoption — a recycled address inside the freshness window, a gate misresolved — merges two devices and permanently deletes one row's monitoring history. Rule 26 gates the reservation-side adoption behind a double opt-in for the same reason, and adoption here was left as a follow-up behind an opt-in Setting.
+
+It shipped instead as a default, on an explicit operator decision, with the hazard answered in code rather than by a toggle. The reasoning that made that acceptable: every wire-level ambiguity is ALREADY refused upstream of the adoption — `pickArpMac` scopes to the owning gate, returns `"ambiguous"` when two MACs answer one address, and the claim and evidence freshness gates have both already passed. What those refusals cannot see is a MAC that is not ambiguous on the wire but is already spoken for in Polaris, and that is the only remaining way this pass manufactures a merge candidate. `partitionAdoptableMacs` is that check: it refuses a MAC another asset already carries, and refuses BOTH when two candidates in one pass resolve to the same MAC — two asset rows at one address being rule 40's duplicate-IP conflict, whose answer is a Conflict row for an operator, not a silent merge.
+
+A refusal drops the adoption ONLY. The switch and AP stamps derived from the same MAC still land, because a stamp is reversible and a merge is not — the asymmetry is the whole reason the two are separable. Every adoption is audited as its own `asset.mac.adopted` Event naming the address the answer came from, so an operator chasing a bad merge can see what the sweep believed, and a provenance row lands in `AssetMacAddress` with source `ip-upstream-arp` (not a hardware source) so the MAC list says where it came from. Adoption is also what ends the asset's eligibility: the candidate query is `macAddress IS NULL`, so a placed row drops out of the next pass entirely rather than being re-derived and re-compared forever. **The residual risk is real and deliberate**: a gate misresolved under rule 41, or an address recycled inside `CLAIM_FRESH_DAYS`, still adopts — the collision check catches the duplicate only when the other device is already in inventory.
 
 **Nothing is cleared.** An address the network cannot currently account for is absence of evidence, not a move; the last known switch port stays until the chain places the device somewhere else.
 
@@ -435,10 +443,351 @@ Guards: `tests/unit/pgEnv.test.ts` pins the translation, the full libpq value se
 case/whitespace handling, and the refusal (including that the message names the offending
 value). Anyone reverting `libpqSslMode` to a passthrough fails them.
 
-
 <a id="rule-52"></a>
 
-## Rule 52 — What ignoring an alert costs is answered where the thing that costs it lives
+## Rule 52 — TimescaleDB is part of the install, not a tuning option
+
+Two statements lived in the repository at the same time and could not both be true.
+
+`services/backupService.ts`'s own header asserted that "every documented production install
+enables TimescaleDB" — which is why the restore path wraps itself in
+`timescaledb_pre_restore()` / `timescaledb_post_restore()` (rule 20c), and why the capacity
+card's disk forecast assumes chunk-drop retention and ~10× compression. Meanwhile
+`docs/INSTALL.md` filed the extension under *Recommended: TimescaleDB*, in a section most
+operators never reached, and **no install path installed it**. `setup-rhel.sh` and
+`setup-ubuntu.sh` named `timescaledb` only in comments — as the reason they choose the PGDG
+repository over RHEL's AppStream — and then never installed the package the comment was
+justifying. A fresh scripted install therefore landed on plain PostgreSQL, and the one of the
+two statements that was false was the one operators were actually living in.
+
+The consequences were not cosmetic, and none of them announced itself. Retention pruned row by
+row instead of dropping chunks. Nothing compressed, so the steady-state size projection on the
+Maintenance tab was wrong by an order of magnitude in the direction that matters. The restore
+gates ran against a database with no extension to gate, so the rehearsal proved something other
+than what would happen in a real restore. And the one signal that could have surfaced it — the
+`timescale_recommended` reason in `capacityService` — was gated at 1 GB of sample tables, so a
+new install stayed silent for exactly as long as it took to accumulate the data whose storage
+was the problem.
+
+### Why the scripts are the only place this can happen
+
+`CREATE EXTENSION timescaledb` requires superuser. The Polaris application user deliberately is
+not one, so the app can never fix this about itself — it can only ever **detect**. That
+asymmetry is the whole shape of the rule: provisioning belongs to the setup scripts, which run
+as root and own the database server, and the app's job is to say loudly that provisioning did
+not happen.
+
+So each step in `setup-rhel.sh` / `setup-ubuntu.sh` **errors out rather than warning**: install
+`timescaledb-2-postgresql-17` and `timescaledb-tools`, run `timescaledb-tune` (which is what
+writes `shared_preload_libraries` — without it the extension is installed and cannot load,
+the most confusing of the failure states), try-restart PostgreSQL so a re-run picks the config
+change up, then `CREATE EXTENSION` on the polaris database. An install that comes up without
+the extension is one whose disk forecast and restore rehearsal are both wrong, which is not a
+condition worth continuing past.
+
+The two `-nodb` scripts are the deliberate exception. They do not own the database server —
+that is what `-nodb` means — so they attempt the create and warn with the consequence and the
+managed-service caveat, rather than aborting a host they have no way to fix from.
+
+`detectTimescale()` now logs the absence at **error** level rather than an info line reading
+`installed:false`. On an install Polaris provisioned, a missing extension does not mean "the
+operator chose not to"; it means something removed it.
+
+### What the plain-table path is now
+
+The plain-table code path stays, and keeping it is not a hedge on the rule. It is two specific
+things: the degraded state of an **external or managed database** that cannot offer the
+extension at all (RDS for PostgreSQL, Aurora and Cloud SQL have no TimescaleDB; Timescale
+Cloud, Crunchy Bridge and Azure Postgres Flexible Server do), and the **fallback when
+`drop_chunks` fails on a table that IS a hypertable**. Neither is a supported way to run an
+install Polaris provisioned.
+
+`capacityService`'s `timescale_recommended` reason therefore lost its size gate entirely. It
+fires at zero bytes; the 1 GB threshold survives only to choose between `watch` and `warning`,
+and the sub-1 GB message says what is actually wrong ("Polaris requires it: retention prunes
+row by row, nothing compresses, and the restore gates do nothing") rather than quoting a
+storage figure that is not yet alarming.
+
+### The corollary for host-fact probes
+
+Anything that reports the extension as a **host fact** must distinguish "absent" from "could
+not tell". `services/haService.ts` → `probeHostFacts()` shells out to `rpm -qa` for
+`timescaledb-2-postgresql-*`, and its catch used to be annotated `/* Timescale is optional */`.
+It never was optional in the sense that comment implied, and after this rule it is not optional
+in any sense: the only way that catch fires is `rpm` itself being unavailable or failing, which
+is a fact about the probe and not about the host. A null `tsdbVersion` means **nothing to
+compare** — which matters because the figure exists to catch a version skew between the two HA
+nodes, and the surrounding comment already warns that a silent "none" on both sides looks like
+agreement.
+
+### Not yet proven on a host
+
+The scripted half of this rule has never been run end to end: no RHEL or Ubuntu box was
+available when it landed on 2026-09-11. `bash -n` passes on all four scripts and the capacity,
+timescale and lifecycle unit tests cover the app half, but **a fresh-install smoke on one
+platform is still outstanding**, and until it happens the strongest claim available is that the
+scripts are syntactically sound and say the right things.
+<a id="rule-53"></a>
+
+## Rule 53 — A device a run could not read keeps the data it already had, so it is named, never folded in with one the run skipped
+
+An 1801F HA pair in production showed pre-upgrade firmware. The FortiGate answered every
+monitoring poll. FortiManager was healthy, had the pair online, and showed the correct
+version in its own device record. Nothing was broken anywhere an operator could see, and the
+firmware had been wrong for weeks.
+
+A firewall's `Asset.osVersion` has exactly one writer: the FMG/FortiGate discovery pass, which
+upserts the `fortigate-firewall` AssetSource and projects it. There is no second path. SNMP
+cannot help — `parseVendorSysDescr` knows one vendor's sysDescr layout and it is not Fortinet,
+so a FortiGate polled over SNMP contributes no `snmp-sysdescr` row at all. And the projection
+write is deliberately guarded:
+
+```ts
+if (fwProjected.osVersion !== null) updateData.osVersion = fwProjected.osVersion;
+```
+
+That guard is correct and must stay: it is what stops a mid-rejoin scrape with no version from
+BLANKING a good one (the 2026-07-14 FortiAP incident). Its unavoidable other edge is that a
+device nothing read this cycle is indistinguishable, at the write site, from a device read
+successfully that had nothing new to say. Both leave the old value in place.
+
+So the question is never "why did the value not change" but "did anything read the device at
+all" — and in direct mode the answer was no, every run, for one specific reason.
+
+### Why the gate was never read
+
+Direct mode resolves each FortiGate's management IP from two producers. The warm cache
+(`buildFmgWarmCacheIps`) supplies monitor-up firewalls from their own `Asset.ipAddress` with no
+FMG round-trip; `resolveDeviceMgmtIp` handles the rest. `processDevice` reads the result by
+`fmgNameKey(deviceName)` — **FortiManager's** name for the device.
+
+The warm cache was keyed on `Asset.hostname` — the gate's own `system global hostname`. Those
+two names are under no obligation to match, and on this estate at least one gate was already
+known to diverge. This is the mismatch `utils/fortinetParentKey.ts` exists to prevent, in a
+shape that file did not list: not a child's stamp resolved to a parent, but **a map built from
+Asset rows and read back by FMG device name**. Every divergent gate's entry was filed under a
+key nothing ever asked for.
+
+A warm-cache miss is supposed to be a slowdown, not a failure — that is what the resolver is
+for. But `resolveDeviceMgmtIp` reads exactly one interface, the one named by the integration's
+fleet-wide `mgmtInterface` setting, out of `/pm/config/device/<name>/global/system/interface`,
+and `_extractV4` rejects `0.0.0.0`:
+
+```ts
+if (!ip || ip === "0.0.0.0" || !isValidIpv4(ip)) return null;
+```
+
+`0.0.0.0` on a dedicated management interface is the **normal** state of a FortiGate HA
+cluster. The per-member management addresses are not in `system interface`; they live under
+`config system ha` → `set ha-mgmt-interfaces`, which this query never reads. A standalone 61F
+has a real address there and resolves fine. An HA pair does not.
+
+Two misses, and `processDevice` logs `discover.device.skip` at error level and returns null.
+The gate is dropped from the entire run — no firmware, no subnets, no leases, no switch or AP
+roster — and everything it had stays exactly as it was. The next run does the same thing.
+
+### Why nobody noticed
+
+Monitoring never uses either of those inputs. `buildFortinetConfig` dials `Asset.ipAddress` and
+prefers a per-asset REST credential over the integration-level token. Different address,
+different credential, different code path. The pair polled green the whole time.
+
+**"It is being monitored fine" is not evidence that anything has read it.** The two answer
+different questions, and on this estate they routinely answer differently.
+
+The skip was not invisible, exactly — `onProgress` persists every progress line as an Event, so
+`integration.discover.device.skip` was on file. It was just unfindable: one Event among the
+thousands a run writes, filed under the *integration* rather than the gate, with nothing on the
+asset itself to suggest it had gone unread. The count reached the UI and was then thrown away —
+`/discoveries` lists only *running* runs, and both surfaces summed the two skip kinds into a
+single "skipped" figure. That summing is what finished the job: **offline is routine here.**
+Staged gates awaiting site deployment sit offline in FMG for weeks with cloned configs, and
+discovery reads their cached CMDB on purpose. An operator who sees "3 skipped" on this fleet is
+right to read it as "3 staged gates", which is exactly what it usually is.
+
+### The rule
+
+Both halves are load-bearing, and the second is the one that survives the next bug of this
+shape rather than this specific one:
+
+- **Never sum the two skip states.** `skippedOfflineCount` is a device the run decided not to
+  read. `skippedErrorCount` is a device the run *could not* read. They have opposite
+  implications for whether the data on screen is trustworthy. `public/js/app.js` and
+  `public/js/widgets/discoveryActivity.js` render them as separate `· N offline` /
+  `· N unread` parts.
+- **Name the unread ones.** `RunAccumulator.skippedErrorDevices` collects the device behind
+  each error increment, and `runDiscovery` writes one warning-level
+  `integration.discover.devices_unread` Event before the abort/complete branch — first 20
+  names plus "and N more", the full list in `details.devices`. In memory rather than a column:
+  the run that collects the names is the run that writes them, so a persisted field would have
+  exactly one reader.
+- **A completion retracts an earlier error for the same device.** `processDevice` logs its
+  first direct-REST failure *before* deciding whether to re-resolve the mgmt IP and retry, so a
+  gate that fails once and then succeeds was being counted as skipped. Without the retraction
+  it would be reported unread despite having been read perfectly, and `done` (completed +
+  skipped) would exceed the device roster.
+
+### Two fixes that look obvious and are forbidden
+
+Both were considered and both are already ruled out elsewhere in the codebase's documented
+decisions:
+
+- **Falling back to `rawDevice.ip`.** FMG's device-record `ip` field can be a public or NAT
+  address; it is what FMG uses to reach the device, not what Polaris should. The mgmt-IP
+  resolver reads `system interface` for exactly this reason.
+- **Falling back to the FMG proxy transport.** Direct mode fails loudly per-device on a
+  precondition failure by design. A silent fallback turns "I disabled proxy" into "I disabled
+  proxy except when something else is wrong, in which case it silently re-enables itself and
+  overruns FMG's session limit".
+
+Fix the key, or surface the skip. The fix here was both: the warm cache is now keyed on
+`fortinetTopology.deviceName` with the hostname as an alias (every device name claimed before
+any alias, so one gate's hostname cannot displace another's real name), and the unread gates
+are named at the end of every run.
+
+Guard: `tests/unit/fmgWarmCacheKeying.test.ts` covers the divergent-name case, the cross-gate
+name collision, case-insensitive dedup against `fmgNameKey`, and the missing-stamp fallback.
+<a id="rule-54"></a>
+
+## Rule 54 — A region tag dies when its name is retired, and only then
+
+Two strip paths already existed for `region:<name>` tags, and between them they covered
+everything except the case that actually bit.
+
+The reconcile (`applyOneRegion` → `diffRegionMembership`) removes the tag from a target that
+has drifted out of membership, bounded by a `RegionTagAssignment` provenance row so that a
+hand-applied tag is never destroyed. The map-save review adds a second, deliberately narrow
+pass (`stripOutOfRegionFirewallTags`) that judges a coordinate-carrying FIREWALL against a
+polygon that still exists, provenance or not, because for a pinned gate the polygon already
+implies the tag in the add direction. Both are about a device that MOVED.
+
+Neither can see a tag whose *region name* moved out from under it. Provenance is keyed by
+region **id**: a rename does not change the id, so the rows still point at a live region and
+say, correctly, "this asset is still a member" — of a region that is now called something
+else. A delete drops the provenance entirely. And the gate pass explicitly leaves "a
+`region:` tag naming no current region" alone. So the moment a rename or delete finished the
+blob write but failed the tag rotation, the leftover tags entered a state no code path in the
+application could reach.
+
+That is not hypothetical. `updateRegion` commits the renamed blob inside its own locked
+transaction and returns; `applyRename` then runs *outside* it. On prod in 2026-09 the tag
+rotation threw there — an unchunked `$transaction` holding an update per row, over a region
+covering ~1,100 assets — twice, under two names. The result was 1,492 asset tags and 114
+subnet tags reading `region:Eastern Middle Tennessee` and `region:Middle Tennessee` while the
+map showed "Middle Eastern Tennessee" and "Middle Tenneessee", invisible to every reconcile,
+and cleaned up in the end by hand-written SQL against the production database. The
+`region.scope_tags_renamed` half had not run either, so scoped operators were pointing at
+region names nothing answered to — silently, since a scope naming no region scopes nothing.
+
+### Why not just strip every tag that matches no region
+
+Because the standing contract is explicit that manual attachments and tags predating
+provenance "persist across runs forever", and a background job that quietly deleted them would
+be a worse bug than the one being fixed: unlike a stranded tag, a destroyed one leaves no
+evidence it was ever there.
+
+When this rule was written, making one was easy. `PUT /assets/:id` accepted `tags: string[]`
+and wrote it as given; the `Tag` registry refused hand-created rows in the "Map Regions"
+*category* but never checked the NAME, so `region:Narnia` filed under "General" was accepted —
+and since the auto-assign device-filter ban was keyed on category too, that was also the way to
+get a `TagAutoAssignment` filter onto a `region:` name, i.e. two managed-sync reconcilers on one
+string, which is exactly what that ban exists to prevent.
+
+Both doors are shut now. The registry refuses the prefix by name in every category
+(`assertNotRegionPrefix`), and asset writes run `assertAddedRegionTagsNameARegion` — a **diff**,
+not a ban, because the edit modal PUTs the whole `tags` array back and a blanket refusal would
+make every asset in a region unsaveable, and because hand-applying a *live* region's tag to a
+device its polygon misses is documented behavior that has to keep working.
+
+That does not retire this rule, for two reasons. Neither guard is retroactive and neither
+touches `Asset.tags` in the database, so on any install with history "matches no region" and
+"was retired by Polaris" still describe different sets — and the whole point of the sweep is
+the install that already has the mess. And the guards live at the route: anything writing
+through a token, a future import path, a migration, is one missed validation from putting the
+prefix back in play. Bounding the sweep by evidence does not depend on every write path
+staying correct forever.
+
+So the sweep is bounded by **evidence rather than absence**. `mapRegionRetiredNames` is a
+companion Setting blob holding `{name, regionId, retiredAt, reason}`, and a name lands on it
+in the *same locked transaction* that renames or deletes the region — before the tag rotation
+is even attempted, which is precisely why it survives a rotation that dies. A tag is swept
+only when its name is on that list. A tag naming a region that never existed is not, and never
+will be.
+
+### The rest of the shape
+
+**A reclaimed name is not stripped.** If a region is live under a retired name again — deleted
+and redrawn, which the delete route already treats as the likely intent when it leaves
+principal scopes in place — the name is dropped from the list untouched and the ordinary
+reconcile owns those tags from there. Matched case-insensitively, like every other region-name
+comparison.
+
+**A failed strip keeps its name.** The sweep catches per name and leaves an unresolved one on
+the list. Dropping it would be the original bug again, one pass later.
+
+**The strips run outside the blob lock; only the bookkeeping takes it.** Holding the advisory
+lock across thousands of row updates would block every region write for the duration — the
+same mistake the rename path made in the other direction. The list rewrite re-reads inside the
+transaction and removes only the names this pass finished, so a rename that retired a name
+while the sweep was running is not discarded. That is rule 20a's lost-update shape applied to
+the second blob, and it is tested the same way.
+
+**It is not retroactive.** An install that stranded tags before this shipped has no
+retired-name row for them and the sweep will not touch them. Those need one cleanup, which is
+the query that found the prod case:
+
+```sql
+WITH live AS (
+  SELECT 'region:' || (r->>'name') AS tag
+  FROM settings s, jsonb_array_elements(s.value) r
+  WHERE s.key = 'mapRegions' AND jsonb_typeof(s.value) = 'array'
+)
+SELECT t AS orphan_tag, count(*) FROM assets a, unnest(a.tags) t
+WHERE t LIKE 'region:%' AND t NOT IN (SELECT tag FROM live)
+GROUP BY t;
+```
+
+Read the result before stripping anything: this query cannot tell a stranded tag from a
+hand-applied one, which is the entire reason the automated sweep does not work this way.
+
+Guards: `tests/unit/mapRegionRetiredSweep.test.ts` pins both halves — that a rename and a
+delete record the name, that a polygon-only edit does not, that an unretired name is never
+swept, reclamation, retry-on-failure, and the racing-writer case. The chunking that removed
+the original trigger is pinned separately by `tests/unit/mapRegionTagChunking.test.ts`.
+
+<a id="rule-55"></a>
+
+## Rule 55 — An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got
+
+**The invariant.** IPAM is the last source consulted for a device's upstream FortiGate, never a replacement for evidence. `resolveOwningGateContexts` (`services/ipUpstreamChainService.ts`) is the one implementation of "which gate is this address behind" — containing subnet → `fortigateSerial` then `fortigateDevice` through `utils/fortinetParentKey.ts`, rule 41's precedence, never a hostname match — and it has three consumers: the rule 45 sweep scoping its ARP lookup, `assetUpstreamService` answering the Last Seen Firewall row, and `dependencyTreeService` placing an otherwise unparentable endpoint. The two new consumers are strictly fallbacks, each labelled, each gated on the claim being current under rule 40.
+
+### What was missing
+
+The Last Seen Firewall row is fed by the freshest `AssetFortigateSighting`. A device no gate has ever reported — an Active Directory workstation, an Azure Arc server, a vCenter VM, an active-scan find, a hand-typed row — has no sighting, so the row read `-` forever, even where Polaris held the subnet its address sits in and knew which FortiGate owns that subnet. The same gap ran deeper than cosmetics: `syncEndpointDependencyEdges` uses that same sighting as its third and last tier, so an endpoint with no switch, no AP and no sighting got no dependency parent at all. "No parent" means "never suppressed", so when its site gate went down, every switch and AP behind that gate correctly read "Dep. Down" while the servers behind it alerted device by device as plain Down — the alert storm the endpoint half was built to stop, still happening to the assets least able to prove where they live.
+
+### Why it goes last, and why that makes it safe
+
+A sighting is a record: a gate reported this device. The IPAM answer is an inference: this address belongs to a network, and that network is served by this gate. They are not the same claim, and a row headed "Last Seen" must not present the second as the first — so the entry carries `source: "subnet"` and the containing `subnetCidr`, and deliberately carries NO `lastSeen`. An inference has no moment. The UI prints "(owns 10.42.8.0/24)" beside the name rather than a timestamp.
+
+Ordering last is also what bounds the blast radius on the alerting side. The tier is consulted only for endpoints the three observed tiers left unplaced, and an unplaced endpoint has no parent — so this can only ever ADD a parent, never move an existing edge somewhere less accurate. The failure mode is therefore a missed alert (a device held in Dep. Down behind a gate it does not really sit behind), never a false one, and even that requires the gate to be CONFIRMED down under rule 38's asymmetric hysteresis rather than merely flapping.
+
+### The two refusals
+
+**A stale claim is not an address.** The endpoint's claim on its address must be current under rule 40's model — operator-owned never expires, a discovered one needs its `AssetIpHistory` row inside `CLAIM_FRESH_DAYS`. This is the recycled-DHCP case that breaks the chain everywhere it appears: the laptop that left three weeks ago still records `10.1.1.50`, and without the gate it would be parented to whichever FortiGate serves that range today and have its alerts suppressed behind a device it has no relationship with. The history row is what the check reads first, because the `src/db.ts` extension bumps it on every write staging `ipAddress` — it tracks discovery cadence rather than change, which is exactly the signal wanted here.
+
+**An unknown address answers nothing.** An address in no known (non-deprecated) network, or one whose owning gate Polaris holds no Asset row for, yields no row and no parent rather than a guess. For the display row that is doubly true: the row exists to carry verbs, and with no Asset row there is nothing to open.
+
+### The same two sources, ranked oppositely, on purpose
+
+`ipContextService.pickNamedGate` puts the subnet ABOVE a sighting on the Add Asset panel, and that is not an inconsistency to reconcile. That panel answers "what is at this address today", where the gate that serves the address now is the better answer and a sighting is a historical fact that survives the device moving. This row answers "where was this device last seen", where evidence outranks inference. Two questions, two rankings, one shared resolver underneath so the gate-identification precedence itself cannot drift between them.
+
+### Permissions
+
+The sighting half reads `AssetFortigateSighting`, gated `assetsQuarantine:read` on its own endpoint; the fallback reads `Subnet`, gated `subnets:read`. Two different grants, so `visibility` reports them separately — a caller holding one and not the other has to be able to tell "no gate owns this address" from "you were not shown that half", the `/ip-context` precedent.
+
+<a id="rule-56"></a>
+
+## Rule 56 — What ignoring an alert costs is answered where the thing that costs it lives
 
 **The invariant.** Two settings decide what *ignoring* an alert costs: whether it keeps
 coming back at you, and what closing it out demands of whoever does. Both were columns on

@@ -16231,8 +16231,16 @@ function _upgradeUpstreamRow(cellId, entry, kindLabel) {
   // Keep the name the server reports even when nothing resolved — for the
   // firewall row that IS the fill (the sightings pass above may not have run
   // for a caller without assetsQuarantine:read).
+  // "Last Seen Firewall" can be answered two ways and they are not the same
+  // claim: a sighting is a gate reporting the device, source "subnet" is the
+  // gate that owns the network its address is in — an inference used only when
+  // nothing has ever sighted it. The row says which, so it never reads as
+  // evidence it isn't.
+  var derived = entry.source === "subnet"
+    ? " (owns " + (entry.subnetCidr || "this network") + ")"
+    : "";
   if (!items.length) {
-    cell.textContent = entry.name + (entry.port ? "/" + entry.port : "");
+    cell.textContent = entry.name + (entry.port ? "/" + entry.port : "") + derived;
     return;
   }
   var btn = document.createElement("button");
@@ -16253,6 +16261,13 @@ function _upgradeUpstreamRow(cellId, entry, kindLabel) {
   cell.textContent = "";
   cell.appendChild(btn);
   if (entry.port) cell.appendChild(document.createTextNode("/" + entry.port));
+  if (derived) {
+    var note = document.createElement("span");
+    note.style.color = "var(--color-text-secondary)";
+    note.title = "No FortiGate has reported this device. This is the gate that owns the network its IP address sits in.";
+    note.textContent = derived;
+    cell.appendChild(note);
+  }
 }
 
 // Operator-facing labels for Asset.lastSeenSource — the evidence that
@@ -18011,6 +18026,7 @@ var _DEP_TREE_VIA_LABEL = {
   "switch-port": "last-seen switch port",
   wireless:      "last-seen access point",
   sighting:      "last-seen firewall",
+  subnet:        "owning firewall (from IPAM)",
   hypervisor:    "hypervisor placement",
   controller:    "controller",
   interface:     "interface",
@@ -18022,6 +18038,7 @@ var _DEP_TREE_VIA_TITLE = {
   "switch-port": "Detected from the FortiSwitch port this device was last seen on",
   wireless:      "Detected from the FortiAP this device was last associated with",
   sighting:      "Detected from the FortiGate that last saw this device (DHCP lease / reservation / ARP)",
+  subnet:        "Inferred: no FortiGate has reported this device, so the gate that owns the network its IP sits in was used. Least specific — it places the device by address, not by having seen it",
   hypervisor:    "Detected from the vCenter host this VM is placed on"
 };
 

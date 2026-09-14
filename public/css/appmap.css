@@ -237,6 +237,9 @@
   min-height: 420px;
 }
 
+/* Both panes take the shared card lift (--shadow-card in styles.css) so the
+   graph and its info rail sit on the page the way every other card does
+   instead of reading as holes cut in it. */
 .appmap-graph {
   position: relative;
   flex: 1;
@@ -245,6 +248,7 @@
   border-radius: 10px;
   background: var(--color-bg-secondary);
   overflow: hidden;
+  box-shadow: var(--shadow-card);
 }
 
 .appmap-info {
@@ -256,6 +260,7 @@
   background: var(--color-bg-secondary);
   padding: 14px;
   font-size: 13px;
+  box-shadow: var(--shadow-card);
 }
 
 .appmap-info h3 {

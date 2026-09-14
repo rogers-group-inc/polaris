@@ -31,7 +31,7 @@
  * templateCtx rendering and batched state writes; a second job would re-load
  * every enabled rule and re-query the unhandled set every minute for nothing.
  *
- * PER ACTION (business rule 52): the clock belongs to the notify action, not to
+ * PER ACTION (business rule 56): the clock belongs to the notify action, not to
  * the rule — `repeatingActionsForSeverity` resolves which actions are repeating
  * at the alert's current severity and on what interval, each keyed
  * `a<i>:repeat` (repeatStateKey) beside that action's escalation tiers. Two

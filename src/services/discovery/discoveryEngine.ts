@@ -34,6 +34,7 @@ import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanager
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { scoreDhcpClaim, claimBeats, type DhcpClaimScore } from "../../utils/dhcpClaimFreshness.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
+import { readFirewallDeviceName, normalizeNameKey } from "../../utils/fortinetParentKey.js";
 import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
 import { refreshCache as refreshAssetTypeCache } from "../assetTypeService.js";
 import { normalizeManufacturer } from "../../utils/manufacturerNormalize.js";
@@ -400,6 +401,26 @@ function fmtSec(ms: number): string {
  * swallowed: the cache is a speedup, not a correctness requirement, and
  * discovery falls back to the FMG-serial resolver path automatically when
  * the map is empty.
+ *
+ * KEYED ON THE FMG DEVICE NAME, NOT THE HOSTNAME. The consumer looks entries
+ * up by `fmgNameKey(deviceName)` — FortiManager's name for the device — while
+ * `Asset.hostname` is projected from the gate's own `system global hostname`.
+ * Those are under no obligation to match (see utils/fortinetParentKey.ts for
+ * the 2026-08 incident that established this), and keying the map on the
+ * hostname filed every divergent gate's entry under a key nothing ever asks
+ * for. The miss is silent and self-perpetuating: the gate falls through to
+ * `resolveDeviceMgmtIp`, which reads only the ONE interface named by the
+ * integration's `mgmtInterface` and rejects `0.0.0.0` — the normal state of a
+ * dedicated management interface on an HA cluster, whose per-member addresses
+ * live under `config system ha` → `set ha-mgmt-interfaces`. Both lookups miss,
+ * `processDevice` returns null, and the gate is dropped from every run while
+ * monitoring (which dials `Asset.ipAddress`) keeps reporting it healthy — so
+ * its firmware, subnets and leases freeze at their last good values with no
+ * signal anywhere. Prod 2026-09: an 1801F HA pair stuck on old firmware.
+ *
+ * Both keys are emitted, device name first, mirroring the resolution order in
+ * `resolveInfraParentAsset`: the hostname alias still resolves a firewall
+ * whose `deviceName` stamp predates that field, and costs one Map entry.
  */
 async function buildFmgWarmCacheIps(
   integrationId: string,
@@ -421,22 +442,56 @@ async function buildFmgWarmCacheIps(
         ipAddress: { not: null },
         hostname: { not: null },
       },
-      select: { hostname: true, ipAddress: true },
+      select: { hostname: true, ipAddress: true, fortinetTopology: true },
     });
-    // Sort by hostname (case-insensitive, natural-numeric so FW-2 precedes
-    // FW-10) before populating the Map. Map iteration order is insertion
-    // order, and the downstream `cachedNames` Set inherits it, so the
-    // warm-cache producer dispatches FortiGates alphabetically — predictable
-    // for operators watching live discovery logs.
-    const sorted = rows
-      .filter((r): r is { hostname: string; ipAddress: string } => !!r.hostname && !!r.ipAddress)
-      .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: "base", numeric: true }));
-    const map = new Map<string, string>();
-    for (const r of sorted) map.set(r.hostname, r.ipAddress);
-    return map;
+    return buildWarmCacheKeyMap(rows);
   } catch {
     return empty;
   }
+}
+
+/** One monitor-up firewall row, as the warm cache reads it. */
+export interface WarmCacheFirewallRow {
+  hostname: string | null;
+  ipAddress: string | null;
+  /** The asset's own `fortinetTopology`; `deviceName` is read off it. */
+  fortinetTopology?: unknown;
+}
+
+/**
+ * The keying half of `buildFmgWarmCacheIps`, pure so the precedence is testable
+ * without a database. See that function's comment for WHY the device name is
+ * the key and the hostname only an alias.
+ */
+export function buildWarmCacheKeyMap(rows: WarmCacheFirewallRow[]): Map<string, string> {
+  // Sort by hostname (case-insensitive, natural-numeric so FW-2 precedes
+  // FW-10) before populating the Map. Map iteration order is insertion
+  // order, and the downstream `cachedNames` Set inherits it, so the
+  // warm-cache producer dispatches FortiGates alphabetically — predictable
+  // for operators watching live discovery logs.
+  const sorted = rows
+    .flatMap((r) => (r.hostname && r.ipAddress
+      ? [{ hostname: r.hostname, ipAddress: r.ipAddress, deviceName: readFirewallDeviceName(r.fortinetTopology) }]
+      : []))
+    .sort((a, b) => a.hostname.localeCompare(b.hostname, undefined, { sensitivity: "base", numeric: true }));
+  const map = new Map<string, string>();
+  // `seen` holds the lowercased key the consumer will actually match on, so
+  // a device-name entry is never displaced by another gate's hostname alias
+  // that differs only in case. Two passes, not one: EVERY device name is
+  // claimed before any hostname alias is offered, so on the install where
+  // gate A's hostname collides with gate B's FMG device name, B keeps its
+  // own address. First writer wins within a pass, as buildInfraParentIndex
+  // does with its duplicate hostnames.
+  const seen = new Set<string>();
+  const put = (name: string | null, ip: string) => {
+    const key = normalizeNameKey(name);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    map.set(name!.trim(), ip);
+  };
+  for (const r of sorted) put(r.deviceName, r.ipAddress);
+  for (const r of sorted) put(r.hostname, r.ipAddress);
+  return map;
 }
 
 /**
@@ -706,12 +761,24 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       if (m) acc.totalDevices = Number(m[1]);
     } else if (step === "discover.device.complete") {
       acc.completedCount++;
+      // Retract an earlier error for this device. `processDevice` logs its
+      // first direct-REST failure BEFORE deciding whether to re-resolve the
+      // mgmt IP and retry, so a gate that fails once and then succeeds has
+      // already been counted. Without this it would be named as unread in the
+      // end-of-run summary despite having been read perfectly — and `done`
+      // (completed + skipped) would exceed the roster. Only the retry path can
+      // reach here after an error, so the retraction is exact, not a guess.
+      if (device && acc.skippedErrorDevices.delete(device)) {
+        acc.skippedErrorCount = Math.max(0, acc.skippedErrorCount - 1);
+      }
     } else if (step === "discover.device.skip" && level === "info") {
       acc.skippedOfflineCount++;
     } else if (step === "discover.device.skip" && level === "error") {
       acc.skippedErrorCount++;
+      if (device) acc.skippedErrorDevices.add(device);
     } else if (step === "discover.device" && level === "error") {
       acc.skippedErrorCount++;
+      if (device) acc.skippedErrorDevices.add(device);
     }
     if (device) {
       const isTerminal =
@@ -1001,6 +1068,41 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         signal: ac.signal,
       }).catch((err: any) => {
         logEvent({ action: "reservation.infra.auto_push.error", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level: "error", message: `Auto-reserve of managed device addresses failed for "${integrationName}": ${err?.message || "Unknown error"}` });
+      });
+    }
+
+    // Business rule 53. Devices discovery could not read AT ALL this run,
+    // named in one place.
+    // Fires before the abort/complete branch because a gate that was never
+    // read is equally unread either way.
+    //
+    // Without this the only trace is the per-device skip line — one Event
+    // among the thousands a run writes, filed under the INTEGRATION, with
+    // nothing on the gate's own asset to show it went unread. A gate in this
+    // list keeps whatever discovery last wrote (firmware, subnets, leases,
+    // switch/AP rosters) while monitoring polls its IP and reports it up, so
+    // it reads as healthy and current indefinitely. That is how an 1801F HA
+    // pair sat on stale firmware in prod (2026-09) with no signal anywhere.
+    //
+    // Level is warning, not error: the run itself succeeded, and a single
+    // staged-but-offline gate is a normal state on this estate (the cached-
+    // CMDB path handles those and counts them as `skippedOffline`, not here).
+    if (acc.skippedErrorDevices.size > 0) {
+      const names = [...acc.skippedErrorDevices].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
+      // Cap the list: a run where FMG itself is unreachable can fail every
+      // device, and an Event message naming 187 gates helps nobody.
+      const MAX_NAMED = 20;
+      const shown = names.slice(0, MAX_NAMED).join(", ");
+      const more = names.length > MAX_NAMED ? `, and ${names.length - MAX_NAMED} more` : "";
+      logEvent({
+        action: "integration.discover.devices_unread",
+        resourceType: "integration",
+        resourceId: integrationId,
+        resourceName: integrationName,
+        actor,
+        level: "warning",
+        message: `[${integrationName}] ${names.length} device(s) could not be read this run and kept their previous data — ${shown}${more}. Check each device's earlier "Skipping" line for the reason.`,
+        details: { devices: names, count: names.length },
       });
     }
 

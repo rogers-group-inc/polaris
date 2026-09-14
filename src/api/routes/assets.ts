@@ -38,7 +38,7 @@ import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
 import { manualCoordPatchError } from "../../utils/geo.js";
-import { reconcileMapRegions } from "../../services/mapRegionService.js";
+import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../services/mapRegionService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
@@ -3156,11 +3156,16 @@ router.get("/:id/mclag-peers", requirePermission("assets", "read"), async (req, 
 // The firewall half reads AssetFortigateSighting, which its own endpoint gates
 // `assetsQuarantine:read` — so it is gated a second time here and the answer
 // says which halves were consulted (`visibility`), the /ip-context precedent.
+// Its IPAM fallback (no gate ever sighted the device → the gate that owns the
+// network its address is in) reads Subnet instead, so it rides `subnets:read`
+// and reports separately: a caller with one grant and not the other must be
+// able to tell an empty answer from an unshown one.
 router.get("/:id/upstream", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const result = await resolveAssetUpstream(id, {
       includeFirewall: hasPermission(req, "assetsQuarantine", "read"),
+      includeSubnetGate: hasPermission(req, "subnets", "read"),
     });
     if (!result) throw new AppError(404, "Asset not found");
     res.json(result);
@@ -3407,6 +3412,9 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     const input = CreateAssetSchema.parse(req.body);
     const coordErr = manualCoordPatchError(input.latitude, input.longitude);
     if (coordErr) throw new AppError(400, coordErr);
+    // Nothing to round-trip on a create, so every region tag in the body is an
+    // addition and must name a real region.
+    if (input.tags) await assertAddedRegionTagsNameARegion([], input.tags);
     const data: Record<string, unknown> = { ...input };
     if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
     // Description: empty string clears to null (an empty Polaris description
@@ -3458,6 +3466,12 @@ type ExistingAssetForUpdate = NonNullable<Awaited<ReturnType<typeof loadAssetFor
 
 // Phase 1 — request-level guards that must 400 before anything is staged.
 async function validateAssetUpdate(id: string, existing: ExistingAssetForUpdate, input: UpdateAssetInput): Promise<void> {
+  // A `region:` tag the operator is ADDING must name a region that exists. The
+  // ones already on the row pass through untouched — the edit modal PUTs the
+  // whole array back — and hand-applying a live region's tag to a device its
+  // polygon misses stays legal. Costs no query unless a region tag was added.
+  if (input.tags) await assertAddedRegionTagsNameARegion(existing.tags ?? [], input.tags);
+
   // Per-asset polling overrides must be valid for the asset's source kind.
   // Falling through silently at the resolver would leave the operator
   // confused about why their selection didn't take.

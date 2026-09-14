@@ -888,7 +888,7 @@ describe("switchNameFromLastSeenSwitch", () => {
 
 describe("buildEndpointDependencyEdges", () => {
   function endpoint(id: string, over: Partial<DepEndpoint> = {}): DepEndpoint {
-    return { id, lastSeenSwitch: null, lastSeenAp: null, sightedFortigates: [], ...over };
+    return { id, lastSeenSwitch: null, lastSeenAp: null, sightedFortigates: [], ipamGateAssetId: null, ...over };
   }
 
   const infra: DepAsset[] = [

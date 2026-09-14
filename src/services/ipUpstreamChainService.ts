@@ -52,9 +52,18 @@
  * asset id inside one `$transaction` (the documented lastSeenAp deadlock fix),
  * with one `asset.switch_port.changed` / `asset.wireless_ap.changed` Event per
  * moved value written AFTER the commit through `buildConnectionChangedEvent`.
- * The MAC itself is NOT adopted onto the asset: adopting it would make the row
- * eligible for MAC-keyed dedupe and merge, and a wrong adoption merges two
- * devices — that step stays a deliberate follow-up behind an opt-in.
+ * The derived MAC IS adopted onto the asset (2026-09; rule 45 originally
+ * withheld it). Adoption makes the row eligible for MAC-keyed dedupe and merge,
+ * so the hazard is answered by `partitionAdoptableMacs` rather than by a
+ * Setting: every wire-level ambiguity is already refused above, leaving only a
+ * MAC that is already spoken for. See that function for the two refusals.
+ *
+ * ── Also the home of the shared owning-gate resolver ────────────────────────
+ * `resolveOwningGateContexts` started here as this sweep's ARP scoping and is
+ * now the ONE implementation of "which gate owns this address" (business rule
+ * 54), shared with `assetUpstreamService` (the Last Seen Firewall fallback) and
+ * `dependencyTreeService` (the last-resort endpoint parent). Three consumers
+ * re-deriving the subnet → gate precedence is the drift rule 41 exists to stop.
  *
  * ── Scale ───────────────────────────────────────────────────────────────────
  * Set-based end to end: one claim query, one containment query, one firewall
@@ -69,8 +78,9 @@ import { chunkArray } from "../utils/chunk.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
 import { UNMONITORABLE_STATUSES } from "../utils/assetInvariants.js";
 import { buildIpContexts } from "./subnetService.js";
+import { reconcileMacAddresses } from "./macAddressService.js";
 import { claimIsOperatorOwned, CLAIM_FRESH_DAYS } from "./duplicateIpConflictService.js";
-import { buildConnectionChangedEvent, logEventsBatch } from "./eventLogService.js";
+import { buildConnectionChangedEvent, buildMacAdoptedEvent, logEventsBatch } from "./eventLogService.js";
 import {
   buildInfraParentIndex,
   resolveInfraParentAsset,
@@ -96,6 +106,14 @@ const CANDIDATE_CAP = 5000;
 const INFRA_TYPES = ["firewall", "switch", "access_point"];
 
 const ACTOR = "system:upstream-chain";
+
+/** Source tag on the `AssetMacAddress` row written when a MAC is adopted, so
+ *  the side table says the MAC came from a gate's ARP cache rather than from
+ *  the device itself. NOT a hardware source — see `isHardwareMacSource`. */
+export const ADOPTED_MAC_SOURCE = "ip-upstream-arp";
+
+/** Side-table writes issued in parallel per batch (two round-trips each). */
+const MAC_ROW_CONCURRENCY = 25;
 const SOURCE = "ip-upstream-chain";
 
 // ─── Row shapes (kept minimal — these are the only fields the decisions read) ─
@@ -147,6 +165,11 @@ export interface IpUpstreamChainResult {
   ambiguous: number;
   switchStamps: number;
   apStamps: number;
+  /** Candidates that had the derived MAC written onto `Asset.macAddress`. */
+  macAdopted: number;
+  /** Derived MACs refused because adopting would duplicate a MAC another asset
+   *  already holds, or two candidates in this pass resolved to the same one. */
+  macCollisions: number;
 }
 
 // ─── Pure decisions (unit-tested in tests/unit/ipUpstreamChain.test.ts) ──────
@@ -187,6 +210,60 @@ export function pickArpMac(
   const macs = new Set(scoped.map((r) => r.macAddress));
   if (macs.size > 1) return "ambiguous";
   return { mac: scoped[0].macAddress, gateAssetId: scoped[0].assetId };
+}
+
+/** MAC comparison key — the Asset storage form (upper, colon-separated). */
+export function macKey(mac: string | null | undefined): string | null {
+  if (!mac) return null;
+  const t = mac.trim();
+  if (!t) return null;
+  return t.toUpperCase().replace(/-/g, ":");
+}
+
+/**
+ * Which derived MACs may be written onto `Asset.macAddress`.
+ *
+ * Business rule 45, as amended 2026-09.
+ *
+ * Adoption is what makes a row eligible for MAC-keyed dedupe and merge
+ * (`mergeDuplicateHostnameAssets` collapses rows sharing a MAC; Entra
+ * cross-links by Ethernet MAC), and a merge deletes one row's monitoring
+ * history irreversibly. The sweep's own refusals already rule out the
+ * ambiguous wire cases — `pickArpMac` scopes to the owning gate and returns
+ * `"ambiguous"` when two MACs answer one address — so the only duplicate this
+ * pass can still manufacture is a MAC that ALREADY names a device:
+ *
+ *   - `macsHeldElsewhere` — another asset carries it today. Two asset rows
+ *     claiming one address is rule 40's duplicate-IP conflict, and its answer
+ *     is a Conflict row for an operator, not a silent merge candidate.
+ *   - two candidates in THIS pass resolving to the same MAC — same case,
+ *     caught before either write lands rather than after both do.
+ *
+ * Both refusals drop the adoption only. The switch/AP stamps derived from the
+ * same MAC still apply: those are reversible, a merge is not.
+ */
+export function partitionAdoptableMacs(
+  candidates: ReadonlyArray<{ assetId: string; mac: string }>,
+  macsHeldElsewhere: ReadonlySet<string>,
+): { adopt: Map<string, string>; collisions: number } {
+  const byMac = new Map<string, Array<{ assetId: string; mac: string }>>();
+  for (const c of candidates) {
+    const key = macKey(c.mac);
+    if (!key) continue;
+    const list = byMac.get(key);
+    if (list) list.push(c);
+    else byMac.set(key, [c]);
+  }
+  const adopt = new Map<string, string>();
+  let collisions = 0;
+  for (const [key, list] of byMac) {
+    if (macsHeldElsewhere.has(key) || list.length > 1) {
+      collisions += list.length;
+      continue;
+    }
+    adopt.set(list[0].assetId, key);
+  }
+  return { adopt, collisions };
 }
 
 /**
@@ -254,22 +331,38 @@ export async function loadMaclessClaims(): Promise<MaclessClaimRow[]> {
   `;
 }
 
+/** The IPAM answer for one address: which network contains it, and the gate
+ *  that owns that network. `gateAssetId` is null when the gate has no Asset
+ *  row (an unadopted gate, an integration that hasn't discovered it yet) —
+ *  the subnet is still known, which is why the two travel together. */
+export interface OwningGate {
+  subnetId: string;
+  subnetCidr: string;
+  gateAssetId: string | null;
+}
+
 /**
- * Resolve, per candidate address, the firewall Asset that owns it: the
- * containing subnet's chassis serial, then its FortiManager device name,
- * through the shared parent-key precedence. Null when the address sits in no
- * known network or the gate has no Asset row.
+ * Resolve, per address, the network that contains it and the firewall Asset
+ * that owns that network: the containing subnet's chassis serial, then its
+ * FortiManager device name, through the shared parent-key precedence
+ * (business rule 41 — never a hostname match). Absent from the map when the
+ * address sits in no known, non-deprecated network.
+ *
+ * The single implementation of "which gate is this address behind" per IPAM
+ * (business rule 55).
+ * Three consumers: this sweep (scoping the ARP lookup), `assetUpstreamService`
+ * (the Last Seen Firewall fallback) and `dependencyTreeService` (the last-
+ * resort endpoint parent). Keep it one function — the three would otherwise
+ * drift on the serial-before-name precedence, which is the exact drift rule 41
+ * exists to prevent.
  */
-async function resolveOwningGates(ips: string[]): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
+export async function resolveOwningGateContexts(ips: string[]): Promise<Map<string, OwningGate>> {
+  const out = new Map<string, OwningGate>();
   if (ips.length === 0) return out;
 
   const contexts = await buildIpContexts(ips);
   const subnetIds = [...new Set([...contexts.values()].map((c) => c.subnetId))];
-  if (subnetIds.length === 0) {
-    for (const ip of ips) out.set(ip, null);
-    return out;
-  }
+  if (subnetIds.length === 0) return out;
 
   const [subnets, firewalls] = await Promise.all([
     prisma.subnet.findMany({
@@ -293,8 +386,26 @@ async function resolveOwningGates(ips: string[]): Promise<Map<string, string | n
   }
   for (const ip of ips) {
     const ctx = contexts.get(ip);
-    out.set(ip, ctx ? (gateBySubnet.get(ctx.subnetId) ?? null) : null);
+    if (!ctx) continue;
+    out.set(ip, {
+      subnetId: ctx.subnetId,
+      subnetCidr: ctx.subnetCidr,
+      gateAssetId: gateBySubnet.get(ctx.subnetId) ?? null,
+    });
   }
+  return out;
+}
+
+/**
+ * The gate-id-only view `pickArpMac` takes. Every address asked for is present
+ * (null when unresolvable), because the sweep distinguishes "no owning gate"
+ * from "not asked".
+ */
+async function resolveOwningGates(ips: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (ips.length === 0) return out;
+  const ctxs = await resolveOwningGateContexts(ips);
+  for (const ip of ips) out.set(ip, ctxs.get(ip)?.gateAssetId ?? null);
   return out;
 }
 
@@ -388,6 +499,7 @@ async function loadStationRows(
 export async function resolveIpUpstreamForMaclessAssets(now = new Date()): Promise<IpUpstreamChainResult> {
   const result: IpUpstreamChainResult = {
     candidates: 0, staleClaims: 0, resolvedMac: 0, ambiguous: 0, switchStamps: 0, apStamps: 0,
+    macAdopted: 0, macCollisions: 0,
   };
 
   const claimCutoff = new Date(now.getTime() - CLAIM_FRESH_DAYS * 86_400_000);
@@ -436,7 +548,31 @@ export async function resolveIpUpstreamForMaclessAssets(now = new Date()): Promi
   const hostnameById = new Map(devices.map((d) => [d.id, d.hostname]));
 
   // Decide per asset. Same address → same answer, so this is a map lookup.
-  type Stamp = { row: MaclessClaimRow; switchLabel?: string; apName?: string };
+  // Which derived MACs may be written onto the asset. One indexed query for
+  // the MACs already spoken for, then a pure partition — see
+  // `partitionAdoptableMacs` for why a collision drops the adoption only.
+  const macCandidates = fresh
+    .map((r) => ({ assetId: r.id, mac: macByIp.get(r.ip) ?? "" }))
+    .filter((c) => c.mac);
+  let adoptByAsset = new Map<string, string>();
+  if (macCandidates.length > 0) {
+    const held = new Set<string>();
+    for (const chunk of chunkArray([...new Set(macCandidates.map((c) => c.mac))], IN_CHUNK)) {
+      const rows = await prisma.asset.findMany({
+        where: { macAddress: { in: chunk } },
+        select: { macAddress: true },
+      });
+      for (const r of rows) {
+        const k = macKey(r.macAddress);
+        if (k) held.add(k);
+      }
+    }
+    const part = partitionAdoptableMacs(macCandidates, held);
+    adoptByAsset = part.adopt;
+    result.macCollisions = part.collisions;
+  }
+
+  type Stamp = { row: MaclessClaimRow; switchLabel?: string; apName?: string; adoptMac?: string };
   const stamps: Stamp[] = [];
   for (const row of fresh) {
     const mac = macByIp.get(row.ip) ?? null;
@@ -465,7 +601,10 @@ export async function resolveIpUpstreamForMaclessAssets(now = new Date()): Promi
       if (apName && stampChanged(row.lastSeenAp, apName)) stamp.apName = apName;
     }
 
-    if (stamp.switchLabel || stamp.apName) stamps.push(stamp);
+    const adopt = adoptByAsset.get(row.id);
+    if (adopt) stamp.adoptMac = adopt;
+
+    if (stamp.switchLabel || stamp.apName || stamp.adoptMac) stamps.push(stamp);
   }
   if (stamps.length === 0) return result;
 
@@ -480,6 +619,7 @@ export async function resolveIpUpstreamForMaclessAssets(now = new Date()): Promi
             data: {
               ...(s.switchLabel ? { lastSeenSwitch: s.switchLabel } : {}),
               ...(s.apName ? { lastSeenAp: s.apName } : {}),
+              ...(s.adoptMac ? { macAddress: s.adoptMac } : {}),
             },
           }),
         ),
@@ -499,9 +639,30 @@ export async function resolveIpUpstreamForMaclessAssets(now = new Date()): Promi
         const ev = buildConnectionChangedEvent("ap", ctx, s.row.lastSeenAp, s.apName);
         if (ev) out.push(ev);
       }
+      if (s.adoptMac) {
+        result.macAdopted++;
+        out.push(buildMacAdoptedEvent(ctx, s.row.ip, s.adoptMac));
+      }
       return out;
     });
     await logEventsBatch(events);
+
+    // Provenance row in the MAC side table, so the asset-details MAC list says
+    // where the address came from rather than showing a MAC with no source.
+    // After the commit and bounded — the scalar column is what downstream
+    // matchers read, so a failure here must not roll back the adoption.
+    const adopted = chunk.filter((c) => c.adoptMac);
+    for (const batch of chunkArray(adopted, MAC_ROW_CONCURRENCY)) {
+      await Promise.all(
+        batch.map((c) =>
+          reconcileMacAddresses(c.row.id, [
+            { mac: c.adoptMac as string, source: ADOPTED_MAC_SOURCE, lastSeen: now.toISOString() },
+          ]).catch((err) =>
+            logger.warn({ err, assetId: c.row.id }, "ip upstream chain: MAC side-table write failed"),
+          ),
+        ),
+      );
+    }
   }
 
   logger.info(result, "ip upstream chain: stamped switch/AP on MAC-less assets");

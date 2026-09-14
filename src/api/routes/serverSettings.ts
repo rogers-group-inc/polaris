@@ -72,6 +72,7 @@ import {
   type TagCriteria,
 } from "../../services/tagAssignmentService.js";
 import { REGION_TAG_CATEGORY } from "../../services/mapRegionService.js";
+import { REGION_TAG_PREFIX } from "../../utils/tagNormalize.js";
 import {
   DEVICE_FILTER_FIELD_OPS,
   scopeConditionMeta,
@@ -587,6 +588,38 @@ function assertNotRegionCategory(category: string | null | undefined, verb: stri
 }
 
 /**
+ * The `region:` prefix is reserved, in EVERY category.
+ *
+ * `assertNotRegionCategory` above guards the Map Regions *category*, and that
+ * is not the same thing: a tag named `region:Nashville` filed under "General"
+ * sails past it. Three consequences, in ascending order of nastiness.
+ *
+ * It renders in the asset edit modal's picker looking exactly like a real
+ * region tag, so operators apply it, and what they get is a string that means
+ * nothing and that nothing maintains. It is then indistinguishable from a tag
+ * stranded by a half-applied rename, which is the ambiguity business rule 54
+ * had to design around. And the auto-assign device-filter ban in
+ * `readPostedTagFilter` is ALSO keyed on category, so filing under "General" is
+ * a way to put a `TagAutoAssignment` filter on a `region:` name — precisely the
+ * "two managed-sync reconcilers on one string" that ban exists to prevent. The
+ * collision needs an ordering to land (names are unique, so the hand-made row
+ * has to exist BEFORE a region takes that name, and `upsertTagRegistry`'s empty
+ * `update` then leaves the filter in place), which is presumably why nobody has
+ * hit it yet.
+ *
+ * Case-insensitive, because every other region-tag comparison in the codebase
+ * is: `Region:Nashville` is the same reservation.
+ */
+function assertNotRegionPrefix(name: string, verb: string): void {
+  if (!name.trim().toLowerCase().startsWith(REGION_TAG_PREFIX)) return;
+  throw new AppError(
+    409,
+    `Tag names starting with "${REGION_TAG_PREFIX}" belong to the Device Map's regions — ` +
+      `draw a region there to ${verb} its tag, or pick another name.`,
+  );
+}
+
+/**
  * How the audit Event describes the filter a write left on the tag. Counts
  * only — the tree itself is on the row, and an Event is shipped off-host by the
  * syslog / SFTP archivers.
@@ -658,6 +691,7 @@ router.post("/tags", requirePermission("serverSettingsSystem", "fullwrite"), asy
 
     const category = req.body.category || "General";
     assertNotRegionCategory(category, "add");
+    assertNotRegionPrefix(name, "add");
 
     // Validate + normalize the optional auto-assignment device filter
     // (neither shape set = an ordinary manual tag).
@@ -775,6 +809,13 @@ router.put("/tags/:id", requirePermission("serverSettingsSystem", "fullwrite"), 
     if (renamed) {
       const dupe = await prisma.tag.findUnique({ where: { name } });
       if (dupe) throw new AppError(409, `Tag "${name}" already exists`);
+      // Only a rename INTO the prefix is refused. A row already carrying it is
+      // one of the map's own, and this route deliberately does not freeze those
+      // (see assertNotRegionCategory) — and the guard must not fire on a
+      // colour-only edit, where `name` falls back to the existing region name.
+      if (!existing.name.trim().toLowerCase().startsWith(REGION_TAG_PREFIX)) {
+        assertNotRegionPrefix(name, "rename");
+      }
     }
 
     const category = req.body.category ?? existing.category;
