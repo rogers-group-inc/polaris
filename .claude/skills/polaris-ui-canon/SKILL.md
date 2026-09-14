@@ -25,7 +25,7 @@ Read the canon files here for *which file in THIS repo* to copy. Inside this rep
 | the SPA shell, navigation, the sidebar status panels and their pollers, the assets page and its slide-over tabs | [references/frontend-shell.md](references/frontend-shell.md) |
 | Discovery-rules card, SSH Deployment, script publishing, export/import, Dash wallboard, mobile PWA + push | [references/frontend-surfaces.md](references/frontend-surfaces.md) |
 | the Automations page or its 6-step wizard | [references/frontend-automations-wizard.md](references/frontend-automations-wizard.md) |
-| html-to-image screenshots or the Device Map topology layout solver | [references/tech-stack-frontend.md](references/tech-stack-frontend.md) |
+| html-to-image screenshots, or the Device Map topology graph — its layout solver AND which theme family its Cytoscape palette takes | [references/tech-stack-frontend.md](references/tech-stack-frontend.md) |
 
 Every pattern section carries **What it is** / **Canonical implementation**
 (`path/file.js → symbol()` — no line numbers, grep the symbol) / **Key conventions** /
