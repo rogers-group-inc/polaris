@@ -12,7 +12,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(52 is the next free number.)
+(53 is the next free number.)
 
 ## How to read
 
@@ -20,9 +20,9 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 |---|---|
 | touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11 below; 20a, 23, 26, 41, 42 in the references |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | rules 9–10 below; 12, 16, 36, 37 |
-| touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38 |
+| touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38, 52 |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46 |
-| touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45 |
+| touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 52 |
 | touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43, 47, 51 |
 | touch Polaris Agent install, upgrade or its stored credential | 43, 49 |
 | add or retire a rule | the numbering paragraph above; add the invariant to the right `invariants-*.md`, the narrative to the right `narrative-*.md`, and cite the number from code. **Never rename the reference files** — `invariants-30-43.md` / `narrative-36-43.md` keep their names whatever range they hold, since other skills and code link to them. **Re-check the next free number on `main` at merge time**: another worktree may have taken it while yours was open, and the branch merging second renumbers (the merge protocol says how) |
@@ -30,11 +30,11 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 Reference files (all verbatim):
 
 - [references/invariants-12-29.md](references/invariants-12-29.md) — the one-paragraph invariant for rules 12–29
-- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–49 (the filename keeps its original range: the reference is cited from code and the other skills)
+- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–52 (the filename keeps its original range: the reference is cited from code and the other skills)
 - [references/narrative-12-24.md](references/narrative-12-24.md) — full narrative, rules 12–24
 - [references/narrative-25-35.md](references/narrative-25-35.md) — full narrative, rules 25–35
 - [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–43 (the filename is a stable citation key — see the numbering note)
-- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–49 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
+- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–52 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -96,6 +96,7 @@ before changing anything the invariant constrains.
 | 48 | Nobody hands out authority they do not hold | invariants-30-43 | narrative-44-48 |
 | 49 | An upgrade never refuses for want of a credential it can find itself, and never records one it has not proved | invariants-30-43 | narrative-44-48 |
 | 50 | A response the app did not write is a response with the app's headers missing | invariants-30-43 | narrative-44-48 |
+| 52 | An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got | invariants-30-43 | narrative-44-48 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

@@ -3156,11 +3156,16 @@ router.get("/:id/mclag-peers", requirePermission("assets", "read"), async (req, 
 // The firewall half reads AssetFortigateSighting, which its own endpoint gates
 // `assetsQuarantine:read` — so it is gated a second time here and the answer
 // says which halves were consulted (`visibility`), the /ip-context precedent.
+// Its IPAM fallback (no gate ever sighted the device → the gate that owns the
+// network its address is in) reads Subnet instead, so it rides `subnets:read`
+// and reports separately: a caller with one grant and not the other must be
+// able to tell an empty answer from an unshown one.
 router.get("/:id/upstream", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const result = await resolveAssetUpstream(id, {
       includeFirewall: hasPermission(req, "assetsQuarantine", "read"),
+      includeSubnetGate: hasPermission(req, "subnets", "read"),
     });
     if (!result) throw new AppError(404, "Asset not found");
     res.json(result);

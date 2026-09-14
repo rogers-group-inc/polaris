@@ -7,13 +7,24 @@
  * rows can carry verbs (open the device, open its HTTPS UI, SSH to it) instead
  * of being dead text an operator has to re-find by hand in the Assets list.
  *
- * Three inputs, all columns discovery already writes — nothing new is
+ * Four inputs, all of them already written by something else — nothing new is
  * collected:
  *   - `Asset.lastSeenSwitch` — "<switch-id-or-hostname>/<port>"
  *   - `Asset.lastSeenAp`     — the FortiAP's name
  *   - the freshest `AssetFortigateSighting.fortigateDevice` — FortiManager's
  *     DEVICE NAME for the gate, which is under no obligation to match the
  *     gate's own hostname.
+ *   - FALLBACK, firewall only: the gate that owns the network the asset's
+ *     address sits in, per IPAM (`resolveOwningGateContexts`). Consulted only
+ *     when NO gate has ever sighted the device, and reported as
+ *     `source: "subnet"` so it can never be read as a sighting: a sighting
+ *     records a gate seeing the device, this infers the gate from the address,
+ *     and the two are not the same claim. It carries no `lastSeen` for exactly
+ *     that reason. `ipContextService.pickNamedGate` makes the opposite
+ *     ranking (subnet over sighting) on the Add Asset panel, and deliberately
+ *     so — that panel answers "what is at this address today", where the
+ *     serving gate is the better answer; this row is labelled "Last Seen", so
+ *     evidence outranks inference.
  *
  * That last point is why name resolution goes through
  * `utils/fortinetParentKey.ts` (serial -> the candidate's own FMG device-name
@@ -41,6 +52,7 @@ import {
   resolveInfraParentAsset,
 } from "../utils/fortinetParentKey.js";
 import { shapeManagementAccessForClient } from "./fortinetManagementAccessService.js";
+import { resolveOwningGateContexts } from "./ipUpstreamChainService.js";
 
 /** The resolved device, shaped for the client's remote-access gating. */
 export interface UpstreamAssetRef {
@@ -59,8 +71,20 @@ export interface UpstreamEntry {
   name: string;
   /** Switch only — the port half of `lastSeenSwitch`, when it carried one. */
   port?: string;
-  /** Firewall only — when that sighting was last refreshed. */
+  /** Firewall only — when that sighting was last refreshed. Present for
+   *  `source: "sighting"` and never for `"subnet"`, which has no moment. */
   lastSeen?: string;
+  /**
+   * Firewall only — which of the two answers this is:
+   *   `"sighting"` — a gate REPORTED this device (AssetFortigateSighting).
+   *   `"subnet"`   — nothing has; this is the gate that owns the network the
+   *                  asset's address sits in. An inference about where the
+   *                  device must be, not a record of it being seen, so the UI
+   *                  labels it and never prints a "last seen" time for it.
+   */
+  source?: "sighting" | "subnet";
+  /** Firewall, `source: "subnet"` only — the network that named the gate. */
+  subnetCidr?: string;
   /** Null when the name resolves to no asset (see the module note). */
   asset: UpstreamAssetRef | null;
 }
@@ -75,7 +99,18 @@ export interface AssetUpstream {
    * endpoint — so a caller without it reads "not shown" rather than a
    * confident "no firewall has seen this device" (the /ip-context precedent).
    */
-  visibility: { firewall: boolean };
+  visibility: {
+    firewall: boolean;
+    /**
+     * Whether the IPAM fallback was allowed to run. The sighting half reads
+     * `AssetFortigateSighting` (gated `assetsQuarantine:read`); the fallback
+     * reads `Subnet` (gated `subnets:read`) — two different grants, so a
+     * caller holding one and not the other must be able to tell "no gate owns
+     * this address" from "you weren't shown that half" (the /ip-context
+     * precedent).
+     */
+    subnetGate: boolean;
+  };
 }
 
 const ASSET_SELECT = {
@@ -137,12 +172,13 @@ export function splitLastSeenSwitch(v: string | null | undefined): { name: strin
  */
 export async function resolveAssetUpstream(
   assetId: string,
-  opts: { includeFirewall?: boolean } = {},
+  opts: { includeFirewall?: boolean; includeSubnetGate?: boolean } = {},
 ): Promise<AssetUpstream | null> {
   const includeFirewall = opts.includeFirewall !== false;
+  const includeSubnetGate = opts.includeSubnetGate !== false;
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { id: true, assetType: true, lastSeenSwitch: true, lastSeenAp: true },
+    select: { id: true, assetType: true, lastSeenSwitch: true, lastSeenAp: true, ipAddress: true },
   });
   if (!asset) return null;
 
@@ -161,6 +197,17 @@ export async function resolveAssetUpstream(
     : null;
   const fwName = sighting?.fortigateDevice?.trim() || "";
 
+  // No gate has ever reported this device — fall back to the gate that owns
+  // the network its address sits in. Strictly a fallback: a sighting is a
+  // record of the device being seen, this is an inference from IPAM, and the
+  // entry says which it is so the row can never read as evidence it isn't.
+  // Skipped for a firewall (same reason the sighting half is) and for an
+  // asset with no address to place.
+  const ip = typeof asset.ipAddress === "string" ? asset.ipAddress.trim() : "";
+  const wantSubnetGate = includeSubnetGate && asset.assetType !== "firewall" && !fwName && !!ip;
+  const owning = wantSubnetGate ? (await resolveOwningGateContexts([ip])).get(ip) : undefined;
+  const subnetGateAssetId = owning?.gateAssetId ?? null;
+
   const branches: Array<Record<string, unknown>> = [];
   const pushBranches = (name: string, assetType: string) => {
     const or = parentAssetWhereOr({ name });
@@ -169,6 +216,10 @@ export async function resolveAssetUpstream(
   if (sw) pushBranches(sw.name, "switch");
   if (apName) pushBranches(apName, "access_point");
   if (fwName) pushBranches(fwName, "firewall");
+  // The IPAM answer is already an asset id — it needs no name resolution, just
+  // the same row shape, so fetch it in the one candidate query rather than a
+  // second round-trip.
+  if (subnetGateAssetId) branches.push({ assetType: "firewall", id: subnetGateAssetId });
 
   const candidates: CandidateRow[] =
     branches.length > 0
@@ -190,6 +241,22 @@ export async function resolveAssetUpstream(
     return row ? toRef(row) : null;
   };
 
+  // The gate owns the network whether or not Polaris holds an Asset row for
+  // it, but this row exists to carry verbs — with no row there is no name to
+  // print either (the sighting half always has FMG's device name; IPAM gives
+  // an id or nothing), so an unresolved gate yields no row at all.
+  const subnetGateRow = subnetGateAssetId
+    ? candidates.find((c) => c.id === subnetGateAssetId && c.assetType === "firewall")
+    : undefined;
+  const subnetGate: UpstreamEntry | null = subnetGateRow
+    ? {
+        name: subnetGateRow.hostname || subnetGateRow.serialNumber || subnetGateRow.id,
+        source: "subnet" as const,
+        ...(owning?.subnetCidr ? { subnetCidr: owning.subnetCidr } : {}),
+        asset: toRef(subnetGateRow),
+      }
+    : null;
+
   return {
     switch: sw
       ? { name: sw.name, ...(sw.port ? { port: sw.port } : {}), asset: resolve(sw.name, "switch") }
@@ -198,10 +265,11 @@ export async function resolveAssetUpstream(
     firewall: fwName
       ? {
           name: fwName,
+          source: "sighting" as const,
           ...(sighting?.lastSeen ? { lastSeen: sighting.lastSeen.toISOString() } : {}),
           asset: resolve(fwName, "firewall"),
         }
-      : null,
-    visibility: { firewall: includeFirewall },
+      : subnetGate,
+    visibility: { firewall: includeFirewall, subnetGate: wantSubnetGate },
   };
 }

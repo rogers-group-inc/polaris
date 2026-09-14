@@ -43,6 +43,8 @@
 import { prisma } from "../db.js";
 import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import { bareFortinetDeviceName } from "../utils/assetSourceLocation.js";
+import { claimIsFresh, resolveOwningGateContexts, type MaclessClaimRow } from "./ipUpstreamChainService.js";
+import { CLAIM_FRESH_DAYS } from "./duplicateIpConflictService.js";
 import {
   buildInfraParentIndex,
   resolveInfraParentAsset,
@@ -66,7 +68,8 @@ export type DependencyDetectedVia =
   // Endpoint-half signals (see buildEndpointDependencyEdges).
   | "switch-port"
   | "wireless"
-  | "sighting";
+  | "sighting"
+  | "subnet";
 export type DependencySource = "computed" | "override" | "endpoint" | "vcenter";
 
 /**
@@ -653,12 +656,21 @@ export interface DepEndpoint {
    * the first that resolves to a firewall asset.
    */
   sightedFortigates: string[];
+  /**
+   * LAST RESORT: the firewall Asset that owns the network this endpoint's
+   * address sits in, per IPAM. Already an id — the caller resolves it through
+   * `resolveOwningGateContexts`, which applies rule 41's serial-before-name
+   * precedence — so no name matching happens here. Null when the address sits
+   * in no known network, the owning gate has no Asset row, or the endpoint's
+   * claim on its address is not current.
+   */
+  ipamGateAssetId: string | null;
 }
 
 /** One resolved endpoint parent. */
 export interface EndpointParentResolution {
   parentAssetId: string;
-  detectedVia: Extract<DependencyDetectedVia, "switch-port" | "wireless" | "sighting">;
+  detectedVia: Extract<DependencyDetectedVia, "switch-port" | "wireless" | "sighting" | "subnet">;
 }
 
 /** The switch half of a `lastSeenSwitch` value ("FS-248E-01/port15" → "FS-248E-01"). */
@@ -673,7 +685,18 @@ export function switchNameFromLastSeenSwitch(v: string | null | undefined): stri
 
 /**
  * Resolve the ONE upstream device an endpoint hangs off, most-specific first:
- * wired switch port → wireless AP → the FortiGate that last saw it.
+ * wired switch port → wireless AP → the FortiGate that last saw it → the
+ * FortiGate that owns the network its address is in.
+ *
+ * The fourth tier is an INFERENCE, not an observation: no gate ever reported
+ * this device, so IPAM is asked which gate serves its address. It sits last
+ * because the three above it are records of the device actually being seen,
+ * and it only ever fires where the alternative is no parent at all — an
+ * endpoint nothing can place is an endpoint that never suppresses, so this
+ * tier can only ADD suppression, never move an existing edge. The failure mode
+ * is therefore a missed alert (a device suppressed behind a gate it does not
+ * really sit behind), never a false one, and entering suppression still needs
+ * that gate CONFIRMED down (rule 38) rather than merely flapping.
  *
  * SINGLE parent, not a union of everything that resolves — and that is the
  * load-bearing decision here. The evaluator's multi-parent rule is "all-down"
@@ -714,6 +737,10 @@ export function resolveEndpointParent(
     if (!name) continue;
     const fg = resolveInfraParentAsset(index, { name }, "firewall");
     if (fg) return { parentAssetId: fg.id, detectedVia: "sighting" };
+  }
+
+  if (endpoint.ipamGateAssetId) {
+    return { parentAssetId: endpoint.ipamGateAssetId, detectedVia: "subnet" };
   }
 
   return null;
@@ -1245,6 +1272,58 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 /**
+ * The owning FortiGate for each of these endpoints' addresses, per IPAM —
+ * the last-resort parent tier.
+ *
+ * Two gates on the way in, both borrowed rather than restated:
+ *
+ *   - **The address claim must be current** (`claimIsFresh`, rule 40's model).
+ *     A recycled DHCP address is exactly how this tier goes wrong: a laptop
+ *     that left a site three weeks ago still records 10.1.1.50, and without
+ *     the freshness gate it would be parented to whichever gate serves
+ *     10.1.1.0/24 today — suppressing its alerts behind a device it has no
+ *     relationship with. Operator-owned claims never expire; a discovered one
+ *     must have been re-asserted within `CLAIM_FRESH_DAYS`.
+ *   - **The gate comes from `resolveOwningGateContexts`**, which applies rule
+ *     41's chassis-serial-then-FMG-device-name precedence. Never a hostname
+ *     match, and never re-implemented here — one resolver, three consumers.
+ *
+ * An address in no known network, or one whose owning gate Polaris holds no
+ * Asset row for, is simply absent: no parent, alerting unchanged, the safe
+ * direction this whole half defaults to.
+ */
+async function resolveIpamGatesForEndpoints(assetIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (assetIds.length === 0) return out;
+
+  const claims: MaclessClaimRow[] = [];
+  for (const ids of chunk(assetIds, 500)) {
+    const rows = await prisma.$queryRaw<MaclessClaimRow[]>`
+      SELECT a.id, a.hostname, a."ipAddress" AS ip, a."ipSource", a."ipOverride",
+             a."lastSeen", h."lastSeen" AS "ipLastSeen",
+             a."lastSeenSwitch", a."lastSeenAp"
+      FROM assets a
+      LEFT JOIN asset_ip_history h ON h."assetId" = a.id AND h.ip = a."ipAddress"
+      WHERE a.id = ANY(${ids}::text[])
+        AND a."ipAddress" IS NOT NULL
+        AND a."ipAddress" <> ''
+    `;
+    claims.push(...rows);
+  }
+
+  const cutoff = new Date(Date.now() - CLAIM_FRESH_DAYS * 86_400_000);
+  const fresh = claims.filter(r => claimIsFresh(r, cutoff));
+  if (fresh.length === 0) return out;
+
+  const gates = await resolveOwningGateContexts([...new Set(fresh.map(r => r.ip))]);
+  for (const r of fresh) {
+    const gate = gates.get(r.ip)?.gateAssetId;
+    if (gate) out.set(r.id, gate);
+  }
+  return out;
+}
+
+/**
  * Refresh every `source="endpoint"` row from the current endpoint columns.
  *
  * Fleet-wide but cheap: four reads, then a DIFF (insert missing / delete gone /
@@ -1316,7 +1395,21 @@ export async function syncEndpointDependencyEdges(
       lastSeenSwitch:    r.lastSeenSwitch,
       lastSeenAp:        r.lastSeenAp,
       sightedFortigates: [...new Set(sighted)],
+      ipamGateAssetId:   null,
     });
+  }
+
+  // The IPAM tier, resolved ONLY for the endpoints the three observed tiers
+  // could not place. Two passes rather than resolving every endpoint's address
+  // up front: at 2000 assets the placed majority would otherwise pay for a
+  // containment query and a fleet-wide firewall load they never consult, and
+  // the unplaced set is the small tail this tier exists for. Set-based — one
+  // claim query and one gate resolution for the whole tail, no per-asset await.
+  const index = buildInfraParentIndex(infra);
+  const unplaced = endpoints.filter(e => !resolveEndpointParent(index, e));
+  if (unplaced.length > 0) {
+    const gateByAsset = await resolveIpamGatesForEndpoints(unplaced.map(e => e.id));
+    for (const e of unplaced) e.ipamGateAssetId = gateByAsset.get(e.id) ?? null;
   }
 
   const desiredEdges = buildEndpointDependencyEdges(endpoints, infra);
