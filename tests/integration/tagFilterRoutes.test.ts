@@ -68,6 +68,9 @@ async function cleanup(): Promise<void> {
     await prisma.tagAutoAssignment.deleteMany({ where: { tagId: { in: tags.map((t) => t.id) } } });
   }
   await prisma.tag.deleteMany({ where: { name: { startsWith: PFX } } });
+  // The prefix-guard cases mint rows named `region:<PFX>-...`, which the
+  // startsWith above cannot see.
+  await prisma.tag.deleteMany({ where: { name: { startsWith: `region:${PFX}` } } });
   await prisma.asset.deleteMany({ where: { hostname: { startsWith: PFX } } });
 }
 
@@ -105,6 +108,44 @@ d("tag registry — the Map Regions lock", () => {
     expect(res.status).toBe(200);
     expect(res.body.color).toBe("#ff0000");
     expect(res.body.category).toBe(REGION_TAG_CATEGORY);
+  });
+
+  it("refuses to CREATE a tag whose NAME carries the region: prefix, whatever the category", async () => {
+    // The category lock alone left this open: filed under General, a
+    // `region:`-named row renders in the asset picker as though the Device Map
+    // owned it, and — because the auto-assign filter ban is ALSO keyed on
+    // category — it is the way to put a TagAutoAssignment filter on a region
+    // name, which is the two-reconciler collision the ban exists to prevent.
+    const res = await post({ name: `region:${PFX}-general`, category: "General" });
+    expect(res.status).toBe(409);
+    expect(String(res.body?.error ?? res.body?.message ?? "")).toContain("Device Map");
+    expect(await prisma.tag.findUnique({ where: { name: `region:${PFX}-general` } })).toBeNull();
+  });
+
+  it("refuses the prefix case-insensitively", async () => {
+    const res = await post({ name: `Region:${PFX}-caps`, category: "General" });
+    expect(res.status).toBe(409);
+  });
+
+  it("refuses to RENAME a plain tag into the prefix", async () => {
+    const created = await post({ name: TAG_NAME, category: "General" });
+    expect(created.status).toBe(201);
+    const res = await put(created.body.id, { name: `region:${PFX}-renamed` });
+    expect(res.status).toBe(409);
+    const row = await prisma.tag.findUnique({ where: { id: created.body.id } });
+    expect(row!.name).toBe(TAG_NAME);
+  });
+
+  it("still lets the map's own region:-named row be recoloured", async () => {
+    // The guard must not fire on a colour-only edit, where the handler falls
+    // back to the existing name — which of course starts with the prefix.
+    const mapRow = await prisma.tag.create({
+      data: { name: `region:${PFX}-live`, category: REGION_TAG_CATEGORY, color: "#4fc3f7" },
+    });
+    const res = await put(mapRow.id, { color: "#ff0000" });
+    expect(res.status).toBe(200);
+    expect(res.body.color).toBe("#ff0000");
+    expect(res.body.name).toBe(`region:${PFX}-live`);
   });
 
   it("refuses an auto-assign filter on a tag in that category", async () => {

@@ -36,6 +36,28 @@ import { requirePermission } from "../middleware/permissions.js";
 const router = Router();
 
 /**
+ * "Nothing was touched" — the summary a rename reports when its tag half threw.
+ * The Event still has to be written (that is the whole point of surviving the
+ * throw), and it must not claim work that did not happen.
+ */
+function noTagsTouched(regionId: string): service.ReconcileSummary {
+  return {
+    regionId,
+    added: 0,
+    removed: 0,
+    assetsTouched: 0,
+    subnetsAdded: 0,
+    subnetsRemoved: 0,
+    subnetsTouched: 0,
+  };
+}
+
+/** Error → a string safe to put in Event details. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
  * One phrasing for the reconcile Event, shared by the create + update paths.
  * Region tags land on assets AND on the subnets an enclosed gate serves, so the
  * message has to name both — an edit can touch only networks.
@@ -242,9 +264,67 @@ router.put("/:id", requirePermission("mapRegions", "write"), async (req, res, ne
     // `renameRegionInPrincipalScopes`.
     let scopeMoves: PrincipalScopeMoves | null = null;
     if (result.renamed) {
-      summary = await service.applyRename(result.region, result.previousName);
-      scopeMoves = await renameRegionInPrincipalScopes(result.previousName, result.region.name);
-      if (scopeMoves.total > 0) bumpRecipientIndex();
+      // `updateRegion` has ALREADY committed the renamed blob inside its own
+      // locked transaction, so everything from here down runs past the point of
+      // no return: a throw leaves the region carrying its new name while assets,
+      // subnets and the RBAC scope columns still read the old one — and, because
+      // the route threw before ever reaching logEvent, with no record that it
+      // happened. Prod hit exactly that twice in 2026-09 (1,492 asset tags and
+      // 114 subnet tags stranded under two dead names, cleaned up by hand in
+      // SQL). The tag mutators are chunked now so the original trigger is gone;
+      // these two defences are for the next cause:
+      //
+      //   1. **The scope half goes first.** It is a handful of rows against the
+      //      tag rotation's thousands, and it is the half with the access
+      //      consequence — a User / Role / GroupMapping still naming the old
+      //      region scopes NOTHING, and does it silently (see the mapRegionService
+      //      entry in polaris-change-impact, invariant 31).
+      //   2. **The halves are independent.** One failing must not skip the other,
+      //      and whatever did not land is named in an Event before the error
+      //      propagates, so the state is diagnosable without reading Postgres.
+      let scopeErr: unknown = null;
+      let tagErr: unknown = null;
+      try {
+        scopeMoves = await renameRegionInPrincipalScopes(result.previousName, result.region.name);
+        if (scopeMoves.total > 0) bumpRecipientIndex();
+      } catch (err) {
+        scopeErr = err;
+      }
+      try {
+        summary = await service.applyRename(result.region, result.previousName);
+      } catch (err) {
+        tagErr = err;
+        summary = noTagsTouched(result.region.id);
+      }
+      if (scopeErr || tagErr) {
+        const stranded = [
+          tagErr ? `assets and networks may still carry "region:${result.previousName}"` : null,
+          scopeErr ? `region scope assignments may still name "${result.previousName}"` : null,
+        ].filter(Boolean);
+        // AWAITED, unlike every other logEvent in this file: this one is the
+        // only record that the rename half-applied, and it is written on the
+        // path that is about to throw. `logEvent` swallows its own errors, so
+        // awaiting it cannot turn a partial rename into a lost one.
+        await logEvent({
+          action: "region.rename_incomplete",
+          resourceType: "map-region",
+          resourceId: result.region.id,
+          resourceName: result.region.name,
+          actor: req.session?.username,
+          level: "error",
+          message:
+            `Map region was renamed "${result.previousName}" → "${result.region.name}" but the rename did not finish: ` +
+            stranded.join("; ") +
+            ". A tag naming no current region is invisible to every reconcile — it needs cleaning up explicitly.",
+          details: {
+            previousName: result.previousName,
+            newName: result.region.name,
+            tagRotation: tagErr ? errorText(tagErr) : "ok",
+            scopeRotation: scopeErr ? errorText(scopeErr) : "ok",
+          },
+        });
+        throw tagErr ?? scopeErr;
+      }
     } else {
       summary = await service.applyOneRegion(result.region);
     }
