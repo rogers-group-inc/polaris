@@ -106,6 +106,14 @@ export const DEFAULT_ALERT_TEXT = [
   "",
   "Open device:      {asset.link}",
   "Acknowledge:      {ack}",
+  "",
+  // The HTML footer's other half. Last, and below the links, because it is a
+  // footnote about the ALERT's audience rather than a fact about the device —
+  // and it renders away, collapsing its blank line with it, on every
+  // automation that pushes to nobody. No colon in the rendered line: this body
+  // goes through `pruneEmptyTextLines`, which deletes any "Label:" line with
+  // nothing after it, and a "Web push:" heading would delete itself.
+  "{push.recipients}",
 ].join("\n");
 
 /**
@@ -268,7 +276,22 @@ export const DEFAULT_ALERT_HTML = [
   "</tr></table>",
   "</td></tr>",
   "</table>",
-  '<div style="font-size:11px;color:#9ca3af;margin-top:10px">Sent by Polaris · automation "{rule}"</div>',
+  // The footer, as ONE block rather than two stacked lines. The type is
+  // declared once, on the container, so `{push.recipients}` — who else this
+  // alert buzzed, filled at delivery by alertPushRecipientsService — cannot
+  // drift away from the "Sent by Polaris" line it sits on top of, and so the
+  // two read as one footnote rather than as two paragraphs 10px apart.
+  //
+  // The token expands to a complete `<div>` of its own or to nothing at all,
+  // which is what keeps an automation that pushes to nobody from mailing an
+  // empty line: `pruneEmptyDivs` runs at COMPOSE time, before this token is
+  // filled, so it would never see it. The container is never empty either way
+  // — the sender line is inside it — so that pass can't take the footer with
+  // it on an install that pushes to nobody at all.
+  '<div style="font-size:11px;color:#9ca3af;margin-top:10px">',
+  "{push.recipients}",
+  '<div>Sent by Polaris · automation "{rule}"</div>',
+  "</div>",
   "</td></tr></table>",
 ].join("\n");
 

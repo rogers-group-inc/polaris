@@ -1065,6 +1065,15 @@ export async function expandDeliveries(
           p256dh: s.p256dh,
           auth: s.auth,
           surface: s.surface,
+          // WHOSE browser this is, for the email footer's "{push.recipients}"
+          // line (alertPushRecipientsService, at drain time). Stamped rather
+          // than joined back through PushSubscription at delivery, because a
+          // dead endpoint is pruned from that table the moment the push
+          // service says 410 — and the email that names who was buzzed is
+          // often drained in the same pass. It is the same reasoning the
+          // `fallback` stamp below carries, one field wider: that one is only
+          // present when the action had an email channel to fall back to.
+          userId: s.userId,
           // Everything the drain needs to email this person instead if the
           // endpoint turns out to be dead (404/410). Stamped HERE because by
           // the time the drain finds out, the subscription row has been pruned
