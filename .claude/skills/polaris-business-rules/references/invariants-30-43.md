@@ -1,4 +1,4 @@
-# Business rules 30–55 — the invariants
+# Business rules 30–58 — the invariants
 
 Each rule as CLAUDE.md stated it: the invariant plus a pointer into the narrative file (`narrative-25-35.md` / `narrative-36-43.md`), which records the incident or constraint that forced it. Rule numbers are a stable citation key — never renumber; retire a rule in place and give a new one the next free number.
 
