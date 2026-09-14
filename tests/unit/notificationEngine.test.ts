@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { compareNum, compareValue, globToRegExp, readingMeets, interfaceIsPinned, interfaceDimLabel, tunnelIsPinned, applyDeviceFilters } from "../../src/services/notificationEngine.js";
+import { compareNum, compareValue, globToRegExp, readingMeets, interfaceIsPinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned, applyDeviceFilters } from "../../src/services/notificationEngine.js";
 import { scopeMatchesAsset, type ScopeAsset } from "../../src/services/notificationRuleService.js";
 import { stripRegionPrefix } from "../../src/services/notificationService.js";
 import { bareInterfaceIp } from "../../src/utils/cidr.js";
@@ -147,6 +147,34 @@ describe("tunnelIsPinned", () => {
     expect(tunnelIsPinned({ monitoredIpsecTunnels: [] }, "to-hq")).toBe(false);
     expect(tunnelIsPinned({}, "to-hq")).toBe(false);
     expect(tunnelIsPinned(undefined, "to-hq")).toBe(false);
+  });
+});
+
+describe("storageIsPinned", () => {
+  it("admits only mounts in the asset's pin set", () => {
+    const a = { monitoredStorage: ["/", "C:\\"] };
+    expect(storageIsPinned(a, "/")).toBe(true);
+    expect(storageIsPinned(a, "C:\\")).toBe(true);
+    // The storage stream walks EVERY mountpath the device reports and writes
+    // the unpinned ones cadence="slow" — rewritten every scrape, so they never
+    // age out of the lookback. This gate is the only thing keeping a fleet-wide
+    // "disk over 90%" rule off the removable volume, the recovery partition and
+    // the archive share that is full by design.
+    expect(storageIsPinned(a, "D:\\")).toBe(false);
+    expect(storageIsPinned(a, "/mnt/backup-archive")).toBe(false);
+  });
+  it("matches exactly — never by prefix or case", () => {
+    const a = { monitoredStorage: ["/var"] };
+    expect(storageIsPinned(a, "/var/log")).toBe(false);
+    expect(storageIsPinned(a, "/VAR")).toBe(false);
+  });
+  it("no pins, or no asset at all, alerts on nothing", () => {
+    // The cutover's consequence, stated as a test: a device with nothing pinned
+    // produces no storage readings, so its rules go silent and the vanished-
+    // state sweep retires anything they had firing.
+    expect(storageIsPinned({ monitoredStorage: [] }, "/")).toBe(false);
+    expect(storageIsPinned({}, "/")).toBe(false);
+    expect(storageIsPinned(undefined, "/")).toBe(false);
   });
 });
 

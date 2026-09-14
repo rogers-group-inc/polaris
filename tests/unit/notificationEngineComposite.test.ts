@@ -181,6 +181,11 @@ function mkAsset(id: string, extra: Record<string, unknown> = {}) {
     id, hostname: id, assetType: "server", tags: [], discoveredByIntegrationId: null,
     monitorStatus: "up", status: "active", consecutiveFailures: 0, dependencySuppressed: false,
     quarantinedAt: null, ipAddress: null, manufacturer: null, model: null, os: null,
+    // The one mount these tests tick. Storage readings are pinned-mount only
+    // (storageIsPinned over Asset.monitoredStorage), so without the pin the
+    // storage leaf of every composite here would silently resolve to "no
+    // reading" and the AND/OR assertions would stop testing anything.
+    monitoredStorage: ["/var"],
     ...extra,
   };
 }

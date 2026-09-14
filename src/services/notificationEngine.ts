@@ -199,6 +199,9 @@ interface ScopeAssetRow extends ScopeAsset {
   // Read by both IPsec resolvers (ipsecStatus / ipsecThroughputBps) for the
   // pinned-tunnel gate (tunnelIsPinned).
   monitoredIpsecTunnels?: string[];
+  // Read by all three storage resolvers (storageUsedBytes / storageUsedPct /
+  // storageDaysUntilFull) for the pinned-mount gate (storageIsPinned).
+  monitoredStorage?: string[];
   // Poll anchors for the current-state readings (see SCOPE_SELECT).
   lastMonitorAt?: Date | null;
   lastSystemInfoAt?: Date | null;
@@ -270,6 +273,8 @@ const SCOPE_SELECT = {
   monitoredInterfaces: true,
   // Every IPsec tunnel reading is restricted to PINNED tunnels (tunnelIsPinned).
   monitoredIpsecTunnels: true,
+  // Every storage reading is restricted to PINNED mounts (storageIsPinned).
+  monitoredStorage: true,
   // The poll anchors a CURRENT-STATE reading counts on: these fields have no
   // sample series, so "3 polls" can only mean three observations in which the
   // stream that produces them actually ran. lastMonitorAt is the probe (every
@@ -492,7 +497,7 @@ function triggerNeedsAnsweringDevice(trigger: Trigger): boolean {
  * `Asset.monitoredInterfaces` (the same join the Down Interfaces widget uses).
  * A device reports every port it has, most of them idle or unplugged, so an
  * ungated interface rule turns one switch into a page of alerts about ports
- * nobody selected. The pin IS the operator's statement of which ports matter,
+ * nobody selected (business rule 57). The pin IS the operator's statement of which ports matter,
  * so it is the default and there is no opt-out: an interface an operator cares
  * about enough to alert on is one they pinned, and un-pinning is how alerting
  * stops (the vanished-state sweep then clears the alert).
@@ -552,6 +557,32 @@ export function tunnelIsPinned(asset: { monitoredIpsecTunnels?: string[] } | und
 }
 
 /**
+ * The storage analogue of interfaceIsPinned (business rule 57): only mounts the operator PINNED
+ * (`Asset.monitoredStorage`) may produce readings, on all three storage
+ * metrics (`storageUsedBytes` / `storageUsedPct` / `storageDaysUntilFull`).
+ *
+ * Storage is the case the IPsec gate describes, one step worse. The stream
+ * walks EVERY mountpath the device reports and writes the unpinned ones
+ * `cadence:"slow"` (24h retention, no rollups) — refreshed on every scrape, so
+ * they are always inside the engine's lookback. Ungated, a fleet-wide
+ * "disk over 90%" rule alerts on every removable volume, ISO mount, recovery
+ * partition, mapped network drive and full-by-design archive share on every
+ * workstation and server in the fleet, none of which anyone selected. The pin
+ * IS the operator's statement of which filesystems matter (Assets → Mass
+ * Pinning, the System tab, or an integration's Auto-Monitor Storage block),
+ * so it is the default with no opt-out and un-pinning is how alerting stops.
+ *
+ * Consequence of turning this on (2026-09): a rule scoped to devices with NO
+ * pinned mounts goes silent, and any alert it has firing is retired by the
+ * vanished-state sweep as `system:out-of-scope` — the same cutover interfaces
+ * and tunnels took. Pinning the mounts that should alert is the fix, and the
+ * builder's mount-path picker has always listed exactly that set.
+ */
+export function storageIsPinned(asset: { monitoredStorage?: string[] } | undefined, mountPath: string): boolean {
+  return asset?.monitoredStorage?.includes(mountPath) ?? false;
+}
+
+/**
  * The pin test for a trigger whose dimensions are PIN-gated (interfaces /
  * IPsec tunnels), or null when they aren't. The vanished-state sweep uses it
  * to tell a configuration edge from a collection gap: an unpinned dimension
@@ -565,6 +596,7 @@ function pinTestForTrigger(trigger: Trigger): ((asset: ScopeAssetRow, dimKey: st
   if (trigger.type === "asset_metric") {
     if (trigger.metric === "ifInBps" || trigger.metric === "ifOutBps" || trigger.metric === "ifInErrorRate" || trigger.metric === "ifOutErrorRate") return interfaceIsPinned;
     if (trigger.metric === "ipsecThroughputBps") return tunnelIsPinned;
+    if (trigger.metric === "storageUsedBytes" || trigger.metric === "storageUsedPct" || trigger.metric === "storageDaysUntilFull") return storageIsPinned;
   } else if (trigger.type === "asset_state") {
     if (trigger.field === "ifOperStatus" || trigger.field === "ifAdminStatus" || trigger.field === "ifIpAddress" || trigger.field === "poeStatus") return interfaceIsPinned;
     if (trigger.field === "ipsecStatus") return tunnelIsPinned;
@@ -792,7 +824,11 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
     }
     case "storageUsedBytes": case "storageUsedPct": {
       const rows = await prisma.assetStorageSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, mountPath: true, usedBytes: true, totalBytes: true } });
-      const filtered = rows.filter((r) => substringMatch(r.mountPath, df.mountPathPattern));
+      // Pinned mounts only (storageIsPinned) — the sample table carries every
+      // mountpath the device reports (unpinned rows ride cadence="slow", 24h,
+      // rewritten every scrape so they never age out of the lookback), so the
+      // gate has to live here, same as the interface and tunnel resolvers.
+      const filtered = rows.filter((r) => storageIsPinned(index.get(r.assetId), r.mountPath) && substringMatch(r.mountPath, df.mountPathPattern));
       const valueFn = (r: any) => {
         if (trigger.metric === "storageUsedBytes") return num(r.usedBytes);
         const used = num(r.usedBytes); const total = num(r.totalBytes);
@@ -804,10 +840,13 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       // Forecast metric: the shared 30-day trend (storageForecastService).
       // aggregation/windowSec don't apply — the trend already smooths; a mount
       // that isn't growing (or has <7 daily points) produces NO reading, so
-      // "days <= N" rules stay silent for healthy filesystems.
+      // "days <= N" rules stay silent for healthy filesystems. Pin-gated like
+      // the other two storage metrics (storageIsPinned) — the forecast service
+      // is shared with the NOC dashboard, which asks a different question, so
+      // the gate is applied HERE rather than inside it.
       const fc = await computeStorageForecast(ids);
       return fc
-        .filter((r) => index.has(r.assetId) && substringMatch(r.mountPath, df.mountPathPattern))
+        .filter((r) => storageIsPinned(index.get(r.assetId), r.mountPath) && substringMatch(r.mountPath, df.mountPathPattern))
         .map((r) => {
           const a = index.get(r.assetId)!;
           return { assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: r.mountPath, dimLabel: r.mountPath, value: r.daysUntilFull };

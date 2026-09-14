@@ -12,7 +12,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(57 is the next free number.)
+(58 is the next free number.)
 
 ## How to read
 
@@ -33,11 +33,11 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 Reference files (all verbatim):
 
 - [references/invariants-12-29.md](references/invariants-12-29.md) — the one-paragraph invariant for rules 12–29
-- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–55 (the filename keeps its original range: the reference is cited from code and the other skills)
+- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–57 (the filename keeps its original range: the reference is cited from code and the other skills)
 - [references/narrative-12-24.md](references/narrative-12-24.md) — full narrative, rules 12–24
 - [references/narrative-25-35.md](references/narrative-25-35.md) — full narrative, rules 25–35
 - [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–43 (the filename is a stable citation key — see the numbering note)
-- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–56 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
+- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–57 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -105,6 +105,7 @@ before changing anything the invariant constrains.
 | 54 | A region tag dies when its name is retired, and only then | invariants-30-43 | narrative-44-48 |
 | 55 | An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got | invariants-30-43 | narrative-44-48 |
 | 56 | What ignoring an alert costs is answered where the thing that costs it lives: the note by severity, the reminder by action | invariants-30-43 | narrative-44-48 |
+| 57 | A sub-asset alerts only if the operator pinned it — the pin IS the statement of what may alert | invariants-30-43 | narrative-44-48 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),
