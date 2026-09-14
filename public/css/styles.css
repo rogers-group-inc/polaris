@@ -719,12 +719,25 @@ code {
 }
 
 /* ─── Query Status Indicator ──────────────────────────────────────────────── */
+/* The base sidebar status panel — the “something is running” state. Its
+   variants below (role review, failed integration, signing failure, FMG
+   advice, capacity) override the two colours with their own semantic hue;
+   this one is the ACCENT, because a discovery in flight is activity, not a
+   condition. It used to hardcode rgba(79,195,247,…) — the retired cyan —
+   which still happens to be the accent on nightfall and so looked correct
+   there, while morning and noon drew a cyan box around a header that reads
+   var(--color-accent). Deriving both from the token keeps the box and the
+   text it contains the same colour in every theme.
+
+   The mix percentages are up from 0.25/0.06: at 6% over a light sidebar the
+   fill was doing nothing at all, so the panel had no body and the list
+   inside it read as loose text on the rail. */
 .query-status {
   padding: 0.5rem 0.75rem;
   margin: 0 0.5rem;
-  border: 1px solid rgba(79,195,247,0.25);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
   border-radius: var(--radius-md);
-  background: rgba(79,195,247,0.06);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
 .query-status-header {
   display: flex;
@@ -738,7 +751,7 @@ code {
 .query-spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(79,195,247,0.3);
+  border: 2px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -779,19 +792,25 @@ code {
   white-space: nowrap;
   min-width: 0;
 }
+/* No opacity here, deliberately. These two lines used to be dimmed to .7 and
+   .65, which on the daylight palettes composited them into the panel fill:
+   2.87:1 on morning, against a 4.5:1 floor. Nothing below full opacity
+   clears it (even .90 only reaches 4.15), so the level difference is carried
+   by SIZE — 0.72rem against the 0.78rem name above them — and not by fading
+   the text. Dimming type with `opacity` composites it toward whatever is
+   behind it; a dimmer COLOUR token would at least be predictable, but here
+   even --color-text-tertiary measures 2.62:1 on this fill. */
 .query-status-device {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.72rem;
-  opacity: 0.7;
   min-width: 0;
 }
 .query-status-progress {
   display: block;
   font-size: 0.72rem;
-  opacity: 0.65;
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
@@ -803,7 +822,6 @@ code {
 }
 .query-status-device-slow {
   color: var(--color-warning);
-  opacity: 1;
   font-weight: 500;
 }
 /* Clickable FortiGate name in the discovery popup — opens the asset slide-over.
@@ -813,7 +831,6 @@ code {
   cursor: pointer;
 }
 .query-status-device-link:hover {
-  opacity: 1;
   color: var(--color-accent);
   text-decoration: underline;
 }
@@ -952,7 +969,7 @@ code {
   transition: background 0.15s;
 }
 .update-status:hover {
-  background: rgba(79,195,247,0.12);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 
 /* ─── Capacity reason building blocks (shared by sidebar critical alert + inline pg-tuning rows on the card) ── */
