@@ -2900,6 +2900,11 @@ function openModal(title, bodyHTML, footerHTML, options) {
     overlay.querySelector(".modal-close").addEventListener("click", closeModal);
     var modalEl = overlay.querySelector(".modal");
     var headerEl = overlay.querySelector(".modal-header");
+    // The move cursor rides on the wiring, not on .modal-header itself: a
+    // modal that builds its own overlay gets no drag handler, and a bare CSS
+    // rule was advertising one to every such dialog (the Device Map topology
+    // modal most visibly). If you wire drag on another header, set this there.
+    headerEl.classList.add("is-draggable");
     headerEl.addEventListener("mousedown", function (e) {
       if (e.target.closest(".modal-close") || e.target.closest(".panel-lock-btn")) return;
       _modalDrag.active = true;
