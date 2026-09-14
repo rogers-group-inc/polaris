@@ -1,6 +1,6 @@
 ---
 name: polaris-business-rules
-description: "The 57 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP/Firewall (upstream placement of a device, including the gate that owns its subnet), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
+description: "The 58 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP/Firewall (upstream placement of a device, including the gate that owns its subnet), monitorStatus (up/down/warning/recovering/passive), dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
 user-invocable: false
 ---
 
@@ -12,7 +12,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(58 is the next free number.)
+(59 is the next free number.)
 
 ## How to read
 
@@ -21,13 +21,13 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 | touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11 below; 20a, 23, 26, 41, 42 in the references |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | rules 9–10 below; 12, 16, 36, 37 |
 | touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38, 55 |
-| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56 |
+| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58 |
 | touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 55 |
 | touch how a discovery run reports what it did or did not read — skipped/offline/unread devices, run counters, a device whose data looks stale | 53 |
 | touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43, 47, 51 |
 | touch the database install, the TimescaleDB extension, retention, compression or the capacity/disk forecast | 20c, 47, 51, 52 |
 | touch Polaris Agent install, upgrade or its stored credential | 43, 49 |
-| touch map regions, `region:` tags, or anything that strips `Asset.tags` | 54 |
+| touch map regions, `region:` tags, or anything that strips `Asset.tags` | 54, 58 |
 | add or retire a rule | the numbering paragraph above; add the invariant to the right `invariants-*.md`, the narrative to the right `narrative-*.md`, and cite the number from code. **Never rename the reference files** — `invariants-30-43.md` / `narrative-36-43.md` keep their names whatever range they hold, since other skills and code link to them. **Re-check the next free number on `main` at merge time**: another worktree may have taken it while yours was open, and the branch merging second renumbers (the merge protocol says how) |
 
 Reference files (all verbatim):
@@ -106,6 +106,7 @@ before changing anything the invariant constrains.
 | 55 | An address places a device behind a gate only when nothing has seen it, and every surface says which answer it got | invariants-30-43 | narrative-44-48 |
 | 56 | What ignoring an alert costs is answered where the thing that costs it lives: the note by severity, the reminder by action | invariants-30-43 | narrative-44-48 |
 | 57 | A sub-asset alerts only if the operator pinned it — the pin IS the statement of what may alert | invariants-30-43 | narrative-44-48 |
+| 58 | A tag that names no region strands the ranking, so level routing abstains | invariants-30-43 | narrative-44-48 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

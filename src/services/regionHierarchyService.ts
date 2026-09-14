@@ -28,6 +28,19 @@
  * reconciler has run and the enclosure is exact — and an escalation must not
  * fall silent because a tag is one reconcile behind.
  *
+ * ── An ORPHANED tag makes the whole ranking unsafe ───────────────────────────
+ *
+ * The seed is the snapshot ∩ catalogue, so a tag naming no region used to be
+ * dropped and the ranking computed over whatever was left. That is not merely
+ * "contributes nothing": dropping the LEAF promotes its container to level 1,
+ * and the automation silently pages the division instead of the site. It cannot
+ * be detected from the outside either — the tag still renders on the asset, the
+ * alert still delivers, and only the tier is wrong.
+ *
+ * So an unrecognized tag now makes this function ABSTAIN for every level
+ * (business rule 58). Nothing else about the alert changes: the other recipient
+ * arms still resolve, and the caller logs which tag stranded the ranking.
+ *
  * Kept out of `mapRegionService` on purpose: that file owns tag reconciliation
  * and is imported by jobs; this is the thin read used on the alerting path.
  */
@@ -106,13 +119,43 @@ function isAncestorOfAny(candidateKey: string, present: RegionLevelEntry[], inde
 }
 
 /**
+ * The asset's region tags that name no region in the CURRENT catalogue.
+ *
+ * Hand-typed, or — the case that actually happens — left behind by a region
+ * renamed or deleted without its tag rotation completing (business rule 54;
+ * prod carried 1,492 such tags under two dead names). Returned in the caller's
+ * own spelling so a log line names the string an operator can search for.
+ *
+ * Pure and exported because it is the REASON `deviceRegionsAtLevels` abstains,
+ * and a silent abstention is the failure mode this whole pair exists to end.
+ */
+export function orphanedRegionTags(
+  assetRegionNames: string[] | undefined,
+  index: RegionLevelIndex,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of assetRegionNames ?? []) {
+    const k = key(raw);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    if (!index.byName.has(k)) out.push(String(raw));
+  }
+  return out;
+}
+
+/**
  * The region NAMES to route to, for a device carrying `assetRegionNames`, at the
  * requested asset-relative `levels` (1 = the device's own innermost region).
  *
- * Returns bare names, the form `resolveUsersByRegions` matches on. A tag that
- * isn't in the catalogue — hand-typed, or a region renamed since the alert fired
- * — contributes nothing, which is the same pre-existing gap plain
- * `recipientDeviceRegion` has and is not this function's to fix.
+ * Returns bare names, the form `resolveUsersByRegions` matches on.
+ *
+ * ABSTAINS ENTIRELY — `[]` for every level — when any tag names no region in the
+ * catalogue (business rule 58). An unrecognized tag cannot be placed in the
+ * containment forest, so nothing can establish which of the remaining tags is
+ * innermost; ranking the rest promotes a container to L1 and pages the wrong
+ * tier. Callers log `orphanedRegionTags` rather than treating `[]` as "nobody
+ * matched".
  */
 export function deviceRegionsAtLevels(
   assetRegionNames: string[] | undefined,
@@ -123,6 +166,11 @@ export function deviceRegionsAtLevels(
     (levels ?? []).filter((n) => Number.isInteger(n) && n >= 1 && n <= MAX_DEVICE_REGION_LEVELS),
   );
   if (wanted.size === 0) return [];
+
+  // Business rule 58 — abstain rather than rank a snapshot we cannot place.
+  // Checked BEFORE the seed below, because the seed is exactly the step that
+  // would swallow the unrecognized tag and hand back a confidently wrong leaf.
+  if (orphanedRegionTags(assetRegionNames, index).length > 0) return [];
 
   // Snapshot ∩ catalogue, deduped.
   const present: RegionLevelEntry[] = [];
