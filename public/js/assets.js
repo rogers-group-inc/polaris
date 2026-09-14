@@ -7286,15 +7286,16 @@ function _isRestApiManagedNetworkDevice(asset, stream) {
 // once the cache populates, so a mid-tier interval like a class override is
 // honored without waiting for the next full system-info refresh.
 function _resolveStaleStreamSec(assetId, asset, streamKey) {
-  var effField = streamKey + "IntervalSeconds";
-  var perAssetField = streamKey + "IntervalSec";
+  // Field names come from the same two mappers the polling chip uses, so the
+  // threshold can't disagree with the "every 2m" the operator reads inches
+  // above the banner. They were derived as streamKey + "IntervalSeconds" here,
+  // which for telemetry/systemInfo named a field no tier returns (the columns
+  // are cpuMemoryIntervalSec* / systemInfoIntervalSec*) — so every tier missed
+  // and the walk fell through to the 60s floor, bannering a 10-minute stream
+  // after three.
+  var effField = _streamIntervalEffectiveField(streamKey);
+  var perAssetField = _streamIntervalAssetField(streamKey);
   var defaultSec = (streamKey === "systemInfo") ? 600 : 60;
-  // The response-time stream's interval fields predate the per-stream naming
-  // convention (resolved: intervalSeconds, per-asset: monitorIntervalSec).
-  if (streamKey === "responseTime") {
-    effField = "intervalSeconds";
-    perAssetField = "monitorIntervalSec";
-  }
   var effResolved = assetId ? _effectiveResolvedByAssetId.get(assetId) : null;
   if (effResolved && typeof effResolved[effField] === "number" && effResolved[effField] > 0) return effResolved[effField];
   if (asset && typeof asset[perAssetField] === "number" && asset[perAssetField] > 0) return asset[perAssetField];
@@ -10607,7 +10608,18 @@ function _renderSystemChart(container, data, asset, si) {
       var telPolling = _assetMonitorStreamSource(asset, "telemetry").polling || "REST API";
       container.innerHTML = _notAvailableViaPollingHTML("Telemetry", telPolling);
     } else {
-      container.textContent = "No telemetry samples in this range yet.";
+      // An empty window is exactly when the stale banner matters most: the
+      // chart has nothing to say, so "last successful update 7h ago" is the
+      // only thing that explains the gap. The banner is emitted inside this
+      // container on the data path below, so this early return used to swallow
+      // it — CPU & Memory stayed silent while every other section on the tab
+      // flagged the same stalled collection.
+      container.innerHTML =
+        _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt) +
+        '<div style="text-align:center">No telemetry samples in this range yet.</div>';
+      container.style.flexDirection = "column";
+      container.style.alignItems = "stretch";
+      container.style.justifyContent = "center";
     }
     return;
   }
@@ -11080,7 +11092,9 @@ function _streamIntervalAssetField(stream) {
   // shows the telemetry interval as the true poll rate. (If an independent
   // hardware-sensor cadence ever lands, switch this to temperatureIntervalSec.)
   if (stream === "telemetry" || stream === "temperature") return "cpuMemoryIntervalSec";
-  if (stream === "interfaces" || stream === "lldp") return "systemInfoIntervalSec";
+  // "systemInfo" is the stale banner's name for the same pass interfaces and
+  // LLDP ride — it asks for the cadence by stream, not by section.
+  if (stream === "interfaces" || stream === "lldp" || stream === "systemInfo") return "systemInfoIntervalSec";
   return null;
 }
 
@@ -11091,7 +11105,8 @@ function _streamIntervalEffectiveField(stream) {
   if (stream === "responseTime") return "intervalSeconds";
   // Hardware sensors ride the telemetry cadence (see _streamIntervalAssetField).
   if (stream === "telemetry" || stream === "temperature") return "cpuMemoryIntervalSeconds";
-  if (stream === "interfaces" || stream === "lldp") return "systemInfoIntervalSeconds";
+  // "systemInfo" — see _streamIntervalAssetField.
+  if (stream === "interfaces" || stream === "lldp" || stream === "systemInfo") return "systemInfoIntervalSeconds";
   return null;
 }
 
