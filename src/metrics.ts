@@ -361,6 +361,19 @@ const processCrashTotal = new Counter({
   registers: [registry],
 });
 
+const fortilinkControllerReadTotal = new Counter({
+  name: "polaris_fortilink_controller_read_total",
+  help: "Controller inventory reads attempted by the FortiLink/CAPWAP link-state sweep, by outcome (success | failure). One count per (controller, switches|aps) table per tick. A sustained `failure` rate means a FortiGate or FMG the sweep cannot reach — its managed devices keep their last reported link state and their fortilinkCheckedAt stops advancing, which is the stale-value case the asset-details row renders differently. Cardinality is deliberately outcome-only, not per-controller: a 50-gate fleet would otherwise add 100 series.",
+  labelNames: ["outcome"] as const,
+  registers: [registry],
+});
+
+const fortilinkTransitionTotal = new Counter({
+  name: "polaris_fortilink_transition_total",
+  help: "Managed FortiSwitch/FortiAP controller-link state changes observed by the sweep (business rule 58). One count per device whose fortilinkStatus moved, which is also one asset.fortilink.changed Event. Flat in a healthy fleet — a spike means either a real FortiLink/CAPWAP event or a controller that started answering about a different device set.",
+  registers: [registry],
+});
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 export type Cadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "lossSample";
@@ -640,6 +653,17 @@ export function recordActiveInstanceConflict(holder: string): void {
 
 export function recordProcessCrash(role: string, kind: CrashKind): void {
   processCrashTotal.inc({ role, kind });
+}
+
+/**
+ * One FortiLink/CAPWAP link-state sweep pass. Counters rather than gauges: a
+ * gauge of "controllers currently failing" would read 0 between ticks and tell
+ * an operator nothing about a controller that fails every pass.
+ */
+export function recordFortilinkState(read: number, failed: number, transitions: number): void {
+  if (read > 0) fortilinkControllerReadTotal.inc({ outcome: "success" }, read);
+  if (failed > 0) fortilinkControllerReadTotal.inc({ outcome: "failure" }, failed);
+  if (transitions > 0) fortilinkTransitionTotal.inc(transitions);
 }
 
 export interface HistogramBucketValue {

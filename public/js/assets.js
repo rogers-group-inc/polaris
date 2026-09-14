@@ -5779,6 +5779,7 @@ function _assetGeneralTabHTML(a) {
       viewRow("Type", ASSET_TYPE_LABELS[a.assetType] || a.assetType) +
       viewRow("Status", a.status ? a.status.charAt(0).toUpperCase() + a.status.slice(1) : "-") +
       authorizationRowHTML(a) +
+      fortilinkRowHTML(a) +
       apProfileRowHTML(a) +
       viewRow("Location", a.location || a.learnedLocation) +
       ((a.latitude != null && a.longitude != null)
@@ -16343,6 +16344,85 @@ function authorizationRowHTML(asset) {
   var badge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
     color + ';color:#000;font-weight:600">' + escapeHtml(label) + '</span>';
   return '<div class="detail-row"><span class="detail-label">Authorization</span><span class="detail-value">' + badge + '</span></div>';
+}
+
+// Render the Controller Link row on the asset details General tab — what the
+// parent FortiGate says about its OWN session to this managed device
+// (business rule 58): the FortiLink session for a FortiSwitch, the CAPWAP
+// tunnel for a FortiAP. Swept every 60s by sweepFortinetLinkState, straight
+// off Asset.fortilinkStatus.
+//
+// Deliberately NOT the same thing as the Monitoring pill above it, and the two
+// are allowed to disagree loudly. The pill is what Polaris sees on the
+// operator's chosen transport; this is what the controller sees. A switch
+// reading "Up" on the pill and "Down" here is answering ICMP with a dead
+// FortiLink session — the exact fault this row exists to surface, and one the
+// monitor loop is structurally unable to find because it is asking the switch.
+//
+// Renders nothing for other asset types, and nothing on a device the sweep has
+// never spoken about (not FortiGate-managed, or a pre-feature row awaiting its
+// first tick — those self-heal within a minute).
+function fortilinkRowHTML(asset) {
+  if (!asset || (asset.assetType !== "switch" && asset.assetType !== "access_point")) return "";
+  var state = asset.fortilinkStatus;
+  if (state !== "up" && state !== "down" && state !== "unknown") return "";
+  // FortiOS calls it FortiLink on a switch and a CAPWAP tunnel on an AP.
+  // Naming the row after what the operator sees in FortiOS beats one generic
+  // label that matches neither screen.
+  var label = asset.assetType === "switch" ? "FortiLink" : "Controller Link";
+  var color = state === "up" ? "var(--color-success,#10b981)"
+            : state === "down" ? "var(--color-danger,#ef4444)"
+            : "var(--color-warning,#fbbf24)";
+  var text = state === "up" ? "Up" : state === "down" ? "Down" : "Unknown";
+  // "Unknown" means the controller answered and this device was not in its
+  // table — worth spelling out, because it reads as a missing reading and is
+  // actually a positive statement about the controller's inventory.
+  var tip = state === "unknown"
+    ? "The controller answered but did not list this device — it has aged out of the managed table."
+    : (asset.assetType === "switch"
+        ? "The controller FortiGate's view of its FortiLink session to this switch."
+        : "The controller FortiGate's view of its CAPWAP tunnel to this AP.");
+  if (asset.fortilinkStatusRaw && String(asset.fortilinkStatusRaw).toLowerCase() !== text.toLowerCase()) {
+    tip += '\nController reports: "' + asset.fortilinkStatusRaw + '"';
+  }
+  var badge = '<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:0.8rem;background:' +
+    color + ';color:#000;font-weight:600">' + escapeHtml(text) + '</span>';
+  var suffix = "";
+  // How long it has been in this state — the first thing asked about a link
+  // that is down. changedAt holds still across confirmations, so this is the
+  // outage length and not the age of the last sweep.
+  if (asset.fortilinkChangedAt) {
+    var since = _fortilinkElapsed(asset.fortilinkChangedAt);
+    if (since) suffix += ' <span style="color:var(--text-muted);font-size:0.8rem">for ' + escapeHtml(since) + '</span>';
+  }
+  // A checkedAt that has stopped advancing means the CONTROLLER is unreadable,
+  // not that the link changed — the sweep refuses to write in that case. Say
+  // so rather than presenting a stale value as current. Threshold is 5x the
+  // 60s sweep, loose enough to absorb one slow FMG pass.
+  if (asset.fortilinkCheckedAt) {
+    var ageMs = Date.now() - new Date(asset.fortilinkCheckedAt).getTime();
+    if (ageMs > 5 * 60 * 1000) {
+      suffix += ' <span style="color:var(--color-warning,#fbbf24);font-size:0.8rem" title="The sweep has not been able to read this device\'s controller since then, so this value is the last one it reported.">· last confirmed ' +
+        escapeHtml(formatDateTime(asset.fortilinkCheckedAt)) + '</span>';
+    }
+  }
+  return '<div class="detail-row"><span class="detail-label" title="' + escapeHtml(tip) + '">' + escapeHtml(label) +
+    '</span><span class="detail-value">' + badge + suffix + '</span></div>';
+}
+
+// Coarse "2h 13m" elapsed label. Deliberately coarse: the sweep resolves to
+// 60s, so rendering seconds would promise a precision the data does not have.
+function _fortilinkElapsed(iso) {
+  var then = new Date(iso).getTime();
+  if (isNaN(then)) return "";
+  var sec = Math.floor((Date.now() - then) / 1000);
+  if (sec < 60) return "under a minute";
+  var min = Math.floor(sec / 60);
+  if (min < 60) return min + "m";
+  var hr = Math.floor(min / 60);
+  if (hr < 24) return hr + "h " + (min % 60) + "m";
+  var day = Math.floor(hr / 24);
+  return day + "d " + (hr % 24) + "h";
 }
 
 // Render the AP Profile row on the asset details General tab — the FortiOS

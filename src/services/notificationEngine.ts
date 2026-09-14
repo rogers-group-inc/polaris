@@ -191,6 +191,11 @@ interface ScopeAssetRow extends ScopeAsset {
   dependencySuppressed: boolean;
   quarantinedAt: Date | null;
   ipAddress: string | null;
+  // Controller link state + when the controller last answered about this
+  // device (business rule 58). The timestamp is the READING ANCHOR for the
+  // field, not decoration — see the resolver.
+  fortilinkStatus: string | null;
+  fortilinkCheckedAt: Date | null;
   // Read by the device-identifier dimension filters (applyDeviceFilters).
   macAddress?: string | null;
   // Read by every interface resolver — state trio AND counter metrics — for
@@ -264,6 +269,10 @@ const SCOPE_SELECT = {
   id: true, hostname: true, assetType: true, tags: true, discoveredByIntegrationId: true,
   monitorStatus: true, status: true, consecutiveFailures: true, dependencySuppressed: true,
   quarantinedAt: true, ipAddress: true,
+  // Business rule 58 — two small columns, and the only way the fortilinkStatus
+  // state field can be read off the scope row like the other Asset-column
+  // fields instead of needing a query of its own.
+  fortilinkStatus: true, fortilinkCheckedAt: true,
   // condition-tree evaluation reads these (manufacturer/model/os); small
   // string columns, still a tight select at 2000 assets. macAddress feeds the
   // device-identifier dimension filters (applyDeviceFilters) alongside
@@ -1071,6 +1080,30 @@ async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asse
     case "consecutiveFailures": return assets.map((a) => ({ ...mk(a, "", "", a.consecutiveFailures), readingAt: probeAt(a) }));
     case "dependencySuppressed": return assets.map((a) => ({ ...mk(a, "", "", a.dependencySuppressed), readingAt: probeAt(a) }));
     case "quarantined": return assets.map((a) => ({ ...mk(a, "", "", a.quarantinedAt !== null || a.status === "quarantined"), readingAt: probeAt(a) }));
+    case "fortilinkStatus": {
+      // Business rule 58. Two departures from the four columns above, both
+      // because this field has a writer of its own on a cadence of its own.
+      //
+      // (1) An asset with no value produces NO READING, rather than a reading
+      //     of null. null means "the sweep has never spoken about this device"
+      //     — it isn't FortiGate-managed, or it is a pre-feature row awaiting
+      //     its first tick. A null reading would make `!= up` true for every
+      //     workstation, VM and printer in a fleet-wide scope, which is the
+      //     inverse of what an operator writing that rule means. No reading
+      //     also lets the vanished-state sweep clear a live alert on a device
+      //     that stops being managed, the same way an unpinned interface
+      //     clears.
+      //
+      // (2) The anchor is `fortilinkCheckedAt`, not `lastMonitorAt`. A
+      //     `forPolls` hold has to count times the CONTROLLER answered; the
+      //     monitor loop's clock says nothing about that, and on an
+      //     ICMP-polled switch — the case this field exists for — it would
+      //     advance every 60s while the controller had not been read since the
+      //     token expired, satisfying a 3-poll hold on one real observation.
+      return assets
+        .filter((a) => a.fortilinkStatus != null)
+        .map((a) => ({ ...mk(a, "", "", a.fortilinkStatus), readingAt: a.fortilinkCheckedAt ?? null }));
+    }
     case "ifOperStatus": case "ifAdminStatus": case "ifIpAddress": case "poeStatus": {
       const col = INTERFACE_STATE_COLUMN[trigger.field];
       const since = new Date(Date.now() - lookbackMsFor(trigger));
@@ -2172,6 +2205,9 @@ const HOST_PSEUDO_ASSET: ScopeAssetRow = {
   id: "", hostname: "Polaris host", assetType: null, tags: [], discoveredByIntegrationId: null,
   monitorStatus: null, status: "active", consecutiveFailures: 0, dependencySuppressed: false,
   quarantinedAt: null, ipAddress: null,
+  // The Polaris host is not a FortiGate-managed device and never will be; null
+  // is the correct reading and the resolver drops it rather than producing one.
+  fortilinkStatus: null, fortilinkCheckedAt: null,
 };
 
 /** The auto/condition clear-sustain ladder — shared by both recovery signals

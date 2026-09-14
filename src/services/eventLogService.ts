@@ -506,3 +506,52 @@ export function buildFirewallChangedEvent(
     details: changeDetails(ctx, { seenFirewall: { from: prev || null, to: next } }),
   };
 }
+
+/**
+ * Controller link state change for a FortiGate-managed switch / AP — the
+ * FortiLink session (FortiSwitch) or CAPWAP tunnel (FortiAP) going up or down
+ * as the CONTROLLER sees it (business rule 58).
+ *
+ * Written unconditionally by the sweep, like the rest of the `asset.*.changed`
+ * family: the transition is edge-triggered and rare, and an operator wants it
+ * in the audit log whether or not an automation happens to watch it. The
+ * `fortilink_changed` CHANGE_TYPE entry only gives the wizard a picker over an
+ * Event that is already there.
+ *
+ * Level tracks direction — a link going down is a `warning`, coming back is
+ * `info` — so the Events page's level filter separates the two without the
+ * operator parsing messages. The first observation (`from === null`) is an
+ * `info` at any value: it is Polaris learning the state, not the link moving.
+ *
+ * `to === null` returns undefined. Null means "never swept", and the sweep
+ * never writes it — a controller it could not read is skipped, so there is no
+ * value→null transition to report.
+ */
+export function buildFortilinkChangedEvent(
+  ctx: AssetChangeEventContext,
+  from: string | null | undefined,
+  to: string | null | undefined,
+  rawStatus?: string | null,
+): LogEventInput | undefined {
+  const next = (to ?? "").trim();
+  if (!next) return undefined;
+  const prev = (from ?? "").trim();
+  if (prev === next) return undefined;
+  const label = ctx.assetName || ctx.assetId;
+  // The controller's own word for it, when it adds anything the normalized
+  // value doesn't already say ("offline" / "discovered" both read as down).
+  const raw = (rawStatus ?? "").trim();
+  const rawSuffix = raw && raw.toLowerCase() !== next.toLowerCase() ? ` (controller reports "${raw}")` : "";
+  return {
+    action: "asset.fortilink.changed",
+    resourceType: "asset",
+    resourceId: ctx.assetId,
+    resourceName: ctx.assetName || undefined,
+    actor: ctx.actor || "system:fortilink-sweep",
+    level: prev && next === "down" ? "warning" : "info",
+    message: prev
+      ? `Asset "${label}" controller link ${prev} → ${next}${rawSuffix}`
+      : `Asset "${label}" controller link is ${next}${rawSuffix}`,
+    details: changeDetails(ctx, { fortilinkStatus: { from: prev || null, to: next } }),
+  };
+}
