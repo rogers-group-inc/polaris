@@ -114,6 +114,7 @@ export const DEFAULT_ALERT_TEXT = [
   // goes through `pruneEmptyTextLines`, which deletes any "Label:" line with
   // nothing after it, and a "Web push:" heading would delete itself.
   "{push.recipients}",
+  "{email.recipients}",
 ].join("\n");
 
 /**
@@ -276,11 +277,12 @@ export const DEFAULT_ALERT_HTML = [
   "</tr></table>",
   "</td></tr>",
   "</table>",
-  // The footer, as ONE block rather than two stacked lines. The type is
-  // declared once, on the container, so `{push.recipients}` — who else this
-  // alert buzzed, filled at delivery by alertPushRecipientsService — cannot
-  // drift away from the "Sent by Polaris" line it sits on top of, and so the
-  // two read as one footnote rather than as two paragraphs 10px apart.
+  // The footer, as ONE block rather than stacked lines. The type is declared
+  // once, on the container, so `{push.recipients}` and `{email.recipients}` —
+  // who else this alert buzzed and who else it mailed, both filled at delivery
+  // by alertPushRecipientsService — cannot drift away from the "Sent by
+  // Polaris" line they sit on top of, and so the three read as one footnote
+  // rather than as paragraphs 10px apart.
   //
   // The token expands to a complete `<div>` of its own or to nothing at all,
   // which is what keeps an automation that pushes to nobody from mailing an
@@ -290,6 +292,7 @@ export const DEFAULT_ALERT_HTML = [
   // it on an install that pushes to nobody at all.
   '<div style="font-size:11px;color:#9ca3af;margin-top:10px">',
   "{push.recipients}",
+  "{email.recipients}",
   '<div>Sent by Polaris · automation "{rule}"</div>',
   "</div>",
   "</td></tr></table>",

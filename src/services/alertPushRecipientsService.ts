@@ -6,7 +6,11 @@
  * whether the on-call phone buzzed thirty seconds ago or whether they are the
  * only one who has heard about this, and that question decides whether they
  * pick the device up or leave it to whoever is already on it. This puts the
- * answer in the email's footer: the accounts this alert was pushed to.
+ * answer in the email's footer: the accounts this alert was pushed to, and
+ * — since the same question has a second half — the people it was mailed to,
+ * which no single copy's To line can show once a send splits (per timezone, or
+ * historically per acknowledge capability) or once a reminder adds recipients
+ * the first copy never had.
  *
  * It is a DEFERRED token (`{push.recipients}` — see notificationTemplate's
  * isDeferredToken), filled at delivery like the charts, the LLDP block and the
@@ -27,9 +31,14 @@
  * alert has been pushed to, including the original fire's recipients, because
  * "who else knows about THIS" does not reset when the reminder does.
  *
- * The list names accounts, not addresses — an email recipient may be an
- * address-book contact with no Polaris account, and mailing them somebody
- * else's endpoint would be worse than telling them nothing.
+ * The PUSH list names accounts, not addresses — a push endpoint has no address
+ * behind it, and an email recipient may be an address-book contact with no
+ * Polaris account at all.
+ *
+ * The EMAIL list is addresses by nature, so it names the account where one
+ * owns the address and prints the address itself otherwise. It never names a
+ * Bcc: a blind copy that appears in a footer everyone can read has stopped
+ * being blind, and this footnote is not worth that.
  */
 
 import { prisma } from "../db.js";
@@ -39,6 +48,18 @@ import { escapeHtml } from "../utils/notificationTemplate.js";
 /** The push-recipient tokens, resolved at delivery like `{chart.*}`. */
 export const PUSH_RECIPIENT_TOKENS = ["push.recipients"] as const;
 export type PushRecipientToken = (typeof PUSH_RECIPIENT_TOKENS)[number];
+
+/**
+ * The email-recipient token — the same question as `{push.recipients}`, asked
+ * about the other transport, and deferred for the same reason: the email rows
+ * it counts are created by `expandDeliveries` after the body was composed.
+ *
+ * Deferred separately rather than folded into `{push.recipients}` because an
+ * operator template may want one and not the other, and because a send that
+ * reaches nobody by push must still be able to name who it reached by mail.
+ */
+export const EMAIL_RECIPIENT_TOKENS = ["email.recipients"] as const;
+export type EmailRecipientToken = (typeof EMAIL_RECIPIENT_TOKENS)[number];
 
 /**
  * How many names print before the line turns into a count.
@@ -86,6 +107,26 @@ export function substitutePushRecipientTokens(body: string, block: string): stri
   return body.replace(PUSH_RECIPIENT_TOKEN_RE, block);
 }
 
+/** Do any of these templates reference an `{email.recipients}` token? */
+export function emailRecipientTokensIn(...templates: Array<string | null | undefined>): Set<EmailRecipientToken> {
+  const found = new Set<EmailRecipientToken>();
+  for (const t of templates) {
+    if (!t) continue;
+    for (const token of EMAIL_RECIPIENT_TOKENS) {
+      if (t.includes(`{${token}}`)) found.add(token);
+    }
+  }
+  return found;
+}
+
+const EMAIL_RECIPIENT_TOKEN_RE = /\{email\.recipients\}/g;
+
+/** The `substitutePushRecipientTokens` sibling, same empty-block contract. */
+export function substituteEmailRecipientTokens(body: string, block: string): string {
+  if (!body) return body;
+  return body.replace(EMAIL_RECIPIENT_TOKEN_RE, block);
+}
+
 /**
  * The displayable name of one recipient. `displayName` is nullable on every
  * auth provider (a local account created without one, an SSO login whose IdP
@@ -121,6 +162,60 @@ export function renderPushRecipients(names: string[], opts: { html: boolean }): 
     : line;
 }
 
+/**
+ * The email half of the same footnote. Pure, for the same reason its push
+ * sibling is.
+ *
+ * Wording is deliberately parallel ("Email sent to …" beside "Web push sent to
+ * …") so the two lines read as one audience list rather than as two unrelated
+ * footnotes, and it carries no colon for the same `pruneEmptyTextLines` reason.
+ *
+ * `names` here may be an account name OR a bare address — unlike push, where a
+ * recipient is always an account. That asymmetry is the honest one: an
+ * address-book contact or a typed address has no account to name, and the
+ * address is the only identity the alert ever had for them.
+ */
+export function renderEmailRecipients(names: string[], opts: { html: boolean }): string {
+  if (names.length === 0) return "";
+  const named = names.slice(0, MAX_NAMED_RECIPIENTS);
+  const overflow = names.length - named.length;
+  const list = named.join(", ") + (overflow > 0 ? `, and ${overflow} more` : "");
+  const line = `Email sent to ${list}`;
+  return opts.html
+    ? `<div style="margin-bottom:2px">${escapeHtml(line)}</div>`
+    : line;
+}
+
+/**
+ * The To addresses on one delivery row.
+ *
+ * Both email paths put To — and only To — in `target`: the composed path joins
+ * the whole To line into one row (`v.to.join(", ")`), the plain per-address
+ * path writes one address. So parsing `target` can never leak a Bcc, which is
+ * the one thing this footer must not do: naming a blind recipient to the To
+ * line would unblind them, and a footnote about who else knows is not worth
+ * breaking that promise for.
+ */
+export function toAddressesOf(target: string | null | undefined): string[] {
+  return String(target ?? "")
+    .split(",")
+    .map((a) => a.trim())
+    .filter((a) => a.includes("@"));
+}
+
+/**
+ * The Cc addresses a composed row carries. Included because a Cc reader is a
+ * reader — they can act on the alert, and "who else knows" is exactly the
+ * question — and because Cc is already visible to everyone on that copy. Bcc
+ * is read by nothing here, deliberately; see `toAddressesOf`.
+ */
+export function ccAddressesOf(meta: unknown): string[] {
+  if (!meta || typeof meta !== "object") return [];
+  const cc = (meta as { cc?: unknown }).cc;
+  if (!Array.isArray(cc)) return [];
+  return cc.filter((a): a is string => typeof a === "string" && a.includes("@")).map((a) => a.trim());
+}
+
 /** The user ids a web_push delivery row's meta names, if any. */
 function userIdFromMeta(meta: unknown): string | null {
   if (!meta || typeof meta !== "object") return null;
@@ -134,64 +229,147 @@ function userIdFromMeta(meta: unknown): string | null {
   return null;
 }
 
+/** One delivery row, as much of it as either half of the footer reads. */
+interface RecipientRow {
+  transport: string;
+  target: string;
+  meta: unknown;
+}
+
 /**
- * The whole delivery-time step: which accounts this alert was pushed to, as
- * both rendered bodies.
+ * The whole delivery-time step: who else this alert reached, as both rendered
+ * bodies, for BOTH transports.
  *
- * Two reads at most, and the second only for rows old enough to predate the
- * `meta.userId` stamp: the delivery rows of this alert (indexed on
- * notificationId), then the accounts behind them. Rows are deduped by USER —
- * an operator with a laptop, a desktop and a phone is one name, not three.
+ * One read of the alert's delivery rows (indexed on notificationId) feeds both
+ * halves, because a rule that both mails and pushes would otherwise ask the
+ * same indexed question twice per drained email.
  *
- * Never throws. A footer is not worth failing an alert over.
+ * Never throws. A footer is not worth failing an alert over — and it fails as
+ * a PAIR, because a half-built footer that named the push audience and silently
+ * dropped the email one would read as "nobody else was mailed", which is a
+ * worse answer than saying nothing.
  */
-export async function buildPushRecipientBlock(notificationId: string): Promise<PushRecipientBlock> {
+export async function buildRecipientBlocks(
+  notificationId: string,
+): Promise<{ push: PushRecipientBlock; email: PushRecipientBlock }> {
   try {
     const rows = await prisma.notificationDelivery.findMany({
-      where: { notificationId, transport: "web_push" },
-      select: { target: true, meta: true },
+      where: { notificationId, transport: { in: ["web_push", "email"] } },
+      select: { transport: true, target: true, meta: true },
     });
-    if (rows.length === 0) return EMPTY;
-
-    const userIds = new Set<string>();
-    const unstamped: string[] = [];
-    for (const r of rows) {
-      const id = userIdFromMeta(r.meta);
-      if (id) userIds.add(id);
-      else if (r.target) unstamped.push(r.target);
-    }
-    if (unstamped.length > 0) {
-      // The endpoint is the PushSubscription business key. A row whose
-      // subscription has since been pruned (410/404) simply drops out — the
-      // account was still pushed, but nothing is left saying whose browser it
-      // was, and guessing would be worse than omitting.
-      const subs = await prisma.pushSubscription.findMany({
-        where: { endpoint: { in: unstamped } },
-        select: { userId: true },
-      });
-      for (const s of subs) userIds.add(s.userId);
-    }
-    if (userIds.size === 0) return EMPTY;
-
-    const users = await prisma.user.findMany({
-      where: { id: { in: Array.from(userIds) } },
-      select: { displayName: true, username: true },
-    });
-    // Alphabetical rather than delivery order: the row order is an artifact of
-    // which browser enrolled first, which means the same set of people reads
-    // differently on every alert.
-    const names = users.map(recipientName).sort((a, b) => a.localeCompare(b));
-    if (names.length === 0) return EMPTY;
-
-    return {
-      html: renderPushRecipients(names, { html: true }),
-      text: renderPushRecipients(names, { html: false }),
-    };
+    if (rows.length === 0) return { push: EMPTY, email: EMPTY };
+    const [push, email] = await Promise.all([
+      buildPushBlock(rows.filter((r) => r.transport === "web_push")),
+      buildEmailBlock(rows.filter((r) => r.transport === "email")),
+    ]);
+    return { push, email };
   } catch (err) {
     logger.warn(
       { err: (err as Error)?.message, notificationId },
-      "alertPushRecipients: could not resolve the push recipients, sending without the footer line",
+      "alertPushRecipients: could not resolve the alert's recipients, sending without the footer lines",
     );
-    return EMPTY;
+    return { push: EMPTY, email: EMPTY };
   }
+}
+
+/**
+ * Which accounts this alert was pushed to.
+ *
+ * One further read at most, and only for rows old enough to predate the
+ * `meta.userId` stamp. Rows are deduped by USER — an operator with a laptop, a
+ * desktop and a phone is one name, not three.
+ */
+async function buildPushBlock(rows: RecipientRow[]): Promise<PushRecipientBlock> {
+  if (rows.length === 0) return EMPTY;
+
+  const userIds = new Set<string>();
+  const unstamped: string[] = [];
+  for (const r of rows) {
+    const id = userIdFromMeta(r.meta);
+    if (id) userIds.add(id);
+    else if (r.target) unstamped.push(r.target);
+  }
+  if (unstamped.length > 0) {
+    // The endpoint is the PushSubscription business key. A row whose
+    // subscription has since been pruned (410/404) simply drops out — the
+    // account was still pushed, but nothing is left saying whose browser it
+    // was, and guessing would be worse than omitting.
+    const subs = await prisma.pushSubscription.findMany({
+      where: { endpoint: { in: unstamped } },
+      select: { userId: true },
+    });
+    for (const s of subs) userIds.add(s.userId);
+  }
+  if (userIds.size === 0) return EMPTY;
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: Array.from(userIds) } },
+    select: { displayName: true, username: true },
+  });
+  // Alphabetical rather than delivery order: the row order is an artifact of
+  // which browser enrolled first, which means the same set of people reads
+  // differently on every alert.
+  const names = users.map(recipientName).sort((a, b) => a.localeCompare(b));
+  if (names.length === 0) return EMPTY;
+
+  return {
+    html: renderPushRecipients(names, { html: true }),
+    text: renderPushRecipients(names, { html: false }),
+  };
+}
+
+/**
+ * Who this alert was mailed to.
+ *
+ * Deduped by ADDRESS, not by account: the delivery rows are addresses, one
+ * account may hold only one, and a contact holds no account at all. An address
+ * that matches an account prints as that account's name so the line reads the
+ * way the push line does; everything else prints as itself, which is the only
+ * identity the alert ever had for a typed address or an address-book contact.
+ *
+ * The account lookup asks for the addresses as written AND lower-cased, rather
+ * than reading the whole user table: `User.email` has no citext on it, so an
+ * account stored with different capitalisation than the delivery row would
+ * otherwise miss and print as a bare address. Two spellings cover every case
+ * that occurs — an address that matches neither was not going to match a third.
+ */
+async function buildEmailBlock(rows: RecipientRow[]): Promise<PushRecipientBlock> {
+  if (rows.length === 0) return EMPTY;
+
+  // lower(address) → the address as the delivery row spelled it.
+  const byLower = new Map<string, string>();
+  for (const r of rows) {
+    for (const a of [...toAddressesOf(r.target), ...ccAddressesOf(r.meta)]) {
+      const k = a.toLowerCase();
+      if (!byLower.has(k)) byLower.set(k, a);
+    }
+  }
+  if (byLower.size === 0) return EMPTY;
+
+  const spellings = new Set<string>();
+  for (const [lower, written] of byLower) {
+    spellings.add(written);
+    spellings.add(lower);
+  }
+  const accounts = await prisma.user.findMany({
+    where: { email: { in: Array.from(spellings) } },
+    select: { email: true, displayName: true, username: true },
+  });
+  const nameByLower = new Map<string, string>();
+  for (const a of accounts) {
+    if (a.email) nameByLower.set(a.email.trim().toLowerCase(), recipientName(a));
+  }
+
+  // Alphabetical, for the reason the push half is: row order is an artifact of
+  // which action fanned out first, so the same audience would read differently
+  // on every alert.
+  const names = Array.from(byLower.entries())
+    .map(([lower, written]) => nameByLower.get(lower) ?? written)
+    .sort((a, b) => a.localeCompare(b));
+  if (names.length === 0) return EMPTY;
+
+  return {
+    html: renderEmailRecipients(names, { html: true }),
+    text: renderEmailRecipients(names, { html: false }),
+  };
 }
