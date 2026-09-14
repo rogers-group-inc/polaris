@@ -62,6 +62,26 @@ import { buildRegionHierarchy, type RegionHierarchy } from "../utils/regionHiera
 import { createTtlCache } from "../utils/ttlCache.js";
 
 const SETTING_KEY = "mapRegions";
+/**
+ * Companion blob to `mapRegions`: the region NAMES that are no longer in use.
+ *
+ * A `region:<name>` tag whose name matches no region is unreachable — the
+ * reconcile strips only pairs `RegionTagAssignment` recorded, and provenance is
+ * keyed by region ID, which a rename does not change and a delete drops
+ * entirely. So the one thing the strip half can never see is the tag left
+ * behind when a rename or delete half-applies, which is exactly what happened
+ * on prod twice in 2026-09.
+ *
+ * This list is the missing evidence. A name lands on it in the SAME locked
+ * transaction that renames or deletes the region — before the tag rotation is
+ * even attempted — so it survives a rotation that dies part-way, and the sweep
+ * in `sweepRetiredRegionTags` can strip that name's tag later knowing Polaris
+ * itself retired it. That is what keeps business rule 52 compatible with the
+ * older invariant it sits beside: a hand-applied `region:Narnia` on some
+ * operator's printer is NOT swept, because no region named Narnia was ever
+ * retired. Only names Polaris watched go away are fair game.
+ */
+const RETIRED_SETTING_KEY = "mapRegionRetiredNames";
 const TAG_PREFIX = "region:";
 /**
  * The tag category this service OWNS. Exported because the tag registry refuses
@@ -120,6 +140,13 @@ export interface ReconcileSummary extends Record<string, unknown> {
   subnetsAdded: number;
   /** Subnets that lost it — drifted-out members, plus rename / delete strips. */
   subnetsRemoved: number;
+  /**
+   * The fleet-wide retired-name sweep (business rule 52). Present ONLY on
+   * `reconcileMapRegions`, which is the only caller that runs it — the
+   * per-region helpers return a summary about one region and have nothing to
+   * say about names that no longer belong to any.
+   */
+  retiredTagSweep?: RetiredTagSweep;
   subnetsTouched: number;
 }
 
@@ -278,6 +305,58 @@ async function upsertTagRegistry(name: string): Promise<void> {
   } catch (err: any) {
     logger.debug({ err: err?.message ?? String(err), tag: tagName }, "mapRegion: tag upsert failed (non-fatal)");
   }
+}
+
+// --- Retired region names (the sweep's evidence) ---
+
+/** A region name Polaris itself retired, and therefore may strip the tag for. */
+export interface RetiredRegionName {
+  name: string;
+  /** The region that carried it. Kept for the audit trail, not for matching. */
+  regionId: string;
+  retiredAt: string;
+  reason: "rename" | "delete";
+}
+
+async function loadRetired(db: RegionDb = prisma): Promise<RetiredRegionName[]> {
+  const row = await db.setting.findUnique({
+    where: { key: RETIRED_SETTING_KEY },
+    select: { value: true },
+  });
+  const val = row?.value as unknown;
+  if (!Array.isArray(val)) return [];
+  // A malformed entry is dropped rather than thrown on: this list exists to
+  // clean up after a failure, so it must not become a second failure.
+  return (val as Partial<RetiredRegionName>[]).filter(
+    (r): r is RetiredRegionName => !!r && typeof r.name === "string" && r.name.trim().length > 0,
+  );
+}
+
+async function persistRetired(rows: RetiredRegionName[], db: RegionDb = prisma): Promise<void> {
+  await db.setting.upsert({
+    where: { key: RETIRED_SETTING_KEY },
+    update: { value: rows as any },
+    create: { key: RETIRED_SETTING_KEY, value: rows as any },
+  });
+}
+
+/**
+ * Record that a name is out of use. MUST be called with `db` inside the caller's
+ * `withRegionBlobLock` transaction — the point of this row is that it is written
+ * atomically with the blob edit that retired the name, so a tag rotation that
+ * dies immediately afterwards still leaves the evidence behind.
+ */
+async function recordRetiredName(
+  db: RegionDb,
+  name: string,
+  regionId: string,
+  reason: RetiredRegionName["reason"],
+): Promise<void> {
+  const rows = await loadRetired(db);
+  const lower = name.trim().toLowerCase();
+  if (rows.some((r) => r.name.trim().toLowerCase() === lower)) return;
+  rows.push({ name, regionId, retiredAt: new Date().toISOString(), reason });
+  await persistRetired(rows, db);
 }
 
 async function deleteTagRegistry(name: string): Promise<void> {
@@ -824,6 +903,11 @@ export async function updateRegion(
     };
     all[idx] = updated;
     await persistAll(all, db);
+    // Inside the lock, in the same transaction as the rename itself: the whole
+    // value of this row is that it is already committed when `applyRename`
+    // starts, so a rotation that throws leaves the old name provably retired
+    // rather than merely absent. See RETIRED_SETTING_KEY.
+    if (renamed) await recordRetiredName(db, existing.name, existing.id, "rename");
     return { region: updated, previousName: existing.name, renamed, polygonChanged };
   });
 
@@ -846,6 +930,9 @@ export async function deleteRegion(id: string): Promise<MapRegion> {
     if (idx === -1) throw new AppError(404, `Region ${id} not found`);
     const row = all[idx]!;
     await persistAll(all.slice(0, idx).concat(all.slice(idx + 1)), db);
+    // Same reasoning as the rename: committed with the delete, before
+    // `applyDelete` gets a chance to fail half-way through the strip.
+    await recordRetiredName(db, row.name, row.id, "delete");
     return row;
   });
   await deleteTagRegistry(removed.name);
@@ -960,6 +1047,88 @@ export async function applyOneRegion(region: MapRegion): Promise<ReconcileSummar
  * must not stop the rest: a region whose membership query throws is logged and
  * skipped, leaving its tags exactly as they were.
  */
+/** What the retired-name sweep did on one pass. */
+export interface RetiredTagSweep extends Record<string, unknown> {
+  /** Retired names that still had a tag out there, and no longer do. */
+  namesSwept: string[];
+  assetTagsStripped: number;
+  subnetTagsStripped: number;
+  /**
+   * Retired names dropped WITHOUT stripping, because a region answers to that
+   * name again — the "deleted and redrawn under the same name" case, which the
+   * delete route already treats as the likely intent behind a redraw.
+   */
+  namesReclaimed: string[];
+}
+
+/**
+ * Strip `region:<name>` for every name Polaris recorded as retired, then forget
+ * the name.
+ *
+ * This is the ONLY path that removes a region tag naming no current region, and
+ * it is bounded by the retired-name list rather than by "the tag matches no
+ * region" — see RETIRED_SETTING_KEY for why that distinction is the whole
+ * design, and business rule 52 for the contract.
+ *
+ * Ordering: the strips run OUTSIDE the blob lock (they are the thousands-of-rows
+ * half and must not hold a lock every region write needs), and only the
+ * bookkeeping rewrite takes it — re-reading the list inside the transaction, so
+ * a rename that retired a name while this pass was stripping is not discarded.
+ * A name whose strip throws STAYS on the list: an unswept name dropped from it
+ * is unreachable garbage again, which is the bug this exists to end.
+ */
+export async function sweepRetiredRegionTags(): Promise<RetiredTagSweep> {
+  const result: RetiredTagSweep = {
+    namesSwept: [],
+    assetTagsStripped: 0,
+    subnetTagsStripped: 0,
+    namesReclaimed: [],
+  };
+  const retired = await loadRetired();
+  if (retired.length === 0) return result;
+
+  const live = new Set((await listRegions()).map((r) => r.name.trim().toLowerCase()));
+  /** Names this pass has finished with, lower-cased — dropped from the list below. */
+  const done = new Set<string>();
+
+  for (const row of retired) {
+    const lower = row.name.trim().toLowerCase();
+    if (live.has(lower)) {
+      result.namesReclaimed.push(row.name);
+      done.add(lower);
+      continue;
+    }
+    try {
+      const tag = regionTag(row.name);
+      const assets = await removeTagFromAllAssets(tag);
+      const subnets = await removeTagFromAllSubnets(tag);
+      result.assetTagsStripped += assets;
+      result.subnetTagsStripped += subnets;
+      if (assets > 0 || subnets > 0) result.namesSwept.push(row.name);
+      // Idempotent: the CRUD paths already drop the registry row, but a delete
+      // that died after the blob write would not have.
+      await deleteTagRegistry(row.name);
+      done.add(lower);
+    } catch (err: any) {
+      logger.warn(
+        { err: err?.message ?? String(err), region: row.name, regionId: row.regionId },
+        "mapRegion: retired-name sweep failed for one name (non-fatal, will retry)",
+      );
+    }
+  }
+
+  if (done.size > 0) {
+    await withRegionBlobLock(async (db) => {
+      const current = await loadRetired(db);
+      await persistRetired(
+        current.filter((r) => !done.has(r.name.trim().toLowerCase())),
+        db,
+      );
+    });
+  }
+  return result;
+}
+
 export async function reconcileMapRegions(): Promise<ReconcileSummary> {
   const regions = await listRegions();
   let added = 0;
@@ -984,7 +1153,27 @@ export async function reconcileMapRegions(): Promise<ReconcileSummary> {
       );
     }
   }
-  return { added, removed, assetsTouched: touched, subnetsAdded, subnetsRemoved, subnetsTouched };
+  // After the per-region passes, never instead of them: a region that failed
+  // above is still live, so its name is not on the retired list and the sweep
+  // cannot touch it. Its own failure must not cost the sweep either.
+  let retiredTagSweep: RetiredTagSweep | undefined;
+  try {
+    retiredTagSweep = await sweepRetiredRegionTags();
+  } catch (err: any) {
+    logger.warn(
+      { err: err?.message ?? String(err) },
+      "mapRegion: retired-name sweep failed (non-fatal)",
+    );
+  }
+  return {
+    added,
+    removed,
+    assetsTouched: touched,
+    subnetsAdded,
+    subnetsRemoved,
+    subnetsTouched,
+    ...(retiredTagSweep ? { retiredTagSweep } : {}),
+  };
 }
 
 /** What the firewall-geometry pass of the map-save review did. */
