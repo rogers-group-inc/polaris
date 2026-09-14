@@ -37,7 +37,13 @@ async function tick(): Promise<void> {
   try {
     await runInstrumentedJob("reconcileMapRegions", async () => {
       const summary = await reconcileMapRegions();
-      if (summary.assetsTouched > 0 || summary.subnetsTouched > 0) {
+      const sweep = summary.retiredTagSweep;
+      // A pass that ONLY swept a retired name touches no membership at all, and
+      // is the most interesting pass there is — it means a rename or delete had
+      // half-applied and this tick finished it. Gating the Event on
+      // assetsTouched alone would have made that invisible.
+      const sweptAnything = !!sweep && (sweep.namesSwept.length > 0 || sweep.namesReclaimed.length > 0);
+      if (summary.assetsTouched > 0 || summary.subnetsTouched > 0 || sweptAnything) {
         // Report adds and removes separately: a run that only strips tags is a
         // fleet where devices MOVED, which reads very differently from a run
         // that only adds, and one net-zero number would hide both.
@@ -46,7 +52,19 @@ async function tick(): Promise<void> {
           resourceType: "map-region",
           message:
             `Periodic region reconcile: +${summary.added}/-${summary.removed} on ${summary.assetsTouched} asset${summary.assetsTouched === 1 ? "" : "s"}, ` +
-            `+${summary.subnetsAdded}/-${summary.subnetsRemoved} on ${summary.subnetsTouched} network${summary.subnetsTouched === 1 ? "" : "s"}`,
+            `+${summary.subnetsAdded}/-${summary.subnetsRemoved} on ${summary.subnetsTouched} network${summary.subnetsTouched === 1 ? "" : "s"}` +
+            // Named, not counted: "1 retired name swept" tells an operator
+            // nothing, and this half of the message is the audit trail for a
+            // rename or delete that did not finish when it was made.
+            (sweep && sweep.namesSwept.length > 0
+              ? `; cleaned up tags left by retired region${sweep.namesSwept.length === 1 ? "" : "s"} ` +
+                sweep.namesSwept.map((n) => `"${n}"`).join(", ") +
+                ` (${sweep.assetTagsStripped} asset${sweep.assetTagsStripped === 1 ? "" : "s"}, ` +
+                `${sweep.subnetTagsStripped} network${sweep.subnetTagsStripped === 1 ? "" : "s"})`
+              : "") +
+            (sweep && sweep.namesReclaimed.length > 0
+              ? `; ${sweep.namesReclaimed.map((n) => `"${n}"`).join(", ")} redrawn under the same name, tags left alone`
+              : ""),
           details: summary,
         });
       }

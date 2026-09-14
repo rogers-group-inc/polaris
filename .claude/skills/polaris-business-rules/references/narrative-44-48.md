@@ -14,6 +14,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 51](#rule-51) — `DATABASE_URL` is a driver URL; its `sslmode` value is translated into the libpq vocabulary, never copied
 - [Rule 52](#rule-52) — TimescaleDB is part of the install, not a tuning option
 - [Rule 53](#rule-53) — A device a run could not read keeps the data it already had, so it is named, never folded in with one the run skipped
+- [Rule 54](#rule-54) — A region tag dies when its name is retired, and only then
 
 <a id="rule-44"></a>
 
@@ -644,6 +645,113 @@ are named at the end of every run.
 
 Guard: `tests/unit/fmgWarmCacheKeying.test.ts` covers the divergent-name case, the cross-gate
 name collision, case-insensitive dedup against `fmgNameKey`, and the missing-stamp fallback.
+<a id="rule-54"></a>
+
+## Rule 54 — A region tag dies when its name is retired, and only then
+
+Two strip paths already existed for `region:<name>` tags, and between them they covered
+everything except the case that actually bit.
+
+The reconcile (`applyOneRegion` → `diffRegionMembership`) removes the tag from a target that
+has drifted out of membership, bounded by a `RegionTagAssignment` provenance row so that a
+hand-applied tag is never destroyed. The map-save review adds a second, deliberately narrow
+pass (`stripOutOfRegionFirewallTags`) that judges a coordinate-carrying FIREWALL against a
+polygon that still exists, provenance or not, because for a pinned gate the polygon already
+implies the tag in the add direction. Both are about a device that MOVED.
+
+Neither can see a tag whose *region name* moved out from under it. Provenance is keyed by
+region **id**: a rename does not change the id, so the rows still point at a live region and
+say, correctly, "this asset is still a member" — of a region that is now called something
+else. A delete drops the provenance entirely. And the gate pass explicitly leaves "a
+`region:` tag naming no current region" alone. So the moment a rename or delete finished the
+blob write but failed the tag rotation, the leftover tags entered a state no code path in the
+application could reach.
+
+That is not hypothetical. `updateRegion` commits the renamed blob inside its own locked
+transaction and returns; `applyRename` then runs *outside* it. On prod in 2026-09 the tag
+rotation threw there — an unchunked `$transaction` holding an update per row, over a region
+covering ~1,100 assets — twice, under two names. The result was 1,492 asset tags and 114
+subnet tags reading `region:Eastern Middle Tennessee` and `region:Middle Tennessee` while the
+map showed "Middle Eastern Tennessee" and "Middle Tenneessee", invisible to every reconcile,
+and cleaned up in the end by hand-written SQL against the production database. The
+`region.scope_tags_renamed` half had not run either, so scoped operators were pointing at
+region names nothing answered to — silently, since a scope naming no region scopes nothing.
+
+### Why not just strip every tag that matches no region
+
+Because the standing contract is explicit that manual attachments and tags predating
+provenance "persist across runs forever", and a background job that quietly deleted them would
+be a worse bug than the one being fixed: unlike a stranded tag, a destroyed one leaves no
+evidence it was ever there.
+
+When this rule was written, making one was easy. `PUT /assets/:id` accepted `tags: string[]`
+and wrote it as given; the `Tag` registry refused hand-created rows in the "Map Regions"
+*category* but never checked the NAME, so `region:Narnia` filed under "General" was accepted —
+and since the auto-assign device-filter ban was keyed on category too, that was also the way to
+get a `TagAutoAssignment` filter onto a `region:` name, i.e. two managed-sync reconcilers on one
+string, which is exactly what that ban exists to prevent.
+
+Both doors are shut now. The registry refuses the prefix by name in every category
+(`assertNotRegionPrefix`), and asset writes run `assertAddedRegionTagsNameARegion` — a **diff**,
+not a ban, because the edit modal PUTs the whole `tags` array back and a blanket refusal would
+make every asset in a region unsaveable, and because hand-applying a *live* region's tag to a
+device its polygon misses is documented behavior that has to keep working.
+
+That does not retire this rule, for two reasons. Neither guard is retroactive and neither
+touches `Asset.tags` in the database, so on any install with history "matches no region" and
+"was retired by Polaris" still describe different sets — and the whole point of the sweep is
+the install that already has the mess. And the guards live at the route: anything writing
+through a token, a future import path, a migration, is one missed validation from putting the
+prefix back in play. Bounding the sweep by evidence does not depend on every write path
+staying correct forever.
+
+So the sweep is bounded by **evidence rather than absence**. `mapRegionRetiredNames` is a
+companion Setting blob holding `{name, regionId, retiredAt, reason}`, and a name lands on it
+in the *same locked transaction* that renames or deletes the region — before the tag rotation
+is even attempted, which is precisely why it survives a rotation that dies. A tag is swept
+only when its name is on that list. A tag naming a region that never existed is not, and never
+will be.
+
+### The rest of the shape
+
+**A reclaimed name is not stripped.** If a region is live under a retired name again — deleted
+and redrawn, which the delete route already treats as the likely intent when it leaves
+principal scopes in place — the name is dropped from the list untouched and the ordinary
+reconcile owns those tags from there. Matched case-insensitively, like every other region-name
+comparison.
+
+**A failed strip keeps its name.** The sweep catches per name and leaves an unresolved one on
+the list. Dropping it would be the original bug again, one pass later.
+
+**The strips run outside the blob lock; only the bookkeeping takes it.** Holding the advisory
+lock across thousands of row updates would block every region write for the duration — the
+same mistake the rename path made in the other direction. The list rewrite re-reads inside the
+transaction and removes only the names this pass finished, so a rename that retired a name
+while the sweep was running is not discarded. That is rule 20a's lost-update shape applied to
+the second blob, and it is tested the same way.
+
+**It is not retroactive.** An install that stranded tags before this shipped has no
+retired-name row for them and the sweep will not touch them. Those need one cleanup, which is
+the query that found the prod case:
+
+```sql
+WITH live AS (
+  SELECT 'region:' || (r->>'name') AS tag
+  FROM settings s, jsonb_array_elements(s.value) r
+  WHERE s.key = 'mapRegions' AND jsonb_typeof(s.value) = 'array'
+)
+SELECT t AS orphan_tag, count(*) FROM assets a, unnest(a.tags) t
+WHERE t LIKE 'region:%' AND t NOT IN (SELECT tag FROM live)
+GROUP BY t;
+```
+
+Read the result before stripping anything: this query cannot tell a stranded tag from a
+hand-applied one, which is the entire reason the automated sweep does not work this way.
+
+Guards: `tests/unit/mapRegionRetiredSweep.test.ts` pins both halves — that a rename and a
+delete record the name, that a polygon-only edit does not, that an unretired name is never
+swept, reclamation, retry-on-failure, and the racing-writer case. The chunking that removed
+the original trigger is pinned separately by `tests/unit/mapRegionTagChunking.test.ts`.
 
 <a id="rule-55"></a>
 

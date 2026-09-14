@@ -38,7 +38,7 @@ import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
 import { manualCoordPatchError } from "../../utils/geo.js";
-import { reconcileMapRegions } from "../../services/mapRegionService.js";
+import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../services/mapRegionService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
@@ -3412,6 +3412,9 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     const input = CreateAssetSchema.parse(req.body);
     const coordErr = manualCoordPatchError(input.latitude, input.longitude);
     if (coordErr) throw new AppError(400, coordErr);
+    // Nothing to round-trip on a create, so every region tag in the body is an
+    // addition and must name a real region.
+    if (input.tags) await assertAddedRegionTagsNameARegion([], input.tags);
     const data: Record<string, unknown> = { ...input };
     if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
     // Description: empty string clears to null (an empty Polaris description
@@ -3463,6 +3466,12 @@ type ExistingAssetForUpdate = NonNullable<Awaited<ReturnType<typeof loadAssetFor
 
 // Phase 1 — request-level guards that must 400 before anything is staged.
 async function validateAssetUpdate(id: string, existing: ExistingAssetForUpdate, input: UpdateAssetInput): Promise<void> {
+  // A `region:` tag the operator is ADDING must name a region that exists. The
+  // ones already on the row pass through untouched — the edit modal PUTs the
+  // whole array back — and hand-applying a live region's tag to a device its
+  // polygon misses stays legal. Costs no query unless a region tag was added.
+  if (input.tags) await assertAddedRegionTagsNameARegion(existing.tags ?? [], input.tags);
+
   // Per-asset polling overrides must be valid for the asset's source kind.
   // Falling through silently at the resolver would leave the operator
   // confused about why their selection didn't take.
