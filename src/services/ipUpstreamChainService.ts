@@ -52,9 +52,18 @@
  * asset id inside one `$transaction` (the documented lastSeenAp deadlock fix),
  * with one `asset.switch_port.changed` / `asset.wireless_ap.changed` Event per
  * moved value written AFTER the commit through `buildConnectionChangedEvent`.
- * The MAC itself is NOT adopted onto the asset: adopting it would make the row
- * eligible for MAC-keyed dedupe and merge, and a wrong adoption merges two
- * devices — that step stays a deliberate follow-up behind an opt-in.
+ * The derived MAC IS adopted onto the asset (2026-09; rule 45 originally
+ * withheld it). Adoption makes the row eligible for MAC-keyed dedupe and merge,
+ * so the hazard is answered by `partitionAdoptableMacs` rather than by a
+ * Setting: every wire-level ambiguity is already refused above, leaving only a
+ * MAC that is already spoken for. See that function for the two refusals.
+ *
+ * ── Also the home of the shared owning-gate resolver ────────────────────────
+ * `resolveOwningGateContexts` started here as this sweep's ARP scoping and is
+ * now the ONE implementation of "which gate owns this address" (business rule
+ * 54), shared with `assetUpstreamService` (the Last Seen Firewall fallback) and
+ * `dependencyTreeService` (the last-resort endpoint parent). Three consumers
+ * re-deriving the subnet → gate precedence is the drift rule 41 exists to stop.
  *
  * ── Scale ───────────────────────────────────────────────────────────────────
  * Set-based end to end: one claim query, one containment query, one firewall
@@ -214,6 +223,8 @@ export function macKey(mac: string | null | undefined): string | null {
 /**
  * Which derived MACs may be written onto `Asset.macAddress`.
  *
+ * Business rule 45, as amended 2026-09.
+ *
  * Adoption is what makes a row eligible for MAC-keyed dedupe and merge
  * (`mergeDuplicateHostnameAssets` collapses rows sharing a MAC; Entra
  * cross-links by Ethernet MAC), and a merge deletes one row's monitoring
@@ -337,7 +348,8 @@ export interface OwningGate {
  * (business rule 41 — never a hostname match). Absent from the map when the
  * address sits in no known, non-deprecated network.
  *
- * The single implementation of "which gate is this address behind" per IPAM.
+ * The single implementation of "which gate is this address behind" per IPAM
+ * (business rule 54).
  * Three consumers: this sweep (scoping the ARP lookup), `assetUpstreamService`
  * (the Last Seen Firewall fallback) and `dependencyTreeService` (the last-
  * resort endpoint parent). Keep it one function — the three would otherwise
