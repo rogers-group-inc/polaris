@@ -56,6 +56,27 @@ The container has `pg_dump` / `psql` and the compose network name, which the Win
 not; only this path exercises the backup/restore and TimescaleDB-gated suites. `--no-file-parallelism`
 is required either way.
 
+**A green integration run may be a run that did nothing.** Every `tests/integration/*` file
+guards on `dbReachable` (`_helpers.ts`) and SKIPS when it cannot reach the database — vitest
+exits 0 and prints `Test Files 1 skipped (1)`, which scans as success. Writing integration
+tests and never noticing they skipped is easy: read the **skipped** count, not the exit code.
+A DB-less run skips ~76 files.
+
+When only a few integration files matter and no full stack is up, a bare Postgres on a free
+port is enough, and is quicker than the compose stack:
+
+```
+podman run -d --name polaris-<slug>-db -e POSTGRES_USER=polaris -e POSTGRES_PASSWORD=polaris \
+  -e POSTGRES_DB=polaris -p 127.0.0.1:<free-port>:5432 timescale/timescaledb:latest-pg17
+DATABASE_URL="postgresql://polaris:polaris@127.0.0.1:<free-port>/polaris" npx prisma migrate deploy
+DATABASE_URL="postgresql://polaris:polaris@127.0.0.1:<free-port>/polaris" npx vitest run tests/integration/<file> --no-file-parallelism
+```
+
+Pick the port by looking at `podman ps` first — other sessions' stacks are usually up, and
+they are not yours to stop. Write a `DEVLOCK` while it runs, and `podman rm -f` it when done.
+And having watched a new test pass, make it FAIL once (comment out the guard it covers) before
+trusting it — a route-level assertion that never saw red has proven nothing.
+
 ## Tear it down
 
 ```
