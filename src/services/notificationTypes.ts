@@ -1800,6 +1800,38 @@ export const repeatConfigSchema = z
 
 export type RepeatConfig = z.infer<typeof repeatConfigSchema>;
 
+/**
+ * A severity band's OWN follow-up policy: what closing the alert out costs
+ * while it is sitting at this severity.
+ *
+ * Just the one setting today, and it is deliberately still an OBJECT rather
+ * than a loose `requireAckNote` key on the band. The reason is the third state
+ * a bare boolean cannot carry: *inherit the rule's*. Every banded automation
+ * that predates this stores no `followUp` at all and must keep following the
+ * rule's flag, so the presence test — `followUp == null` — is what keeps "the
+ * band says no" apart from "the band says nothing". A second per-severity
+ * setting would join it here rather than grow another key with its own absence
+ * rules.
+ *
+ * REMINDERS ARE NOT IN HERE. They were, briefly, and they belong to the ACTION
+ * instead — see `repeat` on the escalatable notify schema. A reminder re-sends
+ * an automation's notify actions, and two of them in one severity can
+ * reasonably chase on different clocks, which a per-severity config cannot
+ * express at all.
+ *
+ * The builder writes a `followUp` onto EVERY band the moment "use different
+ * actions for each severity level" is on (seeded from the rule's, so turning
+ * the toggle on changes nothing by itself), and strips it from all of them when
+ * the toggle is off — the same on/off contract `actions` already has.
+ */
+export const bandFollowUpSchema = z
+  .object({
+    requireAckNote: z.boolean().default(false),
+  })
+  .strict();
+
+export type BandFollowUp = z.infer<typeof bandFollowUpSchema>;
+
 /** Re-exported so the sweep and the schema route can name the quiet-time
  *  shape without reaching past this module for half of one config. */
 export type { QuietConfig };
@@ -1817,7 +1849,30 @@ export type { QuietConfig };
 // from pre-feature rows) and escalationTierStateKey("a<i>", j) = "a<i>:t<j>".
 const perActionEscalation = z.union([escalationSchema, escalationV2Schema]).optional().nullable();
 
-export const notifyActionEscalatableSchema = notifyActionSchema.extend({ escalation: perActionEscalation });
+/**
+ * Per-action reminders: "repeat this action" while the alert stays unhandled.
+ *
+ * ON THE NOTIFY SCHEMA ONLY, and only the escalatable variant — i.e. only the
+ * two places an action FIRES from (`ruleInputBaseSchema.actions` and
+ * `severityBandSchema.actions`). Everywhere else an action can appear it must
+ * not carry one: an escalation TIER already has its own `repeatEveryMin`, a
+ * `bandNotify.resolvedActions` entry announces a recovery (there is nothing
+ * left to chase), and `resetActions` are the same. `REPEATABLE_ACTION_TYPES`
+ * is the other half of the same decision — an `api_call` that files a ticket
+ * and a `script` that writes to a registry are not the same blast radius as a
+ * second email, so neither takes this key at all.
+ *
+ * ABSENT means "inherit the rule's `repeat`", which is what every automation
+ * authored before this stores; an explicit `null` means "this action does not
+ * repeat" even where the rule says otherwise. `repeatForAction` is the one
+ * place that distinction is read.
+ */
+const perActionRepeat = repeatConfigSchema.optional().nullable();
+
+export const notifyActionEscalatableSchema = notifyActionSchema.extend({
+  escalation: perActionEscalation,
+  repeat: perActionRepeat,
+});
 export const apiCallActionEscalatableSchema = apiCallActionSchema.extend({ escalation: perActionEscalation });
 export const scriptActionEscalatableSchema = scriptActionSchema.extend({ escalation: perActionEscalation });
 
@@ -1854,6 +1909,9 @@ export const severityBandSchema = z
     actions: z.array(escalatableActionSchema).max(20).default([]),
     // Per-band time escalation (same shape as rule-level; accepts legacy or v2).
     escalation: z.union([escalationSchema, escalationV2Schema]).optional().nullable(),
+    // Per-band follow-up policy — see bandFollowUpSchema. NULL/absent = this
+    // band inherits the rule's, which is every pre-feature row.
+    followUp: bandFollowUpSchema.optional().nullable(),
   })
   .strict();
 export type SeverityBand = z.infer<typeof severityBandSchema>;
@@ -2493,6 +2551,10 @@ function validateSeverityBands(
  *
  * Band actions count: a banded automation whose notifies live only on its
  * severity bands still has something to re-send once it is firing in a band.
+ *
+ * This is about the RULE-LEVEL `repeat` only. A repeat that rides a notify
+ * action needs no such check — the action it is attached to is the notify
+ * action, by construction: the schema puts the key on nothing else.
  */
 function validateRepeat(
   v: { repeat?: RepeatConfig | null; actions?: AutomationAction[] | null; severityBands?: SeverityBand[] | null },
@@ -2829,13 +2891,7 @@ export function normalizeRuleToV2(row: {
     if (!isEventDrivenTrigger(row.trigger)) actions = [...actions, { type: "event" as const }];
   }
 
-  const bands = Array.isArray(row.severityBands)
-    ? row.severityBands
-        .map((b) => severityBandSchema.safeParse(b))
-        .filter((r): r is { success: true; data: SeverityBand } => r.success)
-        .map((r) => r.data)
-    : [];
-  const severityBands = bands.length ? bands : null;
+  const severityBands = parseSeverityBands(row.severityBands);
   const bandNotify = row.bandNotify && bandNotifySchema.safeParse(row.bandNotify).success
     ? bandNotifySchema.parse(row.bandNotify)
     : null;
@@ -2971,8 +3027,22 @@ export function escalationTierStateKey(chainKey: string, tierIdx: number): strin
  * Shares that map with the escalation tiers, and is collision-free by
  * construction: the level chain produces bare numerics ("0", "1"), per-action
  * chains produce "a<i>:t<j>", and neither can ever be this string.
+ *
+ * This bare key is now the LEGACY one — it is what a notification carries from
+ * before reminders became per-action, when one clock re-sent every notify
+ * action together. `repeatStateKey(i)` is what the sweep writes; the legacy key
+ * is still READ as the seed for an inheriting action, so an alert that is live
+ * across the upgrade keeps its clock instead of firing a fresh reminder at
+ * everyone the moment the new code starts sweeping.
  */
 export const REPEAT_STATE_KEY = "repeat";
+
+/** One action's reminder progress: `a<i>:repeat`, beside that action's
+ *  escalation tiers (`a<i>:t<j>`) and collision-free against both those and the
+ *  level chain's bare numerics. */
+export function repeatStateKey(actionIdx: number): string {
+  return `a${actionIdx}:${REPEAT_STATE_KEY}`;
+}
 
 /**
  * Which action types a REPEAT re-runs.
@@ -3019,6 +3089,113 @@ export function effectiveActionsForSeverity(
     if (band?.actions?.length) return band.actions;
   }
   return rule.actions ?? [];
+}
+
+/**
+ * Does acknowledging at this severity need a note?
+ *
+ * The SAME resolution `effectiveActionsForSeverity` performs, and it has to be:
+ * the demand made of whoever closes an alert out has to be the one the severity
+ * they are looking at makes. The band test is PRESENCE, not truthiness (see
+ * `bandFollowUpSchema`) — a band declaring `requireAckNote: false` is saying
+ * "not here", which is a different answer from a pre-feature band that says
+ * nothing and inherits whatever the rule does.
+ */
+export function effectiveAckNoteForSeverity(
+  rule: { severity: string; severityBands?: SeverityBand[] | null; requireAckNote?: boolean | null },
+  severity: string,
+): boolean {
+  if (severity !== rule.severity) {
+    const band = (rule.severityBands ?? []).find((b) => b.severity === severity);
+    if (band?.followUp) return band.followUp.requireAckNote === true;
+  }
+  return rule.requireAckNote === true;
+}
+
+/**
+ * The reminder clock for ONE action: its own when it states one, else the
+ * rule's.
+ *
+ * PRESENCE, not truthiness, for the same reason the band test is: `repeat:
+ * null` on an action means "this one does not chase", while an action carrying
+ * no `repeat` key at all is every automation authored before reminders became
+ * per-action, and must keep running on `NotificationRule.repeat`. The builder
+ * writes an explicit answer onto every notify action it saves and clears the
+ * rule-level column as it does, so a re-saved automation carries no inheritance
+ * at all — but nothing is migrated behind the operator's back, and a rule the
+ * builder has not touched keeps behaving exactly as it did.
+ */
+export function repeatForAction(
+  rule: { repeat?: RepeatConfig | null },
+  action: { type: string; repeat?: RepeatConfig | null },
+): RepeatConfig | null {
+  if (action.repeat !== undefined) return action.repeat ?? null;
+  return rule.repeat ?? null;
+}
+
+/**
+ * The repeatable actions in force at a severity, each with its resolved clock
+ * and its INDEX in that severity's action list.
+ *
+ * The index travels with the action because it keys that action's reminder
+ * state (`repeatStateKey`) — two notify actions chasing on different clocks
+ * need two independent `lastSentAt`s, and the position in the effective list is
+ * the same identity per-action escalation chains already key on.
+ */
+export function repeatingActionsForSeverity(
+  rule: RuleActionCarrier & { severity: string; repeat?: RepeatConfig | null },
+  severity: string,
+): { index: number; action: EscalatableAction; repeat: RepeatConfig }[] {
+  const repeatable = new Set<string>(REPEATABLE_ACTION_TYPES);
+  const out: { index: number; action: EscalatableAction; repeat: RepeatConfig }[] = [];
+  effectiveActionsForSeverity(rule, severity).forEach((action, index) => {
+    if (!repeatable.has(action.type)) return;
+    const repeat = repeatForAction(rule, action as { type: string; repeat?: RepeatConfig | null });
+    if (repeat) out.push({ index, action, repeat });
+  });
+  return out;
+}
+
+/**
+ * The `severityBands` JSON column → typed bands, dropping any a schema change
+ * has outgrown rather than throwing (the same posture normalizeRuleToV2 takes
+ * with every other JSON column: a row the reader can't fully understand still
+ * has to render).
+ *
+ * Exported because the ack surfaces need the bands WITHOUT normalizing a whole
+ * rule — they select two columns off `rule`, not the dozen normalizeRuleToV2
+ * wants.
+ */
+export function parseSeverityBands(raw: unknown): SeverityBand[] | null {
+  if (!Array.isArray(raw)) return null;
+  const bands = raw
+    .map((b) => severityBandSchema.safeParse(b))
+    .filter((r): r is { success: true; data: SeverityBand } => r.success)
+    .map((r) => r.data);
+  return bands.length ? bands : null;
+}
+
+/** Every repeat config a rule can present — the rule-level one plus each
+ *  action's own, top-level and per band. Used for rule inclusion in the sweep
+ *  and for the due-candidate cutoff, both of which run BEFORE any notification
+ *  is looked at and so must see an automation whose only reminder lives on one
+ *  action of one band. */
+export function allRepeatsOf(
+  rule: { severityBands?: SeverityBand[] | null; repeat?: RepeatConfig | null; actions?: readonly { type: string }[] | null },
+): RepeatConfig[] {
+  const out: RepeatConfig[] = [];
+  if (rule.repeat) out.push(rule.repeat);
+  // `repeat` rides only the notify member of the action union, so the walk is
+  // typed on what every member HAS and reads the key off the ones that carry it.
+  const fromActions = (list: readonly { type: string }[] | null | undefined) => {
+    for (const a of list ?? []) {
+      const own = (a as { repeat?: RepeatConfig | null }).repeat;
+      if (own) out.push(own);
+    }
+  };
+  fromActions(rule.actions);
+  for (const b of rule.severityBands ?? []) fromActions(b.actions);
+  return out;
 }
 
 export function escalationChainsForSeverity(
@@ -3097,7 +3274,16 @@ export function followUpPolicy(
   severity: string,
 ): FollowUpPolicy {
   let repeat = "";
-  const r = rule.repeat;
+  // SOONEST across every repeating action at this severity — exactly the rule
+  // the escalation half below already follows, and for the same reason. One
+  // alert carries ONE of these sentences (it is snapshotted into templateCtx,
+  // not composed per delivery), while its notify actions may chase on different
+  // clocks; the honest answer to "when will this come back at me" is whichever
+  // reminder arrives first, not whichever action happens to be listed first.
+  const r = repeatingActionsForSeverity(rule, severity)
+    .map((x) => x.repeat)
+    .filter((x) => x.everyMin > 0)
+    .sort((a, b) => a.everyMin - b.everyMin)[0];
   if (r && r.everyMin > 0) {
     // The cut-off is stated because it is the difference between "this will
     // chase you until you deal with it" and "this goes quiet at 8 hours",

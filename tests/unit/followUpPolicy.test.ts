@@ -70,6 +70,53 @@ describe("followUpPolicy — repeat", () => {
     expect(followUpPolicy(rule({ repeat: { everyMin: 5, stopOn: "clear", stopAfterHours: 1 } }), "warning").repeat)
       .toContain("for up to 1 hour.");
   });
+
+  it("advertises the SOONEST of several actions' clocks", () => {
+    // One alert carries ONE of these sentences (it is snapshotted into
+    // templateCtx, not composed per delivery) while its notify actions may
+    // chase on different clocks. Same rule the escalation half already follows:
+    // the honest answer to "when will this come back at me" is whichever
+    // reminder arrives first, not whichever action is listed first.
+    const twoClocks = rule({
+      repeat: null,
+      actions: [
+        { ...notify("c1"), repeat: { everyMin: 60, stopOn: "acknowledge" } },
+        { ...notify("c2"), repeat: { everyMin: 5, stopOn: "clear" } },
+      ],
+    });
+    expect(followUpPolicy(twoClocks, "warning").repeat).toBe("Reminders every 5 minutes until cleared.");
+  });
+
+  it("an action that says `repeat: null` contributes no sentence", () => {
+    // An explicit null is an answer, not an absence, so it must not fall back
+    // to the rule's clock the way a missing key does.
+    const silenced = rule({
+      repeat: { everyMin: 15, stopOn: "acknowledge" },
+      actions: [{ ...notify(), repeat: null }],
+    });
+    expect(followUpPolicy(silenced, "warning").repeat).toBe("");
+  });
+
+  it("an action that says NOTHING still advertises the rule's clock", () => {
+    // Every automation authored before reminders became per-action.
+    const inherited = rule({ repeat: { everyMin: 15, stopOn: "acknowledge" }, actions: [notify()] });
+    expect(followUpPolicy(inherited, "warning").repeat).toContain("every 15 minutes");
+  });
+
+  it("describes the BAND's actions once the alert has climbed into one", () => {
+    // Severity still chooses which action list is in force; the clock rides the
+    // action that list selected.
+    const banded = rule({
+      repeat: null,
+      actions: [{ ...notify(), repeat: { everyMin: 60, stopOn: "acknowledge" } }],
+      severityBands: [{
+        threshold: 95, severity: "critical",
+        actions: [{ ...notify(), repeat: { everyMin: 5, stopOn: "clear" } }],
+      }],
+    });
+    expect(followUpPolicy(banded, "warning").repeat).toBe("Reminders every 1 hour until acknowledged.");
+    expect(followUpPolicy(banded, "critical").repeat).toBe("Reminders every 5 minutes until cleared.");
+  });
 });
 
 describe("followUpPolicy — escalation", () => {
