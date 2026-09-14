@@ -53,8 +53,10 @@ x-polaris-common: &polaris-common
     # Node ships its own CA store and ignores the image's, so without this the
     # app's outbound calls fail UNABLE_TO_GET_ISSUER_CERT_LOCALLY: Entra/Graph
     # and Azure Arc discovery, the weekly IEEE OUI refresh, weather and map
-    # tiles, webhook delivery. Unlike a script install there is no `npm ci`
-    # here — the image is prebuilt — so updates are unaffected either way.
+    # tiles, location geocoding (POLARIS_GEOCODER_PROVIDERS — Nominatim and the
+    # US Census geocoder), webhook delivery. Unlike a script install there is
+    # no `npm ci` here — the image is prebuilt — so updates are unaffected
+    # either way.
     # Set it via env_file, not as a default here: Node reads it before any
     # JavaScript runs, and a default would point it at a nonexistent path.
 

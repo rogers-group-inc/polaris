@@ -45,7 +45,7 @@ do this — which one is the reference?"). The UI counterpart is `polaris-ui-can
 | [asset-last-seen-presence](references/cross-cutting/asset-last-seen-presence.md) | `lastSeen`, `bumpLastSeen`, presence verification (rule 12) |
 | [asset-change-events](references/cross-cutting/asset-change-events.md) | firmware / switch-port / AP / gateway change Events |
 | [reservation-push-lifecycle](references/cross-cutting/reservation-push-lifecycle.md) | pushStatus, queued push, retry, FortiGate DHCP writes |
-| [fortigate-snmp-location-and-coord-writeback](references/cross-cutting/fortigate-snmp-location-and-coord-writeback.md) | sysLocation, lat/long, coordSource |
+| [fortigate-snmp-location-and-coord-writeback](references/cross-cutting/fortigate-snmp-location-and-coord-writeback.md) | sysLocation, lat/long, coordSource, geocoding (the Nominatim → Census provider chain) |
 | [fortinet-infra-dhcp-binding](references/cross-cutting/fortinet-infra-dhcp-binding.md) | `dhcpBinding`, infra reservations (rule 23) |
 | [dns-resolved-reservations](references/cross-cutting/dns-resolved-reservations.md) | `dns_resolved` rows (rule 11) |
 | [location-codes](references/cross-cutting/location-codes.md) | `a:` `b:` `f:` `r:` `jb:` parsing (rule 15) |
