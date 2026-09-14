@@ -318,7 +318,7 @@ DirectoryContactSource           -- The same provenance pattern again, for the a
   createdAt     DateTime @default(now())
   @@id([tagId, assetId])
 
-GeocodeCache                    -- Positive+negative cache for `geocoderService.geocode()`. Negative results (no Nominatim hit) are stored too so gibberish sysLocation strings don't repeatedly hit upstream. Refreshed on TTL expiry; transport failures don't poison the cache.
+GeocodeCache                    -- Positive+negative cache for `geocoderService.geocode()`, UNIQUE ON (provider, query) — one row per provider per string, because the geocoder walks a chain (nominatim → census). Negative results (that provider found nothing) are stored too so gibberish sysLocation strings don't repeatedly hit upstream, and a negative suppresses only its own provider's leg rather than the whole chain. Refreshed on TTL expiry (90 days); transport failures don't poison the cache.
   id           UUID PK
   query        String @unique  -- normalized lookup key: trim + collapse whitespace + lowercased
   displayQuery String           -- original-case query string for UI display

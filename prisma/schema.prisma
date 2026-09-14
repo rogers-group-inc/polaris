@@ -4524,21 +4524,25 @@ model AutomationScriptRun {
 // gibberish location strings don't repeatedly hit the upstream provider.
 //
 // `query` is the normalized lookup key (trim + collapse whitespace +
-// lowercase) and is unique. `displayQuery` preserves the original casing
-// for UI display.
+// lowercase); `displayQuery` preserves the original casing for UI display.
+// Uniqueness is on (provider, query), NOT query alone: the geocoder walks a
+// provider chain (nominatim → census by default) and each provider gets its
+// own row per string, so a negative row ("this provider found nothing")
+// suppresses only its own leg and the chain still tries the next provider.
 //
 // `ttlExpiresAt` defaults to fetchedAt + 90 days; expired rows are refetched
 // on the next discovery cycle that touches that location string.
 model GeocodeCache {
   id           String   @id @default(uuid())
-  query        String   @unique
+  query        String
   displayQuery String
   latitude     Float?
   longitude    Float?
-  provider     String // "nominatim"
+  provider     String // "nominatim" | "census"
   fetchedAt    DateTime @default(now())
   ttlExpiresAt DateTime
 
+  @@unique([provider, query])
   @@index([ttlExpiresAt])
   @@map("geocode_cache")
 }

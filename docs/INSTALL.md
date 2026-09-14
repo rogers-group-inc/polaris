@@ -82,7 +82,9 @@ successful run keeps working until one dependency version changes. The first pac
 misses the cache is the first to fail.
 
 The same trust gap affects the app's own outbound calls once it is running: Entra/Graph and
-Azure Arc discovery, the weekly IEEE OUI refresh, weather and map tiles, and webhook delivery.
+Azure Arc discovery, the weekly IEEE OUI refresh, weather and map tiles, location geocoding
+(OpenStreetMap Nominatim and the US Census geocoder — see `POLARIS_GEOCODER_PROVIDERS`), and
+webhook delivery.
 
 ### Fix
 

@@ -356,27 +356,30 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/geocoderService.ts
 
-**What it owns:** Address-string → lat/lng geocoder backed by OpenStreetMap Nominatim with a positive+negative `GeocodeCache` (90-day TTL) and a process-global 1 req/sec rate limiter.
+**What it owns:** Address-string → lat/lng geocoder over an ordered PROVIDER CHAIN (`POLARIS_GEOCODER_PROVIDERS`, default `nominatim,census`) with a positive+negative `GeocodeCache` keyed on (provider, query) at a 90-day TTL, and a per-provider rate limiter.
 
-**Public API:** `geocode(query: string): Promise<{ latitude: number | null, longitude: number | null, cached: boolean }>`.
+**Public API:** `geocode(query: string): Promise<{ latitude: number | null, longitude: number | null, cached: boolean, provider: string | null }>`; `__resetGeocoderStateForTests(rateLimitMs?)` (test seam — clears the rate-limit chains and drops the gates).
 
-**Cross-service deps:** None (uses prisma directly for cache reads/writes; `getAppVersion()` for the Nominatim User-Agent).
+**Cross-service deps:** `utils/geo.ts:isValidGeoCoord` (a provider "hit" must be a valid pair, so a (0,0) answer is cached as a negative and the chain walks on). Otherwise none — prisma directly for cache reads/writes, `getAppVersion()` for the User-Agent.
 
-**Used by:** src/api/routes/integrations.ts:syncDhcpSubnets Phase 3 — geocodes FortiGate SNMP sysLocation when `fortigateMonitor.pullSnmpLocation` is on.
+**Used by:** src/services/discovery/discoveryEngine.ts:syncDhcpSubnets Phase 3 — geocodes the FMG address metavar, else the FortiGate SNMP sysLocation when `pullSnmpLocation` + `useSnmpLocationCoords` are on. The verbose `discovery.location.geocoded` line carries `provider`.
 
 **Invariants:**
-- Normalization key: trim + collapse-whitespace + lowercase. Same on read and write so capitalization / spacing variants collide on one cache row.
-- Cache stores BOTH positive AND negative results. A null lat/lng row means "Nominatim returned no match" — the negative-cache signal that prevents gibberish strings from repeatedly hitting upstream.
-- Transport failures (timeout / non-2xx / parse error) do NOT write a cache row. Only the upstream's actual response (success OR empty array) writes — so a transient Nominatim outage doesn't poison subsequent retries.
-- Rate limiter is module-level chained Promise enforcing ≥1100 ms between outgoing requests (Nominatim's usage policy is 1 req/sec; 100 ms safety margin). Cache hits BYPASS the gate entirely.
-- User-Agent identifies Polaris per Nominatim's usage policy (`Polaris-IPAM/<version>`). Never use a generic / library-default UA.
-- Never throws. All failures return `{latitude: null, longitude: null, cached: false}` so callers in the discovery hot path don't need to wrap.
+- The two shipped providers fail in OPPOSITE directions and that is the entire point of the chain: `nominatim` (OSM) resolves place names / POIs / non-US strings and misses many real US street addresses; `census` (US Census TIGER `onelineaddress`) resolves US street addresses OSM lacks and returns nothing for a city/state string or anything outside the US. Census hits are street-segment INTERPOLATED (right block + side of street, not the rooftop), so it trails Nominatim in the default order — it is a miss-to-block-level-pin fallback, not a precision upgrade.
+- Normalization key: trim + collapse-whitespace + lowercase. Same on read and write so capitalization / spacing variants collide on one cache row PER PROVIDER.
+- Cache uniqueness is (provider, query), NOT query. A null lat/lng row means "THIS provider found no match" and suppresses only its own leg — the chain still walks on to the next provider. Keying on query alone would let a Nominatim negative shadow the Census leg for 90 days, which is the exact case the chain exists to catch.
+- Transport failures (timeout / non-2xx / parse error) do NOT write a cache row; the chain moves to the next provider immediately and retries this one next cycle. Only the upstream's actual response (coords OR a well-formed empty result) writes.
+- Rate limiting is per provider (a Map of chained Promises), so a slow Nominatim leg never throttles Census: nominatim 1100 ms (policy is 1 req/sec + 100 ms margin), census 250 ms (politeness only — no published limit). Cache hits BYPASS the gates entirely.
+- User-Agent identifies Polaris (`Polaris-IPAM/<version>`) per Nominatim's usage policy. Never use a generic / library-default UA.
+- An empty/unparseable provider list disables geocoding (returns the null result, logs `geocode.no_providers_configured`) — the supported air-gapped posture. Unknown names are dropped with a warning, not fatal.
+- Never throws. All failures return `{latitude: null, longitude: null, cached: false, provider: null}` so callers in the discovery hot path don't need to wrap.
 
 **When changing this:**
-- Don't add per-request retries — Nominatim's policy is "be patient and don't hammer us"; one shot per cycle, fall through on failure, retry on next discovery.
+- Don't add per-request retries — the chain IS the retry, across providers; Nominatim's policy is "be patient and don't hammer us". One shot each per cycle, fall through on failure, retry next discovery.
 - TTL is 90 days. Lengthening it reduces upstream load further; shortening risks operators editing sysLocation and waiting too long to see the new pin location. Don't go below 7 days.
-- Adding a second provider (Google / Mapbox): introduce a `provider` parameter, store provider per cache row (already in schema), and run all writes through a single normalization so the cache stays consistent.
-- If extending to other domains (e.g. non-FortiGate asset location lookups), keep the rate limiter shared — Nominatim doesn't care which Polaris feature triggered the request, only the rate-per-process matters.
+- Adding a THIRD provider (Google / Mapbox / an internal geocoder): add an entry to the `PROVIDERS` record (name, rateLimitMs, buildUrl, parse) and name it in `POLARIS_GEOCODER_PROVIDERS` — no cache-shape change is needed, the (provider, query) key already isolates it. A provider needing an API key needs a secret story first (env, not a Credential row — this service has no integration context).
+- Changing the cache key means a migration: the unique index is `geocode_cache_provider_query_key` (`20260914010000_geocode_cache_provider_key` re-keyed it off the original query-only unique).
+- If extending to other domains (e.g. non-FortiGate asset location lookups), keep the rate limiters shared — an upstream doesn't care which Polaris feature triggered the request, only the rate-per-process matters.
 
 ---
 
