@@ -58,6 +58,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{chart.memory}", label: "Memory chart", description: "Last hour of memory as an inline chart (HTML) or a now/avg/peak line (plain text)", group: "notification" },
   { token: "{chart.responseTime}", label: "Response-time chart", description: "Last hour of probe response time as an inline chart (HTML) or a now/avg/peak line (plain text)", group: "notification" },
   { token: "{brand.header}", label: "Letterhead", description: "This install's logo, application name and subtitle — the block in the top-right corner of the default email. Filled at send time (the logo rides as an inline image); renders away on an install with neither a subtitle nor a readable logo", group: "notification" },
+  { token: "{push.recipients}", label: "Web push recipients", description: "The Polaris accounts this alert was also sent to by web push, named — the footer line under the default email. Filled at send time from the alert's own push deliveries (one name per account, however many browsers it has enrolled); renders away entirely on an automation that pushes to nobody", group: "notification" },
   { token: "{interface.lldp}", label: "Interface LLDP neighbors", description: "The LLDP neighbours on the INTERFACE this alert fired on — what was plugged into the port, its own port, management IP and when it last advertised. Renders away entirely unless the automation triggers on an interface (status, PoE, throughput, error rate) and the port has a neighbour", group: "notification" },
   { token: "{time}", label: "Time", description: "Trigger time (ISO-8601)", group: "notification" },
   { token: "{time.local}", label: "Time (readable)", description: "Trigger time in the Polaris server's own timezone, e.g. \"Aug 12, 2026, 1:46 PM CDT\" — what the default email prints", group: "notification" },
@@ -434,7 +435,8 @@ export function isDeferredToken(name: string): boolean {
     DEFERRED_TOKEN_NAMES.has(name) ||
     name.startsWith("chart.") ||
     name.startsWith("interface.") ||
-    name.startsWith("brand.")
+    name.startsWith("brand.") ||
+    name.startsWith("push.")
   );
 }
 
