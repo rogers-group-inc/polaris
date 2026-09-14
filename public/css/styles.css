@@ -401,47 +401,55 @@ code {
 
 
 /* ─── Morning ────────────────────────────────────────────────────────────────
-   Dawn quadrant of the clockface: gilt sun on aged parchment. Warm neutrals,
-   burnished-gold accent, everything a half-step softer than the retired `light`
-   so long reading sessions in a bright room don't glare. */
+   Dawn quadrant of the clockface: gilt sun on aged parchment, pushed into
+   amber. Yellow-brown grounds, an orange accent, warm near-black text,
+   everything still a half-step softer than noon so long reading sessions in a
+   bright room don’t glare.
+
+   The warmth is doing a job, not a mood: morning and noon are the two daylight
+   themes and they used to sit a few percent apart, which made half the theme
+   dial’s travel look like nothing happening. Morning now owns the only neutrals
+   in the system carrying real yellow, and noon owns the neutral whites — so the
+   pair reads as amber against white at a glance. */
 [data-theme="morning"] {
-  --color-bg-primary: #f7efe1;
-  --color-bg-secondary: #efe4d1;
-  --color-bg-tertiary: #f3e9d9;
-  --color-surface: #fffaf1;
-  --color-bg-elevated: #f1e6d4;
-  --color-border: #dcccb2;
-  --color-border-light: #eaddc9;
-  --color-text-primary: #2e2415;
-  --color-text-secondary: #6b5a41;
-  --color-text-tertiary: #9c8a6c;
-  --color-accent: #b5811a;
-  --color-primary: #b5811a;
-  --color-accent-hover: #96690f;
+  --color-bg-primary: #f7e6c8;
+  --color-bg-secondary: #eed9b2;
+  --color-bg-tertiary: #f2e0bd;
+  --color-surface: #fff8e8;
+  --color-bg-elevated: #f0dcb6;
+  --color-border: #d9bd8c;
+  --color-border-light: #ead7b3;
+  --color-text-primary: #33210a;
+  --color-text-secondary: #6e4f22;
+  --color-text-tertiary: #9c7c48;
+  --color-accent: #b25e0a;
+  --color-primary: #b25e0a;
+  --color-accent-hover: #914a05;
   --color-success: #4b7a2f;
-  --color-warning: #cf7a15;
+  --color-warning: #d07a00;
   --color-danger: #b0301d;
   --color-danger-hover: #8e2314;
-  --color-deprecated: #8d8272;
-  --shadow-sm: 0 1px 4px rgba(70,50,20,.10);
-  --shadow-md: 0 8px 32px rgba(70,50,20,.16);
-  --shadow-panel: 0 24px 64px rgba(70,50,20,.24), 0 2px 10px rgba(70,50,20,.14);
-  --shadow-control: 0 2px 5px rgba(70,50,20,.22), 0 1px 2px rgba(70,50,20,.14), inset 0 1px 0 rgba(255,255,255,.55);
-  --shadow-card: 0 8px 32px rgba(70,50,20,.16), 0 2px 6px rgba(70,50,20,.13), inset 0 1px 0 rgba(255,255,255,.55);
+  --color-deprecated: #8a7a5e;
+  --shadow-sm: 0 1px 4px rgba(70,45,10,.10);
+  --shadow-md: 0 8px 32px rgba(70,45,10,.16);
+  --shadow-panel: 0 24px 64px rgba(70,45,10,.24), 0 2px 10px rgba(70,45,10,.14);
+  --shadow-control: 0 2px 5px rgba(70,45,10,.22), 0 1px 2px rgba(70,45,10,.14), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-card: 0 8px 32px rgba(70,45,10,.16), 0 2px 6px rgba(70,45,10,.13), inset 0 1px 0 rgba(255,255,255,.55);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
-   Sun at its height, the clockface's red-rust flank: near-white ground, the
-   highest text contrast of any theme, terracotta accent. The one to reach for
-   on a projector or in direct sunlight. */
+   Sun at its height: neutral near-white ground, the highest text contrast of
+   any theme, terracotta accent. The one to reach for on a projector or in
+   direct sunlight. Deliberately the COOL daylight theme — its neutrals carry
+   almost no hue, which is what keeps it distinct from morning’s amber. */
 [data-theme="noon"] {
-  --color-bg-primary: #fbf6f0;
-  --color-bg-secondary: #f2ebe2;
-  --color-bg-tertiary: #f7f1e9;
+  --color-bg-primary: #fbfaf9;
+  --color-bg-secondary: #f1efec;
+  --color-bg-tertiary: #f7f5f3;
   --color-surface: #ffffff;
-  --color-bg-elevated: #f6efe5;
-  --color-border: #ded1c1;
-  --color-border-light: #eee5d9;
+  --color-bg-elevated: #f6f4f1;
+  --color-border: #dbd6d0;
+  --color-border-light: #ebe7e2;
   --color-text-primary: #201612;
   --color-text-secondary: #5a453c;
   --color-text-tertiary: #8f7367;

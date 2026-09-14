@@ -170,45 +170,47 @@
    the same specificity, so order is the only thing making these win.
    ─────────────────────────────────────────────────────────────────── */
 
-/* Morning — parchment and burnished gold, softest contrast. */
+/* Morning — amber parchment: yellow-brown grounds, orange accent, softest
+   contrast of the daylight palettes. */
 [data-theme="morning"] {
-  --md-primary:                 #b5811a;
+  --md-primary:                 #b25e0a;
   --md-on-primary:              #ffffff;
-  --md-primary-container:       #eaddc9;
-  --md-on-primary-container:    #2e2415;
+  --md-primary-container:       #ead7b3;
+  --md-on-primary-container:    #33210a;
 
-  --md-surface:                 #f7efe1;
-  --md-surface-cont-lowest:     #fffaf1;
-  --md-surface-cont-low:        #f3e9d9;
-  --md-surface-cont:            #f1e6d4;
-  --md-surface-cont-high:       #efe4d1;
-  --md-surface-cont-highest:    #eaddc9;
-  --md-on-surface:              #2e2415;
-  --md-on-surface-variant:      #6b5a41;
-  --md-outline:                 #9c8a6c;
-  --md-outline-variant:         #dcccb2;
+  --md-surface:                 #f7e6c8;
+  --md-surface-cont-lowest:     #fff8e8;
+  --md-surface-cont-low:        #f2e0bd;
+  --md-surface-cont:            #f0dcb6;
+  --md-surface-cont-high:       #eed9b2;
+  --md-surface-cont-highest:    #ead7b3;
+  --md-on-surface:              #33210a;
+  --md-on-surface-variant:      #6e4f22;
+  --md-outline:                 #9c7c48;
+  --md-outline-variant:         #d9bd8c;
 
   --md-success:                 #4b7a2f;
-  --md-warning:                 #cf7a15;
+  --md-warning:                 #d07a00;
   --md-error:                   #b0301d;
 }
-/* Noon — near-white, terracotta, the highest contrast of any palette. */
+/* Noon — neutral near-white, terracotta, the highest contrast of any palette.
+   The cool daylight palette; cream here and it reads as morning. */
 [data-theme="noon"] {
   --md-primary:                 #b5451c;
   --md-on-primary:              #ffffff;
   --md-primary-container:       #eee5d9;
   --md-on-primary-container:    #201612;
 
-  --md-surface:                 #fbf6f0;
+  --md-surface:                 #fbfaf9;
   --md-surface-cont-lowest:     #ffffff;
-  --md-surface-cont-low:        #f7f1e9;
-  --md-surface-cont:            #f6efe5;
-  --md-surface-cont-high:       #f2ebe2;
-  --md-surface-cont-highest:    #eee5d9;
+  --md-surface-cont-low:        #f7f5f3;
+  --md-surface-cont:            #f6f4f1;
+  --md-surface-cont-high:       #f1efec;
+  --md-surface-cont-highest:    #ebe7e2;
   --md-on-surface:              #201612;
   --md-on-surface-variant:      #5a453c;
   --md-outline:                 #8f7367;
-  --md-outline-variant:         #ded1c1;
+  --md-outline-variant:         #dbd6d0;
 
   --md-success:                 #2f7d4f;
   --md-warning:                 #c96a00;
