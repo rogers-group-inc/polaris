@@ -4766,7 +4766,12 @@ model NotificationDelivery {
   transport      String // email | webhook | web_push | pushbullet (dispatch routing)
   target         String               @db.Text // email address / push endpoint; "" for fixed-destination channels (URL/token live on the channel)
   // Per-recipient payload snapshot: webhook → { kind }, web_push →
-  // { p256dh, auth }. Destination secrets stay on the channel, NOT here.
+  // { p256dh, auth, surface, userId, fallback?, noAck?, followUp? } — the
+  // keys the endpoint needs plus WHOSE browser it is, stamped by
+  // notificationRecipientService because a 410 prunes the PushSubscription
+  // that would otherwise answer that (the email fallback and the footer line
+  // naming who was pushed both read it). Destination secrets stay on the
+  // channel, NOT here.
   meta           Json?
   status         String               @default("pending") // pending | sent | failed
   attempts       Int                  @default(0)
