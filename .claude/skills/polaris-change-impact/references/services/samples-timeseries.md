@@ -184,7 +184,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - The browser-side collision guard lives in `_outageMarkers`, not here: a marker landing on a real sample is dropped, because the Polaris Agent pushes on its own schedule and is not gated on `monitorStatus`, so an agent host can keep reporting CPU straight through an outage of the server-side probe transport.
-- The dependency grey is duplicated in FOUR places by design — `_CHART_DEP_COLOR` (public/js/assets.js, also read by assets-compare.js), `DEP_COLOR` (public/js/mobile/charts.js) and `DEP_COLOR` (src/utils/sparklineSvg.ts, the alert email) — for the same reason the red is. Change one, change all four, or one outage renders two ways.
+- The dependency grey is duplicated in FOUR places by design — `_CHART_DEP_COLOR` (public/js/assets.js — the response-time chart AND the Last-30-min strip stacked above it, also read by assets-compare.js), `DEP_COLOR` (public/js/mobile/charts.js) and `DEP_COLOR` (src/utils/sparklineSvg.ts, the alert email) — for the same reason the red is. Change one, change all four, or one outage renders two ways.
 - `_outageMarkers` + `_medianCadenceMs` exist in three copies by design (desktop / mobile / compare) — the mobile and compare files say so in their headers. Keep them in step.
 - Adding `outages` to a new chart endpoint means adding it to the renderer too, or the payload grows for nothing.
 - `openToMs` rides a still-failing run out to the window end (a device down as the chart is drawn is down up to the right edge). Only the FINAL run qualifies, and it is a `Math.max` — a window end older than the last failure must never shorten an outage.

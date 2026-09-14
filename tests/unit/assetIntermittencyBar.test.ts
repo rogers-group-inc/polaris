@@ -234,6 +234,25 @@ describe("_intermittencyStates", () => {
     // elsewhere in the product — the trap the old purple sat one shade from.
     expect(map).not.toContain("149,117,205");
   });
+
+  it("greys a miss the upstream explains, and only a miss", () => {
+    const src = assetsLines.join("\n");
+    const map = /var colors = \{([\s\S]*?)\};/.exec(src)![1];
+    // The dependency grey is an OVERLAY on the replay, not a sixth state: the
+    // bucket does not know about suppression (business rule 38 — the probe
+    // keeps running while suppressed, so the misses are real misses) and the
+    // colour is layered on afterwards, the same way the response-time chart
+    // stacked directly below does it in _chartPointColor.
+    expect(map).toMatch(/dep:\s*_hexWithAlpha\(_CHART_DEP_COLOR,/);
+    // One grey across the strip, that chart, and the alert email's chart.
+    expect(/var _CHART_DEP_COLOR = "(#[0-9a-f]{6})";/.exec(src)![1]).toBe("#9aa0a6");
+    // Grey OUTRANKS the amber/down split — a miss nobody is counting against
+    // this device says nothing by sitting near the threshold.
+    expect(src).toContain("var color = st.dep ? colors.dep : (colors[st.status] || colors.unknown);");
+    // …and an ANSWERED probe under a dark parent keeps its green or blue: it is
+    // the one cell that proves the device is still there.
+    expect(src).toMatch(/st\.dep\s*=\s*!st\.success\s*&&/);
+  });
 });
 
 describe("the strip, the response-time chart and the alert email replay ONE machine", () => {
