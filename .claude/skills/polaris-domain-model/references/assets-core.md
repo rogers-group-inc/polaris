@@ -210,6 +210,12 @@ Asset
   -- collector skips any tunnel with a non-empty `parent` field) so they
   -- don't pollute the table or this pinning surface.
   monitoredIpsecTunnels String[]   @default([])
+  -- All three pin arrays gate ALERTING as well as cadence: an automation
+  -- produces readings only for pinned interfaces / mounts / tunnels
+  -- (services/notificationEngine.ts -> interfaceIsPinned() /
+  -- storageIsPinned() / tunnelIsPinned()). Every stream also writes samples
+  -- for the UNPINNED members (cadence="slow"), so the pin is the only thing
+  -- deciding what can raise an alert; un-pinning is how alerting stops.
   -- Asset.status (active/maintenance/decommissioned/...) lifecycle audit.
   -- statusChangedAt is bumped whenever `status` changes value; statusChangedBy
   -- records who/what changed it (username, integration name, or "system").

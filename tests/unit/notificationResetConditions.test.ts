@@ -141,6 +141,11 @@ function mkAsset(id: string, extra: Record<string, unknown> = {}) {
     id, hostname: id, assetType: "server", tags: [], discoveredByIntegrationId: null,
     monitorStatus: "up", status: "active", consecutiveFailures: 0, dependencySuppressed: false,
     quarantinedAt: null, ipAddress: null, manufacturer: null, model: null, os: null,
+    // The mounts these tests tick. Storage readings are pinned-mount only
+    // (storageIsPinned over Asset.monitoredStorage), so an asset with an empty
+    // pin set produces no storage readings at all and every storage assertion
+    // below would pass vacuously.
+    monitoredStorage: ["/var", "/opt"],
     ...extra,
   };
 }
@@ -361,6 +366,19 @@ describe("single-trigger reset conditions — per-dimension resolution", () => {
     await assetTick({ a1: { "/var": 30, "/opt": 90 } });
     expect(dimState("a1", "/var")?.state).toBe("clear");
     expect(dimState("a1", "/opt")?.state).toBe("firing");
+    expect(activeNotifs()).toHaveLength(1);
+  });
+
+  it("an UNPINNED mount raises nothing, however full it is", async () => {
+    // The gate the complaint was about: the storage stream walks every
+    // mountpath and keeps the unpinned ones at cadence="slow", so a
+    // "disk over 80%" rule used to alert on every volume the device happened
+    // to report. Only the mounts the operator marked for monitoring alert.
+    db.assets = [mkAsset("a1", { monitoredStorage: ["/var"] })];
+    db.rules = [baseRule(STORAGE_TRIGGER, { mode: "auto" })];
+    await assetTick({ a1: { "/var": 95, "/opt": 99 } });
+    expect(dimState("a1", "/var")?.state).toBe("firing");
+    expect(dimState("a1", "/opt")).toBeUndefined();
     expect(activeNotifs()).toHaveLength(1);
   });
 

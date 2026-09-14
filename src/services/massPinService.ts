@@ -30,10 +30,11 @@
  *    one chassis must not veto pins on 400 other switches.
  *
  * Deliberate non-actions on unpin (nothing to clean up):
- *  - Alert state: interface/tunnel triggers gate on the pin set
- *    (interfaceIsPinned / tunnelIsPinned), so readings stop and the engine's
- *    clearVanishedStates sweep closes any firing rows; storage triggers have
- *    no pin gate and keep evaluating on slow samples.
+ *  - Alert state: interface/tunnel/storage triggers all gate on the pin set
+ *    (interfaceIsPinned / tunnelIsPinned / storageIsPinned), so readings stop
+ *    and the engine's clearVanishedStates sweep closes any firing rows — which
+ *    is what makes a bulk unpin here safe without an alert-cleanup path of its
+ *    own. Storage was the exception until 2026-09; it no longer is.
  *  - monitorOverrideService recompute: it reads only `monitored`, never pins.
  *  - recordOperatorPinChanges: process/service pins only.
  */

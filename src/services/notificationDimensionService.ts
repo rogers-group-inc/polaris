@@ -250,13 +250,13 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
   },
   mountPathPattern: {
     // The operator-pinned set (`Asset.monitoredStorage`), mirroring
-    // ifNamePattern. Unlike interfaces this narrows what is OFFERED without
-    // narrowing what can fire: the storage stream walks every mountpath and
-    // stamps unpinned rows `cadence:"slow"` (24h retention, never rolled up), so
-    // the engine has no pin gate here and a stored rule on an unpinned mount
-    // still evaluates. Offering those mounts is the problem — a 7-day average
-    // over a 24-hour retention window reads almost nothing, so the picker steers
-    // to the mounts that actually keep history.
+    // ifNamePattern — and since 2026-09 for the same reason rather than a
+    // weaker one: all three storage resolvers gate on `storageIsPinned`, so an
+    // unpinned mount is a filter that can never fire. The sample table is not
+    // the source for the usual reason (it carries every mountpath the device
+    // reports — unpinned rows ride `cadence:"slow"`, 24h, never rolled up, so
+    // reading it would offer mounts that neither fire nor keep enough history
+    // for a 7-day average) and because a pin can exist before the first scrape.
     noun: "monitored storage mounts",
     strict: false,
     candidateWhere: { monitoredStorage: { isEmpty: false } },
