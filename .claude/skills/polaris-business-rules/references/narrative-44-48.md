@@ -967,3 +967,116 @@ change on the day it ships, and the fleet it changes is the one that never pinne
 Each of the three cutovers carried the same warning, and the storage one is the reason it is
 written into the rule: check the storage automations against their scoped devices' pin arrays
 BEFORE the release, not after the alerts stop.
+
+<a id="rule-58"></a>
+
+## Rule 58 — A tag that names no region strands the ranking, so level routing abstains
+
+### The automation that was working
+
+A FortiSwitch down automation, scoped `model contains FortiSwitch`, with one notify action
+routing to a named engineer plus **"Asset's L1 Region Users"**. It had been in service for
+weeks. The named engineer got every alert. The site techs got none of them, and nobody could
+say why: the switch carried its region tag, the tech carried the same region on their account,
+and the pill in the wizard said L1.
+
+Every check available in the UI agreed the rule was correct. It was not.
+
+### What level routing actually does with a tag it cannot place
+
+`deviceRegionsAtLevels` ranks ASSET-RELATIVE levels — level 1 is the device's own innermost
+region, each step out follows a containment edge. "Innermost" is established structurally: seed
+`present` from the asset's tags **intersected with the region catalogue**, then drop any entry
+that is an ancestor of another entry. What survives is the leaf.
+
+The intersection is the trap. A tag naming no current region cannot be located in the
+containment forest, so it was dropped from the seed and the ranking proceeded over whatever was
+left. The function's docstring called this "contributes nothing", and for an asset whose ONLY
+tag was orphaned that was true — it returned `[]`.
+
+For an asset carrying a division tag as well, it was false in the worst available direction.
+Dropping the leaf leaves the division as the innermost surviving entry, so the division
+**becomes level 1**. The automation does not fall silent. It pages the wrong tier, confidently.
+
+### Why nothing surfaced it
+
+Every surface an operator can inspect kept saying the rule was fine:
+
+- the stale tag still renders on the asset page, indistinguishable from a live one;
+- the automation stays enabled and its deliveries all succeed;
+- `Notification.regionTags` faithfully records the tag that was on the asset;
+- `notification_deliveries.status` reads `sent`;
+- the recipients who DO receive it are real people with a plausible claim to the alert.
+
+Only the tier is wrong, and a tier is not a thing any page displays. The wizard cannot warn
+either: it resolves dynamic recipients at FIRE time by design, so at authoring time there is
+nothing to check.
+
+### The prod case, 2026-09-14
+
+Region `Middle Tennessee` had been retired under rule 54 — and the surviving asset tags spelled
+it `Middle Tenneessee`, with four e's, so even redrawing it under the correct name would not
+have matched. 3,587 FortiSwitches carried it alongside `region:Southern Division`.
+
+Every down alert on those switches resolved L1 to `Southern Division` and mailed the two
+division contacts. The two people scoped to the site were never reached. The automation had
+been "working" for weeks.
+
+Finding it took none of the UI. It took reading `notification_deliveries.target` for a recent
+alert, then checking each of the asset's `region:` tags against the names in the `mapRegions`
+Setting blob — at which point the pattern was total: **every asset whose leaf tag was in the
+catalogue paged its local tech; every asset whose leaf tag was orphaned paged the division.**
+No exceptions in the sample.
+
+Redrawing the region fixed the data (`applyRename` rotates asset and subnet tags,
+`renameRegionInPrincipalScopes` rotates user, role and group-mapping tags — all three sides
+moved, and the fleet went to zero orphaned tags). It did nothing about the mechanism, which
+would strand the next automation the next time a region is renamed.
+
+### The rule
+
+`deviceRegionsAtLevels` returns `[]` for **every** requested level when `orphanedRegionTags`
+finds any tag it cannot place. Not just the level the stranded leaf would have occupied — the
+whole ranking is untrustworthy once one member of it is unplaceable, since any higher level may
+also have shifted inward by one.
+
+**The abstention is scoped to the level arm.** `recipientUserIds`, `recipientRoles`,
+`recipientRegions`, `recipientDeviceRegion`, `recipientTags` and address-book contacts on the
+same action all still resolve. The alert is never lost — only the level-scoped tier is withheld,
+until someone rotates the tag or redraws the region. Withholding one tier is recoverable;
+paging the wrong one teaches people the alert means something it does not.
+
+### The alternative that was rejected
+
+Treating an orphaned tag as an opaque leaf — letting it hold level 1 and resolve against users
+by name — matches operator intent most closely, and was the first instinct. It was rejected
+because an unplaceable name has no containment edge: the catalogue-known tags would have to
+shift outward to start at level 2, silently redefining what every HIGHER level means on exactly
+the assets that are already misconfigured. Trading one silent repointing for another is not a
+fix. Abstain, and say so.
+
+### Three silences, three lines
+
+The level arm can reach nobody three ways, and they are indistinguishable from outside while
+being fixed completely differently:
+
+| Log line | What it means | The fix |
+|---|---|---|
+| `region-level routing abstained` | a tag names no map region | rotate the stale tag, or redraw the region |
+| `region-level routing resolved no regions` | the asset's nesting is shallower than the level asked for | pick a level the tree actually has |
+| `region-level routing matched regions but no users` | the regions exist; nobody is scoped to them | tag a person |
+
+The same pass gave the email branch the warning its `web_push` sibling has had all along. A
+recipient resolved by ANY arm whose account carries no email address is dropped silently by
+`buildAddressOwnerMap`, and the builder only ever warned about missing PUSH devices — so an
+SSO-provisioned account with no mail claim looks perfectly correct on the Users page and can
+never be mailed. `email target matched users but none have an email address` is now said out
+loud.
+
+### When changing this
+
+The diagnostic path is worth keeping: `notification_deliveries.target` for a recent alert on
+the asset, each `region:` tag checked against the `mapRegions` blob, then the users whose
+`region_tags ∪ role.region_tags` carry that name. Region routing has no read-only surface that
+answers "who would this reach" — until it does, that join is the answer, and rule 54's
+`mapRegionRetiredNames` list is where a stranded name is most likely to be explained.

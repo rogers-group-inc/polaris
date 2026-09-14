@@ -182,4 +182,47 @@ describe("recipientDeviceRegionLevels routing", () => {
     );
     expect(createdRows).toHaveLength(0);
   });
+
+  it("ABSTAINS instead of paging the division when the leaf tag names no region", async () => {
+    // Business rule 58, reproduced at the level the incident happened. The
+    // asset sits in a region whose polygon was renamed away, so its leaf tag
+    // is stranded (rule 54) while the division tag still resolves. Pre-58 the
+    // stranded tag was dropped and "South" became L1 — so this action mailed
+    // south@example.com, and the Nashville tech who owns the site heard
+    // nothing. Nothing in the UI said so: the tag still rendered on the asset.
+    await executeActions(
+      "n1",
+      [{ type: "notify", channelId: "c1", recipientDeviceRegionLevels: [1] } as never],
+      CTX,
+      { assetRegionTags: ["Middle Tenneessee", "South"] },
+    );
+    expect(createdRows).toHaveLength(0);
+  });
+
+  it("abstains at EVERY level, not just the one the stranded leaf would hold", async () => {
+    await executeActions(
+      "n1",
+      [{ type: "notify", channelId: "c1", recipientDeviceRegionLevels: [1, 2] } as never],
+      CTX,
+      { assetRegionTags: ["Middle Tenneessee", "South"] },
+    );
+    expect(createdRows).toHaveLength(0);
+  });
+
+  it("leaves the OTHER recipient arms of the same action untouched", async () => {
+    // The abstention is scoped to the level arm — an alert must not lose the
+    // people who were named outright just because a tag went stale.
+    await executeActions(
+      "n1",
+      [{
+        type: "notify",
+        channelId: "c1",
+        recipientUserIds: ["u-south"],
+        recipientDeviceRegionLevels: [1],
+      } as never],
+      CTX,
+      { assetRegionTags: ["Middle Tenneessee", "South"] },
+    );
+    expect(recipients()).toEqual(["south@example.com"]);
+  });
 });

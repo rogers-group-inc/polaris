@@ -19,6 +19,7 @@
 import { describe, it, expect } from "vitest";
 import {
   deviceRegionsAtLevels,
+  orphanedRegionTags,
   MAX_DEVICE_REGION_LEVELS,
   type RegionLevelIndex,
 } from "../../src/services/regionHierarchyService.js";
@@ -102,11 +103,22 @@ describe("deviceRegionsAtLevels", () => {
     expect(deviceRegionsAtLevels(["Nashville", "Memphis"], [2], IX)).toEqual(["South"]);
   });
 
-  it("contributes nothing for a tag outside the catalogue", () => {
-    // A hand-typed tag, or a region renamed since the alert fired. Same
-    // pre-existing gap plain recipientDeviceRegion has.
+  it("ABSTAINS when any tag is outside the catalogue, rather than ranking the rest", () => {
+    // Business rule 58, and the incident behind it. Before this, the orphaned
+    // leaf was dropped and the ranking computed over what remained — so
+    // ["South", "Atlantis"] resolved L1 to "South" and the automation paged the
+    // DIVISION while the site's own people heard nothing. Prod ran that way on
+    // 3,587 assets under a dead region name.
     expect(deviceRegionsAtLevels(["Atlantis"], [1], IX)).toEqual([]);
-    expect(deviceRegionsAtLevels(["Atlantis", "Nashville"], [1], IX)).toEqual(["Nashville"]);
+    expect(deviceRegionsAtLevels(["South", "Atlantis"], [1], IX)).toEqual([]);
+    expect(deviceRegionsAtLevels(["Atlantis", "Nashville"], [1], IX)).toEqual([]);
+    // Every level, not just the one the leaf would have occupied.
+    expect(deviceRegionsAtLevels(["Atlantis", "Nashville"], [1, 2, 3], IX)).toEqual([]);
+  });
+
+  it("still resolves normally when every tag is in the catalogue", () => {
+    // The abstention must not cost the ordinary case anything.
+    expect(deviceRegionsAtLevels(["Nashville", "South"], [1], IX)).toEqual(["Nashville"]);
   });
 
   it("returns nothing for empty or absent input", () => {
@@ -130,5 +142,31 @@ describe("deviceRegionsAtLevels", () => {
 
   it("treats a duplicated snapshot tag once", () => {
     expect(deviceRegionsAtLevels(["Nashville", "region:Nashville", "NASHVILLE"], [1], IX)).toEqual(["Nashville"]);
+  });
+});
+
+describe("orphanedRegionTags", () => {
+  it("names the tags that match no region", () => {
+    expect(orphanedRegionTags(["Nashville", "Atlantis"], IX)).toEqual(["Atlantis"]);
+  });
+
+  it("is empty when every tag is in the catalogue", () => {
+    expect(orphanedRegionTags(["Nashville", "South"], IX)).toEqual([]);
+    expect(orphanedRegionTags([], IX)).toEqual([]);
+    expect(orphanedRegionTags(undefined, IX)).toEqual([]);
+  });
+
+  it("matches the prefix/case rules the rest of region routing uses", () => {
+    expect(orphanedRegionTags(["region:NASHVILLE"], IX)).toEqual([]);
+  });
+
+  it("reports the operator's own spelling, so a log line is searchable", () => {
+    // The caller prints this into a warning; normalizing it would hand the
+    // operator a string that appears nowhere in their data.
+    expect(orphanedRegionTags(["region:Middle Tenneessee"], IX)).toEqual(["region:Middle Tenneessee"]);
+  });
+
+  it("reports each distinct tag once", () => {
+    expect(orphanedRegionTags(["Atlantis", "ATLANTIS", "region:Atlantis"], IX)).toEqual(["Atlantis"]);
   });
 });
