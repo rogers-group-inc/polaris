@@ -47,6 +47,11 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  /* Nothing in the app paints --shadow-sm any more: it was the cards' shadow,
+     and a 4px blur under a box hundreds of pixels wide is invisible on the
+     daylight pair, which is what --shadow-card below replaced. Kept because the
+     portable kit (design/POLARIS-UI-GUIDE.md) declares it; reach for
+     --shadow-card on a new card, not for this. */
   --shadow-sm: 0 1px 4px rgba(0,0,0,.3);
   --shadow-md: 0 8px 32px rgba(0,0,0,.5);
   /* Drop shadow for a frosted panel that floats free of a screen edge — the
@@ -68,6 +73,22 @@
      is all but invisible, which is correct — it is kept in every theme so the
      token stays one value rather than a per-family fork. */
   --shadow-control: 0 3px 8px rgba(0,0,0,.85), 0 1px 3px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.08);
+  /* Drop shadow for the big opaque surfaces that sit ON the page and hold
+     content: every card, the dashboard widgets, the map and graph canvases.
+     These carried --shadow-sm or nothing at all, and on the daylight pair
+     --shadow-sm is a 4px blur at .10 alpha under a box hundreds of pixels
+     wide — invisible, so the cards read as flat cutouts beside the buttons and
+     tables that clearly float.
+     Two drop layers, for the reason --shadow-panel has two: across a surface
+     this wide the 32px halo alone only tints the ground, and the tight second
+     layer is what draws the edge. The third layer is the inset TOP RIM that
+     --shadow-control documents — in the dark family the ground is near-black,
+     so no drop shadow has anything to darken and the 1px light edge is the only
+     thing that reads as raised. Kept in every theme so the token stays one
+     value; on the daylight pair the drop does the work and the rim is subtle.
+     Distinct from --shadow-md, which stays the value for surfaces that float
+     OVER the page (menus, dropdowns) and must not carry a rim. */
+  --shadow-card: 0 8px 32px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.05);
   /* ── Frosted panel surfaces ────────────────────────────────────────────────
      Modals and slide-overs are 50% of the theme's own panel colour over a
      blurred backdrop, so the page stays faintly legible behind them. Declared
@@ -268,6 +289,7 @@ code {
   --shadow-md: 0 8px 32px rgba(70,50,20,.16);
   --shadow-panel: 0 24px 64px rgba(70,50,20,.24), 0 2px 10px rgba(70,50,20,.14);
   --shadow-control: 0 2px 5px rgba(70,50,20,.22), 0 1px 2px rgba(70,50,20,.14), inset 0 1px 0 rgba(255,255,255,.55);
+  --shadow-card: 0 8px 32px rgba(70,50,20,.16), 0 2px 6px rgba(70,50,20,.13), inset 0 1px 0 rgba(255,255,255,.55);
 }
 
 /* ─── Noon ───────────────────────────────────────────────────────────────────
@@ -297,6 +319,7 @@ code {
   --shadow-md: 0 8px 32px rgba(40,20,10,.18);
   --shadow-panel: 0 24px 64px rgba(40,20,10,.26), 0 2px 10px rgba(40,20,10,.15);
   --shadow-control: 0 2px 5px rgba(40,20,10,.24), 0 1px 2px rgba(40,20,10,.15), inset 0 1px 0 rgba(255,255,255,.6);
+  --shadow-card: 0 8px 32px rgba(40,20,10,.18), 0 2px 6px rgba(40,20,10,.14), inset 0 1px 0 rgba(255,255,255,.6);
 }
 
 /* ─── Nightfall ──────────────────────────────────────────────────────────────
@@ -329,6 +352,10 @@ code {
   --shadow-md: 0 8px 32px rgba(0,0,0,.6);
   --shadow-panel: 0 24px 64px rgba(0,0,0,.7), 0 2px 10px rgba(0,0,0,.5);
   --shadow-control: 0 3px 8px rgba(0,0,0,.9), 0 1px 3px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.08);
+  /* Nightfall's ground (#0d0d1c) is the darkest of the three, so the drop is
+     pushed hardest and still does almost nothing — the inset rim is carrying
+     this one, and it is a hair brighter here than in the :root dark base. */
+  --shadow-card: 0 8px 32px rgba(0,0,0,.65), 0 2px 6px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
 }
 
 /* ─── Layout ───────────────────────────────────────────────────────────────── */
@@ -1250,7 +1277,7 @@ code {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1rem 1.25rem;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 .card-title {
   font-size: 0.75rem;
@@ -1273,6 +1300,7 @@ code {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 14px 16px;
+  box-shadow: var(--shadow-card);
 }
 .kpi-label {
   font-size: 0.68rem;
@@ -2948,7 +2976,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 1.25rem;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 .integration-card-header {
   display: flex;
@@ -3062,6 +3090,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   padding: 3rem;
   text-align: center;
   color: var(--color-text-secondary);
+  box-shadow: var(--shadow-card);
 }
 
 /* ─── Conflict Comparison Table ───────────────────────────────────────────── */
@@ -3623,7 +3652,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   border-radius: var(--radius-lg);
   padding: 1.25rem;
   margin-bottom: 1rem;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
 }
 .settings-cards-row {
   display: grid;
@@ -4826,6 +4855,11 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   flex-direction: column;
   min-height: 0;          /* allow body to shrink */
   overflow: hidden;
+  /* Same lift as every other card — the "match .table-wrapper" above had gone
+     only as far as the background, leaving the whole Dashboard and the Dash
+     wallboard flat. overflow:hidden clips the widget's own content, not its
+     drop shadow, and the token's inset rim draws inside the border box. */
+  box-shadow: var(--shadow-card);
 }
 /* The dragged widget lifts with a shadow while moving. */
 .dashboard-widget.lifted {

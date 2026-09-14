@@ -83,10 +83,25 @@ before that each rule picked its own background and shadow.
 [public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body),
 `--panel-glass-chrome` (their header/footer bands), `--menu-glass-bg` (every menu),
 `--panel-glass-blur` (the `backdrop-filter` value all of them share), `--shadow-panel` (a
-frosted surface floating free of a screen edge) and `--shadow-control` (buttons, page search
-and filter fields, anything small resting on the page).
+frosted surface floating free of a screen edge), `--shadow-control` (buttons, page search
+and filter fields, anything small resting on the page) and `--shadow-card` (the big opaque
+content surfaces resting on the page — every card, the dashboard widgets, the map and graph
+canvases).
 
 **Key conventions:**
+- **Four elevation tokens, one per kind of surface — pick by what the surface IS.**
+  `--shadow-panel` floats free over a scrim; `--shadow-md` floats over the page (menus,
+  dropdowns, `.table-wrapper`); `--shadow-control` is small chrome resting on it;
+  `--shadow-card` is a big opaque box resting on it. `--shadow-sm` is retired — nothing in
+  `public/` paints it, and it survives in the token block only because the portable kit
+  declares it. A new card takes `--shadow-card`; reaching for `--shadow-sm` reproduces
+  exactly the bug that retired it (a 4px blur at .10 alpha under a 300px-wide box is
+  invisible on the daylight pair, so every card read as a flat cutout beside buttons and
+  tables that clearly floated).
+- **A wide surface needs two drop layers.** Across a card the 32px halo alone only tints the
+  ground; the tight second layer is what draws the edge. `--shadow-panel` and `--shadow-card`
+  both carry the pair for this reason, `--shadow-control` does not because at 20-36px tall a
+  wide halo just muddies the ground.
 - **Derive, never hardcode a new background.** The glass tokens are `color-mix()` declared
   ONCE on `:root`; a custom property substitutes `var()` at the element it is declared on, and
   every theme block also targets the root element, so each theme's own `--color-bg-*` values
@@ -111,8 +126,11 @@ and filter fields, anything small resting on the page).
   the moment it is focused.
 - **In the dark family the drop shadow is the inset rim.** The nightfall ground is `#0d0d1c`,
   so a black shadow has almost nothing to darken and stays invisible however far its alpha is
-  pushed; `--shadow-control`'s third layer is a 1px inset top highlight, and that is what
-  actually reads as raised. Any future elevation token for the dark themes needs the same.
+  pushed; `--shadow-control`'s and `--shadow-card`'s third layer is a 1px inset top highlight,
+  and that is what actually reads as raised. Any future elevation token for the dark themes
+  needs the same. It is worth saying plainly that a card in the dark family reads as raised
+  only just — that is the ceiling, not a tuning miss, and the answer to "make it stronger" is
+  a brighter rim, never a blacker drop.
 - **A transparent box inside a frosted panel becomes a window.** `.tag-picker` declared a
   border and no background, which was invisible while modals were opaque and showed the
   blurred page through the tag chips the moment they were not. When adding a container inside
