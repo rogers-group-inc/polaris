@@ -1323,3 +1323,78 @@ touching the login limiter on the way. And it accepts **local accounts only**, r
 other `authProvider` with the reason rather than a bare 400: for an SSO, LDAP or App Proxy
 account the directory owns the credential, and Polaris changing a local hash for such a user
 would write a password that no login path consults.
+
+---
+
+## Rule 62 — An install is identified by something it persists, never by the name the runtime handed the process
+
+Polaris has no leader election. Two web roles against one database double-poll every device,
+duplicate every alert, and race each other on `Asset.monitorStatus` — so four layers exist to
+make that impossible rather than merely discouraged (docs/HA.md §5). The active-instance
+heartbeat is the fourth and last, and the only one that can see the case the other three
+cannot: two hosts deliberately pointed at **one** database. It works by writing
+`Setting("ha.activeInstance")` every 30 seconds and refusing to boot when somebody *else*
+holds a stamp younger than 90.
+
+Everything about that turns on the word "else", and for its first release the answer was
+`os.hostname()`.
+
+On a container, a hostname is not a name. It is the container id, and the runtime mints a new
+one every time the container is recreated — which is precisely what an image upgrade does. So
+the sequence on every Docker upgrade was: the old container stamps, stops; the new container
+starts, reads a stamp sixteen seconds old bearing a name that is not its own, concludes a
+second Polaris is live, and exits 1.
+
+```
+"holder":"722cd35333e9","stampAgeMs":16088,"msg":"Refusing to start: another host holds a
+fresh active-instance heartbeat on this database."
+```
+
+One install. One database. No second instance anywhere on the network. The guard was not
+malfunctioning — it was answering the question it had been asked, and the question was wrong.
+
+What made it more than a nuisance is where it stopped. Under `restart: unless-stopped` the
+container retries and the stamp goes stale within ninety seconds, so the install comes up a
+minute late and the operator sees a scary log line about an instance that does not exist.
+Under a restart policy that does not retry — Unraid's one-shot container start, a plain
+`docker run`, a foreground `compose up` that the operator Ctrl-C'd — it stops there. The
+application is simply down, after an upgrade, with a fatal message accusing a second host.
+
+The fix is to notice that the guard never wanted the process's name. It wanted to know which
+**install** is running the schedulers, and an install's lifetime is the lifetime of its state
+directory: the bind mount under Docker and Unraid, the install root on RHEL. So
+`resolveInstanceId()` reads `POLARIS_HA_INSTANCE_ID` if the operator set one, otherwise a uuid
+it generates once into `<STATE_DIR>/data/instance-id` and reuses forever after. A recreated
+container, a cycled systemd unit and an in-app self-update all keep the same id; two hosts
+pointed at one database still have two state directories, so the guard's real case is
+completely unaffected. Only when that file cannot be written at all does it fall back to the
+hostname, and then it logs a warning that names the consequence rather than failing the boot —
+a bookkeeping row must never be the reason an application cannot start.
+
+**The compatibility rule is deliberately the unfriendly one.** A stamp with no `instanceId`
+was written by a release that predates the field, which means the peer that wrote it may
+genuinely be a second live instance. Treating an unrecognized stamp as "probably me" would
+reopen exactly the hole the layer exists to close, so an id-less stamp still compares on
+hostname and still blocks. That costs one ninety-second wait on the upgrade that introduces
+the id — the last one — and nothing after it.
+
+**The second half of the fix is the shutdown.** A stamp outliving the process it describes is
+what makes the window necessary at all, so `releaseActiveInstance()` now runs in the
+SIGTERM/SIGINT handler and deletes the row. Two constraints shape it: it deletes only a stamp
+that is *ours*, because a peer's live claim is the entire point of the mechanism, and it
+latches a flag so a heartbeat tick already in flight cannot write the row back behind the
+successor. A `kill -9`, an OOM kill or a host reset still leave the stamp behind — which is
+correct, because those are the cases where nobody knows whether the old process is really
+gone, and the ninety-second window is the right answer to that question.
+
+**And there is a trap that this fix creates on the way past.** The HA standby keeps itself
+warm by rsyncing `/opt/polaris` from the primary, and `deploy/ha/ha-rsync-exclude` is a
+deny-list: everything not named in it **is** copied, node_modules and built agent binaries
+included, deliberately, so a promoted standby does not have to run `npm ci` before it can
+serve. A per-install identity file dropped into that tree without an exclude line would be
+copied to the standby — and then both nodes would present the same identity, and layer 5 would
+stop being able to tell them apart at all. The failure would never be visible: a guard that
+correctly never fires and a guard that *cannot* fire produce byte-identical behaviour right up
+until the day two instances really do run at once. Hence the exclude entry, the lockstep row in
+`polaris-deploy` → high-availability.md, and the general form of the rule — anything that
+identifies a node belongs on that deny-list the moment it is created.

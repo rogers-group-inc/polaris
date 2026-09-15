@@ -26,7 +26,7 @@
  * The same tick also samples the WAL position, which is what sizes the WAN
  * link and the replication slot cap before HA is ever enabled.
  *
- * ── Why identity is NOT the hostname ─────────────────────────────────────────
+ * ── Why identity is NOT the hostname (business rule 62) ──────────────────────
  * It was, and on Docker that made every image upgrade look like a second host.
  * A container's hostname is its container ID, which the runtime regenerates on
  * every recreate — so the new container read the stamp the old one had written

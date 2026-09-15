@@ -28,7 +28,7 @@ what the load balancer monitors.
   web roles double every poll and duplicate every alert. Nothing here is
   fixable by configuration; four layers make it impossible instead — see
   docs/HA.md §5. **Do not "improve" any of them without reading that section.**
-- **Layer 5 identifies an INSTALL by a file the standby must not copy.**
+- **Layer 5 identifies an INSTALL by a file the standby must not copy** (business rule 62).
   `<STATE_DIR>/data/instance-id` (on RHEL: `/opt/polaris/data/instance-id`) is
   generated per node on first boot and excluded in `deploy/ha/ha-rsync-exclude`.
   The exclude file's default is SYNCED, so a future identity file added without
