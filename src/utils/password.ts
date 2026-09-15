@@ -4,9 +4,11 @@
  * Call sites:
  *   - hashPassword() — every place a new/updated password is stored
  *   - verifyPassword() — every place a stored password is checked
+ *   - passwordPolicySchema — every route that accepts a NEW password
  */
 
 import { hash as argonHash, verify as argonVerify, Algorithm } from "@node-rs/argon2";
+import { z } from "zod";
 
 // OWASP 2024 second-option params — ~50ms/login on commodity hardware, good
 // GPU resistance via 19 MiB of memory per hash. Bump memoryCost to 65536 and
@@ -23,6 +25,24 @@ const ARGON2_PARAMS = {
 // time matches the valid-user-wrong-password path — prevents username
 // enumeration via timing analysis on the login endpoint.
 const DUMMY_HASH: Promise<string> = argonHash("__polaris_timing_dummy__", ARGON2_PARAMS);
+
+/**
+ * The house password-complexity policy, as a Zod schema.
+ *
+ * It lives here rather than beside a route because three surfaces enforce the
+ * same bar and carried three verbatim copies of it: `api/routes/users.ts`
+ * (admin create + admin reset), `setup/setupRoutes.ts` (the first admin the
+ * wizard mints) and `api/routes/auth.ts` (a user changing their own). A fourth
+ * copy is how the rules drift apart. The client-side checklist in
+ * `public/js/password-self.js` mirrors these five rules and says so — it is a
+ * courtesy, and this schema is the enforcement.
+ */
+export const passwordPolicySchema = z.string()
+  .min(8, "Password must be at least 8 characters")
+  .regex(/[a-z]/, "Password must contain a lowercase letter")
+  .regex(/[A-Z]/, "Password must contain an uppercase letter")
+  .regex(/[0-9]/, "Password must contain a number")
+  .regex(/[^a-zA-Z0-9]/, "Password must contain a special character");
 
 /** Produce a new argon2id hash for a plaintext password. */
 export async function hashPassword(plaintext: string): Promise<string> {

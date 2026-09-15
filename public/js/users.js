@@ -1076,65 +1076,19 @@ function copyField(id, btn) {
 }
 
 // ─── Password Complexity ──────────────────────────────────────────────────
+//
+// The rules and their checklist live in public/js/password-self.js, which is
+// loaded on every page because the account menu's Change Password modal needs
+// them too. These five names are the call sites this page already had; they
+// forward, so there is one copy of the regexes on the client and one
+// `passwordPolicySchema` on the server to match it against.
 
-var _pwRules = [
-  { key: "length",  label: "At least 8 characters",  test: function (p) { return p.length >= 8; } },
-  { key: "lower",   label: "Lowercase letter",        test: function (p) { return /[a-z]/.test(p); } },
-  { key: "upper",   label: "Uppercase letter",        test: function (p) { return /[A-Z]/.test(p); } },
-  { key: "number",  label: "Number",                  test: function (p) { return /[0-9]/.test(p); } },
-  { key: "special", label: "Special character",        test: function (p) { return /[^a-zA-Z0-9]/.test(p); } },
-];
-
-function passwordChecksHTML(containerId) {
-  var html = '<div id="' + containerId + '" style="margin-top:0.4rem;font-size:0.8rem;line-height:1.6;color:var(--color-text-tertiary)">';
-  _pwRules.forEach(function (r) {
-    html += '<div data-rule="' + r.key + '"><span class="pw-icon">&#9675;</span> ' + r.label + '</div>';
-  });
-  return html + '</div>';
-}
-
-function wirePasswordChecks(inputId, containerId) {
-  document.getElementById(inputId).addEventListener("input", function () {
-    checkPasswordField(this.value, containerId);
-  });
-}
-
-function checkPasswordField(pw, containerId) {
-  var allPassed = true;
-  _pwRules.forEach(function (r) {
-    var passed = r.test(pw);
-    if (!passed) allPassed = false;
-    var el = document.querySelector('#' + containerId + ' [data-rule="' + r.key + '"]');
-    if (el) {
-      el.querySelector(".pw-icon").innerHTML = passed ? "&#10003;" : "&#9675;";
-      el.style.color = passed ? "var(--color-success, #4caf50)" : "var(--color-text-tertiary)";
-    }
-  });
-  return allPassed;
-}
-
-function passwordMatchHTML(containerId) {
-  return '<div id="' + containerId + '" style="margin-top:0.4rem;font-size:0.8rem;line-height:1.6;color:var(--color-text-tertiary)">' +
-    '<span class="pw-icon">&#9675;</span> Matches password' +
-    '</div>';
-}
-
-function wirePasswordMatch(passwordId, confirmId, containerId) {
-  function update() {
-    checkPasswordMatch(document.getElementById(passwordId).value, document.getElementById(confirmId).value, containerId);
-  }
-  document.getElementById(passwordId).addEventListener("input", update);
-  document.getElementById(confirmId).addEventListener("input", update);
-}
-
-function checkPasswordMatch(pw, confirm, containerId) {
-  var el = document.getElementById(containerId);
-  if (!el) return false;
-  var matched = confirm.length > 0 && pw === confirm;
-  el.querySelector(".pw-icon").innerHTML = matched ? "&#10003;" : "&#9675;";
-  el.style.color = matched ? "var(--color-success, #4caf50)" : "var(--color-text-tertiary)";
-  return matched;
-}
+function passwordChecksHTML(containerId) { return PolarisPasswordSelf.rulesHTML(containerId); }
+function wirePasswordChecks(inputId, containerId) { PolarisPasswordSelf.wire(inputId, containerId); }
+function checkPasswordField(pw, containerId) { return PolarisPasswordSelf.check(pw, containerId); }
+function passwordMatchHTML(containerId) { return PolarisPasswordSelf.matchHTML(containerId); }
+function wirePasswordMatch(pwId, confirmId, containerId) { PolarisPasswordSelf.wireMatch(pwId, confirmId, containerId); }
+function checkPasswordMatch(pw, confirm, containerId) { return PolarisPasswordSelf.checkMatch(pw, confirm, containerId); }
 
 // ─── Roles section ─────────────────────────────────────────────────────────
 

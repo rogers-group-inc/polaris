@@ -1442,6 +1442,9 @@ const api = {
   },
   auth: {
     me: () => request("GET", "/auth/me"),
+    // Self-service. Body: { currentPassword, newPassword }. Local accounts
+    // only; the admin-side reset is api.users.resetPassword().
+    changePassword: (body) => request("PUT", "/auth/password", body),
     azureConfig: () => request("GET", "/auth/azure/config"),
     azureSettings: () => request("GET", "/auth/azure/settings"),
     updateAzureSettings: (body) => request("PUT", "/auth/azure/settings", body),

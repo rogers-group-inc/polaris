@@ -5,7 +5,7 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
-import { hashPassword, verifyPassword } from "../../utils/password.js";
+import { hashPassword, verifyPassword, passwordPolicySchema } from "../../utils/password.js";
 import { isLocked, lockoutRemaining, recordFailure, clearLockout } from "../../utils/loginLockout.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import {
@@ -64,7 +64,7 @@ import { normalizeNotificationPreference } from "../../services/notificationPref
 import { normalizeUserTimezone, serverTimeZone } from "../../services/userTimezoneService.js";
 import { resolveTagScopesForUser } from "../../services/regionScopeService.js";
 import { isBlockedOutboundHost } from "../../utils/netGuard.js";
-import { totpCodeLimiter, ssoEntryLimiter, entraProxyLoginLimiter, ssoCallbackLimiter } from "../middleware/rateLimits.js";
+import { totpCodeLimiter, ssoEntryLimiter, entraProxyLoginLimiter, ssoCallbackLimiter, passwordChangeLimiter } from "../middleware/rateLimits.js";
 import { safeNextPath } from "../../utils/safeRedirect.js";
 import {
   takeLoginTarget,
@@ -953,6 +953,116 @@ router.post("/entra-proxy/test", requireAuth, requirePermission("serverSettingsS
 // Endpoints for the logged-in user to enroll / confirm / disable their own
 // second factor. Admin-initiated reset for *another* user lives under
 // /users/:id/totp (see routes/users.ts).
+
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: passwordPolicySchema,
+});
+
+/**
+ * Rotate the session ID while keeping the caller logged in.
+ *
+ * `regenerateSession` on its own would strand the page: every field the app
+ * reads off the session (identity, role snapshot, mfaVerified) lives in the
+ * object it throws away, and so does `csrfToken` — which the csrf middleware
+ * already mirrored into a response cookie EARLIER in this same request, from
+ * the OLD session. A fresh token minted on the next request would then
+ * disagree with the cookie the still-open page is holding, and the user's next
+ * save would 403 until they reloaded. So the identity fields and the CSRF
+ * token are carried across deliberately: the ID rotates, the page does not
+ * notice.
+ */
+async function rotateSessionKeepingIdentity(req: Request): Promise<void> {
+  const carried = { ...req.session } as Record<string, unknown>;
+  await regenerateSession(req);
+  for (const [key, value] of Object.entries(carried)) {
+    if (key === "cookie") continue; // express-session owns the new one
+    (req.session as unknown as Record<string, unknown>)[key] = value;
+  }
+  req.session.lastActivity = Date.now();
+}
+
+/**
+ * Drop every OTHER live session belonging to this user from the
+ * connect-pg-simple store. This is the point of changing a password after a
+ * suspected compromise: the new password is worthless while whoever learned
+ * the old one still holds a valid cookie.
+ *
+ * Best-effort by design — the same reasoning as `getOnlineUserIds` in
+ * users.ts: the session table is owned by connect-pg-simple, not by Prisma's
+ * schema, so a read or write against it must never be the thing that fails a
+ * password change that has already been committed.
+ */
+async function revokeOtherSessions(userId: string, keepSid: string): Promise<number> {
+  try {
+    const rows = await prisma.$queryRaw<{ sid: string; sess: unknown }[]>`
+      SELECT sid, sess FROM session WHERE expire > NOW()
+    `;
+    const doomed = rows
+      .filter((r) => r.sid !== keepSid && (r.sess as { userId?: unknown } | null)?.userId === userId)
+      .map((r) => r.sid);
+    if (!doomed.length) return 0;
+    await prisma.$executeRaw`DELETE FROM session WHERE sid = ANY(${doomed}::text[])`;
+    return doomed.length;
+  } catch {
+    return 0;
+  }
+}
+
+// PUT /api/v1/auth/password — a local user changing their OWN password.
+// Business rule 61.
+//
+// Distinct from the admin-side `PUT /users/:id/password` in two ways that
+// matter: it proves the caller knows the current password (an admin reset
+// cannot, which is why that one is an Event at `warning` level), and it is
+// gated on nothing but being logged in — /users.html is `users`-gated, so
+// before this route an ordinary local user had no way to change their own
+// password at all.
+router.put("/password", requireAuth, passwordChangeLimiter, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = ChangePasswordSchema.parse(req.body);
+    const userId = req.session.userId!;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new AppError(404, "User not found");
+    if (user.authProvider !== "local") {
+      throw new AppError(400, "Your password is managed by your identity provider — change it there.");
+    }
+
+    const { valid } = await verifyPassword(currentPassword, user.passwordHash);
+    if (!valid) throw new AppError(401, "Current password is incorrect.");
+    if (currentPassword === newPassword) {
+      throw new AppError(400, "The new password must be different from the current one.");
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: await hashPassword(newPassword) },
+    });
+
+    // Same housekeeping the admin reset does: a lockout counted against the
+    // old password is meaningless now, and a TOTP challenge minted against it
+    // must not survive.
+    clearLockout(user.username);
+    mfaPending.revokeForUser(userId);
+
+    const revoked = await revokeOtherSessions(userId, req.sessionID);
+    await rotateSessionKeepingIdentity(req);
+
+    logEvent({
+      action: "user.password_changed",
+      resourceType: "user",
+      resourceId: user.id,
+      resourceName: user.username,
+      actor: user.username,
+      message: `${user.username} changed their own password`,
+      details: { ip: req.ip, otherSessionsRevoked: revoked },
+    });
+
+    res.json({ ok: true, otherSessionsRevoked: revoked });
+  } catch (err) {
+    next(err);
+  }
+});
 
 const TotpConfirmSchema = z.object({ code: z.string().min(1) });
 const TotpDisableSchema = z.object({ code: z.string().min(1), isBackupCode: z.boolean().optional() });

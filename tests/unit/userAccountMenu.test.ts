@@ -42,7 +42,7 @@ interface Item {
   onSelect?: () => void;
 }
 
-function open(opts: { pref?: Item | null; tz?: Item | null; totp?: Item | null } = {}) {
+function open(opts: { pref?: Item | null; tz?: Item | null; pw?: Item | null; totp?: Item | null } = {}) {
   const captured: { items: Item[]; opts: Record<string, unknown>; anchor: unknown } =
     { items: [], opts: {}, anchor: null };
   const fetches: string[] = [];
@@ -53,9 +53,10 @@ function open(opts: { pref?: Item | null; tz?: Item | null; totp?: Item | null }
   };
   g._notifPrefMenuItem = () => (opts.pref === undefined ? null : opts.pref);
   g._tzMenuItem = () => (opts.tz === undefined ? null : opts.tz);
+  g._changePasswordMenuItem = () => (opts.pw === undefined ? null : opts.pw);
   g._totpMenuItem = () => (opts.totp === undefined ? null : opts.totp);
   g._csrfHeaders = () => ({ "x-csrf-token": "t" });
-  g.ICONS = { logout: "<svg id='logout'/>", bell: "<svg id='bell'/>", shield: "<svg id='shield'/>", clock: "<svg id='clock'/>" };
+  g.ICONS = { logout: "<svg id='logout'/>", bell: "<svg id='bell'/>", shield: "<svg id='shield'/>", clock: "<svg id='clock'/>", key: "<svg id='key'/>" };
   g.fetch = vi.fn((url: string) => { fetches.push(url); return Promise.resolve({}); });
 
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -93,6 +94,24 @@ describe("openUserMenu", () => {
       totp: { label: "Set up two-factor auth", icon: "<svg/>", onSelect: () => {} },
     });
     expect(r.labels).toEqual(["Notifications: Push", "Set up two-factor auth", "—", "Logout"]);
+  });
+
+  it("groups the credential rows, password before the second factor on it", () => {
+    // Both are local-account-only and both came here for the same reason
+    // (/users.html is admin-gated), so they read as one group. The password
+    // leads: it is the credential, and 2FA is something added to it.
+    const r = open({
+      pref: { label: "Notifications: Push", icon: "<svg/>", onSelect: () => {} },
+      pw: { label: "Change password", icon: "<svg/>", onSelect: () => {} },
+      totp: { label: "Set up two-factor auth", icon: "<svg/>", onSelect: () => {} },
+    });
+    expect(r.labels).toEqual([
+      "Notifications: Push",
+      "Change password",
+      "Set up two-factor auth",
+      "—",
+      "Logout",
+    ]);
   });
 
   it("slots the timezone row between the preference and two-factor", () => {
