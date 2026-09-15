@@ -639,8 +639,14 @@ document.addEventListener("DOMContentLoaded", async function () {
   // page 1 and re-fetches with the new state translated into API params.
   _assetsSF = new TableSF("assets-tbody", assetsApplyFilterState);
   var assetsTable = document.querySelector("#assets-tbody").closest("table");
+  // Widths + hidden columns persist per browser in the prefs blob; the column
+  // ORDER additionally rides the active view tab (assets-tabs.js), so the
+  // arrangement follows the view rather than the screen.
   _assetsLayout = setupColumnLayout(assetsTable, {
-    onChange: _saveAssetsPrefs,
+    onChange: function () {
+      _saveAssetsPrefs();
+      if (window.PolarisAssetTabs) window.PolarisAssetTabs.syncColumnsFromTable();
+    },
   });
   // Frozen header + pagination: the wrapper carries .table-wrapper-sticky and
   // is viewport-bounded by the shared sizeStickyTableWrappers() in app.js

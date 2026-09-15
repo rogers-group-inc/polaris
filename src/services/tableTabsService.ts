@@ -31,6 +31,16 @@
  * lets the client seed it ONCE from the old per-user localStorage set without
  * a second browser later re-seeding curated tabs.
  *
+ * A tab likewise owns its COLUMN ORDER (`columnOrder`) — the left-to-right
+ * sequence of the movable columns, exactly the permutation setupColumnLayout
+ * persists. Order is part of a view in a way widths and visibility are not: an
+ * operator arranges the columns each view is ABOUT (a firewall tab leading with
+ * the FortiGate columns, an IPAM tab leading with the addresses), so it follows
+ * the tab and the server, while widths / hidden columns stay per-browser in
+ * localStorage where the screen they were sized for is. `null` means "this tab
+ * predates per-tab column order" — same one-shot seeding rule as favoriteIds,
+ * from this browser's stored layout.
+ *
  * Whole-blob read/replace per (user, scope), like userDashboardService: the
  * client owns tab order + active tab and PUTs the full set. `sanitizeTabs` is
  * pure and unit-tested; it delegates per-tab state validation to
@@ -55,6 +65,12 @@ export const MAX_TAB_ID_LEN = 64;
  * since that one bounds a URL and this one bounds stored state.
  */
 export const MAX_TAB_FAVORITES = 500;
+/**
+ * Column ids in one tab's saved order. The widest table this backs carries ~25
+ * columns; the cap only has to stop a client from posting an unbounded array
+ * into a blob that is read back on every page load.
+ */
+export const MAX_TAB_COLUMNS = 200;
 
 export interface TableTab {
   id: string;
@@ -77,6 +93,15 @@ export interface TableTab {
    * per-user localStorage set; `[]` = the operator has none here.
    */
   favoriteIds: string[] | null;
+  /**
+   * The movable columns left-to-right IN THIS TAB, as setupColumnLayout stores
+   * them (a permutation of column ids, not absolute indexes, so a Polaris
+   * update that adds a column splices it in rather than stranding it). `null` =
+   * the tab predates per-tab column order and the client may seed it from this
+   * browser's stored table layout; `[]` = the operator is on the authored
+   * order.
+   */
+  columnOrder: string[] | null;
 }
 
 export interface TableTabsLayout {
@@ -107,6 +132,30 @@ function sanitizeFavoriteIds(raw: unknown, where: string): string[] {
   if (!Array.isArray(raw)) throw new AppError(400, `${where} must be an array`);
   if (raw.length > MAX_TAB_FAVORITES) {
     throw new AppError(400, `${where} exceeds the ${MAX_TAB_FAVORITES}-favorite cap`);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  raw.forEach((value, i) => {
+    const id = shortString(value, `${where}[${i}]`, MAX_TAB_ID_LEN);
+    if (!id) throw new AppError(400, `${where}[${i}] is required`);
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  });
+  return out;
+}
+
+/**
+ * One tab's column order: deduped, order preserved, bounded. Unlike the
+ * favorites list this does NOT throw on an unknown or missing id — the client
+ * stores a permutation of whatever columns the page had when it was written,
+ * and setupColumnLayout.normalizeOrder already splices in newcomers and drops
+ * strangers at apply time. The server only bounds the array.
+ */
+function sanitizeColumnOrder(raw: unknown, where: string): string[] {
+  if (!Array.isArray(raw)) throw new AppError(400, `${where} must be an array`);
+  if (raw.length > MAX_TAB_COLUMNS) {
+    throw new AppError(400, `${where} exceeds the ${MAX_TAB_COLUMNS}-column cap`);
   }
   const out: string[] = [];
   const seen = new Set<string>();
@@ -167,6 +216,10 @@ export function sanitizeTabs(raw: unknown): TableTabsLayout {
       // Absent stays NULL rather than becoming []: the two mean different
       // things to the client (seed me from the legacy set vs. I have none).
       favoriteIds: t.favoriteIds == null ? null : sanitizeFavoriteIds(t.favoriteIds, `tabs[${i}].favoriteIds`),
+      // Same null-vs-[] distinction as favoriteIds: absent means the client may
+      // seed this tab from the browser's stored layout, [] means the operator
+      // is deliberately on the authored order.
+      columnOrder: t.columnOrder == null ? null : sanitizeColumnOrder(t.columnOrder, `tabs[${i}].columnOrder`),
     };
   });
 

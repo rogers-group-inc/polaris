@@ -10,7 +10,10 @@
  * moves <th>/<col>/<td> nodes (there is no CSS way to permute table columns),
  * so every position-derived behaviour has to follow — the hide rules'
  * nth-child indexes, the body cells after a re-render, and a saved order read
- * back on the next page load once a Polaris update has added a column.
+ * back on the next page load once a Polaris update has added a column. The
+ * order-only setPrefs is pinned here too: the Assets view tabs push a per-tab
+ * order through it on every tab switch and must not disturb the widths and
+ * hidden columns, which stay per-browser.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -201,6 +204,37 @@ describe("saved order round-trip", () => {
     const layout = setup();
     layout.setPrefs({ order: ["serial", "gonePhantomColumn", "hostname"] });
     expect(layout.getPrefs().order).toEqual(["serial", "hostname", "ip"]);
+  });
+
+  it("does not mistake an Object.prototype key for a known column", () => {
+    // The saved order is untrusted input — localStorage, or the server blob
+    // behind the Assets view tabs. On a plain {} lookup "constructor" reads as
+    // a known column, gets spliced into the order, then maps to no <th>, and
+    // placeInOrder's all-or-nothing guard silently stops applying the order at
+    // all — the arrangement just quietly stops working.
+    const layout = setup();
+    layout.setPrefs({ order: ["constructor", "serial", "toString", "hostname"] });
+    expect(layout.getPrefs().order).toEqual(["serial", "hostname", "ip"]);
+    expect(headerLabels()).toEqual(["", "Serial Number", "Hostname", "IP Address", "Actions"]);
+  });
+
+  it("an order-only setPrefs leaves widths and hidden columns alone", () => {
+    // What the Assets view tabs rely on: switching tab rearranges the columns
+    // but must not undo the widths the operator dragged or the columns they
+    // hid — those are per-browser, the order is per-view (assets-tabs.js).
+    const layout = setup();
+    layout.setPrefs({ widths: { hostname: 111, ip: 222, serial: 333 }, hidden: ["ip"] });
+    layout.setPrefs({ order: ["serial", "hostname", "ip"] });
+
+    const prefs = layout.getPrefs();
+    expect(prefs.order).toEqual(["serial", "hostname", "ip"]);
+    expect(prefs.hidden).toEqual(["ip"]);
+    expect(prefs.widths.hostname).toBe(111);
+    expect(prefs.widths.serial).toBe(333);
+    // …and the widths followed their own <col> into the new positions.
+    const widths = Array.from(doc.querySelectorAll("colgroup col")).map((c) => (c as any).style.width);
+    expect(widths[1]).toBe("333px");   // serial, now first
+    expect(widths[2]).toBe("111px");   // hostname, now second
   });
 });
 

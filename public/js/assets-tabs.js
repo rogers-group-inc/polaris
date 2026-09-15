@@ -20,6 +20,16 @@
  * live preset every time the Filters menu lists them, which is how an edit to
  * the preset reaches the tabs based on it.
  *
+ * The COLUMN ORDER is the tab's too. Order is part of a view in a way widths
+ * and visibility are not — the operator arranges the columns each view is
+ * ABOUT, so a firewall tab can lead with the FortiGate columns while an
+ * addressing tab leads with the IPs — so it rides the tab onto the server,
+ * while column widths / hidden columns stay per-browser in localStorage (that
+ * is a property of the screen, not of the view). setupColumnLayout stores a
+ * permutation of the MOVABLE column ids, which is exactly what is saved here;
+ * `columnOrder: null` on a tab written before the feature adopts this browser's
+ * stored layout once, the same one-shot rule favorites use.
+ *
  * Favorites are the tab's too: the module registers a favorites.js PROVIDER for
  * the "assets" entity, so the stars assets.js renders — and the `?favoriteIds=`
  * it sends to float them to the top of the whole result set — come from the tab
@@ -34,6 +44,7 @@
  * Contract with assets.js:
  *   init({hashSeeded})  — awaited before the first fetch so the page loads once
  *   syncFromTable()     — called from assetsApplyFilterState on every change
+ *   syncColumnsFromTable() — called from the column layout's onChange
  *   activeDefault() / resetToDefault() — the Clear/Reset button's label + action
  * and with assets-filters.js:
  *   openInNewTab(preset) / noteFilterLoaded(preset) — the two load paths
@@ -44,15 +55,16 @@
  * just left.
  *
  * Depends on globals from app.js (showToast/showConfirm/escapeHtml), api.js
- * (api), table-sf.js (TableSF.applyState/getPrefs), favorites.js
- * (registerFavoritesProvider/getStoredFavorites) and assets.js (_assetsSF,
+ * (api), table-sf.js (TableSF.applyState/getPrefs and the setupColumnLayout
+ * handle's getPrefs/setPrefs), favorites.js (registerFavoritesProvider/
+ * getStoredFavorites) and assets.js (_assetsSF, _assetsLayout,
  * assetsApplyFilterState). Loaded by assets.html BEFORE assets.js so
  * window.PolarisAssetTabs exists when assets.js's DOMContentLoaded runs, and
  * AFTER favorites.js so the provider can be registered during init.
  */
 
-/* global api, showToast, showConfirm, escapeHtml, _assetsSF, assetsApplyFilterState,
-          registerFavoritesProvider, getStoredFavorites */
+/* global api, showToast, showConfirm, escapeHtml, _assetsSF, _assetsLayout,
+          assetsApplyFilterState, registerFavoritesProvider, getStoredFavorites */
 
 (function () {
   var SCOPE = "assets";
@@ -142,6 +154,9 @@
             // Array vs null is meaningful to the server (see the service): null
             // still means "may be seeded from the legacy per-user set".
             favoriteIds: Array.isArray(t.favoriteIds) ? t.favoriteIds : null,
+            // Same contract for the column order — null means "may still be
+            // seeded from this browser's stored table layout".
+            columnOrder: Array.isArray(t.columnOrder) ? t.columnOrder : null,
           };
         }),
         activeId: _activeId,
@@ -161,6 +176,9 @@
     if (!tab || !_assetsSF || typeof _assetsSF.applyState !== "function") return;
     _applying = true;
     try {
+      // Columns first: assetsApplyFilterState writes the layout back to
+      // localStorage, so the order has to be this tab's before it runs.
+      applyColumnOrderToTable(tab);
       _assetsSF.applyState(tab.state);
       assetsApplyFilterState();
     } finally {
@@ -190,6 +208,43 @@
 
   function favoriteIds(tab) {
     return (tab && Array.isArray(tab.favoriteIds)) ? tab.favoriteIds : [];
+  }
+
+  // ─── Column order (per tab) ───────────────────────────────────────────────
+
+  /** The live table's movable-column order, or null when there is no table. */
+  function liveColumnOrder() {
+    if (!_assetsLayout || typeof _assetsLayout.getPrefs !== "function") return null;
+    var order = _assetsLayout.getPrefs().order;
+    return Array.isArray(order) ? order.slice() : null;
+  }
+
+  /**
+   * Drive the table to a tab's column order. Only `order` is handed to
+   * setPrefs — widths and hidden columns are per-browser and must survive a
+   * tab switch untouched. A tab with no order of its own (null, or a strip
+   * running without a column layout) leaves the table exactly as it is rather
+   * than snapping back to the authored order: nothing has claimed otherwise.
+   */
+  function applyColumnOrderToTable(tab) {
+    if (!tab || !Array.isArray(tab.columnOrder)) return;
+    if (!_assetsLayout || typeof _assetsLayout.setPrefs !== "function") return;
+    _assetsLayout.setPrefs({ order: tab.columnOrder.slice() });
+  }
+
+  /**
+   * Fill in every tab that predates per-tab column order from this browser's
+   * stored layout — the order the operator is looking at right now, which is
+   * what every tab used to show. Same one-shot rule as seedLegacyFavorites:
+   * once the tabs carry arrays no other browser can re-seed them.
+   */
+  function seedLegacyColumnOrder() {
+    var pending = _tabs.filter(function (t) { return !Array.isArray(t.columnOrder); });
+    if (!pending.length) return;
+    var live = liveColumnOrder();
+    if (!live) return;                                  // no column layout — nothing to seed from
+    pending.forEach(function (t) { t.columnOrder = live.slice(); });
+    if (_persisted) scheduleSave();
   }
 
   /** This browser's pre-provider per-user set, capped. Read once, at init. */
@@ -329,6 +384,11 @@
       // A new view starts with no stars — that IS the per-tab promise. (Never
       // null: this tab has no legacy set to inherit.)
       favoriteIds: [],
+      // Columns, unlike stars, are INHERITED from the view the operator is on:
+      // a new tab that scrambled the arrangement they just built would read as
+      // a bug, and they can still rearrange it here without touching the tab
+      // they came from. Null only when the page has no column layout at all.
+      columnOrder: liveColumnOrder(),
     };
     _tabs.push(tab);
     _activeId = tab.id;
@@ -451,6 +511,9 @@
             // null (not []) when absent — seedLegacyFavorites below reads that
             // as "may adopt this browser's old per-user stars".
             favoriteIds: Array.isArray(t.favoriteIds) ? t.favoriteIds.slice() : null,
+            // Likewise: null here is what seedLegacyColumnOrder reads as "may
+            // adopt this browser's stored column arrangement".
+            columnOrder: Array.isArray(t.columnOrder) ? t.columnOrder.slice() : null,
           };
         });
         _activeId = layout.activeId || _tabs[0].id;
@@ -468,17 +531,25 @@
           defaultFilterName: null,
           defaultState: null,
           favoriteIds: legacyFavorites(),
+          columnOrder: liveColumnOrder(),
         }];
         _activeId = _tabs[0].id;
         _persisted = false;                               // don't write until they use it
       }
       _ready = true;
       seedLegacyFavorites();
+      seedLegacyColumnOrder();
       // Before the first render + before assets.js fetches: the star cells and
       // the ?favoriteIds= query both read through the provider.
       registerFavoritesBridge();
       render();
       wire(strip);
+
+      // Columns are applied on BOTH paths: a deep link narrows the rows, it
+      // says nothing about how the columns are arranged, so the tab still
+      // decides that.
+      _applying = true;
+      try { applyColumnOrderToTable(activeTab()); } finally { _applying = false; }
 
       if (opts.hashSeeded) {
         // The deep link wins for this load; record it so the tab reflects what
@@ -507,6 +578,23 @@
       if (JSON.stringify(next) === JSON.stringify(tab.state)) return;
       tab.state = next;
       render();                                           // filter dot + tooltip
+      scheduleSave();
+    },
+
+    /**
+     * Mirror the live column order into the active tab (the column layout's
+     * onChange hook in assets.js). Fires for width and visibility changes too
+     * — those are per-browser, so a run that finds the order unchanged is
+     * simply a no-op rather than a save.
+     */
+    syncColumnsFromTable: function () {
+      if (!_ready || _applying) return;
+      var tab = activeTab();
+      if (!tab) return;
+      var next = liveColumnOrder();
+      if (!next) return;
+      if (Array.isArray(tab.columnOrder) && next.join(",") === tab.columnOrder.join(",")) return;
+      tab.columnOrder = next;
       scheduleSave();
     },
 

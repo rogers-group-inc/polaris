@@ -5,6 +5,7 @@
  *   - empty layout before anything is saved; full-replace round-trip after
  *   - a tab's BASE filter round-trips, and its id/name drop without a snapshot
  *   - a tab's own FAVORITES round-trip; absent stays null, over-cap is refused
+ *   - a tab's own COLUMN ORDER round-trips under the same null/[]/cap rules
  *   - tabs are STRICTLY per user — two users never see each other's
  *   - a readonly caller gets tabs (they only need read on the scope's key)
  *   - unknown scope + malformed tab payloads are rejected
@@ -151,6 +152,28 @@ d("table tabs", () => {
 
     const overCap = await put(admin, layout([
       { id: "t1", name: "Full", state: {}, favoriteIds: Array.from({ length: 501 }, (_, i) => `a${i}`) },
+    ], "t1"));
+    expect(overCap.status).toBe(400);
+  });
+
+  it("round-trips each tab's own column order, and refuses an over-cap list", async () => {
+    const saved = await put(admin, layout([
+      { id: "t1", name: "Firewalls", state: STATE, columnOrder: ["type", "hostname", "type"] },
+      { id: "t2", name: "Switches", state: {}, columnOrder: [] },
+      // Absent stays NULL — the client seeds it once from this browser's
+      // stored table layout, exactly as it does for favorites.
+      { id: "t3", name: "Pre-feature", state: {} },
+    ], "t1"));
+    expect(saved.status).toBe(200);
+    expect(saved.body.tabs[0].columnOrder).toEqual(["type", "hostname"]);   // deduped, order kept
+    expect(saved.body.tabs[1].columnOrder).toEqual([]);
+    expect(saved.body.tabs[2].columnOrder).toBeNull();
+
+    const reread = await admin.agent.get("/api/v1/me/table-tabs?scope=assets");
+    expect(reread.body.tabs[0].columnOrder).toEqual(["type", "hostname"]);
+
+    const overCap = await put(admin, layout([
+      { id: "t1", name: "Wide", state: {}, columnOrder: Array.from({ length: 201 }, (_, i) => `c${i}`) },
     ], "t1"));
     expect(overCap.status).toBe(400);
   });
