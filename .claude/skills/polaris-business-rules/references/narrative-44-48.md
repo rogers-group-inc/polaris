@@ -961,6 +961,28 @@ interfaces") rather than as a claim that the device has no ports.
 together or it ships ungated: the predicate, the gate in every resolver that reads its table,
 the `pinTestForTrigger` arm, and the `DIMENSION_SOURCES` entry that lists it.
 
+### The one dimension that is deliberately ungated: SD-WAN
+
+`AssetPerfSlaSample` is dimensioned — per (health check, WAN member) — and nothing gates it.
+That is not an oversight to be tidied up later, and a future session must not "fix" it by
+adding a fourth pin array.
+
+The gate exists because a device reports every port, filesystem and tunnel it HAS, most of
+which nobody chose and most of which are idle, unplugged or full by design. An SD-WAN
+health-check member is the opposite kind of object: it is a performance SLA somebody
+configured on the gate, there are a handful per firewall, and the collector only ever sees
+what `config system sdwan` declares. The operator's statement of intent was made on the
+FortiGate, so asking them to restate it as a pin in Polaris would add a second place to
+forget. The table says so itself — its `cadence` is always `"fast"` precisely because it has
+no pinned-subset concept — which is why there is nothing to gate on even if someone wanted to.
+
+The three SD-WAN METRICS (`sdwanLatencyMs` / `sdwanJitterMs` / `sdwanPacketLoss`) have always
+been ungated for this reason; `sdwanMemberState` (2026-09) is the state field that joins them,
+and it is the one that makes the exception visible, since every OTHER dimensioned state field
+is gated. What replaces the pin as the safety property is the same one the gates provide:
+nothing can alert about a member the gate is not actually probing, because a member that stops
+being reported produces no reading at all and the vanished-state sweep retires its alert.
+
 ### The consequence, which is announced rather than discovered
 
 Turning one of these gates on makes a rule scoped to devices with an EMPTY pin set go silent,

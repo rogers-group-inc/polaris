@@ -93,6 +93,7 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   sdwanPacketLoss: "systemInfo",
   sdwanRuleStatus: "systemInfo",
   sdwanSelectedMember: "systemInfo",
+  sdwanMemberState: "systemInfo",
   ipsecThroughputBps: "systemInfo",
   ipsecStatus: "systemInfo",
   customWidgetValue: "systemInfo",
