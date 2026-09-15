@@ -2,7 +2,7 @@
 
 Verbatim from CLAUDE.md → Authentication & RBAC.
 
-Sessions are PostgreSQL-backed (`connect-pg-simple`), 8-hour max age, HttpOnly/Secure/SameSite=Lax cookies.
+Sessions are PostgreSQL-backed (`connect-pg-simple`), 8-hour max age, HttpOnly/SameSite=Lax cookies. `Secure` is NOT unconditional: the cookie is configured `secure: "auto"`, so it is set only when the request is HTTPS — including behind a reverse proxy, but only when `TRUST_PROXY` is set so `X-Forwarded-Proto` is believed. A plain-HTTP lab install is a supported deployment shape, so never write a feature that hard-requires a `Secure` cookie.
 
 **Dynamic-role model (post-cutover).** RBAC is enforced via `requirePermission(functionKey, level)` from [src/api/middleware/permissions.ts](src/api/middleware/permissions.ts). Each route declares the function key it gates + the required access level; the resolver consults the caller's `Role.permissions` matrix denormalized into `req.session.roleSnapshot` at login. The matrix is `{ [functionKey]: "none" | "read" | "write" | "fullwrite" }` over a 33-key catalogue. The five built-in roles (`admin` / `readonly` / `networkadmin` / `assetsadmin` / `user`) are seeded by `prisma/migrations/20260524000000_roles_table_cutover` so existing accounts keep their pre-cutover access exactly. Admin creates custom roles from the Roles section under Users → Manage Roles.
 
