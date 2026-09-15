@@ -35,7 +35,9 @@ runbook: a runtime major, PostgreSQL 15 → 17, AppStream → PGDG, the legacy s
 layout, the nginx cutover), `DEVELOPMENT.md` (local dev stack),
 `design/POLARIS-UI-GUIDE.md` (the portable UI contract — a drop-in zone, never edited here),
 `.design-sync/NOTES.md` (shipping the UI kit to Claude Design — triggers, procedure, auth
-gate; `/design-sync` reads it), `agent/README.md`, `CONTRIBUTING.md`.
+gate; `/design-sync` reads it), `docs/wiki/` (the OPERATOR documentation — source for the
+GitHub wiki the account menu's Help entry opens; `/polaris-docs-sync` routes operator-visible
+changes to it), `agent/README.md`, `CONTRIBUTING.md`.
 
 External plugins (separate repos; clone, then `claude --plugin-dir <clone>`):
 `fortinet-api-conventions` — https://github.com/davidmoore-rogers/fortinet-api-conventions (FortiManager / FortiOS / FortiSwitch / FortiAP API traps) and

@@ -2,6 +2,16 @@
 
 A network management tool. Auto-discovery from FortiManager / FortiGate / Windows DHCP / Entra ID / Active Directory / VMware vCenter / Azure Arc, to build out IPv4/IPv6 networks, asset inventories and device maps. Made specifically with Fortinet network devices in mind, monitors devices over FortiOS REST and SNMP (response time, telemetry, system info, LLDP topology), maps managed FortiGates with their FortiSwitch/FortiAP/LLDP topology, push DHCP reservations and DHCP lease revocation as well as pushes asset quarantine to FortiGates.
 
+## Documentation
+
+| | |
+|---|---|
+| **[Wiki](https://github.com/rogers-group-inc/polaris/wiki)** | **Operator documentation** — a page per screen, how to configure each integration, how automations and monitoring actually decide things, and the 64 numbered business rules behind that behaviour. In the app it is the **Help** entry in the account menu (click your username, top right). Source lives in [`docs/wiki/`](docs/wiki/) and is published from there |
+| [docs/INSTALL.md](docs/INSTALL.md) | Installing, supported platform versions, disk sizing, split-role deployment, and the environment problems that bite |
+| [docs/HA.md](docs/HA.md) | The optional active/standby pair, phase by phase |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | The local dev stack |
+| `<polaris-url>/api` | Developer docs for the REST API, served by the install itself — see [API overview](#api-overview) |
+
 ## Features
 
 ### IP management
