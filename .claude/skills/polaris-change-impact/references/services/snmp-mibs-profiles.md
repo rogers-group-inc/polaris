@@ -55,6 +55,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/profileResolver.ts
+
+**What it owns:** Which vendor telemetry shape (`VendorTelemetryProfile`) an asset gets, as a pure module with an INJECTED profile lookup. Extracted verbatim from `monitoringService.ts` in Phase 4 of uniform SNMP so both today's merge and its DB-only successor can be driven with in-memory rows by the parity test.
+
+**Public API:** `pickVendorProfileMerged(manufacturer, os, model, assetType, lookup = getProfileFor)`, `resolveDbMetric(metricRow, model)`, `DbMetricPick`, `ProfileLookup`.
+
+**Cross-service deps:** `vendorTelemetryProfiles` (`pickVendorProfile`, `fortinetClassHint`, `diskQueryFromMetricPick`, the constant it still falls back to), `manufacturerProfileService` (`getProfileFor` as the default lookup; `MetricKey` / `MetricRow` / `ProfileFull` types). No Prisma, no I/O.
+
+**Used by:** `src/services/monitoringService.ts` — the four SNMP collectors that read a vendor profile (`collectTelemetrySnmp`, `collectHardwareSensorsViaSnmpSession`, `collectSystemInfoSnmp`, `collectStorageOnlySnmp`).
+
+**Invariants:**
+- Today's behaviour is pinned by `tests/unit/profileResolver.test.ts`, including two KNOWN DELTAS the swap changes on purpose (Cisco memory `walkSubtree: false` on the double_scalar path — a bug; the mis-typed-asset-with-a-stated-model routing) and one KNOWN GAP (an alias-canonical spelling like "Aruba" that the seed did not key finds no DB profile and survives only on the hardcoded regex).
+- The hardcoded constant is still the fallback and the only source of `walkSubtree`, `mountPath`, `sensorName` and the `model` query until the swap lands.
+
+**When changing this:**
+- Any change to what a tuple resolves to must appear in `profileResolver.test.ts` (before the swap) or `profileResolverParity.test.ts` (after) as an explicit expectation — this module decides which OIDs 2000 assets walk every tick.
+
 ## services/mibParserUtils.ts
 
 **What it owns:** Shared ASN.1/SMI text helpers: the comment stripper (collapses comments to whitespace preserving line numbers, string-literal aware) and the IMPORTS-block reader `parseImportMap`, which returns symbol → module pairs (`fortinet FROM FORTINET-CORE-MIB`) — the only place a file states which module defines an anchor it leans on, and therefore what lets the UI name the module to upload. Tolerant: no block → `[]`, never throws.

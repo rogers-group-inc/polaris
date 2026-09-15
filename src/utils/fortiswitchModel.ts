@@ -48,28 +48,33 @@
  * recoverable rather than permanent.
  */
 
+import { applyModelParse, type ModelParse } from "./modelParse.js";
+
 /**
  * Extract the model from a raw fsSysVersion string. Returns the display model
  * ("FortiSwitch <token>") or null when the string doesn't carry a
  * recognizable model prefix (empty value, firmware-only string, etc.).
+ *
+ * A thin wrapper over the declarative parse below since Phase 4 of uniform
+ * SNMP — kept so the existing callers and tests keep their names while the
+ * `model` metric row carries the same rule as data.
  */
 export function fortiswitchModelFromFsSysVersion(raw: string | null | undefined): string | null {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  // Model token = everything before the first "<sep>v<digit>" firmware marker,
-  // where the separator is a hyphen OR whitespace ("S548DF-v7.2.5…" vs
-  // "FortiSwitchRugged-112D-POE v7.4.8…"). Non-greedy so a hyphenated model
-  // token (112D-POE) still stops at the first version-looking segment rather
-  // than at its own internal hyphen.
-  const m = /^(.+?)[-\s]v\d/.exec(trimmed);
-  const token = m?.[1]?.trim();
-  if (!token) return null;
-  // A string that STARTS with the firmware marker has no model prefix.
-  if (/^v\d/i.test(token)) return null;
-  // The prefix exists to keep `pickVendorProfile` matching /fortiswitch/i (see
-  // the header). A token that already says so needs no help, and prefixing it
-  // anyway would store "FortiSwitch FortiSwitchRugged-112D-POE".
-  if (/^fortiswitch/i.test(token)) return token;
-  return `FortiSwitch ${token}`;
+  return applyModelParse(raw, FORTISWITCH_MODEL_PARSE);
 }
+
+/**
+ * The same parse as data — what the `model` metric row of the Fortinet
+ * profile's FortiSwitch override stores (`parsePattern` / `parseTemplate`),
+ * and what the seed job stamps. Model token = everything before the first
+ * "<sep>v<digit>" firmware marker, where the separator is a hyphen OR
+ * whitespace ("S548DF-v7.2.5…" vs "FortiSwitchRugged-112D-POE v7.4.8…");
+ * non-greedy so a hyphenated token (112D-POE) stops at the first version-
+ * looking segment. The `(?!v\d)` lookahead is the old "a string that STARTS
+ * with the firmware marker has no model" guard; the template's prefix rule
+ * in `applyModelParse` is the old "don't re-prefix FortiSwitchRugged".
+ */
+export const FORTISWITCH_MODEL_PARSE: ModelParse = {
+  pattern:  String.raw`^(?!v\d)(.+?)[-\s]v\d`,
+  template: "FortiSwitch $1",
+};
