@@ -1418,6 +1418,25 @@ stays root-owned and read-only to the process.
 Without it they are stored as **plaintext**, which means plaintext in every
 `pg_dump` and in any snapshot of the database volume.
 
+**`./state` also carries the install's identity.** `./state/data/instance-id` is
+a uuid written on first boot; it is how Polaris recognizes its own
+active-instance heartbeat across a container recreate, and it is the reason an
+image upgrade does not look like a second Polaris appearing on your database.
+Keep the bind mount. If you see this in the log of a container that will not
+start —
+
+```
+Refusing to start: another Polaris install holds a fresh active-instance
+heartbeat on this database.
+```
+
+— then either a second Polaris really is pointed at this database (stop it), or
+the stamp was left behind by a process that was killed rather than stopped, in
+which case it expires on its own within 90 seconds and the next start
+succeeds. `POLARIS_HA_HEARTBEAT=off` in `./state/.env` disables the guard
+entirely; do that only if you accept the two-instance failure mode
+([docs/HA.md](HA.md)).
+
 Two container-specific cautions:
 
 - **`./state/.env` is on a bind mount, not in the image.** A `docker compose
