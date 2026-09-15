@@ -235,7 +235,12 @@
   function applyBasemapTheme() {
     if (!map) return;
     var isDark = getMapTheme() === "dark";
-    var url = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+    // Single-host tile URL. The OSM tile usage policy permits only
+    // https://tile.openstreetmap.org/{z}/{x}/{y}.png — the older {s} a/b/c
+    // subdomain form spreads one viewport over three hosts instead of one
+    // multiplexed HTTP/2 connection, and reads to their operators as a
+    // policy violation: tiles come back as the "Access blocked" image.
+    var url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
     var attribution = "© <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors";
     if (basemapLayer) map.removeLayer(basemapLayer);
     basemapLayer = L.tileLayer(url, { maxZoom: 19, attribution: attribution }).addTo(map);

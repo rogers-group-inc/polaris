@@ -96,10 +96,19 @@ SESSION_SECRET=changeme
 TRUST_PROXY=
 
 # Active-instance heartbeat kill switch (HA). Production-only guard: the web
-# role refuses to boot when another hostname holds a <90s-old
-# Setting("ha.activeInstance") stamp. "off" disables it. See docs/HA.md and
-# high-availability.md.
+# role refuses to boot when another INSTALL holds a <90s-old
+# Setting("ha.activeInstance") stamp. A clean shutdown drops the stamp, so a
+# restart or an upgrade normally waits for nothing. "off" disables it. See
+# docs/HA.md and high-availability.md.
 POLARIS_HA_HEARTBEAT=
+
+# Override the install id the heartbeat asserts. Unset is normal: a uuid is
+# generated on first boot into <STATE_DIR>/data/instance-id and reused for the
+# life of the install, which is what lets a container recreate (new container
+# id, new hostname, same install) boot without tripping the guard. Set it only
+# to pin a name — a read-only state dir, or a state dir cloned to a second host
+# where the two must stop claiming one identity.
+POLARIS_HA_INSTANCE_ID=
 
 # /health AND /health/ready bearer token — auto-generated at first-run setup.
 # Clearing reopens both endpoints and surfaces a `health_token_unset` watch

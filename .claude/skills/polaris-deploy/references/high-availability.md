@@ -28,6 +28,15 @@ what the load balancer monitors.
   web roles double every poll and duplicate every alert. Nothing here is
   fixable by configuration; four layers make it impossible instead — see
   docs/HA.md §5. **Do not "improve" any of them without reading that section.**
+- **Layer 5 identifies an INSTALL by a file the standby must not copy** (business rule 62).
+  `<STATE_DIR>/data/instance-id` (on RHEL: `/opt/polaris/data/instance-id`) is
+  generated per node on first boot and excluded in `deploy/ha/ha-rsync-exclude`.
+  The exclude file's default is SYNCED, so a future identity file added without
+  an exclude line would hand both nodes one identity and quietly turn the
+  heartbeat into a no-op — visible nowhere, because the guard's success looks
+  exactly like its absence. The identity is a file rather than `os.hostname()`
+  because containers regenerate their hostname on every recreate; that is a
+  Docker fix, and this exclude line is the price it charges HA.
 - **Every unit's local-PostgreSQL dependency must be redirected, not
   edited.** Patroni owns PostgreSQL and the stock unit is masked. The redirect
   lives in `deploy/ha/dropins/<unit>.service.d/10-ha.conf` precisely because
@@ -110,6 +119,7 @@ what the load balancer monitors.
 | a new shipped systemd unit | a matching `deploy/ha/dropins/<unit>.service.d/10-ha.conf` |
 | what lives under `/opt/polaris` at runtime | `deploy/ha/ha-rsync-exclude` (default is SYNCED) |
 | the heartbeat window or interval | `haHeartbeatService.test.ts` assertions + docs/HA.md §5 |
+| how the heartbeat derives an instance identity | `deploy/ha/ha-rsync-exclude` — anything identifying a NODE must be excluded, or the standby inherits the primary's and layer 5 stops distinguishing them |
 | `/health/ready` semantics | the load-balancer monitor spec in docs/HA.md §7 |
 
 ## Not supported

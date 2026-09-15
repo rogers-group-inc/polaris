@@ -211,7 +211,12 @@
     if (!_map) return;
     var L = window.L;
     var isDark = (window.PolarisTheme ? PolarisTheme.get() : "dark") === "dark";
-    var url = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+    // Single-host tile URL. The OSM tile usage policy permits only
+    // https://tile.openstreetmap.org/{z}/{x}/{y}.png — the older {s} a/b/c
+    // subdomain form spreads one viewport over three hosts instead of one
+    // multiplexed HTTP/2 connection, and reads to their operators as a
+    // policy violation: tiles come back as the "Access blocked" image.
+    var url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
     var attribution = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
     if (_basemapLayer) {
       try { _map.removeLayer(_basemapLayer); } catch (e) {}

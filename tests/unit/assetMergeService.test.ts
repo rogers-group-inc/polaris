@@ -12,6 +12,7 @@
  *     resets, and monitorOverride is recomputed
  *   - business rule 10: a survivor whose merged status lands on
  *     decommissioned/disabled is never switched on
+ *   - notes are COMBINED rather than won (combineAssetNotes)
  *
  * Prisma is mocked so the choreography is exercised without a live DB (same
  * pattern as assetGhostMergeService.test.ts).
@@ -51,6 +52,9 @@ import {
   absorbAssetRelations,
   resolveMonitoringCarry,
   transferDependencyEdges,
+  combineAssetNotes,
+  CONCATENATED_FIELDS,
+  MERGEABLE_FIELDS,
 } from "../../src/services/assetMergeService.js";
 import { prisma } from "../../src/db.js";
 
@@ -533,5 +537,64 @@ describe("resolveMonitoringCarry", () => {
     const res = resolveMonitoringCarry(update, row(), row({ monitored: true }));
     expect(res.carried).toBe(false);
     expect(update.monitored).toBeUndefined();
+  });
+});
+
+// ─── notes: combined, not won ────────────────────────────────────────────────
+// A merge is irreversible and each side's notes were written by somebody who
+// did not know the other row existed, so discarding half is silent data loss.
+
+describe("combineAssetNotes", () => {
+  const A = { notes: "Replaced NIC 2026-04-11.", hostname: "wks042", id: "aaaaaaaa-1111" };
+  const B = { notes: "Intune-enrolled, owner J. Diaz.", hostname: "WKS042.corp.local", id: "bbbbbbbb-2222" };
+
+  it("labels each block with the asset it came from, survivor first", () => {
+    expect(combineAssetNotes(A, B)).toBe(
+      "[wks042]\nReplaced NIC 2026-04-11.\n\n[WKS042.corp.local]\nIntune-enrolled, owner J. Diaz.",
+    );
+  });
+
+  it("writes nothing when neither side has notes", () => {
+    expect(combineAssetNotes({ notes: null }, { notes: "   " })).toBeUndefined();
+  });
+
+  it("writes nothing when only the survivor has notes — it already holds them", () => {
+    expect(combineAssetNotes(A, { notes: "" })).toBeUndefined();
+  });
+
+  it("passes the absorbed row's notes through UNLABELED when the survivor has none", () => {
+    expect(combineAssetNotes({ notes: "  " }, B)).toBe("Intune-enrolled, owner J. Diaz.");
+  });
+
+  it("writes nothing when both sides say the same thing", () => {
+    expect(combineAssetNotes(A, { ...B, notes: A.notes })).toBeUndefined();
+  });
+
+  // Idempotence: merging a third row into an already-merged survivor must not
+  // stack the same block twice.
+  it("writes nothing when the survivor already contains the absorbed text", () => {
+    const merged = { notes: combineAssetNotes(A, B)!, hostname: "wks042", id: "aaaaaaaa-1111" };
+    expect(combineAssetNotes(merged, B)).toBeUndefined();
+  });
+
+  it("disambiguates identical hostnames with a short id — the duplicate-hostname merge", () => {
+    const out = combineAssetNotes(
+      { notes: "first", hostname: "dup-host", id: "aaaaaaaa-1111" },
+      { notes: "second", hostname: "dup-host", id: "bbbbbbbb-2222" },
+    );
+    expect(out).toBe("[dup-host · aaaaaaaa]\nfirst\n\n[dup-host · bbbbbbbb]\nsecond");
+  });
+
+  it("falls back to a placeholder when a side has no hostname", () => {
+    const out = combineAssetNotes({ notes: "x", hostname: null, id: "a" }, { notes: "y", hostname: "named", id: "b" });
+    expect(out).toContain("[unnamed asset]");
+    expect(out).toContain("[named]");
+  });
+});
+
+describe("CONCATENATED_FIELDS", () => {
+  it("keeps notes inside the mergeable vocabulary so the route still validates it", () => {
+    expect(MERGEABLE_FIELDS).toContain("notes");
+    expect(CONCATENATED_FIELDS).toEqual(["notes"]);
   });
 });

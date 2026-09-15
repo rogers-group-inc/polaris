@@ -860,6 +860,40 @@ function getAlertsFormData() {
         });
       });
 
+      // Duplicate-IP "Review & merge" — the same merge engine the row verb
+      // uses, reached through the full comparison modal so the operator sees
+      // polling history, sources and dependency edges and picks per-field
+      // winners before confirming. The modal lives in asset-merge-modal.js,
+      // which this page loads for exactly this button.
+      //
+      // It merges ASSETS, not the conflict, so the duplicate-IP sweep is what
+      // closes the card: with one claimant left the address is no longer a
+      // collision and the next pass auto-resolves it (`system:auto-resolved`).
+      // Reloading the queue here is therefore a refresh, not a resolution —
+      // the card can legitimately still be listed until that pass runs.
+      body.querySelectorAll("[data-dupip-review]").forEach(function (el) {
+        el.addEventListener("click", function () {
+          var thisId = el.getAttribute("data-asset-id");
+          var otherId = el.getAttribute("data-other-id");
+          if (!thisId || !otherId) {
+            showToast("This conflict is missing an asset reference — use the row actions instead", "error");
+            return;
+          }
+          if (typeof openAssetMergeModal !== "function") {
+            showToast("Merge is unavailable on this page — open the asset's Sources tab", "error");
+            return;
+          }
+          openAssetMergeModal(thisId, otherId, {
+            onMerged: async function () {
+              var scrollTop = body.scrollTop;
+              await loadConflicts(true);
+              body.scrollTop = scrollTop;
+              refreshBadge();
+            },
+          });
+        });
+      });
+
       // Chassis-replacement: load the per-address diff on demand. It is a
       // separate read because discovery syncs subnets in Phase 1 and
       // reservations in Phases 3–5, so it cannot be snapshotted at raise time
@@ -1252,19 +1286,54 @@ function getAlertsFormData() {
         '</tr>';
     }).join("");
 
-    var explainer = '<strong class="mono">' + escapeHtml(ip) + '</strong> is recorded on ' +
-      members.length + ' assets that are all in a network-present status. Two devices, or one device ' +
-      'recorded twice — resolve it whichever way it actually is. ' +
+    // Which eligibility clause raised this. `cross-source` means the address is
+    // deliberately assigned in IPAM (a VIP, an interface IP, a DHCP reservation
+    // or a manual row) AND the claimants came from integrations that share no
+    // source kind — overwhelmingly one device two integrations never
+    // cross-linked, so the card leads with the merge rather than with
+    // renumbering. Absent on conflicts raised before that clause shipped.
+    var crossSource = proposed.qualifiedBy === "cross-source";
+    var lead = crossSource
+      ? '<strong class="mono">' + escapeHtml(ip) + '</strong> is recorded on ' + members.length +
+        ' assets that were discovered by <strong>different integrations</strong>, and IPAM says the address ' +
+        'was assigned on purpose rather than leased from a pool. That is usually ONE device recorded twice ' +
+        'because nothing cross-linked the records. '
+      : '<strong class="mono">' + escapeHtml(ip) + '</strong> is recorded on ' +
+        members.length + ' assets that are all in a network-present status. Two devices, or one device ' +
+        'recorded twice — resolve it whichever way it actually is. ';
+    var explainer = lead +
       '<strong>Two devices:</strong> enter a new address on the row of whichever one should move; it is saved ' +
       'as a manual pin (discovery reporting the same address later releases the pin by itself). ' +
       '<strong>One device:</strong> use <em>Merge into this</em> on the record to keep — the other' +
-      (members.length > 2 ? 's are' : ' is') + ' absorbed into it and deleted. ' +
+      (members.length > 2 ? 's are' : ' is') + ' absorbed into it and deleted — or ' +
+      '<em>Review &amp; merge</em> below to compare the two records field by field first. ' +
       '<strong>Reject</strong> dismisses the conflict and changes nothing; the same set will not re-raise, ' +
       'a changed one will.';
 
+    // "Review & merge" opens the full comparison modal (asset-merge-modal.js,
+    // shared with the asset page's Sources tab) instead of the one-click row
+    // verb: it shows polling history, sources, dependency edges and per-field
+    // winners before anything is deleted. Admin-only, matching the modal's own
+    // gate and the assets:write the endpoint behind it requires.
+    //
+    // With more than two claimants it seeds the first two and the modal's own
+    // "Choose a different asset" link re-targets — the alternative was a button
+    // per row, which is the one-click verb the row already has.
+    var reviewBtn = "";
+    if (!isResolved && members.length >= 2 && typeof isAdmin === "function" && isAdmin()) {
+      reviewBtn =
+        '<button class="btn btn-secondary btn-sm" data-dupip-review ' +
+          'data-conflict-id="' + c.id + '" ' +
+          'data-asset-id="' + escapeHtml(members[0].assetId || "") + '" ' +
+          'data-other-id="' + escapeHtml(members[1].assetId || "") + '" ' +
+          'title="Compare the two records field by field, then merge — nothing is deleted until you confirm">' +
+          'Review &amp; merge...</button>';
+    }
+
     var actions = isResolved
       ? resolvedActionsHtml(c)
-      : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '" title="Keep both records on this address">Reject (dismiss)</button>';
+      : reviewBtn +
+        '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '" title="Keep both records on this address">Reject (dismiss)</button>';
 
     return '<div class="conflict-card">' +
       '<div class="conflict-card-header">' +

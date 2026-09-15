@@ -200,7 +200,12 @@ Multi-stage image, ~940 MB, x86_64. PostgreSQL is **not** included — run a `ti
 
 | Container path | Host path | Notes |
 |---|---|---|
-| `/app/state` | `/mnt/user/appdata/polaris` | `.env`, `.setup-complete`, `data/backups/`, `public/uploads/` |
+| `/app/state` | `/mnt/user/appdata/polaris` | `.env`, `.setup-complete`, `data/backups/`, `data/instance-id`, `public/uploads/` |
+
+Keep that mount across upgrades. `data/instance-id` is how Polaris recognizes its own
+active-instance heartbeat once the container is recreated under a new container ID — without
+it, an upgraded container can mistake its predecessor for a second Polaris on the same
+database and refuse to start for 90 seconds ([docs/HA.md](docs/HA.md) §5).
 
 On first launch the container starts the setup wizard at `http://<host>:3000` (DB host, admin account, session secret). The wizard supports self-signed Postgres TLS via an "Allow self-signed certificate" toggle. After finalize, the container restarts itself into the main app — with a generated `POLARIS_SECRET_KEY` in `/app/state/.env` that encrypts stored device + integration credentials. **Back that key up off the host:** it lives on the bind mount, and sealed secrets cannot be recovered without it.
 

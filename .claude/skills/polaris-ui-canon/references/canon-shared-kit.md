@@ -152,4 +152,44 @@ into) and `--shadow-pill` (badges and widget pills, nothing else).
   the title, the endpoint search box and the icon row read through it. Both rules lift only the
   opacity of the theme's own token — never a literal colour — so a new theme keeps its palette.
 
+## Settings-card layout (one card, a fixed row, or a reflowing deck)
+
+**What it is:** how the cards on a Server Settings tab are arranged. `.settings-card` is the
+box itself (the `--shadow-card` surface above); three container classes decide whether cards
+stack, sit in a fixed row, or reflow with the window.
+
+**Canonical implementation:** the three containers in
+[public/css/styles.css](public/css/styles.css), each built by a tab renderer in
+[public/js/server-settings.js](public/js/server-settings.js):
+
+| Container | Layout | Use it when |
+|---|---|---|
+| *(none — bare `.settings-card`)* | full-width, stacked | one card, or a card holding a wide table |
+| `.settings-cards-row` | grid, exactly 2 columns, no reflow | two cards that belong side by side at every width |
+| `.settings-cards-row-3` | grid, 3 columns → 2 under 1000px viewport | a fixed set of three short cards of similar height |
+| `.settings-cards-flow` | `columns: 360px 3` — up to 3 columns, min 360px each, count chosen by the browser | a deck of independent cards of differing height (the Web Server tab) |
+
+**Key conventions:**
+- **A tab with more than three cards wants `.settings-cards-flow`, not a `-row` class.** The
+  `-row` grids assign a card to a fixed slot, so a fourth card means another hand-written
+  container and another breakpoint. `columns: <width> <count>` states the two things that
+  actually matter — the narrowest a card may be, and the most columns worth having — and the
+  browser derives the count from the space it has. That is one declaration instead of a
+  media query per screen size, and it degrades to a single column on a phone for free.
+- **Column flow, not grid, when the cards differ in height.** A grid row is as tall as its
+  tallest member, so on the Web Server tab (nginx Proxy is roughly twice HTTPS Certificate)
+  every short card in that row would trail a column of dead space. Multi-column flow packs
+  vertically instead. The cost is reading order: cards fill down each column, not across, so
+  only use it where the cards are genuinely independent — a deck of settings cards is, a
+  numbered sequence is not.
+- **Every card in a flow container needs `break-inside: avoid`** (and the `-webkit-` prefixed
+  form, which Safari still reads). Without it a card taller than the balanced column height is
+  sliced down the middle across two columns, header in one and buttons in the other.
+- **A full-width banner stays outside the container.** The Web Server tab's
+  not-Polaris-managed drift banner is concatenated ahead of the deck, not inside it, so it
+  spans the tab instead of becoming a fourth card.
+- `.settings-card`'s own `margin-bottom: 1rem` is the vertical gutter in a flow container and
+  is zeroed inside the `-row` grids, which use `gap` instead. A new container class must pick
+  one of the two, not both.
+
 ## Theme-paired image asset with one resolver

@@ -3918,6 +3918,25 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
     grid-template-columns: 1fr 1fr;
   }
 }
+/* Reflowing card deck — the Web Server tab. Unlike .settings-cards-row/-3,
+   which pin each card to a fixed slot, this one lets the browser choose the
+   column count: `columns` declares a MINIMUM column width and a MAXIMUM
+   column count, so a wide desktop gets three, a narrow window or tablet two,
+   and a phone one, with no breakpoint per screen size. Column flow rather
+   than a grid because these cards differ a lot in height — nginx Proxy is
+   roughly twice HTTPS Certificate — and grid rows are as tall as their
+   tallest member, so the shorter cards in a row would each trail a column of
+   dead space. `break-inside: avoid` is what keeps a card whole; without it a
+   tall card is sliced across two columns. */
+.settings-cards-flow {
+  columns: 360px 3;
+  column-gap: 1rem;
+  margin-bottom: 1rem;
+}
+.settings-cards-flow .settings-card {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid; /* Safari still reads only the prefixed form */
+}
 .mac-id-section-heading {
   font-size: 0.78rem;
   font-weight: 600;

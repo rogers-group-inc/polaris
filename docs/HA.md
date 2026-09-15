@@ -241,12 +241,29 @@ application groups. Each has its own independent layers.
 4. **Readiness** takes a demoted node out of the load balancer within one
    monitor interval.
 5. **A heartbeat in the database.** The web role stamps
-   `Setting("ha.activeInstance")` with its hostname every 30 seconds, and
-   refuses to boot when a *different* hostname holds a stamp younger than 90
+   `Setting("ha.activeInstance")` with this **install's id** every 30 seconds,
+   and refuses to boot when a *different* install holds a stamp younger than 90
    seconds. This is the one layer that catches two hosts deliberately pointed
    at **one** database. It is not a lock: a stale stamp expires, so a
-   legitimate failover is delayed by at most one systemd restart. Override with
-   `POLARIS_HA_HEARTBEAT=off` only when you know why.
+   legitimate failover is delayed by at most one systemd restart — and a clean
+   shutdown drops the stamp outright, so a restart or an upgrade normally waits
+   for nothing at all. Override with `POLARIS_HA_HEARTBEAT=off` only when you
+   know why.
+
+   The id is a uuid generated on first boot into `<state dir>/data/instance-id`
+   and kept for the life of the install. It is deliberately **not** the
+   hostname: in a container the hostname is the container id, which the runtime
+   regenerates on every recreate, so a hostname rule made every image upgrade
+   look like a second host and refused to start. Two hosts pointed at one
+   database still have two state directories, so the guard's real case is
+   unchanged. Two caveats follow from that:
+
+   - **Copying a whole state directory to a second host clones the id**, and
+     this layer then sees one install. Set `POLARIS_HA_INSTANCE_ID` to
+     different values on the two hosts, or delete the file on the copy.
+   - **A read-only state directory** leaves the process falling back to its
+     hostname (it logs a warning saying so). Set `POLARIS_HA_INSTANCE_ID`
+     there.
 
 **The residual window.** For up to ~20 seconds after a demote (callback latency
 plus `TimeoutStopSec=20`) the old application may still be running against a

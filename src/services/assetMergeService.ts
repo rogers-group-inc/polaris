@@ -249,6 +249,78 @@ function isEmpty(v: unknown): boolean {
   return v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 }
 
+/**
+ * Fields that are COMBINED across the two rows rather than won by one side.
+ *
+ * `notes` is the only one. Every other mergeable field names a single fact
+ * about the device — it has one hostname, one serial, one owner — so picking a
+ * winner is the right verb and the loser's value is redundant. Notes are not a
+ * fact, they are an accumulated operator record, and each side's was written by
+ * somebody who did not know the other row existed. Discarding half of that is a
+ * silent data loss that no comparison UI makes obvious (the loser's text simply
+ * stops existing), and a merge is irreversible.
+ *
+ * Kept in MERGEABLE_FIELDS so the field list stays the one vocabulary the route
+ * validates and the select is derived from; a `fieldWinners` entry naming one
+ * of these is accepted and IGNORED rather than refused, so an older client (or
+ * the conflict-card merge, which sends no winners at all) cannot fail on it.
+ */
+export const CONCATENATED_FIELDS: readonly MergeableField[] = ["notes"];
+
+/** One side of a notes combine — the text and the name to label it with. */
+export interface NotesSide {
+  notes?: string | null;
+  hostname?: string | null;
+  id?: string | null;
+}
+
+/**
+ * Combine both rows' notes into the survivor's, labeled by the asset each block
+ * came from so the record stays legible a year later.
+ *
+ * Returns `undefined` when there is nothing to write — no notes on either side,
+ * or the survivor's text already contains the absorbed row's (the idempotence
+ * guard that stops a second merge from stacking the same block twice).
+ *
+ * Shape decisions, all of them about not manufacturing noise:
+ *   - one side empty → the other's text is written through UNLABELED. Nothing
+ *     was combined, so a provenance header would be pure clutter.
+ *   - identical text on both sides → written once, unlabeled. Same reasoning.
+ *   - labels that collide (the duplicate-hostname merge, where both rows carry
+ *     the same name) are disambiguated with a short id, because two blocks
+ *     under one identical header say nothing.
+ *
+ * `notes` is a `@db.Text` column and the result is editable on the asset form
+ * afterwards, so this is a starting value rather than a final one.
+ *
+ * NOTE: mirrored in `public/js/asset-merge-modal.js` (`_mergeCombineNotes`) for
+ * the comparison preview. The two must agree — there is no build step to share
+ * one implementation, so a change here needs the same change there.
+ */
+export function combineAssetNotes(
+  canonical: NotesSide,
+  ghost: NotesSide,
+): string | undefined {
+  const cText = (canonical.notes ?? "").trim();
+  const gText = (ghost.notes ?? "").trim();
+
+  if (!cText && !gText) return undefined;
+  if (!gText) return undefined;            // survivor keeps what it has
+  if (!cText) return gText;                // nothing to combine with
+  if (cText === gText) return undefined;   // already says it
+  if (cText.includes(gText)) return undefined;
+
+  const label = (side: NotesSide, other: NotesSide): string => {
+    const name = (side.hostname ?? "").trim() || "unnamed asset";
+    const otherName = (other.hostname ?? "").trim() || "unnamed asset";
+    if (name !== otherName) return name;
+    const suffix = (side.id ?? "").slice(0, 8);
+    return suffix ? `${name} · ${suffix}` : name;
+  };
+
+  return `[${label(canonical, ghost)}]\n${cText}\n\n[${label(ghost, canonical)}]\n${gText}`;
+}
+
 export interface SideTableTransferCounts {
   movedMacs: number;
   movedIps: number;
@@ -572,6 +644,8 @@ export async function mergeAssets(opts: {
   const update: Record<string, unknown> = {};
   const appliedFields: string[] = [];
   for (const field of MERGEABLE_FIELDS) {
+    // Combined, not won — any winner the caller sent for these is ignored.
+    if (CONCATENATED_FIELDS.includes(field)) continue;
     const cVal = c[field];
     const gVal = g[field];
     const winner: FieldWinner = fieldWinners[field] ?? (isEmpty(cVal) && !isEmpty(gVal) ? "ghost" : "canonical");
@@ -579,6 +653,17 @@ export async function mergeAssets(opts: {
       update[field] = gVal;
       appliedFields.push(field);
     }
+  }
+
+  // notes — both rows' text, labeled by origin. See combineAssetNotes for why
+  // this is a combine rather than a pick.
+  const combinedNotes = combineAssetNotes(
+    { notes: c.notes as string | null, hostname: c.hostname as string | null, id: canonicalId },
+    { notes: g.notes as string | null, hostname: g.hostname as string | null, id: ghostId },
+  );
+  if (combinedNotes !== undefined) {
+    update.notes = combinedNotes;
+    appliedFields.push("notes");
   }
 
   // lastSeen — always keep the more recent so the survivor reflects the

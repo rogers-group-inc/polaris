@@ -57,7 +57,7 @@ import { runStartupDiskCheck } from "./utils/startupDiskCheck.js";
 import { runSchemaSanityCheck } from "./utils/schemaSanityCheck.js";
 import { getDbConnectionMode } from "./utils/dbConnections.js";
 import { checkReadiness } from "./utils/readinessCheck.js";
-import { checkActiveInstanceConflict } from "./services/haHeartbeatService.js";
+import { checkActiveInstanceConflict, releaseActiveInstance } from "./services/haHeartbeatService.js";
 import { startMetricsOnlyServer } from "./utils/metricsServer.js";
 import { recordDbConnectionMode, setDbPoolRoleCapacity } from "./metrics.js";
 import { startFmgActivityHeartbeat } from "./services/fmgActivityService.js";
@@ -254,12 +254,19 @@ void startBackgroundJobs(cfg);
 // Graceful shutdown on SIGTERM/SIGINT so in-flight jobs can drain and the
 // final buffer flushes land before the process exits. No-op when
 // pg-boss never started.
+//
+// Releasing the active-instance stamp belongs here and not in a crash path:
+// a clean stop means nobody is behind that claim any more, so the successor —
+// the upgraded container, the restarted unit — boots immediately instead of
+// waiting out CONFLICT_WINDOW_MS. A kill -9 still leaves the stamp, which is
+// exactly when the window should apply.
 for (const sig of ["SIGTERM", "SIGINT"] as const) {
   process.once(sig, () => {
     Promise.allSettled([
       shutdownFlushSampleBuffers(),
       shutdownFlushProbePatchBuffer(),
       stopPgbossWorkers(),
+      cfg.runsSchedulers ? releaseActiveInstance() : Promise.resolve(false),
     ]).finally(() => process.exit(0));
   });
 }
@@ -927,10 +934,16 @@ export async function startApp(): Promise<void> {
     if (verdict.conflict) {
       recordActiveInstanceConflict(verdict.holder ?? "unknown");
       logger.fatal(
-        { holder: verdict.holder, stampAgeMs: verdict.ageMs },
-        "Refusing to start: another host holds a fresh active-instance heartbeat on this database. " +
-        "Two Polaris instances on one database double-poll every device and duplicate every alert. " +
-        "Stop the other host, or point this one at its own database (docs/HA.md). " +
+        {
+          holder:           verdict.holder,
+          holderInstanceId: verdict.holderInstanceId,
+          stampAgeMs:       verdict.ageMs,
+        },
+        "Refusing to start: another Polaris install holds a fresh active-instance heartbeat on " +
+        "this database. Two instances on one database double-poll every device and duplicate " +
+        "every alert. Stop the other one, or point this one at its own database (docs/HA.md). " +
+        "If this IS the same install and holderInstanceId is absent, the stamp predates the " +
+        "per-install ID and expires on its own within 90s — start again. " +
         "Set POLARIS_HA_HEARTBEAT=off to override.",
       );
       process.exit(1);

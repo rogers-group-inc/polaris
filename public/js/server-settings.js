@@ -674,14 +674,18 @@ var _proxyData = null;
 var _dashSettings = null; // { enabled, rfc1918Only } | null while loading/failed
 var _loginAccess = null;  // { settings, callerIp } | null while loading/failed
 
-// Render the Web Server tab (data-tab="certificates"). nginx terminates TLS — four stacked cards:
+// Render the Web Server tab (data-tab="certificates"). nginx terminates TLS — five cards
+// in a .settings-cards-flow deck (up to three columns, reflowing to two then
+// one as the window narrows; the min column width lives in styles.css):
 // HTTPS Certificate (read-only metadata + Rotate button), nginx Proxy (the
 // six operator-settable directives: HTTPS port, HTTP/3, TLS protocols, HSTS,
 // Prometheus allow-list, with a Save & Apply button), Dash Wallboard (the
 // unauthenticated read-only /dash surface: on/off toggle + source-IP scope),
-// and Trusted CAs.
-// A drift banner appears above the cards when proxyConfig.managedMode is
-// false (the refuse-and-banner UX for existing installs that haven't opted
+// Local Login Access (READ-ONLY here since 2026-09 — the editor moved to Users →
+// Authentication → Settings, where it sits with the password and passkey
+// policies; this card states the current scope and points there), and Trusted CAs.
+// A drift banner appears above the deck, full width, when proxyConfig.managedMode
+// is false (the refuse-and-banner UX for existing installs that haven't opted
 // into Polaris-managed nginx config yet). See src/api/routes/proxySettings.ts.
 function renderCertsTab(container) {
   var s = _httpsSettings || {};
@@ -914,7 +918,10 @@ function renderCertsTab(container) {
       '</p>' +
     '</div>';
 
-  container.innerHTML = bannerHtml + certCardHtml + proxyCardHtml + dashCardHtml + loginCardHtml + caCardHtml;
+  container.innerHTML = bannerHtml +
+    '<div class="settings-cards-flow">' +
+      certCardHtml + proxyCardHtml + dashCardHtml + loginCardHtml + caCardHtml +
+    '</div>';
 
   var adoptBtn = document.getElementById("proxy-adopt-btn");
   if (adoptBtn) adoptBtn.addEventListener("click", handleProxyAdopt);
