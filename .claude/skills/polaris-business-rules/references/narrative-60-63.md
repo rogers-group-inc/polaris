@@ -1,0 +1,320 @@
+# Business rules 60–63 — full narrative
+
+> Split out of `narrative-44-48.md` in 2026-09, which had reached the 1500-line reference-file
+> ceiling. Rule numbers are a stable citation key and did not change; only the file holding
+> them did.
+
+Verbatim from BUSINESS-RULES.md: each rule records the decision *and the incident or constraint that forced it*. The invariant for each rule is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
+
+- [Rule 60](#rule-60) — A footer that tells the reader who else knows must never name a Bcc
+- [Rule 61](#rule-61) — Changing a credential ends every other session on it, and rotating your own must carry the CSRF token across
+- [Rule 63](#rule-63) — The complexity bar belongs to the operator, and a password that no longer meets it is replaced on the far side of the second factor
+- [Rule 64](#rule-64) — A passkey is bound to the origin that issued its challenge, the install decides what a passkey is for, and it never names an account that does not already exist
+
+<a id="rule-60"></a>
+
+## Rule 60 — A footer that tells the reader who else knows must never name a Bcc
+
+An alert that routes to both email and web push reaches two audiences that cannot see each
+other. The person reading the email has no way of telling whether the on-call phone buzzed
+thirty seconds ago or whether they are the only one who has heard about this, and that
+question decides whether they pick the device up or leave it to whoever is already on it.
+`{push.recipients}` put the push half of that answer in the footer.
+
+The mail half was missing, and the reason it could not simply be read off the To header is
+the part worth writing down. **No single copy's To line is the whole audience of an alert.**
+A composed send splits per recipient TIMEZONE, because the body is re-rendered per zone. It
+splits again per acknowledge CAPABILITY whenever a recipient's role holds `alerts` below
+`write`, which is rule 25's `splitAckVariants`. A second notify action on the same automation
+mails its own recipient list. A reminder, and every escalation tier, adds people the first
+copy never had — which is exactly the situation an operator is trying to reason about when
+they look. So a reader who checks the To line to see who else is on it gets a confidently
+partial answer, and the partiality is invisible: the header looks complete.
+
+Prod 2026-09-14 is the case that made it concrete. A FortiGate-down alert routed its reminder
+to the site's two people at region level 1 and escalated hourly to the division at level 2.
+Reading any one of those emails, none of the four recipients could see the other three: the
+two site people were on a second copy split off by acknowledge capability, and the division
+pair were only ever on the escalation. Each copy's To line was accurate and each was a quarter
+of the picture.
+
+So `{email.recipients}` renders beside its push sibling in the same 11px footer block, sourced
+from the alert's own email delivery rows, deduped by address across every copy, every notify
+action and every pass. Both lines scope to the ALERT rather than to the send, and both count
+ROWS rather than outcomes — the email and the push drain in the same pass, sometimes the same
+chunk, and a push service's 202 was never proof of delivery anyway ("sent to" is the honest
+verb, the same reachability posture `preferenceWithholds` takes).
+
+**The Bcc rule is the load-bearing half, and it is not where it looks.** A blind copy that
+appears in a footer every recipient reads has stopped being blind, and the operator who Bcc'd
+someone has been overruled by a footnote they never asked for. The obvious reading is that the
+renderer filters Bcc out. It does not — it is never handed one. Both email paths put To, and
+only To, in `NotificationDelivery.target`: the composed path joins the whole To line into a
+single row, and the plain per-address path writes one address. `toAddressesOf` therefore
+cannot reach a Bcc no matter what it parses. Cc IS named, being visible to everyone on that
+copy already, and it comes from `meta.cc` alone; `meta.bcc` is read by nothing.
+
+**That makes the invariant a property of `expandDeliveries`, not of the service that renders
+the line.** The day a delivery row folds Bcc into `target`, or into `meta.cc`, this footer
+unblinds it — silently, with no error, and with no test failing anywhere near the change that
+caused it. `tests/unit/alertEmailRecipients.test.ts` pins both halves for that reason, and
+this rule is the note on the door.
+
+Two smaller decisions ride along. The email half deduplicates by ADDRESS rather than by
+account, and prints the owning account's name only where one holds the address: a typed
+address or an address-book contact has no account to name, which is the same "unknown means
+deliver" posture rules 25 and 39 take, read the other way round. And the account lookup asks
+for each address as WRITTEN and lower-cased rather than reading the whole user table, because
+`User.email` carries no citext and an account stored with different capitalisation would
+otherwise print as a bare address beside its colleagues' names.
+
+Finally, the deferral registration differs between the two tokens, and the asymmetry is
+deliberate rather than an oversight to tidy up. `isDeferredToken` matches the `push.` PREFIX,
+so `{push.recipients}` is covered by the prefix. `email.recipients` is an ENUMERATED name in
+`DEFERRED_TOKEN_NAMES`, beside `ack`, because an `email.` prefix would also swallow any future
+`{email.*}` token that is NOT deferred. A token that is not registered is blanked at compose
+time, before the delivery pass that would have filled it — the `{chart.trigger}` regression,
+and the reason both tokens carry a test asserting they survive the compose passes literal.
+
+<a id="rule-61"></a>
+
+## Rule 61 — Changing a credential ends every other session on it, and rotating your own must carry the CSRF token across
+
+Until 2026-09-14 an ordinary user could not change their own password. The only password
+field in the product was the admin reset on `/users.html`, a page gated `users` — admin-only
+in the built-in matrix — so a local account below that grant had to ask an administrator to
+reset a password it already knew. This is the same reachability mismatch that moved TOTP
+enrollment into the account menu, one surface over, and the two rows now sit together.
+
+`PUT /auth/password` is gated on nothing beyond being logged in, which is worth stating
+plainly because it looks under-gated and is not. **The body names no user.** It reads the
+account out of `req.session.userId` and changes that one, so there is no target to
+enumerate, no id to tamper with, and no permission that would mean anything — a grant to
+"change passwords" is exactly the admin route, which is a different endpoint with a
+different gate. What stands in for a permission here is the current password, and that is
+the substantive difference from the admin reset: this route can prove the caller knows the
+credential it is replacing, and `PUT /users/:id/password` structurally cannot. The two write
+different Events for that reason — `user.password_changed` against the actor's own row, and
+the admin `user.password_reset` at `warning` level, which is elevated precisely because it
+is an unprovable act performed on somebody else's account.
+
+**The revocation is the point of the feature, not a nicety attached to it.** Someone changes
+their password because they think somebody else may have it. A live session does not consult
+the password again, so without a revocation step the change accomplishes nothing against the
+case that motivated it: the attacker's cookie keeps working until it expires on its own
+schedule. `revokeOtherSessions` deletes every other non-expired `session` row whose `sess`
+blob carries this `userId`, keeping only the caller's own `sid`.
+
+That query is deliberately **best-effort raw SQL**, wrapped so that any failure returns zero
+rather than propagating. The `session` table belongs to connect-pg-simple, not to Prisma's
+schema — it is created by the session middleware at boot, it is absent on a first run before
+anyone has logged in, and nothing in a migration guarantees its shape. `getOnlineUserIds` in
+`users.ts` already reads it under the same posture and for the same reason. The ordering
+matters too: the revocation runs AFTER the password write has committed, so a failure to
+sign other sessions out can never roll back or fail a change the user has already been told
+succeeded. The count comes back in the response so the UI can say how many were ended,
+which is the only way the user learns it happened.
+
+**The caller's own session is rotated but kept, and the carry is where this gets subtle.**
+Rotating the session ID on a credential change is ordinary hardening. Doing it with
+`req.session.regenerate()` alone breaks the page in a way nothing reports.
+
+`csrfMiddleware` runs before the route and mirrors the session's `csrfToken` into a response
+cookie on every request — so by the time the handler executes, the response already carries
+the OLD token. `regenerate()` then throws that session away, `csrfToken` included, and the
+middleware mints a replacement only on the NEXT request. The browser is left holding a
+cookie from the session that no longer exists, the page's in-memory header value matches
+that dead cookie, and the fresh session has a token matching neither. The password change
+itself returns 200 and everything looks correct. The user's next write — any write, on any
+page, possibly minutes later and about something unrelated — fails with "CSRF token missing
+or invalid" until they reload.
+
+So `rotateSessionKeepingIdentity` copies the identity fields and `csrfToken` across the
+regenerate. Carrying the CSRF token gives up nothing: it is a per-session secret held by the
+same browser that just proved it knows the password, and the fixation window a rotate closes
+is the anonymous-to-authenticated transition, which is not what is happening here.
+
+This is the kind of defect that ships. It throws nothing, it fails no test written near it,
+and the symptom appears far from the cause — which is why the assertion is explicit:
+`tests/integration/selfChangePassword.test.ts` performs a SECOND change over the same
+supertest agent, reusing the same captured token, after the first rotated the session
+underneath it. Drop the carry and that second call 403s. The same trap is documented from
+the login side in `tests/integration/_helpers.ts`, where `authedAgent` has to issue an extra
+GET after logging in to pick the regenerated token up; login gets away with it because the
+browser does a full page navigation immediately afterward, and an in-page flow does not.
+
+Two smaller decisions. The route is **rate-limited at the login ceiling** (10 / 15 min) —
+its body carries the caller's current password, so it is a password-guessing surface in
+every sense the login endpoint is, reachable by anyone who has stolen a session and never
+touching the login limiter on the way. And it accepts **local accounts only**, refusing every
+other `authProvider` with the reason rather than a bare 400: for an SSO, LDAP or App Proxy
+account the directory owns the credential, and Polaris changing a local hash for such a user
+would write a password that no login path consults.
+
+<a id="rule-63"></a>
+
+## Rule 63 — The complexity bar belongs to the operator, and a password that no longer meets it is replaced on the far side of the second factor
+
+Polaris shipped one password bar: at least 8 characters, a lowercase letter, an uppercase
+letter, a number, a special character. It lived as five Zod refinements in
+`utils/password.ts`, folded there in 2026-09 precisely because it had been three verbatim
+copies (admin create, admin reset, the setup wizard) and a fourth was about to join them.
+That fold was the right move and it is what made the next one possible: when an operator
+asked for the bar to be configurable, there was one place to change rather than four.
+
+**A Zod object cannot be the bar any more, and pretending otherwise is the trap.** The schema
+is built when the module is imported; the policy is a row in the `Setting` table that an admin
+can edit at 3pm on a Tuesday. So `passwordPolicySchema` was reduced to what it can honestly
+assert — a non-empty string of at most 1024 characters, the cap being a DoS guard rather than
+a rule — and every route that stores a password now follows its `.parse()` with one call,
+`assertPasswordMeetsPolicy()`. There are exactly four: `POST /users`, `PUT /users/:id/password`,
+`PUT /auth/password`, and the setup wizard's first admin. The wizard's is asserted BEFORE any
+provisioning, so a rejected password cannot leave a half-created database and an open pg
+client behind, and it resolves to the defaults because `DATABASE_URL` is still empty at that
+point — which is the right answer for a fresh install.
+
+If a complexity rule ever reappears inside that schema, two places are enforcing the bar and
+only one of them is configurable. That is the shape of the bug to watch for.
+
+**The service fails to the defaults, and this is the opposite of the neighbouring one.**
+`loginAccessService` fails OPEN when its Setting row cannot be read: there, a database blip
+that became "nobody can log in locally" would be the exact lockout the feature exists to
+prevent. `passwordPolicyService` fails to `defaultPasswordPolicy()` — the five original rules
+— because here the hazard runs the other way: an install that quietly accepts `a` as an
+administrator's password while its Setting row is unreadable. Both are "fail safe"; safe means
+different things two files apart, and writing down which is which is the point of this rule.
+`minLength` clamps to [8, 128] at parse and at save, 8 being NIST SP 800-63B's minimum for a
+memorized secret, so a UI that offered 1 is not reachable even by a hand-edited row. Turning
+all four character classes off is allowed and is not a misconfiguration — NIST actively
+discourages mandatory composition rules, and an install that wants length alone is taking a
+defensible position.
+
+**Now the half that is a security control rather than a preference.** Raising the bar does
+nothing to the passwords already stored, and an operator who raises it usually means both
+things: new passwords must be better, AND the old ones should go. Polaris cannot re-check a
+stored password against a new policy, because a hash is one-way. The only moment the question
+can be answered is the login where its owner types the plaintext — which is also why the
+timestamp approach was rejected: "changed before the policy took effect" would interrupt
+every user whose password already complies, which is most of them.
+
+So `forceChangeOnLogin` is evaluated at the password step, against the plaintext in hand. And
+then it **waits**. A password-change token minted at the password step would let someone
+holding a stolen password set a new one and collect the session that was withheld, without
+ever facing TOTP or a passkey. That is an MFA bypass wearing a policy's clothes, and it would
+look entirely reasonable in a diff. The flag therefore rides from the password step to the far
+side of the second factor on the pending token itself (`utils/mfaPending.ts` gained
+`mustChangePassword` alongside `purpose` and `methods`), and only once every factor is
+satisfied is a `purpose: "password-change"` token issued. The purposes are checked on consume
+and the token is burned even on a mismatch, so an MFA token cannot be spent at the
+password-change endpoint and vice versa.
+
+That token buys one thing: set a conforming password, receive the session. It is single-use,
+five minutes long, and consumed only AFTER the write lands — a failed update leaves the user
+holding a token they can retry with rather than stranded at a login screen with no way
+forward. The route also refuses a new password equal to the old one; under a stable policy the
+complexity check catches that first (the old password is non-conforming by definition, or
+there would have been no demand), but the policy can be relaxed inside those five minutes, and
+re-submitting the password that triggered the demand satisfies its letter and none of its
+point.
+
+`tests/integration/forcedPasswordChange.test.ts` drives the whole flow against a TOTP-enrolled
+account. The three cases in its "MFA-ordering invariant" block are the regression test for the
+bypass, not a nicety — they were confirmed to go red against a build that moved the demand in
+front of the second factor.
+
+The admin is asked which they want, rather than having it inferred: the Settings tab offers
+"Apply to new passwords only" and "Require a change at next sign-in" as two radios, and
+turning the second ON prompts with what it will do to everyone whose password no longer fits.
+The default is off, because an upgrade must never start refusing logins on its own.
+
+<a id="rule-64"></a>
+
+## Rule 64 — A passkey is bound to the origin that issued its challenge, the install decides what a passkey is for, and it never names an account that does not already exist
+
+A passkey is the only credential Polaris can offer that is both unphishable and nothing to
+type, and the only stronger login path that does not require an identity provider to exist —
+which matters for a FOSS product installed by strangers, most of whom have no Entra tenant.
+
+**Local accounts only**, enforced at the route and re-checked at verification. An SSO or LDAP
+account's credentials belong to its identity provider; a passkey registered against one would
+be a second, Polaris-owned way into an account whose owner believes it is centrally
+controlled, and it would not appear anywhere in that directory's own audit trail.
+
+**The install decides what a passkey IS.** `passkeyConfig.mode` is `off`, `login`
+(passwordless), `second-factor`, or `both` — the default. "Both" is the default because
+enabling passkeys refuses nothing: passwords keep working, registration is opt-in per user,
+and an install that never opens the tab is exactly as reachable as it was. The FOSS posture
+rule is that an upgrade must not start DENYING logins; it says nothing about offering a
+stronger one. There is one consequence worth stating plainly: under a mode that includes
+`second-factor`, registering a passkey makes that account's login two-step, exactly as
+enrolling TOTP does. That is the security gain and it is also a lockout risk, which is why
+`DELETE /users/:id/passkeys` exists — the counterpart of the TOTP reset, for the same lost
+device.
+
+**`requireUserVerification` is what licenses a passkey to be the whole login.** With it on
+(the default), the authenticator proves a human is present AND verified — a PIN, a
+fingerprint, a face — before it will sign, which is two factors inside one gesture. That is
+why a passkey login is stamped `mfaVerified` and skips the TOTP step. Turn it off and the
+claim stops being true, so the passwordless route mirrors the flag into the session rather
+than asserting verification that did not happen. The mode and the UV flag are edited on the
+same card because they are one decision.
+
+**The Relying Party is derived from the request, not configured.** Polaris's deployment
+posture says TLS terminates anywhere, `POLARIS_PUBLIC_URL` may be unset, and one install is
+legitimately reached at more than one name — so nothing in configuration reliably knows the
+domain a browser is talking to. `utils/webauthnRp.ts` reads it off the Host header. That is
+safe HERE, and only because the browser is the real enforcer: it refuses to run a ceremony
+whose rpId is not a registrable suffix of the page's own origin. A forged Host can therefore
+produce a ceremony that fails in the browser, or — for a caller already authenticated and
+forging their own requests — a credential bound to a domain they control, which lets them into
+nothing they did not already have.
+
+The rpId and origin are then **pinned into the ceremony at issue time**
+(`utils/webauthnChallenge.ts`) and replayed at verification. Re-deriving them at verify would
+check the assertion against whatever the SECOND request claimed to be — a mismatch that ought
+to be an error becomes a silent success. The same store gives the ceremony its purpose, and a
+registration token is not spendable at the login endpoint even though both hold a challenge.
+It lives in memory rather than in the session, because a passkey login begins with no session
+at all and the session store is a database table: an unauthenticated caller could create rows
+by hammering the options endpoint. A capped map — 5000 entries, oldest evicted — cannot be
+grown into a disk problem whatever the rate limiter is set to.
+
+**Two supported deployment shapes cannot have passkeys, and both say so.** WebAuthn requires a
+secure context, and an RP ID must be a domain: a lab VM on plain HTTP at 10.0.0.5 is a real
+Polaris install that simply cannot host them. `resolveRelyingParty` returns a REASON rather
+than throwing, so the availability endpoint can tell the login page which of the two it hit
+and the page can leave the button undrawn — instead of showing one that produces an opaque
+`SecurityError` in a credential dialog.
+
+**The passwordless options endpoint names no credentials.** `allowCredentials` is left empty
+on purpose: naming a user's authenticators before they have authenticated would turn the
+endpoint into an oracle for "does alice exist, and how many keys does she have". The browser
+is asked for any discoverable credential for this RP and the assertion names the account,
+which is exactly why registration demands `residentKey: "required"`. The second-factor step
+DOES name them — the caller has already proved the password, so listing them tells them
+nothing new, and naming them is what lets a non-discoverable security key take part — and it
+binds the assertion to that account with `expectUserId`, because without that binding anyone
+holding any passkey on the install could finish somebody else's half-completed login.
+
+**Every refusal is the same sentence.** Unknown credential, bad signature, an account that has
+since become SSO-managed, a signature counter that went backwards — all "that passkey was not
+recognized". "That credential is not registered here" is a fact worth learning to someone
+probing with a key they control. The counter check is the one clone signal WebAuthn gives, and
+it is narrower than it first appears: most platform authenticators pin the counter at 0
+forever, so only a DECREASE from a non-zero value is evidence of anything.
+
+**And unlike every other credential path in Polaris, it never provisions.** SAML, OIDC and
+LDAP all find-or-provision a user, because an identity provider vouching for someone is a
+reason to create an account. A passkey vouches for a credential. A discoverable credential
+resolving to no row is an authentication failure, not a signup.
+
+Finally, the operational trap. A pre-session ceremony endpoint needs FOUR registrations to be
+correct, and each missing one fails in a different silent direction: the route itself; an entry
+in `LOGIN_CREDENTIAL_PATHS` (`app.ts`) if it can end in a session — miss it and a
+source-restricted install is reachable from anywhere with nothing in the UI to show it; a CSRF
+exemption, because a login page has no session and therefore no token — miss it and the
+endpoint 403s every caller; and a `passkeyCeremonyLimiter` mount. The CSRF entry is
+`/api/v1/auth/passkeys/login`, and the segment-boundary match in `isExemptPath` is what keeps
+`/passkeys/register` and `/passkeys/:id` — mutating session routes one segment away —
+protected. A bare `startsWith` would exempt every one of them, which is the mistake the HA
+enrollment entry already made once (rule 50's neighbourhood).

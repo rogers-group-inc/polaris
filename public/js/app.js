@@ -496,6 +496,13 @@ var _tzOptions = null;
 var _totpState = null;
 var _totpFetched = false;
 
+// The same arrangement for the passkey row: one fetch per page load, read when
+// the menu is built. Kept apart from _totpState because the two answer
+// different questions — this one also carries whether the INSTALL offers
+// passkeys at all, which no TOTP payload knows.
+var _passkeyState = null;
+var _passkeyFetched = false;
+
 /**
  * Notification preference + push enrollment for the user menu.
  *
@@ -854,6 +861,61 @@ function _openTotpSelf() {
   PolarisTotpSelf.open({ onChange: refreshTotpState });
 }
 
+/**
+ * Passkey state for the user menu's row. One fetch per page load, same
+ * arrangement as wireTotpState — and the same reason it is not gated on
+ * `currentUserAuthProvider`: the cached-nav path defaults that to "local".
+ */
+function wirePasskeyState() {
+  if (_passkeyFetched) return;
+  if (!window.PolarisPasskeys || !window.api || !api.auth) return;
+  _passkeyFetched = true;
+  PolarisPasskeys.summary()
+    .then(function (st) { _passkeyState = st || null; })
+    .catch(function () { _passkeyState = null; });
+}
+
+/** Re-read passkey state so the row's count relabels after the flow changed it. */
+function refreshPasskeyState() {
+  if (!window.PolarisPasskeys) return;
+  PolarisPasskeys.summary()
+    .then(function (st) { _passkeyState = st || null; })
+    .catch(function () {});
+}
+
+/**
+ * The user menu's passkey row, or null when it isn't on offer.
+ *
+ * Three ways it stays hidden: no shared module on the page, an SSO/LDAP
+ * account (whose provider owns credentials), or an install where passkeys are
+ * switched off AND this user has none — someone holding credentials from
+ * before the switch still gets the row, because removing them is the one thing
+ * they might now want to do.
+ */
+function _passkeyMenuItem() {
+  if (!window.PolarisPasskeys) return null;
+  if (!_passkeyState || _passkeyState.authProvider !== "local") return null;
+
+  var availability = _passkeyState.availability || {};
+  var off = availability.mode === "off";
+  if (off && !_passkeyState.count) return null;
+
+  var label = _passkeyState.count
+    ? "Passkeys (" + _passkeyState.count + ")"
+    : "Set up a passkey";
+  var title = off
+    ? "Passkeys are disabled on this install — you can still remove the ones you registered"
+    : (availability.unavailableReason
+      ? availability.unavailableReason
+      : "Sign in with this device's PIN, fingerprint or face instead of a password");
+  return {
+    label: label,
+    icon: ICONS.key,
+    title: title,
+    onSelect: function () { PolarisPasskeys.open({ onChange: refreshPasskeyState }); },
+  };
+}
+
 const ICONS = {
   grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
   box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>',
@@ -959,6 +1021,7 @@ function renderNav() {
 
   wireNotificationPrefs();
   wireTotpState();
+  wirePasskeyState();
 
   // Wire up query status indicator
   _onQueriesChanged = renderQueryStatus;
@@ -1925,6 +1988,9 @@ function openUserMenu(anchor) {
 
   var totp = _totpMenuItem();
   if (totp) items.push(totp);
+
+  var passkeys = _passkeyMenuItem();
+  if (passkeys) items.push(passkeys);
 
   // Only separate Logout from something — with no preference or 2FA row the menu is
   // Logout alone, and a leading rule would be a divider above nothing.

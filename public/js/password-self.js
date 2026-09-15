@@ -8,9 +8,16 @@
  * private to users.js, which is loaded on /users.html alone. The account menu
  * hangs off the page header on EVERY page, so the change-password modal it
  * opens needed the same live checklist somewhere shared — and a second copy of
- * five regexes is exactly how a client-side hint drifts away from the server's
- * `passwordPolicySchema` (src/utils/password.ts), which is the real gate.
- * users.js now delegates to this module rather than keeping its own copy.
+ * five regexes is exactly how a client-side hint drifts away from the server,
+ * which is the real gate. users.js now delegates to this module rather than
+ * keeping its own copy.
+ *
+ * Since the bar became operator-configurable (Users → Authentication →
+ * Settings), WHICH rules apply is no longer a constant: the list is fetched
+ * once per page from GET /auth/password-policy and every rendered checklist is
+ * repainted when it lands. The predicates stay client-side so a checklist
+ * drawn before that request returns is still honest — it shows the shipped
+ * defaults, which are the strictest thing the product ever asked for.
  *
  * The MODAL is self-service: `PUT /auth/password` is gated on nothing beyond
  * being logged in, while /users.html is page-gated `users` (admin-only in the
@@ -32,31 +39,107 @@
 
   function toast(msg, kind) { if (typeof showToast === "function") showToast(msg, kind); }
 
-  // Mirrors src/utils/password.ts → passwordPolicySchema. The server is the
-  // enforcement; this is the courtesy that tells the user which rule they have
-  // not met yet, before they press the button.
-  var RULES = [
-    { key: "length",  label: "At least 8 characters", test: function (p) { return p.length >= 8; } },
-    { key: "lower",   label: "Lowercase letter",      test: function (p) { return /[a-z]/.test(p); } },
-    { key: "upper",   label: "Uppercase letter",      test: function (p) { return /[A-Z]/.test(p); } },
-    { key: "number",  label: "Number",                test: function (p) { return /[0-9]/.test(p); } },
-    { key: "special", label: "Special character",     test: function (p) { return /[^a-zA-Z0-9]/.test(p); } },
-  ];
+  // The tests, keyed the way the server keys its rules. The LABELS and which
+  // rules apply now come from the server (GET /auth/password-policy), because
+  // the complexity bar is operator-configurable — but the predicates stay here:
+  // they are the same five regexes utils/passwordPolicy.ts uses, and shipping
+  // them rather than fetching them keeps the checklist working before, and if,
+  // the policy request lands.
+  var TESTS = {
+    length:  function (p, policy) { return p.length >= policy.minLength; },
+    lower:   function (p) { return /[a-z]/.test(p); },
+    upper:   function (p) { return /[A-Z]/.test(p); },
+    number:  function (p) { return /[0-9]/.test(p); },
+    special: function (p) { return /[^a-zA-Z0-9]/.test(p); },
+  };
+
+  // The shipped defaults — the five rules this product enforced before the
+  // policy was configurable. Used until the real policy arrives, so a checklist
+  // is never blank and never silently empty on a failed fetch.
+  var _policy = {
+    minLength: 8,
+    requireLowercase: true,
+    requireUppercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+  };
+  var _rules = null;      // [{ key, label }] once resolved
+  var _loading = null;    // in-flight fetch, so N modals make one request
+  var _containers = [];   // rendered checklists, repainted when the policy lands
+
+  function derivedRules(policy) {
+    var rules = [{ key: "length", label: "At least " + policy.minLength + " characters" }];
+    if (policy.requireLowercase) rules.push({ key: "lower", label: "Lowercase letter" });
+    if (policy.requireUppercase) rules.push({ key: "upper", label: "Uppercase letter" });
+    if (policy.requireNumber) rules.push({ key: "number", label: "Number" });
+    if (policy.requireSpecial) rules.push({ key: "special", label: "Special character" });
+    return rules;
+  }
+
+  function activeRules() {
+    return _rules || derivedRules(_policy);
+  }
+
+  /**
+   * Fetch the live policy once per page. Deliberately best-effort: a failure
+   * leaves the defaults in place, which is the strictest posture the product
+   * ships with, so the worst case is a checklist that asks for slightly more
+   * than the server will. The server is the enforcement either way.
+   */
+  function ensurePolicy() {
+    if (_rules) return Promise.resolve(_policy);
+    if (_loading) return _loading;
+    _loading = fetch("/api/v1/auth/password-policy")
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        if (data && data.policy) {
+          _policy = data.policy;
+          _rules = (data.rules && data.rules.length) ? data.rules : derivedRules(data.policy);
+          repaintAll();
+        }
+        return _policy;
+      })
+      .catch(function () { return _policy; });
+    return _loading;
+  }
+
+  function rowsHTML() {
+    return activeRules().map(function (r) {
+      return '<div data-rule="' + r.key + '"><span class="pw-icon">&#9675;</span> ' + r.label + '</div>';
+    }).join("");
+  }
+
+  // A checklist rendered before the policy arrived has the wrong rows; redraw
+  // it in place and re-run the check against whatever the user has typed so
+  // far, so the list never disagrees with the button it sits above.
+  function repaintAll() {
+    // Drop containers whose modal has since closed, so reopening a dialog a
+    // hundred times does not leave a hundred dead ids to walk.
+    _containers = _containers.filter(function (entry) {
+      return document.getElementById(entry.containerId) !== null;
+    });
+    _containers.forEach(function (entry) {
+      document.getElementById(entry.containerId).innerHTML = rowsHTML();
+      var input = entry.inputId ? document.getElementById(entry.inputId) : null;
+      check(input ? input.value : "", entry.containerId);
+    });
+  }
 
   /** The checklist markup. Render it under the new-password field. */
   function rulesHTML(containerId) {
-    var html = '<div id="' + containerId + '" style="margin-top:0.4rem;font-size:0.8rem;line-height:1.6;color:var(--color-text-tertiary)">';
-    RULES.forEach(function (r) {
-      html += '<div data-rule="' + r.key + '"><span class="pw-icon">&#9675;</span> ' + r.label + '</div>';
-    });
-    return html + '</div>';
+    ensurePolicy();
+    if (!_containers.some(function (c) { return c.containerId === containerId; })) {
+      _containers.push({ containerId: containerId, inputId: null });
+    }
+    return '<div id="' + containerId + '" style="margin-top:0.4rem;font-size:0.8rem;line-height:1.6;color:var(--color-text-tertiary)">' +
+      rowsHTML() + '</div>';
   }
 
   /** Repaint the checklist; returns true when every rule passes. */
   function check(pw, containerId) {
     var allPassed = true;
-    RULES.forEach(function (r) {
-      var passed = r.test(pw);
+    activeRules().forEach(function (r) {
+      var passed = TESTS[r.key] ? TESTS[r.key](pw, _policy) : true;
       if (!passed) allPassed = false;
       var el = document.querySelector('#' + containerId + ' [data-rule="' + r.key + '"]');
       if (el) {
@@ -71,7 +154,12 @@
   function wire(inputId, containerId) {
     var input = document.getElementById(inputId);
     if (!input) return;
+    var entry = null;
+    _containers.forEach(function (c) { if (c.containerId === containerId) entry = c; });
+    if (entry) entry.inputId = inputId;
+    else _containers.push({ containerId: containerId, inputId: inputId });
     input.addEventListener("input", function () { check(this.value, containerId); });
+    ensurePolicy();
   }
 
   /** The "Matches password" row for a confirm field. */

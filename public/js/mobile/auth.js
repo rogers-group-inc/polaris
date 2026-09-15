@@ -1,16 +1,25 @@
 // public/js/mobile/auth.js — Login and TOTP screens for the mobile app.
 //
-// Wires up the same two-phase auth flow as the desktop login.html:
+// Wires up the same multi-step auth flow as the desktop login.html. Every step
+// can hand back any of three outcomes, routed by handleLoginOutcome():
 //   POST /api/v1/auth/login
-//     → { ok, user }                 → session set, navigate home
-//     → { mfaRequired, pendingToken } → render TOTP step
-//   POST /api/v1/auth/login/totp     → { ok, user } → home
+//     → { ok, user }                          → session set, navigate home
+//     → { mfaRequired, pendingToken, methods } → second-factor step (code or passkey)
+//     → { passwordChangeRequired, pendingToken } → forced new-password step
+//   POST /api/v1/auth/login/totp     ┐ same three outcomes — a second factor
+//   POST /api/v1/auth/login/passkey  ┘ can still be followed by a forced change
+//   POST /api/v1/auth/passkeys/login → passwordless, same three outcomes
 //
 // Renders directly into the .app container; doesn't touch the navbar or
 // top app bar (those are app.js's responsibility once authenticated).
 
 (function () {
   var pendingToken = null;
+  var pwChangeToken = null;
+  // Which second factors the account can finish with, as reported by the
+  // password step. Defaults to the pre-passkey answer so an older response
+  // shape still renders the code form.
+  var mfaMethods = { totp: true, passkey: false };
   var ssoConfig = null;
 
   // Microsoft 4-square logo, used when SSO is configured for Azure/Entra.
@@ -195,12 +204,42 @@
       + '      <button type="submit" class="btn btn-filled btn-block" style="height:48px;">Sign in</button>'
       + '    </form>'
 
+      + '    <div id="passkey-section" class="hidden" style="width:100%;">'
+      + '      <div class="divider">or</div>'
+      + '      <button id="passkey-btn" class="btn btn-tonal btn-block" style="height:48px;">Sign in with a passkey</button>'
+      + '    </div>'
+
       + '    <div id="sso-section" class="hidden" style="width:100%;">'
       + '      <div class="divider">or</div>'
       + '      <button id="sso-btn" class="btn btn-tonal btn-block" style="height:48px;"></button>'
       + '    </div>'
       + '  </div>'
       + '</div>';
+
+    // Passkey sign-in. A phone is where this matters most — Face ID / a
+    // fingerprint instead of typing a password on a small keyboard — but the
+    // button only appears when the install allows it AND the PWA is on HTTPS,
+    // since a ceremony in a non-secure context can only throw.
+    if (window.PolarisWebAuthn && PolarisWebAuthn.supported()) {
+      PolarisAuthFlow.fetchPasskeyConfig().then(function (cfg) {
+        if (!cfg || !cfg.loginEnabled) return;
+        var sec = document.getElementById("passkey-section");
+        var btn = document.getElementById("passkey-btn");
+        if (!sec || !btn) return;
+        sec.classList.remove("hidden");
+        btn.addEventListener("click", async function () {
+          clearError();
+          btn.disabled = true;
+          try {
+            var r = await PolarisAuthFlow.passkeyLogin();
+            if (!r.ok) { showError(r.error); return; }
+            handleLoginOutcome(app, r);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      }).catch(function () {});
+    }
 
     // Pull branding (logo + app name) — best-effort. Which mark to paint, and
     // whether the Application Name is shown as text at all, is
@@ -276,8 +315,56 @@
       + '      <button type="button" id="totp-toggle" class="btn btn-text btn-block" style="height:40px; margin-top:8px;">Use a backup code</button>'
       + '      <button type="button" id="totp-cancel" class="btn btn-text btn-block" style="height:40px; color:var(--md-on-surface-variant);">Cancel</button>'
       + '    </form>'
+      + '    <div id="mfa-passkey-block" class="hidden" style="width:100%;">'
+      + '      <button type="button" id="mfa-passkey-btn" class="btn btn-filled btn-block" style="height:48px;">Use your passkey</button>'
+      + '      <button type="button" id="mfa-passkey-cancel" class="btn btn-text btn-block" style="height:40px; color:var(--md-on-surface-variant);">Cancel</button>'
+      + '    </div>'
+      + '    <button type="button" id="mfa-switch" class="btn btn-text btn-block hidden" style="height:40px;">Use a passkey instead</button>'
       + '  </div>'
       + '</div>';
+
+    // Which halves of this screen apply depends on what the account actually
+    // enrolled. A passkey-only account never sees a code field it cannot fill.
+    var canPasskey = !!mfaMethods.passkey && window.PolarisWebAuthn && PolarisWebAuthn.supported();
+    var canTotp = !!mfaMethods.totp;
+    if (!canTotp) {
+      document.getElementById("totp-form").classList.add("hidden");
+      document.getElementById("mfa-passkey-block").classList.remove("hidden");
+      document.getElementById("totp-sub").textContent = canPasskey
+        ? "Confirm it's you with your passkey."
+        : "This account uses a passkey as its second factor, and this browser cannot use passkeys here.";
+      document.getElementById("mfa-passkey-btn").disabled = !canPasskey;
+    } else if (canPasskey) {
+      document.getElementById("mfa-switch").classList.remove("hidden");
+    }
+
+    document.getElementById("mfa-switch").addEventListener("click", function () {
+      var form = document.getElementById("totp-form");
+      var block = document.getElementById("mfa-passkey-block");
+      var usingCode = !form.classList.contains("hidden");
+      form.classList.toggle("hidden", usingCode);
+      block.classList.toggle("hidden", !usingCode);
+      this.textContent = usingCode ? "Use a verification code instead" : "Use a passkey instead";
+    });
+
+    document.getElementById("mfa-passkey-btn").addEventListener("click", async function () {
+      var btn = this;
+      clearError();
+      btn.disabled = true;
+      try {
+        var r = await PolarisAuthFlow.confirmPasskey(pendingToken);
+        if (!r.ok) { showError(r.error); return; }
+        pendingToken = null;
+        handleLoginOutcome(app, r);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById("mfa-passkey-cancel").addEventListener("click", function () {
+      pendingToken = null;
+      renderLogin(app);
+    });
 
     var input = document.getElementById("totp-code");
     var label = document.getElementById("totp-label");
@@ -338,9 +425,25 @@
     btn.disabled = true;
     var r = await PolarisAuthFlow.login(username, password);
     if (!r.ok) { showError(r.error); btn.disabled = false; return; }
+    handleLoginOutcome(document.getElementById("app"), r);
+  }
+
+  /**
+   * What a finished step means — the mobile twin of login.js's function of the
+   * same name. Any step can hand back any of the three outcomes, so routing
+   * them in one place is what keeps "second factor, then forced password
+   * change" working without each screen knowing about the other.
+   */
+  function handleLoginOutcome(app, r) {
     if (r.mfaRequired) {
       pendingToken = r.pendingToken;
-      renderTotp(document.getElementById("app"));
+      mfaMethods = r.methods || { totp: true, passkey: false };
+      renderTotp(app);
+      return;
+    }
+    if (r.passwordChangeRequired) {
+      pwChangeToken = r.pendingToken;
+      renderPasswordChange(app);
       return;
     }
     // Success — re-bootstrap with the new session. Unpin .app first: the
@@ -349,6 +452,72 @@
     // viewport event.
     resetKeyboardFit();
     window.PolarisMobile.boot();
+  }
+
+  /**
+   * Forced password change, reached only once every factor has passed. The
+   * phone needs this screen for the same reason the desktop does: without it
+   * the SPA treats the withheld session as a success, boots, finds no session
+   * and bounces straight back to the login form — a loop with no explanation.
+   */
+  function renderPasswordChange(app) {
+    app.dataset.tab = "";
+    app.innerHTML = ''
+      + '<div class="app-body">'
+      + '  <div class="login-shell">'
+      + '    <div class="logo-mark"><svg viewBox="0 0 24 24"><use href="#i-shield"/></svg></div>'
+      + '    <h2>New password</h2>'
+      + '    <div class="sub">Your password no longer meets this system\'s complexity requirements.</div>'
+      + '    <div id="login-error" class="hidden" style="width:100%;background:var(--md-error-container);color:var(--md-on-error-container);border-radius:var(--shape-xs);padding:10px 14px;font-size:13px;margin-bottom:12px;letter-spacing:.25px;"></div>'
+      + '    <form id="pwchange-form" style="width:100%;">'
+      + '      <div class="full-field">'
+      + '        <div class="tf-outlined"><span class="lbl">New password</span>'
+      + '          <input class="field" type="password" id="pw-new" autocomplete="new-password" required autofocus>'
+      + '        </div>'
+      + '      </div>'
+      + '      <div id="pw-new-checks"></div>'
+      + '      <div class="full-field" style="margin-top:12px;">'
+      + '        <div class="tf-outlined"><span class="lbl">Confirm password</span>'
+      + '          <input class="field" type="password" id="pw-confirm" autocomplete="new-password" required>'
+      + '        </div>'
+      + '      </div>'
+      + '      <div id="pw-confirm-match"></div>'
+      + '      <button type="submit" class="btn btn-filled btn-block" style="height:48px;margin-top:12px;">Set password and sign in</button>'
+      + '    </form>'
+      + '  </div>'
+      + '</div>';
+
+    // The checklist is the shared module's, which fetches the live policy — so
+    // what this screen asks for is what the server will accept.
+    document.getElementById("pw-new-checks").outerHTML = PolarisPasswordSelf.rulesHTML("pw-new-checks");
+    document.getElementById("pw-confirm-match").outerHTML = PolarisPasswordSelf.matchHTML("pw-confirm-match");
+    PolarisPasswordSelf.wire("pw-new", "pw-new-checks");
+    PolarisPasswordSelf.wireMatch("pw-new", "pw-confirm", "pw-confirm-match");
+
+    document.getElementById("pwchange-form").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      clearError();
+      var next = document.getElementById("pw-new").value;
+      if (!PolarisPasswordSelf.check(next, "pw-new-checks")) {
+        showError("The new password does not meet the complexity requirements.");
+        return;
+      }
+      if (next !== document.getElementById("pw-confirm").value) {
+        showError("The two passwords do not match.");
+        return;
+      }
+      var btn = e.target.querySelector("button[type=submit]");
+      btn.disabled = true;
+      var r = await PolarisAuthFlow.changePasswordAtLogin(pwChangeToken, next);
+      if (!r.ok) { showError(r.error); btn.disabled = false; return; }
+      pwChangeToken = null;
+      resetKeyboardFit();
+      window.PolarisMobile.boot();
+    });
+
+    kbLastScrolled = null;
+    installKeyboardFit();
+    scheduleKeyboardFit();
   }
 
   async function onTotpSubmit(e) {
@@ -368,8 +537,7 @@
       return;
     }
     pendingToken = null;
-    resetKeyboardFit();
-    window.PolarisMobile.boot();
+    handleLoginOutcome(document.getElementById("app"), r);
   }
 
   window.PolarisAuth = {

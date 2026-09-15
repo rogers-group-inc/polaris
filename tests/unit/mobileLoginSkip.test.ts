@@ -1,7 +1,7 @@
 /**
  * tests/unit/mobileLoginSkip.test.ts
  *
- * "Skip login page" (Users → Authentication → Session) on the phone SPA.
+ * "Skip login page" (Users → Authentication → Settings) on the phone SPA.
  *
  * The desktop enforces the setting in app.ts's protected-page redirect, but
  * /mobile.html is deliberately not a protected page — the SPA draws its own

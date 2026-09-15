@@ -4,7 +4,8 @@
  * Call sites:
  *   - hashPassword() — every place a new/updated password is stored
  *   - verifyPassword() — every place a stored password is checked
- *   - passwordPolicySchema — every route that accepts a NEW password
+ *   - passwordPolicySchema — shape only; the complexity bar is the live policy
+ *     (services/passwordPolicyService.ts → assertPasswordMeetsPolicy)
  */
 
 import { hash as argonHash, verify as argonVerify, Algorithm } from "@node-rs/argon2";
@@ -27,22 +28,29 @@ const ARGON2_PARAMS = {
 const DUMMY_HASH: Promise<string> = argonHash("__polaris_timing_dummy__", ARGON2_PARAMS);
 
 /**
- * The house password-complexity policy, as a Zod schema.
+ * The SHAPE of a new password, as a Zod schema. Not the complexity bar.
  *
- * It lives here rather than beside a route because three surfaces enforce the
- * same bar and carried three verbatim copies of it: `api/routes/users.ts`
- * (admin create + admin reset), `setup/setupRoutes.ts` (the first admin the
- * wizard mints) and `api/routes/auth.ts` (a user changing their own). A fourth
- * copy is how the rules drift apart. The client-side checklist in
- * `public/js/password-self.js` mirrors these five rules and says so — it is a
- * courtesy, and this schema is the enforcement.
+ * Until 2026-09 this schema WAS the bar: min 8 plus four character classes,
+ * hard-coded here so that `api/routes/users.ts` (admin create + admin reset),
+ * `setup/setupRoutes.ts` (the first admin the wizard mints) and
+ * `api/routes/auth.ts` (a user changing their own) could not drift apart. The
+ * bar is now operator-configurable (Users → Authentication → Settings), which
+ * a static schema cannot express — a Zod object is built at import time and
+ * the policy lives in a Setting row.
+ *
+ * So the split is: this schema says "a non-empty string of sane length", and
+ * every one of those call sites follows its `.parse()` with
+ * `assertPasswordMeetsPolicy()` (services/passwordPolicyService.ts), which
+ * reads the live policy and throws a 400 naming every unmet rule. The
+ * defaults in `utils/passwordPolicy.ts` are the five rules this replaced, so
+ * an install that never opens the tab is gated exactly as it was.
+ *
+ * The cap is a DoS guard, not a policy: argon2 hashes whatever it is handed,
+ * and nothing upstream bounds a JSON string.
  */
 export const passwordPolicySchema = z.string()
-  .min(8, "Password must be at least 8 characters")
-  .regex(/[a-z]/, "Password must contain a lowercase letter")
-  .regex(/[A-Z]/, "Password must contain an uppercase letter")
-  .regex(/[0-9]/, "Password must contain a number")
-  .regex(/[^a-zA-Z0-9]/, "Password must contain a special character");
+  .min(1, "Password is required")
+  .max(1024, "Password must be at most 1024 characters");
 
 /** Produce a new argon2id hash for a plaintext password. */
 export async function hashPassword(plaintext: string): Promise<string> {

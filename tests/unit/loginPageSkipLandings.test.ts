@@ -11,7 +11,7 @@
  *    server-side idle check — is /signed-out.html, a page with NO sign-in
  *    fields whose one control is a plain link to the BARE /login.html (so the
  *    skip setting, not the page, decides SSO-or-form);
- *  - the Session tab's hint names `/login.html?local=1`, the anti-lockout
+ *  - the Settings tab's hint names `/login.html?local=1`, the anti-lockout
  *    path (an admin reading the hint during an IdP outage must be told the
  *    key, since the bare URL no longer draws the form);
  *  - app.ts lets exactly `error` and `local` through — `error` because every
@@ -81,7 +81,7 @@ describe("the signed-out page", () => {
 });
 
 describe("the anti-lockout path is named where an admin will read it", () => {
-  it("the Session tab hint points at /login.html?local=1", () => {
+  it("the Settings tab hint points at /login.html?local=1", () => {
     const usersJs = read("public", "js", "users.js");
     expect(usersJs).toContain("<code>/login.html?local=1</code>");
   });

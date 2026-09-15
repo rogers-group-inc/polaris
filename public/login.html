@@ -158,6 +158,17 @@
           </div>
           <button type="submit" class="btn btn-primary">Sign in</button>
         </form>
+        <!-- Passkey sign-in. Hidden until GET /auth/passkeys/config says the
+             install allows it AND this browser is in a secure context — on a
+             plain-HTTP lab install the button would only ever produce a
+             SecurityError, so it is never drawn there. -->
+        <div id="passkey-section" style="display:none">
+          <div class="login-divider"><span>or</span></div>
+          <button id="btn-passkey" class="btn-sso" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><circle cx="9" cy="9" r="4"/><path d="M14.5 11.5L21 18v3h-3l-1-1h-2l-1-1v-2l-1-1"/></svg>
+            Sign in with a passkey
+          </button>
+        </div>
       </div>
       <div id="sso-section">
         <div class="login-divider"><span>or</span></div>
@@ -182,6 +193,10 @@
         </button>
       </div>
       <div id="mfa-section" style="display:none">
+        <!-- The second factor. Which halves are shown depends on what the
+             account actually has: the code form for TOTP, the button for a
+             passkey, both (with links between them) when the account has
+             enrolled both. -->
         <form id="mfa-form">
           <div class="form-group">
             <label for="mfa-code" id="mfa-code-label">Verification code</label>
@@ -193,11 +208,39 @@
             <a href="#" id="btn-use-backup" style="color:var(--color-primary,#4a9eff)">Use a backup code</a>
           </p>
         </form>
+        <div id="mfa-passkey-block" style="display:none">
+          <p class="hint" id="mfa-passkey-hint" style="text-align:center;margin-bottom:0.75rem">Confirm it's you with your passkey.</p>
+          <button id="btn-mfa-passkey" class="btn btn-primary" type="button" style="width:100%">Use your passkey</button>
+        </div>
+        <p id="mfa-switch" style="text-align:center;margin-top:0.75rem;font-size:0.8rem;display:none">
+          <a href="#" id="btn-mfa-switch" style="color:var(--color-primary,#4a9eff)">Use a passkey instead</a>
+        </p>
+      </div>
+      <!-- Forced password change. Reached only after EVERY factor has passed,
+           when the operator has asked for passwords that no longer meet the
+           complexity policy to be replaced at login. -->
+      <div id="pwchange-section" style="display:none">
+        <form id="pwchange-form">
+          <p class="hint" style="margin-bottom:1rem">Your password no longer meets this system's complexity requirements. Set a new one to continue.</p>
+          <div class="form-group">
+            <label for="pw-new">New password</label>
+            <input type="password" id="pw-new" autocomplete="new-password" required>
+            <div id="pw-new-checks" style="margin-top:0.4rem;font-size:0.8rem;line-height:1.6;color:var(--color-text-tertiary)"></div>
+          </div>
+          <div class="form-group">
+            <label for="pw-confirm">Confirm new password</label>
+            <input type="password" id="pw-confirm" autocomplete="new-password" required>
+            <div id="pw-confirm-match" style="margin-top:0.4rem;font-size:0.8rem;line-height:1.6;color:var(--color-text-tertiary)"></div>
+          </div>
+          <button type="submit" class="btn btn-primary">Set password and sign in</button>
+        </form>
       </div>
     </div>
   </div>
   <script src="/js/brand-logo.js"></script>
+  <script src="/js/webauthn.js"></script>
   <script src="/js/auth-flow.js"></script>
+  <script src="/js/password-self.js"></script>
   <script src="/js/login.js"></script>
 </body>
 </html>

@@ -180,10 +180,43 @@ document.getElementById("btn-demo-setup").addEventListener("click", function () 
   window.location.href = "/setup.html";
 });
 
+// Passkey sign-in. The button appears only when the install allows passkeys
+// for login AND this page can actually run a ceremony (HTTPS or localhost,
+// browser support) — see PolarisWebAuthn.supported().
+(async function () {
+  try {
+    if (!window.PolarisWebAuthn || !PolarisWebAuthn.supported()) return;
+    var cfg = await PolarisAuthFlow.fetchPasskeyConfig();
+    if (!cfg.loginEnabled) return;
+    document.getElementById("passkey-section").style.display = "";
+  } catch (_) {}
+})();
+
+document.getElementById("btn-passkey").addEventListener("click", async function () {
+  var btn = this;
+  clearError();
+  btn.disabled = true;
+  try {
+    var r = await PolarisAuthFlow.passkeyLogin();
+    if (!r.ok) {
+      // A cancelled browser dialog is not an error worth shouting about — the
+      // user closed a prompt they opened. Say it once, quietly, and leave the
+      // password form exactly where it was.
+      showError(r.error);
+      return;
+    }
+    handleLoginOutcome(r);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // Two-phase login state — pendingToken is set after a correct password
-// when the server requires a second factor. The rest of the flow is the
+// when the server requires a second factor, and again (with a different
+// purpose) when a conforming password is owed. The rest of the flow is the
 // same async/await shape as before.
 var _mfaPendingToken = null;
+var _pwChangeToken = null;
 
 function showError(msg) {
   var errEl = document.getElementById("login-error");
@@ -195,13 +228,128 @@ function clearError() {
   document.getElementById("login-error").style.display = "none";
 }
 
-function showMfaStep() {
+/** Hide every entry path — the steps after the password own the whole card. */
+function hideEntrySections() {
   document.getElementById("local-login-section").style.display = "none";
   document.getElementById("sso-section").style.display = "none";
   document.getElementById("demo-setup-section").style.display = "none";
-  document.getElementById("mfa-section").style.display = "block";
-  setTimeout(function () { document.getElementById("mfa-code").focus(); }, 30);
 }
+
+/**
+ * The single place that decides what a completed step means. Every step —
+ * password, TOTP, passkey — can hand back any of the three outcomes, so
+ * routing them once is what keeps "second factor, then forced change" working
+ * without each step knowing about the other.
+ */
+function handleLoginOutcome(r) {
+  if (r.mfaRequired) {
+    _mfaPendingToken = r.pendingToken;
+    showMfaStep(r.methods);
+    return;
+  }
+  if (r.passwordChangeRequired) {
+    _pwChangeToken = r.pendingToken;
+    showPasswordChangeStep();
+    return;
+  }
+  window.location.href = takeLoginTarget();
+}
+
+function showMfaStep(methods) {
+  methods = methods || { totp: true, passkey: false };
+  hideEntrySections();
+  document.getElementById("mfa-section").style.display = "block";
+
+  var hasTotp = !!methods.totp;
+  var hasPasskey = !!methods.passkey && window.PolarisWebAuthn && PolarisWebAuthn.supported();
+
+  // An account with a passkey second factor but no authenticator app gets the
+  // button alone; one with both starts on the code form (no dialog opens
+  // uninvited) and can switch.
+  document.getElementById("mfa-form").style.display = hasTotp ? "" : "none";
+  document.getElementById("mfa-passkey-block").style.display = hasTotp ? "none" : "";
+  document.getElementById("mfa-switch").style.display = (hasTotp && hasPasskey) ? "" : "none";
+
+  if (hasTotp) setTimeout(function () { document.getElementById("mfa-code").focus(); }, 30);
+  else if (!hasPasskey) {
+    // The account's only second factor is a passkey and this browser cannot
+    // run one. Say so rather than showing a dead button.
+    document.getElementById("mfa-passkey-block").style.display = "";
+    document.getElementById("btn-mfa-passkey").disabled = true;
+    document.getElementById("mfa-passkey-hint").textContent =
+      "This account uses a passkey as its second factor, and this browser cannot use passkeys here (they need an HTTPS connection).";
+  }
+}
+
+// Switch between the code form and the passkey button when the account has both.
+document.getElementById("btn-mfa-switch").addEventListener("click", function (e) {
+  e.preventDefault();
+  var form = document.getElementById("mfa-form");
+  var block = document.getElementById("mfa-passkey-block");
+  var usingCode = form.style.display !== "none";
+  form.style.display = usingCode ? "none" : "";
+  block.style.display = usingCode ? "" : "none";
+  this.textContent = usingCode ? "Use a verification code instead" : "Use a passkey instead";
+  if (!usingCode) setTimeout(function () { document.getElementById("mfa-code").focus(); }, 30);
+});
+
+document.getElementById("btn-mfa-passkey").addEventListener("click", async function () {
+  var btn = this;
+  clearError();
+  btn.disabled = true;
+  try {
+    var r = await PolarisAuthFlow.confirmPasskey(_mfaPendingToken);
+    if (!r.ok) {
+      showError(r.error);
+      return;
+    }
+    handleLoginOutcome(r);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ─── Forced password change ─────────────────────────────────────────────────
+// The checklist is the shared one (password-self.js), which fetches the live
+// policy — so what this step demands is exactly what the server will accept.
+
+function showPasswordChangeStep() {
+  hideEntrySections();
+  document.getElementById("mfa-section").style.display = "none";
+  document.getElementById("pwchange-section").style.display = "block";
+
+  // Replace the placeholders outright: rulesHTML/matchHTML each render their
+  // own container, and nesting one inside a div of the same id would leave two
+  // elements answering to it.
+  document.getElementById("pw-new-checks").outerHTML = PolarisPasswordSelf.rulesHTML("pw-new-checks");
+  document.getElementById("pw-confirm-match").outerHTML = PolarisPasswordSelf.matchHTML("pw-confirm-match");
+  PolarisPasswordSelf.wire("pw-new", "pw-new-checks");
+  PolarisPasswordSelf.wireMatch("pw-new", "pw-confirm", "pw-confirm-match");
+  setTimeout(function () { document.getElementById("pw-new").focus(); }, 30);
+}
+
+document.getElementById("pwchange-form").addEventListener("submit", async function (e) {
+  e.preventDefault();
+  clearError();
+
+  var next = document.getElementById("pw-new").value;
+  var confirm = document.getElementById("pw-confirm").value;
+  if (!PolarisPasswordSelf.check(next, "pw-new-checks")) {
+    showError("The new password does not meet the complexity requirements.");
+    return;
+  }
+  if (next !== confirm) {
+    showError("The two passwords do not match.");
+    return;
+  }
+
+  var r = await PolarisAuthFlow.changePasswordAtLogin(_pwChangeToken, next);
+  if (!r.ok) {
+    showError(r.error);
+    return;
+  }
+  window.location.href = takeLoginTarget();
+});
 
 document.getElementById("login-form").addEventListener("submit", async function (e) {
   e.preventDefault();
@@ -215,12 +363,7 @@ document.getElementById("login-form").addEventListener("submit", async function 
     showError(r.error);
     return;
   }
-  if (r.mfaRequired) {
-    _mfaPendingToken = r.pendingToken;
-    showMfaStep();
-    return;
-  }
-  window.location.href = takeLoginTarget();
+  handleLoginOutcome(r);
 });
 
 // Toggle between TOTP code and backup code
@@ -268,7 +411,7 @@ document.getElementById("mfa-form").addEventListener("submit", async function (e
     if (!r.network) input.select();
     return;
   }
-  window.location.href = takeLoginTarget();
+  handleLoginOutcome(r);
 });
 
 /* Where to land after a successful local / LDAP / TOTP login.

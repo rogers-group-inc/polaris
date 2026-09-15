@@ -4,12 +4,15 @@
  *
  * Two things live in that file and both are pinned here.
  *
- * The CHECKLIST is the client half of `passwordPolicySchema` in
- * src/utils/password.ts. It used to be private to users.js (one page), and
- * the reason it moved is that a second copy of five regexes is how a hint
- * drifts from the gate it is describing — so the rules are asserted against
- * the same five properties the server enforces, and a change to one side that
- * is not made on the other shows up here.
+ * The CHECKLIST is the client half of the server's password policy. It used to
+ * be private to users.js (one page), and the reason it moved is that a second
+ * copy of five regexes is how a hint drifts from the gate it is describing.
+ * Since the bar became operator-configurable (2026-09) it has two halves to
+ * get right: the SHIPPED DEFAULTS, which is what a checklist shows before (or
+ * instead of) a successful policy fetch, and the REPAINT that happens when the
+ * live policy lands and turns out to differ. A checklist that kept showing the
+ * defaults on an install with a 20-character minimum would be telling users
+ * their password is fine right up until the server refuses it.
  *
  * The MODAL must not send a request the server is going to refuse: every
  * client-side guard (blank current, weak new, mismatched confirm, unchanged)
@@ -33,9 +36,16 @@ interface Harness {
   changed: number;
 }
 
-function load(opts: { changeError?: string; revoked?: number } = {}) {
+function load(opts: { changeError?: string; revoked?: number; policy?: Record<string, unknown> | null } = {}) {
   const h: Harness = { modals: [], toasts: [], sent: [], changed: 0 };
   const g = globalThis as Record<string, unknown>;
+
+  // The policy fetch the module fires on first render. Stubbed for every case,
+  // not just the policy ones: left real it would be a network call from a unit
+  // test, and the module's own catch would hide that it happened.
+  g.fetch = vi.fn(async () => (opts.policy === null || opts.policy === undefined
+    ? { ok: false, json: async () => ({}) }
+    : { ok: true, json: async () => opts.policy }));
 
   g.api = {
     auth: {
@@ -103,6 +113,72 @@ describe("the complexity checklist", () => {
     expect(h.mod.checkMatch("", "", "match")).toBe(false);
     expect(h.mod.checkMatch("Abcdef1!", "Abcdef1", "match")).toBe(false);
     expect(h.mod.checkMatch("Abcdef1!", "Abcdef1!", "match")).toBe(true);
+  });
+});
+
+describe("the checklist against a live policy", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  /** Let the module's policy fetch and its repaint drain. */
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it("repaints a checklist rendered before the policy arrived", async () => {
+    const h = load({
+      policy: {
+        policy: { minLength: 20, requireLowercase: true, requireUppercase: false, requireNumber: false, requireSpecial: false },
+        rules: [{ key: "length", label: "At least 20 characters" }, { key: "lower", label: "Lowercase letter" }],
+      },
+    });
+    document.body.innerHTML = h.mod.rulesHTML("checks");
+    // Drawn from the shipped defaults first — a blank list would be worse.
+    expect(document.querySelectorAll("#checks [data-rule]").length).toBe(5);
+
+    await settle();
+    const keys = Array.from(document.querySelectorAll("#checks [data-rule]")).map((el) => el.getAttribute("data-rule"));
+    expect(keys).toEqual(["length", "lower"]);
+    expect(document.querySelector('#checks [data-rule="length"]')!.textContent).toContain("At least 20 characters");
+  });
+
+  it("enforces the live minimum length in check()", async () => {
+    const h = load({
+      policy: {
+        policy: { minLength: 20, requireLowercase: true, requireUppercase: true, requireNumber: true, requireSpecial: true },
+      },
+    });
+    document.body.innerHTML = h.mod.rulesHTML("checks");
+    await settle();
+    // Fine under the defaults, ten characters short of this install's bar.
+    expect(h.mod.check("Replacement-2!", "checks")).toBe(false);
+    expect(h.mod.check("Replacement-2!-and-more", "checks")).toBe(true);
+  });
+
+  it("accepts what a RELAXED policy accepts", async () => {
+    const h = load({
+      policy: {
+        policy: { minLength: 8, requireLowercase: true, requireUppercase: false, requireNumber: false, requireSpecial: false },
+      },
+    });
+    document.body.innerHTML = h.mod.rulesHTML("checks");
+    await settle();
+    expect(h.mod.check("correcthorse", "checks")).toBe(true);
+  });
+
+  it("keeps the shipped defaults when the policy cannot be fetched", async () => {
+    // Failing to the strictest thing the product ships with: the worst case is
+    // a checklist asking for slightly more than the server will, never less.
+    const h = load({ policy: null });
+    document.body.innerHTML = h.mod.rulesHTML("checks");
+    await settle();
+    const keys = Array.from(document.querySelectorAll("#checks [data-rule]")).map((el) => el.getAttribute("data-rule"));
+    expect(keys).toEqual(["length", "lower", "upper", "number", "special"]);
+    expect(h.mod.check("Replacement-2!", "checks")).toBe(true);
+  });
+
+  it("fetches the policy once however many checklists are rendered", async () => {
+    const h = load({ policy: { policy: { minLength: 8, requireLowercase: true, requireUppercase: true, requireNumber: true, requireSpecial: true } } });
+    document.body.innerHTML = h.mod.rulesHTML("a") + h.mod.rulesHTML("b") + h.mod.rulesHTML("c");
+    await settle();
+    expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
   });
 });
 

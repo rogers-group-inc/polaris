@@ -876,51 +876,42 @@ function renderCertsTab(container) {
       '</div>' +
     '</div>';
 
-  // Local Login Access card — optional source-IP restriction on the local
-  // login form (/login.html) and the password endpoints. Default off. This is
-  // the companion to "Skip login page" (Users → Authentication → Session):
-  // that setting hides the form from navigation, this one decides who may
-  // reach it at all. SSO paths are never restricted.
+  // Local Login Access — a POINTER, not an editor.
+  //
+  // The setting itself (`loginAccessConfig`) still exists and still gates
+  // /login.html and the password endpoints; what moved (2026-09) is where it is
+  // edited. It now lives on Users → Authentication → Settings beside the
+  // password policy and the passkey policy, because "who may sign in, and how"
+  // is one decision and having two screens that write the same row is how the
+  // two drift into disagreeing about what is configured. Read-only status here
+  // so an admin looking at Web Server still learns the answer.
   var la = _loginAccess;
   var laS = la && la.settings;
-  var laScope = (laS && laS.ipScope) || "rfc1918";
-  var laCidrs = (laS && Array.isArray(laS.allowedCidrs)) ? laS.allowedCidrs.join(", ") : "";
+  var laSummary;
+  if (la === null) {
+    laSummary = 'Unavailable &mdash; could not load the login access settings.';
+  } else if (!laS.enabled) {
+    laSummary = 'Not restricted &mdash; local login is reachable from any network that can reach Polaris.';
+  } else if (laS.ipScope === "custom") {
+    laSummary = 'Restricted to: <code>' + escapeHtml((laS.allowedCidrs || []).join(", ") || "(none)") + '</code>';
+  } else if (laS.ipScope === "all") {
+    laSummary = 'Scope set to all source IPs &mdash; effectively unrestricted.';
+  } else {
+    laSummary = 'Restricted to private networks (RFC1918) and loopback.';
+  }
   var loginCardHtml =
     '<div class="settings-card">' +
       '<h4>Local Login Access</h4>' +
-      '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
-        'Restrict which source networks may reach the local login form at <code>/login.html</code> and submit ' +
+      '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">' +
+        'Restricts which source networks may reach the local login form at <code>/login.html</code> and submit ' +
         'a username and password. <strong>SAML, OIDC and App Proxy sign-in are never restricted</strong> &mdash; only the ' +
-        'password path, which carries local <em>and</em> LDAP accounts. Requests from disallowed sources are dropped. ' +
-        'Leave this off unless remote users all sign in through SSO: /login.html is the way back in when the ' +
-        'identity provider is down.' +
+        'password path, which carries local <em>and</em> LDAP accounts.' +
       '</p>' +
-      (la === null
-        ? '<p style="font-size:0.85rem;color:var(--color-text-secondary)">Unavailable &mdash; could not load the login access settings.</p>'
-        : '<div class="form-group">' +
-            '<label><input type="checkbox" id="la-enabled"' + (laS.enabled ? " checked" : "") + '> Restrict local login by source IP</label>' +
-          '</div>' +
-          '<div class="form-group">' +
-            '<label>Allowed source IPs</label>' +
-            '<div style="display:flex;flex-direction:column;gap:0.3rem;margin-top:0.3rem">' +
-              '<label><input type="radio" name="la-ip-scope" value="rfc1918"' + (laScope === "rfc1918" ? " checked" : "") + '> Private networks only (RFC1918 + loopback)</label>' +
-              '<label><input type="radio" name="la-ip-scope" value="all"' + (laScope === "all" ? " checked" : "") + '> All source IPs (no restriction)</label>' +
-              '<label><input type="radio" name="la-ip-scope" value="custom"' + (laScope === "custom" ? " checked" : "") + '> Custom networks</label>' +
-            '</div>' +
-            '<div id="la-custom-cidrs" style="margin-top:0.4rem;' + (laScope === "custom" ? "" : "display:none") + '">' +
-              '<textarea id="la-allowed-cidrs" rows="3" placeholder="10.0.0.0/8, 192.168.10.0/24, 203.0.113.5" ' +
-                'style="width:100%;font-family:monospace">' + escapeHtml(laCidrs) + '</textarea>' +
-              '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-top:0.2rem">Comma- or newline-separated IPv4 networks (CIDR) or addresses. A bare address is treated as /32. Include your VPN pool if admins sign in remotely.</div>' +
-            '</div>' +
-            '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-top:0.5rem">' +
-              'Polaris currently sees your browser as <code>' + escapeHtml(la.callerIp || "unknown") + '</code>. ' +
-              'If that is a load balancer or proxy address rather than your own, every client looks the same to this ' +
-              'setting and the restriction will not mean what it appears to &mdash; fix <code>TRUST_PROXY</code> first.' +
-            '</div>' +
-          '</div>' +
-          '<div style="margin-top:0.5rem">' +
-            '<button class="btn btn-sm btn-primary" id="la-save-btn">Save</button>' +
-          '</div>') +
+      '<p style="font-size:0.85rem;margin-bottom:0.75rem"><strong>Current:</strong> ' + laSummary + '</p>' +
+      '<p style="font-size:0.82rem;color:var(--color-text-secondary)">' +
+        'Edit this on <a href="/users.html">Users</a> &rarr; <strong>Authentication</strong> &rarr; <strong>Settings</strong>, ' +
+        'where it sits with the password policy and passkey settings.' +
+      '</p>' +
     '</div>';
 
   container.innerHTML = bannerHtml + certCardHtml + proxyCardHtml + dashCardHtml + loginCardHtml + caCardHtml;
@@ -931,14 +922,6 @@ function renderCertsTab(container) {
   var dashSaveBtn = document.getElementById("dash-save-btn");
   if (dashSaveBtn) dashSaveBtn.addEventListener("click", handleDashSave);
 
-  var laSaveBtn = document.getElementById("la-save-btn");
-  if (laSaveBtn) laSaveBtn.addEventListener("click", handleLoginAccessSave);
-  document.querySelectorAll('input[name="la-ip-scope"]').forEach(function (radio) {
-    radio.addEventListener("change", function () {
-      var custom = document.getElementById("la-custom-cidrs");
-      if (custom) custom.style.display = radio.value === "custom" && radio.checked ? "" : "none";
-    });
-  });
   document.querySelectorAll('input[name="dash-ip-scope"]').forEach(function (radio) {
     radio.addEventListener("change", function () {
       if (!this.checked) return;
@@ -976,39 +959,6 @@ function renderCertsTab(container) {
   if (applyBtn) applyBtn.addEventListener("click", handleProxyApply);
 }
 
-async function handleLoginAccessSave() {
-  var enabled = !!document.getElementById("la-enabled").checked;
-  var scopeEl = document.querySelector('input[name="la-ip-scope"]:checked');
-  var ipScope = scopeEl ? scopeEl.value : "rfc1918";
-
-  var allowedCidrs = [];
-  if (ipScope === "custom") {
-    var raw = (document.getElementById("la-allowed-cidrs") || {}).value || "";
-    allowedCidrs = raw.split(/[\s,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
-    if (enabled && allowedCidrs.length === 0) {
-      showToast("Add at least one network, or local login would be blocked from everywhere.", "error");
-      return;
-    }
-  }
-
-  // Enabling narrows the SSO-outage recovery path. Confirm with the stakes
-  // named; the server refuses outright if the caller's own IP is excluded.
-  if (enabled && !(await showConfirm(
-    "Restrict the local login page to these networks? Anyone outside them \u2014 including admins working remotely \u2014 " +
-    "will only be able to sign in through SSO, even if the identity provider is down."))) {
-    return;
-  }
-
-  try {
-    var result = await api.serverSettings.loginAccessPut({ enabled: enabled, ipScope: ipScope, allowedCidrs: allowedCidrs });
-    if (result && result.loginAccess) {
-      _loginAccess = { settings: result.loginAccess, callerIp: (_loginAccess && _loginAccess.callerIp) || "" };
-    }
-    showToast(enabled ? "Local login restricted by source IP" : "Local login source-IP restriction disabled");
-  } catch (err) {
-    showToast("Failed to save login access settings: " + (err.message || err), "error");
-  }
-}
 
 async function handleDashSave() {
   var enabled = !!document.getElementById("dash-enabled").checked;

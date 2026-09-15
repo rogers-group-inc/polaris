@@ -355,7 +355,14 @@ move is a project, not a dependency bump, so they are listed here and ignored in
   gitignored so every checkout regenerates via `postinstall`.
 - **zod 3**, **typescript 6**, **eslint 10** + `typescript-eslint 8`, **vitest 5** +
   `@vitest/coverage-v8` (versions must match), **pg 8**, **pg-boss 12**, **pino 10**,
-  **undici 8**, **multer 2**, **happy-dom 20**.
+  **undici 8**, **multer 2**, **happy-dom 20**, **@simplewebauthn/server 14**.
+  - **@simplewebauthn/server has an unversioned counterpart**: the browser half of every
+    passkey ceremony is hand-rolled in `public/js/webauthn.js` rather than bundled from
+    `@simplewebauthn/browser`, because this repo has no build step. So a major bump moves one
+    side of a wire contract and nothing tells you about the other. On a bump, re-read the
+    base64url conversions and the `RegistrationResponseJSON` / `AuthenticationResponseJSON`
+    shapes in that file against the library's types — v13 already moved `credentialID` and
+    `credentialPublicKey` into a nested `credential` object once.
   - **undici is a LOCKSTEP member with Node, not a free npm major** — the one entry in this
     list that has a second declaration site, and it is not in a file: it is
     `process.versions.undici`, the undici bundled into whatever Node major is pinned (7.24.4

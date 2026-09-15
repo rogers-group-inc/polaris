@@ -3229,9 +3229,64 @@ model User {
   savedDashboards   SavedDashboard[]
   savedTableFilters SavedTableFilter[]
   tableTabs         UserTableTabs[]
+  passkeys          UserPasskey[]
 
   @@index([roleId])
   @@map("users")
+}
+
+// One registered WebAuthn credential (passkey) belonging to a LOCAL account.
+//
+// Local accounts only, and enforced at the route rather than by the schema: an
+// SSO/LDAP account's credentials belong to the identity provider, and a passkey
+// registered here would be a second, Polaris-owned way into an account the
+// operator believes is centrally controlled. The FK is to User because a
+// passkey is a credential, not a device — the same security key registered by
+// two people is two rows.
+//
+// What is stored is exactly what verifying a later assertion needs:
+//   credentialId  base64url — the id the authenticator returns; unique across
+//                 the install, which is what makes usernameless (discoverable)
+//                 login possible: the assertion names the credential, and the
+//                 credential names the user.
+//   publicKey     COSE-encoded public key bytes, as handed back by
+//                 verifyRegistrationResponse. NOT a secret — it is the public
+//                 half — so it is a plain Bytes column and deliberately NOT in
+//                 the secretBox seal-on-write set.
+//   counter       the authenticator's signature counter. Stored so a cloned
+//                 credential can be spotted (a counter that goes backwards);
+//                 many modern platform authenticators always report 0, so a
+//                 zero counter is normal and only a DECREASE from a non-zero
+//                 value is evidence of anything.
+//   transports    hints ("internal", "usb", "nfc", "ble", "hybrid") replayed in
+//                 allowCredentials so the browser offers the right prompt.
+//
+// deviceType/backedUp come from the authenticator's own account of itself:
+// "multiDevice" + backedUp means the passkey syncs through a credential manager
+// (iCloud Keychain, a password manager), which is what makes it survivable — and
+// is worth showing an operator deciding whether this is their only factor.
+model UserPasskey {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialId String    @unique @map("credential_id")
+  publicKey    Bytes     @map("public_key")
+  counter      BigInt    @default(0)
+  transports   String[]  @default([])
+  /// Operator-set label ("MacBook Touch ID", "YubiKey 5"). Defaults to a guess
+  /// from the User-Agent at registration time.
+  name         String
+  /// Authenticator model id. All-zero for authenticators that decline to say.
+  aaguid       String?
+  deviceType   String?   @map("device_type") // "singleDevice" | "multiDevice"
+  backedUp     Boolean   @default(false) @map("backed_up")
+  /// Null until the passkey has actually been used to sign in — the difference
+  /// between "registered and forgotten" and "how this person logs in".
+  lastUsedAt   DateTime? @map("last_used_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("user_passkeys")
 }
 
 // Per-user list-page TABS — the operator's own set of open views on one table

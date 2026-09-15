@@ -51,7 +51,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Relay state is NOT this service's** (moved 2026-09-15): `generateRelayState` / `relayStateTarget` live in `utils/loginRedirect.ts`, beside the `polaris_next` cookie, because the two carry the same thing — where this login lands. RelayState is `<nonce>` or `<nonce>.<path>`, the nonce base64url and short enough to keep the whole value inside the SAML binding spec's 80-byte ceiling. It is still the CSRF binding on the redirect (the equality check in `/azure/callback` compares the whole string, path included), and it is still only checked when a session survived — which on a cross-site POST it usually has not.
 - SAML response validation uses @node-saml/node-saml library; wantResponseSigned flag controls signature check.
 - User provisioning on first login: extract nameID/email from validated Profile, upsert User row with default role, auto-enable if disabled.
-- skipLoginPage flag bounces unauthenticated visitors straight to SSO (bypass Polaris login page) — from protected pages AND, since 2026-09-06, from `/login.html` itself (`skipLoginSsoTarget` in app.ts is the one decider for both). Two query keys draw the form anyway: `?error=` (every SSO failure landing — anti-loop) and `?local=1` (the anti-lockout path the Session tab's hint names; deliberately guessable — the source-IP gate is what restricts WHO reaches the form, and it is mounted above the redirect). A logout lands on `/signed-out.html` instead (`public/signed-out.html` + `public/js/signed-out.js`: no form, a `?reason=inactivity` sentence from a closed set, and one Sign in button that opens the BARE `/login.html` so this redirect decides SSO-or-form) — every desktop logout landing (account menu, inactivity timer, server-side idle check in app.ts) goes there, which is what keeps a silent `prompt=none` provider from signing the operator straight back in. Change the landing in all three places together; tests/unit/loginPageSkipLandings.test.ts pins them. app.ts honors SAML first, then OIDC. Turning it ON is lockout-gated in PUT /auth/azure/settings: requires (a) a SAML or OIDC provider configured AND (b) the enabling admin's session authProvider is "azure"/"oidc" (SSO round-trip proven). Turning it OFF is unrestricted (recovery). users.js mirrors the gate by disabling the checkbox for local/LDAP sessions when it's currently off.
+- skipLoginPage flag bounces unauthenticated visitors straight to SSO (bypass Polaris login page) — from protected pages AND, since 2026-09-06, from `/login.html` itself (`skipLoginSsoTarget` in app.ts is the one decider for both). Two query keys draw the form anyway: `?error=` (every SSO failure landing — anti-loop) and `?local=1` (the anti-lockout path the Settings tab's hint names; deliberately guessable — the source-IP gate is what restricts WHO reaches the form, and it is mounted above the redirect). A logout lands on `/signed-out.html` instead (`public/signed-out.html` + `public/js/signed-out.js`: no form, a `?reason=inactivity` sentence from a closed set, and one Sign in button that opens the BARE `/login.html` so this redirect decides SSO-or-form) — every desktop logout landing (account menu, inactivity timer, server-side idle check in app.ts) goes there, which is what keeps a silent `prompt=none` provider from signing the operator straight back in. Change the landing in all three places together; tests/unit/loginPageSkipLandings.test.ts pins them. app.ts honors SAML first, then OIDC. Turning it ON is lockout-gated in PUT /auth/azure/settings: requires (a) a SAML or OIDC provider configured AND (b) the enabling admin's session authProvider is "azure"/"oidc" (SSO round-trip proven). Turning it OFF is unrestricted (recovery). users.js mirrors the gate by disabling the checkbox for local/LDAP sessions when it's currently off.
 - **The flag has TWO enforcement points, and the phone is the second.** app.ts's protected-page and login-page redirects cover the desktop; `/mobile.html` is deliberately NOT a protected page (the phone SPA draws its OWN login screen, so an unauthenticated visitor must be allowed to load it), which left the phone offering the very password form the setting hides. `public/js/mobile/auth.js:renderLogin` is the mirror — the single choke point every local login goes through (boot, the api.js 401 hook, Cancel out of the TOTP step) — and it reads the flag off `GET /auth/azure/config`, which returns `skipLoginPage` regardless of whether SAML itself is enabled, so an OIDC-only install gets it too. Same provider precedence as app.ts, same fall-through to the form when neither provider resolves (the flag can outlive the SSO config it was set under, and a phone with no way in is worse than one showing a form). One carve-out the desktop doesn't need: an explicit Sign out sets a one-shot sessionStorage marker (`PolarisAuth.markSignedOut`, called from more-tab.js) that buys one render of the form — desktop logout lands on the unprotected /login.html and stays there, whereas the phone would be signed straight back in by a silent `prompt=none` provider. Pinned by tests/unit/mobileLoginSkip.test.ts.
 - autoLogoutMinutes triggers silent logout after inactivity (0 = disabled).
 
@@ -319,7 +319,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `src/utils/ipScope.ts` (`ipInScope`, shared with the dash gate), `src/utils/cidr.ts` (`normalizeAllowlistCidr`), `AppError` (prisma otherwise).
 
-**Used by:** `src/app.ts` (the gate middleware over `/login.html` + `POST /api/v1/auth/login` + `/auth/login/totp`), `src/api/routes/serverSettings.ts` (`GET/PUT /server-settings/login-access`, incl. the anti-lockout guard's use of the pure `loginSourceAllowed`).
+**Used by:** `src/app.ts` (the gate middleware over `/login.html` + every path in `LOGIN_CREDENTIAL_PATHS` — the password POST, the TOTP step, both passkey pairs and the forced password-change step), `src/api/routes/serverSettings.ts` (`GET/PUT /server-settings/login-access`, incl. the anti-lockout guard's use of the pure `loginSourceAllowed`).
+
+**Where it is edited (2026-09):** Users → Authentication → **Settings**, as the "Trusted Networks for Login" section, beside the password policy and the passkey policy — `public/js/users.js` → `buildLoginAccessSection()` / `getLoginAccessFormData()`. Server Settings → Web Server keeps a read-only status card that names the current scope and points here; it no longer edits the row. Two screens writing one Setting is how the two drift into disagreeing about what is configured. The ROUTES did not move — both surfaces call `GET/PUT /server-settings/login-access`.
 
 **Invariants:**
 - `enabled` defaults FALSE. Enabling REFUSES logins, so an upgrade must never start doing it on its own — the opposite reason to `dashConfig`'s safe-off default, same result.
@@ -330,8 +332,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Only as trustworthy as `req.ip`: behind two proxies with a one-hop `TRUST_PROXY`, `req.ip` is the INNER proxy's (RFC1918) address, so an "rfc1918" scope would admit the entire internet while reading as enforced. `GET /server-settings/login-access` returns `callerIp` and the card prints it for exactly this reason.
 
 **When changing this:**
-- New fields need a default + tolerant parse + merge handling, AND the Web-Server-tab card (`public/js/server-settings.js` `loginCardHtml`/`handleLoginAccessSave`) + the `PUT /server-settings/login-access` Zod schema + the route's anti-lockout guard updated in lockstep.
-- If you add another credential endpoint, add it to `LOGIN_CREDENTIAL_PATHS` in `src/app.ts` — the gate is an explicit path set, not a prefix, so a new one is unguarded by default.
+- New fields need a default + tolerant parse + merge handling, AND the Settings-tab section (`public/js/users.js` `buildLoginAccessSection`/`getLoginAccessFormData`) + the read-only summary on Server Settings → Web Server (`public/js/server-settings.js` `loginCardHtml`) + the `PUT /server-settings/login-access` Zod schema + the route's anti-lockout guard updated in lockstep.
+- If you add another credential endpoint, add it to `LOGIN_CREDENTIAL_PATHS` in `src/app.ts` — the gate is an explicit path set, not a prefix, so a new one is unguarded by default. The passkey login pair is the case that proves it: `POST /auth/passkeys/login` issues a session outright with no password step in front of it, so a miss there leaves a restricted install reachable from anywhere with nothing in the UI to show it.
 - Keep the two refusal shapes: the PAGE is dropped (socket destroy, no response — the dashServer stealth posture), the API returns the SAME generic 401 a wrong password gets. Neither may confirm "wrong network".
 - Coverage: `tests/unit/loginAccessService.test.ts`, `tests/integration/loginAccessGate.test.ts` (both halves + SSO-never-gated), `tests/integration/loginAccessRoutes.test.ts` (anti-lockout guard + audit).
 
@@ -420,5 +422,69 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Audit all call sites in auth.ts for pendingToken lifecycle (issue, consume at 195/226/233).
 - If adjusting RFC 6238 params (SHA1, 6 digits, 30s step): users must re-enroll; plan migration messaging.
 - Verify no secrets leak into logs (codes are transient; hashes are stored on User rows — check password.ts utility).
+
+---
+
+## services/passwordPolicyService.ts
+
+**What it owns:** Persistence + enforcement of the operator-configurable password complexity bar — the `passwordPolicyConfig` Setting row `{ minLength (8–128, default 8), requireLowercase, requireUppercase, requireNumber, requireSpecial (all default true), forceChangeOnLogin (default false) }` — with a ~10s TTL in-process cache (the `loginAccessService` / `dashSettingsService` pattern). The RULES themselves are pure and live in `src/utils/passwordPolicy.ts`.
+
+**Why it exists:** The bar used to be five hard-coded Zod refinements in `src/utils/password.ts`, which three surfaces shared so they could not drift. A Zod object is built at import time and cannot express a value read from a Setting row, so the schema became a SHAPE check (non-empty, ≤1024 chars) and the bar became one call every password-writing route makes after `.parse()`.
+
+**Public API:** `getPasswordPolicy`, `savePasswordPolicy`, `invalidatePasswordPolicyCache`, `assertPasswordMeetsPolicy` (throws a 400 naming every unmet rule), `passwordNeedsPolicyChange` (the login-time question), `PASSWORD_POLICY_SETTING_KEY`
+
+**Cross-service deps:** `src/utils/passwordPolicy.ts` (`parsePasswordPolicy`, `passwordPolicyError`, `clampMinLength`, `defaultPasswordPolicy`), `settingsStore`, `AppError`.
+
+**Used by:**
+- `src/api/routes/users.ts` — `POST /users` (admin create) and `PUT /users/:id/password` (admin reset)
+- `src/api/routes/auth.ts` — `PUT /auth/password` (self-service change), `POST /auth/login/password-change` (the forced change), `POST /auth/login` (the `passwordNeedsPolicyChange` probe), `GET/PUT /auth/password-policy`
+- `src/setup/setupRoutes.ts` — the first admin the wizard mints, asserted BEFORE any provisioning so a rejected password leaves no half-created database
+- `public/js/password-self.js` — fetches `GET /auth/password-policy` once per page and repaints every rendered checklist
+
+**Invariants:**
+- **Fails to the DEFAULTS, never to "no policy".** A read that throws resolves to `defaultPasswordPolicy()` — the five rules this product shipped with. This is the OPPOSITE posture to `loginAccessService`'s fail-open, and for the same reason: there, failing safe means letting people IN (a lockout is the hazard); here, failing safe means keeping the bar UP while a Setting row is unreadable.
+- The defaults ARE the pre-2026-09 behaviour. An install that never opens the tab is gated exactly as it was — a drift here silently moves the bar for every such install on upgrade.
+- `minLength` clamps to **[8, 128]** at parse AND at save. 8 is NIST SP 800-63B's memorized-secret minimum and is not configurable below.
+- Turning every character class off is a legitimate posture (NIST discourages mandatory composition rules), not a misconfiguration to correct.
+- `passwordNeedsPolicyChange` is asked of the PLAINTEXT at login — the only moment a stored hash can be judged, a hash being one-way. The alternative (a "changed before the policy" timestamp) would interrupt users whose password already complies.
+- It returns false whenever `forceChangeOnLogin` is off, and never throws: a login must not 500 because a Setting row is unreadable.
+
+**When changing this:**
+- A new rule needs: the knob in `PasswordPolicy`, a `passwordRules()` entry (server), a `TESTS` entry (client, `public/js/password-self.js`), a control in `buildPasswordPolicySection()` + `getPasswordPolicyFormData()` (`public/js/users.js`), and the `PUT /auth/password-policy` Zod schema. The client checklist fetches the LABELS but ships the PREDICATES, so both halves move together.
+- `GET /auth/password-policy` is deliberately UNAUTHENTICATED — the setup wizard, the forced-change step at login and the login page all need the rules before there is a session. It discloses a minimum length and which classes are required, which any caller also learns by submitting one bad password.
+- Coverage: `tests/unit/passwordPolicy.test.ts` (the pure rules + the defaults), `tests/unit/passwordPolicyService.test.ts` (persistence + the failure posture), `tests/unit/passwordSelfModule.test.ts` (the client repaint), `tests/integration/forcedPasswordChange.test.ts` (the login flow, including the MFA-ordering invariant).
+
+---
+
+## services/passkeyService.ts
+
+**What it owns:** WebAuthn passkeys for LOCAL accounts, end to end — the `passkeyConfig` Setting row `{ mode ("off"|"login"|"second-factor"|"both", default "both"), rpId ("" = derive from the request), requireUserVerification (default true) }` with a ~10s TTL cache; the four ceremonies (register, passwordless login, second-factor step, verification); and CRUD over `UserPasskey` rows.
+
+**Why it exists:** A passkey is the one credential that is both unphishable and nothing to type, and it is the only stronger login path Polaris can offer that does not depend on an identity provider existing. `mode` is what makes it deployable into a FOSS fleet that disagrees about how much to trust it.
+
+**Public API:** `getPasskeySettings`, `savePasskeySettings`, `invalidatePasskeyCache`, `defaultPasskeySettings`, `normalizeRpId`, `passkeyLoginEnabled`, `passkeySecondFactorEnabled`, `getPasskeyAvailability`, `requireRelyingParty`, `startRegistration`, `finishRegistration`, `startLogin`, `startSecondFactor`, `finishAuthentication`, `listPasskeys`, `countPasskeysByUser`, `renamePasskey`, `deletePasskey`, `deleteAllPasskeys`, `userHasPasskey`, `PASSKEY_SETTING_KEY`
+
+**Cross-service deps:** `@simplewebauthn/server` (the only verification), `src/utils/webauthnRp.ts` (`resolveRelyingParty`), `src/utils/webauthnChallenge.ts` (the in-flight ceremony store), `settingsStore`, `AppError`.
+
+**Used by:**
+- `src/api/routes/auth.ts` — `GET /auth/passkeys/config`, `POST /auth/passkeys/login/options`, `POST /auth/passkeys/login`, `POST /auth/login/passkey/options`, `POST /auth/login/passkey`, the self-service CRUD at `/auth/passkeys*`, and `GET/PUT /auth/passkey-settings`
+- `src/api/routes/users.ts` — the passkey count on `GET /users` and the admin revoke at `GET|DELETE /users/:id/passkeys`
+- `public/js/passkeys-self.js` (the account-menu modal), `public/js/webauthn.js` (the browser ceremony), `public/js/login.js` + `public/js/mobile/auth.js` (the login pages), `public/js/users.js` (the Settings tab policy + the row menu)
+
+**Invariants:**
+- **Local accounts only**, enforced at the route and re-checked at verification. A passkey on an SSO account would be a second, Polaris-owned way into an account the operator believes is centrally controlled.
+- **Fails to `mode: "off"`** when the settings read throws — the opposite of `passwordPolicyService` and deliberate: this setting decides whether a credential may sign someone in, and passwords still work, so failing closed costs a fallback rather than access.
+- It **never provisions a user.** Every other credential path in Polaris can mint an account; a discoverable-credential login that resolves to no row is an authentication failure, not a signup.
+- `startLogin` issues **no `allowCredentials`** — naming a user's credentials before they authenticate would make the endpoint an account-enumeration oracle. That is why registration demands `residentKey: "required"`. `startSecondFactor` DOES name them: the caller already proved the password.
+- The RP ID and origin are pinned into the ceremony at issue time and replayed at verify (`webauthnChallenge`). Re-deriving at verify would check the assertion against whatever the SECOND request claimed to be.
+- `requireUserVerification` (default true) is what makes a passkey acceptable as a whole login — UV is two factors in one gesture — and `POST /auth/passkeys/login` mirrors the flag into `session.mfaVerified` rather than asserting verification that did not happen.
+- A signature counter that **decreases from a non-zero value** refuses the login (the one clone signal WebAuthn gives). Most platform authenticators pin it at 0 forever, so 0 → 0 is normal and not evidence of anything.
+- Every "not recognized" refusal is the SAME message — unknown credential, bad signature, SSO-managed account, rolled-back counter. "That credential is not registered here" is a fact worth learning to someone probing with a key they control.
+- No "last credential" guard on delete: a local account always has a password (a NOT NULL column, and there is no passkey-only signup), so removing every passkey cannot lock anyone out.
+
+**When changing this:**
+- A new ceremony endpoint needs four things in lockstep: the route, a `LOGIN_CREDENTIAL_PATHS` entry in `src/app.ts` if it can end in a session, a CSRF exemption in `src/api/middleware/csrf.ts` if it is pre-session (`/api/v1/auth/passkeys/login` is exempt and the segment-boundary match is what keeps `/passkeys/register` and `/passkeys/:id` protected), and a `passkeyCeremonyLimiter` mount.
+- Registering a passkey under a mode that includes `second-factor` makes that account's login two-step, exactly as enrolling TOTP does. The admin path back from a lost authenticator is `DELETE /users/:id/passkeys` — the counterpart of the TOTP reset, and it must stay reachable.
+- Coverage: `tests/unit/passkeyService.test.ts` (mode gates, ceremony guards, the failure posture), `tests/unit/webauthnRp.test.ts`, `tests/unit/webauthnChallenge.test.ts`, `tests/unit/webauthnBrowser.test.ts`, `tests/integration/passkeyRoutes.test.ts` (the gates, the CSRF boundary, the source-IP gate). A completed ceremony is NOT covered end to end — verifying an assertion needs an authenticator holding a private key, and a fixture signed against a fixed challenge would only pin the fixture.
 
 ---
