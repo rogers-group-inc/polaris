@@ -1011,6 +1011,11 @@ const api = {
     create:  (body)  => request("POST", "/maintenance-schedules", body),
     update:  (id, b) => request("PUT", `/maintenance-schedules/${id}`, b),
     delete:  (id)    => request("DELETE", `/maintenance-schedules/${id}`),
+    // Drop one device from a schedule's explicit target list (asset edit modal
+    // → Maintenance). Deletes the schedule when that device was its last
+    // target; refuses when the device is matched by the schedule's filter.
+    removeAsset: (id, assetId) =>
+      request("DELETE", `/maintenance-schedules/${id}/assets/${encodeURIComponent(assetId)}`),
   },
   automations: {
     list:    ()        => request("GET", "/automations"),

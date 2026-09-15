@@ -13,6 +13,10 @@
  *   POST /preview  maintenanceManagement:fullwrite  (dry-run the target filter
  *                  → capped device list + total; only monitored assets)
  *   POST / PUT/:id / DELETE/:id   maintenanceManagement:fullwrite  (CRUD)
+ *   DELETE /:id/assets/:assetId   maintenanceManagement:fullwrite  (drop one
+ *                  asset from a schedule's explicit target list — the asset
+ *                  edit modal's Maintenance tab; deletes the schedule when
+ *                  that asset was its last target)
  *
  * Zod validates the outer shape; the recurrence blob + criteria are validated
  * in maintenanceScheduleService (validateScheduleShape / normalizeCriteria).
@@ -30,6 +34,7 @@ import {
   createSchedule,
   updateSchedule,
   deleteSchedule,
+  removeAssetFromSchedule,
   previewTargets,
   listOccurrences,
 } from "../../services/maintenanceScheduleService.js";
@@ -103,6 +108,21 @@ maintenanceSchedulesRouter.put("/:id", requirePermission("maintenanceManagement"
     const input = scheduleInputSchema.parse(req.body);
     const schedule = await updateSchedule(req.params.id as string, input, requestActor(req) ?? undefined);
     res.json({ schedule });
+  } catch (err) { next(err); }
+});
+
+// Per-asset removal, from the asset edit modal's Maintenance tab. Mounted
+// BEFORE "/:id" is irrelevant (distinct depth), but the fullwrite gate is the
+// same one the schedule builder carries: this edits the schedule, it just
+// reaches it from the device.
+maintenanceSchedulesRouter.delete("/:id/assets/:assetId", requirePermission("maintenanceManagement", "fullwrite"), async (req, res, next) => {
+  try {
+    const result = await removeAssetFromSchedule(
+      req.params.id as string,
+      req.params.assetId as string,
+      requestActor(req) ?? undefined,
+    );
+    res.json(result);
   } catch (err) { next(err); }
 });
 

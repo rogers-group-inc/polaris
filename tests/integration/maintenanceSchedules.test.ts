@@ -13,6 +13,9 @@
  *   - operator PUT moving status off "maintenance" closes the windows
  *     (endReason "operator") without the scheduler re-entering
  *   - delete → windows closed ("deleted") + status restored
+ *   - DELETE /:id/assets/:assetId (asset edit modal → Maintenance tab): one
+ *     device out, the schedule deleted when it was the last target, refused
+ *     for a filter-matched device, gated on maintenanceManagement
  *   - GET /assets/:id/maintenance-windows range filtering + maintenance-info
  *   - GET /server-time: the wall clock + zone the pickers must be filled in,
  *     usable as a one-shot startAt verbatim (the browser-clock bug)
@@ -408,8 +411,106 @@ d("maintenance preview + asset reads", () => {
     const info = await agent.get(`/api/v1/assets/${asset.id}/maintenance-info`);
     expect(info.status).toBe(200);
     expect(info.body.inMaintenance).toBe(true);
+    expect(info.body.status).toBe("maintenance"); // the modal re-syncs its Status dropdown from this
     expect(info.body.openWindows).toHaveLength(1);
     expect(info.body.schedules.map((s: any) => s.name)).toContain("Readable");
     expect(info.body.schedules[0].activeNow).toBe(true);
+    // The Maintenance tab's action gates travel with the row.
+    expect(info.body.schedules[0]).toMatchObject({ explicit: true, removable: true, lastTarget: true });
+  });
+});
+
+d("DELETE /maintenance-schedules/:id/assets/:assetId", () => {
+  it("removes one device, leaves the schedule running for the rest, and ends that device's window", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const keep = await seedAsset("multi-keep");
+    const drop = await seedAsset("multi-drop");
+    const created = await agent
+      .post("/api/v1/maintenance-schedules")
+      .set("X-CSRF-Token", csrf)
+      .send({ name: "Two devices", assetIds: [keep.id, drop.id], schedule: activeOneshot() });
+    expect(created.status).toBe(201);
+    expect((await prisma.asset.findUnique({ where: { id: drop.id } }))!.status).toBe("maintenance");
+
+    const res = await agent
+      .delete(`/api/v1/maintenance-schedules/${created.body.schedule.id}/assets/${drop.id}`)
+      .set("X-CSRF-Token", csrf);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ scheduleDeleted: false, remainingAssetIds: 1 });
+
+    const row = await prisma.maintenanceSchedule.findUnique({ where: { id: created.body.schedule.id } });
+    expect(row!.assetIds).toEqual([keep.id]);
+    // Dropped device is out of maintenance; the other one stays in it.
+    expect((await prisma.asset.findUnique({ where: { id: drop.id } }))!.status).toBe("active");
+    expect((await prisma.asset.findUnique({ where: { id: keep.id } }))!.status).toBe("maintenance");
+    const closed = await prisma.assetMaintenanceWindow.findFirst({ where: { assetId: drop.id } });
+    expect(closed!.endedAt).not.toBeNull();
+    expect(closed!.endReason).toBe("criteria");
+  });
+
+  it("deletes the schedule when the removed device was its last target", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const asset = await seedAsset("only-device");
+    const created = await agent
+      .post("/api/v1/maintenance-schedules")
+      .set("X-CSRF-Token", csrf)
+      .send({ name: "Only device", assetIds: [asset.id], schedule: activeOneshot() });
+    expect(created.status).toBe(201);
+
+    const res = await agent
+      .delete(`/api/v1/maintenance-schedules/${created.body.schedule.id}/assets/${asset.id}`)
+      .set("X-CSRF-Token", csrf);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ scheduleDeleted: true, scheduleName: "Only device" });
+    expect(await prisma.maintenanceSchedule.findUnique({ where: { id: created.body.schedule.id } })).toBeNull();
+    expect((await prisma.asset.findUnique({ where: { id: asset.id } }))!.status).toBe("active");
+    const evt = await prisma.event.findFirst({
+      where: { action: "maintenance_schedule.deleted", resourceId: created.body.schedule.id },
+    });
+    expect(evt).toBeTruthy();
+  });
+
+  it("refuses a device the schedule reaches through its filter, and gates on maintenanceManagement", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const asset = await seedAsset("filtered-device", { model: "MX-9000" });
+    const created = await agent
+      .post("/api/v1/maintenance-schedules")
+      .set("X-CSRF-Token", csrf)
+      .send({
+        name: "By filter",
+        criteria: { rules: [{ field: "model", op: "contains", values: ["MX-9000"] }] },
+        schedule: activeOneshot(),
+      });
+    expect(created.status).toBe(201);
+
+    const refused = await agent
+      .delete(`/api/v1/maintenance-schedules/${created.body.schedule.id}/assets/${asset.id}`)
+      .set("X-CSRF-Token", csrf);
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toMatch(/filter/i);
+    expect((await prisma.asset.findUnique({ where: { id: asset.id } }))!.status).toBe("maintenance");
+
+    // readonly (maintenanceManagement: none) can't reach the endpoint at all.
+    const roRole = await prisma.role.findUnique({ where: { name: "readonly" } });
+    await prisma.user.upsert({
+      where: { username: RO_USERNAME },
+      create: {
+        username: RO_USERNAME,
+        passwordHash: await hashPassword(RO_PASSWORD),
+        roleId: roRole!.id,
+        authProvider: "local",
+      },
+      update: { roleId: roRole!.id },
+    });
+    const roAgent = request.agent(app);
+    await roAgent.get("/api/v1/auth/me");
+    await roAgent.post("/api/v1/auth/login").send({ username: RO_USERNAME, password: RO_PASSWORD });
+    await roAgent.get("/api/v1/auth/me");
+    const roCookies = (roAgent.jar as any).getCookies({ domain: "127.0.0.1", path: "/", secure: false, script: false });
+    const roCsrf = (roCookies.find((c: any) => c.name === "polaris_csrf") || {}).value || "";
+    const ro = await roAgent
+      .delete(`/api/v1/maintenance-schedules/${created.body.schedule.id}/assets/${asset.id}`)
+      .set("X-CSRF-Token", roCsrf);
+    expect(ro.status).toBe(403);
   });
 });
