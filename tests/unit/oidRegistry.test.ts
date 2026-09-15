@@ -52,6 +52,19 @@ describe("oidRegistry", () => {
   });
 
   describe("BUILT_IN_OIDS — scaffolding only", () => {
+    it("carries nothing under the enterprises arc — vendor OIDs come from uploaded MIBs", () => {
+      // The 2026-09 boundary: fifteen vendor anchors and eighteen telemetry
+      // leaves used to live here so the built-in profiles worked with no
+      // upload. A vendor's OID layout is the vendor's MIB's to state.
+      // `enterprises` itself (1.3.6.1.4.1) is the IETF node and stays.
+      const vendor = Object.entries(BUILT_IN_OIDS).filter(([, oid]) => /^1\.3\.6\.1\.4\.1\.\d/.test(oid));
+      expect(vendor).toEqual([]);
+      expect(BUILT_IN_OIDS.enterprises).toBe("1.3.6.1.4.1");
+      for (const gone of ["fortinet", "fnFortiSwitchMib", "fsSysCpuUsage", "fapTemperature", "cisco", "cpmCPUTotal5secRev", "juniperMIB", "radlan"]) {
+        expect(BUILT_IN_OIDS[gone], gone).toBeUndefined();
+      }
+    });
+
     it("carries no BRIDGE-MIB anchors — the standard layer supplies them", () => {
       // dot1dBridge / dot1dStp were seeded so Q-BRIDGE-MIB and RSTP-MIB could
       // see a sibling's symbol. The bundled standard modules now resolve

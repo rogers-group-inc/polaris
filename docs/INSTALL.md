@@ -342,6 +342,25 @@ request and look for `Referer` in its request headers. If it is present and the
 tiles are still blocked, the block is on the viewer's network address rather than
 on the install; the policy page above says how to contact the operators.
 
+## A vendor's SNMP CPU / memory / storage is empty
+
+**Symptom:** A Fortinet, Cisco, Juniper, MikroTik, HP/Aruba or Dell device polls fine (reachability, interfaces) but CPU, memory, storage or hardware sensors over SNMP stay empty. Server Settings → Credentials → Manufacturer Profiles shows the vendor's profile as **N UNRESOLVED**, its rows read *"unresolved — no uploaded MIB defines …"*, and the Events log carries a `manufacturer_profile.unresolved` warning from the last start.
+
+**Why:** Polaris ships the IETF/IEEE standard MIBs and the *names* of each vendor's telemetry symbols, but not the vendor's OID numbers — those belong to the vendor's MIB, which you upload, so a vendor change is a MIB update rather than a Polaris release. Installs that upgraded from a release before September 2026 previously had those numbers built in; after the upgrade they need the MIB.
+
+**Fix:** Upload the vendor's MIB at manufacturer scope (Server Settings → Credentials → MIB Database → Upload, scope *Manufacturer-wide*). Most vendor leaf modules import their root from a core module, so upload that too — the upload response tells you: *"FORTINET-FORTIGATE-MIB: 412 of 412 symbols unresolved — needs FORTINET-CORE-MIB; upload it too."*
+
+| Vendor | Modules | Where |
+|---|---|---|
+| Fortinet | `FORTINET-CORE-MIB` + `FORTINET-FORTIGATE-MIB` (FortiGate), `FORTINET-FORTISWITCH-MIB` (FortiSwitch), `FORTINET-FORTIAP-MIB` (FortiAP) | Fortinet support portal, one download per FortiOS release |
+| Cisco | `CISCO-SMI` + `CISCO-PROCESS-MIB` (CPU), `CISCO-MEMORY-POOL-MIB` (memory) | cisco.com MIB FTP, public |
+| Juniper | `JUNIPER-SMI` + `JUNIPER-MIB` | juniper.net, public |
+| MikroTik | `MIKROTIK-MIB` | mikrotik.com, public |
+| HP / Aruba | `HP-ICF-OID` + `STATISTICS-MIB` | HPE / Aruba support |
+| Dell (PowerConnect / Force10) | `RADLAN-MIB` (with its `rnd` root) | Dell support |
+
+Telemetry resumes on the next collection cadence once the profile's rows show the module name in their MIB cell; nothing needs restarting.
+
 ## Disk sizing — read this first
 
 The single most common operational footgun on a fresh Polaris install is undersized `/var` — where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.

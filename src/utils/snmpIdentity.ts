@@ -85,10 +85,14 @@ export interface SnmpIdentity {
 /**
  * Enterprise number → vendor name.
  *
- * Seeded from the arcs `oidRegistry.BUILT_IN_OIDS` already carries (so the two
- * cannot disagree about who 12356 is) plus the vendors that turn up on the
- * equipment this feature exists for — PDUs, UPSes, environmental sensors,
- * print devices. Anything not here resolves to `undefined`, never a guess.
+ * IANA Private Enterprise Numbers — a public registry fact, not vendor MIB
+ * knowledge, which is why this table is the ONE place an enterprise arc may
+ * be spelled in `src/` (tests/unit/noEnterpriseOids.test.ts). The number
+ * names a vendor; it is never walked, and the telemetry OIDs under it come
+ * from the MIB the operator uploads. Covers the vendors Polaris has built-in
+ * profiles for plus the ones that turn up on the equipment this feature
+ * exists for — PDUs, UPSes, environmental sensors, print devices. Anything
+ * not here resolves to `undefined`, never a guess.
  */
 export const SNMP_ENTERPRISE_VENDORS: Record<number, string> = {
   9:     "Cisco",

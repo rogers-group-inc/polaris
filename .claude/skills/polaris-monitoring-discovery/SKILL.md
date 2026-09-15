@@ -33,6 +33,7 @@ onto Assets, Subnets and Reservations.
 | FortiManager RPC `-11` "no valid session" churn, discovery/monitor both failing FMG calls | [references/runbooks/fmg-rpc-session-churn.md](references/runbooks/fmg-rpc-session-churn.md) |
 | heavy cadence (system-info / telemetry) wedged behind one dead host, `SNMP gate timeout` logs | [references/runbooks/system-info-deadlock.md](references/runbooks/system-info-deadlock.md) |
 | DB volume growing after asset deletes, compressed-chunk bloat, `reclaimBloatedChunks` | [references/runbooks/timescale-chunk-bloat.md](references/runbooks/timescale-chunk-bloat.md) |
+| one vendor's SNMP CPU / memory / storage rows quiet after an upgrade, `manufacturer_profile.unresolved` Events, a profile showing N UNRESOLVED, "upload its MIB to enable" | [references/runbooks/telemetry-unresolved-symbols.md](references/runbooks/telemetry-unresolved-symbols.md) |
 
 ## Invariants to carry into any change here
 

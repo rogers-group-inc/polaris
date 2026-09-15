@@ -50,10 +50,19 @@ import { stripComments, parseImportMap, type ImportBinding } from "./mibParserUt
 
 // ─── Seed ──────────────────────────────────────────────────────────────────
 //
-// Standard SMI roots from RFC 1155 / RFC 2578 plus a small set of vendor
-// enterprise prefixes. Including the vendor prefixes lets users upload only
-// the leaf MIB they care about (e.g. CISCO-PROCESS-MIB) without having to
-// chase down every CISCO-SMI dependency first.
+// SMI scaffolding only: the root arcs from RFC 1155 / RFC 2578 and the IEEE
+// 802.1 chain that every MIB — standard or vendor — hangs off. NOTHING under
+// `enterprises` lives here. Until 2026-09 this table also carried fifteen
+// vendor anchor arcs (`fortinet`, `fnFortiSwitchMib`, `cisco`, `juniperMIB`…)
+// and eighteen vendor telemetry leaves (`fsSysCpuUsage`, `fapTemperature`,
+// `cpmCPUTotal5secRev`…) so the built-in profiles worked with no upload.
+// That made Polaris the owner of a vendor's OID layout — a fact that belongs
+// to the vendor's MIB, which the operator uploads and can replace without a
+// Polaris release. A vendor leaf module that IMPORTs its root from a core
+// module (FORTINET-FORTIGATE-MIB ← FORTINET-CORE-MIB) resolves once BOTH are
+// uploaded; the upload response and the profile page name the missing one.
+// See polaris-change-impact → cross-cutting/vendor-snmp-knowledge-boundary
+// and tests/unit/noEnterpriseOids.test.ts, which now covers this file.
 export const BUILT_IN_OIDS: Record<string, string> = {
   // Top-level
   ccitt: "0",
@@ -94,81 +103,6 @@ export const BUILT_IN_OIDS: Record<string, string> = {
   // bundled standard modules are now resolved TOGETHER as one layer (see
   // loadStandardLayer), so a module anchored on a sibling's symbol finds it
   // the same way an uploaded vendor MIB finds its uploaded core module.
-  // Cisco
-  cisco: "1.3.6.1.4.1.9",
-  ciscoMgmt: "1.3.6.1.4.1.9.9",
-  // CISCO-PROCESS-MIB::cpmCPUTotal5secRev — column OID of the cpmCPUTotal
-  // table; walked + averaged at probe time. Seeded so the vendor telemetry
-  // profile resolves CPU without requiring CISCO-PROCESS-MIB to be uploaded.
-  cpmCPUTotal5secRev: "1.3.6.1.4.1.9.9.109.1.1.1.1.6",
-  // CISCO-MEMORY-POOL-MIB::ciscoMemoryPool{Used,Free} — column OIDs of the
-  // pool table; walked + summed at probe time. Seeded so the vendor profile
-  // resolves memory without requiring CISCO-MEMORY-POOL-MIB to be uploaded.
-  ciscoMemoryPoolUsed: "1.3.6.1.4.1.9.9.48.1.1.1.5",
-  ciscoMemoryPoolFree: "1.3.6.1.4.1.9.9.48.1.1.1.6",
-  // Juniper
-  juniperMIB: "1.3.6.1.4.1.2636",
-  // JUNIPER-MIB::jnxOperatingCPU / jnxOperatingBuffer — column OIDs of the
-  // jnxOperatingTable; walked + averaged at probe time. Seeded so the vendor
-  // profile resolves CPU/memory without requiring JUNIPER-MIB to be uploaded.
-  jnxOperatingCPU: "1.3.6.1.4.1.2636.3.1.13.1.8",
-  jnxOperatingBuffer: "1.3.6.1.4.1.2636.3.1.13.1.11",
-  // Mikrotik
-  mikrotik: "1.3.6.1.4.1.14988",
-  mtxrSystem: "1.3.6.1.4.1.14988.1.1.3",
-  // Aruba / HP / HPE
-  hp: "1.3.6.1.4.1.11",
-  hpSwitch: "1.3.6.1.4.1.11.2.14.11.5.1.9",
-  // STATISTICS-MIB::hpSwitchCpuStat — scalar percent. Seeded so the vendor
-  // profile resolves CPU without requiring STATISTICS-MIB to be uploaded.
-  hpSwitchCpuStat: "1.3.6.1.4.1.11.2.14.11.5.1.9.6.1",
-  // Fortinet
-  fortinet: "1.3.6.1.4.1.12356",
-  fnFortiGateMib: "1.3.6.1.4.1.12356.101",
-  // Stable across every FortiOS release; seeded so the vendor telemetry
-  // profile resolves CPU/memory without requiring FORTINET-FORTIGATE-MIB
-  // to be uploaded — matches the always-on temperature fallback path.
-  fgSysCpuUsage: "1.3.6.1.4.1.12356.101.4.1.3",
-  fgSysMemUsage: "1.3.6.1.4.1.12356.101.4.1.4",
-  // FortiSwitch (FORTINET-FORTISWITCH-MIB). Unlike FortiGate, the .3/.4
-  // pair here is the used/total *bytes* form, not CPU/MemPercent. Seeded so
-  // the vendor profile resolves CPU/memory without requiring the MIB upload.
-  fnFortiSwitchMib:  "1.3.6.1.4.1.12356.106",
-  // fsSysVersion @ .1 → combined "model-firmware" string, e.g.
-  // "S548DF-v7.2.5-build0453,230511 (GA)". The system-info scrape reads it
-  // to derive the real hardware model (utils/fortiswitchModel.ts) — FMG /
-  // FortiGate discovery has no model field for managed switches.
-  fsSysVersion:      "1.3.6.1.4.1.12356.106.4.1.1",
-  // fsSysCpuUsage @ .2 → scalar percent (0..100). Distinct from FortiGate's
-  // fgSysCpuUsage which lives under the 12356.101 root.
-  fsSysCpuUsage:     "1.3.6.1.4.1.12356.106.4.1.2",
-  fsSysMemUsage:     "1.3.6.1.4.1.12356.106.4.1.3",
-  fsSysMemCapacity:  "1.3.6.1.4.1.12356.106.4.1.4",
-  // Disk used/total bytes. FortiSwitches don't implement HOST-RESOURCES-MIB
-  // hrStorageTable, so collectSystemInfoSnmp's standard storage walk yields
-  // nothing — the vendor disk-fallback in the same function reads these
-  // scalars instead and synthesizes one StorageSample row.
-  fsSysDiskUsage:    "1.3.6.1.4.1.12356.106.4.1.5",
-  fsSysDiskCapacity: "1.3.6.1.4.1.12356.106.4.1.6",
-  // FortiAP (FORTINET-FORTIAP-MIB). Distinct OID root @ 12356.120; the
-  // FortiAP doesn't expose anything under the FortiGate root (12356.101) or
-  // the FortiSwitch root (12356.106). The vendor telemetry profile resolves
-  // CPU/memory/temperature against these three seeds so the probe works
-  // without uploading FORTINET-FORTIAP-MIB. Single-scalar form throughout,
-  // matching FortiGate (NOT the bytes form FortiSwitch uses for memory).
-  fnFortiAPMib:    "1.3.6.1.4.1.12356.120",
-  fapCommon:       "1.3.6.1.4.1.12356.120.1",
-  fapWTPStatus:    "1.3.6.1.4.1.12356.120.3",
-  fapCpuUsage:     "1.3.6.1.4.1.12356.120.3.41",
-  fapMemoryUsage:  "1.3.6.1.4.1.12356.120.3.42",
-  fapTemperature:  "1.3.6.1.4.1.12356.120.3.44",
-  // Dell
-  dell: "1.3.6.1.4.1.674",
-  // Dell PowerConnect / Force10 platforms are RADLAN-derived and expose CPU
-  // under the RADLAN enterprise (89), not Dell's own (674). Seeded so the
-  // vendor profile resolves CPU without requiring the RADLAN MIB upload.
-  radlan: "1.3.6.1.4.1.89",
-  rlCpuUtilDuringLastMinute: "1.3.6.1.4.1.89.1.7",
 };
 
 // ─── Parser ────────────────────────────────────────────────────────────────

@@ -40,12 +40,12 @@ const SRC_DIR = join(__dirname, "..", "..", "src");
  * Files still carrying an enterprise-arc literal in CODE. Repo-relative,
  * forward slashes. Shrinks phase by phase; see the uniform-SNMP plan.
  *
- *   oidRegistry.ts        — BUILT_IN_OIDS vendor anchors + leaf seeds  (Phase 3)
  *   monitoringService.ts  — the hardcoded `OID` map's Fortinet tables    (Phase 5a)
  *   fortiapRadioSnmp.ts   — FortiAP radio / VAP column tables            (Phase 5a)
+ *
+ * Gone: oidRegistry.ts (Phase 3 — BUILT_IN_OIDS is SMI scaffolding only).
  */
 export const ENTERPRISE_OID_ALLOWLIST: ReadonlySet<string> = new Set([
-  "src/services/oidRegistry.ts",
   "src/services/monitoringService.ts",
   "src/utils/fortiapRadioSnmp.ts",
 ]);
