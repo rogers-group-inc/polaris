@@ -81,10 +81,21 @@ against committed end-of-life dates, and links the upgrade steps.
 | **below the minimum** | flagged **critical** |
 | **past upstream EOL** | flagged and emailed, but deliberately **does not hold a permanent banner open** — it clears only in a maintenance window |
 
-Upgrading the *platform* (a PostgreSQL major, a Node major) is a separate
-procedure from updating Polaris, and
-[`docs/INSTALL.md`](https://github.com/rogers-group-inc/polaris/blob/main/docs/INSTALL.md)
-carries the steps.
+**Upgrading the *platform* is a separate procedure from updating Polaris**, and
+every one of those runbooks lives in
+**[`docs/UPGRADING.md`](https://github.com/rogers-group-inc/polaris/blob/main/docs/UPGRADING.md)**:
+Node on an existing install, the signing JDK, moving to PostgreSQL 17,
+migrating from a distro's PostgreSQL to PGDG, upgrading a legacy
+single-process install, migrating to the nginx front end, and recovering an
+install whose update already failed on TLS interception.
+
+`docs/INSTALL.md` is **fresh installs only**. If you are changing something on
+a host that already runs Polaris, you want `UPGRADING.md`.
+
+> **The updater does not install system packages**, and that is a choice rather
+> than a limitation. A PostgreSQL major, a Node major or a JDK is yours to move,
+> on your maintenance window — which is exactly why those runbooks are separate
+> documents rather than a button.
 
 ---
 
@@ -93,7 +104,7 @@ carries the steps.
 | Symptom | Look at |
 |---|---|
 | Aborted at the backup step | [Backup and restore](Backup-and-Restore) — almost always the `pg_dump` major or the `sslmode` translation |
-| Fetch fails on a TLS-inspecting network | the *Networks that inspect TLS* section of the install guide. This is the one environment problem that can leave an install unable to update |
+| Fetch fails on a TLS-inspecting network | *Networks that inspect TLS* in `INSTALL.md` for the fix. This is the one environment problem that can leave an install unable to update — and if the update **already** failed this way, the recovery runbook is *Recovering an install whose update already failed on TLS interception* in `UPGRADING.md` |
 | Container refuses to boot after the image upgrade | *"another host holds a fresh active-instance heartbeat"* — see below |
 | Migration fails on table ownership | check who owns the queue tables; a migration cannot alter tables owned by another role |
 | The override repo appears ignored | the URL contained a disallowed character; the log names it |
