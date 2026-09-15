@@ -18,6 +18,7 @@ import {
   listProfiles, getProfile, createProfile, deleteProfile,
   updateMetricRow, createOverride, updateOverride, deleteOverride,
   createWidget, updateWidget, deleteWidget, listManufacturerSuggestions,
+  symbolWarningsForProfile,
 } from "../../services/manufacturerProfileService.js";
 import {
   TRANSFORM_KINDS,
@@ -98,7 +99,13 @@ router.put("/:id/metrics/:metricKey", requirePermission("manufacturerProfiles", 
     actor: requestActor(req),
     message: `Manufacturer profile metric "${String(req.params.metricKey)}" updated`,
   });
-  send(res, { metric: updated });
+  // A warning, not a refusal (see symbolWarnings): the row saved; the
+  // operator may be about to upload the MIB that makes it resolve.
+  const warnings = symbolWarningsForProfile(String(req.params.id), [
+    { symbol: updated.defaultSymbol,  mibId: updated.defaultMibId },
+    { symbol: updated.defaultSymbolB, mibId: updated.defaultMibId },
+  ]);
+  send(res, { metric: updated, warnings });
 }));
 
 // POST /:id/metrics/:metricKey/overrides — add a per-model override. Body
@@ -113,7 +120,11 @@ router.post("/:id/metrics/:metricKey/overrides", requirePermission("manufacturer
     actor: requestActor(req),
     message: `Manufacturer profile override "${created.modelPattern}" added for metric "${String(req.params.metricKey)}"`,
   });
-  send(res, { override: created }, 201);
+  const warnings = symbolWarningsForProfile(String(req.params.id), [
+    { symbol: created.symbol,  mibId: created.mibId },
+    { symbol: created.symbolB, mibId: created.mibId },
+  ]);
+  send(res, { override: created, warnings }, 201);
 }));
 
 // PUT /:id/metrics/:metricKey/overrides/:overrideId — edit.
@@ -126,7 +137,11 @@ router.put("/:id/metrics/:metricKey/overrides/:overrideId", requirePermission("m
     actor: requestActor(req),
     message: `Manufacturer profile override "${updated.modelPattern}" updated for metric "${String(req.params.metricKey)}"`,
   });
-  send(res, { override: updated });
+  const warnings = symbolWarningsForProfile(String(req.params.id), [
+    { symbol: updated.symbol,  mibId: updated.mibId },
+    { symbol: updated.symbolB, mibId: updated.mibId },
+  ]);
+  send(res, { override: updated, warnings });
 }));
 
 // DELETE /:id/metrics/:metricKey/overrides/:overrideId.
@@ -153,7 +168,8 @@ router.post("/:id/widgets", requirePermission("manufacturerProfiles", "write"), 
     actor: requestActor(req),
     message: `Manufacturer profile custom widget "${widget.name}" created`,
   });
-  send(res, { widget }, 201);
+  const warnings = symbolWarningsForProfile(String(req.params.id), [{ symbol: widget.symbol, mibId: widget.mibId }]);
+  send(res, { widget, warnings }, 201);
 }));
 
 // PUT /:id/widgets/:widgetId.
@@ -167,7 +183,8 @@ router.put("/:id/widgets/:widgetId", requirePermission("manufacturerProfiles", "
     actor: requestActor(req),
     message: `Manufacturer profile custom widget "${widget.name}" updated`,
   });
-  send(res, { widget });
+  const warnings = symbolWarningsForProfile(String(req.params.id), [{ symbol: widget.symbol, mibId: widget.mibId }]);
+  send(res, { widget, warnings });
 }));
 
 // DELETE /:id/widgets/:widgetId.

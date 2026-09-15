@@ -46,7 +46,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
-import { stripComments } from "./mibParserUtils.js";
+import { stripComments, parseImportMap, type ImportBinding } from "./mibParserUtils.js";
 
 // ─── Seed ──────────────────────────────────────────────────────────────────
 //
@@ -204,6 +204,7 @@ interface LoadedMib {
   manufacturer: string | null;
   model: string | null;
   entries: ParsedAssignment[];
+  imports: ImportBinding[];   // symbol → module, from the IMPORTS block
 }
 
 let _mibs: LoadedMib[] | null = null;
@@ -242,6 +243,7 @@ interface StandardMib {
   moduleName: string;
   filename: string;
   entries: ParsedAssignment[];
+  imports: ImportBinding[];
 }
 
 interface StandardLayer {
@@ -273,7 +275,7 @@ function loadStandardLayer(): StandardLayer {
     try {
       const raw = readFileSync(join(STD_MIBS_DIR, filename), "utf8");
       const moduleName = MODULE_NAME_RE.exec(stripComments(raw))?.[1] ?? filename.replace(/\.txt$/, "");
-      mibs.push({ moduleName, filename, entries: parseObjectAssignments(raw) });
+      mibs.push({ moduleName, filename, entries: parseObjectAssignments(raw), imports: parseImportMap(raw) });
     } catch (err: any) {
       logger.warn({ filename, err: err?.message }, "standard MIB parse failed — skipped");
     }
@@ -355,6 +357,7 @@ async function loadInternal(): Promise<void> {
         manufacturer: row.manufacturer,
         model: row.model,
         entries,
+        imports: parseImportMap(row.contents),
       });
     } catch (err: any) {
       logger.warn({ mib: row.moduleName, err: err?.message }, "MIB parse failed during oidRegistry refresh");
@@ -431,16 +434,19 @@ export function findUnresolvedRootSymbols(
   rawText: string,
   resolved: ReadonlyMap<string, string | null>,
 ): string[] {
-  const entries = parseObjectAssignments(rawText);
-  const localNames = new Set(entries.map((e) => e.name));
-  const roots = new Set<string>();
-
   // `resolveSymbolsForMib` keys EVERY symbol in the module and stores null for
   // the ones it couldn't resolve, so membership is not resolution — a bare
   // `.has()` here would treat every unresolved symbol as fine and report
   // nothing at all. Presence of a non-null value is the actual test.
-  const isResolved = (n: string): boolean => resolved.get(n) != null;
+  return unresolvedRootsFromEntries(parseObjectAssignments(rawText), (n) => resolved.get(n) != null);
+}
 
+function unresolvedRootsFromEntries(
+  entries: ParsedAssignment[],
+  isResolved: (name: string) => boolean,
+): string[] {
+  const localNames = new Set(entries.map((e) => e.name));
+  const roots = new Set<string>();
   for (const { name, parts } of entries) {
     if (isResolved(name)) continue;
     for (const p of parts) {
@@ -450,6 +456,101 @@ export function findUnresolvedRootSymbols(
     }
   }
   return [...roots].sort();
+}
+
+// ─── Dependency naming ─────────────────────────────────────────────────────
+//
+// "Which module defines `fortinet`?" The only place that fact exists is the
+// IMPORTS block of the files that USE it — FORTINET-FORTIGATE-MIB says
+// `fortinet FROM FORTINET-CORE-MIB`. Every loaded module (uploads and
+// standards) contributes its bindings, so an unresolved root can be named
+// with the module to upload rather than left as a bare identifier. Polaris
+// ships no table of vendor module names; this is read off the operator's own
+// files.
+
+/** One unresolved anchor and, when a loaded module's IMPORTS names it, the module that defines it. */
+export interface MissingRoot {
+  symbol: string;
+  module: string | null;
+}
+
+/** Modules that loaded files import `symbol` FROM — usually one, sorted. */
+export function definingModulesFor(symbol: string): string[] {
+  const out = new Set<string>();
+  for (const mib of _mibs ?? []) for (const b of mib.imports) if (b.symbol === symbol) out.add(b.module);
+  for (const mib of loadStandardLayer().mibs) for (const b of mib.imports) if (b.symbol === symbol) out.add(b.module);
+  return [...out].sort();
+}
+
+function nameRoots(roots: string[], own: ImportBinding[]): MissingRoot[] {
+  return roots.map((symbol) => {
+    // The file's OWN IMPORTS is the authority for its own anchors; fall back
+    // to what any other loaded module says.
+    const mine = own.find((b) => b.symbol === symbol)?.module;
+    return { symbol, module: mine ?? definingModulesFor(symbol)[0] ?? null };
+  });
+}
+
+/**
+ * The external anchors an UPLOADED module leans on but nothing resolves, each
+ * named with the module its IMPORTS says defines it. Synchronous; the caller
+ * has awaited `ensureRegistryLoaded()`. `[]` for an unknown id or a module
+ * that resolves fully.
+ */
+export function missingRootsForMib(mibId: string): MissingRoot[] {
+  const mib = _mibs?.find((m) => m.id === mibId);
+  if (!mib) return [];
+  const map = getScopeMap(mib.manufacturer, mib.model);
+  const roots = unresolvedRootsFromEntries(mib.entries, (n) => map.has(n));
+  return nameRoots(roots, mib.imports);
+}
+
+// ─── Symbol readiness (the profile page's per-row provenance) ──────────────
+
+/**
+ * Everything the profile page needs to say about one symbol at a
+ * manufacturer's scope: resolved (via which module, at which layer) or not —
+ * and when not, WHY in terms an operator can act on:
+ *
+ *   `imports`   — the row pins an uploaded MIB that itself cannot resolve,
+ *                 because an anchor it IMPORTs is missing: `roots` names the
+ *                 module(s) to upload (FORTINET-CORE-MIB).
+ *   `no-module` — nothing loaded at this scope defines the symbol at all:
+ *                 the vendor's MIB has not been uploaded.
+ */
+export interface SymbolReadiness {
+  symbol: string;
+  resolved: boolean;
+  oid: string | null;
+  fromScope: ResolvedSymbol["fromScope"] | null;
+  fromModuleName: string | null;
+  hint: null | { kind: "no-module" } | { kind: "imports"; mibModuleName: string; roots: MissingRoot[] };
+}
+
+/**
+ * Synchronous readiness for one symbol at the manufacturer-wide scope (the
+ * floor every asset of the vendor gets). `pinnedMibId` is the row's
+ * `mibId`/`defaultMibId`, used only to explain an unresolved symbol. Returns
+ * an unresolved-with-no-hint record before the registry has loaded, never
+ * throws — this runs per row on every profile read.
+ */
+export function symbolReadiness(
+  manufacturer: string,
+  symbol: string,
+  pinnedMibId: string | null = null,
+): SymbolReadiness {
+  const base: SymbolReadiness = { symbol, resolved: false, oid: null, fromScope: null, fromModuleName: null, hint: null };
+  if (!_mibs) return base;
+  const r = getScopeMap(manufacturer, null).get(symbol);
+  if (r) return { ...base, resolved: true, oid: r.oid, fromScope: r.fromScope, fromModuleName: r.fromModuleName };
+  if (pinnedMibId) {
+    const mib = _mibs.find((m) => m.id === pinnedMibId);
+    if (mib) {
+      const roots = missingRootsForMib(pinnedMibId);
+      if (roots.length > 0) return { ...base, hint: { kind: "imports", mibModuleName: mib.moduleName, roots } };
+    }
+  }
+  return { ...base, hint: { kind: "no-module" } };
 }
 
 // Run resolution for a given scope. The MIB layers are processed in

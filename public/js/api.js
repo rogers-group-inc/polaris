@@ -1289,7 +1289,6 @@ const api = {
     setPlaceholderMac:(body) => request("PUT", "/server-settings/reservation-mac", body),
     listMibs: (params) => request("GET", "/server-settings/mibs" + toQuery(params)),
     getMibFacets: () => request("GET", "/server-settings/mibs/facets"),
-    getMibProfileStatus: () => request("GET", "/server-settings/mibs/profile-status"),
     uploadMib: (file, fields) => {
       const formData = new FormData();
       formData.append("file", file);

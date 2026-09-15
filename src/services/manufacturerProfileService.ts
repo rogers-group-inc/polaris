@@ -19,6 +19,8 @@ import {
   type CombinerKind,
 } from "../utils/symbolTransforms.js";
 import { AppError } from "../utils/errors.js";
+import { symbolReadiness, ensureRegistryLoaded, type SymbolReadiness } from "./oidRegistry.js";
+import { logEvent } from "./eventLogService.js";
 import { validateHttpCheckDefinition } from "./credentialService.js";
 import { logger } from "../utils/logger.js";
 import {
@@ -81,6 +83,18 @@ function asStdMibKeyOrNull(value: unknown): string | null {
 // than the usual unary TransformKind).
 export type MetricRowType = "scalar" | "double_scalar" | "table";
 
+/**
+ * Per-row provenance the profile page renders in the MIB cell: does this
+ * row's symbol resolve at the manufacturer's scope, via which module and
+ * layer — and when it does not, what to upload. `b` is the second symbol of a
+ * double_scalar row. Filled by `annotateReadiness` on every read; absent on
+ * the cached row the probe path uses (the probe resolves for itself).
+ */
+export interface RowReadiness {
+  a: SymbolReadiness;
+  b: SymbolReadiness | null;
+}
+
 export interface MetricOverrideRow {
   id:           string;
   modelPattern: string;
@@ -91,6 +105,7 @@ export interface MetricOverrideRow {
   type:         MetricRowType;
   transform:    TransformKind | CombinerKind | null;
   order:        number;
+  readiness?:   RowReadiness;
 }
 
 export interface MetricRow {
@@ -103,6 +118,8 @@ export interface MetricRow {
   defaultType:      MetricRowType;
   defaultTransform: TransformKind | CombinerKind | null;
   overrides:        MetricOverrideRow[];
+  /** Null when the row is unconfigured (built-in seed answers); see RowReadiness. */
+  readiness?:       RowReadiness | null;
 }
 
 export interface CustomWidgetRow {
@@ -137,6 +154,13 @@ export interface ProfileSummary {
   scopedMibCount:     number;
   createdAt:          string;
   updatedAt:          string;
+  /** Every configured symbol resolves at this manufacturer's scope. */
+  ready:              boolean;
+  /** Some resolve, some do not. */
+  partial:            boolean;
+  unresolvedCount:    number;
+  /** The unresolved symbols, deduplicated, for the collapsed header's tooltip. */
+  unresolvedSymbols:  string[];
 }
 
 export interface ProfileFull {
@@ -451,6 +475,7 @@ export async function listProfiles(): Promise<ProfileSummary[]> {
     const cnt = await (prisma as any).mibFile.count({ where: { manufacturer: row.manufacturer } });
     mibCounts.set(row.id, cnt);
   }
+  await ensureRegistryLoaded();
   return rows.map((row: any): ProfileSummary => {
     const overrideCount = (row.metrics || []).reduce(
       (acc: number, m: any) => acc + ((m.overrides || []).length || 0),
@@ -465,8 +490,21 @@ export async function listProfiles(): Promise<ProfileSummary[]> {
       scopedMibCount: mibCounts.get(row.id) ?? 0,
       createdAt:      row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
       updatedAt:      row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
+      ...readinessSummary(shapeProfile(row)),
     };
   });
+}
+
+/**
+ * `symbolWarnings` keyed by profile id — what the write routes have in hand.
+ * Reads the cache (every write path refreshes it before returning), so the
+ * lookup is a scan over tens of profiles at most.
+ */
+export function symbolWarningsForProfile(profileId: string, symbols: Array<{ symbol: string | null; mibId: string | null }>): string[] {
+  for (const p of profileCache.values()) {
+    if (p.id === profileId) return symbolWarnings(p.manufacturer, symbols);
+  }
+  return [];
 }
 
 /**
@@ -578,7 +616,121 @@ export async function getProfile(id: string): Promise<ProfileFull | null> {
       widgets: { orderBy: { order: "asc" } },
     },
   });
-  return row ? shapeProfile(row) : null;
+  if (!row) return null;
+  await ensureRegistryLoaded();
+  return annotateReadiness(shapeProfile(row));
+}
+
+// ─── Readiness ─────────────────────────────────────────────────────────────
+//
+// A profile row names a SYMBOL; whether that symbol resolves to an OID at the
+// manufacturer's scope depends on which MIBs are loaded. Until 2026-09 the page
+// could not tell the operator either way, so a row that saved cleanly and
+// collected nothing looked identical to one that worked. These helpers read
+// the registry (synchronously, after the boot warm-up) and stamp each
+// configured symbol with where it came from or what to upload.
+
+function rowReadiness(manufacturer: string, symbol: string | null, symbolB: string | null, mibId: string | null): RowReadiness | null {
+  if (!symbol && !symbolB) return null;
+  return {
+    a: symbolReadiness(manufacturer, symbol ?? "", mibId),
+    b: symbolB ? symbolReadiness(manufacturer, symbolB, mibId) : null,
+  };
+}
+
+/** Return a copy of `profile` with `readiness` filled on every configured metric row and override. */
+export function annotateReadiness(profile: ProfileFull): ProfileFull {
+  return {
+    ...profile,
+    metrics: profile.metrics.map((m) => ({
+      ...m,
+      readiness: rowReadiness(profile.manufacturer, m.defaultSymbol, m.defaultSymbolB, m.defaultMibId),
+      overrides: m.overrides.map((o) => ({
+        ...o,
+        readiness: rowReadiness(profile.manufacturer, o.symbol, o.symbolB, o.mibId) ?? undefined,
+      })),
+    })),
+  };
+}
+
+/** The collapsed-header rollup: ready / partial / how many symbols are unresolved, and which. */
+export function readinessSummary(profile: ProfileFull): Pick<ProfileSummary, "ready" | "partial" | "unresolvedCount" | "unresolvedSymbols"> {
+  const annotated = annotateReadiness(profile);
+  const all: SymbolReadiness[] = [];
+  for (const m of annotated.metrics) {
+    if (m.readiness) { all.push(m.readiness.a); if (m.readiness.b) all.push(m.readiness.b); }
+    for (const o of m.overrides) {
+      if (o.readiness) { all.push(o.readiness.a); if (o.readiness.b) all.push(o.readiness.b); }
+    }
+  }
+  const unresolved = all.filter((r) => !r.resolved);
+  const unresolvedSymbols = [...new Set(unresolved.map((r) => r.symbol))].sort();
+  const resolvedCount = all.length - unresolved.length;
+  return {
+    ready:             all.length > 0 && unresolved.length === 0,
+    partial:           resolvedCount > 0 && unresolved.length > 0,
+    unresolvedCount:   unresolved.length,
+    unresolvedSymbols,
+  };
+}
+
+/**
+ * Human-readable warnings for a write that just landed — the route returns
+ * them beside the row and the UI toasts them. A warning, not a refusal: the
+ * natural order is "type the symbol, then upload the MIB", and blocking the
+ * first step would make the page unusable for exactly the operator it is
+ * meant to help.
+ */
+export function symbolWarnings(manufacturer: string, symbols: Array<{ symbol: string | null; mibId: string | null }>): string[] {
+  const out: string[] = [];
+  for (const { symbol, mibId } of symbols) {
+    if (!symbol) continue;
+    const r = symbolReadiness(manufacturer, symbol, mibId);
+    if (r.resolved) continue;
+    out.push(describeUnresolved(manufacturer, r));
+  }
+  return out;
+}
+
+function describeUnresolved(manufacturer: string, r: SymbolReadiness): string {
+  if (r.hint?.kind === "imports") {
+    const mods = [...new Set(r.hint.roots.map((x) => x.module ?? x.symbol))];
+    return `${r.symbol} does not resolve for ${manufacturer}: ${r.hint.mibModuleName} is missing ${mods.join(", ")} — upload it too`;
+  }
+  return `${r.symbol} does not resolve for ${manufacturer}: no uploaded MIB defines it — upload the vendor's MIB`;
+}
+
+/**
+ * One warning-level Event per profile with unresolved symbols, emitted after
+ * the boot warm-up. This is what puts "your Fortinet rows stopped resolving"
+ * in the Events log the moment an upgrade removes a seed, instead of leaving
+ * it to be discovered as a chart that quietly stopped.
+ */
+export async function emitProfileReadinessEvents(): Promise<number> {
+  await ensureRegistryLoaded();
+  let emitted = 0;
+  for (const profile of profileCache.values()) {
+    const s = readinessSummary(profile);
+    if (s.unresolvedCount === 0) continue;
+    const annotated = annotateReadiness(profile);
+    const reasons = new Map<string, string>();
+    for (const m of annotated.metrics) {
+      for (const r of [m.readiness?.a, m.readiness?.b, ...m.overrides.flatMap((o) => [o.readiness?.a, o.readiness?.b])]) {
+        if (r && !r.resolved && !reasons.has(r.symbol)) reasons.set(r.symbol, describeUnresolved(profile.manufacturer, r));
+      }
+    }
+    await logEvent({
+      action:       "manufacturer_profile.unresolved",
+      level:        "warning",
+      resourceType: "manufacturer_profile",
+      resourceId:   profile.id,
+      resourceName: profile.manufacturer,
+      message:      `${profile.manufacturer}: ${s.unresolvedCount} profile symbol${s.unresolvedCount === 1 ? "" : "s"} do not resolve — ${s.unresolvedSymbols.join(", ")}. Telemetry using them is not being collected.`,
+      details:      { unresolved: [...reasons.values()] },
+    });
+    emitted += 1;
+  }
+  return emitted;
 }
 
 export async function createProfile(input: {

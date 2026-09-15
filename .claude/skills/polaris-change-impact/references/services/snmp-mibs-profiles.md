@@ -31,7 +31,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** CRUD + cached resolver for the editable per-manufacturer telemetry profiles (metric rows, per-metric overrides, custom widgets). A synchronous `getProfileFor` serves the hot probe path after a boot warm-up.
 
-**Public API:** `MetricKey`, `MetricRowType`, `MetricOverrideRow`, `MetricRow`, `CustomWidgetRow`, `StateProbeSummary`, `ProfileSummary`, `ProfileFull`, `ManufacturerSuggestion`, `ManufacturerSuggestionSource`, `refreshProfileCache`, `getProfileFor`, `listProfiles`, `listStateProbes`, `listManufacturerSuggestions`, `mergeManufacturerSuggestions`, `getProfile`, `createProfile`, `updateMetricRow`, `createOverride`, `updateOverride`, `deleteOverride`, `createWidget`, `updateWidget`, `deleteWidget`, `deleteProfile`, `STD_MIB_KEYS`, `METRIC_KEYS`
+**Public API:** `MetricKey`, `MetricRowType`, `MetricOverrideRow`, `MetricRow`, `RowReadiness`, `CustomWidgetRow`, `StateProbeSummary`, `ProfileSummary`, `ProfileFull`, `ManufacturerSuggestion`, `ManufacturerSuggestionSource`, `refreshProfileCache`, `getProfileFor`, `listProfiles`, `listStateProbes`, `listManufacturerSuggestions`, `mergeManufacturerSuggestions`, `getProfile`, `createProfile`, `updateMetricRow`, `createOverride`, `updateOverride`, `deleteOverride`, `createWidget`, `updateWidget`, `deleteWidget`, `deleteProfile`, `annotateReadiness`, `readinessSummary`, `symbolWarnings`, `symbolWarningsForProfile`, `emitProfileReadinessEvents`, `STD_MIB_KEYS`, `METRIC_KEYS`
+
+**Readiness (2026-09):** a profile row names a SYMBOL; whether it resolves depends on which MIBs are loaded, and until 2026-09 the page could not tell the operator either way. `getProfile()` returns rows stamped with `readiness` (via `oidRegistry.symbolReadiness` at the manufacturer's scope, using the row's pinned `mibId` only to EXPLAIN an unresolved symbol); `listProfiles()` adds `ready / partial / unresolvedCount / unresolvedSymbols` to each summary; the write routes attach `symbolWarningsForProfile()` output as `warnings[]` (warn, never block — "type the symbol, then upload the MIB" is the natural order); and `emitProfileReadinessEvents()` writes one warning-level `manufacturer_profile.unresolved` Event per affected profile after the boot cache warm (called from the seed job's IIFE), which is what makes a seed removal visible in the Events log the moment the process is up. The cached row the probe path reads is NOT annotated — the probe resolves for itself.
 
 **Cross-service deps:** `prisma`, `normalizeManufacturer`, transform/combiner-kind guards, `AppError`, `logger`, `stateProbes` (`normalizeStateMap` / `validateStateMap`), `ouiService.getOuiOverrides` (dynamic import, suggestions only).
 
@@ -55,9 +57,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/mibParserUtils.ts
 
-**What it owns:** Shared ASN.1/SMI comment stripper — collapses comments to whitespace (preserving line numbers) and is string-literal aware.
+**What it owns:** Shared ASN.1/SMI text helpers: the comment stripper (collapses comments to whitespace preserving line numbers, string-literal aware) and the IMPORTS-block reader `parseImportMap`, which returns symbol → module pairs (`fortinet FROM FORTINET-CORE-MIB`) — the only place a file states which module defines an anchor it leans on, and therefore what lets the UI name the module to upload. Tolerant: no block → `[]`, never throws.
 
-**Public API:** `stripComments`
+**Public API:** `stripComments`, `parseImportMap`, `ImportBinding`
 
 **Cross-service deps:** none.
 
@@ -75,9 +77,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Parsing, validation, and CRUD for uploaded SNMP MIB modules. The light validator (`parseMib`) gates uploads (1MB cap, rejects binaries, extracts moduleName + IMPORTS). The heavier peer (`parseMibStructured`) drives the Browse + MIB-aware Walk surface — extracts SYNTAX, INTEGER enum value labels, ACCESS, STATUS, DESCRIPTION, INDEX clauses, and SEQUENCE OF table structure. Per-(manufacturer, model, moduleName) uniqueness is enforced at create.
 
-**Public API:** `parseMib`, `parseMibStructured`, `listMibs`, `getMib`, `createMib`, `deleteMib`, `getMibFacets`, `getProfileStatus`, `ParsedMib`, `ParsedMibStructured`, `MibSymbol`, `MibTable`, `MibBaseType`, `MibAccess`, `MibStatus`, `MibSymbolKind`, `MibEnumValue`, `MibSummary`, `MibFilter`, `CreateMibInput`, `ProfileStatus`, `ProfileSymbolStatus`.
+**Public API:** `parseMib`, `parseMibStructured`, `listMibs`, `getMib`, `createMib`, `deleteMib`, `getMibFacets`, `ParsedMib`, `ParsedMibStructured`, `MibSymbol`, `MibTable`, `MibBaseType`, `MibAccess`, `MibStatus`, `MibSymbolKind`, `MibEnumValue`, `MibSummary`, `MibUploadResult`, `MibFilter`, `CreateMibInput`. (`getProfileStatus` / `ProfileStatus` / `ProfileSymbolStatus` / `exampleManufacturerForProfile` were removed in 2026-09 — an orphaned chain that read the hardcoded constant for a UI pill that no longer existed; readiness lives in `manufacturerProfileService` now.)
 
-**Cross-service deps:** `oidRegistry` (refreshRegistry, resolveSymbolAtVendorScope, listModelOverrides), `vendorTelemetryProfiles` (VENDOR_TELEMETRY_PROFILES), `mibParserUtils` (stripComments).
+**Cross-service deps:** `oidRegistry` (refreshRegistry, resolveSymbolsForMib, missingRootsForMib), `mibParserUtils` (stripComments).
 
 **Used by:** `src/api/routes/mibs.ts — list/get/upload/delete + Browse `/structure` + MIB-aware `/walk``, `src/services/oidRegistry.ts — refreshes the symbol table on create/delete`, `src/services/monitoringService.ts — via oidRegistry for vendor profile matching`.
 
@@ -91,7 +93,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - Verify `createMib` duplicate-check logic handles NULL fields in your test data.
 - Confirm `parseMib` rejects binary/non-text files (test with fixture files).
-- Run `getProfileStatus()` against your vendor MIBs to ensure symbol resolution still works.
+- `createMib` AWAITS `refreshRegistry()` (it used to fire-and-forget) because the `MibUploadResult` readiness figures — `symbolCount`, `unresolvedCount`, `unresolvedRoots[{symbol, module}]` — are read out of the refreshed table; a refresh failure degrades to zeros rather than failing the upload the row already exists for. Check readiness after a parser change by uploading a leaf module without its core module and confirming the response names the core module.
 - Update `DEFAULT_ALIASES` in `manufacturerAliasService.ts` if adding new vendor facets.
 - Check `src/api/routes/mibs.ts` (NOT `serverSettings.ts`) for upload/list/delete endpoint compliance — the MIB routes were extracted there to take precedence over `/server-settings`'s blanket `requireAdmin`.
 - Re-run `tests/unit/mibParseStructured.test.ts` — covers IF-MIB-style table detection, INTEGER enum extraction, multi-line DESCRIPTION, embedded `""` quote escapes, and comment-tolerant enum bodies.
@@ -103,7 +105,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Per-asset scoped OID symbol resolution from MIBs (device → vendor → generic → **standard** → seed), layered SCOPED symbol caching with per-symbol provenance, the process-wide **standard layer** (the IETF/IEEE modules bundled under `src/services/stdMibs/`, read from disk once and resolved together), and lazy cache warmup at app startup. Also exports the low-level building blocks (`BUILT_IN_OIDS`, `parseObjectAssignments`, `tryResolveParts`) and the resolved standard table (`resolveStandardSymbols`) that `stdMibLibrary.ts` stamps `fullOid` from — so Browse/Walk and the probe path read one answer for a standard OID.
 
-**Public API:** `resolveOid`, `resolveOidSync`, `ensureRegistryLoaded`, `refreshRegistry`, `resolveStandardSymbols`, `scopeCacheStats`, `resolveSymbolAtVendorScope`, `listModelOverrides`, `getMibSymbolCount`, `resolveSymbolsForMib`, `resolveSymbolForMib`, `findUnresolvedRootSymbols`, `parseObjectAssignments`, `tryResolveParts`, `BUILT_IN_OIDS`, `ResolveScope`, `ResolvedSymbol`, `SymbolStatus`.
+**Public API:** `resolveOid`, `resolveOidSync`, `ensureRegistryLoaded`, `refreshRegistry`, `resolveStandardSymbols`, `scopeCacheStats`, `resolveSymbolAtVendorScope`, `symbolReadiness`, `missingRootsForMib`, `definingModulesFor`, `listModelOverrides`, `getMibSymbolCount`, `resolveSymbolsForMib`, `resolveSymbolForMib`, `findUnresolvedRootSymbols`, `parseObjectAssignments`, `tryResolveParts`, `BUILT_IN_OIDS`, `ResolveScope`, `ResolvedSymbol`, `SymbolStatus`, `SymbolReadiness`, `MissingRoot`.
+
+**Dependency naming (2026-09):** every loaded module — uploads and the standard layer — contributes its IMPORTS bindings (`parseImportMap`), so `definingModulesFor(symbol)` answers "which module defines `fortinet`?" from the operator's own files, and `missingRootsForMib(id)` returns each unresolved anchor of an upload paired with the module its own IMPORTS names. `symbolReadiness(manufacturer, symbol, pinnedMibId?)` is the synchronous per-row answer the profile page renders: resolved (module + layer) or unresolved with a hint — `imports` (the pinned MIB is missing `roots`) or `no-module` (nothing loaded defines it). Polaris ships no table of vendor module names; this is read off what the operator uploaded.
 
 **Cross-service deps:** `mibService` (via import in mibService for refreshRegistry calls), `mibParserUtils` (stripComments), `node:fs` for the `stdMibs/` directory (the same files `stdMibLibrary` and `scripts/copy-build-assets.mjs` know about — a build that forgets to copy them leaves the standard layer empty with a warn, and `stdMibLibrary.test.ts` is what catches it).
 

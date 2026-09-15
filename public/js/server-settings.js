@@ -5080,7 +5080,11 @@ async function uploadMibUI() {
   try {
     var created = await api.serverSettings.uploadMib(fileInput.files[0], fields);
     showToast("MIB uploaded: " + created.moduleName, "success");
-    if (statusEl) statusEl.innerHTML = "";
+    // Say whether the module is USABLE where it landed, not just stored. A
+    // vendor leaf module uploaded without its core module resolves nothing,
+    // and until 2026-09 the operator found that out from a chart that never
+    // filled. Stays on screen until the next upload or re-render.
+    if (statusEl) statusEl.innerHTML = _mibUploadResultHTML(created);
     // Refresh list + facets + profile status
     var [list, facets] = await Promise.all([
       api.serverSettings.listMibs(),
@@ -5159,10 +5163,19 @@ function renderMibBrowseModal() {
     // root is an IMPORTed symbol fails wholesale rather than partially, so the
     // bare count reads as "this MIB is broken" when the actual fix is usually
     // "upload the one module that defines <symbol>".
-    var roots = Array.isArray(st.unresolvedRoots) ? st.unresolvedRoots : [];
+    // `unresolvedRootDetails` pairs each root with the module the file's own
+    // IMPORTS says defines it, so the fix can be named outright.
+    var details = Array.isArray(st.unresolvedRootDetails) ? st.unresolvedRootDetails : [];
+    var roots = details.length > 0
+      ? details.map(function (d) { return d.symbol; })
+      : (Array.isArray(st.unresolvedRoots) ? st.unresolvedRoots : []);
+    var modules = [];
+    details.forEach(function (d) { if (d.module && modules.indexOf(d.module) === -1) modules.push(d.module); });
     var cause = roots.length > 0
       ? ' Undefined here: <b>' + roots.map(escapeHtml).join("</b>, <b>") + '</b>' +
-        ' — upload the MIB that defines ' + (roots.length === 1 ? 'it' : 'them') + '.'
+        (modules.length > 0
+          ? ' — upload <b>' + modules.map(escapeHtml).join("</b>, <b>") + '</b>' + (roots.length === 1 ? ', which defines it.' : ', which define them.')
+          : ' — upload the MIB that defines ' + (roots.length === 1 ? 'it' : 'them') + '.')
       : (Array.isArray(st.imports) && st.imports.length > 0
           ? ' This MIB imports from: ' + st.imports.map(escapeHtml).join(", ")
           : '');
@@ -8693,8 +8706,9 @@ function manufacturerProfilesCardHTML() {
     '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.75rem">' +
       'Per-manufacturer SNMP telemetry profile — pick which MIB symbol Polaris walks ' +
       'for each System-tab metric, with optional per-model exceptions. Seeded from the ' +
-      'built-in vendor profiles on first boot; edits here will take effect once the ' +
-      'monitoring resolver swap lands.' +
+      'built-in vendor profiles on first boot. Each row’s MIB cell says where its symbol ' +
+      'resolves from — or what to upload when it does not: Polaris ships the standard MIBs, ' +
+      'a vendor’s MIBs come from you.' +
     '</p>';
 
   if (_mfgProfiles.length === 0) {
@@ -8729,7 +8743,7 @@ function renderProfileRow(p) {
   var html = '<div class="mfg-profile-row" data-profile-id="' + escapeHtml(p.id) + '" style="border:1px solid var(--color-border);border-radius:4px;margin-bottom:6px;background:var(--color-bg-secondary,rgba(0,0,0,0.04))">' +
     '<div class="mfg-profile-header" style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer">' +
       '<span class="mfg-profile-caret" style="font-family:var(--font-mono);font-size:0.75rem;width:14px">' + caret + '</span>' +
-      '<span style="font-weight:600;flex:1">' + escapeHtml(p.manufacturer) + '</span>' +
+      '<span style="font-weight:600;flex:1">' + escapeHtml(p.manufacturer) + _mfgReadinessPillHTML(p) + '</span>' +
       '<span style="font-size:0.74rem;color:var(--color-text-secondary)">' +
         p.metricCount + ' metric' + (p.metricCount === 1 ? '' : 's') + ' · ' +
         p.overrideCount + ' override' + (p.overrideCount === 1 ? '' : 's') + ' · ' +
@@ -8797,19 +8811,11 @@ function renderProfileDetail(detail) {
           '<button class="btn btn-sm mfg-metric-cancel">Cancel</button></td>';
     } else {
       var defaultDisplay = _symbolCellViewHTML(m.defaultType, m.defaultSymbol, m.defaultSymbolB);
-      // For seed-MIB display, prefer symbol A (the primary OID) so the "MIB"
-      // cell still reflects where the bytes-form symbols live.
-      var seedMib = m.defaultSymbol ? SEED_SYMBOL_MIB[m.defaultSymbol] : null;
-      // Display order: uploaded MIB → operator-pinned std MIB hint → implied
-      // seed MIB from the symbol → literal "seed" fallback.
-      var stdMibLabel = m.defaultMibStdKey ? STD_MIB_LABELS[m.defaultMibStdKey] : null;
-      var mibDisplay = m.defaultMibId
-        ? '<span style="font-size:0.78rem">' + escapeHtml(_mfgLookupMibLabel(m.defaultMibId)) + '</span>'
-        : (stdMibLabel
-            ? '<span style="font-size:0.78rem">' + escapeHtml(stdMibLabel) + '</span>'
-            : (seedMib
-                ? '<span style="font-size:0.78rem;color:var(--color-text-secondary);font-style:italic">' + escapeHtml(seedMib) + '</span>'
-                : '<span style="font-size:0.78rem;color:var(--color-text-tertiary);font-style:italic">seed</span>'));
+      // The MIB cell is PROVENANCE, not the operator's pick: where the row's
+      // symbol actually resolves from at this manufacturer's scope (module +
+      // layer), or what to upload when it does not. The pinned MIB / std hint
+      // is what the operator chose; the server's readiness is what is true.
+      var mibDisplay = _mfgMibCellHTML(m.readiness, m.defaultMibId, m.defaultMibStdKey);
       var typeLabel = _MFG_TYPE_LABELS[m.defaultType] || m.defaultType;
       html +=
         '<td>' + mibDisplay + '</td>' +
@@ -9325,15 +9331,7 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
         '<button class="btn btn-sm mfg-override-cancel">Cancel</button></td>' +
     '</tr>';
   }
-  var seedMibO = o.symbol ? SEED_SYMBOL_MIB[o.symbol] : null;
-  var stdMibLabelO = o.mibStdKey ? STD_MIB_LABELS[o.mibStdKey] : null;
-  var mibLabel = o.mibId
-    ? escapeHtml(_mfgLookupMibLabel(o.mibId))
-    : (stdMibLabelO
-        ? escapeHtml(stdMibLabelO)
-        : (seedMibO
-            ? '<span style="color:var(--color-text-secondary);font-style:italic">' + escapeHtml(seedMibO) + '</span>'
-            : '<span style="color:var(--color-text-tertiary);font-style:italic">seed</span>'));
+  var mibLabel = _mfgMibCellHTML(o.readiness, o.mibId, o.mibStdKey);
   // MODEL column carries the regex literal (e.g. "FortiSwitch") with a
   // leading ↳ to nest it visually under its default row above.
   var modelCell =
@@ -9392,30 +9390,108 @@ function joinMibSelection(mibId, mibStdKey) {
   return "";
 }
 
-// Built-in seed symbols → originating MIB module name. The values mirror
-// the seeded OIDs in `src/services/oidRegistry.ts`'s BUILT_IN_OIDS table:
-// each entry is a hardcoded OID Polaris ships so the probe works without
-// the MIB being uploaded, but the MIB name is still the operator-meaningful
-// label for "where does this symbol come from."
-var SEED_SYMBOL_MIB = {
-  cpmCPUTotal5secRev:        "CISCO-PROCESS-MIB",
-  ciscoMemoryPoolUsed:       "CISCO-MEMORY-POOL-MIB",
-  ciscoMemoryPoolFree:       "CISCO-MEMORY-POOL-MIB",
-  jnxOperatingCPU:           "JUNIPER-MIB",
-  jnxOperatingBuffer:        "JUNIPER-MIB",
-  hpSwitchCpuStat:           "STATISTICS-MIB",
-  fgSysCpuUsage:             "FORTINET-FORTIGATE-MIB",
-  fgSysMemUsage:             "FORTINET-FORTIGATE-MIB",
-  fsSysCpuUsage:             "FORTINET-FORTISWITCH-MIB",
-  fsSysMemUsage:             "FORTINET-FORTISWITCH-MIB",
-  fsSysMemCapacity:          "FORTINET-FORTISWITCH-MIB",
-  fsSysDiskUsage:            "FORTINET-FORTISWITCH-MIB",
-  fsSysDiskCapacity:         "FORTINET-FORTISWITCH-MIB",
-  fapCpuUsage:               "FORTINET-FORTIAP-MIB",
-  fapMemoryUsage:            "FORTINET-FORTIAP-MIB",
-  fapTemperature:            "FORTINET-FORTIAP-MIB",
-  rlCpuUtilDuringLastMinute: "RADLAN-MIB",
+// ─── Readiness rendering ────────────────────────────────────────────────
+//
+// The server stamps every configured profile row with `readiness` — did the
+// symbol resolve at this manufacturer's scope, via which module and layer,
+// and if not, what to upload (`hint.kind === "imports"` names the module the
+// pinned MIB is missing; `"no-module"` means nothing loaded defines it). The
+// MIB cell renders THAT, so the page can never claim a row works when it
+// does not. An unconfigured row (no symbol) has no readiness and shows the
+// operator's pin as before.
+
+var _MFG_SCOPE_LABELS = {
+  device:   "device MIB",
+  vendor:   "vendor MIB",
+  generic:  "generic MIB",
+  standard: "shipped standard",
+  seed:     "built-in seed",
 };
+
+function _mfgReadinessHint(r) {
+  if (!r || r.resolved) return "";
+  if (r.hint && r.hint.kind === "imports") {
+    var mods = [];
+    (r.hint.roots || []).forEach(function (x) {
+      var m = x.module || x.symbol;
+      if (mods.indexOf(m) === -1) mods.push(m);
+    });
+    return escapeHtml(r.hint.mibModuleName) + " is missing " + mods.map(escapeHtml).join(", ") + " — upload it too";
+  }
+  return "no uploaded MIB defines " + escapeHtml(r.symbol) + " — upload the vendor’s MIB";
+}
+
+// One MIB cell. `readiness` is `{ a, b }` (b for the second symbol of a
+// double_scalar row) or null/undefined for an unconfigured row.
+function _mfgMibCellHTML(readiness, mibId, mibStdKey) {
+  if (!readiness) {
+    // Unconfigured: show the pin the operator made, or that the built-in
+    // seed answers.
+    var stdLabel = mibStdKey ? STD_MIB_LABELS[mibStdKey] : null;
+    if (mibId)    return '<span style="font-size:0.78rem">' + escapeHtml(_mfgLookupMibLabel(mibId)) + '</span>';
+    if (stdLabel) return '<span style="font-size:0.78rem">' + escapeHtml(stdLabel) + '</span>';
+    return '<span style="font-size:0.78rem;color:var(--color-text-tertiary);font-style:italic">seed</span>';
+  }
+  var parts = [readiness.a];
+  if (readiness.b) parts.push(readiness.b);
+  var bad = parts.filter(function (r) { return r && !r.resolved; });
+  if (bad.length === 0) {
+    var r0 = readiness.a;
+    var mod = r0.fromModuleName || (r0.fromScope === "seed" ? "built-in seed" : "(resolved)");
+    var scope = _MFG_SCOPE_LABELS[r0.fromScope] || r0.fromScope || "";
+    // Both symbols of a pair normally come from one module; say so once, and
+    // name the second only when it differs.
+    var second = readiness.b && readiness.b.fromModuleName && readiness.b.fromModuleName !== r0.fromModuleName
+      ? ' <span style="color:var(--color-text-tertiary)">+ ' + escapeHtml(readiness.b.fromModuleName) + '</span>' : '';
+    return '<span style="font-size:0.78rem" title="' + escapeHtml(r0.oid || "") + '">' +
+      escapeHtml(mod) + second +
+      (scope ? ' <span style="color:var(--color-text-tertiary);font-size:0.72rem">(' + escapeHtml(scope) + ')</span>' : '') +
+    '</span>';
+  }
+  var hints = [];
+  bad.forEach(function (r) { var h = _mfgReadinessHint(r); if (h && hints.indexOf(h) === -1) hints.push(h); });
+  return '<span style="font-size:0.78rem;color:var(--color-danger)" title="' + hints.join("\n") + '">' +
+    '⚠ unresolved' +
+    '<span style="display:block;font-size:0.72rem;color:var(--color-text-secondary)">' + hints.join("<br>") + '</span>' +
+  '</span>';
+}
+
+// Collapsed-header pill: green "ready" when every configured symbol resolves,
+// amber with a count otherwise. Nothing when the profile configures no
+// symbols at all (a fresh, empty profile is neither).
+function _mfgReadinessPillHTML(p) {
+  if (!p || (!p.ready && !p.partial && !(p.unresolvedCount > 0))) return "";
+  if (p.ready) {
+    return ' <span style="font-size:0.7rem;font-weight:600;letter-spacing:0.04em;color:var(--color-success);margin-left:6px" title="Every configured symbol resolves">READY</span>';
+  }
+  var n = p.unresolvedCount || 0;
+  var tip = (p.unresolvedSymbols || []).join(", ");
+  return ' <span style="font-size:0.7rem;font-weight:600;letter-spacing:0.04em;color:var(--color-warning,#d97706);margin-left:6px" title="' + escapeHtml(tip) + '">' +
+    n + ' UNRESOLVED</span>';
+}
+
+// The upload form's inline result: stored + usable, or stored + what to add.
+function _mibUploadResultHTML(created) {
+  if (!created || typeof created.symbolCount !== "number") return "";
+  var total = created.symbolCount;
+  var bad = created.unresolvedCount || 0;
+  if (bad === 0) {
+    return '<span style="color:var(--color-success)">' + escapeHtml(created.moduleName) + ': ' + total + ' symbol' + (total === 1 ? '' : 's') + ', all resolve.</span>';
+  }
+  var roots = Array.isArray(created.unresolvedRoots) ? created.unresolvedRoots : [];
+  var mods = [];
+  roots.forEach(function (r) { var m = r.module || r.symbol; if (mods.indexOf(m) === -1) mods.push(m); });
+  return '<span style="color:var(--color-warning,#d97706)">' + escapeHtml(created.moduleName) + ': ' + bad + ' of ' + total + ' symbol' + (total === 1 ? '' : 's') + ' unresolved' +
+    (mods.length > 0 ? ' — needs <b>' + mods.map(escapeHtml).join("</b>, <b>") + '</b>; upload ' + (mods.length === 1 ? 'it' : 'them') + ' too.' : '.') +
+  '</span>';
+}
+
+// Toast every warning a write came back with. The write SUCCEEDED — these
+// say the row names a symbol nothing resolves yet.
+function _mfgToastWarnings(resp) {
+  var w = resp && Array.isArray(resp.warnings) ? resp.warnings : [];
+  w.forEach(function (msg) { showToast(msg, "warning"); });
+}
 
 // Map a MibFile.id back to its module name (or a short fallback) for the
 // MIB column. Reads the same `_mibsData` cache the dropdown is populated
@@ -10241,6 +10317,7 @@ async function saveMetricEdit(tr) {
     delete _mfgEditMibSelections["metric:" + profileId + ":" + metricKey];
     delete _mfgEditTypeSelections["metric:" + profileId + ":" + metricKey];
     showToast("Saved");
+    _mfgToastWarnings(resp);
     renderIdentificationTab();
   } catch (err) {
     showToast(err.message || "Save failed", "error");
@@ -10278,6 +10355,7 @@ async function addOverride(tr) {
     delete _mfgEditMibSelections["new:" + profileId + ":" + metricKey];
     delete _mfgEditTypeSelections["new:" + profileId + ":" + metricKey];
     showToast("Override added");
+    _mfgToastWarnings(resp);
     renderIdentificationTab();
   } catch (err) {
     showToast(err.message || "Add override failed", "error");
@@ -10332,6 +10410,7 @@ async function saveOverrideEdit(tr) {
     delete _mfgEditMibSelections["override:" + overrideId];
     delete _mfgEditTypeSelections["override:" + overrideId];
     showToast("Saved");
+    _mfgToastWarnings(resp);
     renderIdentificationTab();
   } catch (err) {
     showToast(err.message || "Save failed", "error");
@@ -10481,6 +10560,7 @@ async function saveNewWidget(scope) {
     delete _mfgAddingWidget[profileId];
     _mfgWidgetClearShadow("new-widget:" + profileId);
     showToast("Widget added");
+    _mfgToastWarnings(resp);
     renderIdentificationTab();
   } catch (err) {
     showToast(err.message || "Add widget failed", "error");
@@ -10499,6 +10579,7 @@ async function saveWidgetEdit(scope) {
     delete _mfgWidgetEdit[widgetId];
     _mfgWidgetClearShadow("widget:" + widgetId);
     showToast("Saved");
+    _mfgToastWarnings(resp);
     renderIdentificationTab();
   } catch (err) {
     showToast(err.message || "Save failed", "error");

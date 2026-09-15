@@ -24,13 +24,12 @@ import {
   createMib,
   deleteMib,
   getMibFacets,
-  getProfileStatus,
   parseMibStructured,
   type MibSymbol,
   type MibTable,
   type ParsedMibStructured,
 } from "../../services/mibService.js";
-import { resolveSymbolsForMib, findUnresolvedRootSymbols } from "../../services/oidRegistry.js";
+import { resolveSymbolsForMib, findUnresolvedRootSymbols, missingRootsForMib, type MissingRoot } from "../../services/oidRegistry.js";
 import { snmpWalkRaw } from "../../services/monitoringService.js";
 import { getCredential } from "../../services/credentialService.js";
 import {
@@ -48,14 +47,6 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 102
 router.get("/facets", requirePermission("mibDatabase", "read"), async (_req, res, next) => {
   try {
     res.json(await getMibFacets());
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.get("/profile-status", requirePermission("mibDatabase", "read"), async (_req, res, next) => {
-  try {
-    res.json(await getProfileStatus());
   } catch (err) {
     next(err);
   }
@@ -172,12 +163,17 @@ router.get("/:id/structure", requirePermission("mibDatabase", "read"), async (re
     // cause rather than N independent ones.
     const unresolvedRoots =
       unresolvedCount > 0 && oidMap ? findUnresolvedRootSymbols(row.contents, oidMap) : [];
+    // The same roots, each paired with the module the file's own IMPORTS says
+    // defines it — so the banner can read "upload FORTINET-CORE-MIB", not
+    // "something called `fortinet` is missing".
+    const unresolvedRootDetails = unresolvedCount > 0 ? missingRootsForMib(row.id) : [];
     const payload: ParsedMibStructured & {
       mibId: string;
       manufacturer: string | null;
       model: string | null;
       unresolvedCount: number;
       unresolvedRoots: string[];
+      unresolvedRootDetails: MissingRoot[];
     } = {
       ...structured,
       mibId: row.id,
@@ -185,6 +181,7 @@ router.get("/:id/structure", requirePermission("mibDatabase", "read"), async (re
       model: row.model,
       unresolvedCount,
       unresolvedRoots,
+      unresolvedRootDetails,
     };
     res.json(payload);
   } catch (err) {
