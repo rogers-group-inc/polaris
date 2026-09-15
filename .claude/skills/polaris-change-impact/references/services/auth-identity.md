@@ -464,7 +464,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `getPasskeySettings`, `savePasskeySettings`, `invalidatePasskeyCache`, `defaultPasskeySettings`, `normalizeRpId`, `passkeyLoginEnabled`, `passkeySecondFactorEnabled`, `getPasskeyAvailability`, `requireRelyingParty`, `startRegistration`, `finishRegistration`, `startLogin`, `startSecondFactor`, `finishAuthentication`, `listPasskeys`, `countPasskeysByUser`, `renamePasskey`, `deletePasskey`, `deleteAllPasskeys`, `userHasPasskey`, `PASSKEY_SETTING_KEY`
 
-**Cross-service deps:** `@simplewebauthn/server` (the only verification), `src/utils/webauthnRp.ts` (`resolveRelyingParty`), `src/utils/webauthnChallenge.ts` (the in-flight ceremony store), `settingsStore`, `AppError`.
+**Cross-service deps:** `@simplewebauthn/server` (the only verification), `src/utils/webauthnRp.ts` (`resolveRelyingParty`, `forwardedProtoClaim`), `src/utils/webauthnChallenge.ts` (the in-flight ceremony store), `settingsStore`, `AppError`.
 
 **Used by:**
 - `src/api/routes/auth.ts` — `GET /auth/passkeys/config`, `POST /auth/passkeys/login/options`, `POST /auth/passkeys/login`, `POST /auth/login/passkey/options`, `POST /auth/login/passkey`, the self-service CRUD at `/auth/passkeys*`, and `GET/PUT /auth/passkey-settings`
@@ -477,6 +477,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - It **never provisions a user.** Every other credential path in Polaris can mint an account; a discoverable-credential login that resolves to no row is an authentication failure, not a signup.
 - `startLogin` issues **no `allowCredentials`** — naming a user's credentials before they authenticate would make the endpoint an account-enumeration oracle. That is why registration demands `residentKey: "required"`. `startSecondFactor` DOES name them: the caller already proved the password.
 - The RP ID and origin are pinned into the ceremony at issue time and replayed at verify (`webauthnChallenge`). Re-deriving at verify would check the assertion against whatever the SECOND request claimed to be.
+- Availability answers the request that ARRIVED, which behind a reverse proxy is not the page the browser is on. `requireRelyingParty` / `getPasskeyAvailability` pass `forwardedProtoClaim(req.headers)` down so a TLS-terminating proxy with `TRUST_PROXY` unset is told to set it rather than told to install TLS — the claim never grants the secure context, it only picks the sentence. The complementary half is client-side: `PolarisWebAuthn.unavailableHere(rpId)` catches a proxy that rewrote Host, which no server-side check can see.
 - `requireUserVerification` (default true) is what makes a passkey acceptable as a whole login — UV is two factors in one gesture — and `POST /auth/passkeys/login` mirrors the flag into `session.mfaVerified` rather than asserting verification that did not happen.
 - A signature counter that **decreases from a non-zero value** refuses the login (the one clone signal WebAuthn gives). Most platform authenticators pin it at 0 forever, so 0 → 0 is normal and not evidence of anything.
 - Every "not recognized" refusal is the SAME message — unknown credential, bad signature, SSO-managed account, rolled-back counter. "That credential is not registered here" is a fact worth learning to someone probing with a key they control.

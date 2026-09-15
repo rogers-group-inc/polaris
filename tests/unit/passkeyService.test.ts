@@ -183,6 +183,20 @@ describe("getPasskeyAvailability", () => {
     expect(a.rpId).toBeNull();
   });
 
+  it("names TRUST_PROXY when a proxy said https and Express did not believe it", async () => {
+    // The commonest shape of "passkeys don't work": TLS terminated at nginx /
+    // Caddy / Traefik / NPM with TRUST_PROXY unset, which reads in here exactly
+    // like a plain-HTTP lab VM. The header is read for the SENTENCE only — the
+    // request is still refused.
+    const a = await getPasskeyAvailability({
+      protocol: "http",
+      headers: { host: "polaris.example.com", "x-forwarded-proto": "https" },
+    });
+    expect(a.loginEnabled).toBe(false);
+    expect(a.rpId).toBeNull();
+    expect(a.unavailableReason).toMatch(/TRUST_PROXY/);
+  });
+
   it("prefers Express's req.get('host') when present", async () => {
     const a = await getPasskeyAvailability({
       protocol: "https",

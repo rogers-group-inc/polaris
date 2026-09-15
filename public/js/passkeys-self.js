@@ -57,9 +57,21 @@
     }).join("") + '</div>';
   }
 
+  /**
+   * The server's reason wins when it has one — it is the one that knows what
+   * request arrived. Otherwise ask the browser, which is the only side that can
+   * see a proxy-rewritten Host or a page that is not a secure context.
+   */
+  function unavailableReason(availability) {
+    if (availability.unavailableReason) return availability.unavailableReason;
+    if (!window.PolarisWebAuthn) return null;
+    return PolarisWebAuthn.unavailableHere(availability.rpId);
+  }
+
   function modeNote(availability) {
-    if (availability.unavailableReason) {
-      return '<p class="hint" style="color:var(--color-warning,#f0a020)">' + escapeHtml(availability.unavailableReason) + '</p>';
+    var reason = unavailableReason(availability);
+    if (reason) {
+      return '<p class="hint" style="color:var(--color-warning,#f0a020)">' + escapeHtml(reason) + '</p>';
     }
     if (availability.mode === "off") {
       return '<p class="hint">Passkeys are currently disabled on this install. Credentials you have already registered are kept, but will not sign you in until an administrator re-enables them.</p>';
@@ -88,7 +100,7 @@
 
   function render(data, opts) {
     var availability = data.availability || {};
-    var canRegister = !availability.unavailableReason &&
+    var canRegister = !unavailableReason(availability) &&
       availability.mode !== "off" &&
       window.PolarisWebAuthn && PolarisWebAuthn.supported();
 

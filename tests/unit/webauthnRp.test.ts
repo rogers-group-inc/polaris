@@ -10,10 +10,22 @@
  * and the whole point of returning a reason rather than throwing is that the
  * UI can say which of those two it hit instead of surfacing a browser
  * SecurityError nobody can act on.
+ *
+ * The third shape is the one that looks like the lab VM and is not: TLS
+ * terminated at a proxy Polaris was never told to trust. It stays a refusal —
+ * a forwarded header cannot grant a secure context — but the sentence it
+ * produces has to name TRUST_PROXY, because "put Polaris behind TLS" is advice
+ * that operator has already taken.
  */
 
 import { describe, it, expect } from "vitest";
-import { resolveRelyingParty, hostnameFromHost, isLocalhostHostname, isIpLiteral } from "../../src/utils/webauthnRp.js";
+import {
+  resolveRelyingParty,
+  forwardedProtoClaim,
+  hostnameFromHost,
+  isLocalhostHostname,
+  isIpLiteral,
+} from "../../src/utils/webauthnRp.js";
 
 describe("hostnameFromHost", () => {
   it("drops the port", () => {
@@ -126,5 +138,73 @@ describe("resolveRelyingParty", () => {
   it("is case-insensitive about both the host and the override", () => {
     const result = resolveRelyingParty("Polaris.Example.COM", "https", "EXAMPLE.com");
     expect((result as { rp: { rpId: string } }).rp.rpId).toBe("example.com");
+  });
+});
+
+describe("forwardedProtoClaim", () => {
+  it("reads X-Forwarded-Proto", () => {
+    expect(forwardedProtoClaim({ "x-forwarded-proto": "https" })).toBe("https");
+  });
+
+  it("takes the first hop of a chain — the one nearest the browser", () => {
+    // Two proxies: TLS at the edge, plain HTTP between them. The page WAS
+    // served over HTTPS, which is the only hop a secure context depends on.
+    expect(forwardedProtoClaim({ "x-forwarded-proto": "https, http" })).toBe("https");
+  });
+
+  it("reads X-Forwarded-Scheme, which Nginx Proxy Manager sends", () => {
+    expect(forwardedProtoClaim({ "x-forwarded-scheme": "https" })).toBe("https");
+  });
+
+  it("reads RFC 7239 Forwarded", () => {
+    expect(forwardedProtoClaim({ forwarded: 'for=203.0.113.9;proto=https;by=203.0.113.1' })).toBe("https");
+  });
+
+  it("reads X-Forwarded-Ssl: on", () => {
+    expect(forwardedProtoClaim({ "x-forwarded-ssl": "on" })).toBe("https");
+    expect(forwardedProtoClaim({ "x-forwarded-ssl": "off" })).toBeNull();
+  });
+
+  it("takes the first element when Node hands it a repeated header", () => {
+    expect(forwardedProtoClaim({ "x-forwarded-proto": ["https", "http"] })).toBe("https");
+  });
+
+  it("is null when no proxy said anything", () => {
+    expect(forwardedProtoClaim({ host: "polaris.example.com" })).toBeNull();
+    expect(forwardedProtoClaim(undefined)).toBeNull();
+  });
+});
+
+describe("resolveRelyingParty behind a TLS-terminating proxy", () => {
+  // The shape that reads as "no TLS" from inside Express but is a perfectly
+  // ordinary HTTPS install: nginx/Caddy/Traefik/NPM in front, TRUST_PROXY unset.
+  it("names TRUST_PROXY, not TLS, when the proxy claimed https and Express did not believe it", () => {
+    const result = resolveRelyingParty("polaris.example.com", "http", "", "https");
+    expect(result.ok).toBe(false);
+    const reason = (result as { reason: string }).reason;
+    expect(reason).toMatch(/TRUST_PROXY/);
+    // The advice the operator has already taken must NOT be what they are told.
+    expect(reason).not.toMatch(/Put Polaris behind TLS/);
+  });
+
+  it("still refuses — a forwarded header never grants the secure context", () => {
+    // Believing it would only produce a ceremony the browser then rejects, and
+    // the header is spoofable by anyone who can reach the port.
+    expect(resolveRelyingParty("polaris.example.com", "http", "", "https").ok).toBe(false);
+  });
+
+  it("gives the plain-HTTP reason when the proxy claimed http too", () => {
+    const result = resolveRelyingParty("polaris.example.com", "http", "", "http");
+    expect((result as { reason: string }).reason).toMatch(/Put Polaris behind TLS/);
+  });
+
+  it("mentions the proxy path in the plain-HTTP reason, for a proxy that forwards nothing", () => {
+    const result = resolveRelyingParty("polaris.example.com", "http", "", null);
+    expect((result as { reason: string }).reason).toMatch(/X-Forwarded-Proto/);
+  });
+
+  it("ignores the claim entirely once Express itself says https", () => {
+    const result = resolveRelyingParty("polaris.example.com", "https", "", "http");
+    expect(result).toEqual({ ok: true, rp: { rpId: "polaris.example.com", origin: "https://polaris.example.com" } });
   });
 });

@@ -46,7 +46,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { createSettingStore } from "./settingsStore.js";
 import * as webauthnChallenge from "../utils/webauthnChallenge.js";
-import { resolveRelyingParty, type RelyingParty } from "../utils/webauthnRp.js";
+import { forwardedProtoClaim, resolveRelyingParty, type RelyingParty } from "../utils/webauthnRp.js";
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -161,7 +161,7 @@ export interface RequestLike {
 /** Resolve the RP for this request, or throw the operator-facing reason why not. */
 export async function requireRelyingParty(req: RequestLike): Promise<RelyingParty> {
   const settings = await getPasskeySettings();
-  const result = resolveRelyingParty(hostOf(req), req.protocol, settings.rpId);
+  const result = resolveRelyingParty(hostOf(req), req.protocol, settings.rpId, forwardedProtoOf(req));
   if (!result.ok) throw new AppError(400, result.reason);
   return result.rp;
 }
@@ -169,6 +169,15 @@ export async function requireRelyingParty(req: RequestLike): Promise<RelyingPart
 function hostOf(req: RequestLike): string | undefined {
   const viaGetter = typeof req.get === "function" ? req.get("host") : undefined;
   return viaGetter ?? (typeof req.headers?.host === "string" ? req.headers.host : undefined);
+}
+
+/**
+ * The scheme a proxy claimed for the browser hop. Read off the raw headers
+ * rather than `req.secure`, precisely because the case worth reporting is the
+ * one where Express did NOT believe them — see utils/webauthnRp.ts.
+ */
+function forwardedProtoOf(req: RequestLike): string | null {
+  return forwardedProtoClaim(req.headers as Record<string, unknown> | undefined);
 }
 
 /**
@@ -186,7 +195,7 @@ export async function getPasskeyAvailability(req: RequestLike): Promise<{
   rpId: string | null;
 }> {
   const settings = await getPasskeySettings();
-  const result = resolveRelyingParty(hostOf(req), req.protocol, settings.rpId);
+  const result = resolveRelyingParty(hostOf(req), req.protocol, settings.rpId, forwardedProtoOf(req));
   const usable = result.ok && settings.mode !== "off";
   return {
     loginEnabled: usable && passkeyLoginEnabled(settings),

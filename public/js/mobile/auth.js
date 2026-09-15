@@ -223,6 +223,9 @@
     if (window.PolarisWebAuthn && PolarisWebAuthn.supported()) {
       PolarisAuthFlow.fetchPasskeyConfig().then(function (cfg) {
         if (!cfg || !cfg.loginEnabled) return;
+        // Same host-vs-rpId check the desktop login page makes: a proxy that
+        // rewrites Host leaves the button drawable and the ceremony impossible.
+        if (PolarisWebAuthn.unavailableHere(cfg.rpId)) return;
         var sec = document.getElementById("passkey-section");
         var btn = document.getElementById("passkey-btn");
         if (!sec || !btn) return;

@@ -362,6 +362,29 @@ than throwing, so the availability endpoint can tell the login page which of the
 and the page can leave the button undrawn — instead of showing one that produces an opaque
 `SecurityError` in a credential dialog.
 
+**A third shape looks exactly like the first from inside Express and is not it: TLS terminated
+at a reverse proxy Polaris was never told to trust.** `req.protocol` reads "https" only when
+`trust proxy` is set for the deployment's hop count (`utils/trustProxy.ts`), so an install
+behind nginx / Caddy / Traefik / Nginx Proxy Manager / an ALB with `TRUST_PROXY` unset reports
+itself as plain HTTP — and "put Polaris behind TLS" is advice that operator has already taken.
+So when the request carries a proxy's own claim that the browser hop was HTTPS
+(`forwardedProtoClaim` reads `X-Forwarded-Proto`, `X-Forwarded-Scheme`, RFC 7239 `Forwarded`
+and `X-Forwarded-Ssl` — wider than Express, because it is recognizing a proxy rather than
+believing one), the reason names THAT header and `TRUST_PROXY` instead. The claim is never
+honored: a spoofable header must not grant a secure context `req.secure` withheld, believing
+it would only produce a ceremony the browser then rejects, and the setting it asks for is the
+same one that decides whose IP the login rate limiter counts. It is read to write a better
+sentence, and for nothing else.
+
+**The browser is the only side that can see the fourth shape — a proxy that rewrites Host.**
+The RP is derived from the Host header that reached Polaris, so a proxy forwarding its own
+upstream name produces an rpId that is not a registrable suffix of the page's origin, and the
+browser answers that with a bare `SecurityError` naming no cause. `PolarisWebAuthn.unavailableHere(rpId)`
+(`public/js/webauthn.js`) compares the availability payload's `rpId` against
+`location.hostname` and says which header is at fault; the account modal prints it and the
+login page silently withholds the button, because the reason describes the install's plumbing
+to someone who has not yet signed in.
+
 **The passwordless options endpoint names no credentials.** `allowCredentials` is left empty
 on purpose: naming a user's authenticators before they have authenticated would turn the
 endpoint into an oracle for "does alice exist, and how many keys does she have". The browser
