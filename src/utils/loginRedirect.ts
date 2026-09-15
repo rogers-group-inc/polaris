@@ -27,11 +27,11 @@
  * /azure/callback and every emailed Acknowledge link landed the reader on the
  * dashboard after signing in. `None` is what makes a cookie survive that hop.
  * It is only available with `Secure`, so a plain-HTTP install stays on `Lax`
- * (and relies on the SAML RelayState carrying the path instead — see
- * `generateRelayState` in services/azureAuthService.ts, which covers the case
- * where this cookie is missing for any reason, including a reverse proxy that
- * leaves `req.secure` false). Widening it costs nothing: the value is a
- * same-origin path, not a credential, and nothing is authorized by it.
+ * and relies on the SAML RelayState carrying the path instead — `generateRelayState`
+ * at the foot of this file, which covers the case where this cookie is missing
+ * for any reason, including a reverse proxy that leaves `req.secure` false.
+ * Widening it costs nothing: the value is a same-origin path, not a credential,
+ * and nothing is authorized by it.
  */
 
 import type { Request, Response } from "express";
