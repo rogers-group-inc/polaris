@@ -218,3 +218,17 @@ upgrades, so verify an agent reconnects, not just that pages load.
 ### Blast radius
 Signing only. A missing or wrong JDK disables code signing and the UI says so; it does not break
 the app or the agent.
+
+### Moving an EXISTING host to the current JDK
+The steps above move the major Polaris *targets*; they do nothing for a host still running the
+old one, and nothing does it automatically — the in-app updater installs no system packages,
+`deploy/update-linux.sh` never mentions Java, and both setup scripts skip the JDK entirely when
+`command -v java` already succeeds, so re-running one on an upgraded host is a no-op. The
+operator steps (per platform, plus verification and rollback) are `docs/INSTALL.md` →
+*Upgrading the signing JDK to Java 25 on an existing install*, which the `java-major` playbook's
+`docAnchor` points at and its first step names. Two things that make the drift invisible and
+belong in any future version of that section: `signingAvailability` only checks that `java`
+*runs*, so the Code-signing card reads **Ready** on a JDK below `JAVA_MINIMUM` and the Platform
+Lifecycle card is the only surface that objects; and that card serves a 6-hour memo with no
+refresh button, so it keeps reporting the old version after a successful upgrade until
+`polaris-web` restarts or `?refresh=1` is requested.

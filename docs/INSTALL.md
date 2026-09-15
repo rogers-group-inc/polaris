@@ -403,6 +403,130 @@ step 3; nothing else in the sequence needs repeating.
 
 ---
 
+## Upgrading the signing JDK to Java 25 on an existing install
+
+**Who needs this.** Any host installed before 2026-09-09. Until then the scripts
+provisioned Java 17 — and the Ubuntu ones installed `default-jre-headless`, which
+is 17 on 22.04 and 21 on 24.04 — while the table above, every current install path
+and the running app all state **25**. Two places say so, and neither is an outage:
+Server Settings → Maintenance → **Platform Lifecycle** grades the Java row *below
+Polaris's minimum*, which is critical and reaches the sidebar alert, and the **Code
+signing** card says it requires Java 25+.
+
+**Nothing is broken while you wait.** jsign 7.5 is Java 8 bytecode, so signing keeps
+working on 17 or 21 — an old JDK costs runway (17 dies 2027-09-30; 25 runs to
+2030-09-30) and a fleet that signs with a different major per host, not capability.
+Polaris never refuses an older JVM: `signingAvailability` checks only that `java`
+*runs*, so the Code signing card reads **Ready** on 17 and the Platform Lifecycle
+card is the only thing that objects. This is a maintenance-slot task.
+
+**Nothing does it for you.** The in-app updater installs no system packages (same
+reasoning as Node above), `deploy/update-linux.sh` never mentions Java, and
+re-running a setup script will not help either: both scripts skip the JDK entirely
+when `command -v java` already succeeds. They are written for a fresh host, where
+"some Java" means done.
+
+**Where it has to land.** On the host running the **web** role — that is the process
+that shells out to jsign after an in-app agent build, and the one that probes
+`java -version` for the lifecycle card. A monitor-, discovery- or dash-only host
+needs no JDK at all. On an HA pair, do both nodes, since either can be the web host.
+
+**No downtime, and no restart** in the normal case: Polaris execs `java` per
+operation and caches nothing about it, so installing the package *is* the change.
+The exception is a JDK that lands outside the service's `PATH` (a tarball under
+`/opt`, say) — that needs `JAVA_HOME`/`PATH` in a unit drop-in and a restart of
+`polaris.target`.
+
+### RHEL / Rocky / AlmaLinux 9
+
+```bash
+sudo dnf install -y java-25-openjdk-headless
+java -version                      # expect: openjdk version "25.0.x"
+```
+
+If it still reports 17, both JDKs are installed and `alternatives` still prefers the
+old one — pick the `java-25` entry, then re-check:
+
+```bash
+sudo alternatives --config java
+java -version
+```
+
+Remove the old JDK only **after** the verification below passes, and check first that
+nothing else on the host wants it:
+
+```bash
+dnf repoquery --installed --whatrequires java-17-openjdk-headless
+sudo dnf remove java-17-openjdk-headless
+```
+
+### Ubuntu / Debian
+
+```bash
+sudo apt-get update
+sudo apt-get install -y openjdk-25-jre-headless
+java -version                      # expect: openjdk version "25.0.x"
+sudo update-alternatives --config java   # only if the old JDK still wins
+```
+
+On a host installed by an older `setup-ubuntu.sh` the JVM you are replacing came in
+as `default-jre-headless`, so purge the versioned package behind it —
+`openjdk-17-jre-headless` on 22.04, `openjdk-21-jre-headless` on 24.04 — not the
+metapackage alone. Simulate first; `-s` changes nothing and prints what would go:
+
+```bash
+sudo apt-get -s purge default-jre-headless openjdk-17-jre-headless
+sudo apt-get purge -y default-jre-headless openjdk-17-jre-headless
+sudo apt-get autoremove -y
+java -version
+```
+
+### Docker / Podman
+
+No host-side JDK work: the image has carried `openjdk-25-jre-headless` and the
+SHA-256-pinned jsign jar since 2026-09-09. Pull the current image and recreate:
+
+```bash
+docker compose pull                # podman compose pull
+docker compose up -d
+docker compose exec web java -version
+```
+
+The signing keystore is deliberately not in the image — it lives under the mounted
+state dir (`./state/tools/codesign.pfx`) — so recreating the containers leaves it
+alone.
+
+### Verify
+
+1. **As the service account**, since that is the process that execs it:
+   `sudo -u polaris java -version`.
+2. Integrations → **Polaris Agents** → **Code signing (internal CA)** → **Test**.
+   It checks Java, the jsign jar and the keystore password (no TSA call) and reports
+   `Ready: openjdk version "25.0.x" … + /opt/polaris/tools/jsign.jar, keystore
+   readable`. Read the version it prints rather than the word *Ready* — Ready is
+   what it said on Java 17 too.
+3. Build the agents — Integrations → **Polaris Agents** tab → **Polaris Agent** card
+   → **Build agent binaries** — and confirm no `agent.build.sign_failed` Event and no
+   signing warning in the sidebar. Signing is fail-open: a build that ships unsigned
+   still reports success.
+4. Maintenance → **Platform Lifecycle**: the Java row should read 25 and grade clean.
+   **It can lag up to 6 hours** — the card serves a memoised observation and has no
+   refresh button. Restart `polaris-web` to clear it, or request
+   `GET /api/v1/server-settings/platform-lifecycle?refresh=1`. The alert the baseline
+   lifecycle automation raised clears on the daily watch, which re-observes at most
+   once in 20 hours.
+
+**If the card shows a version but no certificate subject / issuer / expiry**,
+`keytool` was not found. These packages ship it beside the JVM rather than on `PATH`;
+Polaris looks on `PATH`, then `JAVA_HOME`, then the running JVM's own `java.home`.
+Set `JAVA_HOME` in the service environment if your JDK landed somewhere unusual.
+
+**Rollback** is `alternatives --config java` (`update-alternatives` on Debian/Ubuntu)
+back to the old entry — which is why removing the old JDK is the last step, not part
+of the install. Polaris stores nothing about which JDK it used.
+
+---
+
 ## RHEL / Rocky / AlmaLinux 9
 
 > **Note:** This walkthrough installs PostgreSQL from PGDG (the official PostgreSQL Global Development Group repo), not the RHEL AppStream module. PGDG matches upstream within days, supports the full Postgres extension ecosystem (TimescaleDB, PostGIS, etc.), and supports side-by-side major versions. AppStream's module ships a curated subset and lags upstream; in particular, **the TimescaleDB package targets PGDG only** — the AppStream `postgresql:15` module's package names (`postgresql-server`) don't satisfy `timescaledb-2-postgresql-17`'s requirement on `postgresql17-server`. If you have an existing AppStream install you want to migrate from, see *Migrating from AppStream to PGDG* below.

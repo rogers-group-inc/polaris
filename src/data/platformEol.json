@@ -436,9 +436,10 @@
     {
       "id": "java-major",
       "title": "Move the Java major used for agent signing",
-      "docAnchor": "docs/INSTALL.md#supported-platform-versions",
+      "docAnchor": "docs/INSTALL.md#upgrading-the-signing-jdk-to-java-25-on-an-existing-install",
       "risk": "low",
       "steps": [
+        "FOR AN OPERATOR whose host is below the minimum: no repo change is needed - install the current JDK on the host running the web role and remove the old one. Steps per platform, plus how to verify and roll back, are in docs/INSTALL.md - 'Upgrading the signing JDK to Java 25 on an existing install'. The remaining steps move the major Polaris itself targets, which is a code change.",
         "Confirm the jsign release in use runs on the target major (7.5 is Java 8 bytecode, so anything from 8 up), and that the JDK package EXISTS on every platform - RHEL AppStream, Debian and both Ubuntu LTSes. One platform without it splits the fleet's signing JDK.",
         "Bump the JDK package in the Dockerfile and in every setup script.",
         "Bump JAVA_MINIMUM in src/services/agentSigningService.ts - the number the running app states. Both signingAvailability error strings interpolate it and the Code-signing card renders availability.javaMinimum, so the browser carries no literal of its own. check:versions reads it, and it is the only Java site inside src/.",
