@@ -40,6 +40,8 @@ import {
   isMergeableGhostSourceKinds,
   isMergeableEndpointGhost,
   mergeEndpointGhostIntoAsset,
+  mergeDuplicateHostnameGhost,
+  type DuplicateHostnameAssetRow,
 } from "../../src/services/assetGhostMergeService.js";
 import { prisma } from "../../src/db.js";
 
@@ -201,5 +203,66 @@ describe("mergeEndpointGhostIntoAsset", () => {
     expect(res.transferredMonitored).toBe(false);
     expect(tx.asset.update).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+// ── the duplicate-hostname ghost merge's scalar absorption ──
+// Null-fill mirrors acceptAssetConflict; the case worth its own coverage is
+// assetType, where the `other` catch-all counts as empty.
+
+function dupRow(id: string, over: Partial<DuplicateHostnameAssetRow> = {}): DuplicateHostnameAssetRow {
+  return {
+    id,
+    hostname: "ws-1234",
+    ipAddress: null,
+    macAddress: null,
+    serialNumber: null,
+    manufacturer: null,
+    model: null,
+    assetType: "other",
+    os: null,
+    osVersion: null,
+    assignedTo: null,
+    notes: null,
+    learnedLocation: null,
+    acquiredAt: null,
+    lastSeen: null,
+    lastSeenSource: null,
+    monitored: false,
+    updatedAt: new Date("2026-09-01T00:00:00Z"),
+    tags: [],
+    sources: [],
+    ...over,
+  };
+}
+
+/** Side tables are read twice each (canonical rows, then ghost rows) — all empty here. */
+function seedEmptySideTables() {
+  for (const t of [tx.assetMacAddress, tx.assetAssociatedIp, tx.assetIpHistory, tx.assetFortigateSighting]) {
+    t.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+  }
+}
+
+describe("mergeDuplicateHostnameGhost — assetType", () => {
+  it("adopts the ghost's specific type when the canonical is still 'other'", async () => {
+    seedEmptySideTables();
+    await mergeDuplicateHostnameGhost(dupRow(CANON, { assetType: "other" }), dupRow(GHOST, { assetType: "server" }));
+    expect(tx.asset.update).toHaveBeenCalledWith({
+      where: { id: CANON },
+      data: { assetType: "server" },
+    });
+    expect(tx.asset.delete).toHaveBeenCalledWith({ where: { id: GHOST } });
+  });
+
+  it("keeps the canonical's specific type over a ghost filed as 'other'", async () => {
+    seedEmptySideTables();
+    await mergeDuplicateHostnameGhost(dupRow(CANON, { assetType: "switch" }), dupRow(GHOST, { assetType: "other" }));
+    expect(tx.asset.update).not.toHaveBeenCalled();
+  });
+
+  it("does not replace one specific type with another — the canonical was chosen by source tier", async () => {
+    seedEmptySideTables();
+    await mergeDuplicateHostnameGhost(dupRow(CANON, { assetType: "server" }), dupRow(GHOST, { assetType: "hypervisor" }));
+    expect(tx.asset.update).not.toHaveBeenCalled();
   });
 });

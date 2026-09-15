@@ -115,6 +115,16 @@ function _mergeFieldVal(asset, f) {
 
 function _mergeIsEmpty(v) { return v === null || v === undefined || (typeof v === "string" && v.trim() === ""); }
 
+// Per-field emptiness. The Type field's `other` is the registry's catch-all —
+// it says "unclassified", not "classified as other" — so it counts as empty
+// here: a specific type on either side is pre-selected whatever the source
+// rank, and the server never writes "other" over a specific type (MIRRORS
+// `fieldIsEmpty` in src/services/assetMergeService.ts).
+function _mergeFieldIsEmpty(key, v) {
+  if (_mergeIsEmpty(v)) return true;
+  return key === "assetType" && String(v).trim().toLowerCase() === "other";
+}
+
 // `preselectOtherId` (optional) pre-selects the merge target and skips the
 // search step — the bulk-bar Merge button and the duplicate-IP conflict card
 // both pass the second asset. The "Choose a different asset" back link
@@ -375,9 +385,10 @@ function _mergePreferredSide(thisRank, otherRank) {
 // backend refuses it), so defaulting to it would render a radio that does
 // nothing. With both sides holding a value the preferred side takes it, and
 // with no preference it stays on A — the pre-existing behavior. Never asked
-// about a `combine:true` field: those render no radios at all.
+// about a `combine:true` field: those render no radios at all. Emptiness is
+// per field (_mergeFieldIsEmpty): a Type of "other" loses to a specific type.
 function _mergeDefaultWinner(A, B, key, preferred) {
-  var aEmpty = _mergeIsEmpty(A[key]), bEmpty = _mergeIsEmpty(B[key]);
+  var aEmpty = _mergeFieldIsEmpty(key, A[key]), bEmpty = _mergeFieldIsEmpty(key, B[key]);
   if (aEmpty && !bEmpty) return "other";
   if (bEmpty && !aEmpty) return "this";
   return preferred || "this";
@@ -566,7 +577,7 @@ function _renderMergeComparison() {
       (loseKind
         ? '<strong>' + escapeHtml(_mergeSourceKindLabel(loseKind)) + '</strong>'
         : 'anything on the other side') +
-      ' in <strong>Settings &rarr; Sources</strong>. A side with no value never overwrites one, whatever its rank.</p>';
+      ' in <strong>Settings &rarr; Sources</strong>. A side with no value never overwrites one, whatever its rank, and a Type of &ldquo;other&rdquo; never overwrites a specific type.</p>';
   }
 
   cmp.innerHTML =
@@ -616,8 +627,11 @@ function _buildMergePlan(survivor, fieldWinners, dependencyWinner) {
     if (!who) return;                        // field didn't differ → no radio
     var winnerAsset = who === "this" ? _mergeThisAsset : _mergeOtherAsset;
     var winRaw = winnerAsset[f.key];
-    // Empty winner can't overwrite a value (backend keeps the survivor's).
-    var toAsset = _mergeIsEmpty(winRaw) ? survivorAsset : winnerAsset;
+    // Empty winner can't overwrite a value (backend keeps the survivor's), and
+    // a Type of "other" can't overwrite a specific type — same server rule.
+    var loses = _mergeIsEmpty(winRaw) ||
+      (_mergeFieldIsEmpty(f.key, winRaw) && !_mergeFieldIsEmpty(f.key, survivorAsset[f.key]));
+    var toAsset = loses ? survivorAsset : winnerAsset;
     var fromVal = _mergeFieldVal(survivorAsset, f);
     var toVal = _mergeFieldVal(toAsset, f);
     if (fromVal !== toVal) {

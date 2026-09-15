@@ -70,6 +70,7 @@ beforeEach(() => {
   g._mergeSourcePriority = null;
   for (const fn of [
     "_mergeIsEmpty",
+    "_mergeFieldIsEmpty",
     "_mergeNormalizePriority",
     "_mergeSourceKindLabel",
     "_mergeSourceRank",
@@ -188,6 +189,22 @@ describe("_mergeDefaultWinner", () => {
     const b = { note: "real", tag: "real" };
     expect(defaultWinner(a, b, "note", "this")).toBe("other");
     expect(defaultWinner(a, b, "tag", "this")).toBe("other");
+  });
+
+  it("treats a Type of 'other' as empty — the specific type wins whatever the source rank", () => {
+    const generic = { assetType: "other", model: "other" };
+    const specific = { assetType: "switch", model: "FS-124F" };
+    // Even when the operator's order prefers the "other" side.
+    expect(defaultWinner(generic, specific, "assetType", "this")).toBe("other");
+    expect(defaultWinner(specific, generic, "assetType", "other")).toBe("this");
+    // Case and whitespace don't rescue it.
+    expect(defaultWinner({ assetType: " Other " }, specific, "assetType", "this")).toBe("other");
+    // Only the Type field reads "other" that way — a model literally called
+    // "other" is a value like any other.
+    expect(defaultWinner(generic, specific, "model", "this")).toBe("this");
+    // Two specific types: the source rank decides as usual.
+    expect(defaultWinner({ assetType: "server" }, specific, "assetType", "other")).toBe("other");
+    expect(defaultWinner({ assetType: "server" }, specific, "assetType", null)).toBe("this");
   });
 });
 

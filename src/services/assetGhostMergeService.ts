@@ -50,6 +50,7 @@ import { transferAssetSideTables } from "./assetMergeService.js";
 import { recomputeMonitorOverrideForAssets } from "./monitorOverrideService.js";
 import { macHexKeyOrNull } from "../utils/mac.js";
 import { bumpLastSeen } from "../utils/assetInvariants.js";
+import { isGenericAssetType } from "../utils/assetTypes.js";
 
 /**
  * Source kinds that mark an asset as having its own authoritative identity.
@@ -185,6 +186,7 @@ export interface DuplicateHostnameAssetRow {
   serialNumber: string | null;
   manufacturer: string | null;
   model: string | null;
+  assetType: string | null;
   os: string | null;
   osVersion: string | null;
   assignedTo: string | null;
@@ -279,6 +281,12 @@ export async function mergeDuplicateHostnameGhost(
     if (!canonical.serialNumber && ghost.serialNumber) update.serialNumber = ghost.serialNumber;
     if (!canonical.manufacturer && ghost.manufacturer) update.manufacturer = ghost.manufacturer;
     if (!canonical.model && ghost.model) update.model = ghost.model;
+    // Type: the `other` catch-all counts as empty, so a canonical still filed
+    // as "other" takes the ghost's specific type (mirrors acceptAssetConflict
+    // and assetMergeService.fieldIsEmpty). Never the other way round.
+    if (isGenericAssetType(canonical.assetType) && !isGenericAssetType(ghost.assetType)) {
+      update.assetType = ghost.assetType;
+    }
     if (!canonical.os && ghost.os) update.os = ghost.os;
     if (!canonical.osVersion && ghost.osVersion) update.osVersion = ghost.osVersion;
     if (!canonical.assignedTo && ghost.assignedTo) update.assignedTo = ghost.assignedTo;

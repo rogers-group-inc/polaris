@@ -48,6 +48,18 @@ export const BUILT_IN_ASSET_TYPES = [
 
 export type BuiltInAssetType = (typeof BUILT_IN_ASSET_TYPES)[number];
 
+/**
+ * True when `name` carries no classification: empty, or the `other`
+ * catch-all. "other" means "not yet classified", not "classified as other",
+ * so every merge path (operator merge, conflict accept, duplicate-hostname
+ * ghost merge) treats it like an empty field — a specific type on the other
+ * side wins, and "other" never overwrites a specific type.
+ */
+export function isGenericAssetType(name: string | null | undefined): boolean {
+  if (!name) return true;
+  return name.trim().toLowerCase() === "other";
+}
+
 /** Live registry cache. null = service hasn't loaded yet; fall through to the built-in set. */
 let _registry: Map<string, { name: string; label: string; isBuiltIn: boolean }> | null = null;
 

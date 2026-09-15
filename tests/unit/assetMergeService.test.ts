@@ -186,6 +186,25 @@ describe("mergeAssets — field resolution", () => {
     expect(data.location).toBeUndefined();     // empty winner can't blank the survivor
   });
 
+  it("treats a Type of 'other' as empty — the absorbed row's specific type fills it by default", async () => {
+    seed({ assetType: "other" }, { assetType: "switch" });
+    const res = await mergeAssets({ canonicalId: CANON, ghostId: GHOST });
+    expect(updateData().assetType).toBe("switch");
+    expect(res.appliedFields).toContain("assetType");
+  });
+
+  it("never writes a Type of 'other' over a specific type, even as the explicit winner", async () => {
+    seed({ assetType: "server" }, { assetType: "other" });
+    await mergeAssets({ canonicalId: CANON, ghostId: GHOST, fieldWinners: { assetType: "ghost" } });
+    expect(updateData().assetType).toBeUndefined();
+  });
+
+  it("still lets an explicit winner pick between two specific types", async () => {
+    seed({ assetType: "server" }, { assetType: "hypervisor" });
+    await mergeAssets({ canonicalId: CANON, ghostId: GHOST, fieldWinners: { assetType: "ghost" } });
+    expect(updateData().assetType).toBe("hypervisor");
+  });
+
   it("carries lastSeenSwitch / lastSeenAp — blank-fill, and recency wins when both sides have values", async () => {
     const older = new Date("2026-07-01T00:00:00Z");
     const newer = new Date("2026-07-20T00:00:00Z");

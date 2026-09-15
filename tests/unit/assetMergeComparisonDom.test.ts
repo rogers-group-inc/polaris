@@ -49,6 +49,7 @@ function arrSrc(name: string): string {
 const HELPERS = [
   "_mergeFieldVal",
   "_mergeIsEmpty",
+  "_mergeFieldIsEmpty",
   "_mergeAssetLabel",
   "_mergeHistoryScore",
   "_mergeHistoryLonger",
@@ -202,5 +203,19 @@ describe("_renderMergeComparison — Sources priority defaults", () => {
     expect(checkedFor(host, "hostname")).toBe("this");  // both set -> A
     expect(checkedFor(host, "os")).toBe("other");       // A empty -> B
     expect(host.innerHTML).not.toContain("higher-ranked source");
+  });
+
+  it("pre-checks the specific Type over 'other' even on the lower-ranked side", () => {
+    const host = render({
+      A: asset({ assetType: "other" }),
+      B: asset({ hostname: "ws-1234.corp", assetType: "workstation" }),
+      aSources: src("fortigate-endpoint"),   // A ranks higher…
+      bSources: src("ad"),
+      priority: PRIORITY,
+    });
+    expect(checkedFor(host, "hostname")).toBe("this");   // …and takes the contested field
+    expect(checkedFor(host, "assetType")).toBe("other"); // but not the Type: "other" is unclassified
+    const hint = host.querySelector("#merge-priority-hint")!.textContent || "";
+    expect(hint).toMatch(/Type of .other. never overwrites a specific type/);
   });
 });

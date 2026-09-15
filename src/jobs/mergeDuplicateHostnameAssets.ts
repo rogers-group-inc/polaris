@@ -91,8 +91,9 @@
  * Scalar-field absorption onto the canonical (only when the canonical's
  * field is empty/null and the ghost has a value): macAddress, ipAddress,
  * serialNumber, manufacturer, model, os, osVersion, assignedTo, notes,
- * acquiredAt, lastSeen, learnedLocation. Mirrors `acceptAssetConflict`'s
- * ghost-absorption block. Tags are union-merged.
+ * acquiredAt, lastSeen, learnedLocation — plus assetType, where the `other`
+ * catch-all counts as empty so a ghost's specific type fills it. Mirrors
+ * `acceptAssetConflict`'s ghost-absorption block. Tags are union-merged.
  *
  * Dry-run mode: set `POLARIS_GHOST_MERGE_DRY_RUN=1` to log every decision
  * without writing. Use on the first deploy to review the per-group choices,
@@ -181,6 +182,7 @@ async function mergeDuplicateHostnameAssets(): Promise<void> {
           serialNumber: true,
           manufacturer: true,
           model: true,
+          assetType: true,
           os: true,
           osVersion: true,
           assignedTo: true,
