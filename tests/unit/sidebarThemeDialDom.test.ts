@@ -29,6 +29,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const APP_JS = readFileSync(join(process.cwd(), "public", "js", "app.js"), "utf-8");
+const STYLES_CSS = readFileSync(join(process.cwd(), "public", "css", "styles.css"), "utf-8");
 
 function extractFn(name: string): string {
   const start = APP_JS.indexOf(`function ${name}(`);
@@ -62,6 +63,7 @@ const harness = [
   extractFn("_getCurrentTheme"),
   extractFn("isLightTheme"),
   extractFn("_wheelRotationFor"),
+  extractFn("_wheelSeatDeg"),
   extractFn("_themeWheelRings"),
   extractFn("_seatThemeWheels"),
   extractFn("_beginThemeFade"),
@@ -73,7 +75,7 @@ const harness = [
   extractFn("_starIcon"),
   "return { setTheme: _setTheme, advanceTheme: advanceTheme, isLightTheme: isLightTheme,",
   "         getTheme: _getTheme, THEMES: THEMES, TRANSIT_THEMES: TRANSIT_THEMES,",
-  "         ANGLE: THEME_WHEEL_ANGLE, seat: _seatThemeWheels };",
+  "         ANGLE: THEME_WHEEL_ANGLE, seat: _seatThemeWheels, seatDeg: _wheelSeatDeg };",
 ].join("\n");
 
 type Api = {
@@ -85,6 +87,7 @@ type Api = {
   TRANSIT_THEMES: Array<{ id: string; label: string; family: string; transit?: boolean }>;
   ANGLE: Record<string, number>;
   seat: (deg?: number) => void;
+  seatDeg: () => number;
 };
 
 /** A fresh evaluation, so the module-scope dial state can't leak between tests. */
@@ -122,8 +125,35 @@ describe("sidebar theme dial placement", () => {
   });
 
   it("seats the ring's starting angle in the markup, so first paint doesn't animate", () => {
-    expect(APP_JS).toContain("style=\"transform:rotate(${_wheelRotation}deg)\"");
+    // Through _wheelSeatDeg(), never `_wheelRotation` raw: the accumulator is
+    // null until the first _setTheme, and `rotate(nulldeg)` is an invalid
+    // transform the browser drops — which seated EVERY page load at 0deg
+    // (noon's crest) whatever theme was painted, nightfall included.
+    expect(APP_JS).toContain("style=\"transform:rotate(${_wheelSeatDeg()}deg)\"");
+    expect(APP_JS).not.toContain("rotate(${_wheelRotation}deg)");
     expect(APP_JS).toContain("_wheelRotation = -(THEME_WHEEL_ANGLE[_getCurrentTheme()] || 0);");
+  });
+
+  it("starts a freshly rendered dial on the showing theme's own hour", () => {
+    // One assertion per theme: the regression only showed on the two whose
+    // angle is not 0, and nightfall (180) is where it was reported.
+    for (const id of ["morning", "noon", "nightfall"]) {
+      const api = freshApi();
+      document.documentElement.setAttribute("data-theme", id);
+      expect(api.seatDeg(), `${id} seats on someone else's hour`).toBe(-api.ANGLE[id]);
+    }
+  });
+
+  it("keeps the accumulated rotation once the dial has turned", () => {
+    // After the first turn the seat value must be the accumulator, not the
+    // theme's bare angle — a sidebar re-rendered later in the day would
+    // otherwise rewind the dial through hours it has already passed.
+    const api = freshApi();
+    document.documentElement.setAttribute("data-theme", "nightfall");
+    document.body.innerHTML = DIAL_HTML;
+    api.setTheme("morning");
+    expect(api.seatDeg()).toBe(ringDeg());
+    expect(api.seatDeg()).toBe(-270);
   });
 
   it("delegates the click instead of wiring a listener in the template", () => {
@@ -326,5 +356,47 @@ describe("advanceTheme", () => {
     // Treating afternoon as "current" would aim at noon and never reach
     // morning; the destination (nightfall) is what the next step follows.
     expect(document.documentElement.getAttribute("data-theme")).toBe("morning");
+  });
+});
+
+describe("the ring is never put behind a compositing layer", () => {
+  // Firefox paints NOTHING for a masked or filtered layer whose content is
+  // rotated (close to) a half-turn. Nightfall is the one selectable theme whose
+  // dial angle is 180 deg, so the control was simply absent there - reported as
+  // "the nightfall wheel image doesn't appear". It is not theme-specific: noon
+  // blanks too if parked at 180, and nightfall renders at 179 or 181.
+  //
+  // Measured on the reporting machine, every cheaper dodge still blanks:
+  // will-change, translateZ(0), backface-visibility, isolation, the `rotate:`
+  // longhand, and 180.01deg. So the invariant is absolute rather than a
+  // preference, and it is the kind a tidy-up re-breaks by reaching for the
+  // obvious tool.
+  /* The window's OWN declarations, stopping at its closing brace: the masked
+     ::after that follows is deliberate and must not be caught by this. */
+  const windowRule = STYLES_CSS.slice(
+    STYLES_CSS.indexOf(".theme-wheel-window {"),
+    STYLES_CSS.indexOf("}", STYLES_CSS.indexOf(".theme-wheel-window {")),
+  );
+  const wheelBlock = STYLES_CSS.slice(
+    STYLES_CSS.indexOf(".theme-wheel-window {"),
+    STYLES_CSS.indexOf(".theme-wheel-notch"),
+  );
+
+  it("does not mask the window the ring sits in", () => {
+    expect(windowRule).not.toMatch(/(-webkit-)?mask-image:/);
+  });
+
+  it("does not filter the ring, at rest or on hover", () => {
+    expect(STYLES_CSS).not.toMatch(/\.theme-wheel-ring\s*\{[^}]*filter:/);
+    expect(STYLES_CSS).not.toMatch(/\.theme-wheel:hover\s+\.theme-wheel-ring\s*\{[^}]*filter:/);
+    expect(STYLES_CSS).not.toContain("--wheel-lift");
+  });
+
+  it("draws the bottom fade as an overlay painted on top instead", () => {
+    // The fade is the design; only its mechanism changed. The masked variant
+    // inside @supports is fine - that overlay holds no rotated content - and
+    // it exists so the fade's colour transitions with the palette.
+    expect(STYLES_CSS).toContain(".theme-wheel-window::after");
+    expect(wheelBlock).toContain("linear-gradient(to bottom, transparent 62%, var(--color-bg-tertiary) 100%)");
   });
 });
