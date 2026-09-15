@@ -1,6 +1,6 @@
 ---
 name: polaris-docs-sync
-description: "Pre-commit documentation review for Polaris: which skill reference file each kind of change must update (new Prisma model, service, job, route, permission key, env var, metric, agent stream, business rule, UI canonical, integration type), the lockstep checklists, the skill-authoring constraints, and how to run and fix npm run check:docs. Run /polaris-docs-sync before every commit and after check-docs fails; /polaris-deploy runs this review itself as its first step, so a task shipped through it never needs a separate invocation."
+description: "Pre-commit documentation review for Polaris: which skill reference file — and which page of the operator wiki under docs/wiki/ — each kind of change must update (new Prisma model, service, job, route, permission key, env var, metric, agent stream, business rule, UI canonical, integration type, and anything an operator sees or configures), the lockstep checklists, the skill-authoring constraints, and how to run and fix npm run check:docs. Also covers the wiki itself — operator docs, help page, docs/wiki, the GitHub wiki the Help entry opens, and the authoring rules a flat wiki imposes. Run /polaris-docs-sync before every commit and after check-docs fails; /polaris-deploy runs this review itself as its first step, so a task shipped through it never needs a separate invocation."
 disable-model-invocation: true
 ---
 
