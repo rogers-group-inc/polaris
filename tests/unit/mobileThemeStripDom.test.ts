@@ -30,6 +30,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+const MOBILE_CSS = readFileSync(join(process.cwd(), "public", "css", "mobile.css"), "utf-8");
+
 const MOBILE_APP_JS = readFileSync(
   join(process.cwd(), "public", "js", "mobile", "app.js"),
   "utf-8",
@@ -327,5 +329,17 @@ describe("the More tab's strip markup", () => {
 
   it("seats the strip, since the tab is built long after boot", () => {
     expect(MORE_TAB_JS).toContain("PolarisTheme.seatStrips()");
+  });
+});
+
+describe("the strip track carries no filter", () => {
+  // A brightness() was added here and reverted in the same session: the
+  // contrast measurement behind it was really describing the desktop dial's
+  // rendering bug, not the artwork. The phone strip translates rather than
+  // rotates, so it is not the same bug - but nothing has looked at it on a real
+  // phone, so it stays unfiltered until something does.
+  it("has no brightness lift on the track or the art inside it", () => {
+    expect(MOBILE_CSS).not.toContain("--strip-lift");
+    expect(MOBILE_CSS).not.toMatch(/\.theme-strip-track\s*\{[^}]*filter:/);
   });
 });
