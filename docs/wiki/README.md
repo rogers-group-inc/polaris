@@ -33,16 +33,38 @@ A GitHub wiki is its own git repository — `<repo>.wiki.git` — so publishing 
 a copy plus a commit:
 
 ```bash
-git clone https://github.com/rogers-group-inc/polaris.wiki.git /tmp/polaris-wiki
-cp docs/wiki/*.md /tmp/polaris-wiki/
-rm -f /tmp/polaris-wiki/README.md          # repo-only, never published
-cd /tmp/polaris-wiki
-git add -A && git commit -m "wiki: sync from polaris@$(git -C /path/to/polaris rev-parse --short HEAD)"
-git push
+SRC=/path/to/polaris                       # this checkout
+WIKI=$(mktemp -d)
+
+git clone https://github.com/rogers-group-inc/polaris.wiki.git "$WIKI"
+cp "$SRC"/docs/wiki/*.md "$WIKI"/
+rm -f "$WIKI"/README.md                    # repo-only, never published
+
+git -C "$WIKI" add -A
+git -C "$WIKI" commit -m "wiki: sync from polaris@$(git -C "$SRC" rev-parse --short HEAD)"
+git -C "$WIKI" push origin master
 ```
 
-The wiki must be initialised once through the GitHub UI (create any page)
-before `.wiki.git` exists to clone.
+Four things that bite an unattended publisher:
+
+- **The wiki's default branch is `master`, not `main`.** GitHub has never
+  changed it for wikis. A script that pushes `main` creates a second branch
+  nobody reads, and the wiki keeps serving the old content with no error
+  anywhere.
+- **The wiki must be initialised once through the GitHub UI** — create a page,
+  titled `Home` — before `.wiki.git` exists to clone at all. Until then the
+  clone fails with a plain "repository not found".
+- **`commit` exits non-zero when nothing changed.** That is the normal state
+  between doc changes, so treat "nothing to commit" as success, not as a
+  failure worth alerting on.
+- **This copies in; it never deletes.** A page removed from `docs/wiki/`, or one
+  somebody hand-created in the web UI, stays on the wiki forever. Renaming a
+  page therefore leaves the old title behind as a stale duplicate — delete it in
+  the wiki UI, or have the publisher `git rm` what the source no longer has.
+
+Anything edited in the GitHub wiki UI is **overwritten by the next sync, with
+no warning and no conflict** — this is a one-way publish. Corrections belong in
+`docs/wiki/` as an ordinary commit.
 
 ## Keeping it true
 
