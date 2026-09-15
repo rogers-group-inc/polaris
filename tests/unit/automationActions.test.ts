@@ -102,6 +102,21 @@ describe("executeActions", () => {
     expect(composed.html).toContain("Acknowledge alert");
   });
 
+  it("an all-clear asks for no acknowledge button; a fire asks for one", async () => {
+    // The "resolved" pseudo-severity is what the three all-clear paths
+    // (fireResolved, fireReset, the operator-clear path) already stamp to
+    // colour the email green, so it is also what tells the expander this send
+    // has nothing left to acknowledge — business rule 25. Anything else is a
+    // fire, and must not pass the flag at all: `undefined` is the shape that
+    // keeps a firing send byte-identical.
+    await executeActions("n1", [{ type: "notify", channelId: "c1" }], { ...CTX, severity: "resolved" }, {});
+    expect((expandDeliveriesMock.mock.calls[0] as any[])[2].noAck).toBe(true);
+
+    expandDeliveriesMock.mockClear();
+    await executeActions("n1", [{ type: "notify", channelId: "c1" }], CTX, {});
+    expect((expandDeliveriesMock.mock.calls[0] as any[])[2].noAck).toBeUndefined();
+  });
+
   it("api_call: creates a NULL-channel delivery row with the body rendered at fire time", async () => {
     const actions: AutomationAction[] = [
       { type: "api_call", method: "POST", url: "https://hooks.example.com/x", headers: { "X-Env": "prod" }, bodyTemplate: '{"asset":"{asset}","v":{value}}', timeoutSec: 20 },
