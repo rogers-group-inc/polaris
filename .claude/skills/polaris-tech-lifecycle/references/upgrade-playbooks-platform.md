@@ -221,7 +221,9 @@ the app or the agent.
 
 ### Moving an EXISTING host to the current JDK
 The steps above move the major Polaris *targets*; they do nothing for a host still running the
-old one, and nothing does it automatically — the in-app updater installs no system packages,
+old one, and nothing does it automatically — the in-app updater installs no system packages
+(a policy, not a privilege limit: its final step already runs a transient unit as root under the
+`manage-units` polkit grant, and that is where a package install would have to go),
 `deploy/update-linux.sh` never mentions Java, and both setup scripts skip the JDK entirely when
 `command -v java` already succeeds, so re-running one on an upgraded host is a no-op. The
 operator steps (per platform, plus verification and rollback) are `docs/INSTALL.md` →

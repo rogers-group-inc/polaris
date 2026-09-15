@@ -323,12 +323,17 @@ The setup wizard runs a preflight check that statfs's the conventional PGDATA pa
 
 ## Upgrading Node on an existing install
 
-**The in-app updater cannot do this, by design.** It runs as the unprivileged
-`polaris` user, whose only root grant is the nginx apply wrapper
-(`deploy/sudoers.d/polaris-nginx`) — installing a system package is not something
-the web application is allowed to do, and giving it that power to save a
-once-every-two-years operation would be a poor trade. Node upgrades are an
-operator (or configuration-management) task.
+**The in-app updater does not do this, by design.** No path through it calls a
+package manager — not `src/services/updateService.ts`, not
+`deploy/update-linux.sh`. Read that as a policy rather than a wall, because the
+updater is not as unprivileged as it looks: besides the nginx apply wrapper it
+reaches through sudo (`deploy/sudoers.d/polaris-nginx`), its final step runs a
+transient systemd unit **as root** under the `manage-units` polkit grant in
+`deploy/polkit/49-polaris.rules`, which is how it syncs unit files,
+`/etc/sudoers.d/polaris-nginx` and the nginx config before restarting the group.
+It *could* install a package. It deliberately never has: handing the web
+application a package manager to save a once-every-two-years operation is a poor
+trade. Node upgrades are an operator (or configuration-management) task.
 
 Order matters. Native modules are compiled against the Node headers present at
 install time, so **`node_modules` must be rebuilt after the runtime changes** —
@@ -420,8 +425,9 @@ Polaris never refuses an older JVM: `signingAvailability` checks only that `java
 *runs*, so the Code signing card reads **Ready** on 17 and the Platform Lifecycle
 card is the only thing that objects. This is a maintenance-slot task.
 
-**Nothing does it for you.** The in-app updater installs no system packages (same
-reasoning as Node above), `deploy/update-linux.sh` never mentions Java, and
+**Nothing does it for you.** The in-app updater installs no system packages —
+deliberately, and the Node section above says what it can and cannot reach —
+`deploy/update-linux.sh` never mentions Java, and
 re-running a setup script will not help either: both scripts skip the JDK entirely
 when `command -v java` already succeeds. They are written for a fresh host, where
 "some Java" means done.
