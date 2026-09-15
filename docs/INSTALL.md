@@ -319,6 +319,23 @@ The UI says which of the two it hit rather than showing a button that fails in a
 browser dialog, so there is nothing to diagnose — but an install reached by IP
 will show passkeys as unavailable however the policy is set.
 
+**Behind a reverse proxy, set `TRUST_PROXY`.** If TLS terminates at nginx, Caddy,
+Traefik, Nginx Proxy Manager, an ALB or a corporate load balancer, the request
+that reaches Polaris is plain HTTP, and without `TRUST_PROXY` Polaris has no
+business believing the `X-Forwarded-Proto` header that says otherwise — so it
+reports the install as insecure and offers no passkeys. Set `TRUST_PROXY` to the
+number of proxy hops in front of it (`TRUST_PROXY=1` for a single proxy; `2` if
+something like Cloudflare sits in front of that) and restart. When a forwarded
+header was present, the message in the UI names this variable rather than
+telling you to install TLS you already have. The same setting is what lets
+session cookies go out `Secure` and makes the login rate limiter count the real
+client address, so it is worth getting right regardless of passkeys.
+
+Your proxy must also **forward the original `Host`** (nginx:
+`proxy_set_header Host $host`). Polaris reads the passkey domain off that header,
+so a proxy substituting its own upstream name produces a domain no browser will
+accept — the Passkeys dialog says so, and names the header, if it happens.
+
 One more case: if your users reach Polaris by **more than one name** (a short
 name and an FQDN, say), a passkey registered at one will not be offered at the
 other. Set a shared parent domain in **Passkey domain** on that tab to cover
