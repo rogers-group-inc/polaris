@@ -7,7 +7,8 @@ A network management tool. Auto-discovery from FortiManager / FortiGate / Window
 | | |
 |---|---|
 | **[Wiki](https://github.com/rogers-group-inc/polaris/wiki)** | **Operator documentation** — a page per screen, how to configure each integration, how automations and monitoring actually decide things, and the 64 numbered business rules behind that behaviour. In the app it is the **Help** entry in the account menu (click your username, top right). Source lives in [`docs/wiki/`](docs/wiki/) and is published from there |
-| [docs/INSTALL.md](docs/INSTALL.md) | Installing, supported platform versions, disk sizing, split-role deployment, and the environment problems that bite |
+| [docs/INSTALL.md](docs/INSTALL.md) | **Fresh installs** — supported platform versions, disk sizing, split-role deployment, nginx, and the environment problems that bite |
+| [docs/UPGRADING.md](docs/UPGRADING.md) | **Existing installs** — moving to PostgreSQL 17, upgrading Node or the signing JDK, migrating to the nginx front end, and recovering an update that failed on TLS interception |
 | [docs/HA.md](docs/HA.md) | The optional active/standby pair, phase by phase |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | The local dev stack |
 | `<polaris-url>/api` | Developer docs for the REST API, served by the install itself — see [API overview](#api-overview) |

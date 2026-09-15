@@ -1,15 +1,20 @@
 # Installation
 
-The authoritative, step-by-step install guide is **[`docs/INSTALL.md`](https://github.com/rogers-group-inc/polaris/blob/main/docs/INSTALL.md)**
+The authoritative, step-by-step guide is **[`docs/INSTALL.md`](https://github.com/rogers-group-inc/polaris/blob/main/docs/INSTALL.md)**
 in the repository. It is long because it covers real environments — TLS-
-inspecting proxies, PostgreSQL major mismatches, split-role deployments, disk
-sizing, migration from a Windows host. This page is the map of it, plus the
-decisions you make before you start.
+inspecting proxies, disk sizing, split-role deployments, nginx. This page is the
+map of it, plus the decisions you make before you start.
 
-> **Upgrading an existing install? Do not follow the install guide.** Use the
-> in-app updater at **Server Settings → Maintenance → Updates**. It also syncs
-> the shipped systemd units and nginx config, which a `git pull` does not. See
-> [Updates](Updates).
+> **`INSTALL.md` is fresh installs. Anything you do to a host that already runs
+> Polaris is in [`docs/UPGRADING.md`](https://github.com/rogers-group-inc/polaris/blob/main/docs/UPGRADING.md)** —
+> moving to PostgreSQL 17, upgrading Node or the signing JDK, migrating from a
+> distro's PostgreSQL to PGDG, migrating to the nginx front end, upgrading a
+> legacy single-process install, and recovering an install whose update already
+> failed on TLS interception.
+>
+> And to update **Polaris itself**, use the in-app updater at **Server Settings →
+> Maintenance → Updates** — it also syncs the shipped systemd units and nginx
+> config, which a `git pull` does not. See [Updates](Updates).
 
 ---
 

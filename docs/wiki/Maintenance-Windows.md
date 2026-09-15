@@ -108,6 +108,53 @@ cleanly and nothing ever entered maintenance.
 
 ---
 
+## Acting on a schedule from the device
+
+The asset edit modal's **Maintenance** tab lists the schedules covering this
+device, and each row carries its two verbs: **remove this asset** from the
+schedule, or **delete the schedule** outright.
+
+Before, acting on one of them meant leaving the asset, opening Assets →
+Maintenance, finding the schedule among all the others and editing its targets.
+
+### Only the explicit half is removable
+
+A schedule's targets are the **union of a criteria filter and an explicit asset
+list**, and only the explicit half can be removed one device at a time.
+
+Dropping the id of a device the **filter** matches changes nothing the
+reconcile can see: the filter still matches, the next tick re-targets the
+device, and you would have been told *"removed"* about a device still heading
+into the window. So that call is **refused**, and each row instead reports
+**how the schedule reaches this asset** — explicitly, by criteria, or both —
+rendering the reason rather than a button the server would reject.
+
+**Narrowing a filter stays with the schedule builder**, which is the only
+surface that can show you what else that filter catches.
+
+### The last one out takes the schedule with it
+
+A schedule with **no criteria** whose explicit list your removal would empty is
+**deleted**, not saved empty.
+
+A targetless schedule can never fire again, and every other write path already
+refuses one — so leaving it behind would create a row the builder itself would
+reject on its next save. The confirmation warns you about the delete before you
+agree to it, and the result says which of the two happened rather than leaving
+you to infer it.
+
+### Neither verb closes an open window itself
+
+Falling out of the target set is something the reconcile already handles — and
+it is also what **restores the parked status**. Closing the window here as well
+would fork the one exit path.
+
+So a device currently *inside* a window leaves it on the next reconcile tick,
+with the end recorded as a criteria change, or as a deletion when the schedule
+went too.
+
+---
+
 ## Ad-hoc windows
 
 The monitor pill's popover — on both the table and the slide-over's System tab —
