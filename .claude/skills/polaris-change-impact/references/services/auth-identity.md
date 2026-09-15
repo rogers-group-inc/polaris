@@ -37,18 +37,18 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/azureAuthService.ts
 
-**What it owns:** Azure AD (Entra) SAML 2.0 SSO configuration, relay-state generation, SAML response validation, user provisioning on first login.
+**What it owns:** Azure AD (Entra) SAML 2.0 SSO configuration, SAML response validation, user provisioning on first login.
 
-**Public API:** getSsoSettings, updateSsoSettings, isAzureSsoConfigured, isAzureSsoConfiguredAsync, generateRelayState, getSamlLoginUrl, validateSamlResponse, getSamlLogoutUrl, findOrProvisionSamlUser, SsoSettings.
+**Public API:** getSsoSettings, updateSsoSettings, isAzureSsoConfigured, isAzureSsoConfiguredAsync, getSamlLoginUrl, validateSamlResponse, getSamlLogoutUrl, findOrProvisionSamlUser, SsoSettings.
 
 **Cross-service deps:** None (SAML + database; no service-to-service calls).
 
-**Used by:** src/app.ts — check SSO configured on startup to conditionally skip login page, src/api/routes/auth.ts — SAML login/logout flow (generateRelayState, getSamlLoginUrl, validateSamlResponse, getSamlLogoutUrl, findOrProvisionSamlUser).
+**Used by:** src/app.ts — check SSO configured on startup to conditionally skip login page, src/api/routes/auth.ts — SAML login/logout flow (getSamlLoginUrl, validateSamlResponse, getSamlLogoutUrl, findOrProvisionSamlUser).
 
 **Invariants:**
 - SSO settings stored in Setting table (key="sso"); 30-second in-memory cache with expiry.
 - SAML IdP config (Entity ID, Login/Logout URLs, certificate) configured via Users page Settings modal.
-- Relay state generated as random 32-byte base64url for CSRF protection on redirect.
+- **Relay state is NOT this service's** (moved 2026-09-15): `generateRelayState` / `relayStateTarget` live in `utils/loginRedirect.ts`, beside the `polaris_next` cookie, because the two carry the same thing — where this login lands. RelayState is `<nonce>` or `<nonce>.<path>`, the nonce base64url and short enough to keep the whole value inside the SAML binding spec's 80-byte ceiling. It is still the CSRF binding on the redirect (the equality check in `/azure/callback` compares the whole string, path included), and it is still only checked when a session survived — which on a cross-site POST it usually has not.
 - SAML response validation uses @node-saml/node-saml library; wantResponseSigned flag controls signature check.
 - User provisioning on first login: extract nameID/email from validated Profile, upsert User row with default role, auto-enable if disabled.
 - skipLoginPage flag bounces unauthenticated visitors straight to SSO (bypass Polaris login page) — from protected pages AND, since 2026-09-06, from `/login.html` itself (`skipLoginSsoTarget` in app.ts is the one decider for both). Two query keys draw the form anyway: `?error=` (every SSO failure landing — anti-loop) and `?local=1` (the anti-lockout path the Session tab's hint names; deliberately guessable — the source-IP gate is what restricts WHO reaches the form, and it is mounted above the redirect). A logout lands on `/signed-out.html` instead (`public/signed-out.html` + `public/js/signed-out.js`: no form, a `?reason=inactivity` sentence from a closed set, and one Sign in button that opens the BARE `/login.html` so this redirect decides SSO-or-form) — every desktop logout landing (account menu, inactivity timer, server-side idle check in app.ts) goes there, which is what keeps a silent `prompt=none` provider from signing the operator straight back in. Change the landing in all three places together; tests/unit/loginPageSkipLandings.test.ts pins them. app.ts honors SAML first, then OIDC. Turning it ON is lockout-gated in PUT /auth/azure/settings: requires (a) a SAML or OIDC provider configured AND (b) the enabling admin's session authProvider is "azure"/"oidc" (SSO round-trip proven). Turning it OFF is unrestricted (recovery). users.js mirrors the gate by disabling the checkbox for local/LDAP sessions when it's currently off.

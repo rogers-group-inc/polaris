@@ -26,7 +26,6 @@ import { requireAuth } from "../middleware/auth.js";
 import { requirePermission, snapshotFromRole } from "../middleware/permissions.js";
 import {
   isAzureSsoConfiguredAsync,
-  generateRelayState,
   getSamlLoginUrl,
   validateSamlResponse,
   getSamlLogoutUrl,
@@ -67,7 +66,12 @@ import { resolveTagScopesForUser } from "../../services/regionScopeService.js";
 import { isBlockedOutboundHost } from "../../utils/netGuard.js";
 import { totpCodeLimiter, ssoEntryLimiter, entraProxyLoginLimiter, ssoCallbackLimiter } from "../middleware/rateLimits.js";
 import { safeNextPath } from "../../utils/safeRedirect.js";
-import { takeLoginTarget } from "../../utils/loginRedirect.js";
+import {
+  takeLoginTarget,
+  peekLoginTarget,
+  generateRelayState,
+  relayStateTarget,
+} from "../../utils/loginRedirect.js";
 import { logEvent } from "./events.js";
 
 const router = Router();
@@ -499,7 +503,12 @@ router.get("/azure/login", async (req, res) => {
     return res.redirect("/login.html?error=azure_not_configured");
   }
   try {
-    const relayState = generateRelayState();
+    // Fold the remembered destination into the RelayState, because the cookie
+    // holding it will not survive the IdP's cross-site POST back to us. PEEK,
+    // never consume: this request is the outbound half of a flow that can
+    // fail, and the browser-side flows still read the cookie if the operator
+    // ends up back on the login form.
+    const relayState = generateRelayState(peekLoginTarget(req));
     req.session.samlRelayState = relayState;
     const url = await getSamlLoginUrl(relayState);
     res.redirect(url);
@@ -541,10 +550,17 @@ router.post("/azure/callback", ssoCallbackLimiter, async (req, res) => {
     });
 
     // Back to whatever protected page bounced them here (an emailed
-    // Acknowledge link, most often), else the dashboard. Read from a cookie
-    // rather than the session: regenerateSession() above deliberately drops
-    // everything the pre-login session held.
-    res.redirect(takeLoginTarget(req, res));
+    // Acknowledge link, most often), else the dashboard. NOT from the session:
+    // regenerateSession() above deliberately drops everything the pre-login
+    // session held. RelayState first and the cookie second, because this
+    // request is a CROSS-SITE POST from the IdP and a SameSite=Lax cookie is
+    // not sent on one — the same reason the relay-state check above has to
+    // tolerate an empty session. `relayStateTarget` re-sanitizes the path it
+    // returns; the cookie is consumed either way, so a target this flow could
+    // not honor never ambushes the next sign-in.
+    const carried = relayStateTarget(returnedState);
+    const remembered = takeLoginTarget(req, res);
+    res.redirect(carried ?? remembered);
   } catch (err: any) {
     logEvent({
       action: "auth.login.azure.failed",

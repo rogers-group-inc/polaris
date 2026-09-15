@@ -50,10 +50,18 @@
    * this reason (utils/loginRedirect.ts); re-stamping it here covers the case
    * where the session died AFTER that first page load, so signing in again
    * still returns to the alert instead of the dashboard. Path only — the
-   * server re-sanitizes whatever comes back. */
+   * server re-sanitizes whatever comes back.
+   *
+   * The attributes mirror what the server writes, for the reason the server
+   * writes them: `SameSite=Lax` is not sent on a cross-site POST, which is the
+   * shape of a SAML assertion coming back from the IdP, so on HTTPS the cookie
+   * goes out `None` (which a browser only accepts with `Secure`). Plain HTTP
+   * has no choice but `Lax`, and the SAML login route's RelayState covers it
+   * there — it reads this same cookie on its way out. */
   window.__polarisOn401 = function () {
+    var secure = location.protocol === "https:";
     document.cookie = "polaris_next=" + encodeURIComponent(location.pathname + location.search)
-      + "; Max-Age=600; Path=/; SameSite=Lax" + (location.protocol === "https:" ? "; Secure" : "");
+      + "; Max-Age=600; Path=/; SameSite=" + (secure ? "None; Secure" : "Lax");
     window.location.href = "/login.html";
   };
 

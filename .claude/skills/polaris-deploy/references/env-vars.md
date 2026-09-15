@@ -86,7 +86,13 @@ POLARIS_SETUP_BIND=
 SESSION_SECRET=changeme
 
 # Reverse-proxy trust — leave unset on direct-to-internet deployments. Set to a
-# hop count, "loopback", or CIDR only when behind a real proxy.
+# hop count, "loopback", or CIDR only when behind a real proxy. It also decides
+# `req.secure` and so whether a cookie may be Secure: without Secure the
+# `polaris_next` login-return cookie cannot be SameSite=None, and a Lax cookie
+# is not sent on the cross-site POST carrying a SAML assertion — an emailed
+# Acknowledge link then stops returning the reader to the alert after SSO
+# (business rule 25; the SAML RelayState backstops it, so this degrades rather
+# than breaks). The shipped nginx configs already send `X-Forwarded-Proto https`.
 TRUST_PROXY=
 
 # Active-instance heartbeat kill switch (HA). Production-only guard: the web

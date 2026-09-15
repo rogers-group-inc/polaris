@@ -8,8 +8,8 @@ All routes are prefixed `/api/v1/`. Auth guards are applied in `src/api/router.t
 - `POST   /auth/logout`
 - `GET    /auth/me`                             — Session probe. Returns `{ authenticated: false }` for unauthenticated callers; otherwise `{ authenticated: true, username, authProvider, role: { id, name, color, isProtected, permissions, updatedAt }, regionTags: { user, role, group, effective }, otherTags: { user, role, group, effective } }` (`color` read live each call; `group` is re-resolved from `User.ssoGroups` via `resolveGroupsToAccess` so a GroupMapping edit shows next page load without re-login). The frontend reads `role.permissions[functionKey]` to gate menu items / buttons (see `permAtLeast()` in `public/js/app.js`).
 - `GET    /auth/azure/config`                   — Azure SSO feature flag
-- `GET    /auth/azure/login`                    — Initiate Azure SAML login
-- `POST   /auth/azure/callback`                 — SAML assertion callback
+- `GET    /auth/azure/login`                    — Initiate Azure SAML login. PEEKS the `polaris_next` cookie (never consumes it) and folds the path into the RelayState it sends the IdP — see the callback
+- `POST   /auth/azure/callback`                 — SAML assertion callback. Lands the operator on the RelayState's path first, the `polaris_next` cookie second, `/` last: this is a CROSS-SITE POST, so a `SameSite=Lax` cookie is not sent on it (the same reason the relay-state equality check has to tolerate an empty session). The cookie is consumed either way. `relayStateTarget` re-sanitizes the returned path — it made a round trip through the IdP
 - `POST   /auth/azure/logout`                    — SAML single-logout
 - `GET    /auth/oidc/config`                    — OIDC feature flag (login page button)
 - `GET    /auth/oidc/login`                     — Initiate OIDC Authorization-Code login (stashes state/nonce/PKCE in session, redirects to IdP)
