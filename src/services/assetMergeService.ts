@@ -20,7 +20,10 @@
  *     `api/routes/conflicts.ts` (`acceptAssetConflict`) — merging a sibling
  *     conflict must not drop the duplicate's unrelated sources either.
  *   - Those paths blank-fill only. Here the caller supplies per-field winners
- *     (operator chose, field by field, in the comparison UI).
+ *     (operator chose, field by field, in the comparison UI). An empty value
+ *     never overwrites a populated one whatever the winner says, and for
+ *     `assetType` the `other` catch-all counts as empty (`fieldIsEmpty`) — a
+ *     specific type always beats it.
  *
  * What is preserved vs. discarded (matches the confirmed product decision —
  * the comparison UI tells the operator to keep the asset with monitoring
@@ -65,6 +68,7 @@
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { clampAcquiredToLastSeen } from "../utils/assetInvariants.js";
+import { isGenericAssetType } from "../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets } from "./monitorOverrideService.js";
 
 // Scalar fields the comparison UI diffs and the operator can pick a winner
@@ -247,6 +251,19 @@ const ASSET_SELECT = {
 
 function isEmpty(v: unknown): boolean {
   return v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+}
+
+/**
+ * Per-field emptiness. For `assetType` the `other` catch-all counts as empty
+ * (`isGenericAssetType`): it says "unclassified", so a specific type on the
+ * absorbed row fills it by default and "other" is never written over a
+ * specific type, whatever the caller's winner says. Mirrored client-side by
+ * `_mergeFieldIsEmpty` in public/js/asset-merge-modal.js, which pre-selects
+ * the radios and previews the write.
+ */
+function fieldIsEmpty(field: MergeableField, v: unknown): boolean {
+  if (isEmpty(v)) return true;
+  return field === "assetType" && isGenericAssetType(v as string);
 }
 
 /**
@@ -648,8 +665,12 @@ export async function mergeAssets(opts: {
     if (CONCATENATED_FIELDS.includes(field)) continue;
     const cVal = c[field];
     const gVal = g[field];
-    const winner: FieldWinner = fieldWinners[field] ?? (isEmpty(cVal) && !isEmpty(gVal) ? "ghost" : "canonical");
-    if (winner === "ghost" && !isEmpty(gVal)) {
+    const cBlank = fieldIsEmpty(field, cVal);
+    const gBlank = fieldIsEmpty(field, gVal);
+    const winner: FieldWinner = fieldWinners[field] ?? (cBlank && !gBlank ? "ghost" : "canonical");
+    // A ghost win writes only a value that beats the survivor's: never an
+    // empty one, and for Type never the `other` catch-all over a specific type.
+    if (winner === "ghost" && !isEmpty(gVal) && !(gBlank && !cBlank)) {
       update[field] = gVal;
       appliedFields.push(field);
     }
