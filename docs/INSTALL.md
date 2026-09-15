@@ -324,6 +324,61 @@ name and an FQDN, say), a passkey registered at one will not be offered at the
 other. Set a shared parent domain in **Passkey domain** on that tab to cover
 both — at the cost of scoping the credential to that whole domain.
 
+## Map tiles come back as "Access blocked"
+
+The Device Map, the Site Map and the two dashboard map widgets draw their basemap
+from OpenStreetMap's public tile server, and they draw it from the **viewer's
+browser** — Polaris never fetches a tile itself. OpenStreetMap's
+[tile usage policy](https://operations.osmfoundation.org/policies/tiles/) requires
+every tile request from a web page to carry an HTTP `Referer`, and since 2026 a
+request without one is answered with a grey "403 Access blocked — App is not
+following the tile usage policy" image in place of the map. When every tile on the
+map shows that image, the Referer is being dropped somewhere between the browser
+and OpenStreetMap.
+
+Polaris does its part: it sends `Referrer-Policy: strict-origin-when-cross-origin`,
+which is on the accepted list and lets the browser send the site's origin — and
+only its origin — to the tile server. Nothing in the app needs changing, running
+more than one Polaris install has no effect on it, and the block has nothing to do
+with traffic volume.
+
+**The usual cause is a reverse proxy in front of Polaris adding its own
+`Referrer-Policy`.** Hardening snippets shipped with, or commonly pasted into,
+SWAG (the "Optional additional headers" block in `nginx/ssl.conf`), Nginx Proxy
+Manager (a host's Advanced tab), Traefik security-header middlewares, Caddy
+`header` blocks and Cloudflare Transform Rules add `Referrer-Policy: same-origin`
+or `no-referrer`. A proxy's `add_header` does not replace the header the app
+sent; it appends a second one. Browsers apply the last valid value they receive,
+so the proxy's stricter policy wins, the browser sends no Referer on the cross-site
+tile request, and OpenStreetMap blocks it.
+
+**Fix.** Remove the proxy's Referrer-Policy header, or set it to one of the values
+OpenStreetMap accepts — `strict-origin-when-cross-origin` (what Polaris sends),
+`strict-origin`, `origin`, `origin-when-cross-origin` or
+`no-referrer-when-downgrade`. Reload the proxy, then hard-reload the map. The
+nginx config Polaris ships (`deploy/nginx/polaris.conf`) deliberately sets no
+Referrer-Policy at the edge for exactly this reason; keep it that way if you
+customise it.
+
+**Verify** from any machine that can reach the install:
+
+```bash
+curl -sI https://polaris.example.com/login | grep -i referrer-policy
+```
+
+One line reading `strict-origin-when-cross-origin` is correct. Two lines, or a
+`same-origin` / `no-referrer` value, means the proxy is still adding one.
+
+Two things that look like tests but are not. Pasting a tile URL such as
+`https://tile.openstreetmap.org/0/0/0.png` into the address bar always shows the
+blocked image — an address-bar navigation carries no Referer — so it says nothing
+about whether the map will work. And the sidebar version says nothing either: the
+gate is a header, not the Polaris build. To see what the browser actually sent,
+open DevTools → Network on the Device Map, click any `tile.openstreetmap.org`
+request and look for `Referer` in its request headers. If it is present and the
+tiles are still blocked, the block is on the viewer's network address rather than
+on the install; the policy page above says how to contact the operators.
+
 ## Disk sizing — read this first
 
 The single most common operational footgun on a fresh Polaris install is undersized `/var` — where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.
