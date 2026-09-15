@@ -138,8 +138,16 @@ describe("post-login return target", () => {
       clearCookie: vi.fn(),
     } as any;
   };
-  const req = (cookieHeader?: string, secure = true) =>
-    ({ secure, get: (h: string) => (h.toLowerCase() === "cookie" ? cookieHeader : undefined) }) as any;
+  const req = (cookieHeader?: string, secure = true, dest?: string) =>
+    ({
+      secure,
+      get: (h: string) => {
+        const k = h.toLowerCase();
+        if (k === "cookie") return cookieHeader;
+        if (k === "sec-fetch-dest") return dest;
+        return undefined;
+      },
+    }) as any;
 
   it("remembers where an emailed link was headed", () => {
     const r = res();
@@ -159,6 +167,24 @@ describe("post-login return target", () => {
     rememberLoginTarget(req(undefined, true), r, "/alert-ack.html?id=n1");
     expect(r.cookies[0].opts.sameSite).toBe("none");
     expect(r.cookies[0].opts.secure).toBe(true);
+  });
+
+  it("remembers a target only for a top-level navigation", () => {
+    // Under SameSite=None a browser stores the cookie a cross-site SUBRESOURCE
+    // provoked, so `<img src="…/alert-ack.html?id=x">` on a foreign page could
+    // otherwise choose where the operator lands after their next sign-in.
+    for (const dest of ["image", "iframe", "script", "empty"]) {
+      const r = res();
+      rememberLoginTarget(req(undefined, true, dest), r, "/alert-ack.html?id=n1");
+      expect(r.cookies).toHaveLength(0);
+    }
+    const nav = res();
+    rememberLoginTarget(req(undefined, true, "document"), nav, "/alert-ack.html?id=n1");
+    expect(nav.cookies).toHaveLength(1);
+    // No header at all (a pre-2020 browser, curl) keeps the old behaviour.
+    const bare = res();
+    rememberLoginTarget(req(undefined, true, undefined), bare, "/alert-ack.html?id=n1");
+    expect(bare.cookies).toHaveLength(1);
   });
 
   it("stays Lax on plain HTTP, where a browser would drop None outright", () => {

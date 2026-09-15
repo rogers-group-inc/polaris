@@ -49,6 +49,19 @@ const MAX_AGE_MS = 10 * 60 * 1000;
 
 /** Remember where an unauthenticated request was headed, before bouncing it. */
 export function rememberLoginTarget(req: Request, res: Response, target: string): void {
+  // ONLY a top-level navigation is somewhere a person is trying to GO. A page
+  // fetched as a subresource — `<img src="https://polaris/alert-ack.html?id=…">`
+  // on a foreign site — is not, and under the `SameSite=None` below the browser
+  // WOULD store the cookie that request provokes (a `Lax` one it would drop),
+  // letting a third-party page choose where the operator lands after their next
+  // sign-in. safeNextPath bounds that to a same-origin path, so the worst case
+  // is a confusing landing rather than a redirect off-origin — but nothing
+  // wants it, so it stops here. `Sec-Fetch-Dest` is the browser's own answer to
+  // "what is this request for"; absent (a pre-2020 browser, curl) it reads as a
+  // navigation, which is exactly the behavior this had before the header
+  // existed.
+  const dest = req.get("sec-fetch-dest");
+  if (dest && dest !== "document") return;
   const path = safeNextPath(target);
   // "/" is where login lands anyway — writing a cookie to say so is pure noise
   // and would keep overwriting a real target set moments earlier.
