@@ -342,6 +342,11 @@ The **+ Condition** menu also offers:
 - **Component name** — Interface name / IPsec tunnel name / Storage mount /
   SD-WAN rule name.
 
+Two conditions carry their component picker **on the row itself** and need no
+filter row for it: `ifIpAddress` (the interface) and `ipsecStatus` (the tunnel).
+A filter row still works there — it folds into the condition and re-opens on the
+row — but the row is where those two say what they are about.
+
 These render as *"`<what>` matches `<value>`"* rows and mean **"narrow every
 condition in this group"**. The stored rule never carries a filter row — each
 one is folded into its AND-group's leaves at save, and re-derived when you open
