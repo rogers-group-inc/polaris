@@ -13,6 +13,7 @@ import { scopeMatchesAsset, type ScopeAsset } from "../../src/services/notificat
 import { stripRegionPrefix } from "../../src/services/notificationService.js";
 import { bareInterfaceIp } from "../../src/utils/cidr.js";
 import { ruleInputSchema, buildSchemaCatalog, triggerDimensionApplicable, scopeIsUnconstrained } from "../../src/services/notificationTypes.js";
+import { dimensionPickerMeta } from "../../src/services/notificationDimensionService.js";
 
 describe("compareNum", () => {
   it("evaluates every operator", () => {
@@ -431,6 +432,19 @@ describe("ifIpAddress (interface IP address state field)", () => {
     expect(meta.integralDimension).toBe("ifNamePattern");
     expect(triggerDimensionApplicable("ifIpAddress", meta.integralDimension!)).toBe(true);
     for (const f of ["ifOperStatus", "ifAdminStatus", "poeStatus"]) expect(fieldMeta[f]!.integralDimension).toBeUndefined();
+  });
+
+  it("names the tunnel as the IPsec status condition's integral dimension", () => {
+    // Same mechanism as ifIpAddress, different reason: a tunnel's phase-1 name
+    // is not guessable, so an operator writing "IPsec tunnel status is down"
+    // needs the scoped gates' own tunnel names ON the row. Blank stays legal —
+    // it means every pinned tunnel, one alert each.
+    const fieldMeta = buildSchemaCatalog().fieldMeta as Record<string, { integralDimension?: string }>;
+    expect(fieldMeta.ipsecStatus!.integralDimension).toBe("tunnelName");
+    expect(triggerDimensionApplicable("ipsecStatus", "tunnelName")).toBe(true);
+    // The picker the builder fills it from must exist, or the box renders as a
+    // plain text field and the operator is back to typing a name from memory.
+    expect(dimensionPickerMeta().tunnelName).toBeTruthy();
   });
 
   it("compares an address the way the resolver hands it over", () => {

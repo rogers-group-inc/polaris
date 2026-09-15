@@ -3569,7 +3569,18 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   // POWER-ETHERNET-MIB can report is known up front, so the wizard offers a
   // picker and a typo cannot silently produce a rule that never matches.
   poeStatus: { label: "Interface PoE status", kind: "enum", values: [...POE_STATUS_VALUES] },
-  ipsecStatus: { label: "IPsec tunnel status", kind: "dynamic" },
+  // The tunnel is INTEGRAL (see the header), for the reason a port is not on
+  // ifOperStatus: an interface name is guessable ("wan1", "port3") and a
+  // per-port rule reads fine without one, but a tunnel name is a phase-1 name
+  // an operator cannot type from memory — "IPsec tunnel status is down" with
+  // no tunnel named is a rule about every pinned tunnel on every scoped gate,
+  // which is a different (and much noisier) statement than the one an operator
+  // building it almost always means. Blank still means exactly that, and the
+  // engine still folds one alert per tunnel; what the inline picker adds is the
+  // chance to SAY which tunnel, from the names the scoped devices actually pin
+  // (notificationDimensionService's tunnelName source), on the row where the
+  // comparison lives instead of only through "+ Condition → Component name".
+  ipsecStatus: { label: "IPsec tunnel status", kind: "dynamic", integralDimension: "tunnelName" },
   sdwanRuleStatus: { label: "SD-WAN rule status", kind: "dynamic" },
   sdwanSelectedMember: { label: "SD-WAN selected member", kind: "dynamic" },
   // Closed enum for poeStatus's reason: the collector normalizes every shape

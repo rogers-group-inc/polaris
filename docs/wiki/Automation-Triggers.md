@@ -170,6 +170,23 @@ The interface is **integral** here: the comparison is about one port, so the
 interface picker renders on the condition row itself rather than as a group
 filter.
 
+### `ipsecStatus` — name the tunnel on the condition
+
+The status of an IPsec tunnel, as the FortiGate reports it. Only tunnels you
+have **pinned** — on the device's [System tab](Assets#system) or in bulk from
+[Mass Pinning](Assets#mass-pinning) — are ever read, so an unpinned tunnel can
+never raise an alert however the rule is written ([rule 57](Business-Rules#rule-57)).
+
+The **IPsec tunnel** picker sits on the condition row and offers the tunnel
+names the devices you selected on the Devices step actually report — a phase-1
+name is not something to type from memory, and one that matches nothing saves
+cleanly and then never fires. Leave it **blank** and the condition covers every
+pinned tunnel on those devices, raising one alert per tunnel; fill it in and the
+condition is about that tunnel alone.
+
+If the picker says the selected devices report no monitored IPsec tunnels, the
+tunnels have not been pinned yet — pin them, then re-open the step.
+
 ---
 
 ## Host metric
@@ -324,6 +341,11 @@ The **+ Condition** menu also offers:
   Model. Valid on every asset metric or state leaf.
 - **Component name** — Interface name / IPsec tunnel name / Storage mount /
   SD-WAN rule name.
+
+Two conditions carry their component picker **on the row itself** and need no
+filter row for it: `ifIpAddress` (the interface) and `ipsecStatus` (the tunnel).
+A filter row still works there — it folds into the condition and re-opens on the
+row — but the row is where those two say what they are about.
 
 These render as *"`<what>` matches `<value>`"* rows and mean **"narrow every
 condition in this group"**. The stored rule never carries a filter row — each
