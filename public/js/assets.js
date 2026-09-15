@@ -3835,24 +3835,129 @@ function _wireMaintenanceEditSection(asset) {
     }
   }
 
+  _loadMaintenanceEditInfo(asset);
+}
+
+/**
+ * (Re)render the Maintenance tab's info block: the open windows, then one row
+ * per covering schedule carrying its own actions. Called on open and again
+ * after every action, so a removal that deleted the schedule simply comes back
+ * with the row gone.
+ */
+function _loadMaintenanceEditInfo(asset, opts) {
+  var infoEl = document.getElementById("f-maint-info");
+  if (!infoEl) return;
   api.assets.maintenanceInfo(asset.id).then(function (info) {
-    var lines = [];
-    (info.openWindows || []).forEach(function (w) {
-      lines.push("<div><strong>In maintenance now</strong> — " + escapeHtml(w.scheduleName) +
-        (w.until ? " (until ~" + escapeHtml(new Date(w.until).toLocaleString()) + ")" : "") + "</div>");
-    });
-    (info.schedules || []).forEach(function (s) {
-      var when = s.activeNow
-        ? "active now"
-        : (s.nextStart ? "next: " + new Date(s.nextStart).toLocaleString() : "no upcoming window");
-      lines.push("<div>Covered by schedule: <strong>" + escapeHtml(s.name) + "</strong>" +
-        (s.enabled ? "" : " (disabled)") + " — " + escapeHtml(when) + "</div>");
-    });
-    infoEl.innerHTML = lines.length
-      ? lines.join("")
-      : "Not covered by any maintenance schedule.";
+    infoEl.innerHTML = _maintenanceInfoHTML(info);
+    _wireMaintenanceScheduleActions(asset, infoEl);
+    if (opts && opts.afterAction) _syncStatusSelectTo(info.status);
   }).catch(function () {
     infoEl.textContent = "Maintenance info unavailable.";
+  });
+}
+
+/**
+ * Re-point the General tab's Status dropdown at the asset's real status after
+ * an action on this tab moved it. The dropdown was filled when the modal
+ * opened; ending a window restores the parked status underneath it, and a Save
+ * carrying the stale "maintenance" would park the device BY HAND — the one
+ * state the scheduler never takes back (there is no window left to close).
+ * Only the value, never the options: an unknown status means the server knows
+ * something this build's list doesn't, and blanking the field is worse.
+ */
+function _syncStatusSelectTo(status) {
+  var sel = document.getElementById("f-status");
+  if (!sel || !status || sel.value === status) return;
+  var hasOption = Array.prototype.some.call(sel.options, function (o) { return o.value === status; });
+  if (hasOption) sel.value = status;
+}
+
+/** Markup for the info block — open windows, then the covering-schedule rows. */
+function _maintenanceInfoHTML(info) {
+  var canManage = typeof canManageMaintenance === "function" && canManageMaintenance();
+  var lines = [];
+  (info.openWindows || []).forEach(function (w) {
+    lines.push("<div><strong>In maintenance now</strong> — " + escapeHtml(w.scheduleName) +
+      (w.until ? " (until ~" + escapeHtml(new Date(w.until).toLocaleString()) + ")" : "") + "</div>");
+  });
+  (info.schedules || []).forEach(function (s) {
+    var when = s.activeNow
+      ? "active now"
+      : (s.nextStart ? "next: " + new Date(s.nextStart).toLocaleString() : "no upcoming window");
+    var actions = "";
+    if (canManage) {
+      // A filter-matched asset has no per-asset removal: dropping it from the
+      // device list leaves the filter matching it and the next reconcile puts
+      // it straight back. Say that where the button would have been rather
+      // than shipping a button that lies (the server refuses it too).
+      actions += s.removable
+        ? '<button type="button" class="btn btn-secondary btn-sm" data-maint-act="remove" ' +
+            'data-schedule-id="' + escapeHtml(s.id) + '" data-schedule-name="' + escapeHtml(s.name) + '"' +
+            (s.lastTarget ? ' data-last-target="true"' : "") + '>Remove this asset</button>'
+        : '<span class="hint" style="margin:0">Matched by this schedule’s filter — edit the filter to exclude it</span>';
+      actions += '<button type="button" class="btn btn-danger btn-sm" data-maint-act="delete" ' +
+        'data-schedule-id="' + escapeHtml(s.id) + '" data-schedule-name="' + escapeHtml(s.name) + '">Delete schedule</button>';
+    }
+    lines.push(
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0">' +
+        '<span style="flex:1 1 220px;min-width:0">Covered by schedule: <strong>' + escapeHtml(s.name) + '</strong>' +
+          (s.enabled ? "" : " (disabled)") + " — " + escapeHtml(when) + '</span>' +
+        actions +
+      '</div>');
+  });
+  return lines.length ? lines.join("") : "Not covered by any maintenance schedule.";
+}
+
+/**
+ * Wire the per-schedule buttons, delegated on the info block. Only its
+ * innerHTML is replaced on a reload, so the element outlives every render and
+ * the listener is attached ONCE — re-attaching per reload is how one click
+ * ends up firing a confirm (and a delete) for every reload that came before.
+ */
+function _wireMaintenanceScheduleActions(asset, infoEl) {
+  if (infoEl.dataset.maintWired === "1") return;
+  infoEl.dataset.maintWired = "1";
+  infoEl.addEventListener("click", function (ev) {
+    var btn = ev.target.closest ? ev.target.closest("[data-maint-act]") : null;
+    if (!btn || !infoEl.contains(btn)) return;
+    ev.preventDefault();
+    var act = btn.getAttribute("data-maint-act");
+    var id = btn.getAttribute("data-schedule-id");
+    var name = btn.getAttribute("data-schedule-name") || "this schedule";
+    var lastTarget = btn.getAttribute("data-last-target") === "true";
+
+    var msg = act === "delete"
+      ? 'Delete the maintenance schedule "' + name + '"?\n\n' +
+        "Every device it covers leaves maintenance and resumes monitoring. This cannot be undone."
+      : lastTarget
+        ? 'Remove this asset from "' + name + '"?\n\n' +
+          "It is the only device on that schedule, so the schedule is deleted with it. " +
+          "Monitoring and notifications resume immediately."
+        : 'Remove this asset from "' + name + '"?\n\n' +
+          "The schedule keeps running for its other devices. Monitoring and notifications " +
+          "resume for this asset immediately.";
+
+    showConfirm(msg).then(function (ok) {
+      if (!ok) return;
+      infoEl.querySelectorAll("[data-maint-act]").forEach(function (b) { b.disabled = true; });
+      var p = act === "delete"
+        ? api.maintenanceSchedules.delete(id).then(function () {
+            showToast('Maintenance schedule "' + name + '" deleted');
+          })
+        : api.maintenanceSchedules.removeAsset(id, asset.id).then(function (res) {
+            showToast(res && res.scheduleDeleted
+              ? 'Asset removed — schedule "' + name + '" deleted (it had no other devices)'
+              : 'Asset removed from "' + name + '"');
+          });
+      p.catch(function (err) {
+        showToast((err && err.message) || "Failed to update the maintenance schedule", "error");
+      }).then(function () {
+        // Reload either way: a refusal is usually a stale tab, and the fresh
+        // read is what tells the operator what is actually true now.
+        _loadMaintenanceEditInfo(asset, { afterAction: true });
+        if (typeof loadAssets === "function") loadAssets();
+      });
+    });
   });
 }
 

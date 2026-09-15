@@ -206,12 +206,14 @@ import {
   createSchedule,
   updateSchedule,
   deleteSchedule,
+  removeAssetFromSchedule,
+  getAssetMaintenanceInfo,
   operatorReleaseAsset,
   releaseAssetsForDecommission,
   previewTargets,
   listOccurrences,
 } from "../../src/services/maintenanceScheduleService.js";
-import { logEventsBatch } from "../../src/services/eventLogService.js";
+import { logEvent, logEventsBatch } from "../../src/services/eventLogService.js";
 import { resolveMatchingAssetIds } from "../../src/services/tagAssignmentService.js";
 
 const NOW = new Date(2026, 6, 10, 12, 0, 0); // 2026-07-10 12:00 local
@@ -729,5 +731,124 @@ describe("listOccurrences (calendar tab)", () => {
   it("rejects an inverted or over-wide range", async () => {
     await expect(listOccurrences({ from: "2026-07-10", to: "2026-07-09" })).rejects.toThrow(/not be before/);
     await expect(listOccurrences({ from: "2026-01-01", to: "2027-12-31" })).rejects.toThrow(/too wide/i);
+  });
+});
+
+describe("getAssetMaintenanceInfo — coverage provenance", () => {
+  it("names how each schedule reaches the asset, and whether removing it empties the schedule", async () => {
+    h.db.assets.push(asset("a1"));
+    h.db.assets.push(asset("a2"));
+    h.db.schedules.push(schedule("s1", DAILY, { assetIds: ["a1"], name: "Only device" }));
+    h.db.schedules.push(schedule("s2", DAILY, { assetIds: ["a1", "a2"], name: "Two devices" }));
+    h.db.schedules.push(schedule("s3", DAILY, { criteria: { rules: [] }, name: "By filter" }));
+    vi.mocked(resolveMatchingAssetIds).mockResolvedValue(new Set(["a1"]));
+
+    const info = await getAssetMaintenanceInfo("a1");
+    const byId = new Map(info.schedules.map((s) => [s.id, s]));
+
+    expect(byId.get("s1")).toMatchObject({ explicit: true, byCriteria: false, removable: true, lastTarget: true });
+    expect(byId.get("s2")).toMatchObject({ explicit: true, byCriteria: false, removable: true, lastTarget: false });
+    expect(byId.get("s3")).toMatchObject({ explicit: false, byCriteria: true, removable: false, lastTarget: false });
+  });
+
+  it("reports the asset's CURRENT status, which is what the edit modal re-syncs its dropdown from", async () => {
+    h.db.assets.push(asset("a1"));
+    h.db.schedules.push(schedule("s1", ACTIVE_ONESHOT, { assetIds: ["a1"] }));
+    await reconcileMaintenance();
+
+    expect(await getAssetMaintenanceInfo("a1")).toMatchObject({
+      inMaintenance: true,
+      status: "maintenance",
+      returnStatus: "active",
+    });
+
+    await removeAssetFromSchedule("s1", "a1");
+
+    expect(await getAssetMaintenanceInfo("a1")).toMatchObject({
+      inMaintenance: false,
+      status: "active",
+      returnStatus: null,
+    });
+  });
+
+  it("an asset both listed AND filter-matched is not removable one asset at a time", async () => {
+    h.db.assets.push(asset("a1"));
+    h.db.schedules.push(schedule("s1", DAILY, { assetIds: ["a1"], criteria: { rules: [] } }));
+    vi.mocked(resolveMatchingAssetIds).mockResolvedValue(new Set(["a1"]));
+
+    const info = await getAssetMaintenanceInfo("a1");
+
+    expect(info.schedules[0]).toMatchObject({ explicit: true, byCriteria: true, removable: false, lastTarget: false });
+  });
+});
+
+describe("removeAssetFromSchedule", () => {
+  it("drops the asset, leaves the schedule for its other devices, and ends its window", async () => {
+    h.db.assets.push(asset("a1"), asset("a2"));
+    h.db.schedules.push(schedule("s1", ACTIVE_ONESHOT, { assetIds: ["a1", "a2"] }));
+    await reconcileMaintenance();
+    expect(assetById("a1").status).toBe("maintenance");
+
+    const res = await removeAssetFromSchedule("s1", "a1", "dana");
+
+    expect(res).toMatchObject({ scheduleDeleted: false, remainingAssetIds: 1 });
+    expect(h.db.schedules[0].assetIds).toEqual(["a2"]);
+    // The reconcile that follows closes the window and restores the status.
+    expect(openWindows().map((w) => w.assetId)).toEqual(["a2"]);
+    expect(assetById("a1")).toMatchObject({ status: "active", maintenanceReturnStatus: null });
+    expect(assetById("a2").status).toBe("maintenance");
+    expect(vi.mocked(logEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "maintenance_schedule.updated", actor: "dana" }),
+    );
+  });
+
+  it("deletes the schedule when the asset was its last target", async () => {
+    h.db.assets.push(asset("a1"));
+    h.db.schedules.push(schedule("s1", ACTIVE_ONESHOT, { assetIds: ["a1"], name: "Only device" }));
+    await reconcileMaintenance();
+
+    const res = await removeAssetFromSchedule("s1", "a1", "dana");
+
+    expect(res).toMatchObject({ scheduleDeleted: true, scheduleName: "Only device", remainingAssetIds: 0 });
+    expect(h.db.schedules).toHaveLength(0);
+    expect(openWindows()).toHaveLength(0);
+    expect(assetById("a1")).toMatchObject({ status: "active", maintenanceReturnStatus: null });
+    expect(vi.mocked(logEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "maintenance_schedule.deleted",
+        details: expect.objectContaining({ reason: "last-asset-removed" }),
+      }),
+    );
+  });
+
+  it("keeps a criteria-based schedule that has no explicit targets left", async () => {
+    h.db.assets.push(asset("a1"));
+    h.db.schedules.push(schedule("s1", DAILY, { assetIds: ["a1"], criteria: { rules: [] } }));
+    // The filter matches a DIFFERENT asset, so removing a1 is honest here.
+    vi.mocked(resolveMatchingAssetIds).mockResolvedValue(new Set(["a9"]));
+
+    const res = await removeAssetFromSchedule("s1", "a1");
+
+    expect(res.scheduleDeleted).toBe(false);
+    expect(h.db.schedules).toHaveLength(1);
+    expect(h.db.schedules[0].assetIds).toEqual([]);
+  });
+
+  it("refuses when the schedule reaches the asset through its filter", async () => {
+    h.db.assets.push(asset("a1"));
+    h.db.schedules.push(schedule("s1", DAILY, { assetIds: ["a1"], criteria: { rules: [] }, name: "By filter" }));
+    vi.mocked(resolveMatchingAssetIds).mockResolvedValue(new Set(["a1"]));
+
+    await expect(removeAssetFromSchedule("s1", "a1")).rejects.toThrow(/filter/i);
+    expect(h.db.schedules[0].assetIds).toEqual(["a1"]);
+  });
+
+  it("refuses for a schedule that does not target the asset, and 404s on a missing schedule or asset", async () => {
+    h.db.assets.push(asset("a1"), asset("a2"));
+    h.db.schedules.push(schedule("s1", DAILY, { assetIds: ["a2"] }));
+
+    await expect(removeAssetFromSchedule("s1", "a1")).rejects.toThrow(/does not target/i);
+    await expect(removeAssetFromSchedule("nope", "a1")).rejects.toThrow(/not found/i);
+    await expect(removeAssetFromSchedule("s1", "ghost")).rejects.toThrow(/not found/i);
   });
 });

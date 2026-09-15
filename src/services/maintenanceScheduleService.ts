@@ -382,6 +382,99 @@ export async function deleteSchedule(id: string, actor?: string) {
   await reconcileMaintenance();
 }
 
+export interface RemoveAssetFromScheduleResult {
+  /** The schedule was deleted outright because the asset was its last target. */
+  scheduleDeleted: boolean;
+  scheduleName: string;
+  /** Explicit targets left on the schedule (0 when it was deleted). */
+  remainingAssetIds: number;
+}
+
+/**
+ * Drop ONE asset from a schedule's explicit target list — the Maintenance tab
+ * of the asset edit modal, where an operator who sees "covered by schedule X"
+ * wants this device out of X without hunting for X on the Maintenance page.
+ *
+ * Two refusals, both deliberate:
+ *  - an asset the schedule's CRITERIA match is not removable one asset at a
+ *    time. Dropping the explicit id would leave the filter matching it, the
+ *    next reconcile would re-target it, and the operator would have been told
+ *    "removed" about a device still heading into the window. Narrowing the
+ *    filter is the real fix, and it belongs to the schedule builder.
+ *  - an asset the schedule doesn't target at all is a 400, not a silent
+ *    no-op, because the only way to ask is from a stale tab.
+ *
+ * When the asset is the schedule's LAST target the schedule is deleted rather
+ * than updated: `normalizeInput` refuses a targetless schedule on every other
+ * write path (it can never fire again), so leaving one behind would create a
+ * row the builder itself would reject on the next save.
+ *
+ * Open windows are closed by the reconcile that follows, not here — falling
+ * out of the target set is exactly the case it already handles (endReason
+ * "criteria", or "deleted" when the schedule went with it), so the exit path,
+ * the status restore and the entering/exiting events stay in one place.
+ */
+export async function removeAssetFromSchedule(
+  scheduleId: string,
+  assetId: string,
+  actor?: string,
+): Promise<RemoveAssetFromScheduleResult> {
+  const row = await getSchedule(scheduleId); // 404 if missing
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: { id: true, hostname: true },
+  });
+  if (!asset) throw new AppError(404, "Asset not found");
+  const assetLabel = asset.hostname ?? assetId;
+
+  const criteria = (row.criteria ?? null) as TagCriteria | null;
+  const byCriteria = criteria ? (await resolveMatchingAssetIds(criteria)).has(assetId) : false;
+  const explicit = row.assetIds.includes(assetId);
+
+  if (byCriteria) {
+    throw new AppError(
+      400,
+      `"${row.name}" targets this asset through its filter, so taking it off the device list ` +
+        "would not take it out of the window. Edit the schedule's filter under " +
+        "Assets → Maintenance to exclude it.",
+    );
+  }
+  if (!explicit) throw new AppError(400, `"${row.name}" does not target this asset`);
+
+  const remaining = row.assetIds.filter((id) => id !== assetId);
+
+  if (remaining.length === 0 && !criteria) {
+    await prisma.maintenanceSchedule.delete({ where: { id: scheduleId } });
+    await logEvent({
+      action: "maintenance_schedule.deleted",
+      resourceType: "maintenance-schedule",
+      resourceId: scheduleId,
+      resourceName: row.name,
+      actor,
+      message: `Maintenance schedule "${row.name}" deleted (last device ${assetLabel} removed)`,
+      details: { reason: "last-asset-removed", assetId, assetName: assetLabel },
+    });
+    await reconcileMaintenance();
+    return { scheduleDeleted: true, scheduleName: row.name, remainingAssetIds: 0 };
+  }
+
+  await prisma.maintenanceSchedule.update({
+    where: { id: scheduleId },
+    data: { assetIds: remaining },
+  });
+  await logEvent({
+    action: "maintenance_schedule.updated",
+    resourceType: "maintenance-schedule",
+    resourceId: scheduleId,
+    resourceName: row.name,
+    actor,
+    message: `${assetLabel} removed from maintenance schedule "${row.name}"`,
+    details: { reason: "asset-removed", assetId, assetName: assetLabel, remaining: remaining.length },
+  });
+  await reconcileMaintenance();
+  return { scheduleDeleted: false, scheduleName: row.name, remainingAssetIds: remaining.length };
+}
+
 // ─── Per-asset reads ─────────────────────────────────────────────────────────
 
 /** Window rows overlapping [since, until] — powers the chart maintenance bands. */
@@ -399,6 +492,13 @@ export async function listAssetWindows(assetId: string, since: Date, until: Date
 
 export interface AssetMaintenanceInfo {
   inMaintenance: boolean;
+  /**
+   * The asset's status as of THIS read. The edit modal's Status dropdown was
+   * filled when the modal opened; an action on this tab can end a window and
+   * move the status underneath it, and saving the stale "maintenance" would
+   * re-park the device by hand — so the tab re-syncs the dropdown from here.
+   */
+  status: string;
   returnStatus: string | null;
   openWindows: Array<{
     id: string;
@@ -416,6 +516,21 @@ export interface AssetMaintenanceInfo {
     activeNow: boolean;
     nextStart: Date | null;
     nextEnd: Date | null;
+    /** Asset is named on the schedule's explicit `assetIds` list. */
+    explicit: boolean;
+    /** Asset is matched by the schedule's criteria filter. */
+    byCriteria: boolean;
+    /**
+     * A per-asset removal can actually drop this asset (explicit membership
+     * and NOT also matched by the filter, which would re-target it the
+     * instant the list changed — see removeAssetFromSchedule).
+     */
+    removable: boolean;
+    /**
+     * Removing this asset would leave the schedule with no targets at all, so
+     * the removal deletes the schedule instead of leaving a dead row.
+     */
+    lastTarget: boolean;
   }>;
 }
 
@@ -447,14 +562,19 @@ export async function getAssetMaintenanceInfo(assetId: string): Promise<AssetMai
     const shape = parseStoredShape(s);
     if (!shape) continue;
     shapeById.set(s.id, shape);
-    let covers = s.assetIds.includes(assetId);
-    if (!covers && s.criteria) {
+    const explicit = s.assetIds.includes(assetId);
+    // Both halves are evaluated even when the asset is explicitly listed: an
+    // asset the filter ALSO matches is not removable one asset at a time, and
+    // the Maintenance tab has to say so rather than offer a button that
+    // re-targets the asset on the next reconcile.
+    let byCriteria = false;
+    if (s.criteria) {
       const criteria = s.criteria as unknown as TagCriteria;
-      covers = (await resolveMatchingAssetIds(criteria)).has(assetId);
+      byCriteria = (await resolveMatchingAssetIds(criteria)).has(assetId);
     }
     // Unmonitored assets can never be targeted (targets ∩ monitored=true),
     // so covering schedules are only reported for monitored assets.
-    if (!covers || !asset.monitored) continue;
+    if ((!explicit && !byCriteria) || !asset.monitored) continue;
     const next = nextWindow(shape, now);
     covering.push({
       id: s.id,
@@ -463,11 +583,16 @@ export async function getAssetMaintenanceInfo(assetId: string): Promise<AssetMai
       activeNow: s.enabled && isInWindow(shape, now),
       nextStart: next?.start ?? null,
       nextEnd: next?.end ?? null,
+      explicit,
+      byCriteria,
+      removable: explicit && !byCriteria,
+      lastTarget: explicit && !s.criteria && s.assetIds.length === 1,
     });
   }
 
   return {
     inMaintenance: open.length > 0,
+    status: asset.status,
     returnStatus: asset.maintenanceReturnStatus,
     openWindows: open.map((w) => {
       const shape = w.scheduleId ? shapeById.get(w.scheduleId) : undefined;
