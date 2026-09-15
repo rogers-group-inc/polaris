@@ -11,8 +11,17 @@
  * copy it replaces) — cross-role propagation of a write is bounded by ttlMs.
  *
  * Adopters so far: azureAuthService (sso), entraProxyAuthService (entraProxy),
- * dashSettingsService (dashConfig). Remaining hand-rolled sites migrate
- * incrementally as they're touched.
+ * dashSettingsService (dashConfig), loginAccessService (loginAccessConfig),
+ * apiDocsAccessService (apiDocsConfig), passwordPolicyService
+ * (passwordPolicyConfig), passkeyService (passkeyConfig). Remaining
+ * hand-rolled sites migrate incrementally as they're touched.
+ *
+ * Note what the last two do NOT share: each wraps get() in its own try/catch
+ * answering a different fallback — the password policy answers the DEFAULT
+ * rules (a settings outage must not lower the bar), the passkey policy answers
+ * "off" (a settings outage must not be what decides a credential may sign
+ * someone in). The store deliberately has no opinion: a fallback is a policy
+ * question, and the two right answers here are opposites.
  */
 
 import { prisma } from "../db.js";

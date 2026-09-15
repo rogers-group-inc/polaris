@@ -300,6 +300,30 @@ docker exec -it <postgres-container> psql -U polaris -d polaris -c "SHOW ssl;"
 Setting `PGSSLMODE` in the environment does not help either — `pgChildEnv` applies the URL's
 overlay last and deliberately overwrites any inherited `PG*` variable.
 
+## Passkeys need HTTPS and a hostname
+
+Nothing here is required to install Polaris, but it decides whether the passkey
+option (Users → Authentication → Settings) can be used at all, and it is worth
+knowing before you pick an address for the server.
+
+A passkey is bound to a **domain**, and browsers only run WebAuthn in a **secure
+context**. So two otherwise-supported ways of reaching Polaris cannot host
+passkeys:
+
+- **Plain HTTP**, unless the address is `localhost`. A lab VM on `http://` is a
+  supported install; passkeys are simply unavailable on it.
+- **An IP address.** `https://10.0.0.5` is a secure context, but an RP ID has to
+  be a domain name, so browse to Polaris by hostname if you want passkeys.
+
+The UI says which of the two it hit rather than showing a button that fails in a
+browser dialog, so there is nothing to diagnose — but an install reached by IP
+will show passkeys as unavailable however the policy is set.
+
+One more case: if your users reach Polaris by **more than one name** (a short
+name and an FQDN, say), a passkey registered at one will not be offered at the
+other. Set a shared parent domain in **Passkey domain** on that tab to cover
+both — at the cost of scoping the credential to that whole domain.
+
 ## Disk sizing — read this first
 
 The single most common operational footgun on a fresh Polaris install is undersized `/var` — where PostgreSQL stores its data by default. Sample tables grow with monitored asset count × probe cadence × retention, so a deployment that's small at week 1 can hit 100% in month 6.
