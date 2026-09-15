@@ -81,8 +81,13 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
     // the default `link-cost-factor` a service rule selects on. A rule that
     // failed over because loss or jitter breached still shows both underneath —
     // the three SD-WAN charts always render as a set.
+    // sdwanMemberState is here for the same reason, and the trio below it is
+    // the answer an operator opens that email for: the health check declared
+    // the member dead, and which of the three gauges walked out of SLA before
+    // it died is what says whether to call the ISP.
     case "sdwanRuleStatus":
     case "sdwanSelectedMember":
+    case "sdwanMemberState":
       return "chart.sdwanLatency";
     default:
       // Storage and interface counters have no chart of their own yet, so the
@@ -130,13 +135,15 @@ export function isPortScopedAlert(metric: string | null | undefined): boolean {
  * Unlike the port case the alert is not left graphless: there is a real
  * time-series behind it, `AssetPerfSlaSample`.
  *
- * BOTH the metric triggers and the two state fields are here. A failover
+ * BOTH the metric triggers and the state fields are here. A failover
  * (`sdwanSelectedMember`) or a rule going down (`sdwanRuleStatus`) is a
  * statement about the paths under that service rule, and the SLA metrics of the
- * health check it selects on are what say why it moved.
+ * health check it selects on are what say why it moved. `sdwanMemberState` is
+ * the most literal case of all: it names one health check and one member, which
+ * is exactly the pair these three charts draw.
  */
 const SDWAN_SCOPED_METRICS: ReadonlySet<string> = new Set([
-  "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "sdwanRuleStatus", "sdwanSelectedMember",
+  "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "sdwanRuleStatus", "sdwanSelectedMember", "sdwanMemberState",
 ]);
 
 export function isSdwanScopedAlert(metric: string | null | undefined): boolean {

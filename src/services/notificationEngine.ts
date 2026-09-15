@@ -1161,6 +1161,55 @@ async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asse
         return { ...mk(a, r.tunnelName, r.tunnelName, r.status), series: g.slice(0, SERIES_CAP).map((x) => x.status ?? null), readingAt: r.timestamp };
       });
     }
+    case "sdwanMemberState": {
+      // One reading per (health check, WAN member) off the SAME rows the SD-WAN
+      // metrics read — `state` is the FortiGate's own verdict on whether the
+      // member is alive, normalized to "up" | "down" at collection time
+      // (monitoringService.normalizeSdwanState), so it is never null and every
+      // sample carries it. That is the point of the field: a WAN port on a
+      // cable modem stays oper-up through an ISP outage, and only the health
+      // check knows the member is dead — whether it died on loss, latency or
+      // jitter, which a threshold on any one of those three can't tell you.
+      //
+      // NO PIN GATE, unlike the interface and tunnel resolvers. Those exist
+      // because a device reports every port it has and an 8-port switch must
+      // not raise 8 alerts; a health-check member is an SLA object someone
+      // configured, there are a handful per gate, and the collector already
+      // samples only what `config system sdwan` declares. There is no pin set
+      // to gate on either — AssetPerfSlaSample carries no pinned-subset
+      // concept (its `cadence` is always "fast" for exactly that reason).
+      //
+      // A member that stops being reported (removed from the health check, or
+      // the gate stopped answering) produces no reading rather than a stale
+      // one, so clearVanishedStates retires its alert — the same contract as
+      // an unpinned interface.
+      const since = new Date(Date.now() - lookbackMsFor(trigger));
+      const rows = await prisma.assetPerfSlaSample.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since } },
+        orderBy: [{ assetId: "asc" }, { healthCheck: "asc" }, { link: "asc" }, { timestamp: "desc" }],
+        select: { assetId: true, healthCheck: true, link: true, timestamp: true, state: true },
+      });
+      // Substring-matched on both dimensions, exactly as the sdwan* METRICS
+      // filter them — an operator who narrowed a packet-loss rule to "Primary
+      // WAN" must get the same set here or the two rules disagree about which
+      // members they are about.
+      const filtered = rows.filter((r) => substringMatch(r.healthCheck, df.healthCheck) && substringMatch(r.link, df.link));
+      // dimKey matches the metrics' `healthCheck|link` so a member's state
+      // alert and its loss alert name the same dimension.
+      return groupSeries(filtered, (r) => `${r.assetId}|${r.healthCheck}|${r.link}`).map((g) => {
+        const r = g[0]!;
+        const a = index.get(r.assetId)!;
+        return {
+          ...mk(a, `${r.healthCheck}|${r.link}`, `${r.healthCheck} / ${r.link}`, r.state),
+          series: g.slice(0, SERIES_CAP).map((x) => x.state),
+          // The SD-WAN collector rides the system-info cadence, not the monitor
+          // loop, so a forPolls hold counts health-check reads — anchoring on
+          // lastMonitorAt would count 60s ICMP ticks during which nothing
+          // asked the gate about its SLA.
+          readingAt: r.timestamp,
+        };
+      });
+    }
     case "sdwanRuleStatus": case "sdwanSelectedMember": {
       const rows = await prisma.assetSdwanRule.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, ruleName: true, status: true, selectedMember: true } });
       const col = trigger.field === "sdwanRuleStatus" ? "status" : "selectedMember";

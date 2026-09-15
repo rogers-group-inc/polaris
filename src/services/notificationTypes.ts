@@ -385,6 +385,15 @@ export const ASSET_STATE_FIELDS = [
   // is a fault the monitor loop cannot see because it is asking the switch.
   "fortilinkStatus",
   "ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus", "ipsecStatus", "sdwanRuleStatus", "sdwanSelectedMember",
+  // Whether ONE WAN member of ONE performance-SLA health check is alive, as the
+  // FortiGate itself judges it (AssetPerfSlaSample.state, normalized from the
+  // health-check response's status/alive). Separate from every interface field
+  // for the reason an operator reaches for it: a cable-modem WAN port stays
+  // oper-up while the ISP behind it degrades, and it is the health check — not
+  // the link — that declares the member dead. The engine reports it per
+  // (health check, WAN member), so it is the member that gets named in the
+  // alert rather than the gate.
+  "sdwanMemberState",
 ] as const;
 
 // ─── Host-metric trigger ────────────────────────────────────────────────────
@@ -3563,6 +3572,11 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   ipsecStatus: { label: "IPsec tunnel status", kind: "dynamic" },
   sdwanRuleStatus: { label: "SD-WAN rule status", kind: "dynamic" },
   sdwanSelectedMember: { label: "SD-WAN selected member", kind: "dynamic" },
+  // Closed enum for poeStatus's reason: the collector normalizes every shape
+  // FortiOS reports (status / state / alive, string or number) down to exactly
+  // "up" | "down" in `normalizeSdwanState`, so both values are known up front
+  // and a typed "dead" would build a rule that reads false forever.
+  sdwanMemberState: { label: "SD-WAN member state", kind: "enum", values: ["up", "down"] },
 };
 
 export const CHANGE_TYPE_META: Record<string, string> = {
@@ -3627,8 +3641,10 @@ export const METRIC_DIMENSIONS: Record<string, string[]> = {
 // state trio and tunnelName on ipsecStatus since the pin-gate work, but the
 // builder never rendered an input for them, so "Interface oper status is down
 // on interfaces matching wan" was expressible only through the raw API. The
-// SD-WAN pair carries no name filter because the engine has none for it (rules
-// alert per ruleName dimension already). Device-identifier dimensions are NOT
+// SD-WAN rule pair carries no name filter because the engine has none for it
+// (rules alert per ruleName dimension already), while sdwanMemberState takes
+// the same health-check + member pair the SD-WAN METRICS take, from the same
+// sample table. Device-identifier dimensions are NOT
 // listed per metric/field — DEVICE_FILTER_DIMENSIONS below applies to every
 // asset leaf uniformly.
 export const FIELD_DIMENSIONS: Record<string, string[]> = {
@@ -3639,6 +3655,7 @@ export const FIELD_DIMENSIONS: Record<string, string[]> = {
   ipsecStatus: ["tunnelName"],
   sdwanRuleStatus: ["sdwanRulePattern"],
   sdwanSelectedMember: ["sdwanRulePattern"],
+  sdwanMemberState: ["healthCheck", "link"],
 };
 
 // ── Device-identifier dimensions ─────────────────────────────────────────────
@@ -3747,6 +3764,9 @@ export const STATE_FIELD_DIMENSIONS: Record<string, string[]> = {
   ipsecStatus: ["tunnelName"],
   sdwanRuleStatus: ["healthCheck"],
   sdwanSelectedMember: ["healthCheck"],
+  // One reading per (health check, WAN member) — so a reset condition on this
+  // field clears the one member's alert, not every member on the gate.
+  sdwanMemberState: ["healthCheck", "link"],
 };
 
 /** What one dimension of a reading IS, in an operator's words — so a surface can
