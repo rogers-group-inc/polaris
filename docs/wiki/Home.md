@@ -1,9 +1,9 @@
 # Polaris
 
-**Polaris is an IP address management and network monitoring tool.** It keeps a
-central registry of your address space — blocks, networks, individual
-addresses, reservations — discovers what is actually on the wire, watches those
-devices, and tells the right people when something breaks.
+**Polaris is an asset management and network monitoring tool.** It pulls the
+systems you already run into one dashboard: it discovers what is on your
+network, keeps one record per device, watches those devices, and tells the right
+people when something breaks.
 
 The name is the point: a fixed reference you navigate by when wiring up
 everything else.
@@ -14,14 +14,16 @@ everything else.
 
 Four things, in the order a new install grows into them:
 
-1. **Records address space.** IP blocks contain networks (subnets) contain
-   addresses. Overlaps are refused, CIDRs are normalised, deletions are
-   protected while reservations are live. See [IPAM](IPAM).
-2. **Discovers what exists.** Seven integration types read your FortiManager,
+1. **Discovers what exists.** Seven integration types read your FortiManager,
    FortiGates, Entra ID / Intune, Active Directory, Windows DHCP servers,
-   vCenter and Azure Arc, and turn what they find into assets, networks,
-   reservations and VIPs. Nothing is guessed — every fact carries the source
-   that reported it. See [Discovery](Discovery).
+   vCenter and Azure Arc. See [Discovery](Discovery).
+2. **Keeps one record per device, from all of them.** This is the part that
+   makes a central dashboard worth having. An asset that AD, Intune, Azure Arc
+   and a FortiGate all know about is **one row carrying four sources**, and
+   every field shows the answer from whichever source is most trustworthy *for
+   that field* — not whichever system wrote last. Where they genuinely disagree,
+   you get a [conflict](Conflict-Resolution) rather than a silent overwrite. See
+   [Assets](Assets).
 3. **Monitors those devices.** Eight independent telemetry streams over six
    transports, on a cadence you set per asset, per class or per integration.
    See [Monitoring](Monitoring).
@@ -29,6 +31,10 @@ Four things, in the order a new install grows into them:
    state, an event or a change; raise an alert at a severity; notify people by
    email, push or webhook; escalate when nobody answers; and run a script or
    call an API if you want them to. See [Automations](Automations).
+
+Alongside those, it keeps a full **address registry** — blocks, networks,
+individual addresses and reservations, with overlaps refused, CIDRs normalised
+and deletions protected while reservations are live. See [IPAM](IPAM).
 
 ## What it deliberately does not do
 
@@ -82,9 +88,11 @@ nginx, behind a corporate load balancer, or nowhere at all on a lab VM.
      polaris (dash) ── NOC wallboard ───────┘
 ```
 
-Every integration is optional and absent by default. An install with no
-integrations at all is a perfectly good IPAM — discovery is something you turn
-on, not something you turn off.
+Every integration is optional and absent by default — discovery is something you
+turn on, not something you turn off. An install with none at all still works:
+you enter assets and address space by hand, and monitor them over SNMP, SSH,
+WinRM, ICMP or the agent. But the integrations are the point of the thing, and
+an install with one is worth more than an install with none.
 
 ---
 

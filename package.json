@@ -1,7 +1,7 @@
 {
   "name": "polaris",
   "version": "0.9.0",
-  "description": "Polaris — subnet & IP address management, the fixed reference point for your network",
+  "description": "Polaris — asset management and network monitoring, the fixed reference point for your network",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
