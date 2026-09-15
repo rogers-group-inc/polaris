@@ -34,6 +34,18 @@ export const totpCodeLimiter = makeRateLimiter({
   message: "Too many code attempts. Please try again in 15 minutes.",
 });
 
+/**
+ * Self-service password change. The body carries the caller's CURRENT
+ * password, so an attacker sitting on a hijacked session can grind for it
+ * here without ever touching the login limiter — this is the login surface
+ * again, just behind a cookie, and it gets the login ceiling.
+ */
+export const passwordChangeLimiter = makeRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many password change attempts. Please try again in 15 minutes.",
+});
+
 /** Unauthenticated SSO entry redirect (OIDC login kick-off). */
 export const ssoEntryLimiter = makeRateLimiter({
   windowMs: 15 * 60 * 1000,

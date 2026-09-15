@@ -77,6 +77,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | `public/js/mobile/app.js` | `PolarisTheme` | the phone's theme: `get()` answers the FAMILY (map-tab's basemap, topology-tab's palette), `set()` writes a real id and never persists a transit one, `advance()` is the strip's one-tap sweep, `seatStrips()` positions a strip rendered after boot. Its `MOBILE_THEMES` / `MOBILE_TRANSIT_THEMES` / `THEME_STRIP_POS` move in lockstep with the desktop's `THEMES` / `TRANSIT_THEMES` / `THEME_WHEEL_ANGLE` — same clock, two geometries |
 | `public/js/region-pills.js` | `PolarisRegionPills` | the only browser-side reader of the region catalogue |
 | `public/js/region-tree.js` | `PolarisRegionTree` | region containment tree + overlay styling |
+| `public/js/password-self.js` | `PolarisPasswordSelf` | the password-complexity checklist (`rulesHTML`/`check`/`matchHTML`/`checkMatch` — users.js forwards to these) + the self-service Change Password modal |
 | `public/js/totp-self.js` | `PolarisTotpSelf` | self-service TOTP enroll/confirm/disable modals |
 | `public/js/temp-unit.js` | — | render-time °C/°F conversion, gated on each reading's stored unit |
 | `public/js/chart-severity.js` | `PolarisChartSeverity` | severity gradient math for charts |

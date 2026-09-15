@@ -781,6 +781,32 @@ function wireTotpState() {
 }
 
 /**
+ * The user menu's change-password row, or null when it isn't on offer.
+ *
+ * Gated on the SAME payload the two-factor row reads — `/auth/totp/status`
+ * returns the account's `authProvider`, and one fetch driving both rows beats
+ * a second round trip that answers the identical question. The reason it is
+ * not `currentUserAuthProvider` is the one wireTotpState gives above: the
+ * cached-nav path defaults that to "local", which would offer an SSO user a
+ * control the server refuses with "managed by your identity provider".
+ *
+ * Local accounts get this here for the same reason they get TOTP here:
+ * /users.html holds the only other password field in the product and is
+ * page-gated `users`, so an ordinary local user had nowhere to change their
+ * own password even though `PUT /auth/password` asks for no permission at all.
+ */
+function _changePasswordMenuItem() {
+  if (!window.PolarisPasswordSelf) return null;
+  if (!_totpState || _totpState.authProvider !== "local") return null;
+  return {
+    label: "Change password",
+    icon: ICONS.key,
+    title: "Requires your current password",
+    onSelect: function () { PolarisPasswordSelf.open({ username: currentUsername }); },
+  };
+}
+
+/**
  * The user menu's two-factor row, or null when it isn't on offer: no shared
  * module on the page, state not read yet, or an SSO/LDAP account whose
  * directory owns MFA (the enroll route rejects those outright).
@@ -841,6 +867,7 @@ const ICONS = {
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
+  key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2"/><path d="M17 6l3 3"/><path d="M14 9l3 3"/></svg>',
   share2: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
   zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
   logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
@@ -1891,6 +1918,10 @@ function openUserMenu(anchor) {
 
   var tz = _tzMenuItem();
   if (tz) items.push(tz);
+
+  // Credentials group: password first, then the second factor on it.
+  var pw = _changePasswordMenuItem();
+  if (pw) items.push(pw);
 
   var totp = _totpMenuItem();
   if (totp) items.push(totp);
