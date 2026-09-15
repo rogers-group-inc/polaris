@@ -135,10 +135,11 @@ npm run check:docs && npm run check:versions && npm run check:deps
 Polaris is FOSS and installed by strangers, not only by us. Nothing may assume
 the Rogers Group install's shape. Concretely, a change must keep working when:
 
-- **Auth is any of the five paths** — local accounts, TOTP, Azure SAML, OIDC,
-  Entra App Proxy header SSO. Never fix a login-adjacent bug for the provider
-  you happen to run; the others have different transport semantics (the SAML
-  callback is a cross-site POST, OIDC's is a same-site GET).
+- **Auth is any of the five paths** — local accounts (optionally with TOTP),
+  LDAP/AD, Azure SAML, OIDC, Entra App Proxy header SSO. Never fix a
+  login-adjacent bug for the provider you happen to run; the others have
+  different transport semantics (the SAML callback is a cross-site POST,
+  OIDC's is a same-site GET).
 - **TLS terminates anywhere** — direct, nginx, a corporate load balancer, or
   plain HTTP on a lab VM. `req.secure` can be false on a real HTTPS install;
   never let a feature hard-require `Secure` cookies or an absolute public URL.
