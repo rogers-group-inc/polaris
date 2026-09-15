@@ -818,10 +818,16 @@ function setupColumnLayout(tableEl, options) {
   var movableSrc = colIds.filter(function (id) { return !required[id]; });
   var order = movableSrc.slice();
 
+  // Prototype-less lookups: `saved` is untrusted — it comes back from
+  // localStorage, or (for the Assets view tabs) from the server blob. A plain
+  // {} inherits Object.prototype, so "constructor" / "toString" / "valueOf"
+  // would read as KNOWN columns and get spliced into `order`, where they map to
+  // no <th> and make placeInOrder bail — a table that silently stops honoring
+  // its saved arrangement. Object.create(null) makes an unknown id unknown.
   function normalizeOrder(saved) {
-    var known = {};
+    var known = Object.create(null);
     movableSrc.forEach(function (id) { known[id] = true; });
-    var seen = {};
+    var seen = Object.create(null);
     var out = [];
     (saved || []).forEach(function (id) {
       if (!known[id] || seen[id]) return;
