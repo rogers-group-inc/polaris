@@ -2,17 +2,6 @@
 
 This guide covers fresh installs on **RHEL / Rocky / AlmaLinux 9** and **Ubuntu / Debian**. The only differences between the two are package names and where PostgreSQL puts its data directory.
 
-> **Windows Server is not a supported Polaris host.** It was dropped on 2026-09-11 along with
-> `deploy/setup-windows.ps1`, `setup-windows-nodb.ps1`, `update-windows.ps1` and the NSSM service
-> layout. The reason is TimescaleDB: Polaris now *requires* the extension on every install it
-> provisions, and Timescale publishes no Windows installer — the Windows route was a manual
-> copy of DLLs and control files into the PostgreSQL tree, which is not something to stake a
-> monitoring database's retention and restore path on. **This does not touch Windows as a
-> monitored estate:** the Polaris Agent still installs on Windows hosts, WinRM polling and the
-> Windows Server DHCP integration are unchanged, and agent code signing for Windows binaries
-> still works. If you are running Polaris itself on Windows, see
-> *Migrating a Windows install to Linux* below.
-
 If you're upgrading an existing install rather than installing fresh, use the in-app updater under **Server Settings → Maintenance → Updates**. Don't follow this document for upgrades.
 
 > **Update source repo.** By default both the in-app updater and the `deploy/update-linux.sh` fallback script update from the install's existing `origin` git remote — i.e. whatever it was cloned from. To force a different source (a fork or an internal mirror), set `POLARIS_UPDATE_REPO=<git-url>` in `/opt/polaris/.env`; it's applied to the `origin` remote before every fetch/pull. Leave it unset to keep using the cloned-from origin. The active repo and its source are shown on the Application Updates card (Server Settings → Maintenance). The URL may contain letters, digits and `. _ ~ : / @ + -` only — enough for `https://`, `ssh://`, `git://` and the `git@host:owner/repo.git` form; a value with any other character is ignored (the updater keeps using the existing origin) and logs an error naming it, so check the log if an override appears not to take.
@@ -29,7 +18,7 @@ states a floor, it states the same one as this table.
 | **Node.js** | 22 | **24** | 22 → 2027-04-30 · 24 → 2028-04-30 | LTS lines only. The minimum is the dependency tree's floor (`engines.node` is `>=22.12.0`); every install script provisions **24**. `engines.node` is advisory — npm warns and installs anyway — so the scripts' accept-checks are the real gate. A host left on 22 has under a year of runway. |
 | **PostgreSQL** | 17 | **17** | 17 → 2029-11-08 · 18 → 2030-11-14 | Five-year policy; a major dies each November. Every install path provisions 17 from PGDG (RHEL *and* Debian/Ubuntu — the distro metapackages are 14/16 and were never the stated major). An existing 15 install keeps working, but it caps TimescaleDB at the 2.28.x line and is below this minimum; see *Moving an existing install to PostgreSQL 17*. |
 | **TimescaleDB** | 2.x | current | no published date | **Required, not optional** — every install path provisions it and Polaris converts its sample tables to hypertables at first boot. Lifecycle is a PostgreSQL-compatibility horizon, not a date. 2.28.x was the last line supporting PostgreSQL 15, which is what capped the extension before the move to 17; 2.29+ supports 16/17/18, and 2.30 is current on both PGDG-supported majors. |
-| **Go** (agent build only) | 1.26 | **1.26** | 1.25 → 2026-08-19 · 1.26 and 1.27 → current | Go supports only the two most recent majors, so this ages faster than anything else here — the floor is the older of the two supported majors. Needed only to build agent binaries in-app. Target equals the minimum: the RHEL go-toolset module and the Go snap both carry 1.26, and since Windows was dropped on 2026-09-11 no install path provisions 1.27. A host that already has 1.27 is accepted. |
+| **Go** (agent build only) | 1.26 | **1.26** | 1.25 → 2026-08-19 · 1.26 and 1.27 → current | Go supports only the two most recent majors, so this ages faster than anything else here — the floor is the older of the two supported majors. Needed only to build agent binaries in-app. Target equals the minimum: the RHEL go-toolset module and the Go snap both carry 1.26, and no install path provisions 1.27. A host that already has 1.27 is accepted. |
 | **nginx** | 1.30 | **1.30** | 1.28 → 2026-04-14 · 1.30 → current | Odd minors are mainline, even minors are stable; a branch dies when its successor of the same parity ships. The setup scripts install the **stable** branch from nginx.org, and 1.30 is the oldest branch still receiving fixes. HTTP/3 needs 1.25 at minimum, so the floor is a support statement now rather than a feature one. |
 | **Java** (agent signing only) | 25 | 25 | 21 → 2028-09-30 · 25 → 2030-09-30 | Microsoft Build of OpenJDK dates. Optional: without it, agent code signing is unavailable and nothing else changes. Target equals the minimum on purpose — a target above what every install path provisions reports a behind-target JDK on every healthy host, which teaches operators to ignore this card. Moved 17 → 25 on 2026-09-09, the current LTS: jsign is Java 8 bytecode and needs none of it, but 25 is available on every supported platform and buys three more years before this row moves again. |
 | **RHEL / Rocky / AlmaLinux** | 9 | 9 | 9 → 2032-05-31 (full support ends 2027-05-31) | |
@@ -916,72 +905,6 @@ opens TCP+UDP/443 in ufw, and starts `polaris.target`. Browse to
 
 The same `--public-url` / `--monitor-replicas` / `--prometheus-ip` flags
 documented above for setup-rhel.sh apply here too.
-
----
-
-## Migrating a Windows install to Linux
-
-Windows Server stopped being a supported Polaris host on 2026-09-11 (see the note at the top of
-this guide for why). An existing Windows install keeps running — nothing reaches out and stops
-it — but it receives no further install or update scripts, the in-app updater's NSSM restart
-path is gone, and it cannot gain TimescaleDB, so its sample tables prune row-by-row and its
-backups restore without the hypertable gates. Move it.
-
-The migration is a dump on Windows, a normal Linux install, and a restore. Plan for downtime
-equal to the dump plus the restore; both scale with your sample-table volume.
-
-```powershell
-# ── On the Windows host ──────────────────────────────────────────────────────
-# 1. Stop the Polaris services so nothing writes during the dump.
-nssm stop PolarisWeb; nssm stop PolarisMonitor1; nssm stop PolarisDiscovery
-
-# 2. Plain-SQL dump of the whole database. --no-owner because the Linux install
-#    owns its objects as the `polaris` role, which is not the role name here.
-& "C:\Program Files\PostgreSQL\17\bin\pg_dump.exe" -U postgres -d polaris `
-    --no-owner --format=plain --file=C:\polaris-migration.sql
-```
-
-Copy `C:\polaris-migration.sql` and the install's `.env` to the new Linux host, then:
-
-```bash
-# ── On the new Linux host ────────────────────────────────────────────────────
-# 3. Do a normal fresh install first — RHEL or Ubuntu section above. It
-#    provisions PostgreSQL 17 + TimescaleDB and creates the polaris role and
-#    database. Do NOT run the first-run wizard; the restore below supplies the
-#    schema and data it would have created.
-sudo systemctl stop polaris.target
-
-# 4. Restore. TimescaleDB is installed by now but the dump carries no
-#    hypertables (Windows never had the extension), so no restore gates are
-#    needed — this is a plain-table restore into a Timescale-enabled database.
-sudo -u postgres psql -d polaris -v ON_ERROR_STOP=1 -f /path/to/polaris-migration.sql
-
-# 5. Give the polaris role ownership of everything the restore created.
-sudo -u postgres psql -d polaris <<'SQL'
-DO $$
-DECLARE r record;
-BEGIN
-  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
-    EXECUTE format('ALTER TABLE public.%I OWNER TO polaris', r.tablename);
-  END LOOP;
-END $$;
-SQL
-
-# 6. Carry POLARIS_SECRET_KEY across from the old .env — VERBATIM. Every stored
-#    credential, SNMP community and integration token is sealed with it; a new
-#    key silently invalidates all of them and there is no escrow. Keep the new
-#    host's own DATABASE_URL.
-sudo -u polaris vi /opt/polaris/.env
-
-# 7. Start, and watch the first boot convert the restored sample tables to
-#    hypertables (a few minutes on a fleet with months of history).
-sudo systemctl start polaris.target
-sudo journalctl -u polaris-web -f
-```
-
-Then re-point anything that names the old host: the agents' `POLARIS_PUBLIC_URL` (agents
-enrolled against the Windows host's address need re-enrolling or an updated URL), DNS or the
-load-balancer VIP, and any syslog/SFTP archival target that allow-listed the old address.
 
 ---
 

@@ -180,12 +180,6 @@ git clone https://github.com/rogers-group-inc/polaris.git && cd polaris
 bash deploy/setup-ubuntu.sh
 ```
 
-> **Windows Server is not a supported Polaris host** (dropped 2026-09-11) — Polaris requires
-> TimescaleDB, which Timescale publishes no Windows installer for. Windows as a *monitored*
-> estate is unaffected: the agent, WinRM polling, the Windows DHCP integration and Windows
-> code signing all stay. Existing Windows installs: see
-> [docs/INSTALL.md](docs/INSTALL.md) → *Migrating a Windows install to Linux*.
-
 After the script finishes the app is live at `http://<server-ip>:3000` — log in with `admin` / `admin` and change the password.
 
 **Docker / Unraid:**
