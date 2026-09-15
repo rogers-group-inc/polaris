@@ -21,7 +21,8 @@ polaris/
 │   ├── schema.prisma                # Database schema
 │   └── seed.ts
 ├── docs/
-│   ├── INSTALL.md                   # Fresh-install guide (RHEL/Rocky/AlmaLinux 9, Ubuntu/Debian, Windows Server). Includes disk-sizing requirements per volume (DB ≥50 GB, app/state ≥5 GB, /var/log ≥5 GB on STIG layouts) and recovery steps for the "/var is full and Postgres is crash-looping" case. Don't follow this for upgrades — those use the in-app updater under Server Settings → Maintenance → Updates.
+│   ├── INSTALL.md                   # Fresh-install guide (RHEL/Rocky/AlmaLinux 9, Ubuntu/Debian, container). Includes disk-sizing requirements per volume (DB ≥50 GB, app/state ≥5 GB, /var/log ≥5 GB on STIG layouts) and recovery steps for the "/var is full and Postgres is crash-looping" case. Fresh installs ONLY since 2026-09-15 — an existing install goes to the in-app updater, or to UPGRADING.md below.
+│   ├── UPGRADING.md                 # Every runbook for a host that already exists: a Node or signing-JDK major, PostgreSQL 15 → 17 (with the Docker/Unraid dump-and-restore variant), RHEL AppStream → PGDG, the legacy single-process polaris.service → split-role, the pre-nginx → nginx cutover, and recovering an update that died on a TLS-intercepting network. Split out of INSTALL.md so a first-time installer is not reading 760 lines addressed to someone else. Deliberately NOT a check:versions site — it names the version you are leaving beside the one you are going to (see polaris-tech-lifecycle → pin-consistency-check.md).
 │   └── fmg-discovery.md             # FortiManager discovery decision tree (operator-facing): transport mode (proxy vs direct), roster filtering, per-class stamping for FortiGates / FortiSwitches / FortiAPs, push toggles, projection apply. Companion to the phase-by-phase narrative in CLAUDE.md's "FMG Discovery Workflow" section.
 ├── scripts/
 │   ├── test-fmg.mjs                 # FortiManager integration test harness

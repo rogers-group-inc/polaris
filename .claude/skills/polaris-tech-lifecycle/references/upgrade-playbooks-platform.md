@@ -99,7 +99,7 @@ PostgreSQL is its own container: the image carries exactly one major's binaries,
 side-by-side install and no `pg_upgrade`. The move is **dump → restore into a NEW container with
 a NEW data directory**, with the old container kept as the rollback; a tag swap over the existing
 data directory exits on `database files are incompatible with server`, and a copy of the old
-appdata restores only back into the old major. The full operator procedure is `docs/INSTALL.md` →
+appdata restores only back into the old major. The full operator procedure is `docs/UPGRADING.md` →
 *On Docker / Unraid, where PostgreSQL is its own container*.
 
 Two of its traps are worth knowing before you advise on one, because both are silent until
@@ -185,7 +185,8 @@ that host builds agents.
    with the mainline stanza written into the RHEL repo file at `enabled=0` — moving branches is
    two flag flips there, and adding or removing a `/mainline` path segment on Debian/Ubuntu.
 2. Widen the accept-regex in the four Linux scripts and the migrate helper.
-3. Update the three `>=` claims in `docs/INSTALL.md` and the help text beside the HTTP/3 toggle.
+3. Update the `>=` claims in `docs/INSTALL.md` **and** the one in `docs/UPGRADING.md` (the
+   migrate-to-nginx prerequisites moved there), plus the help text beside the HTTP/3 toggle.
 4. Re-apply the managed config and confirm HTTP/3 still negotiates.
 
 ### Blast radius
@@ -218,3 +219,19 @@ upgrades, so verify an agent reconnects, not just that pages load.
 ### Blast radius
 Signing only. A missing or wrong JDK disables code signing and the UI says so; it does not break
 the app or the agent.
+
+### Moving an EXISTING host to the current JDK
+The steps above move the major Polaris *targets*; they do nothing for a host still running the
+old one, and nothing does it automatically — the in-app updater installs no system packages
+(a policy, not a privilege limit: its final step already runs a transient unit as root under the
+`manage-units` polkit grant, and that is where a package install would have to go),
+`deploy/update-linux.sh` never mentions Java, and both setup scripts skip the JDK entirely when
+`command -v java` already succeeds, so re-running one on an upgraded host is a no-op. The
+operator steps (per platform, plus verification and rollback) are `docs/UPGRADING.md` →
+*Upgrading the signing JDK to Java 25*, which the `java-major` playbook's
+`docAnchor` points at and its first step names. Two things that make the drift invisible and
+belong in any future version of that section: `signingAvailability` only checks that `java`
+*runs*, so the Code-signing card reads **Ready** on a JDK below `JAVA_MINIMUM` and the Platform
+Lifecycle card is the only surface that objects; and that card serves a 6-hour memo with no
+refresh button, so it keeps reporting the old version after a successful upgrade until
+`polaris-web` restarts or `?refresh=1` is requested.

@@ -23,7 +23,8 @@ manual restart unless asked.
 | systemd deployment of the roles, per-role `/metrics` listeners, nginx-front HTTPS, the in-app nginx GUI | [references/multi-process-deployment.md](references/multi-process-deployment.md) |
 | the deployment lockstep checklist — Dockerfile, `deploy/setup-*`, `deploy/update-*`, `docs/INSTALL.md`, `copy-build-assets.mjs`, Go pin, disk-sizing table | [references/cross-cutting-deployment.md](references/cross-cutting-deployment.md) |
 | active/standby HA — Patroni + etcd, the role reconciler, the systemd drop-ins, `/health/ready`, the file state PostgreSQL does not replicate, the update window | [references/high-availability.md](references/high-availability.md) (operator-facing walkthrough: `docs/HA.md`) |
-| the operator install guide (RHEL/Rocky/Alma 9, Ubuntu/Debian, Windows Server) and the disk-sizing source of truth | `docs/INSTALL.md` |
+| the operator install guide (RHEL/Rocky/Alma 9, Ubuntu/Debian, container) and the disk-sizing source of truth | `docs/INSTALL.md` — **fresh installs only** |
+| the operator runbook for a host that already exists — a runtime major, PostgreSQL 15 → 17, AppStream → PGDG, legacy single-process → split-role, pre-nginx → nginx, an update that died mid-flight | `docs/UPGRADING.md` |
 | the local dev stack (podman/docker compose, host-native, DB reset) | `DEVELOPMENT.md` |
 | the shipped units, nginx template, sudo wrapper, update scripts | `deploy/` |
 | the production image and the multi-container stack | `Dockerfile`, `docker-compose.yml` (state under `./state`) |

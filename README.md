@@ -182,12 +182,6 @@ git clone https://github.com/rogers-group-inc/polaris.git && cd polaris
 bash deploy/setup-ubuntu.sh
 ```
 
-> **Windows Server is not a supported Polaris host** (dropped 2026-09-11) — Polaris requires
-> TimescaleDB, which Timescale publishes no Windows installer for. Windows as a *monitored*
-> estate is unaffected: the agent, WinRM polling, the Windows DHCP integration and Windows
-> code signing all stay. Existing Windows installs: see
-> [docs/INSTALL.md](docs/INSTALL.md) → *Migrating a Windows install to Linux*.
-
 After the script finishes the app is live at `http://<server-ip>:3000` — log in with `admin` / `admin` and change the password.
 
 **Docker / Unraid:**
@@ -196,7 +190,7 @@ After the script finishes the app is live at `http://<server-ip>:3000` — log i
 docker pull ghcr.io/rogers-group-inc/polaris:latest
 ```
 
-Multi-stage image, ~940 MB, x86_64. PostgreSQL is **not** included — run a `timescale/timescaledb:latest-pg17` container alongside it (**not** plain `postgres:17`: Polaris requires the TimescaleDB extension, and the image must also be started with `-c shared_preload_libraries=timescaledb`), or point at any reachable Postgres that has the extension. Already running an older major in a container? Changing the image tag is not an upgrade — see [docs/INSTALL.md → On Docker / Unraid, where PostgreSQL is its own container](docs/INSTALL.md#on-docker--unraid-where-postgresql-is-its-own-container). Expose container port `3000` (HTTP-only; terminate TLS in a reverse proxy in front of the container — see `docker-compose.yml` for the nginx-fronted reference stack — and do not let that proxy add its own `Referrer-Policy` header, or OpenStreetMap blocks every map tile: [docs/INSTALL.md → Map tiles come back as "Access blocked"](docs/INSTALL.md#map-tiles-come-back-as-access-blocked)). All persistent state lives under `/app/state`, so a single bind mount is enough:
+Multi-stage image, ~940 MB, x86_64. PostgreSQL is **not** included — run a `timescale/timescaledb:latest-pg17` container alongside it (**not** plain `postgres:17`: Polaris requires the TimescaleDB extension, and the image must also be started with `-c shared_preload_libraries=timescaledb`), or point at any reachable Postgres that has the extension. Already running an older major in a container? Changing the image tag is not an upgrade — see [docs/UPGRADING.md → On Docker / Unraid, where PostgreSQL is its own container](docs/UPGRADING.md#on-docker--unraid-where-postgresql-is-its-own-container). Expose container port `3000` (HTTP-only; terminate TLS in a reverse proxy in front of the container — see `docker-compose.yml` for the nginx-fronted reference stack — and do not let that proxy add its own `Referrer-Policy` header, or OpenStreetMap blocks every map tile: [docs/INSTALL.md → Map tiles come back as "Access blocked"](docs/INSTALL.md#map-tiles-come-back-as-access-blocked)). All persistent state lives under `/app/state`, so a single bind mount is enough:
 
 | Container path | Host path | Notes |
 |---|---|---|

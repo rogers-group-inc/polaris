@@ -67,6 +67,18 @@ after that target was dropped to 17. Both were caught by someone reading careful
 a mechanism. Only `dated` technologies are compared — TimescaleDB, Windows Server and PgBouncer
 state prose in those columns deliberately, having no dated lifecycle to mirror.
 
+**`docs/UPGRADING.md` is deliberately NOT a site, and must not become one.** Every existing-install
+runbook lives there (Node, the signing JDK, PostgreSQL 15 → 17, AppStream → PGDG, the legacy
+single-process layout, the nginx cutover), and an upgrade runbook names the version you are
+*leaving* beside the one you are going to: `postgresql-15.service`, `/usr/pgsql-15/`,
+`openjdk-17-jre-headless`, `java-17-openjdk-headless`. Every one of those matches a family's pin
+regex, so adding the file to `postgres-major`, `java-major` or `nginx-floor` makes the equality
+check fail on text that is correct. What keeps its *target* numbers honest instead is the playbook:
+`docs/UPGRADING.md` is in the `files` list of `node-major`, `postgres-major` and `java-major` in
+`src/data/platformEol.json`, so a bump that follows the playbook opens it. If you ever do want it
+machine-checked, the site has to be anchored to the runbook's target line rather than to the
+package name — a bare package regex cannot tell "install this" from "remove that".
+
 **A comment is not a declaration site.** Whole-line comments are stripped before matching.
 `setup-rhel.sh` explains its module reset with "nodejs:20 fails with cannot enable multiple
 streams otherwise" directly above `dnf module enable -y nodejs:24`, and matching that comment
@@ -81,7 +93,7 @@ declaration are kept, so `node-version: 24  # bumped 2026-09` still reads as 24.
 | `go-pin` | the Go floors agree — `agent/go.mod`'s directive, `GO_MINIMUM`, every accept-regex, the docs — the pins agree (both winget `--version` flags, both MSI URLs), and floor ≤ pin | fail |
 | `nginx-floor` | the Linux accept-regex floor matches the documented `≥` claim | fail |
 | `postgres-major` | one major across `PG_MAJOR` / `PG_CLIENT_MAJOR` in all five install scripts, the drop-in example, the Windows installer/service pair, the image tags, `postgresql-client-<major>` in both Dockerfiles **and in the CI `integration` job**, the HA script and the docs | fail |
-| `java-major` | the JDK major agrees across the Dockerfile, the RHEL and Ubuntu packages, the Windows winget id and MSI URL, the `docs/INSTALL.md` table and `JAVA_MINIMUM` in `src/services/agentSigningService.ts` — the app’s own floor is a checked site because the operator-facing copy said "Java 17+" for two days after every install path moved to 25 | fail |
+| `java-major` | the JDK major agrees across the Dockerfile, the RHEL and Ubuntu packages, the `docs/INSTALL.md` table and `JAVA_MINIMUM` in `src/services/agentSigningService.ts` (the winget id and MSI URL left with the Windows scripts on 2026-09-11) — the app’s own floor is a checked site because the operator-facing copy said "Java 17+" for two days after every install path moved to 25 | fail |
 | `jsign-pin` | the jsign version agrees across the Dockerfile URL and every setup script's `JSIGN_VERSION` | fail |
 | `units-name-no-postgres` | no shipped `deploy/polaris-*.service` names a `postgresql*.service` in `After=` / `Requires=` / `Wants=` / `BindsTo=`. The unit name is a HOST fact and both update paths overwrite these files verbatim, so a major written here is re-asserted onto every host at every update — including hosts that do not have that unit. It belongs in a `20-postgres.conf` drop-in | fail |
 | `dataset-shape` | `src/data/platformEol.json` parses; every technology has `source` and `sourceCheckedOn`; every `upgradePlaybook` resolves; every playbook `files[]` entry exists on disk; every checked family has a dataset entry | fail |
