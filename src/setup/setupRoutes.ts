@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import pg from "pg";
 import { markSetupComplete } from "./detectSetup.js";
-import { hashPassword } from "../utils/password.js";
+import { hashPassword, passwordPolicySchema } from "../utils/password.js";
 import { ENV_FILE, STATE_DIR } from "../utils/paths.js";
 import { makeRateLimiter } from "../api/middleware/rateLimits.js";
 import { PG_DATA_DIR_CANDIDATES, pickFirstExistingPath, probeDiskFree } from "../utils/startupDiskCheck.js";
@@ -56,12 +56,9 @@ function buildPgClientOptions(db: DbConfig, database: string): pg.ClientConfig {
   return opts;
 }
 
-const passwordSchema = z.string()
-  .min(8, "Password must be at least 8 characters")
-  .regex(/[a-z]/, "Password must contain a lowercase letter")
-  .regex(/[A-Z]/, "Password must contain an uppercase letter")
-  .regex(/[0-9]/, "Password must contain a number")
-  .regex(/[^a-zA-Z0-9]/, "Password must contain a special character");
+// Shared with the admin create/reset routes and the self-service change —
+// see utils/password.ts.
+const passwordSchema = passwordPolicySchema;
 
 const FinalizeSchema = z.object({
   db: DbConfigSchema,
