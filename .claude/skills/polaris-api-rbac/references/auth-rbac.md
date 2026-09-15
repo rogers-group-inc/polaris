@@ -4,6 +4,8 @@ Verbatim from CLAUDE.md → Authentication & RBAC.
 
 Sessions are PostgreSQL-backed (`connect-pg-simple`), 8-hour max age, HttpOnly/Secure/SameSite=Lax cookies.
 
+**The session cookie's `Lax` and `polaris_next`'s `None` are deliberately different — do not make them match.** `Lax` is not sent on a cross-site POST, which is the shape of the SAML assertion arriving at `POST /auth/azure/callback`: the session cookie is *supposed* to be absent there (hence `regenerateSession`, and the relay-state check that tolerates an empty session), but the post-login return target is not, which is why `utils/loginRedirect.ts` writes `polaris_next` `SameSite=None; Secure` on HTTPS and folds the same path into the SAML RelayState. That cookie is a same-origin path, never a credential; the session cookie is the credential and stays `Lax` + HttpOnly. See business rule 25.
+
 **Dynamic-role model (post-cutover).** RBAC is enforced via `requirePermission(functionKey, level)` from [src/api/middleware/permissions.ts](src/api/middleware/permissions.ts). Each route declares the function key it gates + the required access level; the resolver consults the caller's `Role.permissions` matrix denormalized into `req.session.roleSnapshot` at login. The matrix is `{ [functionKey]: "none" | "read" | "write" | "fullwrite" }` over a 33-key catalogue. The five built-in roles (`admin` / `readonly` / `networkadmin` / `assetsadmin` / `user`) are seeded by `prisma/migrations/20260524000000_roles_table_cutover` so existing accounts keep their pre-cutover access exactly. Admin creates custom roles from the Roles section under Users → Manage Roles.
 
 | Built-in role | Locked? | Pre-cutover behavior preserved |
