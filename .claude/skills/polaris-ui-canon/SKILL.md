@@ -21,7 +21,7 @@ Read the canon files here for *which file in THIS repo* to copy. Inside this rep
 | a modal, a dialog over a modal, an integration dialog, a wizard, the condition builder, a slide-over, a blocking overlay, a standalone page | [references/canon-modals-wizards.md](references/canon-modals-wizards.md) |
 | a chart, a dashboard widget, the polling-method subtabs | [references/canon-charts-widgets.md](references/canon-charts-widgets.md) |
 | anything on the phone SPA (bottom sheet, pull-to-refresh, keyboard fit, the theme strip) | [references/canon-mobile.md](references/canon-mobile.md) |
-| shared helpers, theme-paired assets, gated controls, the active-alert dot, kit API names, the glass tokens every floating surface paints, and which of the four elevation shadows a surface takes — a card's included | [references/canon-shared-kit.md](references/canon-shared-kit.md) |
+| shared helpers, theme-paired assets, gated controls, the active-alert dot, kit API names, the glass tokens every floating surface paints, and which of the four elevation shadows a surface takes — a card's included; how a settings tab lays its cards out in a fixed row or a reflowing deck | [references/canon-shared-kit.md](references/canon-shared-kit.md) |
 | the SPA shell, navigation, the sidebar status panels and their pollers, the assets page and its slide-over tabs | [references/frontend-shell.md](references/frontend-shell.md) |
 | Discovery-rules card, SSH Deployment, script publishing, export/import, Dash wallboard, mobile PWA + push | [references/frontend-surfaces.md](references/frontend-surfaces.md) |
 | the Automations page or its 6-step wizard | [references/frontend-automations-wizard.md](references/frontend-automations-wizard.md) |
