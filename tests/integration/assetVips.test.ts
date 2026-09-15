@@ -99,11 +99,17 @@ afterAll(async () => {
 
 beforeEach(async () => {
   if (!dbReachable) return;
+
+  // Teardown drops the ASSETS first, before the reservations they sit on. An
+  // asset write schedules a fire-and-forget dns_resolved reconcile (the db.ts
+  // Prisma extension), and that reconcile re-reads its asset by id before it
+  // does anything — so with the asset rows already gone, a straggler still in
+  // flight from the previous test can only skip.
+  await prisma.assetAssociatedIp.deleteMany();
+  await prisma.asset.deleteMany();
   await prisma.reservation.deleteMany();
   await prisma.subnet.deleteMany();
   await prisma.ipBlock.deleteMany();
-  await prisma.assetAssociatedIp.deleteMany();
-  await prisma.asset.deleteMany();
 
   const block = await prisma.ipBlock.create({
     data: { name: "VIP Test Block", cidr: "10.88.0.0/16", ipVersion: "v4" },
@@ -114,6 +120,36 @@ beforeEach(async () => {
   const insideAlt = await prisma.subnet.create({
     data: { blockId: block.id, cidr: "10.88.2.0/24", name: "Servers B", status: "available" },
   });
+
+  // The RESERVATIONS are created BEFORE the assets, and that order is
+  // load-bearing. Business rule 11 auto-creates a `dns_resolved` reservation for
+  // any asset whose primary IP falls in a known subnet, fired-and-forgotten from
+  // the asset write. Both fixture assets live in `inside`, at exactly the two
+  // addresses reserved below — so with the assets created first, that auto-create
+  // races these `reserve()` calls for the same
+  // `@@unique([subnetId, ipAddress, status])` slot, and when it wins the fixture
+  // dies on a P2002 (CI 2026-09-15, run 34974147361 — note it killed only the two
+  // reservations in `inside`, never the one in `insideAlt`, where no asset holds
+  // the address as its primary).
+  //
+  // Creating the authoritative rows first REMOVES the race rather than narrowing
+  // it: the reconcile's step 3 defers to any active non-dns_resolved reservation
+  // already at the (subnet, ip) it targets, so it finds these and creates nothing.
+  // Production is never exposed — reservationService.create() calls
+  // releaseDnsResolvedAt() first — only a test writing reservations through raw
+  // Prisma is. Do not reorder back, and do not paper over it with a sleep.
+
+  // The address the server answers on is a VIP's mapped target…
+  await reserve(inside.id, SERVER_IP, {
+    name: "web-prod", device: FMG_DEVICE_NAME, extip: EXT_IP, role: "mapped", isVirtualServer: false,
+  });
+  // …and its associated address is a virtual server's pool member, on a gate
+  // Polaris holds no Asset row for.
+  await reserve(insideAlt.id, SERVER_ALT_IP, {
+    name: "lb-pool", device: "GATE-NOT-IN-INVENTORY", extip: EXT_IP_ALT, role: "realserver", isVirtualServer: true,
+  });
+  // A plain reservation is not a VIP.
+  await reserve(inside.id, "10.88.1.51", null);
 
   // The gate's hostname deliberately DIFFERS from its FMG device name — which
   // is the name `vipInfo.device` carries, so a hostname match finds nothing.
@@ -143,18 +179,6 @@ beforeEach(async () => {
       data: { hostname: "WEB-02", assetType: "server", status: "active", ipAddress: "10.88.1.51" },
     })
   ).id;
-
-  // The primary address is a VIP's mapped target…
-  await reserve(inside.id, SERVER_IP, {
-    name: "web-prod", device: FMG_DEVICE_NAME, extip: EXT_IP, role: "mapped", isVirtualServer: false,
-  });
-  // …and the associated address is a virtual server's pool member, on a gate
-  // Polaris holds no Asset row for.
-  await reserve(insideAlt.id, SERVER_ALT_IP, {
-    name: "lb-pool", device: "GATE-NOT-IN-INVENTORY", extip: EXT_IP_ALT, role: "realserver", isVirtualServer: true,
-  });
-  // A plain reservation is not a VIP.
-  await reserve(inside.id, "10.88.1.51", null);
 });
 
 d("GET /assets/:id/vips", () => {
