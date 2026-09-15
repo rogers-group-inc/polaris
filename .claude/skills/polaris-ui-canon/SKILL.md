@@ -1,6 +1,6 @@
 ---
 name: polaris-ui-canon
-description: "Polaris frontend (vanilla JS, no build step, public/): which file is the reference implementation of each UI pattern (SVG charts, modals, stacked modals, slide-overs, wizards, sortable/filterable tables, column layout, row context menus, condition builder, widgets, mobile sheets), the page → permission-gate table, the shared modules never to re-derive, the three themes and the transit palette the theme dial / theme strip sweep through, list-page and modal conventions, and the kit contract in design/POLARIS-UI-GUIDE.md. Load for any change under public/, any HTML/CSS/JS/UI/UX/theme/theme dial/theme strip/theme picker/dark mode/light mode/dashboard/widget/chart/mobile PWA/Dash wallboard request, anything about the sidebar or nav bar and the status panels, indicators and dots that live in it, or 'make it look like the X page'."
+description: "Polaris frontend (vanilla JS, no build step, public/): which file is the reference implementation of each UI pattern (SVG charts, modals, stacked modals, slide-overs, wizards, sortable/filterable tables, column layout, row context menus, condition builder, widgets, mobile sheets), the page → permission-gate table, the shared modules never to re-derive, the three themes and the transit palette the theme dial / theme strip sweep through, list-page and modal conventions, and the kit contract in design/POLARIS-UI-GUIDE.md. Load for any change under public/, any HTML/CSS/JS/UI/UX/theme/theme dial/theme strip/theme picker/dark mode/light mode/dashboard/widget/chart/mobile PWA/Dash wallboard request, anything about the sidebar or nav bar and the status panels, indicators and dots that live in it, anything about the Device Map or Site Map surfaces and the OpenStreetMap basemap they draw — the tile URL, the tile host, blocked or missing tiles, the tile usage policy — or 'make it look like the X page'."
 ---
 
 # Polaris UI canon
@@ -25,7 +25,7 @@ Read the canon files here for *which file in THIS repo* to copy. Inside this rep
 | the SPA shell, navigation, the sidebar status panels and their pollers, the assets page and its slide-over tabs | [references/frontend-shell.md](references/frontend-shell.md) |
 | Discovery-rules card, SSH Deployment, script publishing, export/import, Dash wallboard, mobile PWA + push | [references/frontend-surfaces.md](references/frontend-surfaces.md) |
 | the Automations page or its 6-step wizard | [references/frontend-automations-wizard.md](references/frontend-automations-wizard.md) |
-| html-to-image screenshots, or the Device Map topology graph — its layout solver AND which theme family its Cytoscape palette takes | [references/tech-stack-frontend.md](references/tech-stack-frontend.md) |
+| html-to-image screenshots; the Device Map topology graph — its layout solver AND which theme family its Cytoscape palette takes; or the OpenStreetMap basemap — the single tile host every map surface must use, and why tiles come back "Access blocked" | [references/tech-stack-frontend.md](references/tech-stack-frontend.md) |
 
 Every pattern section carries **What it is** / **Canonical implementation**
 (`path/file.js → symbol()` — no line numbers, grep the symbol) / **Key conventions** /

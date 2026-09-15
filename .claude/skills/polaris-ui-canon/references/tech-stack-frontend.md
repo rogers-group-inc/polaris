@@ -1,6 +1,17 @@
 # Tech stack — frontend rendering libraries
 
-The two Tech Stack table cells CLAUDE.md used to carry in full (moved verbatim 2026-09-06; the table now holds one line each).
+The Tech Stack table cells CLAUDE.md used to carry in full (the screenshot and graph-layout cells moved verbatim 2026-09-06; the table now holds one line each).
+
+## Mapping (Leaflet + OpenStreetMap tiles)
+
+Every geographic surface draws its basemap from **one host, one URL**: `https://tile.openstreetmap.org/{z}/{x}/{y}.png`. The OSM tile usage policy permits that URL and no other — the older `{s}` a/b/c subdomain form spreads a single viewport across three hosts instead of one multiplexed HTTP/2 connection, and OSM's operators read it as a policy violation and answer with the "Access blocked" tile image in place of the map. Polaris shipped the subdomain form until 2026-09-15, when a personal install's maps came back blocked while the Rogers Group production install — same code, different viewer egress IP — kept rendering.
+
+Four files declare the URL and they move together: `public/js/map.js → applyBasemapTheme()` (Device Map), `public/js/mobile/map-tab.js → applyBasemapTheme()` (phone Map tab), and `public/js/widgets/deviceMap.js → applyBasemap()` + `public/js/widgets/siteMap.js → applyBasemap()` (the two dashboard widgets). `src/utils/securityHeaders.ts → buildHelmetOptions()` whitelists exactly that host in CSP `imgSrc`, deliberately **without** a `*.tile.openstreetmap.org` wildcard, so a reintroduced subdomain form fails loudly at the CSP instead of quietly earning another block.
+
+Three things are NOT the cause when tiles come back blocked, because Polaris already does them right: it sends `Referrer-Policy: strict-origin-when-cross-origin` (a missing `Referer` is OSM's first-listed automatic block reason, and that policy is on their accepted list); every layer renders the `© OpenStreetMap contributors` attribution; and `public/sw.js` registers no fetch handler, so the PWA never re-requests a tile the browser has cached. The block is applied per **client IP and referring origin** — tiles are fetched by the browser, never by the Polaris server — so an install whose viewers sit behind a flagged address sees blocked tiles at any usage level, and correcting the URL does not by itself lift one. Confirm which it is by opening `https://tile.openstreetmap.org/0/0/0.png` directly in the affected browser.
+
+Dark mode is the same tiles under a CSS filter (`.polaris-basemap-dark` in `public/css/styles.css`, `.sitemap-dark` for the widget flavor), never a second tile source: CARTO's Dark Matter served the dark half until CARTO began requiring an API key on its basemap CDN. That history is why the rule is *one unkeyed host* — moving to a keyed provider, or making the tile URL an operator setting (offered and deferred 2026-09-15), is a design change across all four files plus the CSP, not a drop-in swap.
+
 ## DOM screenshots (html-to-image)
 
 html-to-image (bundled under `public/js/vendor/`) — SVG-foreignObject capture of the asset-details active tab at a canonical 1100px width (independent of the operator's slide-over size), driven by a section-picker modal (per-section include/exclude via `data-shot-section` wrappers, hidden-interface reveal, temporary chart-range swap with guaranteed restore); CSP `connect-src` whitelists the Google Fonts hosts so webfonts embed into the PNG. The Events tab swaps Screenshot for an asset-scoped CSV/PDF Export dropdown instead. The mobile SPA reuses html-to-image for the asset sheet's header Screenshot button (natural-width capture, share-sheet → clipboard → download delivery)
