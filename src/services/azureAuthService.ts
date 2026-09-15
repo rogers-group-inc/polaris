@@ -7,7 +7,6 @@
  */
 
 import { SAML, type SamlConfig, type Profile, ValidateInResponseTo } from "@node-saml/node-saml";
-import { randomBytes } from "node:crypto";
 import { createSettingStore } from "./settingsStore.js";
 import { provisionExternalUser } from "./ssoProvisioning.js";
 import { AppError } from "../utils/errors.js";
@@ -122,10 +121,6 @@ async function getSamlClient(): Promise<SAML> {
 }
 
 // ─── SAML Auth Flow ──────────────────────────────────────────────────────────
-
-export function generateRelayState(): string {
-  return randomBytes(24).toString("hex");
-}
 
 export async function getSamlLoginUrl(relayState: string): Promise<string> {
   const client = await getSamlClient();

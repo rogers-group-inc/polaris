@@ -23,7 +23,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ackUrlForEmail, ackUrlForPush, substituteAckToken } from "../../src/utils/notificationTemplate.js";
 import { fillComposedAckUrl } from "../../src/services/notificationRecipientService.js";
-import { readCookie, takeLoginTarget, rememberLoginTarget, LOGIN_NEXT_COOKIE } from "../../src/utils/loginRedirect.js";
+import {
+  readCookie,
+  takeLoginTarget,
+  rememberLoginTarget,
+  peekLoginTarget,
+  generateRelayState,
+  relayStateTarget,
+  LOGIN_NEXT_COOKIE,
+} from "../../src/utils/loginRedirect.js";
 
 const PREV_PUBLIC_URL = process.env.POLARIS_PUBLIC_URL;
 afterEach(() => {
@@ -138,10 +146,38 @@ describe("post-login return target", () => {
     rememberLoginTarget(req(), r, "/alert-ack.html?id=n1");
     expect(r.cookies[0].name).toBe(LOGIN_NEXT_COOKIE);
     expect(r.cookies[0].value).toBe("/alert-ack.html?id=n1");
-    expect(r.cookies[0].opts.sameSite).toBe("lax");
     // login.js reads it, so it cannot be HttpOnly — safeNextPath is what makes
     // that safe, not the flag.
     expect(r.cookies[0].opts.httpOnly).toBe(false);
+  });
+
+  it("goes out SameSite=None on HTTPS so it survives the IdP's cross-site POST", () => {
+    // Lax is not sent on a cross-site POST, which is exactly the shape of the
+    // SAML assertion coming back from Azure — the cookie was never present at
+    // /azure/callback, so every emailed Acknowledge link landed on "/".
+    const r = res();
+    rememberLoginTarget(req(undefined, true), r, "/alert-ack.html?id=n1");
+    expect(r.cookies[0].opts.sameSite).toBe("none");
+    expect(r.cookies[0].opts.secure).toBe(true);
+  });
+
+  it("stays Lax on plain HTTP, where a browser would drop None outright", () => {
+    const r = res();
+    rememberLoginTarget(req(undefined, false), r, "/alert-ack.html?id=n1");
+    expect(r.cookies[0].opts.sameSite).toBe("lax");
+    expect(r.cookies[0].opts.secure).toBe(false);
+  });
+
+  it("peeks without consuming, so a failed SSO round trip still has its target", () => {
+    // It takes no Response at all — there is nothing it could clear. The SAML
+    // login route is only the outbound half of a flow that can fail, and
+    // login.js still reads the cookie if the operator lands back on the form.
+    const header = `${LOGIN_NEXT_COOKIE}=%2Falert-ack.html%3Fid%3Dn1`;
+    expect(peekLoginTarget(req(header))).toBe("/alert-ack.html?id=n1");
+    // Nothing worth returning to reads as null, not as "/" — the SAML login
+    // route branches on it rather than folding "/" into the RelayState.
+    expect(peekLoginTarget(req(undefined))).toBeNull();
+    expect(peekLoginTarget(req(`${LOGIN_NEXT_COOKIE}=%2Flogin.html`))).toBeNull();
   });
 
   it("does not write a cookie for the destination login already lands on", () => {
@@ -185,6 +221,67 @@ describe("post-login return target", () => {
 
   it("survives a malformed percent-escape without throwing", () => {
     expect(readCookie(`${LOGIN_NEXT_COOKIE}=%E0%A4%A`, LOGIN_NEXT_COOKIE)).toBeNull();
+  });
+});
+
+describe("SAML RelayState as the second carrier", () => {
+  // The IdP POSTs the assertion back cross-site, where no SameSite=Lax cookie
+  // is sent — RelayState is what carries the destination across that hop.
+  const ACK = "/alert-ack.html?id=0c3a4f1e-2b7d-4a55-9f60-8e1d2c3b4a59";
+
+  it("carries an emailed ack link back, and reads it out again", () => {
+    const state = generateRelayState(ACK);
+    expect(state).toContain(".");
+    expect(relayStateTarget(state)).toBe(ACK);
+  });
+
+  it("carries the longest link Polaris sends without breaking the 80-byte ceiling", () => {
+    // A pushed ack link is the email's plus `&src=push` — the worst case the
+    // budget in loginRedirect.ts is sized against. Some IdPs truncate past 80.
+    const pushed = `${ACK}&src=push`;
+    const state = generateRelayState(pushed);
+    expect(Buffer.byteLength(state)).toBeLessThanOrEqual(80);
+    expect(relayStateTarget(state)).toBe(pushed);
+  });
+
+  it("drops a target too long to fit rather than truncating it", () => {
+    // Half a path is a worse landing than the dashboard; the cookie is the
+    // fallback here, so the relay state carries the nonce alone.
+    const state = generateRelayState("/assets.html?" + "q=".repeat(60));
+    expect(Buffer.byteLength(state)).toBeLessThanOrEqual(80);
+    expect(state).not.toContain(".");
+    expect(relayStateTarget(state)).toBeNull();
+  });
+
+  it("stays an opaque nonce when there is nowhere in particular to return", () => {
+    for (const nothing of [undefined, null, "/", ""]) {
+      const state = generateRelayState(nothing);
+      expect(state).not.toContain(".");
+      expect(relayStateTarget(state)).toBeNull();
+    }
+  });
+
+  it("is unguessable — two calls never collide", () => {
+    const seen = new Set(Array.from({ length: 200 }, () => generateRelayState(ACK)));
+    expect(seen.size).toBe(200);
+  });
+
+  it("re-sanitizes on the way back in, since the IdP and the browser touched it", () => {
+    // A relay state is echoed by a third party, so what comes back is
+    // untrusted input — the same open-redirect guard runs on it as on the
+    // cookie. Nothing here is authorized by RelayState; it names a page.
+    expect(relayStateTarget("nonce.https://evil.example.net/steal")).toBeNull();
+    expect(relayStateTarget("nonce.//evil.example.net/steal")).toBeNull();
+    expect(relayStateTarget("nonce./\\evil.example.net/steal")).toBeNull();
+    // Landing back on the login form would read as a failed sign-in.
+    expect(relayStateTarget("nonce./login.html")).toBeNull();
+    // Non-strings (a missing RelayState in the POST body) are not a crash.
+    expect(relayStateTarget(undefined)).toBeNull();
+    expect(relayStateTarget(42)).toBeNull();
+  });
+
+  it("splits on the FIRST separator, so a dotted path survives intact", () => {
+    expect(relayStateTarget("abc./alert-ack.html?id=n1")).toBe("/alert-ack.html?id=n1");
   });
 });
 
