@@ -30,7 +30,9 @@ invariants and "when changing this" checklists are what make a change land right
 | `polaris-docs-sync` | a commit made outside `/polaris-deploy`; after `check:docs` fails | `/polaris-docs-sync` only |
 
 In-place references the skills point at: `.env.example` (runtime variables, with comments),
-`docs/INSTALL.md` (install + disk sizing), `DEVELOPMENT.md` (local dev stack),
+`docs/INSTALL.md` (fresh installs + disk sizing), `docs/UPGRADING.md` (every existing-install
+runbook: a runtime major, PostgreSQL 15 → 17, AppStream → PGDG, the legacy single-process
+layout, the nginx cutover), `DEVELOPMENT.md` (local dev stack),
 `design/POLARIS-UI-GUIDE.md` (the portable UI contract — a drop-in zone, never edited here),
 `.design-sync/NOTES.md` (shipping the UI kit to Claude Design — triggers, procedure, auth
 gate; `/design-sync` reads it), `agent/README.md`, `CONTRIBUTING.md`.

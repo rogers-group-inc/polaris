@@ -76,7 +76,7 @@ The same `METRICS_TOKEN` from `.env` gates every role endpoint. If Prometheus ru
 
 ### Behind nginx (Phase 1 nginx-front mode — recommended for off-host Prometheus)
 
-If you've run `deploy/migrate-to-nginx.sh` (see [docs/INSTALL.md](../INSTALL.md#optional-nginx-front-end-opt-in-https-termination-move)), nginx terminates TLS on 443 and path-routes the four metrics endpoints to the localhost-bound listeners. This is the **cleanest setup for off-host Prometheus**: one bearer-over-TLS scrape job per role, all targeting the same `polaris.example.com:443`, no firewall rules for 9101/9102/9110, no plain-HTTP bearer travel.
+If you've run `deploy/migrate-to-nginx.sh` (see [docs/UPGRADING.md](../UPGRADING.md#migrating-an-existing-install-to-the-nginx-front-end)), nginx terminates TLS on 443 and path-routes the four metrics endpoints to the localhost-bound listeners. This is the **cleanest setup for off-host Prometheus**: one bearer-over-TLS scrape job per role, all targeting the same `polaris.example.com:443`, no firewall rules for 9101/9102/9110, no plain-HTTP bearer travel.
 
 ```yaml
 scrape_configs:

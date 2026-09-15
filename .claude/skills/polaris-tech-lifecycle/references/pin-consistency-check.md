@@ -67,6 +67,18 @@ after that target was dropped to 17. Both were caught by someone reading careful
 a mechanism. Only `dated` technologies are compared — TimescaleDB, Windows Server and PgBouncer
 state prose in those columns deliberately, having no dated lifecycle to mirror.
 
+**`docs/UPGRADING.md` is deliberately NOT a site, and must not become one.** Every existing-install
+runbook lives there (Node, the signing JDK, PostgreSQL 15 → 17, AppStream → PGDG, the legacy
+single-process layout, the nginx cutover), and an upgrade runbook names the version you are
+*leaving* beside the one you are going to: `postgresql-15.service`, `/usr/pgsql-15/`,
+`openjdk-17-jre-headless`, `java-17-openjdk-headless`. Every one of those matches a family's pin
+regex, so adding the file to `postgres-major`, `java-major` or `nginx-floor` makes the equality
+check fail on text that is correct. What keeps its *target* numbers honest instead is the playbook:
+`docs/UPGRADING.md` is in the `files` list of `node-major`, `postgres-major` and `java-major` in
+`src/data/platformEol.json`, so a bump that follows the playbook opens it. If you ever do want it
+machine-checked, the site has to be anchored to the runbook's target line rather than to the
+package name — a bare package regex cannot tell "install this" from "remove that".
+
 **A comment is not a declaration site.** Whole-line comments are stripped before matching.
 `setup-rhel.sh` explains its module reset with "nodejs:20 fails with cannot enable multiple
 streams otherwise" directly above `dnf module enable -y nodejs:24`, and matching that comment

@@ -340,6 +340,7 @@
         "deploy/setup-ubuntu.sh",
         "deploy/setup-ubuntu-nodb.sh",
         "docs/INSTALL.md",
+        "docs/UPGRADING.md",
         "README.md",
         "CLAUDE.md"
       ]
@@ -353,7 +354,7 @@
         "Check the TimescaleDB package for the target major exists (timescaledb-2-postgresql-N) before planning anything else.",
         "Take a verified backup and confirm a restore into a scratch database first.",
         "Install the target major side by side from PGDG, then pg_upgrade (or dump/restore for a small install).",
-        "On Docker, steps 3 and 5-7 do not apply: the image carries one major's binaries, so it is dump then restore into a NEW container with a NEW data directory, with the old container kept as the rollback. A tag swap over the existing data directory refuses to start, and a copy of the old appdata restores only back into the old major. See docs/INSTALL.md - On Docker / Unraid, where PostgreSQL is its own container.",
+        "On Docker, steps 3 and 5-7 do not apply: the image carries one major's binaries, so it is dump then restore into a NEW container with a NEW data directory, with the old container kept as the rollback. A tag swap over the existing data directory refuses to start, and a copy of the old appdata restores only back into the old major. See docs/UPGRADING.md - On Docker / Unraid, where PostgreSQL is its own container.",
         "On Docker, remember a new data directory is a new postgresql.conf: ssl and max_connections revert to the image defaults, and both are set as container arguments (-c ssl=on -c max_connections=N), not in a file the image keeps. If the old container had TLS and the new one does not, the unchanged DATABASE_URL fails on 'The server does not support SSL connections'.",
         "Re-run the timescaledb extension update and confirm every hypertable and chunk survived.",
         "Rewrite the per-host drop-in /etc/systemd/system/<unit>.d/20-postgres.conf with the new unit name - the SHIPPED units name no PostgreSQL unit and must not be edited.",
@@ -372,6 +373,7 @@
         "Dockerfile.dev",
         "compose.dev.yml",
         "docs/INSTALL.md",
+        "docs/UPGRADING.md",
         "README.md",
         "CONTRIBUTING.md",
         "CLAUDE.md"
@@ -436,10 +438,10 @@
     {
       "id": "java-major",
       "title": "Move the Java major used for agent signing",
-      "docAnchor": "docs/INSTALL.md#upgrading-the-signing-jdk-to-java-25-on-an-existing-install",
+      "docAnchor": "docs/UPGRADING.md#upgrading-the-signing-jdk-to-java-25",
       "risk": "low",
       "steps": [
-        "FOR AN OPERATOR whose host is below the minimum: no repo change is needed - install the current JDK on the host running the web role and remove the old one. Steps per platform, plus how to verify and roll back, are in docs/INSTALL.md - 'Upgrading the signing JDK to Java 25 on an existing install'. The remaining steps move the major Polaris itself targets, which is a code change.",
+        "FOR AN OPERATOR whose host is below the minimum: no repo change is needed - install the current JDK on the host running the web role and remove the old one. Steps per platform, plus how to verify and roll back, are in docs/UPGRADING.md - 'Upgrading the signing JDK to Java 25'. The remaining steps move the major Polaris itself targets, which is a code change.",
         "Confirm the jsign release in use runs on the target major (7.5 is Java 8 bytecode, so anything from 8 up), and that the JDK package EXISTS on every platform - RHEL AppStream, Debian and both Ubuntu LTSes. One platform without it splits the fleet's signing JDK.",
         "Bump the JDK package in the Dockerfile and in every setup script.",
         "Bump JAVA_MINIMUM in src/services/agentSigningService.ts - the number the running app states. Both signingAvailability error strings interpolate it and the Code-signing card renders availability.javaMinimum, so the browser carries no literal of its own. check:versions reads it, and it is the only Java site inside src/.",
@@ -453,7 +455,8 @@
         "deploy/setup-ubuntu-nodb.sh",
         "src/services/agentSigningService.ts",
         "public/js/agent-build.js",
-        "docs/INSTALL.md"
+        "docs/INSTALL.md",
+        "docs/UPGRADING.md"
       ]
     },
     {

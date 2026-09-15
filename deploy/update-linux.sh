@@ -94,8 +94,8 @@ if [[ -f /etc/polaris/ha-node ]]; then
   trap 'rm -f "$HA_HOLD_FILE"' EXIT
 elif ! systemctl is-enabled --quiet polaris.target 2>/dev/null; then
   echo "[ERROR] polaris.target is not enabled. This updater only supports the split-role layout." >&2
-  echo "[ERROR] If you're on the legacy single-process polaris.service install, follow docs/INSTALL.md → " >&2
-  echo "[ERROR] 'Migrating from single-process polaris.service' before running this script." >&2
+  echo "[ERROR] If you're on the legacy single-process polaris.service install, follow docs/UPGRADING.md → " >&2
+  echo "[ERROR] 'Upgrading a legacy single-process install' before running this script." >&2
   exit 1
 fi
 SYSTEMD_UNIT="polaris.target"
