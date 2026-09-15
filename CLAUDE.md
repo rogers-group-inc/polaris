@@ -130,6 +130,29 @@ npm run check:docs && npm run check:versions && npm run check:deps
 
 ---
 
+## Deployment posture — this is a public, open-source application
+
+Polaris is FOSS and installed by strangers, not only by us. Nothing may assume
+the Rogers Group install's shape. Concretely, a change must keep working when:
+
+- **Auth is any of the five paths** — local accounts, TOTP, Azure SAML, OIDC,
+  Entra App Proxy header SSO. Never fix a login-adjacent bug for the provider
+  you happen to run; the others have different transport semantics (the SAML
+  callback is a cross-site POST, OIDC's is a same-site GET).
+- **TLS terminates anywhere** — direct, nginx, a corporate load balancer, or
+  plain HTTP on a lab VM. `req.secure` can be false on a real HTTPS install;
+  never let a feature hard-require `Secure` cookies or an absolute public URL.
+- **`POLARIS_PUBLIC_URL` may be unset** — email links degrade, the app does not.
+- **Install path varies** — RHEL/systemd, Docker/podman compose, Unraid.
+- **Fleet size spans 1 to 2000+ assets** (see the scale-check convention below).
+- **No integration is guaranteed** — no FortiManager, no vCenter, no Entra.
+  Every integration is optional and absent by default.
+
+When a fix is correct for one deployment shape and silently wrong for another,
+ship the one that is correct for all of them, and cover each shape with a test.
+
+---
+
 ## Key Coding Conventions
 
 - All IP math lives in `src/utils/cidr.ts`. **Never** do string manipulation on IPs elsewhere.
