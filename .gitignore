@@ -16,6 +16,11 @@ data/backups/
 # First-run setup marker — written per-host after setup finalizes
 .setup-complete
 
+# This install's identity for the active-instance heartbeat (docs/HA.md §5).
+# Generated per host on first production boot; committing one would hand every
+# install the same identity and retire the guard.
+data/instance-id
+
 # Per-developer Claude Code settings (permissions, hook config) and scratch worktrees are
 # local; the project SKILLS under .claude/skills/ are tracked project memory and must NOT be
 # ignored (git cannot re-include a child of an excluded directory, hence the `/*` + `!` pair).

@@ -1,12 +1,16 @@
 /**
  * src/jobs/activeInstanceHeartbeat.ts
  *
- * Re-stamps `Setting("ha.activeInstance")` every 30s with this host's name and
- * pid, so the database itself records which host is running the schedulers.
- * The boot-time counterpart (checkActiveInstanceConflict, called from
- * src/app.ts) refuses to start when a DIFFERENT hostname holds a fresh stamp —
- * the last line of defence against two app instances on one database. Rationale
- * and the three layers in front of it are in haHeartbeatService's header.
+ * Re-stamps `Setting("ha.activeInstance")` every 30s with this install's ID,
+ * hostname and pid, so the database itself records which install is running the
+ * schedulers. The boot-time counterpart (checkActiveInstanceConflict, called
+ * from src/app.ts) refuses to start when a DIFFERENT install holds a fresh
+ * stamp — the last line of defence against two app instances on one database.
+ * Rationale, the three layers in front of it, and why the identity is the
+ * install and not the hostname are in haHeartbeatService's header.
+ *
+ * The counterpart on the way down is releaseActiveInstance(), called from the
+ * SIGTERM/SIGINT handler in src/app.ts.
  *
  * Every 10th tick also samples pg_current_wal_lsn() into a 24h ring, which is
  * how an operator sizes the WAN link and the replication slot cap BEFORE

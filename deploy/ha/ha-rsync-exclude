@@ -14,6 +14,13 @@
 # tab and update card report the primary's progress as its own.
 .update-status.json
 
+# This node's own identity for the active-instance heartbeat (docs/HA.md §5).
+# It MUST differ between the two nodes: the guard refuses a boot when another
+# INSTALL holds a fresh stamp, so syncing the primary's id would make the
+# standby indistinguishable from it and silently retire layer 5 — on the exact
+# topology it exists for. Each node generates its own on first boot.
+data/instance-id
+
 # Build caches: large, host-local, and rebuilt on demand.
 .cache/
 
