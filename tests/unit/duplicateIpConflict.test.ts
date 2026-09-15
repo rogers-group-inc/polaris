@@ -12,6 +12,9 @@ import {
   toStoredMember,
   duplicateIpRejectMessage,
   DUPLICATE_IP_COLLISION_REASON,
+  addressIsDeliberate,
+  groupHasDisjointSources,
+  DELIBERATE_RESERVATION_SOURCE_TYPES,
   type IpClaimRow,
 } from "../../src/services/duplicateIpConflictService.js";
 
@@ -333,5 +336,149 @@ describe("duplicateIpRejectMessage", () => {
 
   it("survives a conflict with no members recorded", () => {
     expect(duplicateIpRejectMessage({ proposedAssetFields: null })).toContain("unknown");
+  });
+});
+
+// ─── Cross-source clause (rule 40, the second eligibility bar) ───────────────
+
+describe("addressIsDeliberate", () => {
+  it("is false when IPAM has no reservation for the address", () => {
+    expect(addressIsDeliberate(null)).toBe(false);
+    expect(addressIsDeliberate(undefined)).toBe(false);
+  });
+
+  it("is false for a plain DHCP lease — two devices may legitimately trade it", () => {
+    expect(addressIsDeliberate({ sourceType: "dhcp_lease", dhcpBinding: "lease", vipInfo: null })).toBe(false);
+  });
+
+  it("is true for every deliberate sourceType", () => {
+    for (const kind of DELIBERATE_RESERVATION_SOURCE_TYPES) {
+      expect(addressIsDeliberate({ sourceType: kind, dhcpBinding: null, vipInfo: null })).toBe(true);
+    }
+  });
+
+  // Business rule 23: the three columns are three separate facts, and the two
+  // below are exactly the cases reading sourceType alone would get wrong.
+  it("is true for a VIP stamped on a row whose sourceType still says dhcp_lease", () => {
+    expect(addressIsDeliberate({
+      sourceType: "dhcp_lease",
+      dhcpBinding: "lease",
+      vipInfo: { name: "vip-web", device: "FGT-01" },
+    })).toBe(true);
+  });
+
+  it("is true when the gate serves it as a reservation whatever sourceType says", () => {
+    expect(addressIsDeliberate({ sourceType: "dhcp_lease", dhcpBinding: "reservation", vipInfo: null })).toBe(true);
+  });
+});
+
+describe("groupHasDisjointSources", () => {
+  const members = [{ id: "a1" }, { id: "a2" }];
+
+  it("is true when two claimants share no source kind", () => {
+    const idx = new Map([
+      ["a1", new Set(["entra", "intune", "ad"])],
+      ["a2", new Set(["fortigate-endpoint"])],
+    ]);
+    expect(groupHasDisjointSources(members, idx)).toBe(true);
+  });
+
+  it("is false when one integration reported both rows", () => {
+    const idx = new Map([
+      ["a1", new Set(["fortigate-endpoint"])],
+      ["a2", new Set(["fortigate-endpoint"])],
+    ]);
+    expect(groupHasDisjointSources(members, idx)).toBe(false);
+  });
+
+  it("is false when the sets merely overlap — a shared kind is a cross-link", () => {
+    const idx = new Map([
+      ["a1", new Set(["ad", "entra"])],
+      ["a2", new Set(["entra", "fortigate-endpoint"])],
+    ]);
+    expect(groupHasDisjointSources(members, idx)).toBe(false);
+  });
+
+  it("abstains for a member with no source rows rather than qualifying on it", () => {
+    const idx = new Map([["a1", new Set(["entra"])]]);
+    expect(groupHasDisjointSources(members, idx)).toBe(false);
+    expect(groupHasDisjointSources(members, new Map())).toBe(false);
+  });
+
+  it("finds a disjoint PAIR inside a larger group", () => {
+    const idx = new Map([
+      ["a1", new Set(["entra"])],
+      ["a2", new Set(["entra"])],
+      ["a3", new Set(["fortigate-endpoint"])],
+    ]);
+    expect(groupHasDisjointSources([{ id: "a1" }, { id: "a2" }, { id: "a3" }], idx)).toBe(true);
+  });
+});
+
+describe("groupCurrentClaims — cross-source clause", () => {
+  const endpoints = [
+    row({ id: "a1", assetType: "workstation", macAddress: null, hostname: "WKS-042" }),
+    row({ id: "a2", assetType: "workstation", macAddress: "AA:BB:CC:00:00:09", hostname: "wks042.corp" }),
+  ];
+  const disjoint = {
+    sourceKindsByAsset: new Map([
+      ["a1", new Set(["entra", "intune", "ad"])],
+      ["a2", new Set(["fortigate-endpoint"])],
+    ]),
+    deliberateIps: new Set(["10.1.1.50"]),
+  };
+
+  it("still refuses endpoint-only duplicates with no context (unchanged default)", () => {
+    expect(groupCurrentClaims(endpoints, CUTOFF)).toEqual([]);
+  });
+
+  it("raises when sources are disjoint AND the address is deliberate", () => {
+    const groups = groupCurrentClaims(endpoints, CUTOFF, disjoint);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].qualifiedBy).toBe("cross-source");
+  });
+
+  it("stays silent on a leased address even with disjoint sources", () => {
+    const groups = groupCurrentClaims(endpoints, CUTOFF, {
+      ...disjoint,
+      deliberateIps: new Set<string>(),
+    });
+    expect(groups).toEqual([]);
+  });
+
+  it("stays silent on a deliberate address when one integration reported both", () => {
+    const groups = groupCurrentClaims(endpoints, CUTOFF, {
+      ...disjoint,
+      sourceKindsByAsset: new Map([
+        ["a1", new Set(["fortigate-endpoint"])],
+        ["a2", new Set(["fortigate-endpoint"])],
+      ]),
+    });
+    expect(groups).toEqual([]);
+  });
+
+  // The older, broader clause keeps the label when both apply.
+  it("labels a group asset-type when infrastructure is on the card", () => {
+    const withSwitch = [row({ id: "a1", assetType: "switch" }), row({ id: "a2", macAddress: null })];
+    const groups = groupCurrentClaims(withSwitch, CUTOFF, disjoint);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].qualifiedBy).toBe("asset-type");
+  });
+
+  // Every other refusal still applies on top of the new clause.
+  it("still collapses two rows that share a MAC", () => {
+    const sameDevice = [
+      row({ id: "a1", assetType: "workstation", macAddress: "AA:BB:CC:00:00:09" }),
+      row({ id: "a2", assetType: "workstation", macAddress: "AA:BB:CC:00:00:09" }),
+    ];
+    expect(groupCurrentClaims(sameDevice, CUTOFF, disjoint)).toEqual([]);
+  });
+
+  it("still drops a stale claim before testing eligibility", () => {
+    const stale = [
+      endpoints[0],
+      row({ id: "a2", assetType: "workstation", macAddress: null, lastSeen: STALE, ipLastSeen: STALE }),
+    ];
+    expect(groupCurrentClaims(stale, CUTOFF, disjoint)).toEqual([]);
   });
 });

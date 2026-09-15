@@ -438,6 +438,30 @@ function canEditReservation(reservation) {
   return !!(reservation && reservation.createdBy && reservation.createdBy === currentUsername);
 }
 
+// ─── Discovery-source vocabulary ─────────────────────────────────────────────
+// AssetSource.sourceKind -> the name an operator reads. Lives here rather than
+// on the Assets page because three surfaces render it: the asset Sources tab,
+// the merge modal's comparison, and the duplicate-IP conflict card — and the
+// last two are reachable from the Events page, which does not load assets.js.
+// A kind with no entry falls through to the raw string, which is readable
+// enough that a new integration is never blocked on updating this map.
+var _assetSourceLabels = {
+  "entra":              "Microsoft Entra ID",
+  "intune":             "Microsoft Intune",
+  "ad":                 "Active Directory",
+  "fortigate-firewall": "FortiGate (firewall)",
+  "fortiswitch":        "FortiSwitch",
+  "fortiap":            "FortiAP",
+  "fortigate-endpoint": "FortiGate / FortiManager (endpoint)",
+  "snmp-sysdescr": "Device self-report (SNMP sysDescr)",
+  "vcenter-vm":         "VMware vCenter (VM)",
+  "vcenter-host":       "VMware vCenter (ESXi host)",
+  "arc":                "Azure Arc",
+  "arc-k8s":            "Azure Arc (Kubernetes)",
+  "polaris-agent":      "Polaris Agent",
+  "manual":             "Manual / other",
+};
+
 // ─── Sidebar Navigation ──────────────────────────────────────────────────────
 
 // `perm` hides the entry unless the role holds that function key at that
