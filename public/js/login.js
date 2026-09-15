@@ -182,12 +182,18 @@ document.getElementById("btn-demo-setup").addEventListener("click", function () 
 
 // Passkey sign-in. The button appears only when the install allows passkeys
 // for login AND this page can actually run a ceremony (HTTPS or localhost,
-// browser support) — see PolarisWebAuthn.supported().
+// browser support) — see PolarisWebAuthn.supported() — AND the RP the server
+// derived actually covers this page's own host, which a reverse proxy that
+// rewrites the Host header breaks (PolarisWebAuthn.unavailableHere). An
+// unsigned-in visitor gets no explanation for any of it: the reason would
+// describe the install's plumbing to a stranger, and the account modal says it
+// in full to someone who has already logged in.
 (async function () {
   try {
     if (!window.PolarisWebAuthn || !PolarisWebAuthn.supported()) return;
     var cfg = await PolarisAuthFlow.fetchPasskeyConfig();
     if (!cfg.loginEnabled) return;
+    if (PolarisWebAuthn.unavailableHere(cfg.rpId)) return;
     document.getElementById("passkey-section").style.display = "";
   } catch (_) {}
 })();

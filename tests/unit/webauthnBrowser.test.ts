@@ -23,6 +23,7 @@ const SRC = readFileSync(join(process.cwd(), "public", "js", "webauthn.js"), "ut
 
 interface Mod {
   supported: () => boolean;
+  unavailableHere: (rpId?: string) => string | null;
   platformAuthenticatorAvailable: () => Promise<boolean>;
   create: (options: Record<string, unknown>) => Promise<Record<string, any>>;
   get: (options: Record<string, unknown>) => Promise<Record<string, any>>;
@@ -138,6 +139,56 @@ describe("supported", () => {
   it("is false when the credentials container is missing", () => {
     setCredentials(undefined);
     expect(load().supported()).toBe(false);
+  });
+});
+
+describe("unavailableHere", () => {
+  // The server decides availability from the request that reached it; the
+  // browser decides it from the page it is on. Behind a reverse proxy the two
+  // disagree, and this is the side that can see it.
+  function at(url: string) {
+    (globalThis as Record<string, any>).window.location.href = url;
+  }
+
+  it("is null when the page's host IS the RP", () => {
+    at("https://polaris.example.com/users.html");
+    expect(load().unavailableHere("polaris.example.com")).toBeNull();
+  });
+
+  it("is null when the RP is a parent domain — the multi-name override", () => {
+    at("https://polaris.example.com/users.html");
+    expect(load().unavailableHere("example.com")).toBeNull();
+  });
+
+  it("is null when the server named no RP", () => {
+    at("https://polaris.example.com/users.html");
+    expect(load().unavailableHere(undefined)).toBeNull();
+  });
+
+  it("names the proxy when the RP does not cover this page's host", () => {
+    // What a proxy sending its own upstream name as Host produces: the server
+    // derives an rpId nobody's browser will accept.
+    at("https://polaris.example.com/users.html");
+    const reason = load().unavailableHere("polaris-internal.lan");
+    expect(reason).toMatch(/Host header/);
+    expect(reason).toMatch(/polaris-internal\.lan/);
+    expect(reason).toMatch(/polaris\.example\.com/);
+  });
+
+  it("refuses a suffix that is not a domain boundary", () => {
+    at("https://evilexample.com/users.html");
+    expect(load().unavailableHere("example.com")).toMatch(/Host header/);
+  });
+
+  it("reports the secure context first, since it explains more", () => {
+    at("http://polaris.example.com/users.html");
+    (globalThis as Record<string, any>).window.isSecureContext = false;
+    expect(load().unavailableHere("polaris.example.com")).toMatch(/secure context/);
+  });
+
+  it("reports a browser with no WebAuthn at all", () => {
+    (globalThis as Record<string, any>).window.PublicKeyCredential = undefined;
+    expect(load().unavailableHere("polaris.example.com")).toMatch(/does not support/);
   });
 });
 

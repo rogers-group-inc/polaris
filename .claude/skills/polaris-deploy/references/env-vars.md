@@ -93,6 +93,10 @@ SESSION_SECRET=changeme
 # Acknowledge link then stops returning the reader to the alert after SSO
 # (business rule 25; the SAML RelayState backstops it, so this degrades rather
 # than breaks). The shipped nginx configs already send `X-Forwarded-Proto https`.
+# The same `req.secure` decides whether PASSKEYS are offered: WebAuthn needs a
+# secure context, so with this unset behind a TLS-terminating proxy the Passkeys
+# modal calls the install insecure and draws no button (business rule 64 — the
+# message names this variable whenever a forwarded proto header was present).
 TRUST_PROXY=
 
 # Active-instance heartbeat kill switch (HA). Production-only guard: the web

@@ -54,6 +54,39 @@
       window.isSecureContext === true;
   }
 
+  /**
+   * Why THIS page cannot run a ceremony the SERVER believes is available, or
+   * null when it can.
+   *
+   * The server decides availability from the request it received; the browser
+   * decides it from the page it is on, and behind a reverse proxy those two can
+   * disagree. The disagreement worth naming is a rewritten Host: Polaris derives
+   * the RP ID from the Host header that reached it, so a proxy passing its own
+   * upstream name through produces an rpId that is not a registrable suffix of
+   * the page's origin — and the browser answers that with a bare SecurityError
+   * ("This page's address does not match…") that names no cause. Comparing the
+   * two here turns it into the proxy header it actually is.
+   *
+   * @param rpId the server's derived RP ID (availability.rpId), or falsy
+   */
+  function unavailableHere(rpId) {
+    if (typeof window.PublicKeyCredential !== "function" || !(navigator.credentials && navigator.credentials.create)) {
+      return "This browser does not support passkeys.";
+    }
+    if (window.isSecureContext !== true) {
+      return "This page is not a secure context, so the browser will not run a passkey ceremony. Reach Polaris over HTTPS, or from localhost.";
+    }
+    var host = String(window.location.hostname || "").toLowerCase();
+    var rp = String(rpId || "").toLowerCase();
+    if (rp && host !== rp && !host.endsWith("." + rp)) {
+      return 'Polaris read the passkey domain "' + rp + '" off the Host header of this request, but the page is on "' + host +
+        '" — a reverse proxy in front of Polaris is replacing the Host header, and the browser refuses a passkey scoped to a domain ' +
+        "that is not its own. Have the proxy forward the original host (nginx: proxy_set_header Host $host), or set the passkey " +
+        "domain explicitly under Authentication → Settings.";
+    }
+    return null;
+  }
+
   /** True when this device has a built-in authenticator (Touch ID, Windows Hello). */
   async function platformAuthenticatorAvailable() {
     if (!supported()) return false;
@@ -165,6 +198,7 @@
 
   window.PolarisWebAuthn = {
     supported: supported,
+    unavailableHere: unavailableHere,
     platformAuthenticatorAvailable: platformAuthenticatorAvailable,
     create: create,
     get: get,
