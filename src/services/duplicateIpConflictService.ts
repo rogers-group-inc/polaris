@@ -12,12 +12,26 @@
  * Two Assets whose `ipAddress` is the same address while both are in a status
  * that can be on the network (i.e. NOT one of UNMONITORABLE_STATUSES —
  * decommissioned / disabled / storage / quarantined; see business rule 10),
- * where AT LEAST ONE of them is a type whose address was CHOSEN rather than
- * handed out by a pool (CONFLICT_ELIGIBLE_ASSET_TYPES — switch / access_point /
- * firewall / server). Two endpoints trading a DHCP address is DHCP working; an
- * endpoint sitting on an access point's address is an outage, so the endpoint
- * still appears as a claimant on the card, it just cannot raise the conflict by
- * itself.
+ * where the address was ASSIGNED rather than handed out by a pool. Two
+ * endpoints trading a DHCP address is DHCP working; an endpoint sitting on an
+ * access point's address is an outage. There are TWO ways a group can clear
+ * that bar, and either is enough:
+ *
+ *   • **The device was addressed on purpose** — at least one claimant is a
+ *     CONFLICT_ELIGIBLE_ASSET_TYPES member (switch / access_point / firewall /
+ *     server). A non-qualifying claimant still appears on the card, it just
+ *     cannot raise the conflict by itself.
+ *   • **The ADDRESS was assigned on purpose, and the claimants come from
+ *     different integrations** — `groupHasDisjointSources` + `addressIsDeliberate`.
+ *     This is the cross-source clause: one physical device that two
+ *     integrations recorded as two Asset rows (the classic being a FortiGate
+ *     endpoint that never cross-linked with its Entra/Intune/AD identity) is a
+ *     duplicate RECORD, and the merge engine is its answer. It is gated on IPAM
+ *     saying the address is deliberate — a VIP, an interface IP, a DHCP
+ *     reservation or an operator's manual row — because on a leased address two
+ *     genuinely different devices can legitimately trade places inside the
+ *     freshness window, and reporting those would bury the real ones.
+ *
  * One address answering for two devices breaks routing, monitoring and
  * quarantine alike, and nothing else in Polaris notices: the IPAM half has a
  * unique index per subnet (business rule 3) but inventory has no such
@@ -73,6 +87,7 @@ import { UNMONITORABLE_STATUSES } from "../utils/assetInvariants.js";
 import { isValidIpAddress } from "../utils/cidr.js";
 import { resolvePendingIpOverrideConflicts } from "./ipOverrideService.js";
 import { mergeAssets } from "./assetMergeService.js";
+import { buildIpContexts } from "./subnetService.js";
 
 export const DUPLICATE_IP_COLLISION_REASON = "duplicate-ip";
 
@@ -114,6 +129,28 @@ export const CLAIM_FRESH_DAYS = 7;
  */
 export const CONFLICT_ELIGIBLE_ASSET_TYPES = ["switch", "access_point", "firewall", "server"];
 
+/**
+ * `Reservation.sourceType` values that mean somebody ASSIGNED this address,
+ * as opposed to a pool handing it out for the length of a lease.
+ *
+ * `dhcp_lease` is the one deliberately absent: a lease is exactly the case
+ * where two different devices legitimately hold one address a few days apart,
+ * which is what the cross-source clause must not report.
+ *
+ * Note this list is NOT the whole test — see `addressIsDeliberate`. Business
+ * rule 23 splits ownership (`sourceType`) from how the gate serves the address
+ * (`dhcpBinding`), and a VIP is a third fact again (`vipInfo`), so a row can
+ * say "vip" while the gate serves it as a reservation, or say "dhcp_lease"
+ * while carrying a VIP stamped on it by the Phase 3c collision path. Reading
+ * `sourceType` alone would miss both.
+ */
+export const DELIBERATE_RESERVATION_SOURCE_TYPES = [
+  "manual",
+  "dhcp_reservation",
+  "interface_ip",
+  "vip",
+];
+
 /** Safety cap on the duplicate scan's result set (rows, not groups). */
 const SCAN_ROW_CAP = 5000;
 
@@ -151,7 +188,33 @@ export interface DuplicateIpMember {
 export interface DuplicateIpGroup {
   ip: string;
   members: IpClaimRow[];
+  /**
+   * Which eligibility clause admitted this group. `asset-type` is the original
+   * rule 40(g); `cross-source` is the clause that reports one device recorded
+   * by two integrations on a deliberately-assigned address. The card renders a
+   * different explainer per value, because the two have different answers —
+   * the first usually ends in "move one of them", the second in a merge.
+   */
+  qualifiedBy: "asset-type" | "cross-source";
 }
+
+/**
+ * The extra facts the cross-source clause needs, resolved once per pass.
+ * Separated from the pure grouping so `groupCurrentClaims` stays testable with
+ * no database: the caller loads, the decision stays pure.
+ */
+export interface CrossSourceContext {
+  /** assetId → the set of `AssetSource.sourceKind` rows it carries. */
+  sourceKindsByAsset: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Addresses IPAM says were deliberately assigned (`addressIsDeliberate`). */
+  deliberateIps: ReadonlySet<string>;
+}
+
+/** An empty context — every group then falls back to the asset-type clause. */
+export const EMPTY_CROSS_SOURCE_CONTEXT: CrossSourceContext = {
+  sourceKindsByAsset: new Map(),
+  deliberateIps: new Set(),
+};
 
 // ─── Pure decisions (unit-tested in tests/unit/duplicateIpConflict.test.ts) ──
 
@@ -206,8 +269,78 @@ export function groupHasEligibleType(members: Pick<IpClaimRow, "assetType">[]): 
   return members.some((m) => CONFLICT_ELIGIBLE_ASSET_TYPES.includes((m.assetType || "").trim()));
 }
 
+/**
+ * Did somebody ASSIGN this address, per IPAM?
+ *
+ * Three columns answer three different questions (business rule 23), and the
+ * VIP/DHCP collision path in discovery Phase 3c writes them independently, so
+ * all three are read:
+ *
+ *   • `vipInfo` non-null — a VIP external. Always deliberate, and it survives
+ *     on a row whose `sourceType` still says `dhcp_lease` (the VIP-arrives-
+ *     second branch stamps `vipInfo` WITHOUT flipping `sourceType`).
+ *   • `sourceType` in DELIBERATE_RESERVATION_SOURCE_TYPES — ownership.
+ *   • `dhcpBinding === "reservation"` — the gate serves it as a MAC→IP binding.
+ *     Phase 5 writes this and deliberately never flips `sourceType`, so a row
+ *     can read `vip` (or anything else) here and still be gate-reserved.
+ *
+ * No reservation at all is NOT deliberate: nothing in IPAM says the address was
+ * assigned, so a collision on it is as likely to be pool churn as a duplicate.
+ */
+export function addressIsDeliberate(
+  reservation: {
+    sourceType?: string | null;
+    dhcpBinding?: string | null;
+    vipInfo?: unknown;
+  } | null | undefined,
+): boolean {
+  if (!reservation) return false;
+  if (reservation.vipInfo !== null && reservation.vipInfo !== undefined) return true;
+  if (reservation.dhcpBinding === "reservation") return true;
+  const kind = (reservation.sourceType || "").trim();
+  return DELIBERATE_RESERVATION_SOURCE_TYPES.includes(kind);
+}
+
+/**
+ * Do at least two of these claimants come from DIFFERENT integrations?
+ *
+ * "Different" means their `AssetSource.sourceKind` sets are disjoint — the AD /
+ * Entra / Intune row carries {ad, entra, intune} while the FortiGate row
+ * carries {fortigate-endpoint}, and nothing cross-linked them. A shared kind
+ * means one integration reported both rows, which is a duplicate that
+ * integration's own identity resolution should be fixing rather than something
+ * to page an admin about.
+ *
+ * A member with NO source rows abstains rather than qualifying: an asset whose
+ * provenance is unknown cannot be evidence that two integrations disagree.
+ * That keeps the clause off orphaned rows and Phase-1 backfill leftovers, which
+ * are a merge job's problem (`mergeDuplicateHostnameAssets`), not an admin's.
+ */
+export function groupHasDisjointSources(
+  members: Pick<IpClaimRow, "id">[],
+  sourceKindsByAsset: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  const sets = members
+    .map((m) => sourceKindsByAsset.get(m.id))
+    .filter((s): s is ReadonlySet<string> => !!s && s.size > 0);
+  for (let i = 0; i < sets.length; i++) {
+    for (let j = i + 1; j < sets.length; j++) {
+      let shares = false;
+      for (const kind of sets[i]) {
+        if (sets[j].has(kind)) { shares = true; break; }
+      }
+      if (!shares) return true;
+    }
+  }
+  return false;
+}
+
 /** Group current claims by address and keep only the real collisions. */
-export function groupCurrentClaims(rows: IpClaimRow[], cutoff: Date): DuplicateIpGroup[] {
+export function groupCurrentClaims(
+  rows: IpClaimRow[],
+  cutoff: Date,
+  ctx: CrossSourceContext = EMPTY_CROSS_SOURCE_CONTEXT,
+): DuplicateIpGroup[] {
   const byIp = new Map<string, IpClaimRow[]>();
   for (const row of rows) {
     if (!row.ip) continue;
@@ -223,8 +356,23 @@ export function groupCurrentClaims(rows: IpClaimRow[], cutoff: Date): DuplicateI
     // Eligibility is tested on the CURRENT claims, not on everything the scan
     // returned: an address whose only qualifying claimant is a stale record is
     // two endpoints trading a DHCP lease, which is not a fault.
-    if (!groupHasEligibleType(members)) continue;
-    groups.push({ ip, members: [...members].sort((a, b) => a.id.localeCompare(b.id)) });
+    //
+    // The asset-type clause is checked FIRST and wins the label when both
+    // apply: it is the older, broader statement about the group (an AP sitting
+    // under someone else's address), and "these are two integrations' records
+    // of one device" is only the likelier story when nothing on the card is
+    // infrastructure.
+    const byType = groupHasEligibleType(members);
+    const byCrossSource =
+      !byType &&
+      ctx.deliberateIps.has(ip) &&
+      groupHasDisjointSources(members, ctx.sourceKindsByAsset);
+    if (!byType && !byCrossSource) continue;
+    groups.push({
+      ip,
+      members: [...members].sort((a, b) => a.id.localeCompare(b.id)),
+      qualifiedBy: byType ? "asset-type" : "cross-source",
+    });
   }
   return groups.sort((a, b) => a.ip.localeCompare(b.ip));
 }
@@ -315,16 +463,40 @@ export async function loadDuplicateIpClaims(): Promise<IpClaimRow[]> {
         AND a."ipAddress" <> ''
         AND a.status::text <> ALL(${UNMONITORABLE_STATUSES}::text[])
     ),
+    -- Addresses IPAM says were ASSIGNED rather than leased. Mirrors
+    -- addressIsDeliberate (business rule 23's three columns), and is
+    -- deliberately NOT joined through subnet containment here: an address
+    -- reserved in ANY subnet passes, and the JS narrowing re-tests it against
+    -- the containing subnet. A superset is the whole job of this CTE.
+    -- (No backticks in this comment: it lives inside a template literal.)
+    deliberate AS (
+      SELECT DISTINCT r."ipAddress" AS ip
+      FROM reservations r
+      WHERE r.status = 'active'
+        AND (
+          r."vipInfo" IS NOT NULL
+          OR r."dhcpBinding" = 'reservation'
+          OR r."sourceType"::text = ANY(${DELIBERATE_RESERVATION_SOURCE_TYPES}::text[])
+        )
+    ),
     dups AS (
-      -- Addresses with at least two claims AND at least one claim from a type
-      -- worth reporting. A SUPERSET of what qualifies (this cannot see the
-      -- freshness verdict, so a stale switch row still passes bool_or here and
-      -- is dropped in JS) — the point is to keep endpoint-only duplicates,
+      -- Addresses with at least two claims that clear ONE of the two
+      -- eligibility bars: a claim from a type worth reporting, or an address
+      -- IPAM says was assigned on purpose (the cross-source clause, whose
+      -- disjoint-sources half needs AssetSource rows and so stays in JS).
+      --
+      -- A SUPERSET of what qualifies (this cannot see the freshness verdict, so
+      -- a stale switch row still passes bool_or here and is dropped in JS) —
+      -- the point is to keep endpoint-only duplicates on leased addresses,
       -- which on a DHCP fleet are most of them, out of the result set entirely.
-      SELECT ip FROM claims
-      GROUP BY ip
+      SELECT c.ip FROM claims c
+      LEFT JOIN deliberate dl ON dl.ip = c.ip
+      GROUP BY c.ip
       HAVING count(*) > 1
-         AND bool_or("assetType" = ANY(${CONFLICT_ELIGIBLE_ASSET_TYPES}::text[]))
+         AND (
+           bool_or(c."assetType" = ANY(${CONFLICT_ELIGIBLE_ASSET_TYPES}::text[]))
+           OR bool_or(dl.ip IS NOT NULL)
+         )
     )
     SELECT c.* FROM claims c JOIN dups d ON d.ip = c.ip
     ORDER BY c.ip, c.id
@@ -347,6 +519,69 @@ async function loadClaimsForIp(ip: string): Promise<IpClaimRow[]> {
   `;
 }
 
+/**
+ * Resolve the cross-source clause's two inputs for a set of claim rows.
+ *
+ * Two queries regardless of fleet size, both bounded by the claims the scan
+ * already narrowed to (a handful of colliding addresses, not the fleet):
+ *
+ *   1. `AssetSource.sourceKind` per candidate asset.
+ *   2. The containing subnet per address — through `buildIpContexts`, the one
+ *      implementation of subnet containment (most-specific wins when subnets
+ *      nest) — then the active Reservation on that exact (subnet, address).
+ *      Going through containment rather than matching `ipAddress` alone is
+ *      what stops a reservation in an unrelated overlapping block from
+ *      licensing a conflict here.
+ *
+ * MUST be called by every caller of `groupCurrentClaims` that can RAISE or
+ * CLOSE a conflict. Evaluating one address without it would let the refresh
+ * pass re-derive a cross-source group as ineligible and auto-close a conflict
+ * the scan had just raised — the two would then fight every tick.
+ */
+export async function loadCrossSourceContext(rows: IpClaimRow[]): Promise<CrossSourceContext> {
+  const assetIds = [...new Set(rows.map((r) => r.id).filter(Boolean))];
+  const ips = [...new Set(rows.map((r) => r.ip).filter(Boolean))];
+  if (assetIds.length === 0 || ips.length === 0) return EMPTY_CROSS_SOURCE_CONTEXT;
+
+  const [sourceRows, contexts] = await Promise.all([
+    prisma.assetSource.findMany({
+      where: { assetId: { in: assetIds } },
+      select: { assetId: true, sourceKind: true },
+    }),
+    buildIpContexts(ips),
+  ]);
+
+  const sourceKindsByAsset = new Map<string, Set<string>>();
+  for (const row of sourceRows) {
+    const kind = (row.sourceKind || "").trim();
+    if (!kind) continue;
+    const set = sourceKindsByAsset.get(row.assetId);
+    if (set) set.add(kind);
+    else sourceKindsByAsset.set(row.assetId, new Set([kind]));
+  }
+
+  const deliberateIps = new Set<string>();
+  const pairs = ips
+    .map((ip) => ({ ip, subnetId: contexts.get(ip)?.subnetId }))
+    .filter((p): p is { ip: string; subnetId: string } => !!p.subnetId);
+  if (pairs.length > 0) {
+    const reservations = await prisma.reservation.findMany({
+      where: {
+        status: "active",
+        OR: pairs.map((p) => ({ subnetId: p.subnetId, ipAddress: p.ip })),
+      },
+      select: { ipAddress: true, sourceType: true, dhcpBinding: true, vipInfo: true },
+    });
+    for (const res of reservations) {
+      // `ipAddress` is nullable on Reservation (a row can be a MAC-only binding
+      // awaiting an address), so a null one simply has no address to mark.
+      if (res.ipAddress && addressIsDeliberate(res)) deliberateIps.add(res.ipAddress);
+    }
+  }
+
+  return { sourceKindsByAsset, deliberateIps };
+}
+
 function freshnessCutoff(now = Date.now()): Date {
   return new Date(now - CLAIM_FRESH_DAYS * 86_400_000);
 }
@@ -354,7 +589,8 @@ function freshnessCutoff(now = Date.now()): Date {
 /** The live group for one address, or null when it is no longer a collision. */
 async function evaluateIp(ip: string): Promise<DuplicateIpGroup | null> {
   const rows = await loadClaimsForIp(ip);
-  const groups = groupCurrentClaims(rows, freshnessCutoff());
+  const ctx = await loadCrossSourceContext(rows);
+  const groups = groupCurrentClaims(rows, freshnessCutoff(), ctx);
   return groups.find((g) => g.ip === ip) ?? null;
 }
 
@@ -394,7 +630,8 @@ export async function reconcileDuplicateIpConflicts(): Promise<DuplicateIpReconc
   };
 
   const rows = await loadDuplicateIpClaims();
-  const groups = groupCurrentClaims(rows, freshnessCutoff());
+  const ctx = await loadCrossSourceContext(rows);
+  const groups = groupCurrentClaims(rows, freshnessCutoff(), ctx);
   result.groups = groups.length;
 
   const pending = await prisma.conflict.findMany({
@@ -445,6 +682,10 @@ export async function reconcileDuplicateIpConflicts(): Promise<DuplicateIpReconc
       ipAddress: group.ip,
       // Conflict-queue widget subtitle reads `hostname`.
       hostname: group.members[0]?.hostname ?? null,
+      // Which clause admitted the group — the card picks its explainer from
+      // this. Absent on rows raised before the cross-source clause shipped,
+      // which the UI reads as the original asset-type case.
+      qualifiedBy: group.qualifiedBy,
       members,
     } as any;
     const existingAssetSnapshot = { ipAddress: group.ip, members } as any;
