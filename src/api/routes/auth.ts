@@ -994,6 +994,7 @@ async function revokeOtherSessions(userId: string, keepSid: string): Promise<num
 }
 
 // PUT /api/v1/auth/password — a local user changing their OWN password.
+// Business rule 61.
 //
 // Distinct from the admin-side `PUT /users/:id/password` in two ways that
 // matter: it proves the caller knows the current password (an admin reset

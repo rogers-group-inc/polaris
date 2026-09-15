@@ -21,6 +21,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 58](#rule-58) — A tag that names no region strands the ranking, so level routing abstains
 - [Rule 59](#rule-59) — The controller's view of its own link is a second opinion, and an unreadable controller has no view at all
 - [Rule 60](#rule-60) — A footer that tells the reader who else knows must never name a Bcc
+- [Rule 61](#rule-61) — Changing a credential ends every other session on it, and rotating your own must carry the CSRF token across
 
 <a id="rule-44"></a>
 
@@ -1247,3 +1248,78 @@ so `{push.recipients}` is covered by the prefix. `email.recipients` is an ENUMER
 `{email.*}` token that is NOT deferred. A token that is not registered is blanked at compose
 time, before the delivery pass that would have filled it — the `{chart.trigger}` regression,
 and the reason both tokens carry a test asserting they survive the compose passes literal.
+
+<a id="rule-61"></a>
+
+## Rule 61 — Changing a credential ends every other session on it, and rotating your own must carry the CSRF token across
+
+Until 2026-09-14 an ordinary user could not change their own password. The only password
+field in the product was the admin reset on `/users.html`, a page gated `users` — admin-only
+in the built-in matrix — so a local account below that grant had to ask an administrator to
+reset a password it already knew. This is the same reachability mismatch that moved TOTP
+enrollment into the account menu, one surface over, and the two rows now sit together.
+
+`PUT /auth/password` is gated on nothing beyond being logged in, which is worth stating
+plainly because it looks under-gated and is not. **The body names no user.** It reads the
+account out of `req.session.userId` and changes that one, so there is no target to
+enumerate, no id to tamper with, and no permission that would mean anything — a grant to
+"change passwords" is exactly the admin route, which is a different endpoint with a
+different gate. What stands in for a permission here is the current password, and that is
+the substantive difference from the admin reset: this route can prove the caller knows the
+credential it is replacing, and `PUT /users/:id/password` structurally cannot. The two write
+different Events for that reason — `user.password_changed` against the actor's own row, and
+the admin `user.password_reset` at `warning` level, which is elevated precisely because it
+is an unprovable act performed on somebody else's account.
+
+**The revocation is the point of the feature, not a nicety attached to it.** Someone changes
+their password because they think somebody else may have it. A live session does not consult
+the password again, so without a revocation step the change accomplishes nothing against the
+case that motivated it: the attacker's cookie keeps working until it expires on its own
+schedule. `revokeOtherSessions` deletes every other non-expired `session` row whose `sess`
+blob carries this `userId`, keeping only the caller's own `sid`.
+
+That query is deliberately **best-effort raw SQL**, wrapped so that any failure returns zero
+rather than propagating. The `session` table belongs to connect-pg-simple, not to Prisma's
+schema — it is created by the session middleware at boot, it is absent on a first run before
+anyone has logged in, and nothing in a migration guarantees its shape. `getOnlineUserIds` in
+`users.ts` already reads it under the same posture and for the same reason. The ordering
+matters too: the revocation runs AFTER the password write has committed, so a failure to
+sign other sessions out can never roll back or fail a change the user has already been told
+succeeded. The count comes back in the response so the UI can say how many were ended,
+which is the only way the user learns it happened.
+
+**The caller's own session is rotated but kept, and the carry is where this gets subtle.**
+Rotating the session ID on a credential change is ordinary hardening. Doing it with
+`req.session.regenerate()` alone breaks the page in a way nothing reports.
+
+`csrfMiddleware` runs before the route and mirrors the session's `csrfToken` into a response
+cookie on every request — so by the time the handler executes, the response already carries
+the OLD token. `regenerate()` then throws that session away, `csrfToken` included, and the
+middleware mints a replacement only on the NEXT request. The browser is left holding a
+cookie from the session that no longer exists, the page's in-memory header value matches
+that dead cookie, and the fresh session has a token matching neither. The password change
+itself returns 200 and everything looks correct. The user's next write — any write, on any
+page, possibly minutes later and about something unrelated — fails with "CSRF token missing
+or invalid" until they reload.
+
+So `rotateSessionKeepingIdentity` copies the identity fields and `csrfToken` across the
+regenerate. Carrying the CSRF token gives up nothing: it is a per-session secret held by the
+same browser that just proved it knows the password, and the fixation window a rotate closes
+is the anonymous-to-authenticated transition, which is not what is happening here.
+
+This is the kind of defect that ships. It throws nothing, it fails no test written near it,
+and the symptom appears far from the cause — which is why the assertion is explicit:
+`tests/integration/selfChangePassword.test.ts` performs a SECOND change over the same
+supertest agent, reusing the same captured token, after the first rotated the session
+underneath it. Drop the carry and that second call 403s. The same trap is documented from
+the login side in `tests/integration/_helpers.ts`, where `authedAgent` has to issue an extra
+GET after logging in to pick the regenerated token up; login gets away with it because the
+browser does a full page navigation immediately afterward, and an in-page flow does not.
+
+Two smaller decisions. The route is **rate-limited at the login ceiling** (10 / 15 min) —
+its body carries the caller's current password, so it is a password-guessing surface in
+every sense the login endpoint is, reachable by anyone who has stolen a session and never
+touching the login limiter on the way. And it accepts **local accounts only**, refusing every
+other `authProvider` with the reason rather than a bare 400: for an SSO, LDAP or App Proxy
+account the directory owns the credential, and Polaris changing a local hash for such a user
+would write a password that no login path consults.
