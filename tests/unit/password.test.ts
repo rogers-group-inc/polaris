@@ -1,14 +1,16 @@
 /**
  * tests/unit/password.test.ts — src/utils/password.ts
  *
- * The hashing helpers and `passwordPolicySchema`, the single Zod copy of the
- * complexity bar. The schema is the reason this file has a test at all: it
- * used to be three verbatim copies (admin create, admin reset, the setup
- * wizard's first admin), the self-service change made it a fourth, and the
- * whole point of folding them together is that the bar can only move in one
- * place. `public/js/password-self.js` renders the same five rules to the user
- * as a hint — passwordSelfModule.test.ts pins that list, this one pins the
- * gate, and the two are meant to name the same five properties.
+ * The hashing helpers, plus what is left of `passwordPolicySchema` after the
+ * complexity bar became operator-configurable (2026-09): a SHAPE check —
+ * non-empty, bounded — and nothing more. The rules themselves moved to
+ * utils/passwordPolicy.ts, which passwordPolicy.test.ts pins, and the
+ * assertion every route makes against the live policy is pinned by
+ * passwordPolicyService.test.ts.
+ *
+ * This file's remaining job around the schema is to make sure it is not
+ * quietly asked to be the gate again: a complexity rule reappearing here would
+ * mean two places enforce the bar and only one of them is configurable.
  */
 
 import { describe, it, expect } from "vitest";
@@ -16,34 +18,25 @@ import { hash as argonHash, Algorithm } from "@node-rs/argon2";
 import { hashPassword, verifyPassword, passwordPolicySchema } from "../../src/utils/password.js";
 
 describe("passwordPolicySchema", () => {
-  it("accepts a password meeting every rule", () => {
+  it("accepts a password meeting every default rule", () => {
     expect(passwordPolicySchema.safeParse("Replacement-2!").success).toBe(true);
   });
 
-  it.each([
-    ["Sh0rt!",         /8 characters/,      "too short"],
-    ["NOLOWERCASE1!",  /lowercase/,         "no lowercase letter"],
-    ["nouppercase1!",  /uppercase/,         "no uppercase letter"],
-    ["NoDigitsHere!",  /number/,            "no number"],
-    ["NoSpecialChar1", /special character/, "no special character"],
-  ])("rejects %j — %s", (pw, expected) => {
-    const result = passwordPolicySchema.safeParse(pw);
-    expect(result.success).toBe(false);
-    // The message is surfaced verbatim to the user by the route's Zod error
-    // handler, so it has to name the rule that failed rather than the field.
-    expect(result.error!.issues.map((i) => i.message).join(" ")).toMatch(expected);
+  it("accepts a password that meets NONE of the old rules — complexity is not its job", () => {
+    // This would have failed four of the five hard-coded rules. It must pass
+    // here: an install may legitimately have relaxed the character classes,
+    // and the live policy is what decides.
+    expect(passwordPolicySchema.safeParse("aaaaaaaaaaaa").success).toBe(true);
   });
 
-  it("names every unmet rule at once rather than stopping at the first", () => {
-    // A user who typed "password" should not have to discover the four
-    // remaining rules one submission at a time.
-    const result = passwordPolicySchema.safeParse("password");
-    expect(result.success).toBe(false);
-    expect(result.error!.issues.length).toBeGreaterThanOrEqual(3);
+  it("rejects an empty password", () => {
+    expect(passwordPolicySchema.safeParse("").success).toBe(false);
   });
 
-  it("puts no ceiling on length", () => {
+  it("caps length, so nothing unbounded reaches argon2", () => {
     expect(passwordPolicySchema.safeParse("A1!" + "x".repeat(200)).success).toBe(true);
+    expect(passwordPolicySchema.safeParse("x".repeat(1024)).success).toBe(true);
+    expect(passwordPolicySchema.safeParse("x".repeat(1025)).success).toBe(false);
   });
 });
 

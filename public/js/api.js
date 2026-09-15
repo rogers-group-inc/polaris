@@ -573,6 +573,8 @@ const api = {
     updateRegions: (id, b)  => request("PUT", `/users/${id}/regions`, b),
     delete:        (id)     => request("DELETE", `/users/${id}`),
     resetTotp:     (id)     => request("DELETE", `/users/${id}/totp`),
+    passkeys:      (id)     => request("GET", `/users/${id}/passkeys`),
+    revokePasskeys:(id)     => request("DELETE", `/users/${id}/passkeys`),
     roleReviewNotifications: ()   => request("GET", "/users/role-review-notifications"),
     dismissRoleReview:       (id) => request("DELETE", `/users/${id}/role-review`),
   },
@@ -1460,6 +1462,23 @@ const api = {
     entraProxySettings: () => request("GET", "/auth/entra-proxy/settings"),
     updateEntraProxySettings: (body) => request("PUT", "/auth/entra-proxy/settings", body),
     testEntraProxy: () => request("POST", "/auth/entra-proxy/test"),
+
+    // Password complexity policy. The GET is unauthenticated on the server —
+    // the checklist has to render on the login page's forced-change step and in
+    // the setup wizard, neither of which has a session.
+    passwordPolicy: () => request("GET", "/auth/password-policy"),
+    updatePasswordPolicy: (body) => request("PUT", "/auth/password-policy", body),
+
+    // Passkeys. `passkeyConfig` is the unauthenticated availability probe the
+    // login page uses; `passkeySettings` is the admin view of the same policy.
+    passkeyConfig: () => request("GET", "/auth/passkeys/config"),
+    passkeySettings: () => request("GET", "/auth/passkey-settings"),
+    updatePasskeySettings: (body) => request("PUT", "/auth/passkey-settings", body),
+    passkeys: () => request("GET", "/auth/passkeys"),
+    passkeyRegisterOptions: () => request("POST", "/auth/passkeys/register/options"),
+    passkeyRegister: (body) => request("POST", "/auth/passkeys/register", body),
+    renamePasskey: (id, name) => request("PATCH", "/auth/passkeys/" + encodeURIComponent(id), { name: name }),
+    deletePasskey: (id) => request("DELETE", "/auth/passkeys/" + encodeURIComponent(id)),
   },
 };
 

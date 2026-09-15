@@ -26,6 +26,22 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 // protected.
 const EXEMPT_PATH_PREFIXES = [
   "/api/v1/auth/login",        // pre-session; rate limiter is the defense
+  "/api/v1/auth/passkeys/login", // passwordless sign-in — the other pre-session
+                                //   credential path, and exempt for exactly the
+                                //   reason /auth/login is: there is no session
+                                //   yet, so there is no token to carry. Covers
+                                //   /passkeys/login and /passkeys/login/options
+                                //   and NOTHING else — the segment-boundary
+                                //   match below is what keeps /passkeys/register
+                                //   and /passkeys/:id (both session routes,
+                                //   both mutating) protected. A bare startsWith
+                                //   would exempt every one of them.
+                                //   The CSRF risk it does carry is bounded: a
+                                //   cross-site POST here can only start or
+                                //   finish a ceremony the attacker cannot
+                                //   complete, since the assertion must be
+                                //   signed by an authenticator the browser
+                                //   will only use for this origin.
   "/api/v1/auth/azure/",       // SAML flow is cross-origin by design; signed assertion + RelayState are the CSRF guarantee
   "/api/setup/",               // first-run wizard runs on a separate server without sessions
   "/api/v1/agents/",           // Polaris Agent endpoints — agents are programmatic clients with NO browser session.

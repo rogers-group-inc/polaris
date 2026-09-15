@@ -1,14 +1,17 @@
 /**
  * src/services/loginAccessService.ts
  *
- * Operator-settable source-IP restriction on LOCAL LOGIN (Server Settings →
- * Web Server → Local Login Access). Single Setting row (`loginAccessConfig`),
- * JSON blob, TTL-cached via settingsStore — the dashSettingsService pattern.
+ * Operator-settable source-IP restriction on LOCAL LOGIN, edited at Users →
+ * Authentication → Settings → Trusted Networks for Login (Server Settings → Web
+ * Server keeps a read-only summary that points there; two screens writing one
+ * Setting row is how they drift into disagreeing about what is configured).
+ * Single Setting row (`loginAccessConfig`), JSON blob, TTL-cached via
+ * settingsStore — the dashSettingsService pattern.
  *
  * Why it exists: with "Skip login page" on, every unauthenticated visitor —
  * to a protected page AND to /login.html itself — is bounced straight to SSO,
  * but the form stays reachable as /login.html?local=1 (the anti-lockout path
- * for an IdP outage, named in the Session tab's hint and deliberately
+ * for an IdP outage, named in the Settings tab's hint and deliberately
  * guessable), so the local password form stays reachable to anyone who types
  * that URL, and the password endpoints stay reachable to anyone who can POST.
  * That is the right default; this setting is for installs that want the

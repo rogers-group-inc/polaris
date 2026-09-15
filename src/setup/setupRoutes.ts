@@ -12,6 +12,7 @@ import { execSync } from "node:child_process";
 import pg from "pg";
 import { markSetupComplete } from "./detectSetup.js";
 import { hashPassword, passwordPolicySchema } from "../utils/password.js";
+import { assertPasswordMeetsPolicy } from "../services/passwordPolicyService.js";
 import { ENV_FILE, STATE_DIR } from "../utils/paths.js";
 import { makeRateLimiter } from "../api/middleware/rateLimits.js";
 import { PG_DATA_DIR_CANDIDATES, pickFirstExistingPath, probeDiskFree } from "../utils/startupDiskCheck.js";
@@ -56,8 +57,11 @@ function buildPgClientOptions(db: DbConfig, database: string): pg.ClientConfig {
   return opts;
 }
 
-// Shared with the admin create/reset routes and the self-service change —
-// see utils/password.ts.
+// Shape only, shared with the admin create/reset routes and the self-service
+// change. The complexity bar is asserted below against the live policy, which
+// on a fresh install is the default five rules — there is no Setting row yet,
+// and passwordPolicyService falls back to the defaults rather than to "no
+// policy". See utils/passwordPolicy.ts.
 const passwordSchema = passwordPolicySchema;
 
 const FinalizeSchema = z.object({
@@ -280,6 +284,14 @@ router.post("/test-connection", setupActionLimiter, async (req, res) => {
 router.post("/finalize", setupActionLimiter, async (req, res) => {
   try {
     const { db, admin, app } = FinalizeSchema.parse(req.body);
+
+    // Complexity bar BEFORE any provisioning: a rejected password must not
+    // leave a half-created database and an open pg client behind. There is no
+    // Setting row to read at this point (DATABASE_URL is still empty), so this
+    // resolves to the default policy — which is the right answer for a fresh
+    // install, and the reason passwordPolicyService falls back to the defaults
+    // instead of to "anything goes".
+    await assertPasswordMeetsPolicy(admin.password);
 
     // Safety: don't overwrite existing working config
     if (process.env.DATABASE_URL && process.env.DATABASE_URL.trim().length > 0) {

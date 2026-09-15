@@ -12,7 +12,7 @@ import pgSession from "connect-pg-simple";
 import pg from "pg";
 import helmet from "helmet";
 import compression from "compression";
-import rateLimit from "express-rate-limit";
+import rateLimit, { MemoryStore } from "express-rate-limit";
 import { router } from "./api/router.js";
 import { pwaRouter } from "./api/routes/pwa.js";
 
@@ -406,15 +406,49 @@ app.use((req, res, next) => {
 });
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────
+//
+// The budget is TEN GUESSES per 15 minutes, and the mount is a path PREFIX, so
+// everything under /api/v1/auth/login shares it: the password, a TOTP code, a
+// passkey assertion. That is the intent — they are all ways of guessing at one
+// account, and a second factor must not be a fresh allowance.
+//
+// Two sub-paths are exempted, because spending a guess on them would shrink the
+// budget without measuring an attempt:
+//
+//   /passkey/options    issues a challenge; nothing is being guessed, and one
+//                       sign-in costs two requests here (options, then the
+//                       assertion). Counting both would halve the real
+//                       allowance for passkey users. It carries its own,
+//                       roomier limiter (passkeyCeremonyLimiter).
+//   /password-change    the last step of an already-complete login, authorized
+//                       by a single-use token rather than by anything
+//                       guessable. It carries passwordChangeLimiter.
+//
+// The store is held so tests can clear it: the integration suite drives a dozen
+// COMPLETE logins from one address in a few seconds, which no real client does,
+// and without this every suite after the tenth would assert against a 429.
+const loginRateLimitStore = new MemoryStore();
+const LOGIN_LIMIT_EXEMPT = new Set(["/passkey/options", "/password-change"]);
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // 10 attempts per window
   standardHeaders: true,
   legacyHeaders: false,
+  store: loginRateLimitStore,
+  skip: (req) => LOGIN_LIMIT_EXEMPT.has(req.path),
   message: { error: "Too many login attempts. Please try again in 15 minutes." },
 });
 app.use("/api/v1/auth/login", loginLimiter);
 app.use("/api/v1/auth/azure/login", loginLimiter);
+
+/**
+ * Test seam: forget every counted login attempt. Never called in production —
+ * exported so a suite that legitimately performs more than ten logins can do so
+ * without the limiter (correctly) refusing the eleventh.
+ */
+export function resetLoginRateLimit(): void {
+  loginRateLimitStore.resetAll?.();
+}
 
 // ─── Entra App Proxy identity-header strip ──────────────────────────────────
 // The App Proxy header-SSO identity headers are unsigned; requests not
@@ -448,7 +482,23 @@ app.use(stripUntrustedEntraProxyHeaders);
 // the same reason: "you are on the wrong network" is a fact worth learning.
 // Fails OPEN on a settings read error (isLoginSourceAllowed) — a DB blip must
 // not become the lockout this feature exists to prevent.
-const LOGIN_CREDENTIAL_PATHS = new Set(["/api/v1/auth/login", "/api/v1/auth/login/totp"]);
+// Every path that accepts a LOCAL credential and can end in a session. The
+// passkey pair belongs here for exactly the reason the password POST does: a
+// passkey is a local-account credential, `/passkeys/login` issues the session
+// outright with no password step in front of it, and `/passkeys/login/options`
+// is the unauthenticated half that would otherwise stay reachable from
+// anywhere. The second-factor variants (/login/passkey*) sit behind the
+// password step, which this gate already covers, but are listed too so the
+// restriction cannot be sidestepped by resuming a login from a new address.
+const LOGIN_CREDENTIAL_PATHS = new Set([
+  "/api/v1/auth/login",
+  "/api/v1/auth/login/totp",
+  "/api/v1/auth/login/passkey",
+  "/api/v1/auth/login/passkey/options",
+  "/api/v1/auth/login/password-change",
+  "/api/v1/auth/passkeys/login",
+  "/api/v1/auth/passkeys/login/options",
+]);
 app.use(async (req, res, next) => {
   const isLoginPage = req.path === "/login.html";
   const isCredentialPost = req.method === "POST" && LOGIN_CREDENTIAL_PATHS.has(req.path);
@@ -653,7 +703,7 @@ async function skipLoginSsoTarget(): Promise<string | null> {
 //                 OIDC / App Proxy failure redirect carries it) — redirecting
 //                 again would ping-pong between Polaris and the IdP forever.
 //   ?local=1      the anti-lockout path: local and LDAP accounts, and the way
-//                 back in when the IdP is down. The Session tab's hint names
+//                 back in when the IdP is down. The Settings tab's hint names
 //                 this URL — it is deliberately guessable, not a secret; the
 //                 source-IP gate above is what restricts WHO can reach the
 //                 form, and it runs first, so an out-of-scope visitor is

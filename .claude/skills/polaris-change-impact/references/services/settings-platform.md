@@ -363,7 +363,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **Cross-service deps:** `prisma` (settings) only.
 
-**Used by:** `azureAuthService` (key `sso`; `peek` backs the synchronous `isAzureSsoConfigured` fast path), `entraProxyAuthService` (key `entraProxy`), `dashSettingsService` (key `dashConfig`, 10s TTL = the cross-process propagation delay to the dash listener). Other Setting-blob sites still hand-roll the pattern — migrate them onto this as they're touched.
+**Used by:** `azureAuthService` (key `sso`; `peek` backs the synchronous `isAzureSsoConfigured` fast path), `entraProxyAuthService` (key `entraProxy`), `dashSettingsService` (key `dashConfig`, 10s TTL = the cross-process propagation delay to the dash listener). Other Setting-blob sites still hand-roll the pattern — migrate them onto this as they're touched., `passwordPolicyService` (key `passwordPolicyConfig`, 10s TTL — but its `get` wrapper swallows a read error and answers the DEFAULT policy, because a settings outage must not lower the password bar) and `passkeyService` (key `passkeyConfig`, 10s TTL — whose wrapper swallows the same error and answers mode `off`, the opposite posture, because that row decides whether a credential may sign someone in)
 
 **Invariants:**
 - The cache is per-process, exactly like the hand-rolled copies it replaced — a write in one role propagates to other roles only after their ttlMs expires. Don't shorten a TTL without checking what read frequency it implies (dash consults its store on every request).

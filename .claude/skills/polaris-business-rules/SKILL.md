@@ -1,7 +1,6 @@
 ---
 name: polaris-business-rules
-description: "The 62 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP/Firewall (upstream placement of a device, including the gate that owns its subnet), monitorStatus (up/down/warning/recovering/passive), the FortiLink / CAPWAP controller-link state of a managed FortiSwitch or FortiAP, dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, which install is allowed to claim a database and what a refusal to start on an active-instance heartbeat means (a container or unit that will not come up after an upgrade, 'another host holds a fresh active-instance heartbeat', two instances on one database), backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, a user changing their own password and what that does to their other sessions, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."
-user-invocable: false
+description: "The 64 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP/Firewall (upstream placement of a device, including the gate that owns its subnet), monitorStatus (up/down/warning/recovering/passive), the FortiLink / CAPWAP controller-link state of a managed FortiSwitch or FortiAP, dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, which install is allowed to claim a database and what a refusal to start on an active-instance heartbeat means (a container or unit that will not come up after an upgrade, 'another host holds a fresh active-instance heartbeat', two instances on one database), backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, a user changing their own password and what that does to their other sessions, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos, backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, a user changing their own password and what that does to their other sessions, the password complexity policy and forcing a non-conforming password to be changed at login, passkeys / WebAuthn (whether one may sign in on its own or only as a second factor, and what it is bound to), agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."user-invocable: false
 ---
 
 # Polaris business rules
@@ -12,7 +11,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(62 is the next free number.)
+(65 is the next free number.)
 
 ## How to read
 
@@ -24,8 +23,10 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60 |
 | touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 55 |
 | touch how a discovery run reports what it did or did not read — skipped/offline/unread devices, run counters, a device whose data looks stale | 53 |
-| touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43, 47, 51 |
-| touch a user's own credential — changing a password, session rotation, what a credential change does to that user's other sessions | 61 |
+| touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43, 47, 51, 63 |
+| touch a user's own credential — changing a password, session rotation, what a credential change does to that user's other sessions | 61, 62 |
+| touch the password complexity bar, or what happens to an existing password that no longer meets it | 63 |
+| touch passkeys / WebAuthn — registration, passwordless sign-in, the passkey second factor, what a credential is bound to | 64 |
 | touch the database install, the TimescaleDB extension, retention, compression or the capacity/disk forecast | 20c, 47, 51, 52 |
 | touch Polaris Agent install, upgrade or its stored credential | 43, 49 |
 | touch map regions, `region:` tags, or anything that strips `Asset.tags` | 54, 58 |
@@ -34,11 +35,12 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 Reference files (all verbatim):
 
 - [references/invariants-12-29.md](references/invariants-12-29.md) — the one-paragraph invariant for rules 12–29
-- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–61 (the filename keeps its original range: the reference is cited from code and the other skills)
+- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–63 (the filename keeps its original range: the reference is cited from code and the other skills)
 - [references/narrative-12-24.md](references/narrative-12-24.md) — full narrative, rules 12–24
 - [references/narrative-25-35.md](references/narrative-25-35.md) — full narrative, rules 25–35
 - [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–43 (the filename is a stable citation key — see the numbering note)
-- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–61 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
+- [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–59 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
+- [references/narrative-60-64.md](references/narrative-60-64.md) — full narrative, rules 60–64 (split out 2026-09-15 when the 44–48 file reached the 1500-line ceiling)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -109,9 +111,11 @@ before changing anything the invariant constrains.
 | 57 | A sub-asset alerts only if the operator pinned it — the pin IS the statement of what may alert | invariants-30-43 | narrative-44-48 |
 | 58 | A tag that names no region strands the ranking, so level routing abstains | invariants-30-43 | narrative-44-48 |
 | 59 | The controller's view of its own link is a second opinion, and an unreadable controller has no view at all | invariants-30-43 | narrative-44-48 |
-| 60 | A footer that tells the reader who else knows must never name a Bcc | invariants-30-43 | narrative-44-48 |
-| 61 | Changing a credential ends every other session on it, and rotating your own must carry the CSRF token across | invariants-30-43 | narrative-44-48 |
-| 62 | An install is identified by something it persists, never by the name the runtime handed the process | invariants-30-43 | narrative-44-48 |
+| 60 | A footer that tells the reader who else knows must never name a Bcc | invariants-30-43 | narrative-60-64 |
+| 61 | Changing a credential ends every other session on it, and rotating your own must carry the CSRF token across | invariants-30-43 | narrative-60-64 |
+| 62 | An install is identified by something it persists, never by the name the runtime handed the process | invariants-30-43 | narrative-60-64 |
+| 63 | The complexity bar belongs to the operator, and a password that no longer meets it is replaced on the far side of the second factor | invariants-30-43 | narrative-60-64 |
+| 64 | A passkey is bound to the origin that issued its challenge, the install decides what a passkey is for, and it never names an account that does not already exist | invariants-30-43 | narrative-60-64 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

@@ -42,7 +42,13 @@ interface Item {
   onSelect?: () => void;
 }
 
-function open(opts: { pref?: Item | null; tz?: Item | null; pw?: Item | null; totp?: Item | null } = {}) {
+function open(opts: {
+  pref?: Item | null;
+  tz?: Item | null;
+  pw?: Item | null;
+  totp?: Item | null;
+  passkeys?: Item | null;
+} = {}) {
   const captured: { items: Item[]; opts: Record<string, unknown>; anchor: unknown } =
     { items: [], opts: {}, anchor: null };
   const fetches: string[] = [];
@@ -55,6 +61,7 @@ function open(opts: { pref?: Item | null; tz?: Item | null; pw?: Item | null; to
   g._tzMenuItem = () => (opts.tz === undefined ? null : opts.tz);
   g._changePasswordMenuItem = () => (opts.pw === undefined ? null : opts.pw);
   g._totpMenuItem = () => (opts.totp === undefined ? null : opts.totp);
+  g._passkeyMenuItem = () => (opts.passkeys === undefined ? null : opts.passkeys);
   g._csrfHeaders = () => ({ "x-csrf-token": "t" });
   g.ICONS = { logout: "<svg id='logout'/>", bell: "<svg id='bell'/>", shield: "<svg id='shield'/>", clock: "<svg id='clock'/>", key: "<svg id='key'/>" };
   g.fetch = vi.fn((url: string) => { fetches.push(url); return Promise.resolve({}); });
@@ -97,21 +104,34 @@ describe("openUserMenu", () => {
   });
 
   it("groups the credential rows, password before the second factor on it", () => {
-    // Both are local-account-only and both came here for the same reason
+    // All three are local-account-only and came here for the same reason
     // (/users.html is admin-gated), so they read as one group. The password
-    // leads: it is the credential, and 2FA is something added to it.
+    // leads: it is the credential, 2FA is something added to it, and the
+    // passkey is the thing that can eventually replace both.
     const r = open({
       pref: { label: "Notifications: Push", icon: "<svg/>", onSelect: () => {} },
       pw: { label: "Change password", icon: "<svg/>", onSelect: () => {} },
       totp: { label: "Set up two-factor auth", icon: "<svg/>", onSelect: () => {} },
+      passkeys: { label: "Set up a passkey", icon: "<svg/>", onSelect: () => {} },
     });
     expect(r.labels).toEqual([
       "Notifications: Push",
       "Change password",
       "Set up two-factor auth",
+      "Set up a passkey",
       "—",
       "Logout",
     ]);
+  });
+
+  it("omits the passkey row entirely when it is not on offer", () => {
+    // An SSO account, or an install with passkeys off and none registered —
+    // the menu must not grow a dead row for either.
+    const r = open({
+      pw: { label: "Change password", icon: "<svg/>", onSelect: () => {} },
+      passkeys: null,
+    });
+    expect(r.labels).toEqual(["Change password", "—", "Logout"]);
   });
 
   it("slots the timezone row between the preference and two-factor", () => {

@@ -20,6 +20,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **DeviceIcon** — operator-uploaded topology icon blobs (scope + key), served to the Device Map / topology renderer.
 
+- **UserPasskey** — one registered WebAuthn credential on a local account. The row holds only what verifying a later assertion needs (credential id, COSE public key, signature counter, transports) plus what an operator deciding whether to rely on it needs to see (name, last used, whether it syncs through a credential manager). It is a credential, not a device: the same security key registered by two people is two rows. Whether a passkey may sign in on its own, act as a second factor, both, or nothing is the install-wide `passkeyConfig` Setting, never a property of the row — see `polaris-api-rbac` for the endpoints and business rules 63–64.
 - **User** / **Role** — dynamic-role RBAC; `User.roleId` → `Role`; permissions matrix on Role over 32 function keys. `User.notificationPreference` (`email` | `push` | `any`, default `email`) is the account's own answer to how it wants to be alerted — stored here rather than per browser so a sign-in on a new device knows to enroll or un-enroll itself; see business rule 39. `User.timezone` (an IANA name or the literal `auto`, default `auto`) is the zone this account reads times in, and `User.detectedTimezone` (nullable) is the zone its BROWSER last reported — client-posted on boot, never operator-set and never offered as a choice. The pair exists because an alert EMAIL has no browser to ask: `auto` resolves explicit-choice → detected → server zone, so an operator who never opens the picker still gets mail on their own wall clock instead of a UTC-clocked host's. Both are free-form TEXT, not an enum — the tz database moves on its own schedule and an unresolvable name degrades to `auto` on READ (`normalizeUserTimezone`) rather than failing a render or a send.
 
 - **GroupMapping** — IdP group → role + tags map for OIDC / LDAP / SAML SSO login (`provider` + `groupKey`; nullable `roleId` for tags-only mappings).
@@ -103,7 +104,39 @@ User
   totpSecret      String?       -- Base32 TOTP secret (null = not enrolled)
   totpEnabledAt   DateTime?     -- Null = not enabled; set on first valid confirm code
   totpBackupCodes String[]      -- argon2id-hashed single-use recovery codes
+  passkeys        UserPasskey[] -- Registered WebAuthn credentials (local accounts only; cascade delete)
   needsRoleReview Boolean       -- Flipped true at the password step the first time the user logs in (Asset.lastLogin transitions null → set), EXCEPT for users whose role is already `admin` (an admin reviewing their own role is redundant; this keeps the seed admin's first login on a fresh install from triggering a self-notification). Drives the admin-only "new user logged in" panel in the sidebar (#role-review-status, rendered above #query-status). Auto-cleared when an admin PUTs /users/:id/role (implicit review) or DELETEs /users/:id/role-review (explicit Dismiss). Dismiss is global — clearing the flag hides the row for every admin at once. SAML SSO sets it on auto-provision (always `readonly`) and on first-ever login of an existing non-admin account.
+
+UserPasskey                     -- One registered WebAuthn credential (passkey) on a LOCAL account
+  id            UUID PK
+  userId        String FK → User (cascade delete)  -- a deleted account takes its credentials with it; a
+                                -- stranded row would reserve its credentialId against a user that no
+                                -- longer exists, so a re-created account could not re-register the key
+  credentialId  String @unique  -- base64url, as the authenticator returns it. Unique ACROSS THE INSTALL:
+                                -- that is what makes usernameless (discoverable) login possible — the
+                                -- assertion names the credential and the credential names the user —
+                                -- and what stops one authenticator being claimed by two accounts.
+  publicKey     Bytes           -- COSE-encoded public key. NOT a secret (it is the public half), so it
+                                -- is deliberately outside the secretBox seal-on-write set.
+  counter       BigInt @default(0) -- Authenticator signature counter. A DECREASE from a non-zero value is
+                                -- the one clone signal WebAuthn gives and refuses the login; most platform
+                                -- authenticators pin it at 0 forever, so 0 → 0 is normal.
+  transports    String[]        -- "internal" | "usb" | "nfc" | "ble" | "hybrid" — replayed in
+                                -- allowCredentials so the browser offers the right prompt
+  name          String          -- Operator-set label ("Work laptop"); defaults to a User-Agent guess
+  aaguid        String?         -- Authenticator model id; all-zero when it declines to say
+  deviceType    String?         -- "singleDevice" | "multiDevice"
+  backedUp      Boolean @default(false) -- With deviceType "multiDevice", the credential syncs through a
+                                -- credential manager (iCloud Keychain, a password manager) and survives
+                                -- losing the device. Re-stated by the authenticator on every assertion.
+  lastUsedAt    DateTime?       -- Null until it has actually signed someone in — the difference between
+                                -- "registered and forgotten" and "how this person logs in"
+  createdAt     DateTime
+  @@index([userId])
+  -- Local accounts only, enforced at the route rather than by the schema: an SSO/LDAP account's
+  -- credentials belong to its identity provider. Whether a passkey may sign in, act as a second
+  -- factor, both, or nothing is the install-wide `passkeyConfig` Setting (services/passkeyService.ts),
+  -- not a property of the row. Added by `prisma/migrations/20260915010000_user_passkeys`.
 
 Role                            -- Dynamic role + permission matrix; replaces the prior hardcoded `UserRole` enum
   id            UUID PK

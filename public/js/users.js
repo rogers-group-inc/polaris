@@ -206,6 +206,14 @@ function renderUsersBody() {
     } else {
       totpCell = '<span style="color:var(--color-text-tertiary)">Not set</span>';
     }
+    // Passkeys ride in the same cell but as their own chip, never merged into
+    // the 2FA verdict: whether a passkey IS a second factor depends on the
+    // install's passkey mode, and a column that claimed it always was would be
+    // wrong on every "sign-in only" install.
+    if (!isIdpManaged(u) && u.passkeyCount > 0) {
+      totpCell += ' <span class="badge" style="background:rgba(99,102,241,0.15);color:var(--color-primary,#6366f1)" ' +
+        'title="Registered passkeys">' + u.passkeyCount + ' passkey' + (u.passkeyCount === 1 ? '' : 's') + '</span>';
+    }
     var roleId = u.role ? u.role.id : "";
     // Row verbs moved behind the username (polaris-ui-canon → "Row context menu").
     // The conditional set is unchanged — which items exist is decided in
@@ -289,6 +297,16 @@ function _userMenuItems(u) {
       items.push({ label: "Two-factor auth…", title: "Manage your two-factor authentication", onSelect: function () { openTotpSelfModal(); } });
     } else if (u.totpEnabled) {
       items.push({ label: "Reset 2FA…", title: "Reset 2FA (e.g. lost device)", onSelect: function () { confirmTotpReset(u.id, u.username); } });
+    }
+  }
+  if (!isIdpManaged(u)) {
+    if (isSelf) {
+      items.push({ label: "Passkeys…", title: "Register or remove your own passkeys", onSelect: function () { PolarisPasskeys.open({ onChange: loadUsers }); } });
+    } else if (u.passkeyCount > 0) {
+      // The counterpart of "Reset 2FA": a lost authenticator needs an admin
+      // path back. Safe because a local account always has a password, so this
+      // can only widen the way in.
+      items.push({ label: "Revoke passkeys…", title: "Remove every passkey on this account (e.g. lost device)", onSelect: function () { confirmPasskeyRevoke(u.id, u.username, u.passkeyCount); } });
     }
   }
   items.push({ separator: true });
@@ -540,6 +558,23 @@ async function confirmTotpReset(id, username) {
   }
 }
 
+async function confirmPasskeyRevoke(id, username, count) {
+  var ok = await showConfirm(
+    'Revoke ' + count + ' passkey' + (count === 1 ? '' : 's') + ' for "' + username + '"?\n\n' +
+    'Use this when the user has lost the device or security key holding them. They keep their password ' +
+    '(and their authenticator app, if any) and can register a new passkey afterwards.\n\n' +
+    'This cannot be undone — the credentials have to be re-registered from the device itself.',
+  );
+  if (!ok) return;
+  try {
+    var result = await api.users.revokePasskeys(id);
+    showToast((result.removed || count) + " passkey" + ((result.removed || count) === 1 ? "" : "s") + " revoked for " + username);
+    loadUsers();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
 // ─── Authentication Settings ───────────────────────────────────────────────
 
 async function initAuthSettingsButton() {
@@ -558,8 +593,17 @@ async function openAuthSettingsModal() {
     api.auth.oidcSettings().catch(function () { return { enabled: false, discoveryUrl: "", clientId: "", clientSecret: "", scopes: "openid profile email" }; }),
     api.auth.ldapSettings().catch(function () { return { enabled: false, url: "", bindDn: "", bindPassword: "", searchBase: "", searchFilter: "(sAMAccountName={{username}})", tlsVerify: true, displayNameAttr: "displayName", emailAttr: "mail" }; }),
     api.auth.entraProxySettings().catch(function () { return { enabled: false, trustedSourceIps: [], objectIdHeader: "x-entra-object-id", usernameHeader: "x-entra-upn", emailHeader: "x-entra-email", displayNameHeader: "x-entra-display-name", groupsHeader: "x-entra-groups" }; }),
+    // The three that moved onto the Settings tab. Each falls back to the
+    // shipped default so one failed request leaves a usable tab rather than an
+    // empty one — the same posture the four provider reads above take.
+    api.auth.passwordPolicy().catch(function () { return { policy: { minLength: 8, requireLowercase: true, requireUppercase: true, requireNumber: true, requireSpecial: true, forceChangeOnLogin: false } }; }),
+    api.serverSettings.loginAccessGet().catch(function () { return { loginAccess: { enabled: false, ipScope: "rfc1918", allowedCidrs: [] }, callerIp: "" }; }),
+    api.auth.passkeySettings().catch(function () { return { settings: { mode: "both", rpId: "", requireUserVerification: true }, availability: {} }; }),
   ]);
   var saml = results[0], oidc = results[1], ldap = results[2], entraProxy = results[3];
+  var policy = results[4].policy;
+  var loginAccess = { settings: results[5].loginAccess, callerIp: results[5].callerIp || "" };
+  var passkeys = results[6];
 
   var body =
     '<div class="settings-tabs">' +
@@ -567,13 +611,13 @@ async function openAuthSettingsModal() {
       '<button class="settings-tab' + (_authActiveTab === "oidc" ? ' active' : '') + '" data-tab="oidc">OIDC</button>' +
       '<button class="settings-tab' + (_authActiveTab === "ldap" ? ' active' : '') + '" data-tab="ldap">LDAP</button>' +
       '<button class="settings-tab' + (_authActiveTab === "entra-proxy" ? ' active' : '') + '" data-tab="entra-proxy">App Proxy</button>' +
-      '<button class="settings-tab' + (_authActiveTab === "session" ? ' active' : '') + '" data-tab="session">Session</button>' +
+      '<button class="settings-tab' + (_authActiveTab === "settings" ? ' active' : '') + '" data-tab="settings">Settings</button>' +
     '</div>' +
     '<div class="settings-tab-panel' + (_authActiveTab === "saml" ? ' active' : '') + '" id="tab-saml">' + buildSamlTab(saml) + '</div>' +
     '<div class="settings-tab-panel' + (_authActiveTab === "oidc" ? ' active' : '') + '" id="tab-oidc">' + buildOidcTab(oidc) + '</div>' +
     '<div class="settings-tab-panel' + (_authActiveTab === "ldap" ? ' active' : '') + '" id="tab-ldap">' + buildLdapTab(ldap) + '</div>' +
     '<div class="settings-tab-panel' + (_authActiveTab === "entra-proxy" ? ' active' : '') + '" id="tab-entra-proxy">' + buildEntraProxyTab(entraProxy) + '</div>' +
-    '<div class="settings-tab-panel' + (_authActiveTab === "session" ? ' active' : '') + '" id="tab-session">' + buildSessionTab(saml) + '</div>';
+    '<div class="settings-tab-panel' + (_authActiveTab === "settings" ? ' active' : '') + '" id="tab-settings">' + buildSettingsTab(saml, policy, loginAccess, passkeys) + '</div>';
 
   var footer =
     '<div style="margin-right:auto"><button class="btn btn-secondary" id="btn-test-auth">Test</button></div>' +
@@ -591,10 +635,13 @@ async function openAuthSettingsModal() {
       document.querySelectorAll(".settings-tab-panel").forEach(function (p) { p.classList.remove("active"); });
       tab.classList.add("active");
       document.getElementById("tab-" + target).classList.add("active");
-      document.getElementById("btn-test-auth").style.display = (target === "session") ? "none" : "";
+      document.getElementById("btn-test-auth").style.display = (target === "settings") ? "none" : "";
     });
   });
-  document.getElementById("btn-test-auth").style.display = (_authActiveTab === "session") ? "none" : "";
+  document.getElementById("btn-test-auth").style.display = (_authActiveTab === "settings") ? "none" : "";
+
+  // The trusted-networks list only means anything under the "custom" scope.
+  wireLoginAccessScope();
 
   // SAML: live-update ACS / SLS URLs
   document.getElementById("f-sp-entity-id").addEventListener("input", function () {
@@ -689,6 +736,23 @@ async function openAuthSettingsModal() {
   // Save — all tabs
   document.getElementById("btn-save-auth").addEventListener("click", async function () {
     var btn = this;
+
+    // Ask before the write, not after: switching existing users to a forced
+    // change interrupts the next sign-in of everyone whose password no longer
+    // fits, and an admin who ticked a radio two scrolls up deserves to see
+    // that spelled out. Only when it is being turned ON — turning it off
+    // narrows nothing.
+    var forceChange = document.getElementById("f-pw-existing-force").checked;
+    if (forceChange && !policy.forceChangeOnLogin) {
+      var ok = await showConfirm(
+        "Require existing users to change a non-conforming password?\n\n" +
+        "The next time a local user signs in, their password is checked against these rules. " +
+        "If it fails, they must set a new one before they get a session — after any second factor, never instead of it.\n\n" +
+        "SSO and LDAP accounts are unaffected.",
+      );
+      if (!ok) return;
+    }
+
     btn.disabled = true;
     try {
       await Promise.all([
@@ -696,15 +760,65 @@ async function openAuthSettingsModal() {
         api.auth.updateOidcSettings(getOidcFormData()),
         api.auth.updateLdapSettings(getLdapFormData()),
         api.auth.updateEntraProxySettings(getEntraProxyFormData()),
+        api.auth.updatePasswordPolicy(getPasswordPolicyFormData()),
+        api.serverSettings.loginAccessPut(getLoginAccessFormData()),
+        api.auth.updatePasskeySettings(getPasskeyFormData()),
       ]);
       closeModal();
       showToast("Authentication settings saved");
     } catch (err) {
+      // Promise.all rejects on the first failure while the rest may still have
+      // landed, so the toast must not claim nothing was saved.
       showToast(err.message, "error");
     } finally {
       btn.disabled = false;
     }
   });
+}
+
+/** Grey out the CIDR list unless the scope that consults it is selected. */
+function wireLoginAccessScope() {
+  var scope = document.getElementById("f-la-scope");
+  var group = document.getElementById("f-la-cidrs-group");
+  if (!scope || !group) return;
+  function sync() {
+    var custom = scope.value === "custom";
+    group.style.opacity = custom ? "1" : "0.5";
+    document.getElementById("f-la-cidrs").disabled = !custom;
+  }
+  scope.addEventListener("change", sync);
+  sync();
+}
+
+function getPasswordPolicyFormData() {
+  return {
+    minLength: parseInt(document.getElementById("f-pw-min-length").value, 10) || 8,
+    requireLowercase: document.getElementById("f-pw-lower").checked,
+    requireUppercase: document.getElementById("f-pw-upper").checked,
+    requireNumber: document.getElementById("f-pw-number").checked,
+    requireSpecial: document.getElementById("f-pw-special").checked,
+    forceChangeOnLogin: document.getElementById("f-pw-existing-force").checked,
+  };
+}
+
+function getLoginAccessFormData() {
+  return {
+    enabled: document.getElementById("f-la-enabled").checked,
+    ipScope: document.getElementById("f-la-scope").value,
+    allowedCidrs: document.getElementById("f-la-cidrs").value
+      .split(/[\s,]+/)
+      .map(function (x) { return x.trim(); })
+      .filter(Boolean),
+  };
+}
+
+function getPasskeyFormData() {
+  var checked = document.querySelector('input[name="pk-mode"]:checked');
+  return {
+    mode: checked ? checked.value : "both",
+    rpId: val("f-pk-rpid"),
+    requireUserVerification: document.getElementById("f-pk-uv").checked,
+  };
 }
 
 function getSamlFormData() {
@@ -1024,7 +1138,170 @@ function buildEntraProxyTab(s) {
     '<div id="entra-proxy-test-results" style="display:none;margin-top:1rem;padding:0.75rem;border-radius:6px;font-size:0.85rem"></div>';
 }
 
-function buildSessionTab(s) {
+/**
+ * The Settings tab — everything about signing in that is not tied to one
+ * identity provider. Four sections, in the order an admin thinks about them:
+ * session behaviour, the password bar, which networks may reach local login,
+ * and passkeys.
+ *
+ * Renamed from "Session" (2026-09) when the last three moved in. The host ACL
+ * is NOT a new setting: it is `loginAccessConfig`, the same row Server
+ * Settings → Web Server used to edit, surfaced where the rest of authentication
+ * lives so there is one place to reason about who can log in and how. Server
+ * Settings now points here rather than keeping a second editor for one row.
+ */
+function buildSettingsTab(s, policy, loginAccess, passkeys) {
+  return sectionHeading("Session", true) + buildSessionSection(s) +
+    sectionHeading("Password Complexity") + buildPasswordPolicySection(policy) +
+    sectionHeading("Trusted Networks for Login") + buildLoginAccessSection(loginAccess) +
+    sectionHeading("Passkeys") + buildPasskeySection(passkeys);
+}
+
+function sectionHeading(text, first) {
+  return '<h4 style="font-size:0.88rem;font-weight:600;margin:' + (first ? "0" : "1.75rem") + ' 0 0.75rem;color:var(--color-text-primary);' +
+    'border-bottom:1px solid var(--color-border);padding-bottom:0.4rem">' + escapeHtml(text) + '</h4>';
+}
+
+/**
+ * The complexity bar. Defaults are the five rules Polaris has always enforced,
+ * so an admin who opens this and saves without touching anything changes
+ * nothing.
+ *
+ * The two radios are the question the admin has to answer whenever they tighten
+ * the rules — existing passwords cannot be re-checked against a policy (a hash
+ * is one-way), so the only moment to act on one is the next time its owner
+ * types it. Leaving the choice implicit is how an install ends up either
+ * silently unenforced or unexpectedly interrupting every sign-in.
+ */
+function buildPasswordPolicySection(p) {
+  function toggle(id, label, checked) {
+    return '<label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;margin-bottom:0.35rem">' +
+      '<input type="checkbox" id="' + id + '"' + (checked ? ' checked' : '') + '>' +
+      '<span>' + label + '</span>' +
+    '</label>';
+  }
+  return '<p style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+      'Applies to local accounts: the admin “Add User” and “Reset Password” forms, a user changing their own password, ' +
+      'and the first admin created by the setup wizard. Accounts from SSO or LDAP are governed by their identity provider.' +
+    '</p>' +
+    '<div class="form-group">' +
+      '<label>Minimum length</label>' +
+      '<div style="display:flex;align-items:center;gap:0.5rem">' +
+        '<input type="number" id="f-pw-min-length" min="8" max="128" value="' + (p.minLength || 8) + '" style="width:80px">' +
+        '<span style="font-size:0.85rem;color:var(--color-text-secondary)">characters</span>' +
+      '</div>' +
+      '<p class="hint">8 is the floor — NIST SP 800-63B\'s minimum for a memorized secret, and not something this field will go below.</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label>Required characters</label>' +
+      toggle("f-pw-lower", "Lowercase letter", p.requireLowercase) +
+      toggle("f-pw-upper", "Uppercase letter", p.requireUppercase) +
+      toggle("f-pw-number", "Number", p.requireNumber) +
+      toggle("f-pw-special", "Special character", p.requireSpecial) +
+      '<p class="hint">Turning all four off leaves length as the only rule — a legitimate posture (NIST discourages mandatory composition rules), not a misconfiguration.</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label>Existing passwords</label>' +
+      '<label style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer;margin-bottom:0.35rem">' +
+        '<input type="radio" name="pw-existing" id="f-pw-existing-keep" value="keep"' + (p.forceChangeOnLogin ? '' : ' checked') + ' style="margin-top:0.25rem">' +
+        '<span>Apply to new passwords only<br><span class="hint" style="margin:0">Passwords already set keep working until their owner changes them.</span></span>' +
+      '</label>' +
+      '<label style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer">' +
+        '<input type="radio" name="pw-existing" id="f-pw-existing-force" value="force"' + (p.forceChangeOnLogin ? ' checked' : '') + ' style="margin-top:0.25rem">' +
+        '<span>Require a change at next sign-in<br><span class="hint" style="margin:0">A local user whose password fails these rules must set a new one before they get a session — after their second factor, never instead of it.</span></span>' +
+      '</label>' +
+    '</div>';
+}
+
+/**
+ * The host ACL. Mirrors the Server Settings card it replaces, including the
+ * observed caller IP — which is the whole point of showing this in a UI: the
+ * gate compares Express's `req.ip`, and behind two proxies with a one-hop trust
+ * setting that is the INNER proxy's address, so an "RFC1918 only" scope can
+ * admit the entire internet while reading as enforced.
+ */
+function buildLoginAccessSection(la) {
+  var s = (la && la.settings) || { enabled: false, ipScope: "rfc1918", allowedCidrs: [] };
+  var callerIp = (la && la.callerIp) || "";
+  var cidrs = (s.allowedCidrs || []).join("\n");
+  function opt(value, label) {
+    return '<option value="' + value + '"' + (s.ipScope === value ? ' selected' : '') + '>' + label + '</option>';
+  }
+  return '<p style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+      'Restricts which source networks may reach the local login form and the password endpoints. Covers local ' +
+      '<strong>and LDAP</strong> sign-in — both arrive on the same request — and deliberately leaves every SSO path alone, ' +
+      'since SSO is the route that has to keep working from anywhere. Off by default.' +
+    '</p>' +
+    '<div class="form-group">' +
+      '<label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">' +
+        '<input type="checkbox" id="f-la-enabled"' + (s.enabled ? ' checked' : '') + '>' +
+        '<span>Restrict local login by source IP</span>' +
+      '</label>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label>Allowed sources</label>' +
+      '<select id="f-la-scope">' +
+        opt("rfc1918", "Private networks (RFC1918) + loopback") +
+        opt("custom", "Specific networks only") +
+        opt("all", "Anywhere (no restriction)") +
+      '</select>' +
+    '</div>' +
+    '<div class="form-group" id="f-la-cidrs-group">' +
+      '<label>Trusted subnets / addresses</label>' +
+      '<textarea id="f-la-cidrs" rows="4" style="font-family:monospace;font-size:0.8rem;resize:vertical" placeholder="10.0.0.0/8&#10;192.168.10.0/24&#10;203.0.113.5">' + escapeHtml(cidrs) + '</textarea>' +
+      '<p class="hint">One per line — IPv4 CIDR (<code>10.0.0.0/8</code>) or a bare address (<code>203.0.113.5</code>). Used only with “Specific networks only”.</p>' +
+    '</div>' +
+    '<p class="hint" style="margin-top:-0.4rem">' +
+      'Polaris sees this request coming from <code>' + escapeHtml(callerIp || "unknown") + '</code>. ' +
+      'If that is a proxy rather than your workstation, fix <code>TRUST_PROXY</code> before relying on this — ' +
+      'a scope that matches the proxy matches everyone behind it. Saving a scope that excludes your own address is refused.' +
+    '</p>';
+}
+
+/**
+ * Passkeys. The mode radio is the admin-selectable part: a passkey can be a
+ * way IN, a second factor, both, or nothing.
+ */
+function buildPasskeySection(pk) {
+  var s = (pk && pk.settings) || { mode: "both", rpId: "", requireUserVerification: true };
+  var av = (pk && pk.availability) || {};
+  function mode(value, label, detail) {
+    return '<label style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer;margin-bottom:0.35rem">' +
+      '<input type="radio" name="pk-mode" value="' + value + '"' + (s.mode === value ? ' checked' : '') + ' style="margin-top:0.25rem">' +
+      '<span>' + label + '<br><span class="hint" style="margin:0">' + detail + '</span></span>' +
+    '</label>';
+  }
+  var unavailable = av.unavailableReason
+    ? '<p class="hint" style="color:var(--color-warning,#f0a020)"><strong>Not usable at this address:</strong> ' + escapeHtml(av.unavailableReason) + '</p>'
+    : '<p class="hint">Passkeys on this address register against the domain <code>' + escapeHtml(av.rpId || "") + '</code>.</p>';
+
+  return '<p style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+      'A passkey is a key pair held by the browser, phone or security key — unphishable, and nothing to type. ' +
+      'Local accounts only; users enroll their own from the account menu. Registering one never removes the password.' +
+    '</p>' +
+    unavailable +
+    '<div class="form-group">' +
+      '<label>How passkeys may be used</label>' +
+      mode("both", "Sign-in and second factor", "Users choose per sign-in. A user who has registered one must use it — as the whole login, or after their password.") +
+      mode("login", "Sign-in only", "A passkey replaces the password. Password sign-in stays available and stays single-step.") +
+      mode("second-factor", "Second factor only", "Password first, then the passkey instead of an authenticator code.") +
+      mode("off", "Disabled", "No registration, no passkey sign-in. Credentials already registered are kept but authenticate nothing.") +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">' +
+        '<input type="checkbox" id="f-pk-uv"' + (s.requireUserVerification ? ' checked' : '') + '>' +
+        '<span>Require user verification (PIN, fingerprint, face)</span>' +
+      '</label>' +
+      '<p class="hint">This is what makes a passkey two factors in one gesture, and why a passkey sign-in skips the authenticator code. Turn it off and a passkey proves possession alone.</p>' +
+    '</div>' +
+    '<div class="form-group">' +
+      '<label>Passkey domain</label>' +
+      '<input type="text" id="f-pk-rpid" value="' + escapeHtml(s.rpId || "") + '" placeholder="(derive from the address in the browser)">' +
+      '<p class="hint">Leave blank unless users reach Polaris by more than one name. A passkey works only at the domain it was registered to, so a shared parent domain (<code>example.com</code>) lets one passkey serve <code>polaris.example.com</code> and <code>ipam.example.com</code> — at the cost of scoping it to that whole domain.</p>' +
+    '</div>';
+}
+
+function buildSessionSection(s) {
   // Turning "Skip login page" ON is only permitted while the admin is signed in
   // through SSO (SAML or OIDC) — end-to-end proof that SSO works before the
   // local login page is hidden, so an SSO misconfiguration can't lock everyone
@@ -1045,7 +1322,7 @@ function buildSessionTab(s) {
     'While this is on, anyone visiting a Polaris page — the login page included — is sent straight to SSO and never sees the login form. ' +
     'Local and LDAP accounts can still sign in, but only by browsing directly to <code>/login.html?local=1</code> — ' +
     'keep that URL somewhere your admins can find it, since it is the way back in if SSO is down. ' +
-    'To limit which networks may reach it, see <em>Server Settings → Web Server → Local Login Access</em>.';
+    'To limit which networks may reach it, see <em>Trusted Networks for Login</em> further down this tab.';
   return '<p style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:1.25rem">Configure session behavior for all authentication methods.</p>' +
     '<div class="form-group">' +
       '<label style="display:flex;align-items:center;gap:0.5rem;cursor:' + (lockOn ? 'not-allowed' : 'pointer') + '">' +

@@ -18,6 +18,8 @@ import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { hashPassword, passwordPolicySchema } from "../../utils/password.js";
+import { assertPasswordMeetsPolicy } from "../../services/passwordPolicyService.js";
+import { countPasskeysByUser, listPasskeys, deleteAllPasskeys } from "../../services/passkeyService.js";
 import { clearLockout } from "../../utils/loginLockout.js";
 import {
   countAdminEquivalentUsers,
@@ -30,8 +32,9 @@ import { logEvent } from "./events.js";
 
 const router = Router();
 
-// The complexity bar is shared with the setup wizard and with the
-// self-service change in auth.ts — see utils/password.ts.
+// Shape only. The complexity bar is the operator's live policy, asserted by
+// assertPasswordMeetsPolicy() inside each handler — shared with the setup
+// wizard and the self-service change in auth.ts. See utils/passwordPolicy.ts.
 const passwordSchema = passwordPolicySchema;
 
 const RegionTagsSchema = z.array(z.string().max(64)).max(64);
@@ -119,9 +122,18 @@ router.get("/", async (_req, res, next) => {
       }),
       getOnlineUserIds(),
     ]);
+    // One grouped count for the whole page rather than a per-row query: at a
+    // few hundred accounts the N+1 would be the most expensive thing on this
+    // endpoint, and the answer is a single indexed group-by.
+    const passkeyCounts = await countPasskeysByUser(users.map((u) => u.id));
     res.json(users.map((u) => {
       const { totpEnabledAt, ...rest } = u;
-      return { ...rest, isOnline: onlineUserIds.has(u.id), totpEnabled: !!totpEnabledAt };
+      return {
+        ...rest,
+        isOnline: onlineUserIds.has(u.id),
+        totpEnabled: !!totpEnabledAt,
+        passkeyCount: passkeyCounts.get(u.id) ?? 0,
+      };
     }));
   } catch (err) {
     next(err);
@@ -158,6 +170,7 @@ router.post("/", requirePermission("users", "write"), async (req, res, next) => 
     ]);
     if (existing) throw new AppError(409, `User "${username}" already exists`);
     if (!role) throw new AppError(400, `Role ${roleId} not found`);
+    await assertPasswordMeetsPolicy(password);
     // Rule 48: creating an account on an admin-equivalent role — with a
     // password the creator chooses — is the shortest path from users:write to
     // full control of the install.
@@ -197,6 +210,7 @@ router.put("/:id/password", requirePermission("users", "write"), async (req, res
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) throw new AppError(404, "User not found");
     if (user.authProvider !== "local") throw new AppError(400, "Cannot reset password for SSO/LDAP accounts — credentials are managed by the identity provider.");
+    await assertPasswordMeetsPolicy(password);
 
     const passwordHash = await hashPassword(password);
     await prisma.user.update({
@@ -337,6 +351,49 @@ router.delete("/:id/totp", requirePermission("users", "write"), async (req, res,
     });
 
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/v1/users/:id/passkeys — what this account has registered
+router.get("/:id/passkeys", requirePermission("users", "read"), async (req, res, next) => {
+  try {
+    res.json({ passkeys: await listPasskeys(req.params.id as string) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/v1/users/:id/passkeys — admin-initiated revoke of ALL of them.
+//
+// The counterpart of the TOTP reset above, and needed for the same reason: a
+// passkey the operator has configured as a second factor stands between the
+// user and their account, so a lost authenticator needs an admin path back.
+// Removing them all is safe — a local account always has a password, so this
+// can only ever widen the way in, never close it.
+router.delete("/:id/passkeys", requirePermission("users", "write"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const user = await prisma.user.findUnique({ where: { id }, select: { username: true } });
+    if (!user) throw new AppError(404, "User not found");
+
+    const removed = await deleteAllPasskeys(id);
+    if (removed === 0) throw new AppError(400, "This user has no passkeys registered.");
+
+    // A half-finished login holding a passkey second factor must not survive
+    // the credential it was going to use.
+    mfaPending.revokeForUser(id);
+    logEvent({
+      action: "user.passkeys_revoked",
+      level: "warning",
+      resourceType: "user",
+      resourceId: id,
+      resourceName: user.username,
+      actor: req.session?.username,
+      message: `${removed} passkey${removed === 1 ? "" : "s"} revoked for user "${user.username}" by an administrator`,
+    });
+    res.json({ ok: true, removed });
   } catch (err) {
     next(err);
   }

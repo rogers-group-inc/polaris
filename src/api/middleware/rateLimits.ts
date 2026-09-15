@@ -27,6 +27,21 @@ export function makeRateLimiter(opts: { windowMs: number; max: number; message: 
   });
 }
 
+/**
+ * WebAuthn ceremonies (passkey login, the passkey second-factor step, and
+ * registration). An assertion cannot be guessed, so this is not a
+ * code-grinding ceiling like the TOTP one — it bounds the cheap half of the
+ * exchange: `/passkeys/login/options` is reachable with no session at all and
+ * mints an in-memory challenge on every call. Roomier than the login limiter
+ * because one sign-in is two requests and a user who cancels the browser's
+ * credential dialog legitimately starts over.
+ */
+export const passkeyCeremonyLimiter = makeRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: "Too many passkey attempts. Please try again in 15 minutes.",
+});
+
 /** Auth-code guessing surfaces (TOTP confirm/disable): mirror the login limiter. */
 export const totpCodeLimiter = makeRateLimiter({
   windowMs: 15 * 60 * 1000,

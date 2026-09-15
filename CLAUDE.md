@@ -18,7 +18,7 @@ invariants and "when changing this" checklists are what make a change land right
 | Skill | Load when | Invocation |
 |---|---|---|
 | `polaris-domain-model` | a task names a model, column, enum, `sourceType`, `monitorStatus`; edits `prisma/schema.prisma`; writes a migration | auto |
-| `polaris-business-rules` | **before changing any behavior** around subnets, reservations, leases, discovery writes, `lastSeen`, monitor status, dependency suppression, maintenance, alerts/automations, packet loss, secrets, backups, SSH, login gating, RBAC levels — or when anything cites "rule N" | auto (model only) |
+| `polaris-business-rules` | **before changing any behavior** around subnets, reservations, leases, discovery writes, `lastSeen`, monitor status, dependency suppression, maintenance, alerts/automations, packet loss, secrets, backups, SSH, login gating, password complexity, passkeys, RBAC levels — or when anything cites "rule N" | auto (model only) |
 | `polaris-api-rbac` | adding/changing an endpoint or gate, a permission key, a 401/403, tokens, login/SSO, anything in `src/api/` | auto |
 | `polaris-change-impact` | **before editing anything** in `src/services`, `src/jobs`, `src/utils` or a route; adding a service/job/integration/metric; "where does X live" / "what depends on X" | auto |
 | `polaris-ui-canon` | any change under `public/`; HTML/CSS/JS/theme/widget/chart/mobile/Dash work | auto |
@@ -81,7 +81,7 @@ Code lives in `src/` (`api/routes/`, `api/middleware/`, `services/`, `jobs/`, `u
 | Sessions | express-session + connect-pg-simple (PostgreSQL store) |
 | Validation | Zod |
 | Logging | Pino + pino-pretty |
-| Auth | argon2id via @node-rs/argon2, @node-saml/node-saml (Azure SAML SSO), otpauth + qrcode (optional TOTP second factor for local accounts) |
+| Auth | argon2id via @node-rs/argon2, @node-saml/node-saml (Azure SAML SSO), otpauth + qrcode (optional TOTP second factor for local accounts), @simplewebauthn/server (passkeys for local accounts; the browser half is hand-rolled in `public/js/webauthn.js`) |
 | IP Math | netmask |
 | Security | helmet, express-rate-limit |
 | File uploads | multer |
