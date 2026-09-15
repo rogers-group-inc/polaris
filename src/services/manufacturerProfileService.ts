@@ -56,6 +56,10 @@ export const STD_MIB_KEYS = new Set<string>([
   "std:bridge",
   "std:q-bridge",
   "std:rstp",
+  // IP-MIB: ipNetToPhysicalTable / ipNetToMediaTable — the neighbour cache
+  // behind the ARP table stream. Was browsable and walkable but not pinnable
+  // on a profile row until 2026-09.
+  "std:ip",
 ]);
 
 function asStdMibKeyOrNull(value: unknown): string | null {

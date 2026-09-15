@@ -695,7 +695,7 @@ export interface ProfileSymbolStatus {
   symbol: string;
   resolved: boolean;
   fromModuleName: string | null;
-  fromScope: "device" | "vendor" | "generic" | "seed" | null;
+  fromScope: "device" | "vendor" | "generic" | "standard" | "seed" | null;
 }
 
 export interface ProfileStatus {

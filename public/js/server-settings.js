@@ -9369,8 +9369,9 @@ var STD_MIB_LABELS = {
   "std:bridge":         "Bridge — MAC forwarding + STP (RFC 4188)",
   "std:q-bridge":       "Bridge — VLAN-aware forwarding (RFC 4363)",
   "std:rstp":           "Rapid Spanning Tree (RFC 4318)",
+  "std:ip":             "IP — addresses + neighbour cache (RFC 4293)",
 };
-var STD_MIB_ORDER = ["std:system", "std:interfaces", "std:if-ext", "std:host-resources", "std:entity", "std:entity-sensor", "std:lldp", "std:poe", "std:bridge", "std:q-bridge", "std:rstp"];
+var STD_MIB_ORDER = ["std:system", "std:interfaces", "std:if-ext", "std:host-resources", "std:entity", "std:entity-sensor", "std:lldp", "std:poe", "std:bridge", "std:q-bridge", "std:rstp", "std:ip"];
 
 // Splits a single dropdown value into the {mibId, mibStdKey} pair the
 // backend expects. The dropdown carries one combined string ("" = built-in
@@ -9461,11 +9462,11 @@ function renderTransformSelect(current, cls, type) {
 // names. While the structure is in flight we render a disabled select
 // with "Loading…" so the operator sees the chain react.
 function renderSymbolPicker(currentSymbol, mibId, cls, type) {
-  // Standard-MIB picks (std:*) and "Built-in seed" (empty) both fall back
-  // to free-text — there's no enumerable symbol directory on the frontend
-  // for those, since the seeded OIDs live in oidRegistry without a parsed
-  // structure document the picker can walk.
-  if (!mibId || (typeof mibId === "string" && mibId.indexOf("std:") === 0)) {
+  // Only "Built-in seed" (empty) falls back to free text — the seed is a
+  // handful of SMI root arcs with no directory to list. A standard MIB pick
+  // (std:*) enumerates like an upload does, through GET /mibs/std/:key/
+  // structure, which returns the same shape as the uploaded variant.
+  if (!mibId) {
     return '<input type="text" class="' + cls + '" value="' + escapeHtml(currentSymbol || "") +
       '" placeholder="Symbol (e.g. fgSysCpuUsage)" style="width:100%;font-size:0.78rem">';
   }
@@ -9518,13 +9519,16 @@ function renderSymbolPicker(currentSymbol, mibId, cls, type) {
 // state in the picker swaps to the populated dropdown.
 function _ensureMibSymbols(mibId) {
   if (!mibId) return;
-  // Std-MIB hints are display-only — no MibFile row exists to fetch a
-  // structure from. Skip the network call.
-  if (typeof mibId === "string" && mibId.indexOf("std:") === 0) return;
   if (_mfgMibSymbolsCache[mibId] && !_mfgMibSymbolsCache[mibId].loading) return;
   if (_mfgMibSymbolsCache[mibId] && _mfgMibSymbolsCache[mibId].loading) return; // already in flight
   _mfgMibSymbolsCache[mibId] = { loading: true, scalars: [], tables: [] };
-  api.serverSettings.getMibStructure(mibId).then(function (struct) {
+  // A std:* key has no MibFile row; its structure comes from the bundled
+  // module via the std route. Same response shape, same split below.
+  var isStd = typeof mibId === "string" && mibId.indexOf("std:") === 0;
+  var fetchStructure = isStd
+    ? api.serverSettings.getStdMibStructure(mibId)
+    : api.serverSettings.getMibStructure(mibId);
+  fetchStructure.then(function (struct) {
     var tables = (struct.tables || []).map(function (t) { return t.name; }).filter(Boolean);
     // Build "everything that isn't a table-related symbol" for the scalar list.
     var tableColumns = new Set();

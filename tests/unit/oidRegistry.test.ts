@@ -51,6 +51,17 @@ describe("oidRegistry", () => {
     });
   });
 
+  describe("BUILT_IN_OIDS — scaffolding only", () => {
+    it("carries no BRIDGE-MIB anchors — the standard layer supplies them", () => {
+      // dot1dBridge / dot1dStp were seeded so Q-BRIDGE-MIB and RSTP-MIB could
+      // see a sibling's symbol. The bundled standard modules now resolve
+      // together (oidRegistryStandardLayer.test.ts pins that), so a
+      // re-seed here would be the old workaround coming back.
+      expect(BUILT_IN_OIDS.dot1dBridge).toBeUndefined();
+      expect(BUILT_IN_OIDS.dot1dStp).toBeUndefined();
+    });
+  });
+
   describe("IEEE8021-* modules anchored on an imported symbol", () => {
     // The IEEE8021-* family (MSTP, bridge extensions) does NOT use the inline
     // named-number idiom LLDP-MIB does. It writes `::= { ieee802dot1mibs N }`
