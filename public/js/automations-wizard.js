@@ -1549,7 +1549,10 @@ async function openAutomationWizard(existing, opts) {
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
-  var DIM_INTEGRAL_PLACEHOLDER = { ifNamePattern: "which interface — click to pick (blank compares every monitored interface)" };
+  var DIM_INTEGRAL_PLACEHOLDER = {
+    ifNamePattern: "which interface — click to pick (blank compares every monitored interface)",
+    tunnelName: "which IPsec tunnel — click to pick (blank compares every monitored tunnel)",
+  };
   // Dimension VALUE pickers. The server says which dimensionFilter fields it can
   // populate and whether each is a closed enum (`strict` → select-only, e.g.
   // sensorClass) or a substring match (→ suggestions, typing still allowed);

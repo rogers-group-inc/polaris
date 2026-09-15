@@ -2526,6 +2526,79 @@ describe("trigger filter rows", () => {
     expect(saved.trigger.dimensionFilter).toEqual({ ifNamePattern: "wan1", hostnamePattern: "GATE-A" });
   });
 
+  it("keeps the tunnel picker ON the IPsec tunnel status row and saves what it names", async () => {
+    // A tunnel name is a phase-1 name, not a guessable port name, so "IPsec
+    // tunnel status is down" shipped with no way to say WHICH tunnel from the
+    // row — the only path was "+ Condition → Component name → IPsec tunnel
+    // name". fieldMeta.integralDimension puts the scoped gates' own tunnel
+    // names on the condition itself.
+    await openAtStep3("r-ipsec-inline");
+    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ipsecStatus");
+    const row = doc.querySelector("#aw-trig-root .scr-row:not([data-filter-row])") as unknown as Element;
+    const tBox = row.querySelector('.tgl-dim[data-dim="tunnelName"]') as unknown as
+      { value: string; getAttribute: (a: string) => string | null };
+    expect(tBox).toBeTruthy();
+    // The hint asks which tunnel and says what blank does, rather than
+    // describing an optional narrowing the way the filter row's own does.
+    expect(tBox.getAttribute("placeholder")).toContain("which IPsec tunnel");
+    // It is a picker, not a bare text box: the values come from the draft's own
+    // devices (DIM_PICKERS → POST /automations/dimension-values).
+    expect(row.querySelector(".aw-combo-dim")).toBeTruthy();
+
+    (doc.querySelector("#aw-trig-root .tgl-value") as unknown as { value: string }).value = "down";
+    tBox.value = "to-hq";
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.type).toBe("asset_state");
+    expect(saved.trigger.field).toBe("ipsecStatus");
+    expect(saved.trigger.dimensionFilter).toEqual({ tunnelName: "to-hq" });
+    expect(() => ruleInputSchema.parse(saved)).not.toThrow();
+  });
+
+  it("saves an IPsec tunnel status rule with no tunnel named — blank is every pinned tunnel", async () => {
+    // Blank must stay legal: the engine folds one reading per pinned tunnel, so
+    // an unnamed rule is "any tunnel on these gates", one alert each. Making the
+    // picker mandatory would break the rules already authored that way.
+    await openAtStep3("r-ipsec-blank");
+    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ipsecStatus");
+    (doc.querySelector("#aw-trig-root .tgl-value") as unknown as { value: string }).value = "down";
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.field).toBe("ipsecStatus");
+    expect(saved.trigger.dimensionFilter).toBeUndefined();
+  });
+
+  it("re-opens a stored IPsec tunnel status rule with the tunnel on the row, not as a filter", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...BASE, id: "r-ipsec-reopen", name: "stored ipsecStatus",
+      trigger: { type: "asset_state", field: "ipsecStatus", operator: "==", value: "down", forDurationSec: 0, dimensionFilter: { tunnelName: "to-hq", hostnamePattern: "GATE-A" } },
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    // The integral dimension is invisible to the lift — including for a rule
+    // authored through a filter row before this existed, which re-opens with the
+    // tunnel on its condition instead of vanishing from the row.
+    const filterDims = Array.from(doc.querySelectorAll("#aw-trig-root .scr-row[data-filter-row] .tgl-dim"))
+      .map((el) => (el as unknown as { getAttribute: (a: string) => string | null }).getAttribute("data-dim"));
+    expect(filterDims).toEqual(["hostnamePattern"]);
+    const inline = doc.querySelector('#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim[data-dim="tunnelName"]') as unknown as { value: string };
+    expect(inline.value).toBe("to-hq");
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.dimensionFilter).toEqual({ tunnelName: "to-hq", hostnamePattern: "GATE-A" });
+  });
+
   it("folds an SD-WAN rule-name row into the sdwan state condition", async () => {
     await openAtStep3("r-filter-sdwan");
     await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:sdwanRuleStatus");
