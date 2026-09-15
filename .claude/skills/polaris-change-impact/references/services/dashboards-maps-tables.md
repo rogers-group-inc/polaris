@@ -72,13 +72,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Per-user list-page tabs — the `UserTableTabs` table (one row per `(user, scope)`, holding the whole strip: `{version, tabs[], activeId}`). The operator's private workspace of open views on a table; the shareable artifact is a `SavedTableFilter`.
 
-**Public API:** MAX_TABS, MAX_TAB_NAME_LEN, MAX_TAB_ID_LEN, TableTab, TableTabsLayout, EMPTY_LAYOUT, sanitizeTabs, getTabsForUser, saveTabsForUser.
+**Public API:** MAX_TABS, MAX_TAB_NAME_LEN, MAX_TAB_ID_LEN, MAX_TAB_FAVORITES, MAX_TAB_COLUMNS, TableTab, TableTabsLayout, EMPTY_LAYOUT, sanitizeTabs, getTabsForUser, saveTabsForUser.
 
 **Cross-service deps:** `prisma.userTableTabs`, `savedFilterService.sanitizeFilterState` (per-tab state validation).
 
 **Used by:**
 - `src/api/routes/tableTabs.ts` — `GET|PUT /me/table-tabs?scope=…`, gated `read` on the scope's key via `middleware/scopeAccess.ts`.
-- `public/js/assets-tabs.js` — the only frontend consumer, via `api.tableTabs.*`. It also owns the Assets page's FAVORITES store, by registering a `public/js/favorites.js` provider for the `"assets"` entity (`registerFavoritesProvider`) — so `assets.js`'s stars and its `?favoriteIds=` query read the active tab. Blocks / subnets / widget-library favorites still come from localStorage.
+- `public/js/assets-tabs.js` — the only frontend consumer, via `api.tableTabs.*`. It also owns the Assets page's FAVORITES store, by registering a `public/js/favorites.js` provider for the `"assets"` entity (`registerFavoritesProvider`) — so `assets.js`'s stars and its `?favoriteIds=` query read the active tab. Blocks / subnets / widget-library favorites still come from localStorage. It likewise owns the Assets table's COLUMN ORDER: it drives the `setupColumnLayout` handle `assets.js` holds in `_assetsLayout` with an order-only `setPrefs`, and takes the layout's `onChange` back through `syncColumnsFromTable()`.
 
 **Invariants:**
 - Whole-blob replace per (user, scope): the client owns tab order + which tab is active. No merge, no partial update.
@@ -90,10 +90,12 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A base snapshot goes through `sanitizeFilterState` exactly like the tab's own `state` — it is replayed into the table the same way.
 - `favoriteIds` distinguishes **null from `[]`** and must keep doing so: null = "predates per-tab favorites, client may seed me from the legacy per-user localStorage set", `[]` = "the operator has none here". Normalizing absent → `[]` would let a second browser re-seed tabs whose favorites had since been curated elsewhere.
 - Over-cap favorites are REFUSED (400), never truncated: a silently dropped tail looks like a star that didn't stick. The client enforces `MAX_TAB_FAVORITES` at the click, where it can say so. Note the list route's own `ASSET_FAVORITES_MAX` (5000) is a different bound — that one sizes a query string, this one sizes stored state.
+- `columnOrder` draws the SAME null-vs-`[]` distinction as `favoriteIds`, for the same one-shot-seeding reason — null lets the client adopt this browser's stored table layout once, `[]` is a deliberate empty set. Unlike `favoriteIds` it does NOT validate the ids against anything: the client stores a permutation of whatever columns the page had, and `setupColumnLayout.normalizeOrder` already drops strangers and splices in newcomers at apply time, so rejecting an unknown id here would break a tab every time a column is renamed or retired.
+- **Only the ORDER is per tab.** Column widths and hidden columns stay per-browser in `PolarisPrefs`/localStorage, because they are a property of the screen; the order is a property of the view. That is why `assets-tabs.js` hands the layout `{order}` and nothing else — a `widths` or `hidden` key in that call would push one browser's sizing onto every other.
 - Read-level gate on both verbs. Tabs are a view of data the caller can already see, so a readonly operator gets them.
 
 **When changing this:**
-- Adding a per-tab field: extend `TableTab` + `sanitizeTabs` + the route's Zod envelope + the client's serialize/restore in `assets-tabs.js` — all four, or the field silently vanishes on the next save. (The base-filter triple `defaultFilterId` / `defaultFilterName` / `defaultState` is the worked example.)
+- Adding a per-tab field: extend `TableTab` + `sanitizeTabs` + the route's Zod envelope + the client's serialize/restore in `assets-tabs.js` — all four, or the field silently vanishes on the next save. (The base-filter triple `defaultFilterId` / `defaultFilterName` / `defaultState` is the worked example; `columnOrder` is the same walk plus an apply path into the column layout.)
 - Adding tabs to another list page: the scope must already exist in `SAVED_FILTER_SCOPES` (see [services/savedFilterService.ts](#servicessavedfilterservicets)); the strip itself is page-level code.
 - Tests: `tests/unit/tableTabsService.test.ts` (envelope validation), `tests/integration/tableTabs.test.ts` (per-user isolation + readonly access + cascade), `tests/unit/assetsTabsDom.test.ts` (the strip).
 

@@ -6,8 +6,10 @@
  * for the wiring no server test can see: seeding the first tab from the live
  * table, switching tabs applying that tab's state, rename, close, the
  * open-a-preset-in-a-new-tab entry point, the base ("default") filter a tab
- * resets to, and — the subtle one — the re-entrancy guard that stops applying a
- * tab from writing the table state back into the tab the operator just left.
+ * resets to, the per-tab COLUMN ORDER (which follows the view, unlike widths
+ * and hidden columns, which stay per-browser), and — the subtle one — the
+ * re-entrancy guard that stops applying a tab from writing the table state
+ * back into the tab the operator just left.
  *
  * The real public/js/favorites.js is eval'd alongside it, because per-tab
  * favorites work by REGISTERING a provider for its "assets" entity: the thing
@@ -39,6 +41,10 @@ let saved: Record<string, unknown>[];
 let getResponse: Record<string, unknown> | null;
 let liveFilters: Record<string, unknown>;
 let liveSort: { key: string | null; dir: string | null };
+/** The table's movable-column order, as setupColumnLayout would report it. */
+let liveColumnOrder: string[];
+/** Every prefs blob the module handed the column layout. */
+let layoutSetPrefs: Record<string, unknown>[];
 let appliedStates: unknown[];
 let refreshes: number;
 let repaints: number;
@@ -76,6 +82,16 @@ async function boot(opts?: { hashSeeded?: boolean }) {
       liveSort = { key: s.sortKey || null, dir: s.sortDir || null };
     },
   };
+  // Stand-in for the setupColumnLayout handle assets.js holds. Only `order`
+  // matters here — widths/hidden are per-browser and the module must never
+  // write them, which is what the setPrefs recorder below proves.
+  g._assetsLayout = {
+    getPrefs: () => ({ widths: {}, hidden: [], shown: [], order: liveColumnOrder.slice() }),
+    setPrefs: (p: any) => {
+      layoutSetPrefs.push(p);
+      if (Array.isArray(p.order)) liveColumnOrder = p.order.slice();
+    },
+  };
   g.assetsApplyFilterState = () => {
     refreshes += 1;
     tabsApi().syncFromTable();
@@ -103,6 +119,7 @@ async function boot(opts?: { hashSeeded?: boolean }) {
 const tabsApi = () => (g.window as any).PolarisAssetTabs as {
   init: (o?: unknown) => Promise<void>;
   syncFromTable: () => void;
+  syncColumnsFromTable: () => void;
   openInNewTab: (p: unknown) => boolean;
   noteFilterLoaded: (p: unknown) => void;
   setDefaultFilter: (p: unknown) => boolean;
@@ -131,6 +148,8 @@ beforeEach(() => {
   getResponse = { version: 1, tabs: [], activeId: "" };
   liveFilters = {};
   liveSort = { key: null, dir: null };
+  liveColumnOrder = ["hostname", "ip", "type"];
+  layoutSetPrefs = [];
   appliedStates = [];
   refreshes = 0;
   repaints = 0;
@@ -477,6 +496,99 @@ describe("per-tab favorites", () => {
       expect(tabsApi()._debugState().persisted).toBe(false);
       expect(saved).toEqual([]);
     });
+  });
+});
+
+describe("per-tab column order", () => {
+  beforeEach(() => {
+    getResponse = {
+      version: 1,
+      activeId: "t1",
+      tabs: [
+        { id: "t1", name: "Firewalls", state: { sfFilters: {}, sortKey: null, sortDir: null },
+          favoriteIds: [], columnOrder: ["type", "hostname", "ip"] },
+        { id: "t2", name: "Switches", state: { sfFilters: {}, sortKey: null, sortDir: null },
+          favoriteIds: [], columnOrder: ["ip", "type", "hostname"] },
+      ],
+    };
+  });
+
+  it("applies the active tab's order on load, and only the order", async () => {
+    await boot();
+    expect(liveColumnOrder).toEqual(["type", "hostname", "ip"]);
+    // Widths and hidden columns are per-BROWSER: the module must never hand
+    // the layout a key that would overwrite them from server state.
+    expect(layoutSetPrefs.length).toBeGreaterThan(0);
+    layoutSetPrefs.forEach((p) => expect(Object.keys(p)).toEqual(["order"]));
+  });
+
+  it("switching tabs rearranges the columns to that tab's order", async () => {
+    await boot();
+    fire(tabEls()[1], "click");
+    expect(liveColumnOrder).toEqual(["ip", "type", "hostname"]);
+    fire(tabEls()[0], "click");
+    expect(liveColumnOrder).toEqual(["type", "hostname", "ip"]);
+  });
+
+  it("a drag-reorder lands in the ACTIVE tab only, and persists", async () => {
+    await boot();
+    liveColumnOrder = ["hostname", "type", "ip"];          // operator dragged a column
+    tabsApi().syncColumnsFromTable();
+    const state = tabsApi()._debugState();
+    expect(state.tabs[0].columnOrder).toEqual(["hostname", "type", "ip"]);
+    expect(state.tabs[1].columnOrder).toEqual(["ip", "type", "hostname"]);
+    await flushSave();
+    const tabs = (saved.at(-1)!.tabs as Record<string, unknown>[]);
+    expect(tabs[0]!.columnOrder).toEqual(["hostname", "type", "ip"]);
+    expect(tabs[1]!.columnOrder).toEqual(["ip", "type", "hostname"]);
+  });
+
+  it("a width or visibility change alone writes nothing", async () => {
+    await boot();
+    saved = [];
+    tabsApi().syncColumnsFromTable();                      // onChange fires for those too
+    await flushSave();
+    expect(saved).toHaveLength(0);
+  });
+
+  it("a new tab inherits the arrangement of the view it was opened from", async () => {
+    await boot();
+    liveColumnOrder = ["ip", "hostname", "type"];
+    tabsApi().syncColumnsFromTable();
+    doc.getElementById("assets-tab-add")!.dispatchEvent(new win.Event("click", { bubbles: true }));
+    const state = tabsApi()._debugState();
+    expect(state.tabs.at(-1)!.columnOrder).toEqual(["ip", "hostname", "type"]);
+    // …and the columns did not snap back to the authored order on the way.
+    expect(liveColumnOrder).toEqual(["ip", "hostname", "type"]);
+  });
+
+  it("a tab written before the feature adopts this browser's arrangement once", async () => {
+    getResponse = {
+      version: 1,
+      activeId: "t1",
+      tabs: [
+        { id: "t1", name: "Firewalls", state: { sfFilters: {}, sortKey: null, sortDir: null } },
+        { id: "t2", name: "Switches", state: { sfFilters: {}, sortKey: null, sortDir: null } },
+      ],
+    };
+    liveColumnOrder = ["ip", "type", "hostname"];           // this browser's stored layout
+    await boot();
+    const state = tabsApi()._debugState();
+    // Every tab used to show this one arrangement, so every tab keeps it.
+    expect(state.tabs[0].columnOrder).toEqual(["ip", "type", "hostname"]);
+    expect(state.tabs[1].columnOrder).toEqual(["ip", "type", "hostname"]);
+  });
+
+  it("a deep link narrows the rows but does not take the tab's arrangement", async () => {
+    await boot({ hashSeeded: true });
+    expect(liveColumnOrder).toEqual(["type", "hostname", "ip"]);
+  });
+
+  it("the first-visit tab is seeded from the table on screen", async () => {
+    getResponse = { version: 1, tabs: [], activeId: "" };
+    liveColumnOrder = ["type", "ip", "hostname"];
+    await boot();
+    expect(tabsApi()._debugState().tabs[0].columnOrder).toEqual(["type", "ip", "hostname"]);
   });
 });
 

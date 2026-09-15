@@ -5,7 +5,7 @@
  * validation is delegated to savedFilterService.sanitizeFilterState (covered in
  * its own suite); what's tested here is the envelope: caps, uniqueness, name
  * hygiene, the preset back-reference, the base-filter triple, the per-tab
- * favorites list, and the activeId repair rule.
+ * favorites list, the per-tab column order, and the activeId repair rule.
  */
 
 import { describe, it, expect } from "vitest";
@@ -14,6 +14,7 @@ import {
   MAX_TABS,
   MAX_TAB_NAME_LEN,
   MAX_TAB_FAVORITES,
+  MAX_TAB_COLUMNS,
 } from "../../src/services/tableTabsService.js";
 
 const STATE = { sfFilters: { assetType: ["firewall"] }, sortKey: "hostname", sortDir: "asc" };
@@ -41,6 +42,7 @@ describe("sanitizeTabs", () => {
         defaultFilterName: null,
         defaultState: null,
         favoriteIds: null,
+        columnOrder: null,
       }],
     });
   });
@@ -103,6 +105,35 @@ describe("sanitizeTabs", () => {
     expect(() => sanitizeTabs({ tabs: [tab({ favoriteIds: "a1" })] })).toThrowError(/must be an array/);
     expect(() => sanitizeTabs({ tabs: [tab({ favoriteIds: [1] })] })).toThrowError(/must be a string/);
     expect(() => sanitizeTabs({ tabs: [tab({ favoriteIds: [""] })] })).toThrowError(/is required/);
+  });
+
+  it("round-trips a tab's own column order, deduped and in order", () => {
+    const out = sanitizeTabs({ tabs: [tab({ columnOrder: ["ip", "hostname", "ip"] })] });
+    expect(out.tabs[0]!.columnOrder).toEqual(["ip", "hostname"]);
+  });
+
+  it("keeps an ABSENT column order null and an empty one empty", () => {
+    // Same distinction favoriteIds draws: null lets the client seed the tab
+    // from this browser's stored table layout, [] is a deliberate empty set.
+    expect(sanitizeTabs({ tabs: [tab()] }).tabs[0]!.columnOrder).toBeNull();
+    expect(sanitizeTabs({ tabs: [tab({ columnOrder: null })] }).tabs[0]!.columnOrder).toBeNull();
+    expect(sanitizeTabs({ tabs: [tab({ columnOrder: [] })] }).tabs[0]!.columnOrder).toEqual([]);
+  });
+
+  it("keeps a column id the table no longer has — the client splices orders itself", () => {
+    // setupColumnLayout.normalizeOrder drops strangers and re-inserts newcomers
+    // at apply time, so storing a stale id costs nothing, while rejecting one
+    // would break a tab every time a column is renamed or retired.
+    const out = sanitizeTabs({ tabs: [tab({ columnOrder: ["retiredColumn", "hostname"] })] });
+    expect(out.tabs[0]!.columnOrder).toEqual(["retiredColumn", "hostname"]);
+  });
+
+  it("rejects a column order that is over the cap or not a list of ids", () => {
+    const many = Array.from({ length: MAX_TAB_COLUMNS + 1 }, (_, i) => `c${i}`);
+    expect(() => sanitizeTabs({ tabs: [tab({ columnOrder: many })] })).toThrowError(/column cap/);
+    expect(() => sanitizeTabs({ tabs: [tab({ columnOrder: "ip" })] })).toThrowError(/must be an array/);
+    expect(() => sanitizeTabs({ tabs: [tab({ columnOrder: [1] })] })).toThrowError(/must be a string/);
+    expect(() => sanitizeTabs({ tabs: [tab({ columnOrder: [""] })] })).toThrowError(/is required/);
   });
 
   it("trims names and rejects blank / control-character ones", () => {

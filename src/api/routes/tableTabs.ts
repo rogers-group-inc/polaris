@@ -25,6 +25,7 @@ import {
   MAX_TABS,
   MAX_TAB_NAME_LEN,
   MAX_TAB_FAVORITES,
+  MAX_TAB_COLUMNS,
 } from "../../services/tableTabsService.js";
 
 const router = Router();
@@ -49,6 +50,9 @@ const BodySchema = z.object({
         defaultState:      z.record(z.unknown()).nullish(),
         // Per-tab favorites. Null (or absent) is meaningful — see the service.
         favoriteIds:       z.array(z.string().max(64)).max(MAX_TAB_FAVORITES).nullish(),
+        // The tab's column order. Null (or absent) is meaningful the same way:
+        // the client may seed it from the browser's stored table layout.
+        columnOrder:       z.array(z.string().max(64)).max(MAX_TAB_COLUMNS).nullish(),
       }),
     )
     .max(MAX_TABS),
