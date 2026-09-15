@@ -5,53 +5,6 @@ makes every other page shorter.
 
 ---
 
-## The address-space side
-
-**IP block** — the outermost container. A block is a CIDR you own or have been
-allocated (`10.0.0.0/8`, `192.168.0.0/16`). Blocks hold networks.
-
-**Network** (`Subnet` in the API and database) — a CIDR inside a block. This is
-the row that means "a broadcast domain exists here". Three rules bind it:
-
-- A network **must be contained** within its parent block.
-- Two networks **may not overlap** inside the same block.
-- CIDRs are **normalised on write** — typing `10.1.1.5/24` stores `10.1.1.0/24`.
-
-A network carries a status: `available`, `reserved` or `deprecated`.
-
-**Reservation** — one address inside one network, claimed by something. This is
-the row that answers "who has `10.1.1.50`?". Only one *active* reservation may
-exist per address per network.
-
-**Source type** — *why* a reservation exists. This is the single most important
-field on the IPAM side, because it decides whether Polaris may overwrite the
-row:
-
-| `sourceType` | Means | Authoritative? |
-|---|---|---|
-| `manual` | a person typed it | yes |
-| `dhcp_reservation` | the gate has a MAC→IP reservation | yes |
-| `dhcp_lease` | the gate handed the address out dynamically | **no** — observed presence, supersedable |
-| `interface_ip` | the address is on a device interface | yes |
-| `vip` | a virtual IP / NAT mapping | yes |
-| `fortiswitch` / `fortinap` | a managed Fortinet device holds it | depends on its DHCP binding |
-| `fortimanager` / `fortigate` | discovered through that integration | yes |
-| `dns_resolved` | auto-created because an asset's IP fell in a known network | **no** — defers to everything |
-
-**DHCP binding** — *how* the gate hands the address out: `null`, `"lease"` or
-`"reservation"`. This is deliberately a **separate fact from source type**
-([rule 23](Business-Rules#rule-23)). "Who owns this address" and "how does the
-gate serve it" are two different questions, and folding them into one field is
-how IPAM tools start lying.
-
-**Exclusion** — a CIDR declared out of scope for the networks list entirely.
-Exists because some address space is genuinely the *same* at every site — an
-out-of-band management VLAN, an appliance's fixed subnet — so one shared row
-would collide with every site that serves it. See
-[rule 42](Business-Rules#rule-42).
-
----
-
 ## The device side
 
 **Asset** — a device. Anything with a presence on the network: firewalls,
@@ -113,6 +66,53 @@ eight: `responseTime`, `cpuMemory`, `temperature`, `interfaces`, `lldp`,
 `snmp`, `ssh`, `winrm`, `rest_api`, `agent`, `vcenter`, `fortimanager`, or
 `disabled`. Resolved per stream from a four-tier hierarchy. See
 [Polling methods](Polling-Methods).
+
+---
+
+## The address-space side
+
+**IP block** — the outermost container. A block is a CIDR you own or have been
+allocated (`10.0.0.0/8`, `192.168.0.0/16`). Blocks hold networks.
+
+**Network** (`Subnet` in the API and database) — a CIDR inside a block. This is
+the row that means "a broadcast domain exists here". Three rules bind it:
+
+- A network **must be contained** within its parent block.
+- Two networks **may not overlap** inside the same block.
+- CIDRs are **normalised on write** — typing `10.1.1.5/24` stores `10.1.1.0/24`.
+
+A network carries a status: `available`, `reserved` or `deprecated`.
+
+**Reservation** — one address inside one network, claimed by something. This is
+the row that answers "who has `10.1.1.50`?". Only one *active* reservation may
+exist per address per network.
+
+**Source type** — *why* a reservation exists. This is the single most important
+field on the IPAM side, because it decides whether Polaris may overwrite the
+row:
+
+| `sourceType` | Means | Authoritative? |
+|---|---|---|
+| `manual` | a person typed it | yes |
+| `dhcp_reservation` | the gate has a MAC→IP reservation | yes |
+| `dhcp_lease` | the gate handed the address out dynamically | **no** — observed presence, supersedable |
+| `interface_ip` | the address is on a device interface | yes |
+| `vip` | a virtual IP / NAT mapping | yes |
+| `fortiswitch` / `fortinap` | a managed Fortinet device holds it | depends on its DHCP binding |
+| `fortimanager` / `fortigate` | discovered through that integration | yes |
+| `dns_resolved` | auto-created because an asset's IP fell in a known network | **no** — defers to everything |
+
+**DHCP binding** — *how* the gate hands the address out: `null`, `"lease"` or
+`"reservation"`. This is deliberately a **separate fact from source type**
+([rule 23](Business-Rules#rule-23)). "Who owns this address" and "how does the
+gate serve it" are two different questions, and folding them into one field is
+how IPAM tools start lying.
+
+**Exclusion** — a CIDR declared out of scope for the networks list entirely.
+Exists because some address space is genuinely the *same* at every site — an
+out-of-band management VLAN, an appliance's fixed subnet — so one shared row
+would collide with every site that serves it. See
+[rule 42](Business-Rules#rule-42).
 
 ---
 

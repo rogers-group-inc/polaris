@@ -5,9 +5,13 @@ The page where you connect Polaris to the systems that know things.
 Gated by `integrations`. Reads at `read`; creating, editing and running
 discovery at `write`.
 
-> **No integration is guaranteed and every one is absent by default.** An
-> install with none at all is a perfectly good IPAM — discovery is something you
-> turn on, not something you turn off.
+> **No integration is guaranteed and every one is absent by default** —
+> discovery is something you turn on, not something you turn off. An install
+> with none still works on hand-entered assets and address space.
+>
+> But this page is the point of the product: pulling the systems you already run
+> into one dashboard, where a device known to four of them is **one record
+> carrying four sources** rather than four rows to reconcile by hand.
 
 ---
 

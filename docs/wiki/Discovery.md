@@ -4,7 +4,10 @@ Discovery is how devices, networks, reservations and VIPs get into Polaris
 without anyone typing them.
 
 Seven integration types feed it. Every one is **optional and absent by
-default** — an install with no integrations is a perfectly good IPAM.
+default** — but they are what Polaris is built around. An install with none
+still works (hand-entered assets, monitored over SNMP / SSH / WinRM / ICMP or
+the agent, plus the address registry), it just does the smaller half of the
+job.
 
 | Type | Reads | Produces |
 |---|---|---|

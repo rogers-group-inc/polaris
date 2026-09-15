@@ -1,6 +1,10 @@
 # Polaris
 
-A network management tool. Auto-discovery from FortiManager / FortiGate / Windows DHCP / Entra ID / Active Directory / VMware vCenter / Azure Arc, to build out IPv4/IPv6 networks, asset inventories and device maps. Made specifically with Fortinet network devices in mind, monitors devices over FortiOS REST and SNMP (response time, telemetry, system info, LLDP topology), maps managed FortiGates with their FortiSwitch/FortiAP/LLDP topology, push DHCP reservations and DHCP lease revocation as well as pushes asset quarantine to FortiGates.
+An asset management and network monitoring tool, built around pulling the systems you already run into one dashboard.
+
+Seven integrations — FortiManager / FortiGate, Entra ID / Intune, Active Directory, Windows DHCP, VMware vCenter, Azure Arc — are read into **one asset record per device**, where every field carries the source that reported it rather than whichever system wrote last. Those devices are then monitored over eight telemetry streams and six transports (FortiOS REST, SNMP, SSH, WinRM, ICMP, and an optional agent), mapped with their FortiSwitch/FortiAP/LLDP topology, and acted on by automations that alert, escalate, call an API or run a script.
+
+Made with Fortinet devices particularly in mind: it pushes DHCP reservations and lease revocation, and pushes asset quarantine, to FortiGates. It also keeps a full IPv4/IPv6 address registry — blocks, networks, reservations and conflict detection — for the estate it discovers.
 
 ## Documentation
 
