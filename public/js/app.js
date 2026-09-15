@@ -966,6 +966,7 @@ const ICONS = {
   key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2"/><path d="M17 6l3 3"/><path d="M14 9l3 3"/></svg>',
   share2: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
   zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
 };
@@ -1996,10 +1997,18 @@ function renderUserBadge() {
   header.appendChild(badge);
 }
 
+// The operator documentation, on the upstream project's GitHub wiki. It is a
+// LINK OUT rather than a page Polaris serves, so it is not available on an
+// air-gapped install — which is why every page's own behaviour is still
+// discoverable in the UI and nothing here is load-bearing. The wiki's source
+// lives in this repo under docs/wiki/ and is published from there; a fork
+// serving its own documentation changes this one constant.
+var WIKI_URL = "https://github.com/rogers-group-inc/polaris/wiki";
+
 /**
  * The account menu behind the page-header user badge: notification
- * preference, two-factor enrollment, logout. Items are built per open so the
- * preference / 2FA rows reflect current state without anything to keep
+ * preference, two-factor enrollment, help, logout. Items are built per open so
+ * the preference / 2FA rows reflect current state without anything to keep
  * repainted. The theme
  * toggle lives at the bottom of the sidebar, not here — it is a display
  * preference rather than an account action, and an always-visible control
@@ -2026,9 +2035,25 @@ function openUserMenu(anchor) {
   var passkeys = _passkeyMenuItem();
   if (passkeys) items.push(passkeys);
 
+  // Help sits between the account's own settings and Logout, in its own group:
+  // it is neither a preference nor the way out. It always renders — the wiki
+  // documents every page, including the ones this account cannot open, and a
+  // reader who cannot find a feature is exactly who needs it.
+  if (items.length) items.push({ separator: true });
+  items.push({
+    label: "Help",
+    icon: ICONS.help,
+    title: "Open the Polaris wiki on GitHub (new tab)",
+    onSelect: function () {
+      // noopener: the wiki is a third-party origin and must not get a handle
+      // on this window.
+      window.open(WIKI_URL, "_blank", "noopener");
+    },
+  });
+
   // Only separate Logout from something — with no preference or 2FA row the menu is
   // Logout alone, and a leading rule would be a divider above nothing.
-  if (items.length) items.push({ separator: true });
+  items.push({ separator: true });
   items.push({
     label: "Logout",
     icon: ICONS.logout,
