@@ -199,6 +199,15 @@ function toRecipient(u: IndexedUser): RecipientUser {
  */
 const EMPTY_ZONE_MAP: ReadonlyMap<string, string> = new Map<string, string>();
 
+/**
+ * The capability lookup an all-clear uses. Every address misses, and a miss
+ * means "capable" (business rule 25 — an address with no account keeps its
+ * button), so splitAckVariants returns the ONE group it returns for an
+ * ordinary send. The button is gone from that group's body anyway: the whole
+ * send's acknowledge URL is null. Shared and never written.
+ */
+const EMPTY_ACK_MAP: Map<string, boolean> = new Map<string, boolean>();
+
 const USER_INDEX_TTL_MS = 30_000;
 const _userIndexCache = createTtlCache<IndexedUser[]>({ ttlMs: USER_INDEX_TTL_MS, maxEntries: 1 });
 
@@ -749,6 +758,27 @@ export interface ExpandDeliveriesOptions {
    * before the feature even if a stored target carries the flag.
    */
   enforceUserPreference?: boolean;
+  /**
+   * This send carries NO acknowledge button, for anybody.
+   *
+   * Set by the CALLER (automationActionService) for an all-clear — the reset
+   * actions and the severity-band "resolved" actions, the three sends that
+   * announce the alert is OVER (business rule 25). There is nothing left to
+   * acknowledge by the time they land: the engine clears the notification in
+   * the same breath, and `/alert-ack.html` answers a cleared alert with "It
+   * resolved on its own or someone cleared it, so there is nothing to
+   * acknowledge" — a button whose only destination is that page is a dead end,
+   * and on an automation with `requireAckNote` it is a dead end that asks for
+   * a note first.
+   *
+   * Distinct from the per-recipient withholding above it: that one asks
+   * whether the READER may acknowledge, this one whether the ALERT can be.
+   * When it is set nothing about the reader splits the send — the URL is null
+   * for everyone — so the capability lookup is skipped entirely.
+   *
+   * Default false, so every firing send is byte-identical to what it was.
+   */
+  noAck?: boolean;
 }
 
 export async function expandDeliveries(
@@ -756,7 +786,7 @@ export async function expandDeliveries(
   targets: DeliveryTarget[] | undefined,
   opts: ExpandDeliveriesOptions = {},
 ): Promise<number> {
-  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, composedEmailForTimeZone, escalation, repeat, enforceUserPreference, followUp } = opts;
+  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, composedEmailForTimeZone, escalation, repeat, enforceUserPreference, followUp, noAck } = opts;
   if (!targets || targets.length === 0) return 0;
 
   // Resolve the referenced channels once (type + enabled).
@@ -941,9 +971,12 @@ export async function expandDeliveries(
   // rather than per recipient — the body was rendered before the Notification
   // row existed, so the token is still sitting in it literally. Null on an
   // install with no POLARIS_PUBLIC_URL, where the substitution blanks the
-  // button away instead of mailing a link that resolves against nothing.
+  // button away instead of mailing a link that resolves against nothing — and
+  // null for an all-clear (`noAck`), which is the same blanking for the other
+  // reason: the alert is over, so there is nothing the button could do.
+  const ackLink = (): string | null => (noAck ? null : ackUrlForEmail(notificationId));
   const composedBody = composedEmail
-    ? fillComposedAckUrl(composedEmail, ackUrlForEmail(notificationId))
+    ? fillComposedAckUrl(composedEmail, ackLink())
     : null;
 
   // The same body with the button taken out, for recipients whose role can't
@@ -957,6 +990,12 @@ export async function expandDeliveries(
   };
   let _ackCapable: Map<string, boolean> | null = null;
   const ackCapable = async (): Promise<Map<string, boolean>> => {
+    // An all-clear withholds the button from everyone, so who CAN acknowledge
+    // stops being a question worth a query: an empty map leaves every address
+    // "unknown" and `splitAckVariants` returns the single group it always
+    // returns for a fleet that can all act — whose body is the blanked one,
+    // because `ackLink()` above is null for the whole send.
+    if (noAck) return EMPTY_ACK_MAP;
     if (!_ackCapable) _ackCapable = await ackCapabilityByAddress();
     return _ackCapable;
   };
@@ -999,7 +1038,7 @@ export async function expandDeliveries(
     if (!perZone || tz === serverZone) return composedBody as ComposedEmail;
     let b = _ackByZone.get(tz);
     if (!b) {
-      b = fillComposedAckUrl(rawBodyForZone(tz), ackUrlForEmail(notificationId));
+      b = fillComposedAckUrl(rawBodyForZone(tz), ackLink());
       _ackByZone.set(tz, b);
     }
     return b;
@@ -1089,10 +1128,11 @@ export async function expandDeliveries(
       } else {
         // Plain (uncomposed) email is already one row per address, so the
         // button is decided per row: `noAck` tells the drain to leave the
-        // acknowledge line off this copy.
+        // acknowledge line off this copy. An all-clear stamps every row —
+        // there is no reader for whom the link would still mean something.
         const capable = await ackCapable();
         for (const addr of owners.keys()) {
-          const denied = capable.get(addr.trim().toLowerCase()) === false;
+          const denied = noAck || capable.get(addr.trim().toLowerCase()) === false;
           add(channel.id, "email", addr, denied ? { noAck: true } : undefined);
         }
       }
@@ -1135,7 +1175,12 @@ export async function expandDeliveries(
           ...(fallbackChannelId && byUserEmail.get(s.userId)
             ? { fallback: { userId: s.userId, channelId: fallbackChannelId, address: byUserEmail.get(s.userId) } }
             : {}),
-          ...(cannotAck.has(s.userId) ? { noAck: true } : {}),
+          // No tray action either, for the same two reasons: a role that
+          // cannot acknowledge, or an alert that no longer can be. sw.js
+          // renders the Acknowledge button only when `ackUrl` arrives, so the
+          // all-clear push lands with Open device / Ignore and nothing that
+          // opens a page saying there is nothing to do.
+          ...(noAck || cannotAck.has(s.userId) ? { noAck: true } : {}),
           ...(followUp ? { followUp } : {}),
         });
       }

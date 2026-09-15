@@ -223,3 +223,80 @@ describe("expandDeliveries — plain email + web push", () => {
     expect(byEndpoint.get("https://push/u-noc")).toBeUndefined();
   });
 });
+
+/**
+ * The other half of the same question. The block above asks whether the READER
+ * may acknowledge; this one asks whether the ALERT still can be.
+ *
+ * An all-clear — the reset actions, a severity band's resolved actions, the
+ * operator-clear path — announces that the alert is over, and the engine
+ * clears the notification in the same breath. The button on it could only ever
+ * land on `/alert-ack.html` saying "It resolved on its own or someone cleared
+ * it, so there is nothing to acknowledge", and on a rule with `requireAckNote`
+ * it would demand a note about it first. So the send carries none, for anyone,
+ * on every surface (business rule 25).
+ */
+describe("expandDeliveries — an all-clear carries no acknowledge button", () => {
+  it("blanks the button for EVERY composed recipient, and stays one row", async () => {
+    await expandDeliveries(
+      "n-1",
+      [{ channelId: "c-mail", recipientRegions: ["Atlanta"], addresses: ["contact@example.com"] }] as never,
+      { composedEmail: composed(), noAck: true },
+    );
+    const rows = emailRows();
+    // Capability stops splitting the send: with no button on either copy there
+    // is nothing for the two variants to differ about, so the read-only
+    // recipient rides the same message as everyone else.
+    expect(rows).toHaveLength(1);
+    const meta = metaOf(rows[0]!);
+    expect([...(meta.to as string[])].sort()).toEqual(
+      ["contact@example.com", "noc@example.com", "ro@example.com"],
+    );
+    expect(meta.text).not.toContain("Acknowledge");
+    expect(meta.text).not.toContain(ACK_URL);
+    // Pruned whole rather than left as a live-looking dead link.
+    expect(meta.html).not.toContain("Acknowledge");
+    expect(meta.html).not.toContain('href=""');
+    // Everything else about the alert survives — this takes away a button, not
+    // the email.
+    expect(meta.subject).toBe("[WARNING] switch-1");
+    expect(meta.html).toContain("Open device");
+  });
+
+  it("stamps noAck on every plain-email address, account or not", async () => {
+    await expandDeliveries(
+      "n-1",
+      [{ channelId: "c-mail", recipientRegions: ["Atlanta"], addresses: ["contact@example.com"] }] as never,
+      { noAck: true },
+    );
+    const byTarget = new Map(emailRows().map((r) => [r.target as string, metaOf(r).noAck]));
+    expect(byTarget.get("noc@example.com")).toBe(true);
+    expect(byTarget.get("ro@example.com")).toBe(true);
+    // Including the address with no Polaris account behind it — "unknown means
+    // capable" answers a question this send is not asking.
+    expect(byTarget.get("contact@example.com")).toBe(true);
+  });
+
+  it("withholds the push tray action from every subscription", async () => {
+    await expandDeliveries(
+      "n-1",
+      [{ channelId: "c-push", recipientRegions: ["Atlanta"] }] as never,
+      { noAck: true },
+    );
+    const rows = createdRows.filter((r) => r.transport === "web_push");
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => metaOf(r).noAck === true)).toBe(true);
+  });
+
+  it("leaves a FIRING send exactly as it was", async () => {
+    // The option defaults off: same two variants, same links.
+    await expandDeliveries(
+      "n-1",
+      [{ channelId: "c-mail", recipientRegions: ["Atlanta"] }] as never,
+      { composedEmail: composed() },
+    );
+    const rows = emailRows();
+    expect(rows).toHaveLength(2);
+    expect(rows.some((r) => String(metaOf(r).text).includes(ACK_URL))).toBe(true);
+  });
+});

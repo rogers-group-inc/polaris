@@ -126,6 +126,24 @@ export async function executeActions(
   // Resolved AT MOST ONCE per group and only when some action asked — the same
   // posture as assetContactEmails above, so a group that never opts in costs
   // nothing and issues no extra query.
+  // Is this group an ALL-CLEAR — the reset actions, or a severity band's
+  // resolved actions — rather than a fire?
+  //
+  // `severity` is the signal because it already IS one: "resolved" is a
+  // pseudo-severity (never in SEVERITIES, so no rule can carry it) that the
+  // three all-clear paths — fireResolved, fireReset and the operator-clear
+  // path in notificationService — stamp into the context precisely to colour
+  // the email green and read right in a subject line. Reading it here means a
+  // fourth all-clear path gets the behaviour by writing the same line it
+  // already has to write, instead of by remembering a second flag.
+  //
+  // What it buys: no Acknowledge button on an email announcing the alert is
+  // over, and no Acknowledge tray action on the matching push (business rule
+  // 25). Both used to lead to `/alert-ack.html` telling the reader the alert
+  // already cleared and there is nothing to acknowledge — and on a rule with
+  // `requireAckNote`, to a 400 demanding a note about it first.
+  const allClear = ctx["severity"] === "resolved";
+
   let _bothMethods: boolean | null = null;
   const groupOffersBothMethods = async (): Promise<boolean> => {
     if (_bothMethods !== null) return _bothMethods;
@@ -165,6 +183,7 @@ export async function executeActions(
           ...(followUpLine(ctx) ? { followUp: followUpLine(ctx) } : {}),
           escalation: exec.escalation,
           repeat: exec.repeat,
+          ...(allClear ? { noAck: true } : {}),
           ...(action.respectUserPreference ? { enforceUserPreference: await groupOffersBothMethods() } : {}),
         });
         if (rows > 0) executed++;

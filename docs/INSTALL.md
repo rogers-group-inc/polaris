@@ -1998,7 +1998,7 @@ Without it the agent receives `https://localhost:<PORT>` which only works for te
 
 For reverse-proxy / TLS-termination-upstream topologies (nginx, Caddy, ALB), `POLARIS_PUBLIC_URL` must be the **proxy's** public URL — the agent's pinned cert is the proxy's cert, not the upstream's.
 
-It also decides whether **alert emails carry a one-click Acknowledge link** and an Open-device button: both are absolute URLs, so without it the email is delivered without them (web push still acknowledges — it falls back to a relative URL the service worker resolves against its own origin).
+It also decides whether **alert emails carry a one-click Acknowledge link** and an Open-device button: both are absolute URLs, so without it the email is delivered without them (web push still acknowledges — it falls back to a relative URL the service worker resolves against its own origin). Separately, and whatever this is set to, the **all-clear never carries an Acknowledge link** — an email announcing that the alert is over is about an alert Polaris has already cleared, so there is nothing left to acknowledge.
 
 `POLARIS_PUBLIC_URL` is **also required for OIDC SSO** — Polaris derives the OIDC redirect URI from it (`${POLARIS_PUBLIC_URL}/api/v1/auth/oidc/callback`). OIDC login refuses with a clear error if it's unset.
 

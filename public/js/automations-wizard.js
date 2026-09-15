@@ -6928,7 +6928,11 @@ async function openAutomationWizard(existing, opts) {
           '<p class="hint" style="margin:2px 0 6px 22px">Unchecked, this action sends the default Polaris alert email.</p>' +
           '<div class="na-comp-body"' + (customEmail ? "" : ' style="display:none"') + '>' +
             '<p class="hint" style="margin:0 0 6px">This is the email Polaris sends. Edit it freely — ' +
-              '<code>{ack}</code> becomes the recipient’s one-click acknowledge link, <code>{asset.link}</code> opens the device, and ' +
+              // The {ack} caveat is here rather than only on a reset action's
+              // copy of this editor because one string backs every notify
+              // action; an operator who moves the token into a reset email
+              // needs to know it renders away there (business rule 25).
+              '<code>{ack}</code> becomes the recipient’s one-click acknowledge link — blank, and pruned away with its button, on an email announcing the alert is over — <code>{asset.link}</code> opens the device, and ' +
               '<code>{chart.cpu}</code> / <code>{chart.memory}</code> / <code>{chart.responseTime}</code> embed the last hour as charts, ' +
               '<code>{chart.sdwanLatency}</code> / <code>{chart.sdwanJitter}</code> / <code>{chart.sdwanLoss}</code> chart the SD-WAN health check an SD-WAN alert fired on (and replace the three above on one), and ' +
               '<code>{interface.lldp}</code> lists what LLDP saw on the port an interface alert fired on. ' +
