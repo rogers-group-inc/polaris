@@ -104,8 +104,9 @@ validate a backup or restore change — use the podman stack for that
 - **Version is automatic** — patch = git commit count (`src/utils/version.ts`).
   Never edit the patch in `package.json`; bump the minor only when cutting a
   named release.
-- **Before pushing**, re-read `README.md`, `docs/INSTALL.md`, the `deploy/`
-  scripts, and the Dockerfile for anything the change invalidated.
+- **Before pushing**, re-read `README.md`, `docs/INSTALL.md` (fresh installs),
+  `docs/UPGRADING.md` (what an existing host has to do), the `deploy/` scripts,
+  and the Dockerfile for anything the change invalidated.
 
 ## Deployment shape (so changes land safely)
 
