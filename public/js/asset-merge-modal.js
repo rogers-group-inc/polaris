@@ -74,6 +74,11 @@ var _mergeOtherDeps = null;
 var _mergeSearchTimer = null;
 var _mergePreselected = false;     // true when opened from the bulk bar (both assets picked up front)
 var _mergeOnDone = null;           // host page's post-merge refresh (see the header's host contract)
+// The operator's Sources priority order (Assets -> Settings -> Sources), most
+// authoritative first — GET /assets/source-priority. Decides which side's value
+// a differing field defaults to. null = the fetch failed or the server predates
+// the setting; the defaults then fall back to the empty-value rule alone.
+var _mergeSourcePriority = null;   // { order: string[], labels: { kind: label } }
 
 // Combine both rows' notes instead of picking a winner. MIRRORS
 // `combineAssetNotes` in src/services/assetMergeService.ts — that function is
@@ -123,6 +128,7 @@ async function openAssetMergeModal(assetId, preselectOtherId, opts) {
   _mergeThisHistory = null; _mergeOtherHistory = null;
   _mergeThisDeps = null; _mergeOtherDeps = null;
   _mergePreselected = !!preselectOtherId;
+  _mergeSourcePriority = null;
   _mergeOnDone = (opts && typeof opts.onMerged === "function") ? opts.onMerged : null;
 
   var intro = preselectOtherId
@@ -157,12 +163,17 @@ async function openAssetMergeModal(assetId, preselectOtherId, opts) {
       api.assets.get(assetId),
       api.assets.getSources(assetId).catch(function () { return []; }),
       api.assets.pollingHistory(assetId).catch(function () { return null; }),
-      api.assets.getDependencies(assetId).catch(function () { return null; })
+      api.assets.getDependencies(assetId).catch(function () { return null; }),
+      // Same setting the Sources column reads. Fetched here (not cached
+      // globally) so an order saved in another tab is picked up by the next
+      // merge; a failure just drops back to the empty-value default.
+      api.assets.getSourcePriority().catch(function () { return null; })
     ]);
     _mergeThisAsset = fetched[0];
     _mergeThisSources = Array.isArray(fetched[1]) ? fetched[1] : [];
     _mergeThisHistory = fetched[2];
     _mergeThisDeps = fetched[3];
+    _mergeSourcePriority = _mergeNormalizePriority(fetched[4]);
   } catch (err) {
     var rs = document.getElementById("merge-search-results");
     if (rs) rs.innerHTML = '<div class="empty-state" style="padding:1rem">Failed to load this asset: ' + escapeHtml(err.message || "error") + '</div>';
@@ -297,6 +308,81 @@ function _mergeSourcesSummary(sources) {
   }).join("");
 }
 
+// ── Source-priority helpers (merge comparison) ──
+// Two rows that are really one device were usually learned by different
+// integrations, and the operator has already declared which of those they
+// trust — the drag-to-reorder list on Assets -> Settings -> Sources. So the
+// per-field winner defaults to the side whose best-ranked discovery source
+// sits higher in that order, instead of always defaulting to A.
+//
+// The order only ranks the sources that can contribute a learned location
+// (LOCATION_CONTRIBUTORS in src/utils/assetSourceLocation.ts) — `manual`,
+// `polaris-agent`, `snmp-sysdescr` and `fortigate-firewall` are deliberately
+// absent from it. Those rank BELOW every listed kind here rather than being
+// promoted to the top: the operator never placed them, so inventing a rank for
+// them would be this code's opinion, not theirs. A side holding only unranked
+// sources still wins any field where the other side is empty.
+
+// Coerce the GET /assets/source-priority payload into { order, labels }, or
+// null when it carries no usable order.
+function _mergeNormalizePriority(payload) {
+  if (!payload || !Array.isArray(payload.order) || !payload.order.length) return null;
+  var labels = {};
+  if (Array.isArray(payload.contributors)) {
+    payload.contributors.forEach(function (c) {
+      if (c && c.kind) labels[c.kind] = c.label || c.kind;
+    });
+  }
+  return { order: payload.order.slice(), labels: labels };
+}
+
+function _mergeSourceKindLabel(kind) {
+  if (_mergeSourcePriority && _mergeSourcePriority.labels[kind]) return _mergeSourcePriority.labels[kind];
+  return (_assetSourceLabels && _assetSourceLabels[kind]) || kind;
+}
+
+// Best (lowest) index this side's sources hold in `order`; -1 when none of them
+// are ranked. -1 compares as worse than every real rank — see _mergePreferredSide.
+function _mergeSourceRank(sources, order) {
+  if (!order || !order.length || !sources || !sources.length) return -1;
+  var best = -1;
+  for (var i = 0; i < sources.length; i++) {
+    var idx = order.indexOf(sources[i] && sources[i].sourceKind);
+    if (idx < 0) continue;              // unranked kind — contributes nothing
+    if (best < 0 || idx < best) best = idx;
+  }
+  return best;
+}
+
+// The source kind that earned a side its rank, for the explanatory hint.
+function _mergeTopRankedKind(sources, order) {
+  var rank = _mergeSourceRank(sources, order);
+  return rank < 0 ? null : order[rank];
+}
+
+// "this" | "other" | null — which side the priority order prefers. null means
+// it can't separate them (equal rank, or neither side has a ranked source),
+// which leaves the empty-value rule alone in charge of the defaults.
+function _mergePreferredSide(thisRank, otherRank) {
+  if (thisRank === otherRank) return null;
+  if (thisRank < 0) return "other";
+  if (otherRank < 0) return "this";
+  return thisRank < otherRank ? "this" : "other";
+}
+
+// Default winner for one differing field. The empty-value rule outranks the
+// source priority both ways: an empty winner can never overwrite a value (the
+// backend refuses it), so defaulting to it would render a radio that does
+// nothing. With both sides holding a value the preferred side takes it, and
+// with no preference it stays on A — the pre-existing behavior. Never asked
+// about a `combine:true` field: those render no radios at all.
+function _mergeDefaultWinner(A, B, key, preferred) {
+  var aEmpty = _mergeIsEmpty(A[key]), bEmpty = _mergeIsEmpty(B[key]);
+  if (aEmpty && !bEmpty) return "other";
+  if (bEmpty && !aEmpty) return "this";
+  return preferred || "this";
+}
+
 // ── Dependency helpers (merge comparison) ──
 // A merge re-points everything that DEPENDS ON the absorbed asset at the
 // survivor, and carries the absorbed asset's own upstream parent links when
@@ -348,6 +434,14 @@ function _renderMergeComparison() {
   var cmp = document.getElementById("merge-compare");
   if (!cmp || !_mergeThisAsset || !_mergeOtherAsset) return;
   var A = _mergeThisAsset, B = _mergeOtherAsset;
+
+  // Which side's discovery sources the operator ranks higher. Drives the
+  // per-field winner defaults below; the radios stay live either way.
+  var priorityOrder = _mergeSourcePriority ? _mergeSourcePriority.order : null;
+  var aSourceRank = _mergeSourceRank(_mergeThisSources, priorityOrder);
+  var bSourceRank = _mergeSourceRank(_mergeOtherSources, priorityOrder);
+  var preferredSide = _mergePreferredSide(aSourceRank, bSourceRank);
+  var srcBadge = ' <span class="badge badge-active" title="This side\'s discovery source ranks higher in Assets → Settings → Sources — its values are pre-selected where both sides have one">higher-ranked source</span>';
 
   // Survivor selector — which row's identity, monitoring history, dependency
   // edges and FKs are kept. The absorbed row's sample history is deleted, so
@@ -440,9 +534,9 @@ function _renderMergeComparison() {
       winnerCell =
         '<span class="badge badge-active" title="Both assets\' notes are kept and combined onto the survivor — nothing is discarded">combined</span>';
     } else if (differs) {
-      // Default winner: the side with a value; if both have values, default to
-      // "this". Stored as data-field so confirm can gather them.
-      var defThis = _mergeIsEmpty(B[f.key]) || !_mergeIsEmpty(A[f.key]);
+      // Default winner: the side with a value; when both have one, the side the
+      // operator's Sources priority prefers (A when it has no opinion).
+      var defThis = _mergeDefaultWinner(A, B, f.key, preferredSide) === "this";
       winnerCell =
         '<div style="display:flex;gap:0.5rem;white-space:nowrap">' +
           '<label style="cursor:pointer"><input type="radio" name="mw-' + f.key + '" value="this"' + (defThis ? " checked" : "") + '> A</label>' +
@@ -458,18 +552,36 @@ function _renderMergeComparison() {
     '</tr>';
   }).join("");
 
+  // Says WHY the radios are pre-selected the way they are — an operator who
+  // disagrees should be pointed at the setting, not left re-picking every merge.
+  var priorityHint = "";
+  if (preferredSide && diffCount > 0) {
+    var winSources = preferredSide === "this" ? _mergeThisSources : _mergeOtherSources;
+    var loseSources = preferredSide === "this" ? _mergeOtherSources : _mergeThisSources;
+    var winKind = _mergeTopRankedKind(winSources, priorityOrder);
+    var loseKind = _mergeTopRankedKind(loseSources, priorityOrder);
+    priorityHint =
+      '<p class="hint" id="merge-priority-hint" style="margin:0 0 0.4rem">Pre-selected <strong>' + (preferredSide === "this" ? "A" : "B") + '</strong> ' +
+      'where both sides have a value: its <strong>' + escapeHtml(_mergeSourceKindLabel(winKind)) + '</strong> source ranks higher than ' +
+      (loseKind
+        ? '<strong>' + escapeHtml(_mergeSourceKindLabel(loseKind)) + '</strong>'
+        : 'anything on the other side') +
+      ' in <strong>Settings &rarr; Sources</strong>. A side with no value never overwrites one, whatever its rank.</p>';
+  }
+
   cmp.innerHTML =
     survivorHTML +
     '<div style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:0.4rem">' +
       (diffCount === 0 ? 'No field differences — the two assets agree on every field.' : diffCount + ' field' + (diffCount === 1 ? '' : 's') + ' differ (highlighted). Pick the winning value for each.') +
       (depsConflict ? ' <strong>Both assets have dependency parents and they differ</strong> — pick whose upstream links the merged asset keeps (devices depending on either asset are combined either way).' : '') +
     '</div>' +
+    priorityHint +
     '<div style="overflow:auto">' +
       '<table style="width:100%;font-size:0.85rem;border-collapse:collapse">' +
         '<thead><tr>' +
           '<th style="text-align:left;padding:0 0.6rem 0.4rem 0">Field</th>' +
-          '<th style="text-align:left;padding:0 0.6rem 0.4rem">A: ' + _mergeAssetLabel(A) + '</th>' +
-          '<th style="text-align:left;padding:0 0.6rem 0.4rem">B: ' + _mergeAssetLabel(B) + '</th>' +
+          '<th style="text-align:left;padding:0 0.6rem 0.4rem">A: ' + _mergeAssetLabel(A) + (preferredSide === "this" ? srcBadge : "") + '</th>' +
+          '<th style="text-align:left;padding:0 0.6rem 0.4rem">B: ' + _mergeAssetLabel(B) + (preferredSide === "other" ? srcBadge : "") + '</th>' +
           '<th style="text-align:left;padding:0 0 0.4rem">Keep</th>' +
         '</tr></thead>' +
         '<tbody>' + contextRows + fieldRows + '</tbody>' +
