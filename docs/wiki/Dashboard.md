@@ -142,3 +142,10 @@ The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
 
 Both report the **server's** count back, so a no-op says "already cleared"
 rather than showing a success toast over nothing.
+
+**A widget with more rows than fit scrolls itself** — a slow creep through the
+list, then back to the top, the way a NOC wall display reads. It never moves
+while you are working in it: pointing at the widget pauses it, and so does
+opening a row's menu, which stays put until you pick something or dismiss it.
+The list settles for a moment after the menu closes before it starts creeping
+again.

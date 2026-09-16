@@ -253,6 +253,55 @@ describe("showRowMenu — dismissal", () => {
   });
 });
 
+describe("showRowMenu — the open-menu stamp", () => {
+  /**
+   * `data-rowmenu-open` on the anchor is what tells a container not to move
+   * while a fixed menu is pinned to one of its children. The dashboard's NOC
+   * auto-scroll reads it (dashboard.js → startAutoScroll): a single 1px creep
+   * tick scrolls the widget body, which contains the anchor, which closes the
+   * menu — so a row menu on a scrolling widget vanished before the operator
+   * could pick anything. Hover can't cover it: the menu is body-mounted, so
+   * reaching for it is a mouseleave from the widget.
+   *
+   * Both halves matter. A stamp left behind on a closed menu freezes that
+   * widget for as long as the row survives its next re-render.
+   */
+  it("stamps the anchor while the menu is open", () => {
+    expect(anchor.hasAttribute("data-rowmenu-open")).toBe(false);
+    showRowMenu(anchor, [{ label: "Acknowledge alert…", onSelect: () => {} }]);
+    expect(anchor.hasAttribute("data-rowmenu-open")).toBe(true);
+  });
+
+  it("clears the stamp on every close path", () => {
+    const paths: Array<[string, () => void]> = [
+      ["closeRowMenu", () => closeRowMenu()],
+      ["Escape", () => {
+        const ev = new win.Event("keydown", { bubbles: true }) as unknown as { key: string };
+        ev.key = "Escape";
+        doc.dispatchEvent(ev as never);
+      }],
+      ["selecting an item", () => (doc.querySelector(".row-context-menu button") as unknown as HTMLElement).click()],
+      ["a scroll that moved the anchor", () => doc.body.dispatchEvent(new win.Event("scroll", { bubbles: true }))],
+    ];
+    for (const [name, close] of paths) {
+      showRowMenu(anchor, [{ label: "Open device", onSelect: () => {} }]);
+      expect(anchor.hasAttribute("data-rowmenu-open"), name).toBe(true);
+      close();
+      expect(menu(), name).toBeFalsy();
+      expect(anchor.hasAttribute("data-rowmenu-open"), name).toBe(false);
+    }
+  });
+
+  it("moves the stamp when another row claims the menu", () => {
+    const other = doc.createElement("button") as unknown as HTMLElement;
+    doc.body.appendChild(other as never);
+    showRowMenu(anchor, [{ label: "Open", onSelect: () => {} }]);
+    showRowMenu(other, [{ label: "Open", onSelect: () => {} }]);
+    expect(anchor.hasAttribute("data-rowmenu-open")).toBe(false);
+    expect(other.hasAttribute("data-rowmenu-open")).toBe(true);
+  });
+});
+
 describe("showRowMenu — stacking layer", () => {
   /**
    * The menu is body-mounted and fixed, so its z-index is compared against the

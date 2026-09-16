@@ -972,13 +972,26 @@
   // NOC uses translateY on an inner wrapper; we drive scrollTop on the
   // overflow:auto widget body instead (no DOM wrapper needed). Pauses while
   // the operator hovers the widget so they can read / click without it moving.
+  //
+  // Hover is not the whole story: clicking a row opens a row menu (Acknowledge
+  // alert… / Open device) that is position:fixed and mounted on <body>, so
+  // moving the pointer onto the menu LEAVES the widget — hover released, the
+  // creep resumed, and showRowMenu closes on a scroll of any container holding
+  // its anchor, so the menu vanished before the operator could pick anything.
+  // While a row in this body carries the open-menu stamp the widget holds too,
+  // and dwells briefly once it clears so the list doesn't lurch the instant the
+  // menu closes. The attribute is spelled out below rather than read from
+  // app.js: the /dash wallboard runs this file WITHOUT app.js (and so never
+  // stamps anything). Keep it in step with ROW_MENU_OPEN_ATTR in app.js.
   function startAutoScroll(scrollEl, hoverEl) {
     var STEP_MS = 80;                              // tick cadence (NOC metric-box speed)
     var TOP_PAUSE_TICKS = Math.ceil(3000 / STEP_MS); // ~3s dwell at the top
     var BOTTOM_DWELL = 40;                          // extra ticks held at the bottom (~3.2s)
+    var RESUME_TICKS = Math.ceil(1000 / STEP_MS);   // ~1s settle after a hold ends
     var offset = 0;
     var pause = TOP_PAUSE_TICKS;
     var hovered = false;
+    var held = false;
 
     function onEnter() { hovered = true; }
     function onLeave() { hovered = false; }
@@ -992,7 +1005,12 @@
         offset = 0; pause = TOP_PAUSE_TICKS;
         return;
       }
-      if (hovered) return;                          // operator is reading — hold
+      // Reading it, or acting on a row through an open menu pinned to it.
+      if (hovered || scrollEl.querySelector("[data-rowmenu-open]")) {
+        held = true;
+        return;
+      }
+      if (held) { held = false; pause = Math.max(pause, RESUME_TICKS); }
       if (pause > 0) { pause--; return; }
       offset += 1;
       if (offset > maxScroll + BOTTOM_DWELL) {       // past bottom + dwell → glide home, re-pause
