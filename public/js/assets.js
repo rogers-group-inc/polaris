@@ -6899,6 +6899,124 @@ function _updateStaleBannersFromEffective(assetId, asset) {
   }
 }
 
+// ─── Current-state tab strip: cadence · freshness · Refresh ────────────────
+//
+// Wireless, MAC Table and ARP Table are SNAPSHOTS of what the device last
+// answered, not time series. Read without a cadence and an age, an empty
+// client list or forwarding database says "nothing is connected" when it just
+// as often means "not asked since yesterday" — so all three carry the same
+// strip the System tab's section headers carry (_streamSourceBadgeHTML + an
+// "updated X ago" stamp), plus a Refresh button that re-asks the device now.
+//
+// The stamp turns amber past ONE cadence, not the three _staleBannerInnerHTML
+// uses: at 1× a poll is simply OVERDUE, which is what an operator asking "is
+// this current" needs told; the banner stays the louder signal for data that
+// has been abandoned long enough to be wrong rather than merely late.
+//
+// Each tab feeds ONE cadence figure into both the chip and the threshold, so
+// the number an operator reads is the number being compared against. Wireless
+// resolves it client-side (_resolveStaleStreamSec, the same resolver its stale
+// banner already uses); MAC Table and ARP Table take the server's fully-walked
+// `pollIntervalSec`, which is the only one that can see ARP's discovery-only
+// case.
+
+/** "every 10m" / "every 12h" for a cadence chip; "" when there is no figure. */
+function _cadenceChipHTML(cadenceSec, title) {
+  var label = _formatPollingInterval(cadenceSec);
+  if (!label) return "";
+  return '<span style="font-size:0.75rem;padding:2px 6px;border-radius:10px;background:var(--color-bg-primary);' +
+    'border:1px solid var(--color-border);color:var(--color-text-secondary);white-space:nowrap"' +
+    (title ? ' title="' + escapeHtml(title) + '"' : "") + '>every ' + escapeHtml(label) + '</span>';
+}
+
+// "updated 3m ago", amber with a ⚠ once the data is older than one cadence.
+// `lastAt` null renders the never-collected case rather than an empty slot —
+// on these tabs "we have never had an answer" is the single most useful thing
+// the strip can say, and leaving it blank is how it went unsaid before.
+function _freshnessStampHTML(lastAt, cadenceSec, neverText) {
+  if (!lastAt) {
+    return '<span style="font-size:0.72rem;color:var(--color-text-tertiary)">' +
+      escapeHtml(neverText || "never collected") + '</span>';
+  }
+  var overdue = typeof cadenceSec === "number" && cadenceSec > 0 &&
+    (Date.now() - new Date(lastAt).getTime()) > cadenceSec * 1000;
+  var color = overdue ? "var(--color-warning)" : "var(--color-text-tertiary)";
+  var title = new Date(lastAt).toLocaleString() +
+    (overdue ? " — older than the " + _formatPollingInterval(cadenceSec) + " poll cadence" : "");
+  return '<span style="font-size:0.72rem;color:' + color + (overdue ? ";font-weight:600" : "") + '" title="' +
+    escapeHtml(title) + '">' + (overdue ? "&#9888; " : "") + 'updated ' + timeAgo(lastAt) + '</span>';
+}
+
+/**
+ * The strip itself. `opts`:
+ *   title       — heading text (HTML-safe string, rendered as an <h4>)
+ *   suffixHTML  — optional span after the heading (the counts parenthetical)
+ *   chipHTML    — the cadence chip or a full stream badge
+ *   lastAt      — ISO timestamp the data was collected
+ *   cadenceSec  — the same cadence the chip states; drives the amber threshold
+ *   neverText   — what to say when lastAt is null
+ *   refreshId   — element id for the Refresh button; omitted → no button
+ *                 (also omitted for operators without `assetsProbe` read)
+ */
+function _currentStateStripHTML(opts) {
+  var canRefresh = opts.refreshId && typeof canProbeAssets === "function" && canProbeAssets();
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;' +
+      'flex-wrap:wrap;margin:0 0 0.5rem">' +
+    '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
+      '<h4 style="margin:0">' + opts.title + '</h4>' +
+      (opts.suffixHTML || "") +
+      (opts.chipHTML || "") +
+      _freshnessStampHTML(opts.lastAt, opts.cadenceSec, opts.neverText) +
+    '</div>' +
+    (canRefresh
+      ? '<button type="button" class="btn btn-sm btn-secondary" id="' + escapeHtml(opts.refreshId) + '" ' +
+          'title="' + escapeHtml(opts.refreshTitle || "Re-read this from the device now") + '">Refresh</button>'
+      : "") +
+  '</div>';
+}
+
+/**
+ * Wire a strip's Refresh button to the narrow system-info collector.
+ *
+ * One endpoint serves all three tabs because one pass writes all three tables
+ * (wireless stations + radios, the forwarding database, the neighbour cache).
+ * `onDone` re-loads whichever tab asked, and runs on failure too so the strip's
+ * own stamp refreshes either way.
+ *
+ * `supported: false` is reported as a toast, not an error: monitoring off, the
+ * Interfaces stream Disabled, or an agent-managed host pushing on its own
+ * schedule are all legitimate answers, and a spinner that simply stops would
+ * leave the operator guessing which.
+ */
+function _wireCurrentStateRefresh(refreshId, assetId, onDone) {
+  var btn = document.getElementById(refreshId);
+  if (!btn) return;
+  btn.addEventListener("click", async function () {
+    btn.disabled = true;
+    btn.textContent = "Refreshing…";
+    try {
+      var res = await api.assets.refreshSystemInfo(assetId);
+      if (!res || res.supported === false) {
+        showToast("Nothing to refresh — this device does not deliver current-state data on its " +
+          "current polling method.", "info");
+      } else if (!res.collected) {
+        showToast("Refresh failed — " + (res.error || "the device returned no data"), "error");
+      } else {
+        showToast("Refreshed from the device.", "success");
+      }
+    } catch (err) {
+      showToast("Refresh failed — " + ((err && err.message) || "unknown error"), "error");
+    } finally {
+      // The button lives inside the markup onDone replaces, so restore it
+      // first for the paths where the re-render never happens (a failed
+      // re-fetch leaves the old DOM in place).
+      btn.disabled = false;
+      btn.textContent = "Refresh";
+      if (typeof onDone === "function") await onDone();
+    }
+  });
+}
+
 // Centred "not available" empty-state for a section whose polling method
 // cannot deliver this data stream. `label` is the data-type name (e.g.
 // "Telemetry"). `pollingMethod` is the human-readable label (e.g. "REST API").
@@ -8469,7 +8587,7 @@ function _renderWirelessTree(container, radios, stations, asset, si) {
   }
 
   var staleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt);
-  container.innerHTML = staleBanner +
+  container.innerHTML = _wirelessStripHTML(asset, si) + staleBanner +
     '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
       '<th>Radio / SSID / Client</th>' +
       '<th>BSSID</th>' +
@@ -8513,6 +8631,42 @@ function _wirelessBandLabel(band) {
   return "—";
 }
 
+// The Wireless tab's cadence · freshness · Refresh strip. Same cadence source
+// as the stale banner directly below it (_resolveStaleStreamSec on the
+// systemInfo stream), so the "every 1m" an operator reads is the figure the
+// amber threshold uses. The full stream badge rather than a bare chip: which
+// transport and credential answered is exactly what an operator asks next when
+// the client list is empty, and the System tab already states it that way.
+function _wirelessStripHTML(asset, si) {
+  var assetId = asset && asset.id;
+  return _currentStateStripHTML({
+    title: "Wireless",
+    chipHTML: asset ? _streamSourceBadgeHTML(asset, "interfaces") : "",
+    lastAt: (si && si.lastSystemInfoAt) || (asset && asset.lastSystemInfoAt) || null,
+    cadenceSec: _resolveStaleStreamSec(assetId, asset, "systemInfo"),
+    neverText: "never collected",
+    refreshId: "asset-wireless-refresh",
+    refreshTitle: "Re-read this AP's radios, SSIDs and connected clients from the device now",
+  });
+}
+
+// Re-read the system-info snapshot and repaint just this tab. Narrower than
+// _loadSystemTabFor, which would also re-fetch telemetry history and repaint
+// five other sections the operator is not looking at.
+async function _reloadWirelessStations(assetId, asset) {
+  var container = document.getElementById("asset-system-stations");
+  if (!container) return;
+  try {
+    var si = await api.assets.systemInfo(assetId);
+    // Shared with the System tab's own renderers — keep them on the same
+    // snapshot rather than letting the two tabs disagree.
+    if (_currentAssetForRefresh && _currentAssetForRefresh.id === assetId) _assetSystemSiCache = si;
+    _renderWirelessStationsCard(container, si, asset);
+  } catch (err) {
+    showToast("Could not reload wireless data — " + ((err && err.message) || "unknown error"), "error");
+  }
+}
+
 // Render the wireless-station table from the system-info response.
 // Same shape as _renderLldpNeighborsCard — current-state list, no time
 // series. Stations matched to a Polaris asset surface the asset name
@@ -8522,19 +8676,33 @@ function _renderWirelessStationsCard(container, si, asset) {
   if (!container) return;
   var stations = (si && si.wirelessStations) || [];
   var radios = (si && si.apRadios) || [];
+  var assetId = asset && asset.id;
+  // Every branch below replaces container.innerHTML, so the strip is wired
+  // once here, after whichever branch ran.
+  function wireStrip() {
+    _wireCurrentStateRefresh("asset-wireless-refresh", assetId, function () {
+      return _reloadWirelessStations(assetId, asset);
+    });
+  }
   // With radio inventory, the clients hang off the SSID they joined on the
   // radio broadcasting it. Without it — discovery has not run since the
   // feature shipped, or this AP is not controller-managed — fall back to the
   // flat list below so the tab never regresses to empty while it fills in.
-  if (radios.length > 0) return _renderWirelessTree(container, radios, stations, asset, si);
+  if (radios.length > 0) {
+    _renderWirelessTree(container, radios, stations, asset, si);
+    wireStrip();
+    return;
+  }
   if (stations.length === 0) {
     var pollingLabel = _assetMonitorStreamSource(asset, "interfaces").polling || "the configured transport";
-    container.innerHTML = '<p class="empty-state" style="padding:1rem 0">' +
+    container.innerHTML = _wirelessStripHTML(asset, si) +
+      '<p class="empty-state" style="padding:1rem 0">' +
       'No radios or wireless clients reported yet. Radios and their SSIDs arrive with the next ' +
       'discovery run against the controlling FortiGate; connected clients come from the SNMP ' +
       'fapStationTable walk, which needs interfacesPolling set to SNMP (currently: ' +
       escapeHtml(pollingLabel) + ') on this AP.' +
       '</p>';
+    wireStrip();
     return;
   }
   // Stable sort: SSID → MAC. Same order the backend returns, but
@@ -8566,7 +8734,7 @@ function _renderWirelessStationsCard(container, si, asset) {
     '</tr>';
   }).join("");
   var staleBanner = _staleBannerHTML(asset && asset.id, asset, "systemInfo", si && si.lastSystemInfoAt);
-  container.innerHTML = staleBanner +
+  container.innerHTML = _wirelessStripHTML(asset, si) + staleBanner +
     '<div class="table-wrapper"><table class="data-table" style="font-size:0.82rem"><thead><tr>' +
       '<th data-col-id="ssid">SSID</th>' +
       '<th data-col-id="mac" data-col-required="true">MAC</th>' +
@@ -8586,10 +8754,11 @@ function _renderWirelessStationsCard(container, si, asset) {
   container.querySelectorAll(".asset-station-link").forEach(function (link) {
     link.addEventListener("click", function (e) {
       e.preventDefault();
-      var assetId = link.getAttribute("data-asset-id");
-      if (assetId) openViewModal(assetId);
+      var linkedId = link.getAttribute("data-asset-id");
+      if (linkedId) openViewModal(linkedId);
     });
   });
+  wireStrip();
 }
 
 // ─── Custom MIB tab (Slice 7) ────────────────────────────────────────────
@@ -21182,10 +21351,47 @@ async function _loadAssetMacTable(assetId) {
   try {
     var data = await api.assets.macTable(assetId);
     var entries = (data && data.entries) || [];
+
+    // Cadence · freshness · Refresh, on the server's fully-walked
+    // pollIntervalSec so the chip and the amber threshold are the same figure.
+    // `collectedAt` is the scrape stamp (persistMacTable writes one `now`
+    // across every row) and stays the ONLY source for the stamp: a switch
+    // polled over REST via its parent FortiGate has a recent system-info pass
+    // and no forwarding database at all, and "updated 2m ago" over an empty
+    // table would be a claim the data does not support.
+    var macCadenceSec = (data && typeof data.pollIntervalSec === "number") ? data.pollIntervalSec : null;
+    function stripHTML(suffixHTML) {
+      return _currentStateStripHTML({
+        title: "Forwarding database",
+        suffixHTML: suffixHTML || "",
+        chipHTML: _cadenceChipHTML(macCadenceSec, "How often the system-info pass re-reads this switch's forwarding database"),
+        lastAt: (data && data.collectedAt) || null,
+        cadenceSec: macCadenceSec,
+        neverText: "no entries recorded yet",
+        refreshId: "mactable-refresh-" + assetId,
+        refreshTitle: "Re-read this switch's forwarding database from the device now",
+      });
+    }
+    function wireStrip() {
+      _wireCurrentStateRefresh("mactable-refresh-" + assetId, assetId, function () {
+        return _loadAssetMacTable(assetId);
+      });
+    }
+
     if (entries.length === 0) {
-      mount.innerHTML = '<span class="empty-state">No forwarding-database entries. ' +
+      // The pass stamp belongs HERE rather than in the strip: it separates
+      // "never scraped" from "scraped and genuinely empty", which is the whole
+      // question an operator has in front of an empty forwarding database.
+      var lastPass = data && data.lastSystemInfoAt;
+      mount.innerHTML = stripHTML() +
+        '<span class="empty-state">No forwarding-database entries. ' +
         'This is collected over SNMP on the system-info cadence; a switch polled ' +
-        'via its parent FortiGate reports none.</span>';
+        'via its parent FortiGate reports none.' +
+        (lastPass
+          ? ' The last system-info pass ran ' + escapeHtml(timeAgo(lastPass)) + ' and returned none.'
+          : ' No system-info pass has completed against this switch yet.') +
+        '</span>';
+      wireStrip();
       return;
     }
 
@@ -21240,10 +21446,10 @@ async function _loadAssetMacTable(assetId) {
             '<th>Interface / MAC</th><th>VLAN</th><th>Status</th><th>Device</th>' +
           '</tr></thead><tbody>' + groups.map(groupHtml).join("") + '</tbody></table></div>';
       mount.innerHTML =
-        '<h4 style="margin:0 0 0.4rem">Forwarding database ' +
-          '<span style="font-weight:400;color:var(--color-text-secondary)">(' + shown.length +
-            ' entries on ' + groups.length + ' interface' + (groups.length === 1 ? "" : "s") + ')</span>' +
-        '</h4>' + note + body;
+        stripHTML('<span style="font-weight:400;color:var(--color-text-secondary)">(' + shown.length +
+          ' entries on ' + groups.length + ' interface' + (groups.length === 1 ? "" : "s") + ')</span>') +
+        note + body;
+      wireStrip();
       var toggle = document.getElementById("mactable-toggle-" + assetId);
       if (toggle) toggle.addEventListener("click", function () {
         showUnattributed = !showUnattributed;
@@ -21417,6 +21623,35 @@ async function _loadAssetArpTable(assetId, range) {
     var cadence = _arpCadenceLabel(data && data.pollIntervalSec);
     var retentionDays = (data && typeof data.retentionDays === "number") ? data.retentionDays : null;
 
+    // Declared up here because the strip renders the counts slot and the strip
+    // is also what the zero-entries branch below returns.
+    var countsId = "arptable-counts-" + assetId;
+    var bodyId   = "arptable-body-" + assetId;
+
+    // Cadence · freshness · Refresh. `pollIntervalSec` is the server's walk and
+    // is the only figure that can be right here: for an unmonitored gate the
+    // writer is discovery, not the system-info pass, and the two are twelve
+    // hours apart. Null means neither writes it — the stamp then says how old
+    // the rows are without pretending anything is coming to replace them.
+    var arpCadenceSec = (data && typeof data.pollIntervalSec === "number") ? data.pollIntervalSec : null;
+    function arpStripHTML() {
+      return _currentStateStripHTML({
+        title: "Neighbour cache",
+        suffixHTML: '<span id="' + countsId + '" style="font-weight:400;color:var(--color-text-secondary)"></span>',
+        chipHTML: _cadenceChipHTML(arpCadenceSec, "How often this gate's neighbour cache is re-read"),
+        lastAt: (data && data.collectedAt) || null,
+        cadenceSec: arpCadenceSec,
+        neverText: "never read",
+        refreshId: "arptable-refresh-" + assetId,
+        refreshTitle: "Re-read this gate's neighbour cache from the device now",
+      });
+    }
+    function wireArpStrip() {
+      _wireCurrentStateRefresh("arptable-refresh-" + assetId, assetId, function () {
+        return _loadAssetArpTable(assetId, activeRange);
+      });
+    }
+
     // The disclaimer. Two separate facts, and the second is the one that
     // actually matters: a poll is a SNAPSHOT of a cache whose entries expire in
     // minutes, so anything that came and went between two polls was never
@@ -21457,7 +21692,8 @@ async function _loadAssetArpTable(assetId, range) {
     }
 
     if (entries.length === 0) {
-      mount.innerHTML = disclaimerHtml() +
+      mount.innerHTML = arpStripHTML() +
+        disclaimerHtml() +
         '<div style="margin:0 0 0.6rem">' + rangeControlHtml() + '</div>' +
         '<span class="empty-state">' +
           (activeRange === "current"
@@ -21465,6 +21701,7 @@ async function _loadAssetArpTable(assetId, range) {
             : 'No ARP entries seen in this window.') +
         '</span>';
       wireRange();
+      wireArpStrip();
       return;
     }
 
@@ -21507,17 +21744,17 @@ async function _loadAssetArpTable(assetId, range) {
     // makes that hack necessary. A core FortiGate's neighbour cache runs into
     // the thousands, so each keystroke also re-filtered, re-grouped,
     // re-sorted and re-attached a listener per group and per matched device.
-    var countsId = "arptable-counts-" + assetId;
-    var bodyId   = "arptable-body-" + assetId;
+    // (countsId / bodyId are declared above the zero-entries branch, which
+    // renders the strip that owns the counts slot.)
 
     function countsHTML() {
       var shown = entries.filter(matches);
       var matched = shown.filter(function (e) { return !!e.matchedAsset; }).length;
-      var stamp = data.collectedAt ? timeAgo(data.collectedAt) : null;
+      // The read stamp used to live here; it is now the strip's, where it can
+      // go amber against the cadence stated beside it.
       return '(' +
         shown.length + (filter ? " of " + entries.length : "") + ' entr' +
         (shown.length === 1 ? "y" : "ies") + ' · ' + matched + ' matched to a known device' +
-        (stamp ? ' · newest read ' + escapeHtml(stamp) : "") +
       ')';
     }
 
@@ -21540,9 +21777,7 @@ async function _loadAssetArpTable(assetId, range) {
 
     function render() {
       mount.innerHTML =
-        '<h4 style="margin:0 0 0.4rem">Neighbour cache ' +
-          '<span id="' + countsId + '" style="font-weight:400;color:var(--color-text-secondary)"></span>' +
-        '</h4>' +
+        arpStripHTML() +
         disclaimerHtml() +
         '<div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;margin:0 0 0.5rem">' +
           rangeControlHtml() +
@@ -21565,6 +21800,7 @@ async function _loadAssetArpTable(assetId, range) {
         box.addEventListener("input", apply);
       }
       wireRange();
+      wireArpStrip();
       renderBody();
     }
 

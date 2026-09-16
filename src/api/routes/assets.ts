@@ -1770,6 +1770,73 @@ router.get("/:id/monitor-history", requirePermission("assets", "read"), async (r
   } catch (err) { next(err); }
 });
 
+/**
+ * Is this asset still inside its originating integration's device filter?
+ *
+ * Honors deviceInclude/deviceExclude (ouInclude/ouExclude for AD, vmInclude/
+ * vmExclude for vCenter). Every operator-initiated pull shares this gate: a
+ * refresh must not fetch from a device the next discovery sweep would skip —
+ * operators tighten these filters precisely to keep Polaris off certain hosts.
+ * Evaluated BEFORE any traffic leaves the box.
+ *
+ * Returns the loaded asset plus the blocking reason (`null` when in scope);
+ * `notFound` distinguishes a missing asset so the caller 404s rather than
+ * reporting a filter it never evaluated.
+ */
+async function resolveIntegrationFilterBlock(id: string): Promise<{
+  notFound?: true;
+  asset?: {
+    hostname: string | null;
+    ipAddress: string | null;
+    discoveredByIntegration: { id: string; type: string; name: string } | null;
+  };
+  reason: string | null;
+}> {
+  const filterAsset = await prisma.asset.findUnique({
+    where: { id },
+    select: {
+      hostname: true,
+      ipAddress: true,
+      learnedLocation: true,
+      assetType: true,
+      discoveredByIntegration: { select: { id: true, type: true, config: true, name: true } },
+    },
+  });
+  if (!filterAsset) return { notFound: true, reason: null };
+  if (!filterAsset.discoveredByIntegration) return { asset: filterAsset, reason: null };
+
+  // For AD, prefer the source's own observed.ouPath over the merged
+  // learnedLocation field (which other integrations can overwrite). The
+  // lookup is cheap — one row, indexed by (sourceKind, externalId)'s
+  // assetId index — and only runs on AD-discovered assets.
+  let adOuPath: string | null = null;
+  if (filterAsset.discoveredByIntegration.type === "activedirectory") {
+    const adSource = await prisma.assetSource.findFirst({
+      where: { assetId: id, sourceKind: "ad" },
+      select: { observed: true },
+    });
+    const obs = (adSource?.observed as Record<string, unknown> | null) || null;
+    if (obs && typeof obs.ouPath === "string") adOuPath = obs.ouPath;
+  }
+  // For vCenter, the vmInclude/vmExclude filters match the vCenter-side
+  // VM name, which can differ from the merged hostname (guest hostname
+  // wins projection) — same source-preferred pattern as AD's ouPath.
+  let vmName: string | null = null;
+  if (filterAsset.discoveredByIntegration.type === "vcenter") {
+    const vmSource = await prisma.assetSource.findFirst({
+      where: { assetId: id, sourceKind: "vcenter-vm" },
+      select: { observed: true },
+    });
+    const obs = (vmSource?.observed as Record<string, unknown> | null) || null;
+    if (obs && typeof obs.name === "string") vmName = obs.name;
+  }
+  const filt = assetMatchesIntegrationFilter({ ...filterAsset, adOuPath, vmName }, filterAsset.discoveredByIntegration);
+  return {
+    asset: filterAsset,
+    reason: filt.included ? null : (filt.reason || "Excluded by integration filter"),
+  };
+}
+
 // POST /api/v1/assets/:id/probe-now — run a one-off probe immediately.
 // Gated `assetsProbe=read`: probing dials the device and writes no Polaris
 // state, so read IS the grant on that key (its ladder stops there).
@@ -1782,72 +1849,37 @@ router.post("/:id/probe-now", requirePermission("assetsProbe", "read"), async (r
   try {
     const id = req.params.id as string;
 
-    // Honor the originating integration's deviceInclude/deviceExclude (or
-    // ouInclude/ouExclude for AD). A refresh shouldn't pull data from a
-    // device the next discovery sweep would skip — operators tighten these
-    // filters precisely to keep the inventory off certain hosts. If the asset
-    // is now out of scope we short-circuit before any probe traffic goes out.
-    const filterAsset = await prisma.asset.findUnique({
-      where: { id },
-      select: {
-        hostname: true,
-        ipAddress: true,
-        learnedLocation: true,
-        assetType: true,
-        discoveredByIntegration: { select: { id: true, type: true, config: true, name: true } },
-      },
-    });
-    if (!filterAsset) throw new AppError(404, "Asset not found");
-    if (filterAsset.discoveredByIntegration) {
-      // For AD, prefer the source's own observed.ouPath over the merged
-      // learnedLocation field (which other integrations can overwrite). The
-      // lookup is cheap — one row, indexed by (sourceKind, externalId)'s
-      // assetId index — and only runs on AD-discovered assets.
-      let adOuPath: string | null = null;
-      if (filterAsset.discoveredByIntegration.type === "activedirectory") {
-        const adSource = await prisma.assetSource.findFirst({
-          where: { assetId: id, sourceKind: "ad" },
-          select: { observed: true },
-        });
-        const obs = (adSource?.observed as Record<string, unknown> | null) || null;
-        if (obs && typeof obs.ouPath === "string") adOuPath = obs.ouPath;
-      }
-      // For vCenter, the vmInclude/vmExclude filters match the vCenter-side
-      // VM name, which can differ from the merged hostname (guest hostname
-      // wins projection) — same source-preferred pattern as AD's ouPath.
-      let vmName: string | null = null;
-      if (filterAsset.discoveredByIntegration.type === "vcenter") {
-        const vmSource = await prisma.assetSource.findFirst({
-          where: { assetId: id, sourceKind: "vcenter-vm" },
-          select: { observed: true },
-        });
-        const obs = (vmSource?.observed as Record<string, unknown> | null) || null;
-        if (obs && typeof obs.name === "string") vmName = obs.name;
-      }
-      const filt = assetMatchesIntegrationFilter({ ...filterAsset, adOuPath, vmName }, filterAsset.discoveredByIntegration);
-      if (!filt.included) {
-        const reason = filt.reason || "Excluded by integration filter";
-        const label = filterAsset.hostname || filterAsset.ipAddress || id;
-        logEvent({
-          action: "asset.refresh",
-          resourceType: "asset",
-          resourceId: id,
-          resourceName: filterAsset.hostname || filterAsset.ipAddress || undefined,
-          actor: requestActor(req),
-          level: "warning",
-          message: `Poll blocked: ${label} — ${reason}`,
-          details: { integrationId: filterAsset.discoveredByIntegration.id, integrationType: filterAsset.discoveredByIntegration.type, reason },
-        });
-        res.status(409).json({
-          success: false,
-          responseTimeMs: 0,
-          error: reason,
-          telemetry:   { supported: true, collected: false, error: reason },
-          temperature: { supported: true, collected: false, error: reason },
-          systemInfo:  { supported: true, collected: false, error: reason },
-        });
-        return;
-      }
+    // Out of the originating integration's scope → short-circuit before any
+    // probe traffic goes out. See resolveIntegrationFilterBlock.
+    const gate = await resolveIntegrationFilterBlock(id);
+    if (gate.notFound) throw new AppError(404, "Asset not found");
+    if (gate.reason) {
+      const reason = gate.reason;
+      const filterAsset = gate.asset!;
+      const label = filterAsset.hostname || filterAsset.ipAddress || id;
+      logEvent({
+        action: "asset.refresh",
+        resourceType: "asset",
+        resourceId: id,
+        resourceName: filterAsset.hostname || filterAsset.ipAddress || undefined,
+        actor: requestActor(req),
+        level: "warning",
+        message: `Poll blocked: ${label} — ${reason}`,
+        details: {
+          integrationId: filterAsset.discoveredByIntegration?.id,
+          integrationType: filterAsset.discoveredByIntegration?.type,
+          reason,
+        },
+      });
+      res.status(409).json({
+        success: false,
+        responseTimeMs: 0,
+        error: reason,
+        telemetry:   { supported: true, collected: false, error: reason },
+        temperature: { supported: true, collected: false, error: reason },
+        systemInfo:  { supported: true, collected: false, error: reason },
+      });
+      return;
     }
 
     // Keep flat response-time fields at the root for back-compat with anything
@@ -1925,6 +1957,92 @@ router.post("/:id/probe-now", requirePermission("assetsProbe", "read"), async (r
     });
 
     res.json({ ...probe, telemetry, hardware, systemInfo });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v1/assets/:id/refresh-system-info — re-read ONE device's
+// current-state inventory on demand.
+//
+// probe-now narrowed to a single collector. It backs the Refresh button on the
+// three tabs whose whole content is a SNAPSHOT of what the device last
+// answered — Wireless (radios / SSIDs / clients), MAC Table (the switch's
+// forwarding database) and ARP Table (the gate's neighbour cache). All three
+// are written by the same system-info pass, so one collector refreshes each of
+// them; an operator looking at an empty client list wants THAT re-asked, not
+// an ICMP probe and a CPU sample as well.
+//
+// Same `assetsProbe=read` gate as probe-now, and the same integration-filter
+// short-circuit: it dials the device and writes only the current-state tables
+// the scheduled pass would have written anyway. It touches NO monitor state —
+// recordSystemInfoResult writes no probe result, so a manual refresh can
+// neither mark an asset down nor clear a missed poll.
+//
+// `supported: false` is the honest answer, not an error: monitoring off, the
+// interfaces stream set to Disabled, or an agent-managed host that pushes on
+// its own schedule. The tab says so rather than spinning.
+router.post("/:id/refresh-system-info", requirePermission("assetsProbe", "read"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+
+    const gate = await resolveIntegrationFilterBlock(id);
+    if (gate.notFound) throw new AppError(404, "Asset not found");
+    const gateAsset = gate.asset!;
+    const label = gateAsset.hostname || gateAsset.ipAddress || id;
+    if (gate.reason) {
+      logEvent({
+        action: "asset.refresh",
+        resourceType: "asset",
+        resourceId: id,
+        resourceName: gateAsset.hostname || gateAsset.ipAddress || undefined,
+        actor: requestActor(req),
+        level: "warning",
+        message: `System-info refresh blocked: ${label} — ${gate.reason}`,
+        details: {
+          integrationId: gateAsset.discoveredByIntegration?.id,
+          integrationType: gateAsset.discoveredByIntegration?.type,
+          reason: gate.reason,
+        },
+      });
+      res.status(409).json({ supported: true, collected: false, error: gate.reason });
+      return;
+    }
+
+    const result = await collectSystemInfo(id).catch((err: any) => ({
+      supported: true as const,
+      error: err?.message || "System info collection failed",
+    }));
+    await recordSystemInfoResult(id, result);
+    const collected = !!(result as { data?: unknown }).data;
+
+    // Operator-initiated, so it leaves a trace regardless of outcome — the
+    // scheduled pass only logs on failure.
+    logEvent({
+      action: "asset.refresh",
+      resourceType: "asset",
+      resourceId: id,
+      resourceName: gateAsset.hostname || gateAsset.ipAddress || undefined,
+      actor: requestActor(req),
+      level: result.supported && !collected ? "warning" : "info",
+      message: `System-info refresh: ${label} — ${
+        collected ? "ok" : result.supported ? "failed: " + (result.error || "no data") : "n/a (stream not delivered)"
+      }`,
+      details: { supported: result.supported, collected, error: result.error },
+    });
+
+    // The freshness stamp the tabs render comes from the row, not from this
+    // response's timing — re-read it so a successful refresh cannot show an
+    // age the collector did not actually achieve.
+    const after = await prisma.asset.findUnique({
+      where: { id },
+      select: { lastSystemInfoAt: true },
+    });
+
+    res.json({
+      supported: result.supported,
+      collected,
+      error: result.error ?? null,
+      lastSystemInfoAt: after?.lastSystemInfoAt ?? null,
+    });
   } catch (err) { next(err); }
 });
 
@@ -2563,6 +2681,14 @@ router.get("/:id/processes", requirePermission("assets", "read"), async (req, re
  * select. Returns the entries plus per-port MAC counts, which is the number
  * that separates an access port from an uplink and is far cheaper to compute
  * here than in the browser over a few thousand rows.
+ *
+ * Also returns the freshness pair every current-state tab states — when the
+ * table was last written (`collectedAt`, the newest lastSeen, since the whole
+ * table is replaced in one scrape) and how often it is refreshed
+ * (`pollIntervalSec`). Without both, an empty forwarding database reads as "no
+ * devices on this switch" when it can equally mean "not scraped since
+ * yesterday". Unlike ARP there is no discovery fallback: only the system-info
+ * pass writes the FDB, so an unmonitored switch gets null.
  */
 router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, res, next) => {
   try {
@@ -2575,10 +2701,22 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
       },
     });
     const portCounts: Record<string, number> = {};
+    let collectedAt: Date | null = null;
     for (const r of rows) {
+      if (!collectedAt || r.lastSeen > collectedAt) collectedAt = r.lastSeen;
       if (r.status !== "learned" || !r.ifName) continue;
       portCounts[r.ifName] = (portCounts[r.ifName] ?? 0) + 1;
     }
+    const pollIntervalSec = await resolveCurrentStateIntervalSec(id, { discoveryFallback: false });
+    // `collectedAt` is null on a wiped table, where "collected and empty" and
+    // "never collected" look identical from the rows alone. The asset's own
+    // pass stamp separates them: a switch polled over REST via its parent
+    // FortiGate has a recent one and no FDB, and the tab must not call that
+    // "never collected".
+    const passAsset = await prisma.asset.findUnique({
+      where: { id },
+      select: { lastSystemInfoAt: true },
+    });
     res.json({
       entries: rows.map((r) => ({
         macAddress: r.macAddress,
@@ -2591,6 +2729,9 @@ router.get("/:id/mac-table", requirePermission("assets", "read"), async (req, re
         matchedAsset: r.matchedAsset,
       })),
       portCounts,
+      collectedAt,
+      lastSystemInfoAt: passAsset?.lastSystemInfoAt ?? null,
+      pollIntervalSec,
       total: rows.length,
     });
   } catch (err) {
@@ -2625,18 +2766,27 @@ const ArpTableQuerySchema = z.object({
 });
 
 /**
- * How often THIS device's neighbour cache is actually refreshed, in seconds.
+ * How often THIS device's current-state tables are actually refreshed, in
+ * seconds — the figure the ARP Table, MAC Table and Wireless tabs state next
+ * to their data, and the threshold they turn amber past.
  *
- * Two cadences can write it and they differ by two orders of magnitude, so the
- * tab cannot state one number for the fleet: a monitored firewall refreshes on
- * the system-info pass (600 s by default), while an unmonitored one — or one
- * with system info off — only gets the rows discovery already reads on its
- * integration's pollInterval (12 h by default for both Fortinet types).
+ * The system-info pass is the writer, so its resolved per-asset cadence is the
+ * answer for a monitored device. `discoveryFallback` covers the one table
+ * discovery ALSO writes: an unmonitored firewall — or one with system info off
+ * — still gets ARP rows on its integration's pollInterval (12 h by default for
+ * both Fortinet types), two orders of magnitude apart from the monitor
+ * cadence, which is exactly why the tab cannot state one number for the fleet.
+ * The forwarding database has no such second writer, so the MAC Table passes
+ * `false` and gets null — "not being collected" rather than a cadence
+ * borrowed from a pass that does not touch it.
  *
- * Returns null when neither applies, which the tab renders as "on discovery
- * only" rather than inventing a figure.
+ * Returns null when nothing refreshes it, which the tab renders as "on
+ * discovery only" / "not polled" rather than inventing a figure.
  */
-async function resolveArpPollIntervalSec(assetId: string): Promise<number | null> {
+async function resolveCurrentStateIntervalSec(
+  assetId: string,
+  opts: { discoveryFallback: boolean },
+): Promise<number | null> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
     select: {
@@ -2647,7 +2797,7 @@ async function resolveArpPollIntervalSec(assetId: string): Promise<number | null
   });
   if (!asset) return null;
 
-  const discoverySec = asset.discoveredByIntegration?.pollInterval
+  const discoverySec = opts.discoveryFallback && asset.discoveredByIntegration?.pollInterval
     ? asset.discoveredByIntegration.pollInterval * 3600
     : null;
   // A device that isn't being polled can only be refreshed by discovery.
@@ -2701,7 +2851,7 @@ router.get("/:id/arp-table", requirePermission("assets", "read"), async (req, re
     // states it verbatim, because the poll interval is the whole reason a
     // short-lived entry can be missing and an operator has no other way to
     // know which cadence THIS device is on.
-    const pollIntervalSec = await resolveArpPollIntervalSec(id);
+    const pollIntervalSec = await resolveCurrentStateIntervalSec(id, { discoveryFallback: true });
 
     res.json({
       entries: rows.map((r) => ({

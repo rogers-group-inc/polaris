@@ -58,6 +58,12 @@ const FN_NAMES = [
   "_renderWirelessTree",
   "_wirelessBandLabel",
   "_renderWirelessStationsCard",
+  // The cadence · freshness · Refresh strip every branch of the tab renders.
+  "_formatPollingInterval",
+  "_cadenceChipHTML",
+  "_freshnessStampHTML",
+  "_currentStateStripHTML",
+  "_wirelessStripHTML",
 ];
 
 let container: HTMLElement;
@@ -72,6 +78,16 @@ beforeEach(() => {
   g._screenshotTableEl = vi.fn();
   g._assetMonitorStreamSource = () => ({ polling: "snmp" });
   g.openViewModal = vi.fn();
+  // Strip dependencies that live outside this slice. The cadence is fixed at
+  // 60 s so the amber threshold in the tests below is a known quantity.
+  g._streamSourceBadgeHTML = () => '<span class="asset-stream-source-badge">SNMP · every 1m · Integration</span>';
+  g._resolveStaleStreamSec = () => 60;
+  g.timeAgo = (t: any) => {
+    const mins = Math.round((Date.now() - new Date(t).getTime()) / 60000);
+    return mins + "m ago";
+  };
+  g.canProbeAssets = () => true;
+  g._wireCurrentStateRefresh = vi.fn();
   try { globalThis.localStorage.clear(); } catch { /* happy-dom always has one */ }
 
   // eslint-disable-next-line no-eval
@@ -258,5 +274,100 @@ describe("_renderWirelessStationsCard dispatch", () => {
     const text = container.textContent || "";
     expect(text).toContain("discovery run");
     expect(text).toContain("fapStationTable");
+  });
+});
+
+// ─── Cadence · freshness · Refresh strip ───────────────────────────────────
+//
+// The three snapshot tabs (Wireless here, MAC Table and ARP Table elsewhere)
+// share this strip. What is pinned is the part a reader has no other way to
+// check: that an OVERDUE reading is called out, and at ONE cadence rather than
+// the three the stale banner waits for — the two are deliberately different
+// thresholds, and collapsing them back together is the likely drift.
+
+describe("_freshnessStampHTML", () => {
+  const ago = (sec: number) => new Date(Date.now() - sec * 1000).toISOString();
+
+  it("stays neutral while the reading is within one cadence", () => {
+    const html = g._freshnessStampHTML(ago(30), 60);
+    expect(html).not.toContain("color-warning");
+    expect(html).not.toContain("&#9888;");
+    expect(html).toContain("updated");
+  });
+
+  it("goes amber with a warning glyph once the reading is older than the cadence", () => {
+    const html = g._freshnessStampHTML(ago(90), 60);
+    expect(html).toContain("var(--color-warning)");
+    expect(html).toContain("&#9888;");
+  });
+
+  // The stale banner's own threshold is 3x. A reading at 2x must be amber
+  // here and still silent there, or the strip has been quietly rewired to the
+  // banner's rule and stops answering "is this current".
+  it("is amber at twice the cadence, where the 3x stale banner is still silent", () => {
+    expect(g._freshnessStampHTML(ago(120), 60)).toContain("var(--color-warning)");
+  });
+
+  it("says so when there has never been a reading, rather than rendering nothing", () => {
+    expect(g._freshnessStampHTML(null, 60, "no entries recorded yet")).toContain("no entries recorded yet");
+  });
+
+  // A device nothing refreshes (unmonitored, no discovery writer) has no
+  // cadence to be late against — the age is still worth stating.
+  it("never goes amber when there is no cadence to compare against", () => {
+    const html = g._freshnessStampHTML(ago(86400), null);
+    expect(html).toContain("updated");
+    expect(html).not.toContain("var(--color-warning)");
+  });
+});
+
+describe("_currentStateStripHTML", () => {
+  it("offers Refresh to an operator holding assetsProbe", () => {
+    g.canProbeAssets = () => true;
+    const html = g._currentStateStripHTML({ title: "Wireless", refreshId: "r1", lastAt: null, cadenceSec: 60 });
+    expect(html).toContain('id="r1"');
+    expect(html).toContain("Refresh");
+  });
+
+  // The button dials the device, so it mirrors the route's assetsProbe gate —
+  // rendering it for a reader who would get a 403 is the failure mode.
+  it("omits Refresh without that grant", () => {
+    g.canProbeAssets = () => false;
+    const html = g._currentStateStripHTML({ title: "Wireless", refreshId: "r1", lastAt: null, cadenceSec: 60 });
+    expect(html).not.toContain('id="r1"');
+    g.canProbeAssets = () => true;
+  });
+});
+
+describe("Wireless tab strip", () => {
+  const fresh = () => new Date(Date.now() - 10 * 1000).toISOString();
+  const overdue = () => new Date(Date.now() - 600 * 1000).toISOString();
+
+  it("carries the cadence, the age and Refresh on the radio tree", () => {
+    g._renderWirelessStationsCard(container, {
+      apRadios: makeRadios(), wirelessStations: [], lastSystemInfoAt: fresh(),
+    }, ASSET);
+    expect(container.textContent).toContain("every 1m");
+    expect(container.textContent).toContain("updated");
+    expect(container.querySelector("#asset-wireless-refresh")).not.toBeNull();
+  });
+
+  // An empty client list is exactly where the strip earns its place: without
+  // it, "not polled since yesterday" and "nobody is connected" look identical.
+  it("carries it on the empty state too, amber when the poll is overdue", () => {
+    g._renderWirelessStationsCard(container, {
+      apRadios: [], wirelessStations: [], lastSystemInfoAt: overdue(),
+    }, ASSET);
+    expect(container.innerHTML).toContain("var(--color-warning)");
+    expect(container.querySelector("#asset-wireless-refresh")).not.toBeNull();
+  });
+
+  it("carries it on the flat fallback table", () => {
+    g._renderWirelessStationsCard(container, {
+      apRadios: [],
+      wirelessStations: [{ staMacAddr: "11:11:11:11:11:11", ssid: "CORP", band: "5GHz" }],
+      lastSystemInfoAt: fresh(),
+    }, ASSET);
+    expect(container.querySelector("#asset-wireless-refresh")).not.toBeNull();
   });
 });
