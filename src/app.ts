@@ -1081,6 +1081,11 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
     for (const p of [
       "./jobs/normalizeManufacturers.js",
       "./jobs/seedAssetTypes.js",
+      // Before seedManufacturerProfiles, deliberately: the profiles it seeds
+      // name symbols these MIBs define, and a profile whose readiness check
+      // runs first would emit an `unresolved` Event that corrects itself on
+      // the next boot.
+      "./jobs/seedVendorMibs.js",
       "./jobs/seedManufacturerProfiles.js",
       "./jobs/backfillManufacturerProfileMemoryComposition.js",
       "./jobs/migrateMonitorSettingsHierarchy.js",

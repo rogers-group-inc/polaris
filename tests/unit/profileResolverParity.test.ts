@@ -129,9 +129,15 @@ const JUNIPER = profile("Juniper", "juniper|junos", [
   row("temperature"), row("storage"), row("interfaces"), row("lldp"), row("wirelessStations"),
 ]);
 
-const MIKROTIK = profile("Mikrotik", "mikrotik|routeros", [
-  row("model"), row("cpu", { defaultSymbol: "mtxrSystemUserCPULoad" }),
-  row("memory"), row("temperature"), row("storage"), row("interfaces"), row("lldp"), row("wirelessStations"),
+// MikroTik claims nothing: RouterOS answers CPU, memory and storage through
+// HOST-RESOURCES-MIB, so every row is empty on purpose — the profile is an
+// override layer and there is nothing there to override. (The `cpu` row used
+// to read `mtxrSystemUserCPULoad`, a symbol that exists in no MikroTik MIB;
+// see the seed job's MikroTik note.) Kept in the table so the tuple below
+// still exercises "a profile exists but says nothing the collectors can use".
+const MIKROTIK = profile("MikroTik", "mikrotik|routeros", [
+  row("model"), row("cpu"), row("memory"), row("temperature"),
+  row("storage"), row("interfaces"), row("lldp"), row("wirelessStations"),
 ]);
 
 const HP = profile("HP", "aruba|hpe|hewlett|procurve|^hp\\b", [

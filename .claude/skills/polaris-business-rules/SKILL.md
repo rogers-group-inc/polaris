@@ -11,7 +11,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(68 is the next free number.)
+(69 is the next free number.)
 
 ## How to read
 

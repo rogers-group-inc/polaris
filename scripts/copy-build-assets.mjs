@@ -34,6 +34,13 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Asset groups to mirror from src/<dir> into dist/<dir>, filtered by extension. */
 const ASSETS = [
   { dir: "services/stdMibs", exts: [".txt"] },
+  // src/services/vendorMibs/ — the manufacturer MIBs Polaris ships and SEEDS
+  // INTO THE DATABASE as ordinary, operator-deletable MIB Database entries
+  // (see jobs/seedVendorMibs.ts). Deliberately NOT under stdMibs/, because
+  // `oidRegistry.loadStandardLayer` globs that directory and anything landing
+  // there becomes part of the baked-in layer no operator can remove — the
+  // opposite of what these are for.
+  { dir: "services/vendorMibs", exts: [".txt"] },
   // src/data/platformEol.json — the committed platform end-of-life dataset read by
   // src/services/platformLifecycleService.ts. Same dist-relative story as the MIBs:
   // without this entry the Platform Lifecycle card is empty in a container and on

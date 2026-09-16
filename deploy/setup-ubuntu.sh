@@ -504,8 +504,10 @@ sudo -u "$APP_USER" npm ci --include=dev
 
 info "Building TypeScript..."
 # `npm run build` (not bare tsc) so scripts/copy-build-assets.mjs runs and the
-# bundled std MIB .txt files land in dist/services/stdMibs/ — without them the
-# SNMP Walk tab's standard MIBs (LLDP-MIB etc.) report "not installed".
+# shipped MIB .txt files land in dist/services/ — stdMibs/, without which the
+# SNMP Walk tab's standard MIBs (LLDP-MIB etc.) report "not installed", and
+# vendorMibs/, without which seedVendorMibs logs an error and a fresh install
+# silently ships no Cisco MIBs.
 sudo -u "$APP_USER" npm run build
 
 info "Running database migrations..."
