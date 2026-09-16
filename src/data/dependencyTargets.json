@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-09-11",
+  "reviewedAt": "2026-09-16",
   "reviewedBy": "david.moore@rogersgroupinc.com",
   "notes": "Read by scripts/check-deps.mjs and by the quarterly pass in .claude/skills/polaris-tech-lifecycle/references/dependency-audit.md. NEVER read by anything under src/ at runtime: npm majors publish no end-of-life dates, and which major an install runs is fixed by its build, so this is a repo fact rather than a per-install monitoring signal. targetMajor is the major this repo intends to be on; check-deps fails when the installed major is below it.",
   "npm": [
@@ -9,7 +9,7 @@
     { "name": "@prisma/client", "targetMajor": 7, "architectural": true, "note": "See prisma." },
     { "name": "@prisma/adapter-pg", "targetMajor": 7, "architectural": true, "note": "See prisma." },
     { "name": "zod", "targetMajor": 3, "architectural": true, "note": "Issue shape feeds the API's 400 bodies, so an error-shape change is an API-contract change." },
-    { "name": "typescript", "targetMajor": 6, "architectural": false },
+    { "name": "typescript", "targetMajor": 6, "architectural": false, "note": "HELD at 6 by typescript-eslint, not by choice. typescript 7 is the native Go port, and no typescript-eslint release accepts it — every version through 8.70.1-alpha.21 still peer-caps at `typescript >=4.8.4 <6.1.0` (checked 2026-09-16). The failure mode is worth knowing because it is not the obvious one: npm does not refuse the bump, it PRUNES @typescript-eslint/{eslint-plugin,parser,type-utils,utils} out of the lockfile to satisfy the peer range, leaving the typescript-eslint meta-package behind with no parser under it. An incremental `npm install` then looks fine and `npm ci` fails with ERESOLVE — the same only-a-clean-install-fails trap as @eslint/js. That was PR #144 (dependabot, typescript-toolchain group), closed unmergeable 2026-09-16, and the typescript major is now ignored in .github/dependabot.yml so it stops returning weekly. Lift both the ignore and this note when typescript-eslint's peer range opens past 6.1.0; bump the whole group together, since eslint.config.mjs imports typescript-eslint directly." },
     { "name": "vitest", "targetMajor": 5, "architectural": false, "note": "Must match @vitest/coverage-v8. Moved 4 -> 5 on 2026-09-09." },
     { "name": "@vitest/coverage-v8", "targetMajor": 5, "architectural": false, "note": "Must match vitest. Moved 4 -> 5 on 2026-09-09." },
     { "name": "eslint", "targetMajor": 10, "architectural": false, "note": "Moves with typescript-eslint AND @eslint/js. eslint 10 dropped @eslint/eslintrc, which is what carried the vulnerable js-yaml." },
