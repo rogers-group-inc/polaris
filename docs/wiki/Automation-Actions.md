@@ -250,14 +250,17 @@ alert. **Identity comes from that session**, not from the link.
 
 What follows from that:
 
-- **The email is one message.** A shared body carries a link that works for
-  whoever reads it. The only thing that still splits a send is *capability*, and
-  that is two copies at most — never one per person.
-- **Everyone Polaris cannot vouch for gets the button.** An address-book contact
-  or a typed address has no account behind it, so permission is decided at the
-  page rather than by withholding a control.
-- **An account it *can* vouch for is asked first.** A role holding `alerts`
-  below `write` is mailed the same alert with the button pruned out.
+- **The email is one message, and nothing splits it.** A shared body carries a
+  link that works for whoever reads it, so everyone a notify action names is on
+  one To line — not their timezone and not their permissions.
+- **Everyone gets the button**, whether or not Polaris knows them. An
+  address-book contact or a typed address has no account behind it; a reader
+  whose role holds `alerts` below `write` does. Both click through, and
+  permission is decided at the page — which tells a reader who cannot
+  acknowledge exactly that, rather than quietly mailing them a different email.
+- **Web push is the exception**, and only because a push is addressed to one
+  browser: a role that cannot acknowledge gets no Acknowledge tray action, which
+  costs nobody a shared To line.
 - **Loading is a GET and acknowledging is a POST**, so a mail gateway
   prefetching every link — Safe Links, Proofpoint — cannot acknowledge
   anything.

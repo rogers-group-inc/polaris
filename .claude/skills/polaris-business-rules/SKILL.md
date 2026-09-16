@@ -21,6 +21,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | rules 9–10 below; 12, 16, 36, 37 |
 | touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59 |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60 |
+| touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it is the one that forbids splitting a send), then 56 and 60 |
 | touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 55 |
 | touch how a discovery run reports what it did or did not read — skipped/offline/unread devices, run counters, a device whose data looks stale | 53 |
 | touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43, 47, 51, 63 |
