@@ -62,6 +62,28 @@ async function seedProbes(values: Array<number | null>, agoMin = 0): Promise<voi
   });
 }
 
+/**
+ * The richer seed for business rule 67: a number is a successful RTT,
+ * `["miss", t]` a failure that waited t ms (what recordProbeResult now records),
+ * and `"down"` a failure that declared the outage (`assetDown`). Newest LAST.
+ */
+type Probe = number | ["miss", number | null] | "down";
+async function seedProbeHistory(probes: Probe[], agoMin = 0): Promise<void> {
+  const now = Date.now();
+  await prisma.assetMonitorSample.createMany({
+    data: probes.map((p, i) => {
+      const timestamp = new Date(now - (agoMin + (probes.length - 1 - i)) * 60_000);
+      if (p === "down") {
+        return { assetId, timestamp, success: false, responseTimeMs: null, timeoutMs: 5000, assetDown: true, probeKind: "primary" };
+      }
+      if (Array.isArray(p)) {
+        return { assetId, timestamp, success: false, responseTimeMs: null, timeoutMs: p[1], probeKind: "primary" };
+      }
+      return { assetId, timestamp, success: true, responseTimeMs: p, probeKind: "primary" };
+    }),
+  });
+}
+
 /** The shape the builder writes: both counts, each with its wall-clock mirror
  *  at a 60s cadence. `windowSec`/`forDurationSec` size the engine's fetch. */
 async function seedRule(windowPolls: number, forPolls: number, threshold = 500): Promise<void> {
@@ -166,6 +188,87 @@ d("count-windowed aggregation + breach counter", () => {
     await seedProbes([100, 100, 100, 900, 900, 900, 900, 900]);
     await evaluateAllNotificationRules();
     expect(await activeAlerts()).toBe(1);
+  });
+
+  // ── Response time's own window (business rule 67) ────────────────────────
+
+  it("fills a miss with the timeout the probe waited, so a stalling device reads slow", async () => {
+    // A device that is UP but timing out on two of every three polls. Dropping
+    // the misses would read 500 ms and never alert; filling them with the 5 s
+    // they actually cost reads ~3500 ms, which is the truth about the device.
+    await seedRule(3, 1);
+    await seedProbeHistory([["miss", 5000], 500, ["miss", 5000]]);
+    await evaluateAllNotificationRules();
+    expect(await lastValue()).toBeCloseTo(3500, 0);
+    expect(await activeAlerts()).toBe(1);
+  });
+
+  it("RESETS the window at an outage, so a recovered device does not alert about it", async () => {
+    // The outage's own timeouts must not trail the device back up. Threshold
+    // 100 so the healthy post-outage readings DO produce a value we can read —
+    // which is the point: it is ~125, not the ~3400 it would be if the 5 s
+    // timeouts before the outage were still in the window.
+    await seedRule(3, 1, 100);
+    await seedProbeHistory([700, ["miss", 5000], "down", "down", 120, 130, 125]);
+    await evaluateAllNotificationRules();
+    expect(await lastValue()).toBeCloseTo(125, 0);
+  });
+
+  it("does not alert after recovery about the outage it just left", async () => {
+    // Same history, the real threshold. Everything before the outage would
+    // breach 500; nothing after it does, so nothing fires.
+    await seedRule(3, 1);
+    await seedProbeHistory([700, ["miss", 5000], "down", "down", 120, 130, 125]);
+    await evaluateAllNotificationRules();
+    expect(await activeAlerts()).toBe(0);
+  });
+
+  it("has NO reading while the device is down", async () => {
+    await seedRule(3, 1);
+    await seedProbeHistory([120, 130, 125, "down"]);
+    await evaluateAllNotificationRules();
+    expect(await activeAlerts()).toBe(0);
+    expect(await lastValue()).toBeNull();
+  });
+
+  it("keeps abstaining until the window refills, then reads", async () => {
+    // Two answers back from an outage is not three, so there is still nothing
+    // to compare — the settling period the abstain rule buys.
+    await seedRule(3, 1);
+    await seedProbeHistory(["down", 900, 900]);
+    await evaluateAllNotificationRules();
+    expect(await lastValue()).toBeNull();
+    expect(await activeAlerts()).toBe(0);
+  });
+
+  it("reads once the third post-outage answer lands", async () => {
+    await seedRule(3, 1);
+    await seedProbeHistory(["down", 900, 900, 900]);
+    await evaluateAllNotificationRules();
+    expect(await lastValue()).toBeCloseTo(900, 0);
+    expect(await activeAlerts()).toBe(1);
+  });
+
+  it("counts an AMBER miss — only a probe that declared down resets", async () => {
+    // assetDown is stamped from the status the probe RESULTS in, so misses
+    // below the operator's missedPolls still count (filled with their timeout)
+    // and only the ones their own automation calls Down reset the window.
+    await seedRule(3, 1);
+    await seedProbeHistory([120, ["miss", 5000], ["miss", 5000]]);
+    await evaluateAllNotificationRules();
+    expect(await lastValue()).toBeCloseTo(3373, 0); // (120 + 5000 + 5000) / 3
+    expect(await activeAlerts()).toBe(1);
+  });
+
+  it("EXCLUDES a miss with no recorded timeout, the pre-feature row", async () => {
+    // Rows written before the column existed carry NULL. "Not known" must not
+    // become a number — those misses read as they always did, out of the
+    // window, so only the two real readings remain and cannot fill a 3-window.
+    await seedRule(3, 1);
+    await seedProbeHistory([120, ["miss", null], ["miss", null], 130]);
+    await evaluateAllNotificationRules();
+    expect(await lastValue()).toBeNull();
+    expect(await activeAlerts()).toBe(0);
   });
 
   it("takes longer on a lossy device, because it waits for MEASUREMENTS", async () => {

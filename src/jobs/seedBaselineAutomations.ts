@@ -55,6 +55,7 @@
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV3SeededAt'; -- down detection
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV4ResetEventSeededAt'; -- counterpart resets
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV5LossCeilingSeededAt'; -- loss ceiling
+ *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV7ResponseTimeWindowAt'; -- response-time count windows
  * then restart. (This resurrects that ENTIRE set, including rules you deleted.
  * For V3 that means re-deriving the thresholds from the settings tiers, which
  * are dormant but still stored — and it will NOT re-retire an Asset down rule
@@ -78,6 +79,9 @@ const MARKER_KEY_V3 = "seedBaselineAutomationsV3SeededAt";
 const MARKER_KEY_V4 = "seedBaselineAutomationsV4ResetEventSeededAt";
 const MARKER_KEY_V5 = "seedBaselineAutomationsV5LossCeilingSeededAt";
 const MARKER_KEY_V6 = "seedBaselineAutomationsV6PlatformLifecycleSeededAt";
+const MARKER_KEY_V7 = "seedBaselineAutomationsV7ResponseTimeWindowAt";
+/** The window every migrated response-time rule lands on (business rule 67). */
+const RESPONSE_TIME_WINDOW_POLLS = 10;
 
 /**
  * Platform end-of-life. Its own marker and its own set rather than an entry
@@ -787,6 +791,76 @@ async function migrateLossCeilingV5(): Promise<{ updated: number; skipped: boole
   return { updated: updated.length, skipped: false };
 }
 
+/**
+ * V7 — move every AGGREGATED response-time automation from a wall-clock window
+ * to the 10-reading count window (business rule 67).
+ *
+ * Unlike V5 this does NOT spare edited rules, and that is a deliberate call
+ * rather than an oversight. V5 was adding a NEW knob whose default an operator
+ * might reasonably disagree with, so an edited rule was evidence of an opinion
+ * worth preserving. This is fixing what the existing knob MEASURES: a window of
+ * minutes takes however many samples happened to land in it, so the same rule is
+ * an average of sixty readings on a healthy device and of seventeen on a lossy
+ * one — the statistic silently changes exactly when the device is worst. An
+ * edited rule is no less wrong than an unedited one, and leaving it behind would
+ * mean two response-time behaviours on one install with nothing on screen saying
+ * which a given rule has.
+ *
+ * What it does NOT touch: `latest` rules (no window to convert), packet loss and
+ * anything else that is not response time, and any rule already carrying a
+ * count window. The wall-clock `windowSec` is KEPT as the mirror that sizes the
+ * engine's sample fetch.
+ *
+ * The Event names every rule changed and its old window, because this alters
+ * when existing alerts fire and an operator must be able to see that it happened
+ * and put a rule back by hand.
+ */
+async function migrateResponseTimeWindowV7(): Promise<{ updated: number; skipped: boolean }> {
+  if (await hasRunMarker(MARKER_KEY_V7)) return { updated: 0, skipped: true };
+
+  const rows = await prisma.notificationRule.findMany({
+    select: { id: true, name: true, trigger: true },
+  });
+  const updated: Array<{ name: string; wasSec: number }> = [];
+  for (const row of rows) {
+    const trigger = row.trigger as Record<string, unknown> | null;
+    if (!trigger || trigger.type !== "asset_metric" || trigger.metric !== "responseTimeMs") continue;
+    const agg = typeof trigger.aggregation === "string" ? trigger.aggregation : "latest";
+    if (agg === "latest") continue;                                   // no window to convert
+    if (typeof trigger.windowPolls === "number" && trigger.windowPolls > 0) continue; // already counted
+    const wasSec = typeof trigger.windowSec === "number" ? trigger.windowSec : 0;
+    if (!(wasSec > 0)) continue;                                      // nothing stated to replace
+    try {
+      await prisma.notificationRule.update({
+        where: { id: row.id },
+        data: { trigger: { ...trigger, windowPolls: RESPONSE_TIME_WINDOW_POLLS } },
+      });
+      updated.push({ name: row.name, wasSec });
+    } catch (err) {
+      logger.warn({ err, rule: row.name }, "Failed to convert a response-time automation to a count window");
+    }
+  }
+
+  if (updated.length > 0) {
+    await logEvent({
+      action: "automation.seed.v7_response_time_window",
+      resourceType: "notification-rule",
+      actor: SEED_ACTOR,
+      level: "warning",
+      message:
+        `${updated.length} response-time automation(s) now average the last ${RESPONSE_TIME_WINDOW_POLLS} readings ` +
+        `instead of a span of time, so a lossy device is measured over the same number of samples as a healthy one ` +
+        `(a missed poll counts as its probe timeout, and an outage resets the window). ` +
+        `Each one's previous window is listed in the details; change "Measured over" back to minutes on any rule ` +
+        `that should keep it: ` +
+        updated.map((u) => `${u.name} (was ${Math.round(u.wasSec / 60)}m)`).join(", "),
+      details: { updated, windowPolls: RESPONSE_TIME_WINDOW_POLLS },
+    }).catch(() => {});
+  }
+  await stampRunMarker(MARKER_KEY_V7, { updated: updated.length });
+  return { updated: updated.length, skipped: false };
+}
+
 export async function seedBaselineAutomations(): Promise<{ created: number; skipped: boolean }> {
   // Independent markers: a pre-V2 install has the first marker stamped and
   // still picks up the event set; a fresh install seeds both.
@@ -805,12 +879,18 @@ export async function seedBaselineAutomations(): Promise<{ created: number; skip
   // stamped the V1 marker before the ceiling existed, where the anchor removal
   // would otherwise leave an all-assets rule alerting after every outage.
   const v5 = await migrateLossCeilingV5();
+  // V7 converts every AGGREGATED response-time rule from a wall-clock window to
+  // the 10-reading count window. It has to run on existing installs, not just
+  // fresh ones, because the point is that a time window measures a different
+  // number of samples on a lossy device than on a healthy one — a rule left
+  // behind keeps doing exactly that.
+  const v7 = await migrateResponseTimeWindowV7();
   // V6 is its own set with its own marker so installs that stamped V2 long ago
   // still receive the platform end-of-life rule.
   const v6 = await seedRuleSet(MARKER_KEY_V6, PLATFORM_LIFECYCLE_RULES);
   return {
     created: v1.created + v2.created + v3.created + v6.created,
-    skipped: v1.skipped && v2.skipped && v3.skipped && v4.skipped && v5.skipped && v6.skipped,
+    skipped: v1.skipped && v2.skipped && v3.skipped && v4.skipped && v5.skipped && v6.skipped && v7.skipped,
   };
 }
 

@@ -177,6 +177,7 @@ describe("marker gating (V2 reaches existing installs)", () => {
     settings.set("seedBaselineAutomationsV4ResetEventSeededAt", { key: "w", value: {} });
     settings.set("seedBaselineAutomationsV5LossCeilingSeededAt", { key: "v", value: {} });
     settings.set("seedBaselineAutomationsV6PlatformLifecycleSeededAt", { key: "u", value: {} });
+    settings.set("seedBaselineAutomationsV7ResponseTimeWindowAt", { key: "t", value: {} });
     const res = await seedBaselineAutomations();
     expect(res).toEqual({ created: 0, skipped: true });
     expect(createdRules).toEqual([]);
@@ -514,5 +515,78 @@ describe("V5 packet-loss saturation ceiling", () => {
     existingRules = [];
     await seedBaselineAutomations();
     expect(loggedEvents.some((e) => e.action === "automation.seed.v5_loss_ceiling")).toBe(false);
+  });
+});
+
+/**
+ * V7 — response-time automations move from a wall-clock window to the
+ * 10-reading count window (business rule 67). The one migration that
+ * deliberately does NOT spare edited rules: V5 was adding a knob whose default
+ * was arguable, this fixes what the existing knob MEASURES, and an edited rule
+ * measured it just as wrongly as an unedited one.
+ */
+describe("V7 response-time count window", () => {
+  const seededMarkers = (): void => {
+    settings.set("seedBaselineAutomationsSeededAt", { key: "x", value: {} });
+    settings.set("seedBaselineAutomationsV2SeededAt", { key: "y", value: {} });
+    settings.set("seedBaselineAutomationsV3SeededAt", { key: "z", value: {} });
+    settings.set("seedBaselineAutomationsV4ResetEventSeededAt", { key: "w", value: {} });
+    settings.set("seedBaselineAutomationsV5LossCeilingSeededAt", { key: "v", value: {} });
+    settings.set("seedBaselineAutomationsV6PlatformLifecycleSeededAt", { key: "u", value: {} });
+  };
+  const t = new Date("2026-01-01T00:00:00Z");
+  const rtRule = (over: Record<string, unknown> = {}): any => ({
+    id: "R1", name: "Slow response time",
+    trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 3600, operator: ">", threshold: 500 },
+    reset: { mode: "auto" }, clearBehavior: "auto",
+    createdAt: t, updatedAt: t, ...over,
+  });
+
+  it("converts an aggregated response-time rule, KEEPING the seconds mirror", async () => {
+    // windowSec stays: it is what sizes the engine's sample fetch.
+    seededMarkers();
+    existingRules = [rtRule()];
+    await seedBaselineAutomations();
+    expect(ruleUpdates).toHaveLength(1);
+    expect(ruleUpdates[0].data.trigger).toEqual({
+      type: "asset_metric", metric: "responseTimeMs", aggregation: "avg",
+      windowSec: 3600, windowPolls: 10, operator: ">", threshold: 500,
+    });
+  });
+
+  it("converts an EDITED rule too, and says so in a warning naming its old window", async () => {
+    seededMarkers();
+    existingRules = [rtRule({ updatedAt: new Date("2026-03-01T00:00:00Z") })];
+    await seedBaselineAutomations();
+    expect(ruleUpdates).toHaveLength(1);
+    const ev = loggedEvents.find((e) => e.action === "automation.seed.v7_response_time_window");
+    expect(ev?.level).toBe("warning");
+    expect(ev?.message).toContain("Slow response time");
+    expect(ev?.message).toContain("60m");
+  });
+
+  it("leaves `latest`, other metrics, and an existing count window alone", async () => {
+    seededMarkers();
+    existingRules = [
+      // no window to convert
+      rtRule({ id: "a", trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "latest", windowSec: 0, operator: ">", threshold: 500 } }),
+      // not response time
+      rtRule({ id: "b", trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 3600, operator: ">", threshold: 90 } }),
+      // already counted
+      rtRule({ id: "c", trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 600, windowPolls: 5, operator: ">", threshold: 500 } }),
+      // aggregated but states no window at all
+      rtRule({ id: "d", trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 0, operator: ">", threshold: 500 } }),
+    ];
+    await seedBaselineAutomations();
+    expect(ruleUpdates).toEqual([]);
+    expect(loggedEvents.some((e) => e.action === "automation.seed.v7_response_time_window")).toBe(false);
+  });
+
+  it("does not run twice", async () => {
+    seededMarkers();
+    settings.set("seedBaselineAutomationsV7ResponseTimeWindowAt", { key: "t", value: {} });
+    existingRules = [rtRule()];
+    await seedBaselineAutomations();
+    expect(ruleUpdates).toEqual([]);
   });
 });

@@ -87,6 +87,19 @@ export interface MonitorSampleRow {
    */
   assetDown?: boolean | null;
   /**
+   * How long a FAILED response-time probe waited before giving up, in ms — the
+   * asset's resolved `probeTimeoutMs` at probe time (business rule 67). A count
+   * window fills the miss with this instead of dropping it, so a device that
+   * answers once an hour cannot read as fast as one answering every minute.
+   *
+   * Set only on a failure and only by a caller that HAS a timeout of its own
+   * (the probe loop and the batched ICMP sweep; never the agent's samples). A
+   * success carries a real `responseTimeMs`. Omitted/null reads as "not known",
+   * which the window treats as an excluded miss. Flushed straight through by
+   * createMany.
+   */
+  timeoutMs?: number | null;
+  /**
    * PACKET ACCOUNTING for a burst row (the ICMP loss sweep — utils/burstPing.ts).
    * `packetsSent` is the burst size and `packetsReceived` how many came back;
    * `success` must be maintained as `packetsReceived > 0` so every reader that

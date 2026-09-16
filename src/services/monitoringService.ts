@@ -1941,7 +1941,7 @@ async function collectIpsecOnlyFortinetSafe(
  */
 export async function probeAsset(
   assetId: string,
-  out?: { snapshot?: AssetMonitorSnapshot; dueIntervalSec?: number },
+  out?: { snapshot?: AssetMonitorSnapshot; dueIntervalSec?: number; timeoutMs?: number },
 ): Promise<ProbeResult> {
   const start = performance.now();
   try {
@@ -1975,6 +1975,11 @@ export async function probeAsset(
       discoveredByIntegrationType: asset.discoveredByIntegration?.type ?? null,
     });
     const timeoutMs = effective.probeTimeoutMs;
+    // Hand it back the way the asset snapshot is handed back: the caller needs
+    // it to record what a MISS cost (business rule 67), and it has already been
+    // resolved here through the four-tier hierarchy. Re-resolving it at the
+    // record site would be a second answer to one question.
+    if (out) out.timeoutMs = timeoutMs;
     const polling   = effective.responseTimePolling;
     if (!polling) return finish(start, false, "No response-time polling method configured");
 
@@ -11229,8 +11234,16 @@ export async function recordProbeResult(
    *  its slowest target times out, so stamping at record time would place
    *  every reading up to a probe timeout late and stretch the cadence by the
    *  same amount. It sets the sample timestamp and the `lastMonitorAt` anchor
-   *  only; status-change time and Events still use the record time. */
-  opts?: { fromAgent?: boolean; observedAt?: Date },
+   *  only; status-change time and Events still use the record time.
+   *
+   *  `timeoutMs` is how long THIS probe waited before giving up — the asset's
+   *  resolved `probeTimeoutMs`, which the caller has already computed to run
+   *  the probe at all. Recorded on the sample when the probe FAILED, so a
+   *  count window can fill the miss with the time it actually cost rather than
+   *  dropping it or inventing a zero (business rule 67). Absent from a caller
+   *  that has no timeout of its own (the agent's real samples) and ignored on
+   *  a success, which carries a real RTT. */
+  opts?: { fromAgent?: boolean; observedAt?: Date; timeoutMs?: number },
 ): Promise<void> {
   const loaded = preloadedAsset ?? await prisma.asset.findUnique({
     where: { id: assetId },
@@ -11420,6 +11433,15 @@ export async function recordProbeResult(
     // the pill — still count as loss and only the ones the operator's own
     // automation calls Down do not. Only ever set on a failure.
     assetDown: !result.success && nextStatus === "down" ? true : null,
+    // And record what the miss COST: the timeout this probe waited out. Only
+    // on a failure (a success has a real RTT) and only when the caller knew it
+    // — the agent's samples carry no timeout of ours. This is what lets a
+    // count window read a missed poll as "at least this slow" instead of
+    // discarding it, without the engine re-resolving monitor settings per
+    // asset on its own tick (business rule 67).
+    timeoutMs: !result.success && typeof opts?.timeoutMs === "number" && opts.timeoutMs > 0
+      ? Math.round(opts.timeoutMs)
+      : null,
   });
 
   // Buffer the state write — the periodic flush in probePatchBuffer collapses
@@ -11739,7 +11761,7 @@ export async function runProbeBatchFor(items: ProbeBatchItem[], labels: WorkItem
       attempted++;
       if (!success) failed++;
       try {
-        await recordProbeResult(item.id, result, byId.get(item.id) ?? null, { observedAt: sentAt });
+        await recordProbeResult(item.id, result, byId.get(item.id) ?? null, { observedAt: sentAt, timeoutMs: item.timeoutMs });
       } catch (err) {
         // One asset's state write must not abandon the rest of the chunk.
         logger.error({ err, assetId: item.id }, "Batched ICMP probe failed to record a result");
@@ -11781,7 +11803,7 @@ export async function runProbeFor(
     // probeAsset stashes its loaded asset row into `probeOut.snapshot` so
     // recordProbeResult can reuse it for the state-machine update — one
     // findUnique per probe instead of two.
-    const probeOut: { snapshot?: AssetMonitorSnapshot; dueIntervalSec?: number } = { dueIntervalSec };
+    const probeOut: { snapshot?: AssetMonitorSnapshot; dueIntervalSec?: number; timeoutMs?: number } = { dueIntervalSec };
     const result = await probeAsset(assetId, probeOut);
     // Already polled this cycle by the job this one queued behind: no reading,
     // no anchor stamp, no probe metric. The work itself ran cleanly.
@@ -11790,7 +11812,7 @@ export async function runProbeFor(
       return "success";
     }
     const probeMs = Date.now() - probeStart;
-    await recordProbeResult(assetId, result, probeOut.snapshot ?? null);
+    await recordProbeResult(assetId, result, probeOut.snapshot ?? null, { timeoutMs: probeOut.timeoutMs });
     // A skipped probe measured nothing, so it is charted nowhere and counted
     // as neither outcome — the cadence ran cleanly, it simply had nothing to
     // ask. See ProbeResult.skipped.

@@ -79,6 +79,7 @@ import {
   triggerHoldPolls,
   triggerWindowPolls,
   rollingAggregate,
+  prepareResponseTimeWindow,
   resetSustainPolls,
   leadingRun,
   advanceRun,
@@ -698,9 +699,15 @@ function reduceReadings(
   valueFn: (row: any) => number | null,
   aggregation: string,
   windowPolls = 0,
+  /** COUNT-WINDOW ONLY. Given this group's series newest-first (each entry
+   *  carrying its source row), return the values the window should be built
+   *  from — the seam response time uses to fill misses with their timeout and
+   *  to truncate at an outage (business rule 67). Every other metric passes
+   *  none and its raw values are used as they are. */
+  prepare?: (series: Array<{ ts: number; v: number | null; row: any }>) => Array<number | null>,
 ): Reading[] {
   // group by assetId|dimKey
-  const groups = new Map<string, { asset: ScopeAssetRow; dimKey: string; dimLabel: string; values: number[]; series: Array<{ ts: number; v: number | null }>; latest: { ts: number; v: number | null } }>();
+  const groups = new Map<string, { asset: ScopeAssetRow; dimKey: string; dimLabel: string; values: number[]; series: Array<{ ts: number; v: number | null; row: any }>; latest: { ts: number; v: number | null } }>();
   for (const row of rows) {
     const asset = assetIndex.get(row.assetId);
     if (!asset) continue;
@@ -718,7 +725,7 @@ function reduceReadings(
     // of qualifying readings, so their ORDER is the reading and a reduced value
     // cannot answer it. Sorted on the way out — rows arrive in whatever order
     // the query returned them.
-    g.series.push({ ts, v });
+    g.series.push({ ts, v, row });
     if (ts > g.latest.ts) g.latest = { ts, v };
   }
   const out: Reading[] = [];
@@ -731,7 +738,8 @@ function reduceReadings(
       // the time-window branch below deliberately refuses. Empty when the
       // device has not yet produced N valued readings, which reads downstream
       // exactly like a device that has produced none: no reading, no fire.
-      const rolled = rollingAggregate(g.series.map((x) => x.v), windowPolls, aggregation);
+      const prepared = prepare ? prepare(g.series) : g.series.map((x) => x.v);
+      const rolled = rollingAggregate(prepared, windowPolls, aggregation);
       if (!rolled.length) continue;
       out.push({
         assetId: g.asset.id, hostname: g.asset.hostname, tags: g.asset.tags,
@@ -798,8 +806,35 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       // NULL responseTimeMs and never reads uptime, so its rows would only add
       // scan cost — and an automation on response time must never see another
       // transport's timing.
-      const rows = await prisma.assetMonitorSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since }, OR: [{ probeKind: null }, { probeKind: "primary" }] }, select: { assetId: true, timestamp: true, responseTimeMs: true, uptimeSec: true } });
-      return reduceReadings(rows, index, () => "", () => "", (r) => r[trigger.metric] ?? null, agg, winPolls);
+      //
+      // A COUNT-windowed response-time trigger needs two more columns — what a
+      // miss cost and whether it was the outage — so it can fill and truncate
+      // (business rule 67). Selected only for that case: at 2000 assets these
+      // are two extra columns on the heaviest query an automation runs, and
+      // every other trigger here has no use for them.
+      const wantsProbeContext = trigger.metric === "responseTimeMs" && winPolls > 0;
+      const rows = await prisma.assetMonitorSample.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since }, OR: [{ probeKind: null }, { probeKind: "primary" }] },
+        select: {
+          assetId: true, timestamp: true, responseTimeMs: true, uptimeSec: true,
+          ...(wantsProbeContext ? { timeoutMs: true, assetDown: true } : {}),
+        },
+      });
+      if (!wantsProbeContext) {
+        return reduceReadings(rows, index, () => "", () => "", (r) => r[trigger.metric] ?? null, agg, winPolls);
+      }
+      // The raw value carried through reduceReadings is the RTT; `prepare`
+      // re-reads the row for the fill and the reset, which is why it is handed
+      // the rows rather than the values.
+      return reduceReadings(
+        rows, index, () => "", () => "",
+        (r) => r.responseTimeMs ?? null, agg, winPolls,
+        (series) => prepareResponseTimeWindow(series.map((x) => ({
+          responseTimeMs: x.row.responseTimeMs ?? null,
+          timeoutMs: (x.row as { timeoutMs?: number | null }).timeoutMs ?? null,
+          assetDown: (x.row as { assetDown?: boolean | null }).assetDown === true,
+        }))),
+      );
     }
     case "probeLossPct": {
       // Probe-failure ratio over the window — the same shared query the

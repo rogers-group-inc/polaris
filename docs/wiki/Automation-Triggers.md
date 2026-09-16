@@ -374,6 +374,44 @@ not page you for a single spike. One 1500 ms response inside an otherwise health
 while a device that has genuinely slowed clears the line at every recalculation
 and fires on schedule.
 
+### Response time measures misses too, and forgets an outage
+
+**Response time defaults to a count window of 10**, and it behaves differently
+from every other metric inside that window — because it is the only metric whose
+*failure* has a duration attached. A missed CPU reading is an absence; there is no
+number to put there. A missed response-time poll waited the device's full probe
+timeout and heard nothing, which is a fact about the device measured in the same
+unit as the metric.
+
+So, inside a response-time count window:
+
+- **A missed poll counts as the probe timeout configured for that device.** Not
+  skipped, not zero. Skipping it would let a device answering one poll in ten read
+  exactly as fast as one answering every poll; zero would make the worst device on
+  the network look like the best.
+- **Going Down resets the window.** Everything up to and including the poll that
+  declared the outage is discarded. Without this, an outage's timeouts would sit
+  in the window for ten polls after the device came back, and a recovered device
+  would keep alerting about the outage your down automation already paged you for.
+- **Only Down resets it.** A missed poll that has *not* yet crossed your
+  "Declare Down after" count is still a degraded device, not an outage — it counts,
+  filled with its timeout. The line between the two is your own missed-poll
+  setting, not a second threshold hidden in here.
+- **A recovered device is quiet until the window refills.** Ten polls, so about
+  ten minutes at a 60-second cadence. That is a settling period rather than a blind
+  spot — `down` was your down automation's business for the whole outage.
+
+You can still change the number, or switch back to minutes, on any individual
+automation. The default only applies to a new automation that hasn't stated a
+window yet, and it never overrides a choice you have made.
+
+> **On upgrade, existing response-time automations were converted** to the
+> 10-reading window, including ones you had edited. Each one is named in an Event
+> along with the window it used to have, so you can see exactly what changed and
+> set any of them back by hand. They were not left alone because the problem being
+> fixed is what a minutes window *measures* — an edited rule measured it just as
+> wrongly as an unedited one.
+
 ---
 
 ## Severity bands

@@ -623,3 +623,57 @@ beside a count window (and beside a ratio's History, the other window with a fre
 — and `tgStampWindowPolls` STRIPS the count from every leaf that must not carry it, because
 the engine prefers `windowPolls` wherever it finds one and a leftover would keep measuring in
 readings while the field, the sentence and the formula all said minutes.
+
+
+---
+
+## Rule 67 — A missed response-time poll is the timeout it cost, and an outage resets the window
+
+Response time is the one metric whose FAILURE has a duration attached. Every other metric's
+miss is an absence — the collector did not read a CPU percentage, and there is no number to
+put there. A failed response-time probe waited the asset's full `probeTimeoutMs` and heard
+nothing, which is a fact about how the device is behaving and is measured in the same unit as
+the metric itself.
+
+Business rule 66 dropped misses out of the count window, and for a general metric that is
+right. For response time it is a hole: a device answering one poll in ten reads exactly as
+fast as one answering every poll, because both windows contain only the answers. **A miss that
+did not put the asset Down is therefore filled with `AssetMonitorSample.timeoutMs`** — the
+resolved timeout for that asset AT PROBE TIME, recorded on the row by `recordProbeResult`
+rather than re-resolved when the rule runs. Recorded for two reasons: a window of past probes
+must use the timeout that actually applied to each one rather than whatever the setting says
+today, and resolving per-asset monitor settings inside the engine's tick would mean widening
+its deliberately tight asset select at 2000 assets. A failure with NO recorded timeout is a row
+written before the column existed; those stay excluded, which is exactly the pre-feature
+behaviour and self-heals within one window.
+
+**What makes the fill safe is the reset.** Filling misses with the timeout is honest only while
+the device is still considered reachable; through a real outage it would turn a latency metric
+into a loss alarm, firing about the thing the down automation already owns — which is the
+objection that sank "count a miss as the timeout" as a general rule, and the exact failure
+business rule 29h exists to stop for packet loss in the metric next door. So **walking
+newest-first, everything at and before the most recent `assetDown` probe is discarded.**
+`assetDown` is stamped from the status the probe RESULTS in (`monitorStatusFor`), so the line
+between "degraded" and "out" is the operator's own `missedPolls` (business rule 36) rather than
+a second threshold invented here: an amber miss — below their threshold, not an outage yet —
+still counts and is still filled, and only the misses their own automation calls Down reset
+anything.
+
+**The consequence is deliberate: a recovered device has no reading until its window refills.**
+`rollingAggregate` refuses a partial window (business rule 66), so at a 60s cadence a device is
+quiet for ten minutes after an outage. That is a settling period rather than a blind spot —
+`down` was a different automation's subject the whole time, and the alternative is comparing an
+average of one or two samples against a threshold meant for ten, at the moment a device is
+least stable.
+
+**Response time therefore DEFAULTS to a count window of 10** in the builder, and the unit is
+chosen for the operator rather than offered neutrally: picking minutes for response time is
+picking the denominator that floats. It is a default, not a lock — the number and the unit stay
+editable — but the default only asserts itself on a draft that states no window at all, and
+never after the operator has touched the picker (`data-touched`) or on a stored rule.
+**Existing response-time rules were migrated** by the `V7` one-shot
+(`seedBaselineAutomationsV7ResponseTimeWindowAt`), which unlike V5 does NOT spare edited rules:
+V5 was adding a new knob whose default an operator might reasonably disagree with, while this
+fixes what the existing knob MEASURES, and an edited rule is no less wrong than an unedited one.
+It names every rule it changed and its old window in a warning Event, because it alters when
+existing alerts fire and an operator must be able to see it happened and put a rule back.

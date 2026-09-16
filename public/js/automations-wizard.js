@@ -3773,6 +3773,22 @@ async function openAutomationWizard(existing, opts) {
     // count of probes: over the shortest legal window this fleet's cadence
     // gives you this many, and loss can only land on multiples of 1/that.
     var minPolls = ratio ? Math.max(1, Math.round(RATIO_WINDOW_MIN_SEC / (cadSec > 0 ? cadSec : CADENCE_FALLBACK_SEC))) : 0;
+    // RESPONSE TIME defaults to a count window of 10 (business rule 67): a
+    // missed poll there is worth its timeout and an outage resets the window,
+    // so readings are what the metric is actually measured in. The operator can
+    // still change the number or switch back to minutes — the default is where
+    // it starts, not a lock — but the unit is chosen FOR them, because picking
+    // minutes for response time is picking the denominator that floats.
+    var rtDefault = aggregated && !ratio && !countWindow && triggerIsResponseTime(panel) && !unitTouched(unitSel);
+    if (rtDefault && unitSel) {
+      unitSel.value = "polls";
+      countWindow = true;
+      setFieldUnit(input, "polls");
+      if (!(pollFieldCount(input) > 0) || pollFieldCount(input) > COUNT_WINDOW_MAX_POLLS) {
+        input.value = String(COUNT_WINDOW_DEFAULT_POLLS);
+        input.setAttribute("data-sec", String(secFromPolls(input.value, cadSec)));
+      }
+    }
     setFieldUnit(input, countWindow ? "polls" : windowed ? "min" : "polls");
     var label = wrap.querySelector("label");
     if (label) {
@@ -3926,7 +3942,16 @@ async function openAutomationWizard(existing, opts) {
     // all — reading its unit off that would turn the first switch to `avg` into
     // a count window the operator never asked for.
     var unitPick = box.querySelector("#tf-window-unit");
-    if (unitPick) unitPick.value = triggerWindowPollsOf(draft.trigger) > 0 ? "polls" : "min";
+    if (unitPick) {
+      unitPick.value = triggerWindowPollsOf(draft.trigger) > 0 ? "polls" : "min";
+      // A STORED rule has already stated its unit — by being authored, or by
+      // the one-shot that migrated it — so the response-time default must not
+      // overwrite it. Only a fresh draft, which carries no window at all, is
+      // still asking to be defaulted.
+      if (triggerWindowPollsOf(draft.trigger) > 0 || triggerDurationSec(draft.trigger) > 0) {
+        unitPick.setAttribute("data-touched", "1");
+      }
+    }
     refreshTriggerSentence();
     refreshDimOptions(panel);
     syncDurationRequirement(panel);
@@ -3968,6 +3993,9 @@ async function openAutomationWizard(existing, opts) {
     panel.addEventListener("change", function (e) {
       var t = e.target;
       if (!t || !t.classList || !t.classList.contains("aw-window-unit")) return;
+      // From here the operator owns the unit — the response-time default stops
+      // asserting itself, in either direction.
+      t.setAttribute("data-touched", "1");
       // Seed a sensible count the first time an operator picks readings: the
       // minutes-derived conversion is whatever their old window happened to be,
       // which for a 60-minute window is 60 readings — a window nobody asked for.
@@ -4161,6 +4189,23 @@ async function openAutomationWizard(existing, opts) {
     if (tgLeafWindowedRatio(leaf)) return false;
     if (!leaf.aggregation || leaf.aggregation === "latest") return false;
     return typeof leaf.windowPolls === "number" && leaf.windowPolls > 0;
+  }
+  /** Every metric condition on screen is response time. Response time is the
+   *  one metric whose misses have a DURATION (the probe timeout) and whose
+   *  outages reset the window, so it is the one the count-window default is
+   *  chosen for — see business rule 67. A mixed tree keeps the plain default. */
+  function triggerIsResponseTime(panel) {
+    var root = panel && panel.querySelector("#aw-trig-root");
+    var sels = root ? root.querySelectorAll(".scr-row .tgl-what") : [];
+    if (!sels.length) return false;
+    return Array.prototype.every.call(sels, function (el) { return el.value === "m:responseTimeMs"; });
+  }
+  /** True once the operator has touched the unit picker themselves. The
+   *  response-time default must never fight a deliberate choice — including a
+   *  deliberate choice of minutes, which would otherwise be re-flipped on the
+   *  next keystroke anywhere in the panel. */
+  function unitTouched(sel) {
+    return !!sel && sel.getAttribute("data-touched") === "1";
   }
   /** The stored count window a trigger states, or 0. */
   function triggerWindowPollsOf(tr) {

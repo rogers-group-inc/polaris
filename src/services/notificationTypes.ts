@@ -310,6 +310,61 @@ function aggregateOver(slice: readonly number[], aggregation: string): number {
   }
 }
 
+/** One response-time probe as the count window sees it, newest-first. */
+export interface ProbeEntry {
+  /** The measured RTT, or null when the probe failed. */
+  responseTimeMs: number | null;
+  /** How long the failed probe waited. Null on a success, and on any failure
+   *  recorded before the column existed. */
+  timeoutMs: number | null;
+  /** True when this failed probe is the one that declared (or continued) an
+   *  outage — `AssetMonitorSample.assetDown`, business rule 29h. */
+  assetDown: boolean;
+}
+
+/**
+ * RESPONSE TIME'S OWN WINDOW (business rule 67), applied before the rolling
+ * aggregate turns it into readings.
+ *
+ * Two things happen here that no other metric wants, and both exist because a
+ * response-time poll has a failure mode with a DURATION attached:
+ *
+ *  1. **A miss that did not put the asset Down is the timeout.** The probe
+ *     genuinely waited that long and heard nothing, so the honest reading is
+ *     "at least this slow" — not a gap (which would let a device answering once
+ *     an hour read as fast as one answering every minute) and not a zero (which
+ *     would make the worst device on the network look like the best). A failure
+ *     with no recorded timeout is a row written before the column existed;
+ *     those are EXCLUDED, which is exactly the pre-feature behaviour and
+ *     self-heals within one window.
+ *
+ *  2. **An outage RESETS the window.** Walking newest-first, everything at and
+ *     before the most recent `assetDown` probe is discarded. Without this, the
+ *     timeouts of an outage would sit in the window for ten polls after the
+ *     device came back, so a recovered device would keep alerting about a
+ *     slowness that was really the outage the down automation already owns —
+ *     the same failure rule 29h exists to stop for packet loss, in the metric
+ *     next door. It is also what keeps (1) safe: filling misses with the
+ *     timeout is only honest while the device is still considered reachable.
+ *
+ * The consequence is deliberate: a device that has just recovered has NO
+ * reading until its window refills, because `rollingAggregate` refuses a
+ * partial window. At a 60s cadence that is ten quiet minutes after every
+ * outage — a settling period, not a blind spot, since `down` is a different
+ * automation's subject the whole time.
+ */
+export function prepareResponseTimeWindow(entries: readonly ProbeEntry[]): Array<number | null> {
+  const out: Array<number | null> = [];
+  for (const e of entries) {
+    if (e.assetDown) break; // the outage ends the window; everything older is its
+    if (e.responseTimeMs !== null && e.responseTimeMs !== undefined) { out.push(e.responseTimeMs); continue; }
+    // A miss. Worth the timeout it waited, or nothing at all if we never
+    // recorded one — `rollingAggregate` drops the nulls.
+    out.push(typeof e.timeoutMs === "number" && e.timeoutMs > 0 ? e.timeoutMs : null);
+  }
+  return out;
+}
+
 /** The measurement window as a COUNT OF READINGS, or 0 when the trigger states
  *  a wall-clock window instead. Only ever set alongside a real aggregation:
  *  `latest` has nothing to measure over, and a windowed ratio's window IS its
