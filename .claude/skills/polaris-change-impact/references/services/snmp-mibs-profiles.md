@@ -59,18 +59,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Which vendor telemetry shape (`VendorTelemetryProfile`) an asset gets, as a pure module with an INJECTED profile lookup. Extracted verbatim from `monitoringService.ts` in Phase 4 of uniform SNMP so both today's merge and its DB-only successor can be driven with in-memory rows by the parity test.
 
-**Public API:** `pickVendorProfileMerged(manufacturer, os, model, assetType, lookup = getProfileFor)`, `resolveDbMetric(metricRow, model)`, `DbMetricPick`, `ProfileLookup`.
+**Public API:** TWO resolvers, both callable during the swap. Outgoing: `pickVendorProfileMerged(manufacturer, os, model, assetType, lookup = getProfileFor)` + `resolveDbMetric(metricRow, model)`. Incoming (DB-only): `pickDbProfile(subject, lookup = getProfileFor, list = listCachedProfiles)`, `findDbProfile(subject, …)`, `resolveScopedMetric(metricRow, assetType, modelHaystack, skipTypeDefaults?)`, `modelIdentifiesDevice(profile, modelHaystack)`, `clearProfileRegexCache()`. Types: `DbMetricPick`, `ProfileSubject`, `ProfileLookup`, `ProfileList`.
 
-**Cross-service deps:** `vendorTelemetryProfiles` (`pickVendorProfile`, `fortinetClassHint`, `diskQueryFromMetricPick`, the constant it still falls back to), `manufacturerProfileService` (`getProfileFor` as the default lookup; `MetricKey` / `MetricRow` / `ProfileFull` types). No Prisma, no I/O.
+**Cross-service deps:** `vendorTelemetryProfiles` (`pickVendorProfile`, `fortinetClassHint`, `diskQueryFromMetricPick`, the constant the OUTGOING resolver still falls back to), `manufacturerProfileService` (`getProfileFor` + `listCachedProfiles` as the default lookups; `Aggregate` / `MetricKey` / `MetricRow` / `MetricOverrideRow` / `ProfileFull` types), `utils/modelParse` (`applyModelParse`), `utils/assetTypes` (`normalizeAssetTypeName`). No Prisma, no I/O.
 
-**Used by:** `src/services/monitoringService.ts` — the four SNMP collectors that read a vendor profile (`collectTelemetrySnmp`, `collectHardwareSensorsViaSnmpSession`, `collectSystemInfoSnmp`, `collectStorageOnlySnmp`).
+**Used by:** `src/services/monitoringService.ts` — the four SNMP collectors that read a vendor profile (`collectTelemetrySnmp`, `collectHardwareSensorsViaSnmpSession`, `collectSystemInfoSnmp`, `collectStorageOnlySnmp`). They still call the OUTGOING resolver; wiring them to `pickDbProfile` is the next step of the phase.
 
 **Invariants:**
-- Today's behaviour is pinned by `tests/unit/profileResolver.test.ts`, including two KNOWN DELTAS the swap changes on purpose (Cisco memory `walkSubtree: false` on the double_scalar path — a bug; the mis-typed-asset-with-a-stated-model routing) and one KNOWN GAP (an alias-canonical spelling like "Aruba" that the seed did not key finds no DB profile and survives only on the hardcoded regex).
-- The hardcoded constant is still the fallback and the only source of `walkSubtree`, `mountPath`, `sensorName` and the `model` query until the swap lands.
+- Today's behaviour is pinned by `tests/unit/profileResolver.test.ts`; the swap's answer is pinned against it tuple by tuple in `tests/unit/profileResolverParity.test.ts`, whose `DELTAS` table is the ONLY licence for a field to differ — anything else that changes fails the run. The three declared deltas are Cisco memory `walkSubtree` (false → true; the merge hardcoded false on the double_scalar path, so a seeded Cisco did a scalar GET of a table column and fell to HOST-RESOURCES-MIB) and a FortiAP's temperature `sensorName` (dropped → "System"; the merge overwrote `temperature` with `{symbol, mode}` and lost the hardcoded label).
+- **A device is ONE family.** `modelIdentifiesDevice` is asked once per device, not per metric: when a row states a model and NO device type and that model matches, the device-type tier is skipped for EVERY metric. Without this a mis-typed FortiAP reads cpu/memory/temperature as a FortiAP and then falls through to the SWITCH type default for storage, charting a flash partition it does not have. The hardcoded constant could not mix families because it picked one entry for the whole device; this preserves that.
+- `matchPattern` is consulted ONLY when no profile is keyed by the asset's canonical manufacturer, so a profile's "also applies when" can never steal an asset from the profile keyed by its manufacturer.
+- `fortinetClassHint` is still carried into the model haystack by `pickDbProfile` — for compatibility with a hand-made Fortinet profile whose model patterns the Phase 4 migration's `IN ('FortiSwitch','FortiAP')` backfill did not recognize, NOT because the resolver needs it. The device-type tier is its general replacement.
+- Regexes are compiled once per pattern TEXT into a module-level cache, so an edited pattern is a new key and a stale entry can never be read; nothing invalidates it in production (a service → resolver import would be a cycle). `listCachedProfiles` returns the cached array itself — read-only, rebuilt per `refreshProfileCache`.
 
 **When changing this:**
 - Any change to what a tuple resolves to must appear in `profileResolver.test.ts` (before the swap) or `profileResolverParity.test.ts` (after) as an explicit expectation — this module decides which OIDs 2000 assets walk every tick.
+- A new tier, or a change to tier precedence, changes what a mis-typed or modelless asset walks. Add the tuple to the parity table; do not rely on the unit cases alone.
+- Anything added to the per-asset path here runs once per asset per pass at 2000 assets. Precompute per refresh (as `listCachedProfiles` does), never per call.
 
 ## services/mibParserUtils.ts
 

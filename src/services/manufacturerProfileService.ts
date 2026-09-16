@@ -220,6 +220,8 @@ export interface ProfileFull {
 
 const profileCache = new Map<string, ProfileFull>();
 let cacheLoaded = false;
+/** Lazily built by `listCachedProfiles`; dropped whenever the cache refills. */
+let sortedCache: ProfileFull[] | null = null;
 
 function asMetricKey(value: unknown): MetricKey {
   if (typeof value !== "string" || !(METRIC_KEYS as string[]).includes(value)) {
@@ -518,6 +520,7 @@ export async function refreshProfileCache(): Promise<void> {
     },
   });
   profileCache.clear();
+  sortedCache = null;
   for (const row of rows) {
     const shaped = shapeProfile(row);
     profileCache.set(shaped.manufacturer.toLowerCase(), shaped);
@@ -536,6 +539,31 @@ export function getProfileFor(manufacturer: string | null | undefined): ProfileF
   const canonical = normalizeManufacturer(manufacturer);
   if (!canonical) return null;
   return profileCache.get(canonical.toLowerCase()) ?? null;
+}
+
+/**
+ * Every cached profile, for the resolver's `matchPattern` fallback — the scan
+ * it runs only when `getProfileFor` misses. Sorted by manufacturer so two
+ * profiles whose patterns both match an asset resolve the same way on every
+ * process and every restart; `refreshProfileCache` fills the Map in whatever
+ * order `findMany` returns, which is not a guarantee.
+ *
+ * Empty before the cache warms — the same "no opinion" the keyed getter
+ * reports, so a caller needs no extra branch.
+ *
+ * The array is built ONCE per cache refresh, not per call. A miss on the
+ * keyed lookup is the COMMON case on a fleet whose vendors mostly have no
+ * profile, and this sits on the per-asset probe path: at 2000 monitored
+ * assets a copy-and-sort per asset per pass is real work to do for an answer
+ * that changes only when an operator edits a profile. Callers must treat it
+ * as read-only — it is the cached array itself, not a defensive copy.
+ */
+export function listCachedProfiles(): ProfileFull[] {
+  if (!cacheLoaded) return [];
+  if (!sortedCache) {
+    sortedCache = [...profileCache.values()].sort((a, b) => a.manufacturer.localeCompare(b.manufacturer));
+  }
+  return sortedCache;
 }
 
 /** One state probe, flattened out of its profile. */

@@ -9,13 +9,21 @@
  * here touches Prisma; `getProfileFor` is the default lookup and reads the
  * warm cache.
  *
- * What it does today: pick the hardcoded VENDOR_TELEMETRY_PROFILES entry by
- * regex over `manufacturer + os + model + fortinetClassHint`, then LAYER the
- * operator-editable ManufacturerProfile rows over a clone of it for the four
- * metric keys the collectors read (cpu / memory / temperature / storage).
- * The constant is still the fallback and the source of the fields the DB
- * cannot express (`walkSubtree`, `mountPath`, `model.parse`). Step 6 of the
- * phase replaces this with a DB-only pick.
+ * TWO resolvers live here during the swap:
+ *
+ *   `pickVendorProfileMerged` — what the collectors call TODAY. Picks the
+ *   hardcoded VENDOR_TELEMETRY_PROFILES entry by regex over
+ *   `manufacturer + os + model + fortinetClassHint`, then LAYERS the
+ *   operator-editable ManufacturerProfile rows over a clone of it for the
+ *   four metric keys the collectors read (cpu / memory / temperature /
+ *   storage). The constant remains the fallback and the source of everything
+ *   the pre-Phase-4 rows could not express.
+ *
+ *   `pickDbProfile` — its replacement, reading ROWS ALONE. Same answer for a
+ *   seeded install (the parity test pins it tuple by tuple) plus the four
+ *   things the constant's shape got wrong; see the comment above it. Not
+ *   wired into the collectors yet — that is the next step, and keeping both
+ *   callable is what lets one test drive them side by side.
  */
 
 import {
@@ -26,13 +34,21 @@ import {
 } from "./vendorTelemetryProfiles.js";
 import {
   getProfileFor,
+  listCachedProfiles,
+  type Aggregate,
   type MetricKey,
+  type MetricOverrideRow,
   type MetricRow,
   type ProfileFull,
 } from "./manufacturerProfileService.js";
+import { applyModelParse } from "../utils/modelParse.js";
+import { normalizeAssetTypeName } from "../utils/assetTypes.js";
 
 /** Manufacturer → cached profile. Injected so tests run without a database. */
 export type ProfileLookup = (manufacturer: string | null | undefined) => ProfileFull | null;
+
+/** Every cached profile, for the `matchPattern` scan. Injected for the same reason. */
+export type ProfileList = () => ProfileFull[];
 
 // Per-asset metric resolution from the editable Manufacturer Profile.
 // Walks the profile's per-model overrides in `order` and picks the first whose
@@ -49,6 +65,40 @@ export interface DbMetricPick {
   symbolB:   string | null;
   type:      "scalar" | "double_scalar" | "table";
   transform: string | null; // TransformKind on scalar/table; CombinerKind on double_scalar
+  /** How a walked subtree collapses. "none" on every pre-Phase-4 row. */
+  aggregate:     Aggregate;
+  /** Sample-row label (StorageSample.mountPath / hardware sensorName). */
+  label:         string | null;
+  /** `model` metric only — the declarative parse, see src/utils/modelParse.ts. */
+  parsePattern:  string | null;
+  parseTemplate: string | null;
+}
+
+/** The pre-Phase-4 fields only; the four new ones take their "row said nothing" value. */
+function pickFromRowDefaults(metric: MetricRow): DbMetricPick {
+  return {
+    symbol:        metric.defaultSymbol ?? null,
+    symbolB:       metric.defaultSymbolB ?? null,
+    type:          metric.defaultType,
+    transform:     metric.defaultTransform ?? null,
+    aggregate:     metric.defaultAggregate ?? "none",
+    label:         metric.defaultLabel ?? null,
+    parsePattern:  metric.defaultParsePattern ?? null,
+    parseTemplate: metric.defaultParseTemplate ?? null,
+  };
+}
+
+function pickFromOverride(o: MetricOverrideRow): DbMetricPick {
+  return {
+    symbol:        o.symbol || null,
+    symbolB:       o.symbolB ?? null,
+    type:          o.type,
+    transform:     o.transform ?? null,
+    aggregate:     o.aggregate ?? "none",
+    label:         o.label ?? null,
+    parsePattern:  o.parsePattern ?? null,
+    parseTemplate: o.parseTemplate ?? null,
+  };
 }
 
 export function resolveDbMetric(metric: MetricRow | undefined, model: string | null | undefined): DbMetricPick | null {
@@ -59,24 +109,10 @@ export function resolveDbMetric(metric: MetricRow | undefined, model: string | n
     // pre-swap resolver does not read; `pickDbProfile` does. Skip, don't match.
     if (!o.modelPattern) continue;
     try {
-      if (new RegExp(o.modelPattern, "i").test(modelStr)) {
-        return {
-          symbol:    o.symbol || null,
-          symbolB:   o.symbolB ?? null,
-          type:      o.type,
-          transform: o.transform ?? null,
-        };
-      }
+      if (new RegExp(o.modelPattern, "i").test(modelStr)) return pickFromOverride(o);
     } catch { /* malformed regex; skip — write-path validates so this is defensive only */ }
   }
-  if (metric.defaultSymbol || metric.defaultSymbolB) {
-    return {
-      symbol:    metric.defaultSymbol ?? null,
-      symbolB:   metric.defaultSymbolB ?? null,
-      type:      metric.defaultType,
-      transform: metric.defaultTransform ?? null,
-    };
-  }
+  if (metric.defaultSymbol || metric.defaultSymbolB) return pickFromRowDefaults(metric);
   return null;
 }
 
@@ -198,4 +234,281 @@ export function pickVendorProfileMerged(
     if (disk) merged.disk = disk;
   }
   return merged;
+}
+
+// ─── The DB-only pick (Phase 4, the swap) ─────────────────────────────────
+//
+// `pickVendorProfileMerged` above layers rows over the hardcoded constant.
+// Everything below reads rows ALONE. It is the same answer for every seeded
+// install — the parity test pins that tuple by tuple — with the four
+// differences the phase set out to make, each of them a bug the constant's
+// shape forced:
+//
+//   1. Cisco memory walks again. The merge hardcoded `walkSubtree: false` on
+//      the double_scalar path, so a seeded Cisco did a scalar GET of a table
+//      column, got nothing, and fell to HOST-RESOURCES-MIB. `aggregate` is
+//      the row that says otherwise.
+//   2. A device-type default resolves. The constant could only key a family
+//      off a model regex, which matched an empty model through
+//      `fortinetClassHint` and nothing else; a Fortinet-shaped vendor with no
+//      such hint had no way to say "every switch under me".
+//   3. A profile the operator MADE now behaves like a seeded one. Before, a
+//      manufacturer with no hardcoded entry got `base = null` and only the
+//      four merged metrics; the model query, the sensor label and the mount
+//      path were unreachable to it.
+//   4. An alias spelling resolves through `matchPattern` instead of through
+//      the constant's regex.
+
+/** Everything the resolver knows about the asset in front of it. */
+export interface ProfileSubject {
+  manufacturer: string | null | undefined;
+  os:           string | null | undefined;
+  model:        string | null | undefined;
+  assetType:    string | null | undefined;
+  /**
+   * The module name of the MIB pinned on this asset, when it has one — the
+   * third field of the `matchPattern` haystack and part of the model haystack.
+   * An asset whose only vendor signal is "it speaks FORTINET-FORTISWITCH-MIB"
+   * is a real case on gear that reports no manufacturer over SNMP.
+   */
+  mibModule?:   string | null;
+}
+
+// Regexes come from the DB and are re-tested on every probe of every asset.
+// Compiling per call is the kind of cost that only shows up at 2000 monitored
+// assets, and the pattern set is small (one per profile plus one per scoped
+// row), so it is cached by pattern text for the life of the process. A
+// pattern that does not compile caches as null and is skipped — the write
+// path validates, so this is defensive only, and caching the failure keeps a
+// malformed row from re-throwing on every pass.
+//
+// Keyed by pattern TEXT, so an edited pattern is a new key and a stale entry
+// can never be read; the only cost of not invalidating on write is one dead
+// entry per edited pattern, which is why nothing calls the clear below in
+// production. (A service → resolver import for that would also be a cycle.)
+const regexCache = new Map<string, RegExp | null>();
+
+function compiled(pattern: string): RegExp | null {
+  const hit = regexCache.get(pattern);
+  if (hit !== undefined) return hit;
+  let re: RegExp | null = null;
+  try { re = new RegExp(pattern, "i"); } catch { re = null; }
+  regexCache.set(pattern, re);
+  return re;
+}
+
+/** Drop every compiled pattern. Call after a profile write; tests use it to isolate. */
+export function clearProfileRegexCache(): void {
+  regexCache.clear();
+}
+
+/**
+ * Which profile governs this asset.
+ *
+ * The canonical manufacturer is the primary key and the only lookup that
+ * runs for an asset the alias map already folds into a profile's name. Only
+ * when that misses does `matchPattern` get its turn, tested against
+ * `manufacturer os mibModule` — so a profile's "also applies when" can never
+ * steal an asset from the profile actually keyed by its manufacturer.
+ */
+export function findDbProfile(
+  subject: ProfileSubject,
+  lookup: ProfileLookup = getProfileFor,
+  list: ProfileList = listCachedProfiles,
+): ProfileFull | null {
+  const keyed = lookup(subject.manufacturer);
+  if (keyed) return keyed;
+
+  const haystack = [subject.manufacturer, subject.os, subject.mibModule].filter(Boolean).join(" ").trim();
+  if (!haystack) return null;
+  for (const p of list()) {
+    if (!p.matchPattern) continue;
+    const re = compiled(p.matchPattern);
+    if (re && re.test(haystack)) return p;
+  }
+  return null;
+}
+
+/**
+ * The effective row for one metric, most-specific-first:
+ *
+ *   1. this device type AND a matching model pattern
+ *   2. a matching model pattern, any device type
+ *   3. this device type's default (no pattern)
+ *   4. the metric row's own defaults
+ *
+ * A stated model outranks an inferred type deliberately (2 above 3): an asset
+ * mis-typed by discovery whose model names its family still routes by the
+ * model. Inside a tier the row `order` decides, and the rows arrive sorted by
+ * it — which is why the profile page must render them in that same order.
+ */
+export function resolveScopedMetric(
+  metric: MetricRow | undefined,
+  assetType: string | null | undefined,
+  modelHaystack: string,
+  skipTypeDefaults = false,
+): DbMetricPick | null {
+  if (!metric) return null;
+  const type = assetType ? normalizeAssetTypeName(assetType) : null;
+  const rows = metric.overrides || [];
+
+  const modelHit = (o: MetricOverrideRow): boolean => matchesModel(o, modelHaystack);
+  const typeHit = (o: MetricOverrideRow): boolean =>
+    !!type && !!o.assetType && normalizeAssetTypeName(o.assetType) === type;
+
+  const tiers: Array<(o: MetricOverrideRow) => boolean> = [
+    (o) => typeHit(o) && modelHit(o),
+    (o) => !o.assetType && modelHit(o),
+  ];
+  if (!skipTypeDefaults) tiers.push((o) => typeHit(o) && !o.modelPattern);
+
+  for (const inTier of tiers) {
+    const hit = rows.find(inTier);
+    if (hit) return pickFromOverride(hit);
+  }
+  if (metric.defaultSymbol || metric.defaultSymbolB) return pickFromRowDefaults(metric);
+  return null;
+}
+
+function matchesModel(o: MetricOverrideRow, modelHaystack: string): boolean {
+  if (!o.modelPattern) return false;
+  const re = compiled(o.modelPattern);
+  return !!re && re.test(modelHaystack);
+}
+
+/**
+ * Does this device's MODEL name its family, anywhere in this profile?
+ *
+ * The question is asked once per device, not once per metric, and it decides
+ * whether the device-type tier is consulted at all. A mis-typed FortiAP —
+ * model "FortiAP-231F", `assetType: "switch"` — matches the FortiAP model
+ * rows for cpu / memory / temperature, but the Fortinet profile has no
+ * FortiAP STORAGE row, so a per-metric walk would fall through to the SWITCH
+ * type default and hand a FortiAP the FortiSwitch flash OIDs. The device
+ * would be reading half its telemetry as one family and half as another,
+ * which the hardcoded constant could not do — it picked ONE entry for the
+ * whole device.
+ *
+ * So: a matching row that states a model and NO device type (the "this model,
+ * whatever it is typed as" tier) settles the device's identity, and the
+ * type defaults are skipped for every metric. A metric that family has
+ * nothing to say about then reads the profile default or nothing at all —
+ * the same silence the constant produced.
+ *
+ * A row carrying BOTH halves does not settle anything: it is an exception
+ * scoped UNDER a device type and is only reachable through that type.
+ */
+export function modelIdentifiesDevice(profile: ProfileFull, modelHaystack: string): boolean {
+  if (!modelHaystack) return false;
+  return profile.metrics.some((m) =>
+    (m.overrides || []).some((o) => !o.assetType && matchesModel(o, modelHaystack)),
+  );
+}
+
+/** `aggregate` is the row's word for "this symbol names a subtree, walk it". */
+function walks(pick: DbMetricPick): boolean {
+  return pick.aggregate === "avg" || pick.aggregate === "sum";
+}
+
+/**
+ * Build the runtime telemetry shape for an asset from its profile rows alone.
+ * Returns null when no profile governs the asset, or when one does but has
+ * nothing configured for any metric the collectors read — both mean "this
+ * install has no vendor opinion here", and the collectors already treat a
+ * null profile as "use the standard MIBs".
+ */
+export function pickDbProfile(
+  subject: ProfileSubject,
+  lookup: ProfileLookup = getProfileFor,
+  list: ProfileList = listCachedProfiles,
+): VendorTelemetryProfile | null {
+  const profile = findDbProfile(subject, lookup, list);
+  if (!profile) return null;
+
+  // `fortinetClassHint` is carried into the model haystack for compatibility,
+  // not because the resolver still needs it: the device-type tier is its
+  // general replacement, and the Phase 4 migration gives every seeded
+  // FortiSwitch / FortiAP model row a type-default sibling. What it still
+  // covers is a Fortinet profile an operator built BY HAND whose rows use a
+  // model pattern the migration's `IN ('FortiSwitch','FortiAP')` guard did
+  // not recognize — dropping the hint would silently stop collecting on that
+  // install. Removable once those rows are gone; nothing else depends on it.
+  const modelHaystack = [
+    subject.model,
+    subject.mibModule,
+    fortinetClassHint(subject.manufacturer, subject.model, subject.assetType),
+  ].filter(Boolean).join(" ");
+
+  // Asked once for the device, not once per metric — see modelIdentifiesDevice.
+  const byModel = modelIdentifiesDevice(profile, modelHaystack);
+
+  const row = (key: MetricKey) => profile.metrics.find((m) => m.metricKey === key);
+  const pick = (key: MetricKey) => resolveScopedMetric(row(key), subject.assetType, modelHaystack, byModel);
+
+  const cpuPick   = pick("cpu" as MetricKey);
+  const memPick   = pick("memory" as MetricKey);
+  const tempPick  = pick("temperature" as MetricKey);
+  const diskPick  = pick("storage" as MetricKey);
+  const modelPick = pick("model" as MetricKey);
+
+  const out: VendorTelemetryProfile = {
+    vendor: profile.manufacturer,
+    // The runtime never re-tests this; `findDbProfile` has already decided.
+    // The profile's own "also applies when" is the honest value where there
+    // is one, and a sentinel that matches nothing where there is not.
+    match: (profile.matchPattern && compiled(profile.matchPattern)) || /__db_profile__/,
+  };
+
+  if (cpuPick?.symbol) {
+    // walk-avg is the only walked CPU shape the collector implements, so a
+    // row that says `sum` still walks — it averages. Worth knowing if a
+    // vendor ever needs a summed CPU; today none does.
+    out.cpu = {
+      symbol: cpuPick.symbol,
+      mode: cpuPick.type === "table" || walks(cpuPick) ? "walk-avg" : "scalar",
+    };
+  }
+
+  if (memPick) {
+    if (memPick.type === "double_scalar" && memPick.symbol && memPick.symbolB) {
+      // The combiner says which pair the two symbols are; it is not arithmetic
+      // to perform here. `walkSubtree` is now the row's own word rather than
+      // the hardcoded baseline's — which is the Cisco fix.
+      if (memPick.transform === "a_over_b_as_percent") {
+        out.memory = { usedBytesSymbol: memPick.symbol, totalBytesSymbol: memPick.symbolB, walkSubtree: walks(memPick) };
+      } else if (memPick.transform === "a_over_a_plus_b_as_percent") {
+        out.memory = { usedBytesSymbol: memPick.symbol, freeBytesSymbol: memPick.symbolB, walkSubtree: walks(memPick) };
+      }
+      // Any other combiner is not memory-meaningful — leave memory unset
+      // rather than emit a shape the collector would misread.
+    } else if (memPick.type !== "double_scalar" && memPick.symbol) {
+      out.memory = { pctSymbol: memPick.symbol, walkSubtree: walks(memPick) };
+    }
+  }
+
+  if (tempPick?.symbol) {
+    out.temperature = {
+      symbol: tempPick.symbol,
+      mode: tempPick.type === "table" ? "table" : "scalar",
+      ...(tempPick.label ? { sensorName: tempPick.label } : {}),
+    };
+  }
+
+  if (diskPick) {
+    // A row that cannot produce a used/total byte pair resolves to null and
+    // leaves disk unset — a half-finished edit costs this metric, not the pass.
+    const disk = diskQueryFromMetricPick(diskPick, diskPick.label ?? undefined);
+    if (disk) out.disk = disk;
+  }
+
+  if (modelPick?.symbol && modelPick.parsePattern) {
+    const parse = { pattern: modelPick.parsePattern, template: modelPick.parseTemplate };
+    out.model = { symbol: modelPick.symbol, parse: (raw: string) => applyModelParse(raw, parse) };
+  }
+
+  // A profile row exists but says nothing the collectors can use. Reporting
+  // null rather than an empty shell keeps "no opinion" a single condition for
+  // every caller.
+  if (!out.cpu && !out.memory && !out.temperature && !out.disk && !out.model) return null;
+  return out;
 }
