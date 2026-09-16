@@ -38,6 +38,7 @@ do this — which one is the reference?"). The UI counterpart is `polaris-ui-can
 | [asset-source-projection](references/cross-cutting/asset-source-projection.md) | a discovery source writes an Asset field; AssetSource priority |
 | [windows-os-name-correction](references/cross-cutting/windows-os-name-correction.md) | `os` / `osVersion` on Windows hosts (rule 28) |
 | [polling-method-resolver](references/cross-cutting/polling-method-resolver.md) | per-stream polling method, the four tiers, `pollingCompatibility.ts` |
+| [vendor-snmp-knowledge-boundary](references/cross-cutting/vendor-snmp-knowledge-boundary.md) | any SNMP OID or vendor MIB symbol in code, `BUILT_IN_OIDS`, a new SNMP collector, `noEnterpriseOids.test.ts` failing |
 | [integration-type-onboarding](references/cross-cutting/integration-type-onboarding.md) | adding an 8th integration type (~30-callsite checklist) |
 | [fmg-fortigate-parity-surfaces](references/cross-cutting/fmg-fortigate-parity-surfaces.md) | a FortiManager feature that must also ship on standalone FortiGate |
 | [asset-write-time-clamps-and-shadow-writes](references/cross-cutting/asset-write-time-clamps-and-shadow-writes.md) | the `src/db.ts` Prisma extension hooks |
