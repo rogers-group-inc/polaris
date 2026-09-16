@@ -2478,13 +2478,6 @@ describe("trigger filter rows", () => {
     expect(ifBox).toBeTruthy();
     // Its hint asks which port rather than describing an optional narrowing.
     expect(ifBox.getAttribute("placeholder")).toContain("which interface");
-    // The other interface fields keep the filter-row shape — an "oper status is
-    // down" rule per pinned port is a legitimate rule, an IP comparison over
-    // every pinned port is not.
-    await openAtStep3("r-ifoper-noinline");
-    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifOperStatus");
-    expect(doc.querySelector('#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim[data-dim="ifNamePattern"]')).toBeFalsy();
-
     await openAtStep3("r-ifip-inline-save");
     await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifIpAddress");
     (doc.querySelector("#aw-trig-root .tgl-op") as unknown as { value: string }).value = "!=";
@@ -2497,6 +2490,49 @@ describe("trigger filter rows", () => {
     expect(saved.trigger.field).toBe("ifIpAddress");
     expect(saved.trigger.dimensionFilter).toEqual({ ifNamePattern: "wan2" });
     expect(() => ruleInputSchema.parse(saved)).not.toThrow();
+  });
+
+  it("puts the interface picker on the oper/admin/PoE status rows too, and leaves it optional", async () => {
+    // The ask this shipped for: "Interface oper status == down" gave the
+    // operator nowhere on the row to say WHICH interface — the only path was
+    // "+ Condition → Component name → Interface name", two menu levels away
+    // from the comparison it qualifies. Blank still means every monitored
+    // interface, one alert each, so the box is a narrowing and never a
+    // requirement.
+    for (const field of ["ifOperStatus", "ifAdminStatus", "poeStatus"]) {
+      await openAtStep3("r-" + field + "-inline");
+      await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:" + field);
+      const ifBox = doc.querySelector('#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim[data-dim="ifNamePattern"]') as unknown as
+        { getAttribute: (a: string) => string | null };
+      expect(ifBox, field).toBeTruthy();
+      expect(ifBox.getAttribute("placeholder")).toContain("which interface");
+    }
+
+    // Naming one saves it as the leaf's own dimensionFilter — the same shape a
+    // filter row compiles to, so stored rules of either origin stay readable.
+    await openAtStep3("r-ifoper-inline-save");
+    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifOperStatus");
+    (doc.querySelector("#aw-trig-root .tgl-value") as unknown as { value: string }).value = "down";
+    (doc.querySelector('#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim[data-dim="ifNamePattern"]') as unknown as { value: string }).value = "port3";
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.field).toBe("ifOperStatus");
+    expect(saved.trigger.dimensionFilter).toEqual({ ifNamePattern: "port3" });
+    expect(() => ruleInputSchema.parse(saved)).not.toThrow();
+
+    // Left blank it saves nothing at all — not an empty pattern that would read
+    // as a filter matching nothing.
+    await openAtStep3("r-ifoper-blank-save");
+    await pickWhat(doc.querySelector("#aw-trig-root .scr-row") as unknown as Element, "f:ifOperStatus");
+    (doc.querySelector("#aw-trig-root .tgl-value") as unknown as { value: string }).value = "down";
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const blank = savedPayloads[0]! as Record<string, any>;
+    expect(blank.trigger.dimensionFilter?.ifNamePattern).toBeFalsy();
+    expect(() => ruleInputSchema.parse(blank)).not.toThrow();
   });
 
   it("re-opens a stored Interface IP address rule with the interface on the row, not as a filter", async () => {
@@ -2648,15 +2684,18 @@ describe("trigger filter rows", () => {
       await new Promise((r) => setTimeout(r, 20));
     }
     const filterRows = Array.from(doc.querySelectorAll("#aw-trig-root .scr-row[data-filter-row]"));
-    expect(filterRows.length).toBe(2);
+    // Only the hostname lifts. The interface is the leaf's INTEGRAL dimension
+    // (fieldMeta.integralDimension), which the lift is blind to, so it renders
+    // on the condition row where it says which port the comparison is about —
+    // including on a rule authored as a filter row before the picker existed.
+    expect(filterRows.length).toBe(1);
     const byDim = new Map(filterRows.map((r) => [
       (r.querySelector(".tgl-dim") as unknown as { getAttribute: (a: string) => string }).getAttribute("data-dim"),
       (r.querySelector(".tgl-dim") as unknown as { value: string }).value,
     ]));
-    expect(byDim.get("ifNamePattern")).toBe("port1");
     expect(byDim.get("hostnamePattern")).toBe("SW-A");
-    // The condition row itself is clean — no inline leftovers.
-    expect(doc.querySelector("#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim")).toBeFalsy();
+    const inlineIf = doc.querySelector('#aw-trig-root .scr-row:not([data-filter-row]) .tgl-dim[data-dim="ifNamePattern"]') as unknown as { value: string };
+    expect(inlineIf.value).toBe("port1");
     // And an untouched save round-trips the exact stored shape.
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));

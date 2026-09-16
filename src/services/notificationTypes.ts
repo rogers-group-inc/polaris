@@ -3520,6 +3520,14 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
 // which is the right shape for "narrow every condition in this group", and the
 // wrong one for a field whose reading is meaningless until one component is
 // named.
+//
+// Every per-component state field now carries one. The earlier line — that a
+// port is typeable from memory ("wan1", "port3") where a phase-1 tunnel name is
+// not, so the interface trio could be left to filter rows — did not survive
+// contact with the builder: an operator reading "Interface oper status == down"
+// asks which interface ON THAT ROW, and the answer being two menu levels away
+// under "+ Condition → Component name" is the gap, not the typing. Blank still
+// means every monitored component on every scoped device, for all of them.
 export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" | "number" | "dynamic"; values?: string[]; placeholder?: string; equalityOnly?: boolean; integralDimension?: string }> = {
   // "passive" = no down-detection automation covers the device, so Polaris
   // renders no verdict for it. It is still polled and still charted — the
@@ -3547,8 +3555,13 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   // wants "tell me when the gate stops seeing this switch at all" writes
   // `!= up` rather than `== down`.
   fortilinkStatus: { label: "Controller link (FortiLink / CAPWAP)", kind: "enum", values: ["up", "down", "unknown"] },
-  ifOperStatus: { label: "Interface oper status", kind: "dynamic" },
-  ifAdminStatus: { label: "Interface admin status", kind: "dynamic" },
+  // The interface is INTEGRAL on all three port-state fields (see the header):
+  // the row says which port it is about, and blank keeps meaning "every
+  // monitored interface", one alert each — the engine folds per dimension
+  // either way, so naming a port narrows the rule rather than changing its
+  // shape.
+  ifOperStatus: { label: "Interface oper status", kind: "dynamic", integralDimension: "ifNamePattern" },
+  ifAdminStatus: { label: "Interface admin status", kind: "dynamic", integralDimension: "ifNamePattern" },
   // The port's CURRENT L3 address, compared as a string. Its reason for
   // existing is the negative form: `!= 0.0.0.0` is how an operator says "this
   // interface actually has an address", which is the gate a rule about
@@ -3568,18 +3581,17 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   // Closed enum rather than "dynamic" (which ifOperStatus uses): every value
   // POWER-ETHERNET-MIB can report is known up front, so the wizard offers a
   // picker and a typo cannot silently produce a rule that never matches.
-  poeStatus: { label: "Interface PoE status", kind: "enum", values: [...POE_STATUS_VALUES] },
-  // The tunnel is INTEGRAL (see the header), for the reason a port is not on
-  // ifOperStatus: an interface name is guessable ("wan1", "port3") and a
-  // per-port rule reads fine without one, but a tunnel name is a phase-1 name
-  // an operator cannot type from memory — "IPsec tunnel status is down" with
-  // no tunnel named is a rule about every pinned tunnel on every scoped gate,
-  // which is a different (and much noisier) statement than the one an operator
-  // building it almost always means. Blank still means exactly that, and the
-  // engine still folds one alert per tunnel; what the inline picker adds is the
-  // chance to SAY which tunnel, from the names the scoped devices actually pin
-  // (notificationDimensionService's tunnelName source), on the row where the
-  // comparison lives instead of only through "+ Condition → Component name".
+  poeStatus: { label: "Interface PoE status", kind: "enum", values: [...POE_STATUS_VALUES], integralDimension: "ifNamePattern" },
+  // The tunnel is INTEGRAL (see the header) with the sharpest case for it: a
+  // tunnel name is a phase-1 name an operator cannot type from memory, so
+  // "IPsec tunnel status is down" with no tunnel named is a rule about every
+  // pinned tunnel on every scoped gate — a much noisier statement than the one
+  // an operator building it almost always means. Blank still means exactly
+  // that, and the engine still folds one alert per tunnel; what the inline
+  // picker adds is the chance to SAY which tunnel, from the names the scoped
+  // devices actually pin (notificationDimensionService's tunnelName source), on
+  // the row where the comparison lives instead of only through
+  // "+ Condition → Component name".
   ipsecStatus: { label: "IPsec tunnel status", kind: "dynamic", integralDimension: "tunnelName" },
   sdwanRuleStatus: { label: "SD-WAN rule status", kind: "dynamic" },
   sdwanSelectedMember: { label: "SD-WAN selected member", kind: "dynamic" },

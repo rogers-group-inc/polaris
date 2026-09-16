@@ -428,10 +428,24 @@ describe("ifIpAddress (interface IP address state field)", () => {
     // the condition row instead of leaving it to a group filter row: an address
     // comparison is about one port, and unnamed it reads "any monitored
     // interface" — true of every addressed device once a composite folds it per
-    // device. The other interface fields are narrowed by choice, not by need.
+    // device.
     expect(meta.integralDimension).toBe("ifNamePattern");
     expect(triggerDimensionApplicable("ifIpAddress", meta.integralDimension!)).toBe(true);
-    for (const f of ["ifOperStatus", "ifAdminStatus", "poeStatus"]) expect(fieldMeta[f]!.integralDimension).toBeUndefined();
+  });
+
+  it("names the interface on every port-state condition, not just the address one", () => {
+    // The whole quartet is per-interface, so every one of them asks "which
+    // port?" on its own row. Leaving the other three to reach a port only
+    // through "+ Condition → Component name → Interface name" made the row
+    // read as a fleet-wide statement it never was.
+    const fieldMeta = buildSchemaCatalog().fieldMeta as Record<string, { integralDimension?: string }>;
+    for (const f of ["ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus"]) {
+      expect(fieldMeta[f]!.integralDimension).toBe("ifNamePattern");
+      expect(triggerDimensionApplicable(f, "ifNamePattern")).toBe(true);
+    }
+    // The picker behind the box, or the operator is typing a port name from
+    // memory into what looks like a dropdown.
+    expect(dimensionPickerMeta().ifNamePattern).toBeTruthy();
   });
 
   it("names the tunnel as the IPsec status condition's integral dimension", () => {

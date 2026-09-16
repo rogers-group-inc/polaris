@@ -342,10 +342,15 @@ The **+ Condition** menu also offers:
 - **Component name** — Interface name / IPsec tunnel name / Storage mount /
   SD-WAN rule name.
 
-Two conditions carry their component picker **on the row itself** and need no
-filter row for it: `ifIpAddress` (the interface) and `ipsecStatus` (the tunnel).
-A filter row still works there — it folds into the condition and re-opens on the
-row — but the row is where those two say what they are about.
+Every **per-component condition** carries its component picker **on the row
+itself** and needs no filter row for it: the four interface conditions
+(*Interface oper status*, *Interface admin status*, *Interface IP address*,
+*Interface PoE status*) name an interface, and *IPsec tunnel status* names a
+tunnel. Click the box for the component names the scoped devices actually
+monitor. **Leave it blank and the condition covers every monitored component**,
+one alert each — which is what these conditions have always meant. A filter row
+still works there too — it folds into the condition and re-opens on the row —
+but the row is where these say what they are about.
 
 These render as *"`<what>` matches `<value>`"* rows and mean **"narrow every
 condition in this group"**. The stored rule never carries a filter row — each
