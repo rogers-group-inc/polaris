@@ -176,9 +176,25 @@ linux/darwin/windows × amd64/arm64.
 | `prod-minor-patch` / `dev-minor-patch` | everything else, minor and patch only | volume control |
 
 Majors are **ignored** for the architectural set (express, the Prisma trio, zod, pg, pg-boss,
-undici, multer, pino) and for `@types/node`. An ignored major is not invisible — the playbooks
-and the quarterly `npm outdated` catch it — whereas an un-ignored one becomes a PR that sits open
-forever and trains everyone to ignore Dependabot.
+undici, multer, pino), for `@types/node`, and — since 2026-09-16 — for **`typescript`**. An
+ignored major is not invisible — the playbooks and the quarterly `npm outdated` catch it —
+whereas an un-ignored one becomes a PR that sits open forever and trains everyone to ignore
+Dependabot.
+
+**Why `typescript`'s major joined that list, and the failure mode to recognise.** typescript 7
+is the native Go port, and no typescript-eslint release accepts it: every version through
+`8.70.1-alpha.21` still peer-caps at `typescript >=4.8.4 <6.1.0` (checked 2026-09-16). A grouped
+`typescript-toolchain` PR therefore arrives carrying **typescript alone**, because the other two
+members have nowhere to go — which defeats the whole point of grouping them. The part worth
+recognising: **npm does not refuse the bump, it prunes.** To satisfy the peer range it drops
+`@typescript-eslint/{eslint-plugin,parser,type-utils,utils}` out of the lockfile and leaves the
+`typescript-eslint` meta-package behind with no parser under it, so the lockfile looks plausible
+and `eslint.config.mjs` — which imports `typescript-eslint` directly — has nothing to parse with.
+An incremental `npm install` papers over it; `npm ci` fails with ERESOLVE. **Same shape as the
+`@eslint/js` trap: only a clean install fails, so only CI tells you.** That was PR #144, closed
+unmergeable. Lift the ignore when typescript-eslint's peer range opens past 6.1.0, and move the
+whole group in one commit. The hold is recorded on the `typescript` row of
+`src/data/dependencyTargets.json` as well, which is where `check:deps` will point a future reader.
 
 **gomod at `/agent`**, monthly, limit 3. See above.
 
@@ -210,6 +226,10 @@ of a trap. It will not touch the compose files, which use floating tags it could
 A Dependabot PR that touches a **pin family** member is not mergeable on its own — it is one site
 of many. Close it and do the bump properly through
 [version-pin-inventory.md](version-pin-inventory.md), or the other twenty-two sites stay behind.
+
+**A grouped PR carrying only ONE member of its group is a red flag, not a small PR.** The groups
+exist because their members must move together; Dependabot splitting one out means the others
+were blocked, and it will not say by what. Read the peer ranges before reading the changelog.
 
 Everything else: read the changelog, check it is not in the ignored architectural set, let CI
 run, and merge. `npm run check:versions` and `npm run check:deps` both run in CI, so a PR that

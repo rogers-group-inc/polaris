@@ -67,6 +67,18 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: multer
         update-types: [version-update:semver-major]
+      # typescript 7 is the native Go port, and NO typescript-eslint release
+      # accepts it yet — every one through 8.70.1-alpha.21 still peer-caps at
+      # `typescript >=4.8.4 <6.1.0` (checked 2026-09-16). So the grouped PR
+      # arrives carrying typescript alone, npm resolves the conflict by PRUNING
+      # @typescript-eslint/{eslint-plugin,parser,type-utils,utils} out of the
+      # lockfile, and `npm ci` — which is what CI runs — fails outright with
+      # ERESOLVE. That was PR #144, closed unmergeable. Rule 2 above exactly:
+      # un-ignored, it returns every Monday and cannot ever be merged.
+      # LIFT THIS the moment typescript-eslint's peer range opens past 6.1.0;
+      # the quarterly `npm outdated` pass is what will notice.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   # Monthly, not weekly: eight modules with low churn, and every agent-side bump
   # implies agent/VERSION, a rebuild of every platform binary and a re-sign. The
