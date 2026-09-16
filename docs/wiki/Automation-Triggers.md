@@ -56,8 +56,9 @@ maps to null — an empty SFP cage is not a fault.
 
 `probeLossPct` is a **windowed ratio**, not an aggregation. Its field is
 relabelled **History (minutes)** — mandatory, default 15, range 5–1440 — and
-that window *is* the reading. A separate optional **Sustained for** field
-carries a hold on top of it.
+that window *is* the reading. A separate optional **Sustained for (polls)** field
+carries a hold on top of it — the window in minutes, the hold in readings, each
+stating the unit it is actually stored in.
 
 Three things it does that no other metric does
 ([rule 29](Business-Rules#rule-29)):
@@ -253,13 +254,26 @@ using **device filter rows** (below).
 
 ## Windows, holds and the one field that means two things
 
-The step has a **single** "Sustained for (minutes)" field, and it means one of
-two things depending on the aggregation you picked:
+The step has a **single** duration field, and it means one of two things
+depending on the aggregation you picked. It renames itself — and changes its
+**unit** — to say which:
 
-| Aggregation | The field means |
-|---|---|
-| `avg` / `median` / `min` / `max` | the **measurement window** — the period the value is computed over |
-| `latest` | the **sustain clock** — how long the condition must stay true |
+| Aggregation | The field | It means |
+|---|---|---|
+| `avg` / `median` / `min` / `max` | **Measured over (minutes)** | the **measurement window** — the period the value is computed over |
+| `probeLossPct` | **History (minutes)** | the window the ratio is measured across (see above) |
+| `latest` | **Sustained for (polls)** | the **sustain clock** — how many consecutive readings the condition must stay true for |
+
+The two units are not a cosmetic difference, and which one you get is not a
+preference — it is what the rule actually stores. A window is saved as
+`windowSec` and the engine reads it as wall-clock time, so stating it in polls
+meant multiplying by whatever cadence the wizard had observed and presenting the
+result as though you had said it; a hold is saved as `forPolls` and the engine
+genuinely counts readings. Each field now states the half that is true, and its
+caption names the other half — the poll estimate under a window, the wall clock
+under a hold. Switching a condition's aggregation **re-denominates** the number
+in the box rather than reinterpreting it: 10 minutes on a fleet polled every two
+minutes becomes 5 polls, never a bare 10 that would quietly double the hold.
 
 That ambiguity is real, so the step renders the trigger **twice**: once as an
 English sentence, and once as a **formula** directly underneath. The formula puts
@@ -290,6 +304,30 @@ This matters because the engine ticks every 60 seconds while a device may be
 polled every five minutes. Counting ticks would charge five polls against one.
 The wizard asks the server for **the actual cadence of the draft's own devices**
 so it can convert, and says which cadence it converted at.
+
+### Windows are measured in minutes, not readings
+
+The same is not true of a measurement window, and since 2026-09-16 the two are
+no longer stated in the same unit. A window is `windowSec` — the engine takes
+every sample whose timestamp falls inside it and reduces them. It does not count
+to N. So "60 polls" was never what the rule said: it was 60 × the cadence the
+wizard happened to observe when you typed it, and it stopped describing the rule
+the moment that cadence changed — a window authored against a 60s poll stayed an
+hour after the fleet moved to 300s, while the label still claimed 60 readings.
+
+The number of readings a window holds is a **consequence** of the window and the
+fleet's cadence, so it belongs in the caption, where it updates as the cadence
+does. Two consequences worth knowing when you read a window back:
+
+- **A window's denominator floats with availability.** Missed polls write no
+  value, so an hour of `avg` over a device dropping three quarters of its packets
+  is the average of the quarter that answered — not of 60 slots with holes in
+  them. If you want the misses to count, that is what `probeLossPct` and down
+  detection are for.
+- **A stored window that isn't a whole number of minutes is left alone** until
+  you edit the field. A 90-second window shows `2` and stays 90 across a save
+  that never touched it; type `2` and it becomes 120, because typing it is
+  stating it.
 
 ---
 
