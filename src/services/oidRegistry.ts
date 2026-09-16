@@ -1,23 +1,37 @@
 /**
  * src/services/oidRegistry.ts — Symbolic name → numeric OID resolver.
  *
- * Loads every uploaded MIB from the database, parses out OBJECT-TYPE /
- * OBJECT IDENTIFIER / MODULE-IDENTITY / NOTIFICATION-TYPE / OBJECT-IDENTITY
- * assignments, and resolves each symbol against a built-in seed of standard
- * SMI roots + common vendor enterprise prefixes.
+ * Loads every uploaded MIB from the database plus the IETF/IEEE standard MIBs
+ * bundled under `stdMibs/`, parses out OBJECT-TYPE / OBJECT IDENTIFIER /
+ * MODULE-IDENTITY / NOTIFICATION-TYPE / OBJECT-IDENTITY assignments, and
+ * resolves each symbol against a small seed of SMI root arcs.
  *
  * Resolution is **scoped per asset**: when the SNMP probe asks for a symbol
  * for an asset with manufacturer=Cisco, model="Catalyst 2960", we look in
  *   (1) model-specific MIBs   (manufacturer="Cisco", model="Catalyst 2960")
  *   (2) vendor-wide MIBs      (manufacturer="Cisco", model=null)
- *   (3) generic MIBs          (manufacturer=null,    model=null)
- *   (4) built-in SMI seed
+ *   (3) generic MIBs          (manufacturer=null,    model=null) — uploads
+ *   (4) the bundled STANDARD MIBs (IF-MIB, HOST-RESOURCES-MIB, BRIDGE-MIB…)
+ *   (5) built-in SMI seed     (iso / org / enterprises / mib-2 …)
  * in that order. A model-specific upload therefore **overrides** the
  * vendor-wide upload for the same symbol — that's the point of letting users
- * upload device-specific MIBs even when the vendor MIB is already present.
+ * upload device-specific MIBs even when the vendor MIB is already present —
+ * and an uploaded generic module overrides the shipped standard of the same
+ * name, so an operator can carry a newer IF-MIB than the one Polaris bundles.
+ *
+ * The standard layer is what makes "shipped" and "uploaded" one mechanism:
+ * a standard symbol and a vendor symbol resolve through the same map, the
+ * same fixpoint, the same provenance record. Polaris ships the standards and
+ * the engine; every vendor OID comes from a MIB the operator uploaded (see
+ * polaris-change-impact → cross-cutting/vendor-snmp-knowledge-boundary).
+ * The standard layer is resolved ONCE per process — the files never change
+ * at runtime — and every scope map starts from a copy of it.
  *
  * Each scoped numeric map is computed lazily on first request and cached
- * keyed by `${manufacturer ?? ""}|${model ?? ""}`. The cache is rebuilt from
+ * keyed by `${manufacturer ?? ""}|${model ?? ""}`. A model with no
+ * device-scoped upload of its own shares its manufacturer's map rather than
+ * getting a copy — at 2000 assets across a hundred models that is the
+ * difference between ten maps and a hundred. The cache is rebuilt from
  * scratch on every upload/delete (cheap — MIBs are small) and warmed at
  * startup so the first probe doesn't pay the load cost.
  *
@@ -27,16 +41,28 @@
  * per-model override is layered on top.
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
-import { stripComments } from "./mibParserUtils.js";
+import { stripComments, parseImportMap, type ImportBinding } from "./mibParserUtils.js";
 
 // ─── Seed ──────────────────────────────────────────────────────────────────
 //
-// Standard SMI roots from RFC 1155 / RFC 2578 plus a small set of vendor
-// enterprise prefixes. Including the vendor prefixes lets users upload only
-// the leaf MIB they care about (e.g. CISCO-PROCESS-MIB) without having to
-// chase down every CISCO-SMI dependency first.
+// SMI scaffolding only: the root arcs from RFC 1155 / RFC 2578 and the IEEE
+// 802.1 chain that every MIB — standard or vendor — hangs off. NOTHING under
+// `enterprises` lives here. Until 2026-09 this table also carried fifteen
+// vendor anchor arcs (`fortinet`, `fnFortiSwitchMib`, `cisco`, `juniperMIB`…)
+// and eighteen vendor telemetry leaves (`fsSysCpuUsage`, `fapTemperature`,
+// `cpmCPUTotal5secRev`…) so the built-in profiles worked with no upload.
+// That made Polaris the owner of a vendor's OID layout — a fact that belongs
+// to the vendor's MIB, which the operator uploads and can replace without a
+// Polaris release. A vendor leaf module that IMPORTs its root from a core
+// module (FORTINET-FORTIGATE-MIB ← FORTINET-CORE-MIB) resolves once BOTH are
+// uploaded; the upload response and the profile page name the missing one.
+// See polaris-change-impact → cross-cutting/vendor-snmp-knowledge-boundary
+// and tests/unit/noEnterpriseOids.test.ts, which now covers this file.
 export const BUILT_IN_OIDS: Record<string, string> = {
   // Top-level
   ccitt: "0",
@@ -72,93 +98,11 @@ export const BUILT_IN_OIDS: Record<string, string> = {
   iso8802: "1.0.8802",
   ieee802dot1: "1.0.8802.1",
   ieee802dot1mibs: "1.0.8802.1.1",
-  // BRIDGE-MIB (RFC 4188) anchors, for the same reason.
-  //
-  // stdMibLibrary resolves each bundled module INDEPENDENTLY against this seed
-  // — there is deliberately no cross-MIB visibility — so a module that anchors
-  // on a symbol IMPORTed from BRIDGE-MIB cannot see it even when BRIDGE-MIB is
-  // bundled right alongside. Measured against the real files: without these,
-  // Q-BRIDGE-MIB resolves 0 of 129 assignments (its whole tree hangs off
-  // `dot1dBridge`) and RSTP-MIB 9 of 19 (`dot1dStp`). Values read off
-  // BRIDGE-MIB itself: `dot1dBridge ::= { mib-2 17 }`, `dot1dStp ::=
-  // { dot1dBridge 2 }`.
-  dot1dBridge: "1.3.6.1.2.1.17",
-  dot1dStp: "1.3.6.1.2.1.17.2",
-  // Cisco
-  cisco: "1.3.6.1.4.1.9",
-  ciscoMgmt: "1.3.6.1.4.1.9.9",
-  // CISCO-PROCESS-MIB::cpmCPUTotal5secRev — column OID of the cpmCPUTotal
-  // table; walked + averaged at probe time. Seeded so the vendor telemetry
-  // profile resolves CPU without requiring CISCO-PROCESS-MIB to be uploaded.
-  cpmCPUTotal5secRev: "1.3.6.1.4.1.9.9.109.1.1.1.1.6",
-  // CISCO-MEMORY-POOL-MIB::ciscoMemoryPool{Used,Free} — column OIDs of the
-  // pool table; walked + summed at probe time. Seeded so the vendor profile
-  // resolves memory without requiring CISCO-MEMORY-POOL-MIB to be uploaded.
-  ciscoMemoryPoolUsed: "1.3.6.1.4.1.9.9.48.1.1.1.5",
-  ciscoMemoryPoolFree: "1.3.6.1.4.1.9.9.48.1.1.1.6",
-  // Juniper
-  juniperMIB: "1.3.6.1.4.1.2636",
-  // JUNIPER-MIB::jnxOperatingCPU / jnxOperatingBuffer — column OIDs of the
-  // jnxOperatingTable; walked + averaged at probe time. Seeded so the vendor
-  // profile resolves CPU/memory without requiring JUNIPER-MIB to be uploaded.
-  jnxOperatingCPU: "1.3.6.1.4.1.2636.3.1.13.1.8",
-  jnxOperatingBuffer: "1.3.6.1.4.1.2636.3.1.13.1.11",
-  // Mikrotik
-  mikrotik: "1.3.6.1.4.1.14988",
-  mtxrSystem: "1.3.6.1.4.1.14988.1.1.3",
-  // Aruba / HP / HPE
-  hp: "1.3.6.1.4.1.11",
-  hpSwitch: "1.3.6.1.4.1.11.2.14.11.5.1.9",
-  // STATISTICS-MIB::hpSwitchCpuStat — scalar percent. Seeded so the vendor
-  // profile resolves CPU without requiring STATISTICS-MIB to be uploaded.
-  hpSwitchCpuStat: "1.3.6.1.4.1.11.2.14.11.5.1.9.6.1",
-  // Fortinet
-  fortinet: "1.3.6.1.4.1.12356",
-  fnFortiGateMib: "1.3.6.1.4.1.12356.101",
-  // Stable across every FortiOS release; seeded so the vendor telemetry
-  // profile resolves CPU/memory without requiring FORTINET-FORTIGATE-MIB
-  // to be uploaded — matches the always-on temperature fallback path.
-  fgSysCpuUsage: "1.3.6.1.4.1.12356.101.4.1.3",
-  fgSysMemUsage: "1.3.6.1.4.1.12356.101.4.1.4",
-  // FortiSwitch (FORTINET-FORTISWITCH-MIB). Unlike FortiGate, the .3/.4
-  // pair here is the used/total *bytes* form, not CPU/MemPercent. Seeded so
-  // the vendor profile resolves CPU/memory without requiring the MIB upload.
-  fnFortiSwitchMib:  "1.3.6.1.4.1.12356.106",
-  // fsSysVersion @ .1 → combined "model-firmware" string, e.g.
-  // "S548DF-v7.2.5-build0453,230511 (GA)". The system-info scrape reads it
-  // to derive the real hardware model (utils/fortiswitchModel.ts) — FMG /
-  // FortiGate discovery has no model field for managed switches.
-  fsSysVersion:      "1.3.6.1.4.1.12356.106.4.1.1",
-  // fsSysCpuUsage @ .2 → scalar percent (0..100). Distinct from FortiGate's
-  // fgSysCpuUsage which lives under the 12356.101 root.
-  fsSysCpuUsage:     "1.3.6.1.4.1.12356.106.4.1.2",
-  fsSysMemUsage:     "1.3.6.1.4.1.12356.106.4.1.3",
-  fsSysMemCapacity:  "1.3.6.1.4.1.12356.106.4.1.4",
-  // Disk used/total bytes. FortiSwitches don't implement HOST-RESOURCES-MIB
-  // hrStorageTable, so collectSystemInfoSnmp's standard storage walk yields
-  // nothing — the vendor disk-fallback in the same function reads these
-  // scalars instead and synthesizes one StorageSample row.
-  fsSysDiskUsage:    "1.3.6.1.4.1.12356.106.4.1.5",
-  fsSysDiskCapacity: "1.3.6.1.4.1.12356.106.4.1.6",
-  // FortiAP (FORTINET-FORTIAP-MIB). Distinct OID root @ 12356.120; the
-  // FortiAP doesn't expose anything under the FortiGate root (12356.101) or
-  // the FortiSwitch root (12356.106). The vendor telemetry profile resolves
-  // CPU/memory/temperature against these three seeds so the probe works
-  // without uploading FORTINET-FORTIAP-MIB. Single-scalar form throughout,
-  // matching FortiGate (NOT the bytes form FortiSwitch uses for memory).
-  fnFortiAPMib:    "1.3.6.1.4.1.12356.120",
-  fapCommon:       "1.3.6.1.4.1.12356.120.1",
-  fapWTPStatus:    "1.3.6.1.4.1.12356.120.3",
-  fapCpuUsage:     "1.3.6.1.4.1.12356.120.3.41",
-  fapMemoryUsage:  "1.3.6.1.4.1.12356.120.3.42",
-  fapTemperature:  "1.3.6.1.4.1.12356.120.3.44",
-  // Dell
-  dell: "1.3.6.1.4.1.674",
-  // Dell PowerConnect / Force10 platforms are RADLAN-derived and expose CPU
-  // under the RADLAN enterprise (89), not Dell's own (674). Seeded so the
-  // vendor profile resolves CPU without requiring the RADLAN MIB upload.
-  radlan: "1.3.6.1.4.1.89",
-  rlCpuUtilDuringLastMinute: "1.3.6.1.4.1.89.1.7",
+  // `dot1dBridge` / `dot1dStp` used to be seeded here so Q-BRIDGE-MIB and
+  // RSTP-MIB could see BRIDGE-MIB's anchors. They no longer need to be: the
+  // bundled standard modules are now resolved TOGETHER as one layer (see
+  // loadStandardLayer), so a module anchored on a sibling's symbol finds it
+  // the same way an uploaded vendor MIB finds its uploaded core module.
 };
 
 // ─── Parser ────────────────────────────────────────────────────────────────
@@ -194,6 +138,7 @@ interface LoadedMib {
   manufacturer: string | null;
   model: string | null;
   entries: ParsedAssignment[];
+  imports: ImportBinding[];   // symbol → module, from the IMPORTS block
 }
 
 let _mibs: LoadedMib[] | null = null;
@@ -201,17 +146,134 @@ let _loadingPromise: Promise<void> | null = null;
 
 // Per-scope resolution cache. Key is `${manufacturer ?? ""}|${model ?? ""}`.
 // Values store both the OID and which MIB (if any) provided it, for the UI.
-interface ResolvedSymbol {
+export interface ResolvedSymbol {
   oid: string;
-  fromMibId: string | null;        // null = built-in seed
-  fromModuleName: string | null;
-  fromScope: "device" | "vendor" | "generic" | "seed";
+  fromMibId: string | null;        // null = built-in seed or a bundled standard MIB
+  fromModuleName: string | null;   // set for uploads AND standards; null only for the seed
+  fromScope: "device" | "vendor" | "generic" | "standard" | "seed";
 }
 
 const _scopeCache: Map<string, Map<string, ResolvedSymbol>> = new Map();
 
 function scopeKey(manufacturer: string | null | undefined, model: string | null | undefined): string {
   return `${(manufacturer ?? "").toLowerCase()}|${(model ?? "").toLowerCase()}`;
+}
+
+// ─── Standard layer ────────────────────────────────────────────────────────
+//
+// The IETF / IEEE modules Polaris ships under stdMibs/ (IF-MIB, HOST-RESOURCES-
+// MIB, ENTITY-MIB, LLDP-MIB, BRIDGE-MIB, Q-BRIDGE-MIB, IP-MIB…). They are read
+// from disk once per process, parsed with the same extractor as an upload and
+// resolved TOGETHER against the SMI seed, so a module anchored on a sibling's
+// symbol (Q-BRIDGE-MIB on BRIDGE-MIB's `dot1dBridge`) sees it without anyone
+// seeding the anchor by hand. stdMibLibrary reads the result too, so the
+// Browse/Walk UI and the probe path can never disagree about a standard OID.
+//
+// Every scope map starts from a COPY of this layer's resolved table, which is
+// what puts standards below uploads: a generic upload of the same module name
+// lays its symbols down on top.
+
+interface StandardMib {
+  moduleName: string;
+  filename: string;
+  entries: ParsedAssignment[];
+  imports: ImportBinding[];
+}
+
+interface StandardLayer {
+  mibs: StandardMib[];
+  resolved: Map<string, ResolvedSymbol>;  // seed + every standard symbol that resolves
+}
+
+const STD_MIBS_DIR = join(dirname(fileURLToPath(import.meta.url)), "stdMibs");
+// The module header every SMI file opens with. Same shape mibService.parseMib
+// accepts; re-stated here because mibService imports this module.
+const MODULE_NAME_RE = /([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+[A-Z-]+)*\s*::=\s*BEGIN/;
+
+let _standard: StandardLayer | null = null;
+
+function loadStandardLayer(): StandardLayer {
+  if (_standard) return _standard;
+
+  const mibs: StandardMib[] = [];
+  let filenames: string[] = [];
+  try {
+    filenames = readdirSync(STD_MIBS_DIR).filter((f) => f.endsWith(".txt")).sort();
+  } catch (err: any) {
+    // A build that forgot to copy stdMibs/ into dist/ lands here. Resolution
+    // still works for uploads; standard symbols are simply absent, and the
+    // stdMibLibrary test that checks every file exists is what catches it.
+    logger.warn({ dir: STD_MIBS_DIR, err: err?.message }, "standard MIB directory unreadable — standard layer is empty");
+  }
+  for (const filename of filenames) {
+    try {
+      const raw = readFileSync(join(STD_MIBS_DIR, filename), "utf8");
+      const moduleName = MODULE_NAME_RE.exec(stripComments(raw))?.[1] ?? filename.replace(/\.txt$/, "");
+      mibs.push({ moduleName, filename, entries: parseObjectAssignments(raw), imports: parseImportMap(raw) });
+    } catch (err: any) {
+      logger.warn({ filename, err: err?.message }, "standard MIB parse failed — skipped");
+    }
+  }
+
+  const numeric = new Map<string, string>(Object.entries(BUILT_IN_OIDS));
+  const resolved = new Map<string, ResolvedSymbol>();
+  for (const [name, oid] of Object.entries(BUILT_IN_OIDS)) {
+    resolved.set(name, { oid, fromMibId: null, fromModuleName: null, fromScope: "seed" });
+  }
+  layDown(
+    mibs.flatMap((mib) => mib.entries.map((entry) => ({ entry, mibId: null, moduleName: mib.moduleName }))),
+    numeric,
+    resolved,
+    "standard",
+  );
+
+  _standard = { mibs, resolved };
+  logger.info({ modules: mibs.length, symbols: resolved.size - Object.keys(BUILT_IN_OIDS).length }, "standard MIB layer resolved");
+  return _standard;
+}
+
+/**
+ * Every symbol the bundled standard MIBs define, resolved to its numeric OID
+ * (plus the SMI seed arcs). Synchronous and process-cached; this is the
+ * table stdMibLibrary stamps `fullOid` from, so Browse/Walk and the probe
+ * path read one answer.
+ */
+export function resolveStandardSymbols(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [name, r] of loadStandardLayer().resolved) out.set(name, r.oid);
+  return out;
+}
+
+/**
+ * Lay one layer of assignments onto a numeric table, iterating to a fixpoint
+ * so forward references inside a module (cpmCPUTotal5secRev →
+ * cpmCPUTotalEntry → cpmCPUTotalTable → cpmCPU) and across modules of the
+ * same layer resolve regardless of declaration order. Later items win for a
+ * duplicate name — within an upload layer that means the most recently
+ * uploaded module; in practice the case is vanishingly rare and warning
+ * would be the cleaner answer.
+ */
+function layDown(
+  items: Array<{ entry: ParsedAssignment; mibId: string | null; moduleName: string }>,
+  numeric: Map<string, string>,
+  provenance: Map<string, ResolvedSymbol>,
+  layer: ResolvedSymbol["fromScope"],
+): void {
+  const pending = items.slice();
+  let progress = true;
+  while (progress && pending.length > 0) {
+    progress = false;
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const { entry, mibId, moduleName } = pending[i];
+      const resolved = tryResolveParts(entry.parts, numeric);
+      if (resolved != null) {
+        numeric.set(entry.name, resolved);
+        provenance.set(entry.name, { oid: resolved, fromMibId: mibId, fromModuleName: moduleName, fromScope: layer });
+        pending.splice(i, 1);
+        progress = true;
+      }
+    }
+  }
 }
 
 async function loadInternal(): Promise<void> {
@@ -229,6 +291,7 @@ async function loadInternal(): Promise<void> {
         manufacturer: row.manufacturer,
         model: row.model,
         entries,
+        imports: parseImportMap(row.contents),
       });
     } catch (err: any) {
       logger.warn({ mib: row.moduleName, err: err?.message }, "MIB parse failed during oidRegistry refresh");
@@ -305,16 +368,19 @@ export function findUnresolvedRootSymbols(
   rawText: string,
   resolved: ReadonlyMap<string, string | null>,
 ): string[] {
-  const entries = parseObjectAssignments(rawText);
-  const localNames = new Set(entries.map((e) => e.name));
-  const roots = new Set<string>();
-
   // `resolveSymbolsForMib` keys EVERY symbol in the module and stores null for
   // the ones it couldn't resolve, so membership is not resolution — a bare
   // `.has()` here would treat every unresolved symbol as fine and report
   // nothing at all. Presence of a non-null value is the actual test.
-  const isResolved = (n: string): boolean => resolved.get(n) != null;
+  return unresolvedRootsFromEntries(parseObjectAssignments(rawText), (n) => resolved.get(n) != null);
+}
 
+function unresolvedRootsFromEntries(
+  entries: ParsedAssignment[],
+  isResolved: (name: string) => boolean,
+): string[] {
+  const localNames = new Set(entries.map((e) => e.name));
+  const roots = new Set<string>();
   for (const { name, parts } of entries) {
     if (isResolved(name)) continue;
     for (const p of parts) {
@@ -324,6 +390,101 @@ export function findUnresolvedRootSymbols(
     }
   }
   return [...roots].sort();
+}
+
+// ─── Dependency naming ─────────────────────────────────────────────────────
+//
+// "Which module defines `fortinet`?" The only place that fact exists is the
+// IMPORTS block of the files that USE it — FORTINET-FORTIGATE-MIB says
+// `fortinet FROM FORTINET-CORE-MIB`. Every loaded module (uploads and
+// standards) contributes its bindings, so an unresolved root can be named
+// with the module to upload rather than left as a bare identifier. Polaris
+// ships no table of vendor module names; this is read off the operator's own
+// files.
+
+/** One unresolved anchor and, when a loaded module's IMPORTS names it, the module that defines it. */
+export interface MissingRoot {
+  symbol: string;
+  module: string | null;
+}
+
+/** Modules that loaded files import `symbol` FROM — usually one, sorted. */
+export function definingModulesFor(symbol: string): string[] {
+  const out = new Set<string>();
+  for (const mib of _mibs ?? []) for (const b of mib.imports) if (b.symbol === symbol) out.add(b.module);
+  for (const mib of loadStandardLayer().mibs) for (const b of mib.imports) if (b.symbol === symbol) out.add(b.module);
+  return [...out].sort();
+}
+
+function nameRoots(roots: string[], own: ImportBinding[]): MissingRoot[] {
+  return roots.map((symbol) => {
+    // The file's OWN IMPORTS is the authority for its own anchors; fall back
+    // to what any other loaded module says.
+    const mine = own.find((b) => b.symbol === symbol)?.module;
+    return { symbol, module: mine ?? definingModulesFor(symbol)[0] ?? null };
+  });
+}
+
+/**
+ * The external anchors an UPLOADED module leans on but nothing resolves, each
+ * named with the module its IMPORTS says defines it. Synchronous; the caller
+ * has awaited `ensureRegistryLoaded()`. `[]` for an unknown id or a module
+ * that resolves fully.
+ */
+export function missingRootsForMib(mibId: string): MissingRoot[] {
+  const mib = _mibs?.find((m) => m.id === mibId);
+  if (!mib) return [];
+  const map = getScopeMap(mib.manufacturer, mib.model);
+  const roots = unresolvedRootsFromEntries(mib.entries, (n) => map.has(n));
+  return nameRoots(roots, mib.imports);
+}
+
+// ─── Symbol readiness (the profile page's per-row provenance) ──────────────
+
+/**
+ * Everything the profile page needs to say about one symbol at a
+ * manufacturer's scope: resolved (via which module, at which layer) or not —
+ * and when not, WHY in terms an operator can act on:
+ *
+ *   `imports`   — the row pins an uploaded MIB that itself cannot resolve,
+ *                 because an anchor it IMPORTs is missing: `roots` names the
+ *                 module(s) to upload (FORTINET-CORE-MIB).
+ *   `no-module` — nothing loaded at this scope defines the symbol at all:
+ *                 the vendor's MIB has not been uploaded.
+ */
+export interface SymbolReadiness {
+  symbol: string;
+  resolved: boolean;
+  oid: string | null;
+  fromScope: ResolvedSymbol["fromScope"] | null;
+  fromModuleName: string | null;
+  hint: null | { kind: "no-module" } | { kind: "imports"; mibModuleName: string; roots: MissingRoot[] };
+}
+
+/**
+ * Synchronous readiness for one symbol at the manufacturer-wide scope (the
+ * floor every asset of the vendor gets). `pinnedMibId` is the row's
+ * `mibId`/`defaultMibId`, used only to explain an unresolved symbol. Returns
+ * an unresolved-with-no-hint record before the registry has loaded, never
+ * throws — this runs per row on every profile read.
+ */
+export function symbolReadiness(
+  manufacturer: string,
+  symbol: string,
+  pinnedMibId: string | null = null,
+): SymbolReadiness {
+  const base: SymbolReadiness = { symbol, resolved: false, oid: null, fromScope: null, fromModuleName: null, hint: null };
+  if (!_mibs) return base;
+  const r = getScopeMap(manufacturer, null).get(symbol);
+  if (r) return { ...base, resolved: true, oid: r.oid, fromScope: r.fromScope, fromModuleName: r.fromModuleName };
+  if (pinnedMibId) {
+    const mib = _mibs.find((m) => m.id === pinnedMibId);
+    if (mib) {
+      const roots = missingRootsForMib(pinnedMibId);
+      if (roots.length > 0) return { ...base, hint: { kind: "imports", mibModuleName: mib.moduleName, roots } };
+    }
+  }
+  return { ...base, hint: { kind: "no-module" } };
 }
 
 // Run resolution for a given scope. The MIB layers are processed in
@@ -350,69 +511,72 @@ function resolveScope(
     ? _mibs.filter((m) => m.manufacturer?.toLowerCase() === lcMfr && m.model?.toLowerCase() === lcModel)
     : [];
 
-  // Seed numeric table; provenance comes from the resolved-symbol map below.
-  const numeric = new Map<string, string>(Object.entries(BUILT_IN_OIDS));
+  // Start from the standard layer — the SMI seed plus every bundled standard
+  // symbol, already resolved once for the process. Copies, not the shared
+  // maps: the upload layers below overwrite in place.
+  const standard = loadStandardLayer().resolved;
+  const numeric = new Map<string, string>();
   const provenance = new Map<string, ResolvedSymbol>();
-  for (const [name, oid] of Object.entries(BUILT_IN_OIDS)) {
-    provenance.set(name, { oid, fromMibId: null, fromModuleName: null, fromScope: "seed" });
+  for (const [name, r] of standard) {
+    numeric.set(name, r.oid);
+    provenance.set(name, r);
   }
 
+  // Higher layers overwrite lower ones — that's the point of scoped
+  // resolution. Each layer is a fixpoint of its own (see layDown), so a
+  // device MIB referencing a vendor symbol resolves as long as the vendor
+  // layer came first.
   const layers: { mibs: LoadedMib[]; layer: ResolvedSymbol["fromScope"] }[] = [
     { mibs: generic, layer: "generic" },
     { mibs: vendor,  layer: "vendor"  },
     { mibs: device,  layer: "device"  },
   ];
-
   for (const { mibs, layer } of layers) {
     if (mibs.length === 0) continue;
-
-    // Collect every entry from this layer, then iteratively resolve until a
-    // pass adds nothing. This catches forward references inside one MIB
-    // (cpmCPUTotal5secRev → cpmCPUTotalEntry → cpmCPUTotalTable → cpmCPU)
-    // and across layers (a device MIB referencing a vendor symbol).
-    const pending: { entry: ParsedAssignment; mib: LoadedMib }[] = [];
-    for (const mib of mibs) for (const entry of mib.entries) pending.push({ entry, mib });
-
-    let progress = true;
-    while (progress && pending.length > 0) {
-      progress = false;
-      for (let i = pending.length - 1; i >= 0; i--) {
-        const { entry, mib } = pending[i];
-        const resolved = tryResolveParts(entry.parts, numeric);
-        if (resolved != null) {
-          // Higher layers overwrite lower ones — that's the point of scoped
-          // resolution. Within a layer, later MIBs win for the same name (an
-          // operator who uploads two conflicting Cisco MIBs gets the most
-          // recent one; cleaner solutions would warn, but in practice this
-          // case is vanishingly rare).
-          numeric.set(entry.name, resolved);
-          provenance.set(entry.name, {
-            oid: resolved,
-            fromMibId: mib.id,
-            fromModuleName: mib.moduleName,
-            fromScope: layer,
-          });
-          pending.splice(i, 1);
-          progress = true;
-        }
-      }
-    }
+    layDown(
+      mibs.flatMap((mib) => mib.entries.map((entry) => ({ entry, mibId: mib.id, moduleName: mib.moduleName }))),
+      numeric,
+      provenance,
+      layer,
+    );
   }
 
   return provenance;
+}
+
+/**
+ * True when at least one uploaded MIB is scoped to exactly this
+ * (manufacturer, model). Without one, the model's scope map would be a
+ * byte-for-byte copy of the manufacturer's — so `getScopeMap` shares that
+ * map instead of building another. With the standard layer in every map
+ * (~1000 symbols) this is what keeps a 2000-asset fleet across a hundred
+ * models at a handful of maps rather than a hundred.
+ */
+function hasDeviceScopedMibs(lcMfr: string, lcModel: string): boolean {
+  return !!_mibs?.some(
+    (m) => m.manufacturer?.toLowerCase() === lcMfr && m.model?.toLowerCase() === lcModel,
+  );
 }
 
 function getScopeMap(
   manufacturer: string | null | undefined,
   model: string | null | undefined,
 ): Map<string, ResolvedSymbol> {
-  const key = scopeKey(manufacturer, model);
+  const lcMfr   = manufacturer ? manufacturer.toLowerCase() : null;
+  const lcModel = model        ? model.toLowerCase()        : null;
+  const effectiveModel = lcMfr && lcModel && hasDeviceScopedMibs(lcMfr, lcModel) ? model : null;
+  const key = scopeKey(manufacturer, effectiveModel);
   let cached = _scopeCache.get(key);
   if (!cached) {
-    cached = resolveScope(manufacturer, model);
+    cached = resolveScope(manufacturer, effectiveModel);
     _scopeCache.set(key, cached);
   }
   return cached;
+}
+
+/** How many distinct scope maps are held. Exposed for tests and metrics. */
+export function scopeCacheStats(): { scopes: number } {
+  return { scopes: _scopeCache.size };
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────

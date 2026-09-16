@@ -7,7 +7,6 @@ import {
   listStdMibs,
   getStdMibDef,
   getStdMibStructure,
-  resolveStdSymbol,
 } from "../../src/services/stdMibLibrary.js";
 
 describe("stdMibLibrary", () => {
@@ -160,13 +159,13 @@ describe("stdMibLibrary", () => {
       expect(oid("dot1dStpPortState")).toBe("1.3.6.1.2.1.17.2.15.1.3");
     });
 
-    // Q-BRIDGE and RSTP anchor on symbols IMPORTed from BRIDGE-MIB, and
-    // stdMibLibrary resolves each module independently against BUILT_IN_OIDS
-    // with no cross-MIB visibility — so bundling BRIDGE-MIB alongside them is
-    // NOT what makes these resolve; the seeded `dot1dBridge` / `dot1dStp`
-    // anchors are. Drop those seeds and Q-BRIDGE resolves 0 of 129
-    // assignments and RSTP 9 of 19, which is what these two pin.
-    it("resolves Q-BRIDGE-MIB's VLAN-aware forwarding table via the seeded dot1dBridge anchor", () => {
+    // Q-BRIDGE and RSTP anchor on symbols IMPORTed from BRIDGE-MIB. They
+    // resolve because the registry's standard layer resolves every bundled
+    // module TOGETHER — nothing is seeded by hand any more (the old
+    // `dot1dBridge` / `dot1dStp` seeds are gone). Before that layer existed
+    // each module resolved alone and Q-BRIDGE came out 0 of 129, RSTP 9 of
+    // 19; these two pin that the cross-module visibility holds.
+    it("resolves Q-BRIDGE-MIB's VLAN-aware forwarding table through BRIDGE-MIB's dot1dBridge", () => {
       const s = getStdMibStructure("std:q-bridge");
       const oid = (n: string) => s.symbols.find((x) => x.name === n)?.fullOid;
       expect(oid("dot1qTpFdbPort")).toBe("1.3.6.1.2.1.17.7.1.2.2.1.2");
@@ -174,7 +173,7 @@ describe("stdMibLibrary", () => {
       expect(s.unresolvedCount).toBe(0);
     });
 
-    it("resolves RSTP-MIB via the seeded dot1dStp anchor", () => {
+    it("resolves RSTP-MIB through BRIDGE-MIB's dot1dStp", () => {
       const s = getStdMibStructure("std:rstp");
       const oid = (n: string) => s.symbols.find((x) => x.name === n)?.fullOid;
       expect(oid("dot1dStpVersion")).toBe("1.3.6.1.2.1.17.2.16");
@@ -187,20 +186,9 @@ describe("stdMibLibrary", () => {
       const b = getStdMibStructure("std:system");
       expect(a).toBe(b);
     });
-  });
 
-  describe("resolveStdSymbol", () => {
-    it("looks up a symbol within a MIB by name", () => {
-      const sym = resolveStdSymbol("std:system", "sysDescr");
-      expect(sym?.fullOid).toBe("1.3.6.1.2.1.1.1");
-    });
-
-    it("returns null for unknown symbol names", () => {
-      expect(resolveStdSymbol("std:system", "notARealSymbol")).toBeNull();
-    });
-
-    it("throws on unknown MIB keys (via getStdMibStructure)", () => {
-      expect(() => resolveStdSymbol("std:bogus", "anything")).toThrow(/Unknown standard MIB/);
+    it("throws on unknown MIB keys", () => {
+      expect(() => getStdMibStructure("std:bogus")).toThrow(/Unknown standard MIB/);
     });
   });
 });

@@ -14,8 +14,7 @@
  */
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
-import { refreshRegistry, resolveSymbolAtVendorScope, listModelOverrides } from "./oidRegistry.js";
-import { VENDOR_TELEMETRY_PROFILES } from "./vendorTelemetryProfiles.js";
+import { refreshRegistry, resolveSymbolsForMib, missingRootsForMib, type MissingRoot } from "./oidRegistry.js";
 import { stripComments } from "./mibParserUtils.js";
 
 const MAX_BYTES = 1024 * 1024; // 1 MB — MIBs are normally <100 KB
@@ -558,7 +557,22 @@ export interface CreateMibInput {
   uploadedBy?: string | null;
 }
 
-export async function createMib(input: CreateMibInput): Promise<MibSummary> {
+/**
+ * What an upload comes back with. The summary is the stored row; the three
+ * readiness fields say whether the module is USABLE where it landed — how many
+ * of its own symbols resolved at its scope, and for the ones that did not,
+ * which IMPORTed anchors are missing and which module defines each. An upload
+ * of FORTINET-FORTIGATE-MIB alone reads: 412 symbols, 3 unresolved, needs
+ * `fortinet` from FORTINET-CORE-MIB. Before 2026-09 the response was the bare
+ * summary and an operator learned nothing until they opened Browse.
+ */
+export interface MibUploadResult extends MibSummary {
+  symbolCount: number;
+  unresolvedCount: number;
+  unresolvedRoots: MissingRoot[];
+}
+
+export async function createMib(input: CreateMibInput): Promise<MibUploadResult> {
   const filename = (input.filename || "").trim();
   if (!filename) throw new AppError(400, "filename is required");
 
@@ -613,9 +627,26 @@ export async function createMib(input: CreateMibInput): Promise<MibSummary> {
     },
   });
   // Reload the OID symbol table so the new MIB's symbols are immediately
-  // resolvable by the monitoring probe (next tick onward).
-  refreshRegistry().catch(() => {});
-  return created;
+  // resolvable by the monitoring probe (next tick onward) — and AWAITED,
+  // because the readiness figures below are read out of the refreshed
+  // table. A refresh failure must not fail the upload the row already
+  // exists for; it degrades to "0 of N resolved" with no roots, which the
+  // operator will see again correctly on the next Browse.
+  let symbolCount = 0;
+  let unresolvedCount = 0;
+  let unresolvedRoots: MissingRoot[] = [];
+  try {
+    await refreshRegistry();
+    const resolved = await resolveSymbolsForMib(created.id);
+    if (resolved) {
+      symbolCount = resolved.size;
+      unresolvedCount = [...resolved.values()].filter((oid) => oid === null).length;
+      unresolvedRoots = unresolvedCount > 0 ? missingRootsForMib(created.id) : [];
+    }
+  } catch {
+    /* registry refresh is best-effort; the row is stored either way */
+  }
+  return { ...created, symbolCount, unresolvedCount, unresolvedRoots };
 }
 
 export async function deleteMib(id: string): Promise<void> {
@@ -670,144 +701,4 @@ export async function getMibFacets(): Promise<{
     manufacturers: Array.from(manufacturers).sort(),
     modelsByManufacturer,
   };
-}
-
-// ─── Vendor profile status ────────────────────────────────────────────────
-//
-// Used by the MIB Database card to show, per built-in vendor profile, whether
-// the symbols it queries can be resolved at the **universal** scope (i.e. by
-// generic + manufacturer-wide MIBs alone, without any model-specific upload).
-// Each profile also reports any model-specific MIBs that were layered on top
-// for the same manufacturer — those are device overrides, not part of the
-// universal floor.
-
-export interface ProfileSymbolStatus {
-  metric:
-    | "cpu"
-    | "memory.used"
-    | "memory.free"
-    | "memory.total"
-    | "memory.pct"
-    | "disk.used"
-    | "disk.total"
-    | "disk.free"
-    | "temperature";
-  symbol: string;
-  resolved: boolean;
-  fromModuleName: string | null;
-  fromScope: "device" | "vendor" | "generic" | "seed" | null;
-}
-
-export interface ProfileStatus {
-  vendor: string;
-  matchPattern: string;
-  example: string;            // first manufacturer string that matches the regex (or "" if none)
-  symbols: ProfileSymbolStatus[];
-  ready: boolean;             // true if every symbol declared by the profile resolves
-  partial: boolean;           // true if at least one (but not all) resolve
-  modelOverrides: { model: string; mibCount: number }[];
-}
-
-/**
- * Pick a representative manufacturer string for a profile. The match regex
- * is what determines applicability at probe time; for the UI we want a real
- * manufacturer string we've seen on assets or in MIB rows so the resolver can
- * compute against the same scope key the probe will use. Falls back to the
- * profile's first regex alternative when nothing matches yet.
- */
-async function exampleManufacturerForProfile(match: RegExp): Promise<string> {
-  const [mibRows, assetRows] = await Promise.all([
-    prisma.mibFile.findMany({
-      where: { manufacturer: { not: null } },
-      select: { manufacturer: true },
-      distinct: ["manufacturer"],
-    }),
-    prisma.asset.findMany({
-      where: { manufacturer: { not: null } },
-      select: { manufacturer: true },
-      distinct: ["manufacturer"],
-    }),
-  ]);
-  const candidates = new Set<string>();
-  for (const r of [...mibRows, ...assetRows]) {
-    if (r.manufacturer) candidates.add(r.manufacturer.trim());
-  }
-  for (const c of candidates) {
-    if (match.test(c)) return c;
-  }
-  // Fallback: first alternative in the regex source. Crude but readable —
-  // strips flags, anchors, and alternation pipes.
-  const src = match.source.replace(/^[\\^?(]+|[\\$?)]+$/g, "");
-  const first = src.split("|")[0].replace(/[^A-Za-z0-9-]/g, "");
-  return first || "(any)";
-}
-
-export async function getProfileStatus(): Promise<ProfileStatus[]> {
-  const out: ProfileStatus[] = [];
-
-  for (const profile of VENDOR_TELEMETRY_PROFILES) {
-    const example = await exampleManufacturerForProfile(profile.match);
-    const symbols: ProfileSymbolStatus[] = [];
-
-    if (profile.cpu) {
-      const r = await resolveSymbolAtVendorScope(example, profile.cpu.symbol);
-      symbols.push({
-        metric: "cpu",
-        symbol: profile.cpu.symbol,
-        resolved: r.resolved,
-        fromModuleName: r.fromModuleName,
-        fromScope: r.fromScope,
-      });
-    }
-    if (profile.memory?.usedBytesSymbol) {
-      const r = await resolveSymbolAtVendorScope(example, profile.memory.usedBytesSymbol);
-      symbols.push({ metric: "memory.used", symbol: profile.memory.usedBytesSymbol, resolved: r.resolved, fromModuleName: r.fromModuleName, fromScope: r.fromScope });
-    }
-    if (profile.memory?.freeBytesSymbol) {
-      const r = await resolveSymbolAtVendorScope(example, profile.memory.freeBytesSymbol);
-      symbols.push({ metric: "memory.free", symbol: profile.memory.freeBytesSymbol, resolved: r.resolved, fromModuleName: r.fromModuleName, fromScope: r.fromScope });
-    }
-    if (profile.memory?.totalBytesSymbol) {
-      const r = await resolveSymbolAtVendorScope(example, profile.memory.totalBytesSymbol);
-      symbols.push({ metric: "memory.total", symbol: profile.memory.totalBytesSymbol, resolved: r.resolved, fromModuleName: r.fromModuleName, fromScope: r.fromScope });
-    }
-    if (profile.memory?.pctSymbol) {
-      const r = await resolveSymbolAtVendorScope(example, profile.memory.pctSymbol);
-      symbols.push({ metric: "memory.pct", symbol: profile.memory.pctSymbol, resolved: r.resolved, fromModuleName: r.fromModuleName, fromScope: r.fromScope });
-    }
-    if (profile.disk?.usedBytesSymbol) {
-      const r = await resolveSymbolAtVendorScope(example, profile.disk.usedBytesSymbol);
-      symbols.push({ metric: "disk.used", symbol: profile.disk.usedBytesSymbol, resolved: r.resolved, fromModuleName: r.fromModuleName, fromScope: r.fromScope });
-    }
-    if (profile.disk?.totalBytesSymbol) {
-      const r = await resolveSymbolAtVendorScope(example, profile.disk.totalBytesSymbol);
-      symbols.push({ metric: "disk.total", symbol: profile.disk.totalBytesSymbol, resolved: r.resolved, fromModuleName: r.fromModuleName, fromScope: r.fromScope });
-    }
-    if (profile.disk?.freeBytesSymbol) {
-      const r = await resolveSymbolAtVendorScope(example, profile.disk.freeBytesSymbol);
-      symbols.push({ metric: "disk.free", symbol: profile.disk.freeBytesSymbol, resolved: r.resolved, fromModuleName: r.fromModuleName, fromScope: r.fromScope });
-    }
-    if (profile.temperature?.symbol) {
-      const r = await resolveSymbolAtVendorScope(example, profile.temperature.symbol);
-      symbols.push({ metric: "temperature", symbol: profile.temperature.symbol, resolved: r.resolved, fromModuleName: r.fromModuleName, fromScope: r.fromScope });
-    }
-
-    const resolvedCount = symbols.filter((s) => s.resolved).length;
-    const ready = symbols.length > 0 && resolvedCount === symbols.length;
-    const partial = resolvedCount > 0 && !ready;
-
-    const modelOverrides = example !== "(any)" ? await listModelOverrides(example) : [];
-
-    out.push({
-      vendor: profile.vendor,
-      matchPattern: profile.match.source,
-      example,
-      symbols,
-      ready,
-      partial,
-      modelOverrides,
-    });
-  }
-
-  return out;
 }

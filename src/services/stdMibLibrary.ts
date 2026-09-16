@@ -10,19 +10,19 @@
  *   GET  /server-settings/mibs/std/:key/structure
  *   POST /server-settings/mibs/std/:key/walk
  *
- * Standard MIBs are immutable at runtime — we parse + resolve each one
- * lazily on first request and cache the result module-level. The
- * resolver runs against `BUILT_IN_OIDS` only (no DB MIB layering, and no
- * cross-MIB visibility between bundled modules either).
+ * Standard MIBs are immutable at runtime — we parse each one lazily on
+ * first request and cache the structured result module-level. The numeric
+ * OIDs come from `oidRegistry.resolveStandardSymbols()`: the registry reads
+ * the same `stdMibs/` directory, resolves every bundled module TOGETHER as
+ * its standard layer, and serves the probe path from it. Reading that one
+ * table here means Browse/Walk and the collectors can never disagree about
+ * what a standard symbol's OID is.
  *
- * That last part is a real constraint when ADDING a module: a MIB whose
- * root is IMPORTed from a sibling cannot see it here even though the
- * sibling ships in the same directory. Q-BRIDGE-MIB anchors on BRIDGE-MIB's
- * `dot1dBridge` and RSTP-MIB on its `dot1dStp`, so both resolve to nothing
- * (0 of 129 and 9 of 19 assignments respectively) until those anchors are
- * seeded into `BUILT_IN_OIDS`. Whenever a new std MIB is added, check its
- * IMPORTS for symbols used as OID parents and seed them — the smoke script
- * catches it, but only if it carries expectations for the new module.
+ * Because the modules resolve together, a MIB anchored on a sibling's
+ * symbol just works: Q-BRIDGE-MIB hangs off BRIDGE-MIB's `dot1dBridge` and
+ * RSTP-MIB off its `dot1dStp`, and both resolve fully with nothing seeded
+ * by hand. Adding a module is dropping the file in `stdMibs/`, adding its
+ * `StdMibDef` below, and giving the smoke script an expectation for it.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -31,14 +31,9 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import {
   parseMibStructured,
-  type MibSymbol,
   type ParsedMibStructured,
 } from "./mibService.js";
-import {
-  BUILT_IN_OIDS,
-  parseObjectAssignments,
-  tryResolveParts,
-} from "./oidRegistry.js";
+import { resolveStandardSymbols } from "./oidRegistry.js";
 
 export interface StdMibDef {
   /** Frontend-facing id, e.g. "std:system". */
@@ -82,43 +77,6 @@ const STD_MIBS_DIR = join(dirname(fileURLToPath(import.meta.url)), "stdMibs");
  */
 const _cache = new Map<string, ParsedMibStructured & { unresolvedCount: number }>();
 
-/**
- * Shared symbol map keyed by module name → name → fullOid. We resolve
- * each module independently (no cross-MIB visibility) since std MIBs
- * don't IMPORTS-chain to each other at the OID level — every std MIB's
- * symbols root at the same SMI seed.
- */
-function resolveStdMibOids(parsed: ParsedMibStructured, rawText: string): Map<string, string> {
-  // Build the per-MIB numeric map by seeding from BUILT_IN_OIDS and then
-  // iteratively resolving each parsed assignment until a pass adds nothing.
-  // This catches forward references inside one MIB (e.g. ifMIBObjects
-  // declared after the table that uses it).
-  const numeric = new Map<string, string>(Object.entries(BUILT_IN_OIDS));
-
-  // We re-run the cheap regex-based extractor used by the production
-  // oidRegistry loader rather than rebuilding from parsed.symbols — the
-  // structured parse drops some OID-IDENTIFIER shorthand assignments
-  // (`name OBJECT IDENTIFIER ::= { parent N }`) that the registry
-  // resolver picks up. Cross-checked against parsed.symbols below.
-  const pending = parseObjectAssignments(rawText);
-
-  let progress = true;
-  while (progress && pending.length > 0) {
-    progress = false;
-    for (let i = pending.length - 1; i >= 0; i--) {
-      const { name, parts } = pending[i];
-      const resolved = tryResolveParts(parts, numeric);
-      if (resolved != null) {
-        numeric.set(name, resolved);
-        pending.splice(i, 1);
-        progress = true;
-      }
-    }
-  }
-
-  return numeric;
-}
-
 function loadAndCache(def: StdMibDef): ParsedMibStructured & { unresolvedCount: number } {
   const cached = _cache.get(def.key);
   if (cached) return cached;
@@ -134,7 +92,9 @@ function loadAndCache(def: StdMibDef): ParsedMibStructured & { unresolvedCount: 
   }
 
   const parsed = parseMibStructured(raw);
-  const numeric = resolveStdMibOids(parsed, raw);
+  // The registry resolved every bundled module together; a symbol this
+  // module IMPORTs from a sibling is in the table alongside its own.
+  const numeric = resolveStandardSymbols();
 
   // Stamp resolved OIDs onto each symbol the structured parser produced.
   for (const sym of parsed.symbols) {
@@ -173,14 +133,4 @@ export function getStdMibStructure(key: string): ParsedMibStructured & { unresol
   const def = getStdMibDef(key);
   if (!def) throw new AppError(404, `Unknown standard MIB key "${key}"`);
   return loadAndCache(def);
-}
-
-/**
- * Look up a single symbol within a std MIB by name. Used by the std walk
- * route to translate the operator's "Object name" input into a numeric
- * OID. Returns null when the symbol is unknown OR unresolved.
- */
-export function resolveStdSymbol(key: string, name: string): MibSymbol | null {
-  const structure = getStdMibStructure(key);
-  return structure.symbols.find((s) => s.name === name) ?? null;
 }

@@ -19,7 +19,7 @@ import { logger } from "../utils/logger.js";
 import { runInstrumentedJob } from "./_metrics.js";
 import { hasRunMarker, stampRunMarker } from "./_runOnce.js";
 import { VENDOR_TELEMETRY_PROFILES, type VendorTelemetryProfile, memoryQueryToDoubleScalar, diskQueryToDoubleScalar } from "../services/vendorTelemetryProfiles.js";
-import { refreshProfileCache } from "../services/manufacturerProfileService.js";
+import { refreshProfileCache, emitProfileReadinessEvents } from "../services/manufacturerProfileService.js";
 import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 
 const MARKER_KEY = "seedManufacturerProfilesSeededAt";
@@ -236,6 +236,11 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
         logger.info(result, "Seeded manufacturer profiles from VENDOR_TELEMETRY_PROFILES");
       }
       await refreshProfileCache();
+      // With the cache warm, say which profiles name symbols nothing resolves
+      // — one warning Event per profile, in the log the moment the process
+      // is up rather than as a chart that quietly stopped.
+      const emitted = await emitProfileReadinessEvents();
+      if (emitted > 0) logger.warn({ profiles: emitted }, "manufacturer profiles with unresolved symbols — see Events");
     });
   } catch (err) {
     logger.error({ err }, "seedManufacturerProfiles startup task failed");

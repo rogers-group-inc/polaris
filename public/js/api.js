@@ -1289,7 +1289,6 @@ const api = {
     setPlaceholderMac:(body) => request("PUT", "/server-settings/reservation-mac", body),
     listMibs: (params) => request("GET", "/server-settings/mibs" + toQuery(params)),
     getMibFacets: () => request("GET", "/server-settings/mibs/facets"),
-    getMibProfileStatus: () => request("GET", "/server-settings/mibs/profile-status"),
     uploadMib: (file, fields) => {
       const formData = new FormData();
       formData.append("file", file);
@@ -1344,6 +1343,7 @@ const api = {
     listManufacturerSuggestions: ()      => request("GET",    "/server-settings/manufacturer-profiles/suggestions"),
     getManufacturerProfile:      (id)    => request("GET",    `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}`),
     createManufacturerProfile:   (body)  => request("POST",   "/server-settings/manufacturer-profiles", body),
+    updateManufacturerProfile:   (id, body) => request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}`, body),
     deleteManufacturerProfile:   (id)    => request("DELETE", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}`),
     updateProfileMetric:         (id, metricKey, body) =>
       request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/metrics/${encodeURIComponent(metricKey)}`, body),

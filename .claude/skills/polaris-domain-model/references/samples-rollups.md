@@ -170,7 +170,7 @@ MonitorClassOverride            -- Tier-2 of the monitor settings hierarchy. **A
   systemInfoDailyRetentionDays   Int?
   -- Per-stream polling overrides. storagePolling has no companion credential /
   -- MIB column — storage reuses the interfaces credential at probe time and
-  -- HOST-RESOURCES-MIB + the vendor disk fallback in pickVendorProfileMerged
+  -- HOST-RESOURCES-MIB + the vendor disk fallback in pickDbProfile
   -- covers OID selection.
   responseTimePolling       String?
   cpuMemoryPolling          String?

@@ -9,6 +9,48 @@
  * avoid a circular import; now both modules consume the same helper.
  */
 
+/** One `symbol FROM MODULE` pair out of a module's IMPORTS block. */
+export interface ImportBinding {
+  symbol: string;
+  module: string;
+}
+
+/**
+ * Read the IMPORTS block as symbol → module pairs, not just module names.
+ *
+ *   IMPORTS
+ *       fortinet, FnBoolState            FROM FORTINET-CORE-MIB
+ *       MODULE-IDENTITY, OBJECT-TYPE     FROM SNMPv2-SMI;
+ *
+ * yields { fortinet → FORTINET-CORE-MIB }, { FnBoolState → FORTINET-CORE-MIB },
+ * …. This is the only place a file states which module defines an anchor it
+ * leans on, and it is what lets the UI say "upload FORTINET-CORE-MIB" rather
+ * than "something called `fortinet` is missing". Macro names (uppercase-
+ * leading, `OBJECT-TYPE`) are kept — callers filter on what they need.
+ *
+ * Tolerant by design: a module with no IMPORTS block returns []; a malformed
+ * block yields whatever pairs parse. Never throws.
+ */
+export function parseImportMap(text: string): ImportBinding[] {
+  const stripped = stripComments(text);
+  const block = /\bIMPORTS\b([\s\S]*?);/.exec(stripped);
+  if (!block) return [];
+  const out: ImportBinding[] = [];
+  // Each segment is "<ident>, <ident>, … FROM <MODULE>"; the last segment
+  // ends at the `;` the outer regex already stopped on.
+  const segment = /([\s\S]*?)\bFROM\s+([A-Za-z][\w-]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = segment.exec(block[1]))) {
+    const module = m[2];
+    for (const raw of m[1].split(",")) {
+      const symbol = raw.trim();
+      if (!symbol || !/^[A-Za-z][\w-]*$/.test(symbol)) continue;
+      out.push({ symbol, module });
+    }
+  }
+  return out;
+}
+
 // Strip ASN.1 comments. SMI (RFC 2578) supports two comment styles:
 //   1. `-- ... <newline>` or `-- ... --` (the second `--` closes it)
 //   2. line that begins with `--`
