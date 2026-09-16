@@ -18,7 +18,9 @@
  * Entries are matched in array order; first match wins.
  */
 
-import { fortiswitchModelFromFsSysVersion } from "../utils/fortiswitchModel.js";
+import { fortiswitchModelFromFsSysVersion, FORTISWITCH_MODEL_PARSE } from "../utils/fortiswitchModel.js";
+import type { ModelParse } from "../utils/modelParse.js";
+import type { TransformKind } from "../utils/symbolTransforms.js";
 
 export interface CpuQuery {
   symbol: string;                       // symbolic OID name (resolved via oidRegistry)
@@ -78,6 +80,13 @@ export interface TemperatureQuery {
   mode: "scalar" | "table";
   /** Display label for the synthesized hardware-sensor row. Defaults to "System" when omitted. */
   sensorName?: string;
+  /**
+   * Unary transform applied to the raw reading. Needed wherever a vendor's
+   * sensor object is not already in the unit Polaris charts — MikroTik's
+   * `Temperature` is DISPLAY-HINT "d-1", i.e. tenths of a degree, so 315
+   * means 31.5 °C and charts as 315 without `tenths_to_units`.
+   */
+  transform?: TransformKind;
 }
 
 /**
@@ -94,6 +103,14 @@ export interface ModelQuery {
   symbol: string;                       // symbolic OID name resolved via oidRegistry
   /** Extract the display model from the raw scalar; null = unrecognized (nothing stamped). */
   parse: (raw: string) => string | null;
+  /**
+   * The ROW-SHAPED form of `parse` — the same rule as a regex + `$1` template
+   * (`utils/modelParse.ts`). `parse` is a function and a function cannot be
+   * seeded, so without this the `model` metric row would be created empty on a
+   * fresh install and the vendor's identity query would exist only in code.
+   * Keep the two in step: `parse` should be `applyModelParse(raw, rowParse)`.
+   */
+  rowParse: ModelParse;
 }
 
 export interface VendorTelemetryProfile {
@@ -162,10 +179,33 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
   {
     vendor: "Mikrotik RouterOS",
     match: /mikrotik|routeros/i,
-    // MIKROTIK-MIB::mtxrSystemUserCPULoad — scalar percent
-    cpu: { symbol: "mtxrSystemUserCPULoad", mode: "scalar" },
-    // Mikrotik exposes RAM bytes via HOST-RESOURCES-MIB only, so leave the
-    // memory profile empty and let the HRM fallback handle it.
+    // NO cpu / memory / disk block, on purpose. RouterOS reports all three
+    // through HOST-RESOURCES-MIB — hrProcessorLoad, hrStorage's RAM row, and
+    // hrStorageTable — which Polaris reads generically for every device. A
+    // vendor profile exists to OVERRIDE what the generic MIBs already do, and
+    // here they do it, so there is nothing to override.
+    //
+    // This block used to claim `cpu: { symbol: "mtxrSystemUserCPULoad" }`.
+    // That symbol does not exist: it appears nowhere in MIKROTIK-MIB, checked
+    // 2026-09-16 against MikroTik's own download and the LibreNMS mirror. The
+    // MIB has no CPU-load object at all. The row therefore never resolved on
+    // any install and never could — it read as a profile with an unresolved
+    // symbol, when the truth was that the generic path was already correct.
+    //
+    // The one thing MIKROTIK-MIB adds is the mtxrHealth sensor group, which no
+    // standard MIB covers — and it is NOT claimed here, deliberately.
+    // `mtxrHlCpuTemperature`'s `Temperature` textual convention is
+    // DISPLAY-HINT "d-1", TENTHS of a degree, so a raw 315 means 31.5 °C. That
+    // needs scaling to the canonical unit AT COLLECTION, and nothing does it:
+    // `applyTransform` has exactly one call site in `src/`, the custom-widget
+    // collector, so a unary transform on a profile METRIC row is stored and
+    // never applied. A `temperature` block here would have charted 315.
+    //
+    // Note this is not the same lever as Celsius→Fahrenheit, which must NEVER
+    // happen before storage — Polaris stores and alerts in Celsius and converts
+    // at render (`public/js/temp-unit.js`). Scaling a d-1 integer INTO Celsius
+    // is legitimate; converting Celsius to another unit is not. Wiring the
+    // first without enabling the second is what a MikroTik sensor row needs.
   },
   {
     // FortiSwitch sits BEFORE the generic Fortinet entry so FortiSwitches
@@ -208,7 +248,7 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
     // includes the model, and FortiSwitch assets have no `os` to match on).
     // Discovery can't supply the model: the managed-switch CMDB has no model
     // field, so the asset sits at the generic "FortiSwitch" until this reads.
-    model: { symbol: "fsSysVersion", parse: fortiswitchModelFromFsSysVersion },
+    model: { symbol: "fsSysVersion", parse: fortiswitchModelFromFsSysVersion, rowParse: FORTISWITCH_MODEL_PARSE },
   },
   {
     // FortiAP sits BEFORE the generic Fortinet entry so FortiAPs (manufacturer
@@ -242,6 +282,13 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
     // than via the FortiOS REST monitorType path.
     cpu: { symbol: "fgSysCpuUsage", mode: "scalar" },
     memory: { pctSymbol: "fgSysMemUsage" },
+    // The hardware-sensor table. This block did not exist until 2026-09: the
+    // walk was dispatched by `/fortinet/i.test(manufacturer)` inside
+    // `collectHardwareSensorsSnmp` instead, so the fact lived in the collector
+    // and the seeded `temperature` row came out EMPTY. The Phase 4 migration
+    // fills that row on an existing install; this block is what gives a FRESH
+    // one the same thing.
+    temperature: { symbol: "fgHwSensorTable", mode: "table" },
   },
   {
     vendor: "HP / Aruba ProCurve",

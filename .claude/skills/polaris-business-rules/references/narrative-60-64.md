@@ -719,9 +719,94 @@ fixes what the existing knob MEASURES, and an edited rule is no less wrong than 
 It names every rule it changed and its old window in a warning Event, because it alters when
 existing alerts fire and an operator must be able to see it happened and put a rule back.
 
+## Rule 68 — What Polaris ships and what the operator owns are two different kinds of MIB
+
+Polaris resolves a vendor's telemetry by MIB SYMBOL NAME, and the number behind
+that name comes from a MIB. Since the vendor OID seed was removed (the uniform-SNMP
+work, 2026-09) Polaris ships no vendor OID numbers in code at all, which makes
+*which MIBs ship, and on what terms* an operator-facing question rather than an
+implementation detail.
+
+**Two kinds, and the difference is a promise.**
+
+`services/stdMibs/` holds the generic IETF/IEEE modules. They are read off disk by
+`oidRegistry.loadStandardLayer`, exist in every install, and are removable by
+nobody — they change when the product is updated. That is correct for standards
+every device speaks: there is nothing to opt out of, and interfaces, LLDP, PoE,
+bridge/VLAN, `hrStorage` and ENTITY sensors therefore collect the moment SNMP does.
+
+`services/vendorMibs/` holds a manufacturer's own public MIB, and it is **seeded,
+not bundled**: `jobs/seedVendorMibs.ts` inserts each as a `MibFile` row at
+manufacturer scope through `mibService.createMib` — the same function the upload
+route calls, so a seeded MIB is parsed, dup-checked and registry-refreshed
+identically to an uploaded one and there is no second code path to drift. It then
+appears in the MIB Database like anything the operator uploaded, and **they can
+delete it**. That is correct for a vendor's file: they may hold a newer one, may
+object to it shipping, or may simply not run that gear.
+
+The two must not be confused in the one direction that is silent. `stdMibs/` is
+GLOBBED, so a vendor module dropped there becomes part of the layer nobody can
+remove, and the only symptom is an operator unable to delete a file they never
+asked for. `tests/unit/seedVendorMibs.test.ts` fails if a shipped vendor module
+appears there, and fails again if any `stdMibs/` module anchors under `enterprises`.
+
+**Seeding is fresh-installs-only.** The job skips any database where
+`seedManufacturerProfilesSeededAt` is already stamped, because that marker can only
+exist if an earlier release ran here — which makes this an upgrade. An existing MIB
+Database is curated by its operator, and an upgrade that silently adds vendor
+modules is editing their data. Measured on the owner's production fleet
+(2026-09-16): 2,416 monitored assets, of which **zero** were Cisco. The ordering in
+`app.ts` is load-bearing in both directions — the job runs before
+`seedManufacturerProfiles` so the profiles it seeds resolve on their first readiness
+check, and because it runs first the marker is still absent on a genuinely fresh
+install. Flip the order and a fresh install would read itself as an upgrade and seed
+nothing, for ever, without an error.
+
+**A manufacturer profile is only ever an override.** It says which symbol *is* the
+CPU, which pair *is* the memory — the half a MIB cannot tell you. It earns its place
+only by saying something the generic MIBs cannot, and two vendors show both sides of
+that test:
+
+- **Cisco ships one.** `cpmCPUTotal5secRev` is the 5-second CPU where
+  `hrProcessorLoad` is a 5-minute average on many IOS platforms, and
+  `ciscoMemoryPoolUsed`/`Free` are per-pool bytes that HOST-RESOURCES-MIB's single
+  RAM row cannot distinguish. Its `CISCO-SMI` anchor ships alongside, because the
+  leaf modules resolve to nothing without it.
+- **MikroTik ships neither profile nor MIB.** RouterOS reports CPU, memory and
+  storage through HOST-RESOURCES-MIB, which Polaris already reads, so there is
+  nothing to override. Its long-standing `cpu` row named `mtxrSystemUserCPULoad`, a
+  symbol that exists in **no** MikroTik MIB (checked against MikroTik's own download
+  and the LibreNMS mirror) and had therefore never resolved on any install. The one
+  thing `MIKROTIK-MIB` does add — the `mtxrHealth` temperature sensor — is
+  DISPLAY-HINT `d-1`, tenths of a degree, and needs scaling AT COLLECTION that no
+  collector performs, so the row would have charted 315 instead of 31.5.
+
+That second case is the rule's teeth: shipping a profile for a vendor the generic
+MIBs already answer produces a page of `N UNRESOLVED` rows and a warning Event on
+first boot, and an operator handed something broken-looking they never asked for.
+
+**Both shipped pieces are deletable, and neither deletion is silent.** Without the
+profile, `pickDbProfile` returns null, which is the collectors' signal to use the
+standard MIBs — the device keeps being monitored and only the vendor-specific
+figures are lost. Without the MIB, the profile's rows report `unresolved` and name
+the module to re-upload. Nothing is unrecoverable, which is what makes shipping
+either of them safe.
+
+**A caution for anyone finishing the transform feature.** A unary transform on a
+profile METRIC row is stored, shown in the Transform column, and never applied:
+`applyTransform` has one call site in `src/`, the custom-widget collector. Scaling a
+raw integer into its canonical unit at collection is a legitimate thing to build;
+converting Celsius to Fahrenheit before storage is not, and must not ride along with
+it — Polaris stores, rolls up and ALERTS in Celsius, and converts at render only
+(`public/js/temp-unit.js`, `branding.temperatureUnit`). Rewriting stored values would
+silently re-point every temperature automation's threshold and step each sensor's
+history mid-series.
+
 ---
 
-## Rule 68 — A reservation count is of addresses held, and a release is history
+---
+
+## Rule 69 — A reservation count is of addresses held, and a release is history
 
 The IPAM Networks list has carried a Reservations column since the beginning, and until
 2026-09-16 it was `prisma.subnet.findMany`'s unfiltered `_count.reservations`. That reads as

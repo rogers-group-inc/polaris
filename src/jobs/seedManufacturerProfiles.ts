@@ -4,14 +4,31 @@
  * One-shot startup that converts the hardcoded VENDOR_TELEMETRY_PROFILES
  * constant into ManufacturerProfile + ManufacturerProfileMetric +
  * ManufacturerProfileMetricOverride rows. Idempotent (marker-keyed in
- * Setting). The constant stays as the runtime fallback until the resolver
- * swap in a follow-up commit; this job only owns persistence.
+ * Setting).
+ *
+ * Since the Phase 4 resolver swap those rows are the ONLY source of vendor
+ * telemetry OIDs, which makes this job's output the fresh-install half of a
+ * pair: **whatever the `20260915020000_manufacturer_profile_resolver_swap`
+ * migration gives an EXISTING install, this must give a NEW one.** They are
+ * not interchangeable — on a fresh install `migrate deploy` runs before this
+ * job, so every backfill UPDATE in that migration matches zero rows and only
+ * what is written here survives. Anything added to one belongs in the other,
+ * and `tests/unit/seedManufacturerProfiles.test.ts` pins the pair.
  *
  * Layout: every entry in VENDOR_TELEMETRY_PROFILES whose regex anchors a
  * SPECIFIC model (FortiSwitch / FortiAP — the two pre-Fortinet entries)
  * becomes a `ManufacturerProfileMetricOverride` row under the umbrella
  * "Fortinet" manufacturer profile. Every other entry becomes its own
- * top-level profile (Cisco / Juniper / Mikrotik / Fortinet / HP / Dell).
+ * top-level profile.
+ *
+ * **Only a manufacturer whose MIB Polaris also SEEDS gets a profile** — see
+ * `PROFILE_SEEDED_MANUFACTURERS` and `jobs/seedVendorMibs.ts`. A manufacturer
+ * profile is an override layer over what the generic MIBs already do; one
+ * seeded for a vendor whose MIB is absent resolves nothing, and ships as a
+ * page full of `N UNRESOLVED` rows plus a warning Event on every boot.
+ * SEED_MAP still carries all eight entries, because that is where the symbol
+ * knowledge lives and the vendor tables in `docs/INSTALL.md` and
+ * `docs/wiki/Monitoring.md` are written from it.
  */
 
 import { prisma } from "../db.js";
@@ -19,7 +36,7 @@ import { logger } from "../utils/logger.js";
 import { runInstrumentedJob } from "./_metrics.js";
 import { hasRunMarker, stampRunMarker } from "./_runOnce.js";
 import { VENDOR_TELEMETRY_PROFILES, type VendorTelemetryProfile, memoryQueryToDoubleScalar, diskQueryToDoubleScalar } from "../services/vendorTelemetryProfiles.js";
-import { refreshProfileCache, emitProfileReadinessEvents } from "../services/manufacturerProfileService.js";
+import { refreshProfileCache, emitProfileReadinessEvents, METRIC_KEYS } from "../services/manufacturerProfileService.js";
 import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 
 const MARKER_KEY = "seedManufacturerProfilesSeededAt";
@@ -34,18 +51,72 @@ interface SeedRow {
   vendorLabel: string;
   manufacturer: string;
   modelPattern: string | null; // null = top-level default; non-null = override under that manufacturer
+  /**
+   * The DEVICE TYPE this sub-family is, for the type-default sibling seeded
+   * beside the model-pattern row (Phase 4). A model regex only matches an
+   * asset whose model STATES the family; a Fortinet switch discovered with an
+   * empty model matched it solely through `fortinetClassHint`. The type
+   * default says the same thing as data.
+   */
+  assetType: string | null;
 }
 
-const SEED_MAP: SeedRow[] = [
-  { vendorLabel: "Cisco IOS / IOS-XE / NX-OS",        manufacturer: "Cisco",    modelPattern: null },
-  { vendorLabel: "Juniper Junos",                     manufacturer: "Juniper",  modelPattern: null },
-  { vendorLabel: "Mikrotik RouterOS",                 manufacturer: "Mikrotik", modelPattern: null },
-  { vendorLabel: "Fortinet FortiSwitch (SNMP path)",  manufacturer: "Fortinet", modelPattern: "FortiSwitch" },
-  { vendorLabel: "Fortinet FortiAP (SNMP path)",      manufacturer: "Fortinet", modelPattern: "FortiAP" },
-  { vendorLabel: "Fortinet FortiOS (SNMP path)",      manufacturer: "Fortinet", modelPattern: null },
-  { vendorLabel: "HP / Aruba ProCurve",               manufacturer: "HP",       modelPattern: null },
-  { vendorLabel: "Dell PowerConnect / Networking",    manufacturer: "Dell",     modelPattern: null },
+export const SEED_MAP: SeedRow[] = [
+  { vendorLabel: "Cisco IOS / IOS-XE / NX-OS",        manufacturer: "Cisco",    modelPattern: null,          assetType: null },
+  { vendorLabel: "Juniper Junos",                     manufacturer: "Juniper",  modelPattern: null,          assetType: null },
+  { vendorLabel: "Mikrotik RouterOS",                 manufacturer: "MikroTik", modelPattern: null,          assetType: null },
+  { vendorLabel: "Fortinet FortiSwitch (SNMP path)",  manufacturer: "Fortinet", modelPattern: "FortiSwitch", assetType: "switch" },
+  { vendorLabel: "Fortinet FortiAP (SNMP path)",      manufacturer: "Fortinet", modelPattern: "FortiAP",     assetType: "access_point" },
+  { vendorLabel: "Fortinet FortiOS (SNMP path)",      manufacturer: "Fortinet", modelPattern: null,          assetType: null },
+  { vendorLabel: "HP / Aruba ProCurve",               manufacturer: "HP",       modelPattern: null,          assetType: null },
+  { vendorLabel: "Dell PowerConnect / Networking",    manufacturer: "Dell",     modelPattern: null,          assetType: null },
 ];
+
+/**
+ * The manufacturers Polaris SEEDS a profile for — the ones whose MIB it also
+ * ships and seeds (`jobs/seedVendorMibs.ts` → `services/vendorMibs/`).
+ *
+ * A manufacturer profile is an OVERRIDE layer over what the generic MIBs
+ * already do — business rule 68. Two rules follow, and both are load-bearing:
+ *
+ *   1. **Seed a profile only where its MIB is seeded too.** Otherwise the
+ *      profile names symbols nothing can resolve: an `N UNRESOLVED` page, a
+ *      `manufacturer_profile.unresolved` Event on first boot, and an operator
+ *      handed something broken-looking they never asked for.
+ *   2. **Seed nothing the generic MIBs already do.** MikroTik is the worked
+ *      example: RouterOS reports CPU, memory and storage through
+ *      HOST-RESOURCES-MIB, so its profile carries ONE row — the mtxrHealth
+ *      temperature sensor, which no standard MIB covers. A vendor with nothing
+ *      to add needs neither a profile nor its MIB.
+ *
+ * These exist as much to be READ as to be used: they are the worked example an
+ * operator copies when they upload their own vendor's MIB and build a profile
+ * for it, which is why they carry real transforms and labels rather than the
+ * minimum that happens to work.
+ *
+ * **A manufacturer joins this list in the SAME commit that adds its MIB to
+ * `VENDOR_MIBS`**, never before. Its entry stays in `SEED_MAP` either way,
+ * because that is where the symbol knowledge lives and the vendor tables in
+ * `docs/INSTALL.md` and `docs/wiki/Monitoring.md` are written from it.
+ *
+ * Existing installs are untouched: this job is marker-keyed, so a profile
+ * seeded by an earlier release stays exactly as the operator left it.
+ *
+ * Deleting a seeded profile is a supported operator action: vendor telemetry
+ * for that manufacturer falls back to HOST-RESOURCES-MIB rather than stopping,
+ * because `pickDbProfile` returning null is the collectors' "use the standard
+ * MIBs" signal. Deleting the seeded MIB instead leaves the profile reporting
+ * `unresolved` and naming the module to re-upload.
+ */
+export const PROFILE_SEEDED_MANUFACTURERS: ReadonlySet<string> = new Set<string>([
+  "Cisco",
+  // MikroTik was here briefly and removed 2026-09-16, as rule 2 above applied
+  // honestly: RouterOS answers CPU, memory and storage through
+  // HOST-RESOURCES-MIB, and the one thing left — the mtxrHealth temperature
+  // sensor — is DISPLAY-HINT "d-1" and needs scaling at COLLECTION, which no
+  // collector performs (`applyTransform` has one call site, the custom-widget
+  // collector). The row would have charted 315 instead of 31.5.
+]);
 
 // Translate a VENDOR_TELEMETRY_PROFILES entry's metric queries into a per-
 // metric seed shape. Memory may be either `scalar` (single percent OID) or
@@ -57,26 +128,65 @@ interface MetricSeed {
   symbolB:   string | null;
   type:      "scalar" | "double_scalar" | "table";
   transform: string | null;
+  /** How a walked subtree collapses; "none" unless the hardcoded shape walks. */
+  aggregate: "none" | "avg" | "sum";
+  /** The synthesized sample row's label — storage mountPath / sensor name. */
+  label:     string | null;
+  /** `model` only: the row-shaped identity parse. */
+  parsePattern:  string | null;
+  parseTemplate: string | null;
 }
 
-function profileToMetricSeeds(p: VendorTelemetryProfile): MetricSeed[] {
+/** Everything below "none" is derived from the hardcoded shape, never typed twice. */
+const NO_EXTRAS = { aggregate: "none", label: null, parsePattern: null, parseTemplate: null } as const;
+
+export function profileToMetricSeeds(p: VendorTelemetryProfile): MetricSeed[] {
   const out: MetricSeed[] = [];
   if (p.cpu) {
     out.push({
+      ...NO_EXTRAS,
       metricKey: "cpu",
       symbol:    p.cpu.symbol,
       symbolB:   null,
       type:      p.cpu.mode === "walk-avg" ? "table" : "scalar",
       transform: null,
+      // "walk-avg" is literally walk + average. It reached the row as
+      // `type: "table"` alone before Phase 4, which the resolver could read
+      // for CPU but not for anything else — `aggregate` is the general form.
+      aggregate: p.cpu.mode === "walk-avg" ? "avg" : "none",
+    });
+  }
+  if (p.model?.rowParse) {
+    // The identity query. A `model` row seeded without its parse would stamp
+    // raw firmware strings onto Asset.model, so the symbol and the parse seed
+    // together or not at all.
+    out.push({
+      ...NO_EXTRAS,
+      metricKey:     "model",
+      symbol:        p.model.symbol,
+      symbolB:       null,
+      type:          "scalar",
+      transform:     null,
+      parsePattern:  p.model.rowParse.pattern,
+      parseTemplate: p.model.rowParse.template,
     });
   }
   if (p.memory) {
     const ds = memoryQueryToDoubleScalar(p.memory);
     if (ds) {
       out.push({
+        ...NO_EXTRAS,
         metricKey: "memory",
         symbol:    ds.symbol,
         symbolB:   ds.symbolB,
+        // `walkSubtree` means the symbol names a table column, and the two
+        // forms collapse it differently: a BYTES pair is summed (Cisco's
+        // memory pools are per-pool rows that add up to the device's memory),
+        // a single PERCENT is averaged (Juniper's jnxOperatingBuffer is one
+        // reading per operating entity). This is the fact `pickVendorProfileMerged`
+        // could not express, which is why it hardcoded walkSubtree=false on
+        // the pair path and every seeded Cisco fell to HOST-RESOURCES-MIB.
+        aggregate: !p.memory.walkSubtree ? "none" : (ds.type === "double_scalar" ? "sum" : "avg"),
         // walkSubtree forms (Cisco / Juniper) walk a table column under the
         // hood — the runtime path averages/sums the result. The editable
         // profile records the type the resolver will use, not the wire
@@ -96,21 +206,33 @@ function profileToMetricSeeds(p: VendorTelemetryProfile): MetricSeed[] {
     const ds = diskQueryToDoubleScalar(p.disk);
     if (ds) {
       out.push({
+        ...NO_EXTRAS,
         metricKey: "storage",
         symbol:    ds.symbol,
         symbolB:   ds.symbolB,
         type:      ds.type,
         transform: ds.transform,
+        // The StorageSample.mountPath the pins and thresholds attach to —
+        // "flash" on a FortiSwitch. Without it the collector labels the row
+        // "system" and an operator's existing pin no longer matches.
+        label:     p.disk.mountPath ?? null,
       });
     }
   }
   if (p.temperature) {
     out.push({
+      ...NO_EXTRAS,
       metricKey: "temperature",
       symbol:    p.temperature.symbol,
       symbolB:   null,
-      type:      "scalar",
-      transform: null,
+      // "table" makes the collector walk the named sensor table
+      // (fgHwSensorTable) instead of doing a scalar GET of it. Hardcoding
+      // "scalar" here is what left the Fortinet row unable to say so.
+      type:      p.temperature.mode === "table" ? "table" : "scalar",
+      // Carried, not dropped: MikroTik's sensor is in tenths of a degree, and
+      // a row seeded without its transform charts 315 instead of 31.5.
+      transform: p.temperature.transform ?? null,
+      label:     p.temperature.sensorName ?? null,
     });
   }
   return out;
@@ -129,7 +251,11 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
   // canonical manufacturer. Pre-populate metric defaults from the hardcoded
   // entry that DOESN'T have a modelPattern (the "umbrella" entry — e.g.
   // FortiOS for Fortinet; the only entry for Cisco/Juniper/etc.).
-  const distinctMfrs = Array.from(new Set(SEED_MAP.map((s) => s.manufacturer)));
+  // Only the manufacturers whose MIB ships with Polaris — see
+  // PROFILE_SEEDED_MANUFACTURERS. The rest stay in SEED_MAP as the source of the
+  // symbol names the docs table is written from.
+  const distinctMfrs = Array.from(new Set(SEED_MAP.map((s) => s.manufacturer)))
+    .filter((m) => PROFILE_SEEDED_MANUFACTURERS.has(m));
   for (const mfrRaw of distinctMfrs) {
     const mfr = normalizeManufacturer(mfrRaw) ?? mfrRaw;
     const profileId = (await import("crypto")).randomUUID();
@@ -138,7 +264,6 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
     const umbrellaSeeds = umbrellaProfile ? profileToMetricSeeds(umbrellaProfile) : [];
 
     const metricRowIds = new Map<string, string>();
-    const METRIC_KEYS = ["cpu", "memory", "temperature", "interfaces", "lldp", "storage", "wirelessStations"];
 
     const txOps: any[] = [
       (prisma as any).manufacturerProfile.create({
@@ -146,9 +271,19 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
           id:           profileId,
           manufacturer: mfr,
           createdBy:    "system:seed",
+          // "Also applies when": the umbrella entry's own regex, which is
+          // exactly the set of spellings that entry was written to catch —
+          // an alias the seed did not key ("Aruba" canonicalizes away from
+          // "HP"), and OS-only identity ("Cisco IOS" with no manufacturer).
+          // Deriving it from `match` rather than retyping it is the whole
+          // point: the constant is the one place that list lives.
+          matchPattern: umbrellaProfile?.match.source ?? null,
         },
       }),
     ];
+    // METRIC_KEYS comes from the service, never a copy. The copy that used to
+    // live here silently omitted `model` when Phase 4 added it, so a fresh
+    // install got no identity query at all while an upgraded one did.
     for (const mk of METRIC_KEYS) {
       const seed = umbrellaSeeds.find((s) => s.metricKey === mk);
       const id = (await import("crypto")).randomUUID();
@@ -163,6 +298,10 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
             defaultSymbolB:   seed?.symbolB ?? null,
             defaultType:      seed?.type    ?? "scalar",
             defaultTransform: seed?.transform ?? null,
+            defaultAggregate:     seed?.aggregate ?? "none",
+            defaultLabel:         seed?.label ?? null,
+            defaultParsePattern:  seed?.parsePattern ?? null,
+            defaultParseTemplate: seed?.parseTemplate ?? null,
           },
         }),
       );
@@ -194,8 +333,13 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
   // override under the parent profile's matching metric row.
   for (const seedRow of SEED_MAP) {
     if (!seedRow.modelPattern) continue;
+    // Its manufacturer was filtered out of pass 1 for want of a bundled MIB —
+    // expected, and not worth a line in the boot log on every fresh install.
+    if (!PROFILE_SEEDED_MANUFACTURERS.has(seedRow.manufacturer)) continue;
     const parent = profilesByMfr.get(seedRow.manufacturer);
     if (!parent) {
+      // Now genuinely unexpected: a bundled manufacturer whose pass-1 create
+      // failed. Worth saying so.
       logger.warn({ vendorLabel: seedRow.vendorLabel }, "No parent profile for override seed; skipping");
       continue;
     }
@@ -205,21 +349,41 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
     for (const s of seeds) {
       const metricRowId = parent.metricRowIds.get(s.metricKey);
       if (!metricRowId) continue;
-      try {
-        await (prisma as any).manufacturerProfileMetricOverride.create({
-          data: {
-            metricRowId,
-            modelPattern: seedRow.modelPattern,
-            symbol:       s.symbol,
-            symbolB:      s.symbolB ?? null,
-            type:         s.type,
-            transform:    s.transform ?? null,
-            order:        0,
-          },
-        });
-        createdOverrides += 1;
-      } catch (err) {
-        logger.warn({ err, vendorLabel: seedRow.vendorLabel, metricKey: s.metricKey }, "Failed to seed override");
+      const shared = {
+        metricRowId,
+        symbol:        s.symbol,
+        symbolB:       s.symbolB ?? null,
+        type:          s.type,
+        transform:     s.transform ?? null,
+        aggregate:     s.aggregate,
+        label:         s.label,
+        parsePattern:  s.parsePattern,
+        parseTemplate: s.parseTemplate,
+        order:         0,
+      };
+      // TWO rows per sub-family metric, the same pair the Phase 4 migration
+      // inserts. The model-pattern row catches an asset whose model STATES
+      // the family — including one discovery mis-typed, since a stated model
+      // outranks an inferred type. The device-type row catches the one whose
+      // model is empty, which is the common case on a FortiSwitch (the
+      // managed-switch CMDB has no model field) and which used to be reachable
+      // only through the Fortinet-specific `fortinetClassHint`.
+      const rows: Array<Record<string, unknown>> = [
+        { ...shared, assetType: null, modelPattern: seedRow.modelPattern },
+      ];
+      if (seedRow.assetType) {
+        rows.push({ ...shared, assetType: seedRow.assetType, modelPattern: null });
+      }
+      for (const data of rows) {
+        try {
+          await (prisma as any).manufacturerProfileMetricOverride.create({ data });
+          createdOverrides += 1;
+        } catch (err) {
+          logger.warn(
+            { err, vendorLabel: seedRow.vendorLabel, metricKey: s.metricKey, assetType: data.assetType },
+            "Failed to seed override",
+          );
+        }
       }
     }
   }

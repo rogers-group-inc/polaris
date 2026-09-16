@@ -20,6 +20,29 @@
  */
 
 // ─── Unary transforms ────────────────────────────────────────────────────
+//
+// **Where these are actually applied.** `applyTransform` has ONE call site in
+// `src/`: the custom-widget collector in `monitoringService`. A unary transform
+// set on a ManufacturerProfile METRIC row (cpu / memory / temperature /
+// storage) is stored, shown in the profile table's Transform column, and never
+// applied to a reading. Found 2026-09-16 on the owner's production install,
+// where a FortiAP temperature row had carried `celsius_to_fahrenheit` for
+// months without converting anything.
+//
+// Two consequences before reaching for one of these on a metric row:
+//   - It will not do what the column implies. Either wire the stream to apply
+//     it, or solve the problem where it is actually solved.
+//   - For temperature specifically, converting units before storage is WRONG
+//     regardless: Polaris stores and alerts in Celsius and converts at render
+//     (`public/js/temp-unit.js`, `branding.temperatureUnit`). Rewriting stored
+//     values would silently re-point every temperature automation's threshold
+//     and step each sensor's history mid-series. SCALING a raw integer into its
+//     canonical unit (a DISPLAY-HINT "d-1" sensor, say) is a different and
+//     legitimate operation — it just has no implementation yet.
+//
+// `applyCombiner` below has NO call site at all. A double-scalar row's combiner
+// is read as a STATEMENT OF SHAPE — which two of used/total/free the symbols
+// are — by `profileResolver` and the disk/memory collectors, not executed here.
 
 export type TransformKind =
   | "celsius_to_fahrenheit"
@@ -30,7 +53,8 @@ export type TransformKind =
   | "ticks_to_seconds"
   | "ratio_to_percent"
   | "percent_to_ratio"
-  | "signed_to_unsigned";
+  | "signed_to_unsigned"
+  | "tenths_to_units";
 
 export const TRANSFORM_KINDS: TransformKind[] = [
   "celsius_to_fahrenheit",
@@ -42,6 +66,7 @@ export const TRANSFORM_KINDS: TransformKind[] = [
   "ratio_to_percent",
   "percent_to_ratio",
   "signed_to_unsigned",
+  "tenths_to_units",
 ];
 
 export const TRANSFORM_LABELS: Record<TransformKind, string> = {
@@ -54,6 +79,7 @@ export const TRANSFORM_LABELS: Record<TransformKind, string> = {
   ratio_to_percent:      "Ratio (0..1) → Percent (0..100)",
   percent_to_ratio:      "Percent (0..100) → Ratio (0..1)",
   signed_to_unsigned:    "Signed Int32 → Unsigned (negative values shifted by 2³²)",
+  tenths_to_units:       "Tenths → Units (DISPLAY-HINT d-1)",
 };
 
 export function isTransformKind(value: unknown): value is TransformKind {
@@ -80,6 +106,10 @@ export function applyTransform(value: number | null | undefined, kind: Transform
     case "ratio_to_percent":      return value * 100;
     case "percent_to_ratio":      return value / 100;
     case "signed_to_unsigned":    return value < 0 ? value + 2 ** 32 : value;
+    // SMI DISPLAY-HINT "d-1" — the raw integer carries one implied decimal
+    // place, so 315 means 31.5. Common on vendor sensor objects; MikroTik's
+    // Temperature / Power / Voltage textual conventions all use it.
+    case "tenths_to_units":       return value / 10;
     default:                      return value;
   }
 }

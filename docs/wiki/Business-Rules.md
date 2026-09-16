@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **64 numbered rules**. Each one records a decision *and* the
+Polaris carries **69 numbered rules**. Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -447,9 +447,34 @@ configured. The email is marked **TEST** in its subject, in a banner above the
 body, and in the plain-text alternative, and that marking is added at send time,
 so customizing the email template cannot remove it.
 
+### Rule 68
+**Polaris ships two kinds of MIB, and only one of them is yours to remove.**
+The generic IETF/IEEE modules are **built in**: every install has them, nobody
+can delete or edit them, and they change only when you update Polaris. That is
+what makes interfaces, LLDP, PoE, VLAN tables, storage and ENTITY sensors
+collect the moment SNMP works.
+
+A **manufacturer's own MIB** is different. Where Polaris ships one — Cisco's
+today — it is loaded into your MIB Database on the first start of a **fresh
+install**, where it sits alongside anything you uploaded and **you can delete
+it**. An install that was upgraded rather than installed fresh receives none:
+your MIB Database is yours, and an upgrade does not add vendor files to it.
+
+A **manufacturer profile** says which symbol *is* the CPU and which pair *is*
+the memory — the half a MIB cannot tell you. Polaris ships one only where it
+overrides something the generic MIBs cannot already do, which is why Cisco has
+one (per-pool memory, and a 5-second CPU where the standard MIB gives a
+5-minute average) and MikroTik has none (RouterOS reports CPU, memory and
+storage through the standard MIB already).
+
+Deleting either is supported and neither is silent. Without the profile, that
+manufacturer falls back to the standard MIBs — the device keeps being
+monitored, you lose only the vendor-specific figures. Without the MIB, the
+profile's rows read *unresolved* and name the module to re-upload.
+
 ---
 
-### Rule 68
+### Rule 69
 **A reservation count is of addresses held, and a release is history.** Polaris
 never deletes a reservation when it is given up — it marks it `released` or
 `expired` and keeps it, because that history is how you answer "who had .47 in

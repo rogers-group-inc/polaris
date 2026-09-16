@@ -290,7 +290,7 @@ export async function listSubnets(filter: ListSubnetsFilter = {}) {
       include: {
         block: { select: { name: true, cidr: true } },
         integration: { select: { id: true, name: true } },
-        // FILTERED on purpose (business rule 68): `_count.reservations` is what
+        // FILTERED on purpose (business rule 69): `_count.reservations` is what
         // the Networks list's Reservations column shows and sorts on, so it
         // counts the addresses actually held — active rows carrying an IP.
         // Released and expired rows are kept forever (soft-release; only
@@ -310,7 +310,7 @@ export async function listSubnets(filter: ListSubnetsFilter = {}) {
       take: limit,
     }),
     prisma.subnet.count({ where }),
-    // Every reservation row, live or not, grouped by subnet (business rule 68):
+    // Every reservation row, live or not, grouped by subnet (business rule 69):
     // the delete / archive confirmations name how many rows the cascade takes
     // with it, and that number has to include the released history the column
     // hides — subnetArchiveService copies rows with no status filter at all. One
