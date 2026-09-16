@@ -17008,12 +17008,8 @@ function _renderSnmpMibTree(structure, onPick, selectedName) {
   });
 
   function rowHtml(name, suffixHtml) {
-    var isSel = name === selectedName;
-    var selStyle = isSel
-      ? "background:var(--color-primary-bg,rgba(99,179,237,0.18));color:var(--color-primary,#4fc3f7)"
-      : "";
     return '<div class="snmp-mib-tree-row" data-name="' + escapeHtml(name) + '" ' +
-      'style="padding:0.3rem 0.5rem;cursor:pointer;border-radius:4px;font-family:var(--font-mono,monospace);font-size:0.78rem;' + selStyle + '">' +
+      'style="padding:0.3rem 0.5rem;cursor:pointer;border-radius:4px;font-family:var(--font-mono,monospace);font-size:0.78rem">' +
       escapeHtml(name) + (suffixHtml || "") +
     "</div>";
   }
@@ -17058,8 +17054,24 @@ function _renderSnmpMibTree(structure, onPick, selectedName) {
       "</div>" +
     "</div>";
 
+  _applySnmpMibTreeSelection(selectedName);
+
   mount.querySelectorAll(".snmp-mib-tree-row").forEach(function (el) {
     el.addEventListener("click", function () { onPick(el.getAttribute("data-name")); });
+  });
+}
+
+// Moves the selection highlight without rebuilding the tree. Re-rendering
+// would replace the scroller element, and a fresh element starts at
+// scrollTop 0 — so picking a symbol halfway down the list threw the
+// operator back to the top of it. Restyle the existing rows in place.
+function _applySnmpMibTreeSelection(selectedName) {
+  var mount = document.getElementById("snmp-walk-mib-tree");
+  if (!mount) return;
+  mount.querySelectorAll(".snmp-mib-tree-row").forEach(function (el) {
+    var isSel = el.getAttribute("data-name") === selectedName;
+    el.style.background = isSel ? "var(--color-primary-bg,rgba(99,179,237,0.18))" : "";
+    el.style.color = isSel ? "var(--color-primary,#4fc3f7)" : "";
   });
 }
 
@@ -17231,7 +17243,7 @@ function _wireSnmpWalkTab(a) {
       // jumping the modal's scroll container back to the top and yanking the
       // tree out from under the operator who just clicked a symbol.
       oidInput.focus({ preventScroll: true });
-      _renderSnmpMibTree(_snmpMibStructureCache[mibId], pick, name);
+      _applySnmpMibTreeSelection(name);
     };
     var cached = _snmpMibStructureCache[mibId];
     if (cached) {
