@@ -38,6 +38,34 @@ an operator is trying to reason about when they look. A Cc rider is a reader the
 not name. So a reader who checks the To line to see who else is on this ALERT still gets a
 confidently partial answer, and the partiality is invisible: the header looks complete.
 
+**The second of those three reasons was the one that had to go, and it took the alert scope
+with it (2026-09-16).** An operator read a reminder whose footer said `Email sent to <the
+division manager>` and concluded their reminders were escalating over their head. They were
+not: the manager sat on the T+30 tier and on no reminder at all. But the footer read every
+delivery row the alert had ever produced, so from the moment tier 1 fired, every later
+reminder named them — and the automation's own page, which showed the manager only under
+Escalation, read as though it were lying.
+
+"Who else knows about this alert" was an honest question and the answer was accurate. It was
+simply not the question a line at the bottom of one email gets read as. A footnote on a
+message is read as a claim about that message; no amount of correctness in the header comment
+reaches the person holding the phone at 3am. So **both lines now scope to the SEND**: the fire
+names the fire's recipients, a reminder names that reminder's, an escalation tier names the
+tier's.
+
+**The grain is the FAN-OUT, not the delivery row**, and that distinction is what keeps the
+feature alive rather than quietly killing it. One `executeActions` call is one send:
+`expandDeliveries` stamps the id it mints into every row's `meta.dispatch`, and
+`buildRecipientBlocks` narrows on that stamp — in the query, because a weekend-long outage
+reminding every five minutes leaves hundreds of rows hanging off one alert. Scoped to the
+row instead, an automation that mails the NOC and pushes the on-call would stop telling the
+NOC that the phone buzzed, which is the entire reason `{push.recipients}` was written. Scoped
+to the fan-out, it still does: those are two actions of one fire. The sweep's repeat pass runs
+one action per call, which is precisely what stops a reminder from borrowing a tier's
+audience. A row carrying no stamp — queued before this shipped and still draining — falls
+back to the alert-wide read rather than losing its footer, the same "a slightly-too-wide
+answer beats no answer" posture the `meta.userId` stamp already takes.
+
 Prod 2026-09-14 is the case that made it concrete. A FortiGate-down alert routed its reminder
 to the site's two people at region level 1 and escalated hourly to the division at level 2.
 Reading any one of those emails, none of the four recipients could see the other three: the
@@ -48,9 +76,9 @@ one message again — and the second half cannot be: an escalation tier that has
 has no recipients to name.
 
 So `{email.recipients}` renders beside its push sibling in the same 11px footer block, sourced
-from the alert's own email delivery rows, deduped by address across every copy, every notify
-action and every pass. Both lines scope to the ALERT rather than to the send, and both count
-ROWS rather than outcomes — the email and the push drain in the same pass, sometimes the same
+from the send's own email delivery rows, deduped by address across every copy and every notify
+action of that fan-out. Both lines scope to the SEND rather than to the alert (see above —
+they were alert-wide until 2026-09-16), and both count ROWS rather than outcomes — the email and the push drain in the same pass, sometimes the same
 chunk, and a push service's 202 was never proof of delivery anyway ("sent to" is the honest
 verb, the same reachability posture `preferenceWithholds` takes).
 
@@ -556,3 +584,220 @@ When adding a new `{asset.*}` token, add its field to `SAMPLE_ALERT_DEVICE` as w
 engine's `ASSET_DETAIL_SELECT`. The specimen's value is that it prunes the same rows the real
 alert prunes; a field missing here mails a blank row for a fact a real alert prints, and the
 test quietly stops being faithful without anything failing.
+
+
+---
+
+## Rule 66 — A measurement window may be counted in readings, and then the hold counts poll groups
+
+A time window takes whatever samples landed inside it, which means the SAMPLE SIZE of an
+aggregated automation is a function of how well the device happens to be working. `avg` over
+an hour on a healthy device is the mean of sixty readings; on a device dropping three
+quarters of its probes it is the mean of the seventeen that answered, under the same
+threshold, wearing the same name, with nothing on screen saying the statistic changed. That
+is not a rounding problem, it is two different rules sharing one definition — and it gets
+worse exactly when the device is worst.
+
+**`windowPolls` states the window as a COUNT of readings instead: the last N samples that
+produced a value.** Misses are not counted, not filled, and not fabricated — a failed probe
+writes a NULL `responseTimeMs` and simply is not a member of the window. What stretches under
+loss is the WALL CLOCK the window spans, not the number of measurements in it, so the reading
+means the same thing at 0% loss and at 40%: *when this device answers, this is how long it
+takes*. `rollingAggregate` is the arithmetic, and its defining test is an equality — a holed
+series and a clean series carrying the same N values produce the same number.
+
+**Two shapes of window were considered and rejected before this one.** Filling a miss with
+**0 ms** flatters a dying device: the Roanoke FortiAP that prompted this read 507 ms over the
+polls it answered and would have read 144 ms with its 43 misses counted as zero, so the alert
+would have CLEARED as the device got worse. Median does not rescue that — past 50% loss the
+zeros ARE the distribution and the median is 0 — and it is the trap Zabbix's `icmppingsec`
+is known for, where every latency trigger has to be guarded with `and icmpping=1`. Filling
+with the **probe timeout** fails the other way: it poisons a latency metric into a loss alarm
+that fires about a device whose successful responses are perfectly fine. The standard every
+other NMS keeps — Nagios `check_icmp`'s `rta`/`pl` pair, SmokePing's median-of-replies with
+loss as the line colour, the SRE convention that latency is measured over SUCCESSFUL requests
+and failures are a separate availability signal — is that a failed probe's latency is
+UNDEFINED rather than any number, and packet loss is its own metric with its own threshold
+(business rule 29) and its own down detection (business rule 36).
+
+**The hold composes with it, and only with it.** Under a time window `forPolls` is refused,
+because there the window IS the period and a second clock on top would be two clocks doing
+one job. Under a count window the readings are cut into DISJOINT GROUPS of N, so there is a
+series of group aggregates to count and `forPolls` means *M consecutive GROUPS over the line*.
+`reduceReadings` hands those group aggregates on AS the series, which is why every existing
+mechanism keeps working untouched: `leadingRun` counts the run, `tierRuns` gives each severity
+tier its own run against the same series, and the engine's fire/clear path never learns that
+the numbers it is counting were derived. That composition is the thing a time window cannot
+express: one 1500 ms spike inside an otherwise healthy 5-reading group never clears the
+threshold, so the run never starts, while a genuine climb clears it in group after group.
+
+**The groups step by N, never by 1, and that is the load-bearing half of the design.** The
+first cut of this shipped as a ROLLING window recomputed at every reading, and the flaw was
+statistical rather than mechanical: consecutive rolling windows overlap by N-1 samples, so
+"sustained for 3" was three near-identical averages agreeing — barely more evidence than one,
+while reading like three times as much. Disjoint groups are three INDEPENDENT looks at the
+device, which is what an operator means by "it has been slow for a while". It also makes the
+wall clock legible and predictable: time to alert is **groupSize x sustained** polls, not
+groupSize + sustained - 1, which is what the builder's own labels now promise ("Poll Group
+Size" of 10 held for 3 groups = 30 polls = 30 minutes at a 60s cadence). The consequence for
+the engine is that `lookbackMsFor` sizes a count window from the PRODUCT of the two counts
+rather than their sum — get that wrong and the hold can never be satisfied, because the query
+excluded the readings the older groups needed. A trailing partial group is dropped for the
+same reason a partial window is.
+
+**Not enough readings is NO reading, never a partial window.** An aggregate over fewer than N
+samples is a different statistic under the same threshold, so `rollingAggregate` returns
+empty and the asset is skipped exactly as one that has reported nothing is skipped. This is
+what bounds the feature's cost: `lookbackMsFor` reaches back over the wall-clock mirror of
+both counts, doubled — enough for a device losing half its probes — and a device worse than
+that produces too few readings to fill the window and abstains. Doubling rather than more is
+a fleet-scale decision, not a correctness one: this fetch is already the heaviest thing an
+automation does at 2000 assets, and a device at that loss rate is a packet-loss and
+down-detection problem those metrics already own.
+
+**Both counts keep their wall-clock mirrors.** `windowSec` beside `windowPolls` and
+`forDurationSec` beside `forPolls` are what size the engine's sample fetch and what the prose
+reads; the builder always writes them, and an API-authored rule that omits them gets the full
+6-hour lookback rather than a guessed cadence. The BUILDER states the unit the rule actually
+stores — "Measured over" with a minutes/polls picker, the breach counter appearing only
+beside a count window (and beside a ratio's History, the other window with a free hold axis)
+— and `tgStampWindowPolls` STRIPS the count from every leaf that must not carry it, because
+the engine prefers `windowPolls` wherever it finds one and a leftover would keep measuring in
+readings while the field, the sentence and the formula all said minutes.
+
+
+---
+
+## Rule 67 — A missed response-time poll is the timeout it cost, and an outage resets the window
+
+Response time is the one metric whose FAILURE has a duration attached. Every other metric's
+miss is an absence — the collector did not read a CPU percentage, and there is no number to
+put there. A failed response-time probe waited the asset's full `probeTimeoutMs` and heard
+nothing, which is a fact about how the device is behaving and is measured in the same unit as
+the metric itself.
+
+Business rule 66 dropped misses out of the count window, and for a general metric that is
+right. For response time it is a hole: a device answering one poll in ten reads exactly as
+fast as one answering every poll, because both windows contain only the answers. **A miss that
+did not put the asset Down is therefore filled with `AssetMonitorSample.timeoutMs`** — the
+resolved timeout for that asset AT PROBE TIME, recorded on the row by `recordProbeResult`
+rather than re-resolved when the rule runs. Recorded for two reasons: a window of past probes
+must use the timeout that actually applied to each one rather than whatever the setting says
+today, and resolving per-asset monitor settings inside the engine's tick would mean widening
+its deliberately tight asset select at 2000 assets. A failure with NO recorded timeout is a row
+written before the column existed; those stay excluded, which is exactly the pre-feature
+behaviour and self-heals within one window.
+
+**What makes the fill safe is the reset.** Filling misses with the timeout is honest only while
+the device is still considered reachable; through a real outage it would turn a latency metric
+into a loss alarm, firing about the thing the down automation already owns — which is the
+objection that sank "count a miss as the timeout" as a general rule, and the exact failure
+business rule 29h exists to stop for packet loss in the metric next door. So **walking
+newest-first, everything at and before the most recent `assetDown` probe is discarded.**
+`assetDown` is stamped from the status the probe RESULTS in (`monitorStatusFor`), so the line
+between "degraded" and "out" is the operator's own `missedPolls` (business rule 36) rather than
+a second threshold invented here: an amber miss — below their threshold, not an outage yet —
+still counts and is still filled, and only the misses their own automation calls Down reset
+anything.
+
+**The consequence is deliberate: a recovered device has no reading until its window refills.**
+`rollingAggregate` refuses a partial window (business rule 66), so at a 60s cadence a device is
+quiet for ten minutes after an outage. That is a settling period rather than a blind spot —
+`down` was a different automation's subject the whole time, and the alternative is comparing an
+average of one or two samples against a threshold meant for ten, at the moment a device is
+least stable.
+
+**Response time therefore DEFAULTS to a count window of 10** in the builder, and the unit is
+chosen for the operator rather than offered neutrally: picking minutes for response time is
+picking the denominator that floats. It is a default, not a lock — the number and the unit stay
+editable — but the default only asserts itself on a draft that states no window at all, and
+never after the operator has touched the picker (`data-touched`) or on a stored rule.
+**Existing response-time rules were migrated** by the `V7` one-shot
+(`seedBaselineAutomationsV7ResponseTimeWindowAt`), which unlike V5 does NOT spare edited rules:
+V5 was adding a new knob whose default an operator might reasonably disagree with, while this
+fixes what the existing knob MEASURES, and an edited rule is no less wrong than an unedited one.
+It names every rule it changed and its old window in a warning Event, because it alters when
+existing alerts fire and an operator must be able to see it happened and put a rule back.
+
+## Rule 68 — What Polaris ships and what the operator owns are two different kinds of MIB
+
+Polaris resolves a vendor's telemetry by MIB SYMBOL NAME, and the number behind
+that name comes from a MIB. Since the vendor OID seed was removed (the uniform-SNMP
+work, 2026-09) Polaris ships no vendor OID numbers in code at all, which makes
+*which MIBs ship, and on what terms* an operator-facing question rather than an
+implementation detail.
+
+**Two kinds, and the difference is a promise.**
+
+`services/stdMibs/` holds the generic IETF/IEEE modules. They are read off disk by
+`oidRegistry.loadStandardLayer`, exist in every install, and are removable by
+nobody — they change when the product is updated. That is correct for standards
+every device speaks: there is nothing to opt out of, and interfaces, LLDP, PoE,
+bridge/VLAN, `hrStorage` and ENTITY sensors therefore collect the moment SNMP does.
+
+`services/vendorMibs/` holds a manufacturer's own public MIB, and it is **seeded,
+not bundled**: `jobs/seedVendorMibs.ts` inserts each as a `MibFile` row at
+manufacturer scope through `mibService.createMib` — the same function the upload
+route calls, so a seeded MIB is parsed, dup-checked and registry-refreshed
+identically to an uploaded one and there is no second code path to drift. It then
+appears in the MIB Database like anything the operator uploaded, and **they can
+delete it**. That is correct for a vendor's file: they may hold a newer one, may
+object to it shipping, or may simply not run that gear.
+
+The two must not be confused in the one direction that is silent. `stdMibs/` is
+GLOBBED, so a vendor module dropped there becomes part of the layer nobody can
+remove, and the only symptom is an operator unable to delete a file they never
+asked for. `tests/unit/seedVendorMibs.test.ts` fails if a shipped vendor module
+appears there, and fails again if any `stdMibs/` module anchors under `enterprises`.
+
+**Seeding is fresh-installs-only.** The job skips any database where
+`seedManufacturerProfilesSeededAt` is already stamped, because that marker can only
+exist if an earlier release ran here — which makes this an upgrade. An existing MIB
+Database is curated by its operator, and an upgrade that silently adds vendor
+modules is editing their data. Measured on the owner's production fleet
+(2026-09-16): 2,416 monitored assets, of which **zero** were Cisco. The ordering in
+`app.ts` is load-bearing in both directions — the job runs before
+`seedManufacturerProfiles` so the profiles it seeds resolve on their first readiness
+check, and because it runs first the marker is still absent on a genuinely fresh
+install. Flip the order and a fresh install would read itself as an upgrade and seed
+nothing, for ever, without an error.
+
+**A manufacturer profile is only ever an override.** It says which symbol *is* the
+CPU, which pair *is* the memory — the half a MIB cannot tell you. It earns its place
+only by saying something the generic MIBs cannot, and two vendors show both sides of
+that test:
+
+- **Cisco ships one.** `cpmCPUTotal5secRev` is the 5-second CPU where
+  `hrProcessorLoad` is a 5-minute average on many IOS platforms, and
+  `ciscoMemoryPoolUsed`/`Free` are per-pool bytes that HOST-RESOURCES-MIB's single
+  RAM row cannot distinguish. Its `CISCO-SMI` anchor ships alongside, because the
+  leaf modules resolve to nothing without it.
+- **MikroTik ships neither profile nor MIB.** RouterOS reports CPU, memory and
+  storage through HOST-RESOURCES-MIB, which Polaris already reads, so there is
+  nothing to override. Its long-standing `cpu` row named `mtxrSystemUserCPULoad`, a
+  symbol that exists in **no** MikroTik MIB (checked against MikroTik's own download
+  and the LibreNMS mirror) and had therefore never resolved on any install. The one
+  thing `MIKROTIK-MIB` does add — the `mtxrHealth` temperature sensor — is
+  DISPLAY-HINT `d-1`, tenths of a degree, and needs scaling AT COLLECTION that no
+  collector performs, so the row would have charted 315 instead of 31.5.
+
+That second case is the rule's teeth: shipping a profile for a vendor the generic
+MIBs already answer produces a page of `N UNRESOLVED` rows and a warning Event on
+first boot, and an operator handed something broken-looking they never asked for.
+
+**Both shipped pieces are deletable, and neither deletion is silent.** Without the
+profile, `pickDbProfile` returns null, which is the collectors' signal to use the
+standard MIBs — the device keeps being monitored and only the vendor-specific
+figures are lost. Without the MIB, the profile's rows report `unresolved` and name
+the module to re-upload. Nothing is unrecoverable, which is what makes shipping
+either of them safe.
+
+**A caution for anyone finishing the transform feature.** A unary transform on a
+profile METRIC row is stored, shown in the Transform column, and never applied:
+`applyTransform` has one call site in `src/`, the custom-widget collector. Scaling a
+raw integer into its canonical unit at collection is a legitimate thing to build;
+converting Celsius to Fahrenheit before storage is not, and must not ride along with
+it — Polaris stores, rolls up and ALERTS in Celsius, and converts at render only
+(`public/js/temp-unit.js`, `branding.temperatureUnit`). Rewriting stored values would
+silently re-point every temperature automation's threshold and step each sensor's
+history mid-series.

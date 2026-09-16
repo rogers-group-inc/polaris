@@ -5,8 +5,9 @@
  * (`services/vendorMibs/`) into the MIB Database as ordinary entries.
  * Idempotent (marker-keyed in Setting).
  *
- * **These are seeded, not bundled, and the distinction is the point.** Polaris
- * ships two kinds of MIB and an operator's relationship to them differs:
+ * **These are seeded, not bundled, and the distinction is the point** — business
+ * rule 68. Polaris ships two kinds of MIB and an operator's relationship to
+ * them differs:
  *
  *   - `services/stdMibs/` — the generic IETF/IEEE modules. Read off disk by
  *     `oidRegistry.loadStandardLayer`, present in every install, not rows in

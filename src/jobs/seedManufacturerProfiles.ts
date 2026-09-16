@@ -77,7 +77,7 @@ export const SEED_MAP: SeedRow[] = [
  * ships and seeds (`jobs/seedVendorMibs.ts` → `services/vendorMibs/`).
  *
  * A manufacturer profile is an OVERRIDE layer over what the generic MIBs
- * already do. Two rules follow, and both are load-bearing:
+ * already do — business rule 68. Two rules follow, and both are load-bearing:
  *
  *   1. **Seed a profile only where its MIB is seeded too.** Otherwise the
  *      profile names symbols nothing can resolve: an `N UNRESOLVED` page, a
