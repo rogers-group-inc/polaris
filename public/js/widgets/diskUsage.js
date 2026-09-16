@@ -13,6 +13,7 @@
   function render(el, config, rows) {
     PolarisTopN.renderRows(el, rows || [], {
       unit: "%", thresholds: THRESHOLDS, baseColor: "#4fc3f7", emptyText: EMPTY, config: config || {}, fillTo: 20,
+      valueNoun: "disk usage",
     });
   }
 
@@ -27,7 +28,7 @@
     description: "Monitored filesystems with the highest used percentage, per volume.",
     defaultSize: { width: 4, height: 1 },
     minSize: { width: 3, height: 1 },
-    defaultConfig: { rowLimit: 20, regionScope: "mine" },
+    defaultConfig: { rowLimit: 20, regionScope: "mine", sortBy: "severity" },
     requiredPermission: { key: "assets", level: "read" },
 
     fetchData: function (config) {

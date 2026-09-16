@@ -305,7 +305,7 @@ describe("event-triggered alerts", () => {
 });
 
 describe("gear config", () => {
-  it("offers a row limit seeded at the default, and warns that the cap is severity-ordered", () => {
+  it("offers a row limit seeded at the default, and warns that the cap follows the sort order", () => {
     const el = mountWidget();
     const changes: Array<[string, unknown]> = [];
     mod.renderConfig(el, {}, (k, v) => changes.push([k, v]));
@@ -313,8 +313,11 @@ describe("gear config", () => {
     const selected = Array.from(sel.querySelectorAll("option"))
       .filter((o: any) => o.hasAttribute("selected")).map((o: any) => o.getAttribute("value"));
     expect(selected).toEqual(["50"]);
-    // The hint is what makes a low limit's behaviour predictable.
-    expect(el.textContent).toContain("most-severe-first");
+    // The hint is what makes a low limit's behaviour predictable. Since the
+    // order became the operator's (the ⇅ header button), the hint names THAT
+    // rather than claiming a severity order the widget may no longer be on.
+    expect(el.textContent).toContain("sort order");
+    expect(el.textContent).toContain("least severe by default");
     // …and the minimum-severity control still follows it.
     expect(el.querySelector("[data-minsev]")).toBeTruthy();
   });

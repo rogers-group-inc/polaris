@@ -23,6 +23,36 @@
     return baseColor || "#4fc3f7";
   }
 
+  // The ⇅ header button's menu, shared by all six top-N widgets. `valueNoun`
+  // names what the bar measures ("CPU", "response time", …) so the two value
+  // options read as a sentence about this widget rather than a generic
+  // "Value, highest first".
+  //
+  // The red guarantee still runs after the sort, so a red row shows whatever
+  // the order — but on "Lowest first" everything else it pushes past the Row
+  // limit is the quiet end of the fleet, which is the point of asking for it.
+  var CMP = PolarisWidgets.sortCmp;
+  function valueOf(r) { return r.value; }
+  function sortsFor(opts) {
+    var noun = opts.valueNoun || "value";
+    return [
+      {
+        key: "severity",
+        label: "Severity, then " + noun,
+        cmp: CMP.then(CMP.severity(), CMP.high(valueOf)),
+      },
+      { key: "highest", label: "Highest " + noun + " first", cmp: CMP.high(valueOf) },
+      { key: "lowest", label: "Lowest " + noun + " first", cmp: CMP.low(valueOf) },
+      // Stable on a wallboard: rows keep their places across the refresh
+      // instead of re-ranking every time a sample lands.
+      {
+        key: "hostname",
+        label: "Hostname A–Z",
+        cmp: CMP.then(CMP.text(function (r) { return r.hostname || r.ipAddress; }), CMP.text(function (r) { return r.detail; })),
+      },
+    ];
+  }
+
   function formatValue(value, unit) {
     if (unit === "ms") return Math.round(value) + " ms";
     if (unit === "°C") return Math.round(value) + " °C";
@@ -33,8 +63,10 @@
    * el       — widget body
    * rows     — [{ id, hostname, ipAddress, value }]
    * opts     — { unit:"%"|"ms"|"°C", thresholds, baseColor, emptyText, config,
-   *              fillTo }
-   *            config: { rowLimit }
+   *              fillTo, valueNoun }
+   *            config: { rowLimit, sortBy }
+   *            valueNoun: what the bar measures ("CPU", "response time"), used
+   *            to phrase this widget's two value sort options.
    *            fillTo: red-guarantee mode (Highest Avg CPU/Memory, Disk, Slowest
    *            Response). The operator's Row limit governs how many rows show
    *            (top-N by value), EXCEPT that every RED row (at/above the top
@@ -50,13 +82,14 @@
     // anything else looks at the set, so the export and the red guarantee both
     // operate on the rows the operator asked to see.
     rows = PolarisWidgets.filterByMinSeverity(rows, cfg);
-    // SEVERITY-FIRST: rows whose asset carries an active automation alert sort
-    // above unalerted rows (by the alert's severity rank, attached server-side
-    // as alertRank), then by value desc within a rank.
-    var sorted = (rows || []).slice().sort(function (a, b) {
-      var d = (b.alertRank || 0) - (a.alertRank || 0);
-      return d !== 0 ? d : (b.value || 0) - (a.value || 0);
-    });
+    // Operator's sort (⇅ header button, edit mode). options[0] is the shared
+    // SEVERITY-FIRST order these widgets have always used — rows whose asset
+    // carries an active automation alert lead (by the alert's severity rank,
+    // attached server-side as alertRank), then value desc within a rank — so a
+    // dashboard saved before this control keeps behaving exactly as it did.
+    var sorts = sortsFor(opts);
+    var sorted = PolarisWidgets.applySort(rows, sorts, cfg);
+    PolarisWidgets.setHeaderSort(el, { options: sorts, config: cfg });
     // Header export: the full ranked set (pre row-limit, post the
     // gear's minimum-severity filter), severity-tiered on each asset's active
     // automation alert. The filename defaults from the widget's data-type

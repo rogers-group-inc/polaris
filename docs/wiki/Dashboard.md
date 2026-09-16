@@ -17,6 +17,8 @@ two people on the same install legitimately see different dashboards.
 | Move one | drag its header |
 | Resize | drag the edge; widgets snap to the column grid |
 | Configure one | the **gear** on the widget — most carry options (row count, filters, grouping) |
+| Sort one | the **⇅** button on the widget's header, while you are customizing |
+| Export one to CSV | the **⤓** button on the widget's header, while you are *not* customizing |
 | Remove one | the widget's own menu |
 | Change column count | the canvas control |
 
@@ -117,6 +119,26 @@ them.
 
 **Maintenance is its own state, never an outage.** A device inside a
 maintenance window shows a purple Maintenance pill and is not counted as down.
+
+**The sort order also decides what the row limit hides.** Every listing widget
+shows its rows in an order you choose (the **⇅** button, while customizing) and
+*then* cuts the list to its Row limit. So the order is not only cosmetic: on
+"Severity, then newest" a low limit hides the least severe rows, and on "Down
+longest first" it hides the most recent ones. Each widget's first option is the
+order it has always used, and a widget you never touch keeps it.
+
+Besides the default, the listing widgets offer **Most recent first**, **Down
+longest / Longest outstanding first** (the problem nobody has dealt with, which
+a severity-first list buries at the bottom), **Hostname A–Z** — worth choosing
+for a wall display, because rows then keep their places instead of jumping on
+every refresh — and, where the widget has one, its place: **Site**, **Division**
+or **Gate**, A–Z then severity. Active Alerts adds **Unacknowledged first**, and
+the ranked widgets (CPU, memory, response time, loss, disk, temperature,
+storage forecast) offer highest-first and lowest-first on their own value.
+
+A widget that groups its rows follows you: pick an order and the groups
+re-order to match it, instead of staying on the biggest-group-first order they
+use by default.
 
 **Conflict Queue is role-scoped, not filtered for tidiness.** If it looks empty
 and you expected rows, check whether your role can resolve that conflict kind

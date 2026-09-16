@@ -1085,6 +1085,22 @@
     /** Widgets on the canvas — what the save modal reports it is about to store. */
     widgetCount: function () { return totalWidgets(); },
 
+    /**
+     * Write one key of a widget's config — persist + re-render, exactly as the
+     * gear popover's own onChange does. The seam exists for controls that live
+     * on the widget HEADER rather than in the popover (the ⇅ sort button,
+     * PolarisWidgets.setHeaderSort): those are stamped from widgets/index.js,
+     * which is handed a body element and a config object and knows nothing
+     * about the canvas. Refuses while viewing a published dashboard — that
+     * layout is someone else's row and this page only renders it.
+     */
+    setWidgetConfig: function (id, key, value) {
+      if (state.external) return false;
+      if (!findWidget(id)) return false;
+      updateConfig(id, key, value);
+      return true;
+    },
+
     /** Id of the published dashboard being viewed, or null. */
     publishedId: function () { return state.external ? state.external.id : null; },
 

@@ -79,6 +79,45 @@
   var DEFAULT_ROWS = 50;
 
   function severityOf(r) { return r.severity; }
+  function rankOf(r) { return RANK[severityOf(r)] || 0; }
+  function raisedAtOf(r) { return r.raisedAt; }
+
+  // The ⇅ header button's menu (edit mode). options[0] is the feed's own
+  // historical order, so a dashboard saved before this control keeps behaving
+  // exactly as it did. The cap slices whatever order is chosen, so a sort here
+  // also decides which alerts the Row limit hides.
+  //
+  // No site/division option: an alert row carries neither (nocDashboardService's
+  // ActiveAlertRow is built from Notification, not from the asset), and an
+  // event-triggered alert has no device to take one from.
+  var CMP = PolarisWidgets.sortCmp;
+  var SORTS = [
+    {
+      key: "severity",
+      label: "Severity, then newest",
+      cmp: CMP.then(CMP.severity(rankOf), CMP.newest(raisedAtOf)),
+    },
+    { key: "newest", label: "Most recent first", cmp: CMP.newest(raisedAtOf) },
+    // The alert nobody has dealt with in three days — the one a severity-first
+    // feed buries at the bottom.
+    { key: "oldest", label: "Longest outstanding first", cmp: CMP.oldest(raisedAtOf) },
+    {
+      key: "unacked",
+      label: "Unacknowledged first",
+      cmp: CMP.then(
+        CMP.flagFirst(function (r) { return !r.acknowledged; }),
+        CMP.severity(rankOf),
+        CMP.newest(raisedAtOf)
+      ),
+    },
+    // Stable on a wallboard: rows keep their places across the 30s refresh
+    // instead of jumping as severities and ages change under the auto-scroll.
+    {
+      key: "hostname",
+      label: "Hostname A–Z",
+      cmp: CMP.then(CMP.text(function (r) { return r.hostname; }), CMP.newest(raisedAtOf)),
+    },
+  ];
 
   // Whether the operator wants alerts raised by EVENT-triggered automations in
   // this widget (config.eventAlerts: "show" | "hide", default show — an
@@ -123,6 +162,10 @@
       if (hideEvents && r.triggerType === "event") return false;
       return (RANK[severityOf(r)] || 0) >= min;
     });
+    // Operator's sort (⇅, edit mode) — applied BEFORE the export provider and
+    // the clip so all three agree on which alerts lead and which get cut.
+    filtered = PolarisWidgets.applySort(filtered, SORTS, config);
+    PolarisWidgets.setHeaderSort(el, { options: SORTS, config: config });
     // Header export: the configured-severity listing pre the row-limit clip.
     // Severity is the raising automation's own tier, so "Critical only"
     // = critical automations rather than the old error-level Events.
@@ -252,7 +295,7 @@
     description: "Alerts your automations have raised and nothing has cleared, most severe first.",
     defaultSize: { width: 6, height: 1 },
     minSize: { width: 4, height: 1 },
-    defaultConfig: { minSeverity: DEFAULT_TIER, regionScope: "mine", rowLimit: DEFAULT_ROWS, eventAlerts: "show" },
+    defaultConfig: { minSeverity: DEFAULT_TIER, regionScope: "mine", rowLimit: DEFAULT_ROWS, eventAlerts: "show", sortBy: SORTS[0].key },
     // The feed reads Notification rows, so this is alerts:read, not events:read.
     // Every role was seeded that key at read, so no dashboard loses the widget.
     requiredPermission: { key: "alerts", level: "read" },
@@ -317,7 +360,7 @@
       el.innerHTML =
         '<label>Row limit</label>' +
         '<select data-k="rowLimit">' + PolarisWidgets.rowLimitOptionsHTML(config.rowLimit == null ? DEFAULT_ROWS : config.rowLimit) + '</select>' +
-        '<p class="widget-config-hint">The cap is applied most-severe-first, so a low limit hides the least severe alerts.</p>';
+        '<p class="widget-config-hint">The cap follows the widget’s sort order (the ⇅ button on the header while editing), so a low limit hides whatever that order puts last — least severe by default.</p>';
       el.querySelector('[data-k="rowLimit"]').addEventListener("change", function (e) {
         onChange("rowLimit", PolarisWidgets.parseRowLimit(e.target.value));
       });

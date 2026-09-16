@@ -613,76 +613,111 @@
     downloadCsv(headers, rows, filename);
   }
 
-  function closeExportMenu() {
+  // ─── Widget-header menus (export tiers, sort order) ─────────────────────
+  // ONE dismiss / scroll / toggle implementation for every small anchored menu
+  // a header button opens. The chrome class stays `.widget-export-menu` even
+  // for the sort menu: that is the kit's menu styling (design/css/polaris-ui.css
+  // carries the same rules) and renaming it here would drift this repo from the
+  // snapshot for no gain — the second class says what the menu actually is.
+  function closeHeaderMenu() {
     var m = document.querySelector(".widget-export-menu");
     if (m) m.remove();
-    document.removeEventListener("click", exportMenuDismiss, true);
-    document.removeEventListener("keydown", exportMenuKey, true);
-    document.removeEventListener("scroll", exportMenuScroll, true);
+    document.removeEventListener("click", headerMenuDismiss, true);
+    document.removeEventListener("keydown", headerMenuKey, true);
+    document.removeEventListener("scroll", headerMenuScroll, true);
   }
   // Page scroll detaches the fixed-position menu from its button — close it.
   // Scrolls INSIDE a widget body are ignored: the NOC auto-scroll creeps
   // overflowing widget bodies continuously and must not dismiss the menu.
-  function exportMenuScroll(ev) {
+  function headerMenuScroll(ev) {
     var t = ev.target;
     if (t && t.closest && t.closest(".dashboard-widget-body")) return;
-    closeExportMenu();
+    closeHeaderMenu();
   }
-  // Outside-click dismiss ignores the export buttons themselves so a click on
+  // Outside-click dismiss ignores the header buttons themselves so a click on
   // the owning button toggles (its own handler closes) instead of close+reopen.
-  function exportMenuDismiss(ev) {
+  function headerMenuDismiss(ev) {
     var t = ev.target;
-    if (t && t.closest && (t.closest(".widget-export-menu") || t.closest(".widget-header-export"))) return;
-    closeExportMenu();
+    if (t && t.closest && (t.closest(".widget-export-menu") || t.closest(".widget-header-menu-btn"))) return;
+    closeHeaderMenu();
   }
-  function exportMenuKey(ev) { if (ev.key === "Escape") closeExportMenu(); }
+  function headerMenuKey(ev) { if (ev.key === "Escape") closeHeaderMenu(); }
 
-  function openExportMenu(btn) {
+  // spec: { className, title, items: [{ label, note?, disabled?, checked?, onPick }] }
+  // A second click on the owning button closes instead of reopening.
+  function openHeaderMenu(btn, spec) {
     var existing = document.querySelector(".widget-export-menu");
     var wasMine = existing && existing.__owner === btn;
-    closeExportMenu();
-    if (wasMine) return; // second click on the same button = toggle closed
-    var provider = btn.__polarisExport;
-    if (!provider || !provider.rows || !provider.rows.length) return;
-    var sevOf = provider.severityOf || function (r) { return r.alertSeverity; };
-    function rankOf(r) { return window.PolarisWidgets.ALERT_SEVERITY_RANK[sevOf(r)] || 0; }
+    closeHeaderMenu();
+    if (wasMine) return;
+    if (!spec || !spec.items || !spec.items.length) return;
 
     var menu = document.createElement("div");
-    menu.className = "widget-export-menu";
+    menu.className = "widget-export-menu" + (spec.className ? " " + spec.className : "");
     menu.__owner = btn;
-    menu.innerHTML = '<div class="widget-export-menu-title">Export CSV</div>' +
-      EXPORT_TIERS.map(function (t, i) {
-        var n = provider.rows.filter(function (r) { return rankOf(r) >= t.minRank; }).length;
-        return '<button type="button" data-tier="' + i + '"' + (n ? "" : " disabled") + '>' +
-          '<span>' + t.label + '</span><span class="widget-export-count">' + n + '</span></button>';
+    menu.innerHTML = (spec.title ? '<div class="widget-export-menu-title">' + escapeHtml(spec.title) + '</div>' : "") +
+      spec.items.map(function (it, i) {
+        return '<button type="button" data-i="' + i + '"' + (it.disabled ? " disabled" : "") +
+          (it.checked ? ' aria-checked="true"' : "") + '>' +
+          '<span>' + escapeHtml(it.label) + '</span>' +
+          (it.note == null ? "" : '<span class="widget-export-count">' + escapeHtml(String(it.note)) + '</span>') +
+          '</button>';
       }).join("");
     document.body.appendChild(menu);
     var rect = btn.getBoundingClientRect();
     menu.style.top = (rect.bottom + 4) + "px";
     menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8)) + "px";
 
-    menu.querySelectorAll("button[data-tier]").forEach(function (b) {
+    menu.querySelectorAll("button[data-i]").forEach(function (b) {
       b.addEventListener("click", function () {
-        var tier = EXPORT_TIERS[parseInt(b.getAttribute("data-tier"), 10)];
-        var rows = provider.rows.filter(function (r) { return rankOf(r) >= tier.minRank; });
-        closeExportMenu();
-        if (!rows.length) return;
-        var headers = provider.columns.map(function (c) { return c.header; }).concat(["Severity"]);
-        var data = rows.map(function (r) {
-          return provider.columns.map(function (c) { return c.get(r); }).concat([sevOf(r) || ""]);
-        });
-        var filename = "polaris-" + provider.filename +
-          (tier.key === "all" ? "" : "-" + tier.key) + "-" +
-          new Date().toISOString().slice(0, 10) + ".csv";
-        csvDownload(headers, data, filename);
-        if (typeof showToast === "function") {
-          showToast("Exported " + rows.length + " row" + (rows.length === 1 ? "" : "s") + " to " + filename);
-        }
+        var it = spec.items[parseInt(b.getAttribute("data-i"), 10)];
+        closeHeaderMenu();
+        if (it && it.onPick) it.onPick();
       });
     });
-    document.addEventListener("click", exportMenuDismiss, true);
-    document.addEventListener("keydown", exportMenuKey, true);
-    document.addEventListener("scroll", exportMenuScroll, true);
+    document.addEventListener("click", headerMenuDismiss, true);
+    document.addEventListener("keydown", headerMenuKey, true);
+    document.addEventListener("scroll", headerMenuScroll, true);
+  }
+
+  function openExportMenu(btn) {
+    var provider = btn.__polarisExport;
+    if (!provider || !provider.rows || !provider.rows.length) return;
+    var sevOf = provider.severityOf || function (r) { return r.alertSeverity; };
+    function rankOf(r) { return window.PolarisWidgets.ALERT_SEVERITY_RANK[sevOf(r)] || 0; }
+
+    openHeaderMenu(btn, {
+      title: "Export CSV",
+      items: EXPORT_TIERS.map(function (t) {
+        var rows = provider.rows.filter(function (r) { return rankOf(r) >= t.minRank; });
+        return {
+          label: t.label,
+          note: rows.length,
+          disabled: !rows.length,
+          onPick: function () {
+            var headers = provider.columns.map(function (c) { return c.header; }).concat(["Severity"]);
+            var data = rows.map(function (r) {
+              return provider.columns.map(function (c) { return c.get(r); }).concat([sevOf(r) || ""]);
+            });
+            var filename = "polaris-" + provider.filename +
+              (t.key === "all" ? "" : "-" + t.key) + "-" +
+              new Date().toISOString().slice(0, 10) + ".csv";
+            csvDownload(headers, data, filename);
+            if (typeof showToast === "function") {
+              showToast("Exported " + rows.length + " row" + (rows.length === 1 ? "" : "s") + " to " + filename);
+            }
+          },
+        };
+      }),
+    });
+  }
+
+  // Is this widget's canvas in EDIT mode? dashboard.js stamps `is-editing` on
+  // the canvas whenever the operator is customizing (and clears it for a
+  // published dashboard, which is never editable). The two header buttons
+  // divide on it: ⇅ sort while editing, ⤓ export while viewing.
+  function isEditingWidget(article) {
+    return !!(article && article.closest && article.closest(".dashboard-canvas.is-editing"));
   }
 
   // Stamp (or remove) a CSV-export button (⤓) on the widget's header, next to
@@ -700,17 +735,28 @@
   // }
   // No-ops outside a dashboard shell (library preview); zero rows removes the
   // button (mirrors setHeaderCount).
+  //
+  // VIEW MODE ONLY. In edit mode the same slot carries the ⇅ sort button
+  // (setHeaderSort): the header already holds the grip, the severity pills,
+  // the height toggle, the gear and the remove ×, and the two verbs belong to
+  // different moments — you configure a board while editing it and pull data
+  // out of it while watching it. Both helpers run on every render tick and
+  // entering/leaving edit mode re-renders every widget, so the swap is
+  // automatic.
   window.PolarisWidgets.setHeaderExport = function (el, provider) {
     var article = el && el.closest ? el.closest(".dashboard-widget") : null;
     var header = article ? article.querySelector(".dashboard-widget-header") : null;
     var title = header ? header.querySelector(".dashboard-widget-title") : null;
     if (!title) return;
     var btn = header.querySelector(".widget-header-export");
-    if (!provider || !provider.rows || !provider.rows.length) { if (btn) btn.remove(); return; }
+    if (!provider || !provider.rows || !provider.rows.length || isEditingWidget(article)) {
+      if (btn) btn.remove();
+      return;
+    }
     if (!btn) {
       btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "dashboard-widget-action widget-header-export";
+      btn.className = "dashboard-widget-action widget-header-menu-btn widget-header-export";
       btn.title = "Export CSV…";
       btn.textContent = "⤓";
       title.insertAdjacentElement("afterend", btn);
@@ -724,6 +770,167 @@
         .replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
     }
     btn.__polarisExport = provider;
+  };
+
+  // ─── Sort order (gear-free, edit-mode header control) ───────────────────
+  //
+  // Every listing widget ships a hardcoded order — severity-first, then its own
+  // secondary key (newest outage / highest value / soonest full). That order is
+  // right for a NOC wall and wrong for several other jobs the same widget does:
+  // the alert nobody has touched in three days is at the BOTTOM of a
+  // severity-first feed, and a wallboard re-sorting itself every 30s is hard to
+  // read at all. So the order is now the operator's, stored per widget as
+  // `config.sortBy` and picked from the ⇅ header button while editing.
+  //
+  // IT IS NOT ONLY AN ORDER. Every one of these widgets clips to a Row limit
+  // AFTER sorting, so the sort decides which rows are cut, not just where they
+  // sit — which is why the menu says so and why the first option (index 0) is
+  // always the widget's historical default: an existing dashboard carries no
+  // `sortBy` key and must keep behaving exactly as it did.
+  //
+  // Comparator builders, so eleven option lists across six files can't each
+  // invent their own null handling. The rule throughout: a row with NO value
+  // for the sort key sinks to the bottom, in either direction — an unknown
+  // timestamp is not "the oldest" and a nameless row is not "first".
+  function sortTime(v) {
+    if (!v) return null;
+    var t = new Date(v).getTime();
+    return isNaN(t) ? null : t;
+  }
+  function nullsLast(x, y, cmp) {
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return cmp(x, y);
+  }
+  window.PolarisWidgets.sortCmp = {
+    /** Newest timestamp first. */
+    newest: function (get) {
+      return function (a, b) { return nullsLast(sortTime(get(a)), sortTime(get(b)), function (x, y) { return y - x; }); };
+    },
+    /** Oldest timestamp first — "longest outstanding". */
+    oldest: function (get) {
+      return function (a, b) { return nullsLast(sortTime(get(a)), sortTime(get(b)), function (x, y) { return x - y; }); };
+    },
+    /** Text A–Z, case- and digit-aware (port10 after port9). */
+    text: function (get) {
+      return function (a, b) {
+        var x = get(a), y = get(b);
+        return nullsLast(x || null, y || null, function (p, q) {
+          return String(p).localeCompare(String(q), undefined, { sensitivity: "base", numeric: true });
+        });
+      };
+    },
+    /** Highest number first. */
+    high: function (get) {
+      return function (a, b) { return nullsLast(get(a), get(b), function (x, y) { return y - x; }); };
+    },
+    /** Lowest number first. */
+    low: function (get) {
+      return function (a, b) { return nullsLast(get(a), get(b), function (x, y) { return x - y; }); };
+    },
+    /** Most severe active alert first (falls back to the shared alertRank). */
+    severity: function (get) {
+      var rank = get || function (r) { return r && r.alertRank; };
+      return function (a, b) { return (rank(b) || 0) - (rank(a) || 0); };
+    },
+    /** Rows matching the predicate first (used for "Unacknowledged first"). */
+    flagFirst: function (pred) {
+      return function (a, b) { return (pred(a) ? 0 : 1) - (pred(b) ? 0 : 1); };
+    },
+    /** First non-zero of the given comparators. */
+    then: function () {
+      var cmps = Array.prototype.slice.call(arguments);
+      return function (a, b) {
+        for (var i = 0; i < cmps.length; i++) {
+          var d = cmps[i](a, b);
+          if (d) return d;
+        }
+        return 0;
+      };
+    },
+  };
+
+  /**
+   * Resolve a stored `config.sortBy` against a widget's option list. An
+   * unknown key (a config written by a newer build, or an option this widget
+   * dropped) falls back to options[0] — the widget's own default — rather than
+   * leaving the rows in whatever order the feed happened to send.
+   */
+  window.PolarisWidgets.sortOption = function (options, key) {
+    var list = options || [];
+    for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+    return list[0] || null;
+  };
+
+  /**
+   * Sort a row array by the config's chosen option. Array#sort is stable, so
+   * ties keep the server's own order — which is what makes "Hostname A–Z" a
+   * STABLE order on a wallboard rather than one that reshuffles equal rows on
+   * every 30s refresh.
+   */
+  window.PolarisWidgets.applySort = function (rows, options, config) {
+    var opt = window.PolarisWidgets.sortOption(options, config && config.sortBy);
+    var out = (rows || []).slice();
+    return opt && opt.cmp ? out.sort(opt.cmp) : out;
+  };
+
+  /** True when the widget is on a sort other than its default (options[0]). */
+  window.PolarisWidgets.isCustomSort = function (options, config) {
+    var opt = window.PolarisWidgets.sortOption(options, config && config.sortBy);
+    return !!(opt && options && options.length && opt !== options[0]);
+  };
+
+  // Stamp (or remove) the ⇅ sort button on the widget's header, in the slot the
+  // ⤓ export button holds while viewing. EDIT MODE ONLY — this writes the saved
+  // layout, and a published dashboard or the /dash wallboard's read-only view
+  // has nothing to write to. Picking an option goes through the dashboard's own
+  // `setWidgetConfig`, which persists and re-renders exactly as the gear does;
+  // without that seam (a library preview, an isolated harness) no button is
+  // stamped at all rather than one that silently does nothing.
+  //
+  // spec: { options: [{ key, label }], config }
+  window.PolarisWidgets.setHeaderSort = function (el, spec) {
+    var article = el && el.closest ? el.closest(".dashboard-widget") : null;
+    var header = article ? article.querySelector(".dashboard-widget-header") : null;
+    var title = header ? header.querySelector(".dashboard-widget-title") : null;
+    if (!title) return;
+    var btn = header.querySelector(".widget-header-sort");
+    var dash = window.PolarisDashboard;
+    var id = article.getAttribute("data-id");
+    var options = (spec && spec.options) || [];
+    if (options.length < 2 || !isEditingWidget(article) || !id || !dash || !dash.setWidgetConfig) {
+      if (btn) btn.remove();
+      return;
+    }
+    var current = window.PolarisWidgets.sortOption(options, spec.config && spec.config.sortBy);
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "dashboard-widget-action widget-header-menu-btn widget-header-sort";
+      btn.textContent = "⇅";
+      title.insertAdjacentElement("afterend", btn);
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var s = btn.__polarisSort;
+        openHeaderMenu(btn, {
+          className: "widget-sort-menu",
+          title: "Sort rows",
+          items: s.options.map(function (o) {
+            return {
+              label: o.label,
+              checked: o === s.current,
+              onPick: function () { window.PolarisDashboard.setWidgetConfig(s.id, "sortBy", o.key); },
+            };
+          }),
+        });
+      });
+    }
+    // The current order is in the tooltip, not the label: the button sits in a
+    // header that already ellipsizes its title, and on a narrow column an
+    // order spelled out in full would push the name off the widget.
+    btn.title = "Sort rows — " + current.label + " (also decides which rows the Row limit cuts)";
+    btn.__polarisSort = { id: id, options: options, current: current };
   };
 
   // The caller's effective region names, or [] when unrestricted. Used by the
