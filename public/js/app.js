@@ -3332,6 +3332,17 @@ function closeRowMenu(opts) {
 // lift below has to know when it would be a DEMOTION; keep the two in step.
 var ROW_MENU_BASE_Z = 900;
 
+// Stamped on the anchor for as long as its menu is open, and removed on every
+// close path. The contract it publishes: "a position:fixed menu is pinned to
+// this element — do not move it." Anything that scrolls or animates a
+// container on its own initiative reads it and holds: the dashboard's NOC
+// auto-scroll (dashboard.js → startAutoScroll) pauses the widget body that
+// holds a stamped row, because one 1px creep tick fires the scroll handler
+// below, which closes the menu the operator was still reaching for. The hover
+// pause cannot cover that case — the menu is mounted on <body>, so moving the
+// pointer onto it is a mouseleave from the widget.
+var ROW_MENU_OPEN_ATTR = "data-rowmenu-open";
+
 /**
  * The z-index a row menu needs to clear the layer its ANCHOR sits in: the
  * greatest z-index on the anchor's ancestors, plus one. Returns 0 when nothing
@@ -3491,7 +3502,10 @@ function showRowMenu(anchor, items, opts) {
     window.removeEventListener("resize", onScrollOrResize);
     if (menu.parentNode) menu.parentNode.removeChild(menu);
     _rowMenuTeardown = null;
-    if (anchor) anchor.setAttribute("aria-expanded", "false");
+    if (anchor) {
+      anchor.setAttribute("aria-expanded", "false");
+      anchor.removeAttribute(ROW_MENU_OPEN_ATTR);
+    }
     // Hand focus back so keyboard users don't land at the top of the document —
     // except when another affordance is about to claim it (silent close).
     if (!(o && o.silent) && typeof anchor.focus === "function") {
@@ -3501,6 +3515,7 @@ function showRowMenu(anchor, items, opts) {
   _rowMenuTeardown.anchor = anchor;
 
   anchor.setAttribute("aria-expanded", "true");
+  anchor.setAttribute(ROW_MENU_OPEN_ATTR, "");
   if (buttons.length) buttons[0].focus();
 }
 
