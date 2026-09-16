@@ -94,6 +94,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | `public/js/app.js` | `alertSummaryDotHTML` / `assetAlertDotHTML` / `assetAlertStrobeColor` | the active-alert indicator — the strobing severity-coloured dot on the Assets list, the search dropdown and (as a word) the phone. Here rather than in `assets.js` because the search dropdown renders on every page |
 | `public/js/app.js` | `tabbedBodyHTML` / `wireModalTabs` | the ONE modal tab-strip pair (assets.js and integrations.js each carried a byte-identical private copy) |
 | `public/js/app.js` | `openIntegrationModal` | the one shape all seven integration dialogs are built from — title, tab order, footer order, Test gating |
+| `public/js/app.js` | `subnetUtilCellHTML` / `subnetUtilBarColor` | how full a network is, as the canonical utilization bar + figure — the IPAM → Networks list (`ipam.html` and the legacy `subnets.html`) and the block drill-in panel (`block-panel.js`, on `ipam.html` and `blocks.html`) draw the same reading, and app.js is the only script all four pages load. Its colour bands ARE the Block utilization widget's (`widgets/blockUtilization.js`) — a network reading amber on the dashboard and blue on the list reads as a bug in one of the two |
 | `public/js/app.js` | `sectionHeading` / `formDivider` / `infoBox` / `checkboxRow` / `calloutHTML` | config-modal form parts |
 | `public/js/app.js` | `revealOverlay` / `syncSelectedRows` | hidden-tab-safe overlay reveal; `tr.selected` in step with the row checkboxes |
 

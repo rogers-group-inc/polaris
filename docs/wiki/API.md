@@ -222,6 +222,14 @@ PUT    /subnets/exclusions/:id     fullwrite — name and notes only
 DELETE /subnets/exclusions/:id     fullwrite
 ```
 
+Each row from `GET /subnets` carries its address usage:
+`_count.reservations` (reservations holding an address right now — active, with
+an `ipAddress`; released and expired rows and whole-network reservations are
+not counted), `usableHosts` (what the CIDR can hand out, `null` for IPv6),
+`utilizationPercent` (the first over the second, to one decimal, `null`
+wherever `usableHosts` is) and `totalReservations` (every reservation row
+whatever its status — what a delete removes).
+
 An **exclusion's CIDR is its identity** and is frozen after create — the PUT
 accepts name and notes only ([rule 42](Business-Rules#rule-42)). Changing the
 range is a delete plus an add.

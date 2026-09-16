@@ -729,6 +729,16 @@
           <p><code>{ subnets, total, limit, offset }</code> (default limit 50, max 10000).
             Filters: <code>blockId</code>, <code>status</code> (<code>available</code> /
             <code>reserved</code> / <code>deprecated</code>), <code>tag</code>.</p>
+          <p>Each row carries its address usage:
+            <code>_count.reservations</code> — reservations holding an address right now
+            (<code>active</code> with an <code>ipAddress</code>; released and expired rows and
+            whole-network reservations are not counted);
+            <code>usableHosts</code> — addresses the CIDR can hand out, <code>null</code> for
+            IPv6 and for any CIDR that cannot be measured;
+            <code>utilizationPercent</code> — the first over the second, to one decimal,
+            <code>null</code> wherever <code>usableHosts</code> is;
+            <code>totalReservations</code> — every reservation row on the network whatever its
+            status, which is what a delete removes.</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /subnets/:id

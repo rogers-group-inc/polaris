@@ -61,7 +61,7 @@ Business rules 63–64. Local accounts only. Whether each half is live is the in
 - `DELETE /blocks/:id`                          — 409 if active reservations exist
 
 ### Subnets — `requireAuth`
-- `GET    /subnets`                             — List (filter by blockId, status, tag, createdBy)
+- `GET    /subnets`                             — List (filter by blockId, status, tag, createdBy). `{ subnets, total, limit, offset }`, default limit 50 / caps 10000. Each row carries its address usage, and the two counts on it answer DIFFERENT questions: `_count.reservations` is FILTERED to reservations holding an address right now (`status: "active"` with an `ipAddress`) — the Networks list's Reservations column and the numerator of its `utilizationPercent`; `totalReservations` is every reservation row whatever its status, which is what a cascade delete or an archive takes with it and what those confirmations must quote. Released and expired rows are kept forever, so the two diverge on any churned DHCP network. Also `usableHosts` (what the CIDR can hand out, `null` for IPv6 and unmeasurable CIDRs) and `utilizationPercent` (to one decimal, `null` wherever `usableHosts` is — never 0, which the cell would draw as an empty bar).
 - `POST   /subnets`
 - `GET    /subnets/:id`                         — Get + reservation list
 - `PUT    /subnets/:id`
