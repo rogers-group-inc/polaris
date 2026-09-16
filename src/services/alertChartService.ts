@@ -1093,7 +1093,8 @@ function sampleWave(from: number, to: number, at: (fraction: number, i: number) 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 
 /**
- * INVENTED telemetry for a TEST alert's charts — see `utils/sampleAlertDevice`.
+ * INVENTED telemetry for a TEST alert's charts (business rule 65) — see
+ * `utils/sampleAlertDevice`.
  *
  * A test alert is attached to no asset (`Notification.assetId` is null), so
  * there is nothing to query and nothing that SHOULD be queried: charting a real

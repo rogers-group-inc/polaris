@@ -1,6 +1,6 @@
 /**
  * src/utils/sampleAlertDevice.ts — the MADE-UP device an automation test alert
- * is about.
+ * is about (business rule 65).
  *
  * A "Send Test Email" used to fire against a real monitored asset, on the
  * reasoning that a test should look exactly like the real thing. What it

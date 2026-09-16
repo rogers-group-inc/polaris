@@ -9,10 +9,11 @@
  *
  * Four safety properties, each of which is the whole reason for its code:
  *
- *  0. It is about a MADE-UP device, and says so. The alert used to be fired
- *     against whichever real asset the draft would match, so the email carried
- *     a live hostname, management IP, site code and the device's own admin
- *     description — mailed on demand to an address the caller typed. Every
+ *  0. It is about a MADE-UP device, and says so (business rule 65). The alert
+ *     used to be fired against whichever real asset the draft would match, so
+ *     the email carried a live hostname, management IP, site code and the
+ *     device's own admin description — mailed on demand to an address the
+ *     caller typed, into an inbox nobody treats as inventory. Every
  *     fact in a test email now comes from `utils/sampleAlertDevice` and every
  *     chart from `sampleChartSeries`; the message, the subject and a banner at
  *     the head of the body all say TEST, so no forwarded copy of one can be

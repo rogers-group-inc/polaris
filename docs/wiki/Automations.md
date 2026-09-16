@@ -223,7 +223,8 @@ escalation tiers, resolved and reset actions.
 
 - Each press creates a **real** `[TEST]` alert and dispatches that one action
   immediately.
-- **The alert is about a made-up device, not one of yours.** Hostname, IP, MAC,
+- **The alert is about a made-up device, not one of yours**
+  ([rule 65](Business-Rules#rule-65)). Hostname, IP, MAC,
   location, model, description and the last-hour charts are all invented sample
   data (`EXAMPLE-SWITCH-01` at `192.0.2.51`, and so on), so a test email can be
   forwarded to a vendor or a colleague without carrying any of your inventory.

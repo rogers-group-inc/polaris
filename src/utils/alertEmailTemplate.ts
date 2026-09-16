@@ -429,7 +429,7 @@ export function pruneEmptyTextLines(text: string): string {
 }
 
 /**
- * How a TEST email says so, in the three places a reader looks.
+ * How a TEST email says so, in the three places a reader looks (business rule 65).
  *
  * NOT a template token, deliberately. `{test.notice}` in the default body would
  * be marking an operator can delete — by customizing the body, or simply by
