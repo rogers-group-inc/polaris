@@ -25,7 +25,15 @@
 - **`src/db.ts`** — Prisma client extension; its `Asset.update` / `findMany` / `create` / `updateMany` / `upsert` wrappers go through whatever client is generated. Failure modes here surface as the generic `column "<name>" does not exist` errors in the log.
 - **Operators reading the Maintenance tab** — `pg-tuning` and `capacity-advisor` routes consume the raw-SQL readers above; they 500 when those queries fail.
 
+**A backfill migration only ever reaches an EXISTING install.** On a fresh one `prisma migrate deploy` runs BEFORE the startup seed jobs, so every `UPDATE`/`INSERT … WHERE EXISTS` a migration writes against seeded rows matches **zero rows** — the rows do not exist yet. Whatever a migration backfills onto seeded data, the seed job must produce for itself, and the two are a PAIR that has to be changed together. The asymmetry is invisible to anyone developing against a database that already has the rows, which is all of us.
+
+It has cost once already (2026-09-16): the Phase 4 SNMP migration backfilled `matchPattern`, aggregates, sample-row labels, device-type override siblings and the `model` identity row onto the six seeded manufacturer profiles, `seedManufacturerProfiles` was not taught any of them, and every FRESH install silently lost vendor telemetry facts — including the FortiSwitch model query, whose absence is the deadlock where a switch with an empty model can never fill it in. The job had also kept a private copy of `METRIC_KEYS`, so a metric key added to the service never reached it. Polaris is FOSS and installed by strangers: a fresh install is the common deployment shape for everyone except us.
+
+The guards now in place, worth copying for the next such pair: the seed derives each fact from the same constant the migration's literals came from (a profile's `matchPattern` is its vendor entry's own `match.source`), it imports shared lists rather than copying them, and `tests/unit/seedManufacturerProfiles.test.ts` states the expected end state vendor by vendor so it can be diffed against the migration SQL by eye.
+
 **Invariants:**
+- **A migration that backfills seeded rows is half a change; the seed job is the other half.** Both must produce the same end state, and a test should pin it — an upgraded install and a fresh one are two deployment shapes of one feature.
+- A startup seed job must not keep its own copy of a list the service owns (`METRIC_KEYS` and friends). Import it, so a key added in one place cannot go missing in the other.
 - The generated client and the DB schema must agree at every process start. Steps 3-6 are not optional; reordering them re-introduces the failure mode where the running client selects columns the DB no longer has.
 - `src/generated/` is gitignored; the build pipeline (postinstall + the updater's explicit step) regenerates it from `schema.prisma`. Never check generated files in.
 - A migration that DROPS a column requires every raw-SQL reader of that column to be updated in the same commit. The Prisma client gets rewritten automatically; raw SQL does not.
@@ -33,6 +41,7 @@
 - The updater's `rm -rf dist` between `prisma generate` and `tsc` is load-bearing — stale compiled JS from a previous Prisma-client version can shadow the fresh build.
 
 **When changing this:**
+- **Writing a migration that UPDATEs or INSERTs against rows a startup seed job creates:** open that job in the same change and make it emit the same thing. Then prove it on an empty database, not on yours — the failure only appears where the rows did not already exist.
 - **Renaming or dropping any DB column:** grep the entire codebase for `prisma.$queryRawUnsafe` and raw-SQL strings containing the column name BEFORE writing the migration. Update those readers in the same commit as the migration.
 - **Adding a step to the updater pipeline:** keep the generate → clean-dist → tsc → migrate → restart ordering intact. If the new step needs DB access, decide whether it should run pre- or post-migrate based on what schema state it expects.
 - **Changing where the Prisma client is generated to:** update `tsconfig.json` includes, `package.json:postinstall` (if path changes), `.gitignore`, and re-verify `dist/` cleanup still wipes the right path.

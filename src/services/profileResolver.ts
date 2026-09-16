@@ -500,8 +500,12 @@ export function pickDbProfile(
   }
 
   if (modelPick?.symbol && modelPick.parsePattern) {
-    const parse = { pattern: modelPick.parsePattern, template: modelPick.parseTemplate };
-    out.model = { symbol: modelPick.symbol, parse: (raw: string) => applyModelParse(raw, parse) };
+    // `rowParse` is the operator's row itself, and `parse` is that row
+    // applied — the same relationship the hardcoded entry has, read in the
+    // other direction (there the function is authored and the row derived
+    // from it for seeding; here the row is the source).
+    const rowParse = { pattern: modelPick.parsePattern, template: modelPick.parseTemplate };
+    out.model = { symbol: modelPick.symbol, rowParse, parse: (raw: string) => applyModelParse(raw, rowParse) };
   }
 
   // A profile row exists but says nothing the collectors can use. Reporting

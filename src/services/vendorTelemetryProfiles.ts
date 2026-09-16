@@ -18,7 +18,8 @@
  * Entries are matched in array order; first match wins.
  */
 
-import { fortiswitchModelFromFsSysVersion } from "../utils/fortiswitchModel.js";
+import { fortiswitchModelFromFsSysVersion, FORTISWITCH_MODEL_PARSE } from "../utils/fortiswitchModel.js";
+import type { ModelParse } from "../utils/modelParse.js";
 
 export interface CpuQuery {
   symbol: string;                       // symbolic OID name (resolved via oidRegistry)
@@ -94,6 +95,14 @@ export interface ModelQuery {
   symbol: string;                       // symbolic OID name resolved via oidRegistry
   /** Extract the display model from the raw scalar; null = unrecognized (nothing stamped). */
   parse: (raw: string) => string | null;
+  /**
+   * The ROW-SHAPED form of `parse` — the same rule as a regex + `$1` template
+   * (`utils/modelParse.ts`). `parse` is a function and a function cannot be
+   * seeded, so without this the `model` metric row would be created empty on a
+   * fresh install and the vendor's identity query would exist only in code.
+   * Keep the two in step: `parse` should be `applyModelParse(raw, rowParse)`.
+   */
+  rowParse: ModelParse;
 }
 
 export interface VendorTelemetryProfile {
@@ -208,7 +217,7 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
     // includes the model, and FortiSwitch assets have no `os` to match on).
     // Discovery can't supply the model: the managed-switch CMDB has no model
     // field, so the asset sits at the generic "FortiSwitch" until this reads.
-    model: { symbol: "fsSysVersion", parse: fortiswitchModelFromFsSysVersion },
+    model: { symbol: "fsSysVersion", parse: fortiswitchModelFromFsSysVersion, rowParse: FORTISWITCH_MODEL_PARSE },
   },
   {
     // FortiAP sits BEFORE the generic Fortinet entry so FortiAPs (manufacturer
@@ -242,6 +251,13 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
     // than via the FortiOS REST monitorType path.
     cpu: { symbol: "fgSysCpuUsage", mode: "scalar" },
     memory: { pctSymbol: "fgSysMemUsage" },
+    // The hardware-sensor table. This block did not exist until 2026-09: the
+    // walk was dispatched by `/fortinet/i.test(manufacturer)` inside
+    // `collectHardwareSensorsSnmp` instead, so the fact lived in the collector
+    // and the seeded `temperature` row came out EMPTY. The Phase 4 migration
+    // fills that row on an existing install; this block is what gives a FRESH
+    // one the same thing.
+    temperature: { symbol: "fgHwSensorTable", mode: "table" },
   },
   {
     vendor: "HP / Aruba ProCurve",
