@@ -125,10 +125,10 @@ const HOLD_LOOKBACK_CAP_MS = 6 * 60 * 60 * 1000;
 /**
  * A COUNT window needs its readings to have HAPPENED, and a lossy device
  * produces them slower than the cadence suggests — the whole point of counting
- * measurements instead of minutes (business rule 66). So a count-windowed
- * trigger reaches back over the wall-clock mirror of BOTH counts (the window
- * plus the hold, since the oldest recalculation in a run needs its own full
- * window behind it) and doubles it.
+ * measurements instead of minutes (business rule 66). The groups are DISJOINT,
+ * so a hold of M groups needs groupSize x M readings behind it — the PRODUCT of
+ * the two counts, not their sum — which is `windowSec` (the group's wall-clock
+ * mirror) times the hold. Then doubled.
  *
  * TWO, not more, and the reason is fleet scale rather than correctness. Doubling
  * covers a device losing half its probes; past that the query would have to grow
@@ -153,7 +153,8 @@ function lookbackMsFor(trigger: {
 }): number {
   const base = Math.max((trigger.windowSec ?? 0) * 1000, DEFAULT_LOOKBACK_MS);
   if (triggerWindowPolls(trigger)) {
-    const span = ((trigger.windowSec ?? 0) + (trigger.forDurationSec ?? 0)) * 1000;
+    const groups = Math.max(1, triggerHoldPolls(trigger));
+    const span = (trigger.windowSec ?? 0) * 1000 * groups;
     if (span <= 0) return HOLD_LOOKBACK_CAP_MS;
     return Math.max(base, Math.min(span * COUNT_WINDOW_LOOKBACK_FACTOR, HOLD_LOOKBACK_CAP_MS));
   }

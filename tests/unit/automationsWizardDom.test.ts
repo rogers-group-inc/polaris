@@ -1930,26 +1930,37 @@ describe("automation wizard DOM render", () => {
     unit.dispatchEvent(new win.Event("change", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 20));
     expect(dur.value).toBe("5");
-    // ...and the breach counter appears beside it, named for what it counts.
+    // ...the field renames itself to the job it is now doing...
+    expect((doc.querySelector(".aw-dur label") as unknown as { textContent: string }).textContent)
+      .toContain("Poll Group Size");
+    // ...and the sustain appears beside it, counting GROUPS rather than polls.
     const sustainWrap = doc.querySelector(".aw-ratio-sustain") as unknown as { style: { display: string } };
     expect(sustainWrap.style.display).not.toBe("none");
     expect((doc.querySelector(".aw-ratio-sustain label") as unknown as { textContent: string }).textContent)
-      .toContain("Alert after (recalculations)");
+      .toContain("Sustained for (poll groups)");
 
-    // Last 10 readings, alerting after 15 consecutive recalculations over the line.
+    // Groups of 10, sustained for 3 groups.
     dur.value = "10";
     dur.dispatchEvent(new win.Event("input", { bubbles: true }));
-    (doc.querySelector("#tf-sustain-min") as unknown as { value: string }).value = "15";
+    const sus = doc.querySelector("#tf-sustain-min") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    sus.value = "3";
+    sus.dispatchEvent(new win.Event("input", { bubbles: true }));
+    // The caption does the arithmetic the operator would otherwise do in their
+    // head: 3 groups of 10 is 30 polls, which at the stubbed 120s cadence is 1h.
+    expect((doc.querySelector(".aw-ratio-sustain .aw-poll-note") as unknown as { textContent: string }).textContent)
+      .toContain("3 groups of 10 ≈ 30 polls");
+
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);
     const saved = savedPayloads[0]! as Record<string, any>;
     expect(saved.trigger.windowPolls).toBe(10);
-    expect(saved.trigger.forPolls).toBe(15);
-    // Both counts keep their wall-clock mirrors — that is what sizes the
-    // engine's sample fetch (lookbackMsFor), so neither may be dropped.
-    expect(saved.trigger.windowSec).toBe(1200); // 10 x the stubbed 120s cadence
-    expect(saved.trigger.forDurationSec).toBe(1800); // 15 x 120s
+    expect(saved.trigger.forPolls).toBe(3);
+    // Both counts keep their wall-clock mirrors. The hold's is the time an
+    // operator actually waits — groups x groupSize x cadence — because the
+    // groups do not overlap.
+    expect(saved.trigger.windowSec).toBe(1200);     // 10 polls x the stubbed 120s
+    expect(saved.trigger.forDurationSec).toBe(3600); // 3 x 10 x 120s = 1h
     expect(() => ruleInputSchema.parse(saved)).not.toThrow();
   });
 

@@ -118,7 +118,7 @@ before changing anything the invariant constrains.
 | 63 | The complexity bar belongs to the operator, and a password that no longer meets it is replaced on the far side of the second factor | invariants-30-43 | narrative-60-64 |
 | 64 | A passkey is bound to the origin that issued its challenge, the install decides what a passkey is for, and it never names an account that does not already exist | invariants-30-43 | narrative-60-64 |
 | 65 | A delivery test is a specimen of the alert, not a rehearsal against live inventory | invariants-30-43 | narrative-60-64 |
-| 66 | A measurement window may be counted in readings, and then the hold counts recalculations | invariants-30-43 | narrative-60-64 |
+| 66 | A measurement window may be counted in readings, and then the hold counts poll GROUPS | invariants-30-43 | narrative-60-64 |
 | 67 | A missed response-time poll is the timeout it cost, and an outage resets the window | invariants-30-43 | narrative-60-64 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),

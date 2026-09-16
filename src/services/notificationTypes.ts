@@ -250,8 +250,9 @@ export function leadingRun<T>(readings: readonly T[], meets: (v: T) => boolean):
 }
 
 /**
- * COUNT-WINDOWED AGGREGATION (business rule 66): the aggregate over the last N
- * readings that produced a value, recomputed at every one of them.
+ * POLL-GROUP AGGREGATION (business rule 66): the readings that produced a value
+ * are cut into DISJOINT groups of N, newest-first, and each group is aggregated
+ * into one reading.
  *
  * `values` arrives newest-first and may be holed — a failed probe writes a row
  * with a NULL value, and for `responseTimeMs` that is the only thing a NULL
@@ -263,19 +264,22 @@ export function leadingRun<T>(readings: readonly T[], meets: (v: T) => boolean):
  * a dying device, the timeout turns a latency metric into a loss alarm) can
  * arise, because a miss contributes nothing to a window it is not counted in.
  *
- * The RESULT is itself a series, newest-first: `out[0]` is the aggregate as of
- * the newest reading, `out[1]` as of the one before it, and so on. That is what
- * lets a hold count *recalculations* — `leadingRun` over this answers "how many
- * consecutive times has the smoothed value been over the line", which is the
- * breach counter, rather than "how many raw samples were over" (a single spike
- * inside an otherwise fine window would satisfy that, which is the whole reason
- * an operator asked to smooth in the first place).
+ * The RESULT is itself a series, newest-first, of DISJOINT group aggregates:
+ * `out[0]` covers the newest N values, `out[1]` the N before those, and so on.
+ * Each group is an independent look at the device, which is what lets a hold
+ * above it mean something — `leadingRun` over this answers "how many groups in
+ * a row came out over the line", and three groups agreeing is three separate
+ * measurements agreeing. (Stepping by 1 instead of N would make consecutive
+ * entries overlap by N-1 samples, so "sustained for 3" would be three
+ * near-identical numbers and barely stronger than one. That is why the groups
+ * do not slide.) It also makes the wall clock legible: time to alert is
+ * groupSize x sustained polls, not groupSize + sustained - 1.
  *
- * Returns EMPTY when fewer than N values exist. An aggregate over a partial
- * window is a different statistic wearing the same threshold, and the one thing
- * a rule must not do is fire off a number it did not describe — so a device
- * that has not yet answered N times simply has no reading, exactly as one that
- * has not answered at all does.
+ * Returns EMPTY when fewer than N values exist, and DROPS a trailing partial
+ * group. An aggregate over a partial group is a different statistic wearing the
+ * same threshold, and the one thing a rule must not do is fire off a number it
+ * did not describe — so a device that has not yet answered N times simply has
+ * no reading, exactly as one that has not answered at all does.
  */
 export function rollingAggregate(
   values: readonly (number | null)[],
@@ -287,7 +291,19 @@ export function rollingAggregate(
   for (const v of values) if (v !== null && v !== undefined && Number.isFinite(v)) vals.push(v);
   if (vals.length < n) return [];
   const out: number[] = [];
-  for (let k = 0; k + n <= vals.length; k += 1) {
+  // DISJOINT groups, newest-first: [0..n), [n..2n), [2n..3n). Stepping by n
+  // rather than by 1 is the whole difference between a poll GROUP and a rolling
+  // average, and it is what makes the hold above mean something. Consecutive
+  // ROLLING windows overlap by n-1 samples, so three of them agreeing is three
+  // near-identical numbers agreeing — almost no more evidence than one. Three
+  // disjoint groups are three INDEPENDENT looks at the device, which is what an
+  // operator means by "it has been slow for a while", and it makes the time to
+  // alert exactly groupSize x sustained instead of groupSize + sustained - 1.
+  //
+  // A trailing partial group is dropped for the same reason a partial window is
+  // (the aggregate would be a different statistic under the same threshold), so
+  // the series is floor(vals.length / n) long.
+  for (let k = 0; k + n <= vals.length; k += n) {
     out.push(aggregateOver(vals.slice(k, k + n), aggregation));
   }
   return out;

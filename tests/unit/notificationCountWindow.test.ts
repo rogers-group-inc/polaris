@@ -30,9 +30,17 @@ const entries = (xs: Spec[]) => xs.map((x) => {
 });
 
 describe("rollingAggregate", () => {
-  it("returns the aggregate at every offset, newest first", () => {
-    // [10,20,30,40] with a window of 2 -> avg(10,20), avg(20,30), avg(30,40).
-    expect(rollingAggregate([10, 20, 30, 40], 2, "avg")).toEqual([15, 25, 35]);
+  it("cuts the series into DISJOINT groups, newest first", () => {
+    // [10,20,30,40] in groups of 2 -> avg(10,20) and avg(30,40). Stepping by 1
+    // would give [15,25,35] — three overlapping numbers sharing samples. The
+    // groups do not slide, which is what makes a hold over them mean something.
+    expect(rollingAggregate([10, 20, 30, 40], 2, "avg")).toEqual([15, 35]);
+  });
+
+  it("DROPS a trailing partial group", () => {
+    // Five values in groups of 2 leave one over. A group of one is a different
+    // statistic under the same threshold, so it is not a reading.
+    expect(rollingAggregate([10, 20, 30, 40, 50], 2, "avg")).toEqual([15, 35]);
   });
 
   it("DROPS misses rather than filling them — the window counts measurements", () => {
@@ -84,12 +92,21 @@ describe("rollingAggregate", () => {
     expect(rollingAggregate(raw, 3, "avg")[0]).toBeGreaterThan(500);
   });
 
-  it("counts a SUSTAINED climb, which is what the breach counter is for", () => {
-    // Genuinely slow: every 3-sample average is over the line, so the run is
-    // the number of recalculations rather than the number of samples.
-    const rolled = rollingAggregate([900, 880, 920, 890, 910], 3, "avg");
-    expect(rolled).toHaveLength(3);
-    expect(leadingRun(rolled, (v) => v > 500)).toBe(3);
+  it("counts GROUPS in a run, which is what the sustain is for", () => {
+    // Nine slow readings in groups of three: three INDEPENDENT groups, all over
+    // the line, so the run is 3 — and the operator waited 3 x 3 = 9 polls for
+    // it, which is the arithmetic "sustained for 3" is meant to promise.
+    const groups = rollingAggregate([900, 880, 920, 890, 910, 905, 895, 915, 885], 3, "avg");
+    expect(groups).toHaveLength(3);
+    expect(leadingRun(groups, (v) => v > 500)).toBe(3);
+  });
+
+  it("a slow newest group after a healthy older one is a run of ONE", () => {
+    // The run is consecutive from the newest, so relapse does not inherit the
+    // credit of groups that were over the line before a recovery.
+    const groups = rollingAggregate([900, 900, 900, 120, 120, 120], 3, "avg");
+    expect(groups).toEqual([900, 120]);
+    expect(leadingRun(groups, (v) => v > 500)).toBe(1);
   });
 
   it("is unmoved by loss, which is the whole reason it exists", () => {

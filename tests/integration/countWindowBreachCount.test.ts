@@ -183,9 +183,35 @@ d("count-windowed aggregation + breach counter", () => {
     expect(await activeAlerts()).toBe(0);
   });
 
-  it("fires on the Mth consecutive recalculation over the line", async () => {
+  it("fires on the Mth consecutive GROUP over the line, and not before", async () => {
+    // Groups of 3, sustained 3 — so nine slow readings, not five. Eight is one
+    // short: the groups are [900,900,900] and [900,900,100], and the second
+    // does not clear the line, so the run is 1.
     await seedRule(3, 3);
     await seedProbes([100, 100, 100, 900, 900, 900, 900, 900]);
+    await evaluateAllNotificationRules();
+    expect(await activeAlerts()).toBe(0);
+
+    await wipe();
+    const asset = await prisma.asset.create({
+      data: { hostname: `${HOST}-b`, status: "active", monitored: true, assetType: "server", monitorStatus: "up", lastMonitorAt: new Date() } as never,
+    });
+    assetId = asset.id;
+    await seedRule(3, 3);
+    await seedProbes([900, 900, 900, 900, 900, 900, 900, 900, 900]); // three full groups
+    await evaluateAllNotificationRules();
+    expect(await activeAlerts()).toBe(1);
+  });
+
+  it("takes groupSize x sustained polls to arrive — the operator's own arithmetic", async () => {
+    // What the field labels promise: a group of 10 held for 3 needs 30 polls.
+    // At 29 there are only two complete groups, so nothing fires.
+    await seedRule(10, 3);
+    await seedProbes(Array.from({ length: 29 }, () => 900));
+    await evaluateAllNotificationRules();
+    expect(await activeAlerts()).toBe(0);
+
+    await seedProbes([900]); // the 30th
     await evaluateAllNotificationRules();
     expect(await activeAlerts()).toBe(1);
   });
@@ -272,12 +298,15 @@ d("count-windowed aggregation + breach counter", () => {
   });
 
   it("takes longer on a lossy device, because it waits for MEASUREMENTS", async () => {
-    // The consequence of only-successes-recalculate, stated as a test: the same
-    // rule that fires on 5 consecutive readings needs 5 consecutive SUCCESSES,
-    // however many failed probes are mixed in among them.
+    // The consequence of counting measurements: three groups of three needs
+    // nine SUCCESSES, however many failed probes are mixed in among them. Here
+    // they are spread across 18 probe slots — twice the wall clock a healthy
+    // device would have taken, for the same amount of evidence.
     await seedRule(3, 3);
-    // 5 successes over the line but spread across 13 probe slots.
-    await seedProbes([100, 100, 100, null, 900, null, 900, null, null, 900, null, 900, null]);
+    await seedProbes([
+      null, 900, null, 900, null, 900, null, 900, null,
+      900, null, 900, null, 900, null, 900, null, 900,
+    ]);
     await evaluateAllNotificationRules();
     expect(await activeAlerts()).toBe(1);
   });

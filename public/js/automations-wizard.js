@@ -3235,7 +3235,11 @@ async function openAutomationWizard(existing, opts) {
   /** The unit a rendered field is wearing. Polls unless it says otherwise, so a
    *  field built before this existed keeps counting readings. */
   function fieldUnit(input) {
-    return input && input.getAttribute("data-unit") === "min" ? "min" : "polls";
+    var u = input && input.getAttribute("data-unit");
+    // "groups" is the hold beside a POLL GROUP window: the number counts groups,
+    // and its wall clock is groups x groupSize x cadence, so the caption needs
+    // the group size too (data-group-size, stamped by syncDurationRequirement).
+    return u === "min" || u === "groups" ? u : "polls";
   }
   /** Convert a field between units IN PLACE. The seconds are the fixed point:
    *  they are what both units stand for and what gets stored, so switching a
@@ -3318,7 +3322,7 @@ async function openAutomationWizard(existing, opts) {
     // trigger turns out to have no choice to offer.
     var min = unit === "min";
     return pollFieldHtml(attr, sec, {
-      label: min ? "Measured over" : "Sustained for (polls)",
+      label: min ? "Measured over" : "Sustained for (polls)",  // syncDurationRequirement renames to "Poll Group Size" in count mode
       polls: polls, authority: authority, unit: min ? "min" : "polls",
       unitPicker: true,
     });
@@ -3340,7 +3344,7 @@ async function openAutomationWizard(existing, opts) {
     return pollFieldHtml('id="tf-sustain-min"', triggerSustainSec(tr), {
       wrapClass: "aw-ratio-sustain",
       hidden: !second,
-      label: count ? "Alert after (recalculations)" : "Sustained for (polls)",
+      label: count ? "Sustained for (poll groups)" : "Sustained for (polls)",
       polls: second && triggerSustainSec(tr) > 0 ? storedHoldPolls(tr) : null,
     }).replace(
       '<p class="aw-dur-note"',
@@ -3447,14 +3451,18 @@ async function openAutomationWizard(existing, opts) {
    * changes and the number the operator needs to judge whether the window is
    * big enough to average anything.
    */
-  function cadenceNoteFor(value, unit) {
+  function cadenceNoteFor(value, unit, groupSize) {
     var c = awCadence();
     var typed = Math.max(0, Math.round(Number(value) || 0));
     // At 0 there is no duration to convert, and every field that accepts 0
     // already says what 0 means in its own words (placeholder / inline text).
     if (typed === 0) return "";
     var minutes = unit === "min";
-    var total = minutes ? typed * MINUTE_SEC : typed * c.sec;
+    var groups = unit === "groups";
+    var gs = Math.max(1, Math.round(Number(groupSize) || 1));
+    // A group is gs polls, so M groups is M x gs polls of wall clock — the
+    // number an operator actually waits, and the one this caption exists for.
+    var total = minutes ? typed * MINUTE_SEC : groups ? typed * gs * c.sec : typed * c.sec;
     // Formatted here rather than through PolarisMonitorDownAfter.human: this
     // caption is the wizard's own and must read "10m" even where that shared
     // file hasn't loaded (the down-detection caption below still uses it — that
@@ -3464,7 +3472,9 @@ async function openAutomationWizard(existing, opts) {
     var polls = minutes ? Math.max(1, Math.round(total / (c.sec > 0 ? c.sec : CADENCE_FALLBACK_SEC))) : typed;
     var head = minutes
       ? human + " ≈ " + polls + " poll" + (polls === 1 ? "" : "s")
-      : typed + " poll" + (typed === 1 ? "" : "s") + " ≈ " + human;
+      : groups
+        ? typed + " group" + (typed === 1 ? "" : "s") + " of " + gs + " ≈ " + typed * gs + " polls ≈ " + human
+        : typed + " poll" + (typed === 1 ? "" : "s") + " ≈ " + human;
     if (c.host) return head + " — the Polaris host samples itself every " + c.sec + "s.";
     var noun = CADENCE_STREAM_NOUN[c.stream] ? CADENCE_STREAM_NOUN[c.stream] + " poll" : "poll";
     if (!c.known) {
@@ -3498,7 +3508,7 @@ async function openAutomationWizard(existing, opts) {
       var note = wrap && wrap.querySelector(".aw-poll-note");
       if (note) {
         note.style.display = wrap && wrap.style && wrap.style.display === "none" ? "none" : "";
-        note.textContent = cadenceNoteFor(input.value, fieldUnit(input));
+        note.textContent = cadenceNoteFor(input.value, fieldUnit(input), input.getAttribute("data-group-size"));
       }
     });
     syncBandDurationMirrors(panel);
@@ -3510,6 +3520,8 @@ async function openAutomationWizard(existing, opts) {
    *  into `forPolls` as a number of readings it never meant. */
   function pollFieldCount(input) {
     if (!input || input.value === "" || fieldUnit(input) === "min") return 0;
+    // A "groups" field still states a COUNT — of groups — and that count is
+    // exactly what `forPolls` stores, so it reads like a poll field here.
     var n = Math.round(Number(input.value) || 0);
     return n > 0 ? n : 0;
   }
@@ -3555,7 +3567,10 @@ async function openAutomationWizard(existing, opts) {
     panel.addEventListener("input", function (e) {
       var t = e.target;
       if (!t || !t.classList || !t.classList.contains("aw-poll-input")) return;
-      if (fieldUnit(t) === "min") {
+      if (fieldUnit(t) === "groups") {
+        var gsz = Math.max(1, Math.round(Number(t.getAttribute("data-group-size")) || 1));
+        t.setAttribute("data-sec", String(secFromPolls(pollFieldCount(t) * gsz, awCadence().sec)));
+      } else if (fieldUnit(t) === "min") {
         // Minutes ARE the stored value; there is no second half to keep in step
         // and no authority to move.
         t.setAttribute("data-sec", String(secFromMinutes(t.value)));
@@ -3797,7 +3812,7 @@ async function openAutomationWizard(existing, opts) {
       // or a count of readings — versus a hold clock for `latest`, which the
       // engine really does count in readings. Where the picker is on screen the
       // label states no unit, because the picker already does.
-      label.innerHTML = (ratio ? "History (minutes)" : aggregated ? "Measured over" : "Sustained for (polls)") +
+      label.innerHTML = (ratio ? "History (minutes)" : aggregated ? (countWindow ? "Poll Group Size" : "Measured over") : "Sustained for (polls)") +
         '<span class="aw-dur-req" style="' + (aggregated || ratio ? "" : "display:none;") + 'color:var(--color-danger);font-weight:700;margin-left:2px">*</span>';
       star = label.querySelector(".aw-dur-req");
     }
@@ -3815,8 +3830,8 @@ async function openAutomationWizard(existing, opts) {
           " probe" + (minPolls === 1 ? "" : "s") + " at this fleet's cadence, so loss can only read in steps of " +
           Math.round(100 / minPolls) + "%."
         : countWindow
-          ? "Required — the value is the aggregate of the last this-many readings that returned a number, recomputed at each one. "
-            + "Missed polls are not counted, so the window reaches further back on a lossy device instead of averaging fewer samples."
+          ? "Required — polls are taken in groups of this many and each group is aggregated into one reading. "
+            + "Groups do not overlap, so a device needs this many polls before it has any reading at all."
         : aggregated ? "Required — this is the period the value is measured over." : tiersNote.trim();
     }
     if (input) {
@@ -3854,13 +3869,23 @@ async function openAutomationWizard(existing, opts) {
       sustainWrap.style.display = secondField ? unfoldedDisplay(sustainWrap) : "none";
       var sLabel = sustainWrap.querySelector("label");
       if (sLabel) {
-        sLabel.textContent = countWindow ? "Alert after (recalculations)" : "Sustained for (polls)";
+        sLabel.textContent = countWindow ? "Sustained for (poll groups)" : "Sustained for (polls)";
+      }
+      // The hold counts GROUPS beside a poll-group window, and a group is only
+      // meaningful next to its size — so the size rides along on the field and
+      // the caption can say "3 groups of 10 ≈ 30 polls ≈ 30m".
+      var sInput = sustainWrap.querySelector("#tf-sustain-min");
+      if (sInput) {
+        sInput.setAttribute("data-unit", countWindow ? "groups" : "polls");
+        if (countWindow) sInput.setAttribute("data-group-size", String(Math.max(1, pollFieldCount(input))));
+        else sInput.removeAttribute("data-group-size");
       }
       var sNote = sustainWrap.querySelector(".aw-sustain-note");
       if (sNote) {
         sNote.textContent = countWindow
-          ? "Optional — how many consecutive recalculations must be over the threshold before the alert fires. "
-            + "Each one is a fresh window, so this counts readings the device actually produced, not minutes."
+          ? "Optional — how many consecutive poll groups must average over the threshold before the alert fires. "
+            + "The groups do not overlap, so each is an independent look at the device — and the alert takes "
+            + "group size x this many polls to arrive."
           : "Optional — how long the loss must stay over the threshold before the alert fires. Each reading still measures over the History window above.";
       }
     }
@@ -4065,7 +4090,13 @@ async function openAutomationWizard(existing, opts) {
         tgStampWindowPolls(tree, countWindow ? pollFieldCount(dEl) : 0);
         var sEl = panel.querySelector("#tf-sustain-min");
         var secondField = ratio || countWindow;
-        var sustainSec = secondField ? Math.min(pollFieldSec(sEl), RATIO_WINDOW_MAX_SEC) : 0;
+        // Beside a poll-group window the hold counts GROUPS, so its wall-clock
+        // mirror is groups x groupSize x cadence — the time an operator actually
+        // waits for the alert, and what the prose reads as "held 30m".
+        var sustainSec = !secondField ? 0
+          : countWindow
+            ? Math.min(secFromPolls(pollFieldCount(sEl) * Math.max(1, pollFieldCount(dEl)), awCadence().sec), RATIO_WINDOW_MAX_SEC)
+            : Math.min(pollFieldSec(sEl), RATIO_WINDOW_MAX_SEC);
         // The hold is stored BOTH ways: `forPolls` is what the engine counts,
         // `forDurationSec` its wall-clock mirror (which also sizes the sample
         // window the engine fetches to see that many readings). A TIME-windowed
@@ -4355,7 +4386,7 @@ async function openAutomationWizard(existing, opts) {
     if (tgLeafCountWindow(leaf)) {
       // A count window is bounded by the engine's SERIES_CAP, not by the clock.
       if (leaf.windowPolls > COUNT_WINDOW_MAX_POLLS) {
-        return label + ': "Measured over" can be at most ' + COUNT_WINDOW_MAX_POLLS + " readings.";
+        return label + ': "Poll Group Size" can be at most ' + COUNT_WINDOW_MAX_POLLS + " polls.";
       }
       return null;
     }

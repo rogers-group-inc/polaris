@@ -560,7 +560,7 @@ test quietly stops being faithful without anything failing.
 
 ---
 
-## Rule 66 — A measurement window may be counted in readings, and then the hold counts recalculations
+## Rule 66 — A measurement window may be counted in readings, and then the hold counts poll groups
 
 A time window takes whatever samples landed inside it, which means the SAMPLE SIZE of an
 aggregated automation is a function of how well the device happens to be working. `avg` over
@@ -594,15 +594,28 @@ UNDEFINED rather than any number, and packet loss is its own metric with its own
 
 **The hold composes with it, and only with it.** Under a time window `forPolls` is refused,
 because there the window IS the period and a second clock on top would be two clocks doing
-one job. Under a count window the window is recomputed AT EVERY READING, so there is a series
-of aggregates to count and `forPolls` means *N consecutive recalculations over the line* — a
-breach counter. `reduceReadings` hands the rolling aggregates on AS the series, which is why
-every existing mechanism keeps working untouched: `leadingRun` counts the run, `tierRuns`
-gives each severity tier its own run against the same smoothed series, and the engine's
-fire/clear path never learns that the numbers it is counting were derived. That composition
-is the thing a time window cannot express: one 1500 ms spike inside an otherwise healthy
-5-reading window never clears the threshold, so the counter never starts, while a genuine
-climb clears it at every offset and the counter runs.
+one job. Under a count window the readings are cut into DISJOINT GROUPS of N, so there is a
+series of group aggregates to count and `forPolls` means *M consecutive GROUPS over the line*.
+`reduceReadings` hands those group aggregates on AS the series, which is why every existing
+mechanism keeps working untouched: `leadingRun` counts the run, `tierRuns` gives each severity
+tier its own run against the same series, and the engine's fire/clear path never learns that
+the numbers it is counting were derived. That composition is the thing a time window cannot
+express: one 1500 ms spike inside an otherwise healthy 5-reading group never clears the
+threshold, so the run never starts, while a genuine climb clears it in group after group.
+
+**The groups step by N, never by 1, and that is the load-bearing half of the design.** The
+first cut of this shipped as a ROLLING window recomputed at every reading, and the flaw was
+statistical rather than mechanical: consecutive rolling windows overlap by N-1 samples, so
+"sustained for 3" was three near-identical averages agreeing — barely more evidence than one,
+while reading like three times as much. Disjoint groups are three INDEPENDENT looks at the
+device, which is what an operator means by "it has been slow for a while". It also makes the
+wall clock legible and predictable: time to alert is **groupSize x sustained** polls, not
+groupSize + sustained - 1, which is what the builder's own labels now promise ("Poll Group
+Size" of 10 held for 3 groups = 30 polls = 30 minutes at a 60s cadence). The consequence for
+the engine is that `lookbackMsFor` sizes a count window from the PRODUCT of the two counts
+rather than their sum — get that wrong and the hold can never be satisfied, because the query
+excluded the readings the older groups needed. A trailing partial group is dropped for the
+same reason a partial window is.
 
 **Not enough readings is NO reading, never a partial window.** An aggregate over fewer than N
 samples is a different statistic under the same threshold, so `rollingAggregate` returns
