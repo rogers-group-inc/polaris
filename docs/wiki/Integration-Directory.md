@@ -20,6 +20,8 @@ Intune is enabled.
 | Client secret | — | secret |
 | **Enable Intune** | off | adds the managed-device read |
 | `deviceInclude` / `deviceExclude` | — | wildcards against the device name |
+| **Include disabled** | **on** | a disabled device syncs as *decommissioned*; off skips it entirely |
+| **Decommission devices that leave Entra ID** | **off** | see [Decommissioning what leaves the directory](#decommissioning-what-leaves-the-directory) |
 | **Verify presence** | **on** | the post-sync presence pass |
 | **Enable directory search** | off | live GAL typeahead, stores nothing |
 | **Enable directory sync** | off | stores the roster as contacts |
@@ -56,6 +58,7 @@ Reads LDAP or LDAPS, hard-filtered to `objectClass=computer`.
 | Search scope | `sub` | `sub` or `one` |
 | `ouInclude` / `ouExclude` | — | OU filters |
 | **Include disabled** | **on** | a disabled computer object is still a record |
+| **Decommission computers that leave the directory** | **off** | see [Decommissioning what leaves the directory](#decommissioning-what-leaves-the-directory) |
 | Verify presence | on | |
 | Enable directory search / sync | off | |
 | Workstation / Server monitor blocks | — | |
@@ -65,6 +68,55 @@ Reads LDAP or LDAPS, hard-filtered to `objectClass=computer`.
 > deliberate about: a stream that re-fires every tick against a bad credential
 > is an **AD-lockout risk**, which is why the agentless collectors stamp their
 > cadence anchor **even on failure**.
+
+---
+
+## Decommissioning what leaves the directory
+
+Off by default on both integrations. Switch it on and a device that is
+**deleted from the directory**, or that the directory reports as **disabled**,
+sets its asset's status to *decommissioned* on the next discovery run. Nothing
+is deleted — the asset, its history and its samples all stay, and setting the
+status back to *active* by hand undoes it.
+
+**Only assets this integration manages.** The test is the **Managed by** row on
+the asset's System tab, not the list of sources on its Sources tab. If AD or
+Entra manages the asset, the directory's word is final: a DHCP lease seen by a
+FortiGate, a vCenter record or a reporting Polaris Agent will not keep a
+deleted computer object active. If some *other* integration manages it, this
+sweep only removes its own now-stale source row and says so in the run log.
+
+**A run that cannot be trusted is refused, and says why.** The sweep will not
+act on:
+
+- a **Discover Now** run scoped to a single device;
+- a cancelled run, or one that hit the 10,000-object read cap;
+- an **empty** read — zero objects where there used to be a fleet is far more
+  often a bind failure, a wrong base DN or a withdrawn Graph consent than a
+  genuinely emptied directory;
+- a run where the number of missing devices is implausibly large — more than
+  50, or more than a fifth of what the integration holds. That is the guard for
+  the cases nothing else can detect: a base DN narrowed by one level, an OU
+  delegated away, a service principal that lost its read over half the tenant.
+
+Each refusal writes a **warning** on the Events page naming the reason, and
+leaves every source row untouched.
+
+**Filters and disabled accounts are not deletions.** Editing `ouInclude` /
+`ouExclude` / `deviceInclude` / `deviceExclude`, or turning *Include disabled*
+off, narrows what the sync processes — it does not decommission what you
+excluded, and re-widening the filter picks the same assets back up. A disabled
+device is decommissioned but **keeps** its directory source row, because it has
+not left the directory.
+
+**Intune is swept separately.** An Intune source row is judged against the
+Intune roster, never against `/devices`. If Intune sync is switched off, or its
+read fails on a given run, every Intune row is left alone.
+
+Each decommission writes an Event on the Assets timeline naming which of the
+two reasons applied. Aging assets out after months of inactivity is a separate,
+always-on mechanism — see [Server-Settings](Server-Settings) — and is unaffected
+by this toggle.
 
 ---
 

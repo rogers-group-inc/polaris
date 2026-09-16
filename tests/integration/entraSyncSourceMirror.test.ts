@@ -102,10 +102,25 @@ async function seedAsset(sourceRows: Array<{ sourceKind: string; externalId: str
   });
 }
 
+// Wrap a device list in the full EntraDiscoveryResult shape. These tests pass
+// no `decommissionMissing`, so the disappearance sweep is off and the absence
+// fields go unread — they are here to keep the fixture honest to the type.
+function discovery(devices: any[]) {
+  return {
+    devices,
+    presentDeviceIds: devices.map((x) => String(x.deviceId).toLowerCase()),
+    disabledDeviceIds: [],
+    presentIntuneDeviceIds: [],
+    intuneRead: "disabled" as const,
+    inventoryComplete: true,
+    scoped: false,
+  };
+}
+
 d("syncEntraDevices source mirror", () => {
   it("steady state: sweep hints skip the deletes and exactly one refreshed entra row remains", async () => {
     const asset = await seedAsset([{ sourceKind: "entra", externalId: NEW_ID }]);
-    const r = await syncEntraDevices(integrationId, "entra-mirror-test", {}, { devices: [dev()] });
+    const r = await syncEntraDevices(integrationId, "entra-mirror-test", {}, discovery([dev()]));
     expect(r.updated).toContain(HOST);
     const rows = (await prisma.assetSource.findMany({ where: { assetId: asset.id } })).filter((s) => s.sourceKind === "entra" || s.sourceKind === "intune");
     expect(rows.map((s) => `${s.sourceKind}|${s.externalId}`)).toEqual([`entra|${NEW_ID}`]);
@@ -122,7 +137,7 @@ d("syncEntraDevices source mirror", () => {
 
   it("deviceId change: the duplicate-registration resolve sweeps the stale row and lands the new identity", async () => {
     const asset = await seedAsset([{ sourceKind: "entra", externalId: OLD_ID, lastSeen: new Date("2026-01-01T00:00:00Z") }]);
-    const r = await syncEntraDevices(integrationId, "entra-mirror-test", {}, { devices: [dev()] });
+    const r = await syncEntraDevices(integrationId, "entra-mirror-test", {}, discovery([dev()]));
     expect(r.skipped.length + r.updated.length + r.created.length).toBeGreaterThan(0);
     const rows = (await prisma.assetSource.findMany({ where: { assetId: asset.id }, orderBy: { externalId: "asc" } })).filter((s) => s.sourceKind === "entra" || s.sourceKind === "intune");
     expect(rows.map((s) => `${s.sourceKind}|${s.externalId}`)).toEqual([`entra|${NEW_ID}`]);
@@ -136,7 +151,7 @@ d("syncEntraDevices source mirror", () => {
       { sourceKind: "entra", externalId: NEW_ID },
       { sourceKind: "intune", externalId: NEW_ID },
     ]);
-    await syncEntraDevices(integrationId, "entra-mirror-test", {}, { devices: [dev({ sources: ["entra"] })] });
+    await syncEntraDevices(integrationId, "entra-mirror-test", {}, discovery([dev({ sources: ["entra"] })]));
     const rows = (await prisma.assetSource.findMany({ where: { assetId: asset.id } })).filter((s) => s.sourceKind === "entra" || s.sourceKind === "intune");
     expect(rows.map((s) => `${s.sourceKind}|${s.externalId}`)).toEqual([`entra|${NEW_ID}`]);
   });

@@ -495,6 +495,36 @@ commit.
 
 ---
 
+### Rule 70
+**Absence from a directory decommissions what that directory manages, and only
+when the read was whole.** Deleting a computer object, or disabling a device
+account, is how an operator retires a machine — so Active Directory and Entra ID
+can act on it, the way the vCenter integration already acts on a VM that leaves
+the inventory. The pass is **opt-in** per integration (*Decommission devices
+that leave the directory*, off by default) because the first run of a sweep
+nobody asked for is a fleet-wide status change.
+
+**What decides** is the **Managed by** row on the asset's System tab, not its
+list of sources. If the directory manages the asset, its word is final — a DHCP
+sighting, a vCenter record or a reporting agent does not keep a deleted computer
+object active. If another integration manages it, the sweep only drops its own
+stale source row.
+
+**What refuses it**: a scoped *Discover Now* run; a cancelled or capped read; an
+**empty** read (a bind failure or a withdrawn consent, far more often than an
+emptied directory); and a missing set too large to be ordinary turnover — over
+50 devices, or over a fifth of what the integration holds, which is the only
+guard that catches a narrowed base DN or a half-revoked grant. Every refusal
+writes a warning naming the reason and changes nothing.
+
+**What is not a deletion**: a device your OU or name filter excludes, and a
+device *Include disabled* skipped. Both are still in the directory, so both keep
+their asset. A disabled device is decommissioned but **keeps** its source row.
+
+See [Integration-Directory](Integration-Directory) for the operator view.
+
+---
+
 ## Reading a rule correctly
 
 Three habits make these easier to apply:

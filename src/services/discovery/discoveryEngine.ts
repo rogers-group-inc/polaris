@@ -32,6 +32,7 @@ import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
 import { ENTRA_ASSET_TAG_PREFIX, AD_ASSET_TAG_PREFIX, AD_GUID_TAG_PREFIX, SID_TAG_PREFIX } from "../../utils/assetSourceTags.js";
 import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanagerService.js";
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
+import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { scoreDhcpClaim, claimBeats, type DhcpClaimScore } from "../../utils/dhcpClaimFreshness.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
 import { readFirewallDeviceName, normalizeNameKey } from "../../utils/fortinetParentKey.js";
@@ -831,6 +832,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.created.push(...r.created);
         syncTotals.updated.push(...r.updated);
         syncTotals.skipped.push(...r.skipped);
+        syncTotals.decommissionedAssets.push(...r.decommissioned);
       }
     } else if (integration.type === "activedirectory") {
       // Active Directory discovery produces assets only — no subnets, reservations, or VIPs.
@@ -840,6 +842,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.created.push(...r.created);
         syncTotals.updated.push(...r.updated);
         syncTotals.skipped.push(...r.skipped);
+        syncTotals.decommissionedAssets.push(...r.decommissioned);
       }
     } else if (integration.type === "vcenter") {
       // vCenter discovery produces assets only — VMs + ESXi hosts (plus the
@@ -8048,13 +8051,228 @@ function buildArcProposedFields(
 // Exported for tests: the in-memory source mirror below must stay
 // byte-faithful to upsertEntraIntuneSources' DB effects, and only a real
 // Postgres round trip can prove that (tests/integration/entraSyncSourceMirror).
+/** One source kind this directory owns, paired with what the run read for it. */
+interface DirectorySweepKind {
+  sourceKind: "entra" | "intune" | "ad";
+  /**
+   * Every identifier the directory returned for this kind — RAW, before the
+   * operator's filters. `null` means the endpoint was not read this cycle
+   * (Intune switched off, or its call failed), in which case every row of the
+   * kind is left alone: not read is not the same as not there.
+   */
+  present: string[] | null;
+  /** Identifiers the directory returned AS DISABLED. */
+  disabled: string[];
+}
+
+interface DirectorySweepInput {
+  integrationId: string;
+  integrationName: string;
+  /** The operator's `decommissionMissing` toggle. Default OFF — see rule 69. */
+  enabled: boolean;
+  /**
+   * Non-null refuses the whole sweep, source deletes included. Lazy: the
+   * toggle and the "are there even any rows" check come first, so a sweep
+   * that is off never reads the result shape at all.
+   */
+  blockedReason: () => string | null;
+  kinds: DirectorySweepKind[];
+  /** "Active Directory" / "Entra ID" — what the operator sees in the log line. */
+  directoryLabel: string;
+  /** `asset.ad.decommissioned` / `asset.entra.decommissioned`. */
+  eventAction: string;
+  now: Date;
+  actor?: string;
+  syncLog: (level: "info" | "error" | "warning", message: string) => void;
+}
+
+/**
+ * The AD / Entra disappearance sweep (business rule 70) — shared by both
+ * directory syncs so the two integrations cannot drift apart on a pass that
+ * changes asset lifecycle state.
+ *
+ * A device that left the directory, or that the directory now reports as
+ * disabled, decommissions the asset it MANAGES. Three things make that safe
+ * enough to ship:
+ *
+ *  1. **It is opt-in.** `decommissionMissing` defaults to false, so no install
+ *     gets a fleet-wide status change on upgrade. Off, the pass does nothing
+ *     at all — the stale source rows are left in place too, because deleting
+ *     them is the same judgement wearing a smaller hat.
+ *  2. **The read has to be whole.** `adSweepBlockedReason` /
+ *     `entraSweepBlockedReason` refuse a scoped, cancelled, truncated or empty
+ *     read, and `classifyDirectoryRows` is fed the RAW identifier set, so an
+ *     `ouExclude` edit or an `includeDisabled=false` skip reads as
+ *     "configuration changed", never as "the fleet was deleted".
+ *  3. **Scale is the last guard.** `absenceExceedsGuard` catches what the
+ *     other two structurally cannot see — a narrowed `baseDn`, an OU
+ *     delegated away, a service principal that lost half the tenant — each of
+ *     which returns a complete, non-empty, well-formed read that is simply
+ *     missing most of the estate.
+ *
+ * **Ownership decides, not provenance.** An asset is judged by
+ * `Asset.discoveredByIntegrationId` — the "Managed by" row on the System tab.
+ * Managed by THIS integration, and the directory's word is final: a
+ * `fortigate-endpoint` sighting, a vCenter row or an agent check-in does not
+ * keep a deleted computer object alive. Managed by ANOTHER integration, and
+ * this sweep only drops its own stale source row — vCenter losing sight of a
+ * VM is not AD's business, and the reverse holds too. Managed by nothing
+ * (which is every Entra-discovered asset today — `syncEntraDevices` has never
+ * stamped ownership, unlike the AD, Windows-Server and Arc paths) is treated
+ * as "this directory is as close to an owner as it has".
+ *
+ * Time-based aging stays with `decommissionStaleAssets`; this is the
+ * evidence-based path, the same division vCenter's sweep draws.
+ */
+async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string[]> {
+  const { integrationId, integrationName, directoryLabel, now, actor, syncLog } = input;
+  const decommissioned: string[] = [];
+  if (!input.enabled) return decommissioned;
+
+  const sourceKinds = input.kinds.map((k) => k.sourceKind);
+
+  try {
+    // One read of this integration's rows, tight select, partitioned in
+    // memory. Deliberately NOT `externalId: { notIn: [...] }` the way the
+    // vCenter sweep does it — a 10,000-element NOT IN is the shape this
+    // integration hits at fleet scale.
+    const rows = await prisma.assetSource.findMany({
+      where: { integrationId, sourceKind: { in: sourceKinds } },
+      select: { id: true, assetId: true, sourceKind: true, externalId: true },
+    });
+    if (rows.length === 0) return decommissioned;
+
+    const blockedReason = input.blockedReason();
+    if (blockedReason) {
+      syncLog(
+        "warning",
+        `Disappearance sweep skipped — ${blockedReason}. ${rows.length} existing ${directoryLabel} source row(s) left untouched rather than reading a partial answer as deleted devices.`,
+      );
+      return decommissioned;
+    }
+
+    const gone: typeof rows = [];
+    // assetId → how its rows of THIS integration came back. An asset is only
+    // judged once every one of them agrees: an Entra device that left
+    // /devices but is still in Intune is still in the tenant.
+    const tally = new Map<string, { gone: number; disabled: number; alive: number }>();
+    const bump = (assetId: string, key: "gone" | "disabled" | "alive") => {
+      let t = tally.get(assetId);
+      if (!t) { t = { gone: 0, disabled: 0, alive: 0 }; tally.set(assetId, t); }
+      t[key]++;
+    };
+
+    for (const kind of input.kinds) {
+      const kindRows = rows.filter((r) => r.sourceKind === kind.sourceKind);
+      if (kindRows.length === 0) continue;
+      if (kind.present === null) {
+        // Endpoint not read this cycle — every row of this kind is alive.
+        for (const r of kindRows) bump(r.assetId, "alive");
+        continue;
+      }
+      const fates = classifyDirectoryRows(kindRows, kind.present, kind.disabled);
+      for (const r of fates.alive) bump(r.assetId, "alive");
+      for (const r of fates.disabled) bump(r.assetId, "disabled");
+      for (const r of fates.gone) { bump(r.assetId, "gone"); gone.push(r); }
+    }
+
+    if (absenceExceedsGuard(gone.length, rows.length)) {
+      syncLog(
+        "warning",
+        `Disappearance sweep skipped — ${gone.length} of ${rows.length} ${directoryLabel} source row(s) vanished from this read, which is too large a share to be ordinary turnover. Check the search scope and the read permissions before trusting it; nothing was deleted or decommissioned.`,
+      );
+      return decommissioned;
+    }
+
+    // Stale provenance goes regardless of who manages the asset — the row is
+    // this integration's claim on a device it no longer holds. Rows for
+    // DISABLED devices are kept: the device still exists, it is switched off.
+    if (gone.length > 0) {
+      for (const batch of chunkIds(gone.map((r) => r.id))) {
+        await prisma.assetSource.deleteMany({ where: { id: { in: batch } } });
+      }
+      syncLog("info", `Swept ${gone.length} stale ${directoryLabel} source row(s) for device(s) no longer in the directory.`);
+    }
+
+    const candidateIds = [...tally.entries()]
+      .filter(([, t]) => t.alive === 0 && (t.gone > 0 || t.disabled > 0))
+      .map(([assetId]) => assetId);
+    if (candidateIds.length === 0) return decommissioned;
+
+    const candidates = await prisma.asset.findMany({
+      // Maintenance-window assets ARE judged, on the vCenter sweep's
+      // reasoning: absence from a directory is configuration truth, not a
+      // reachability signal — and releaseAssetsForDecommission force-closes
+      // the window first so the 30s maintenance reconcile can't re-flip it.
+      where: { id: { in: candidateIds }, status: { not: "decommissioned" } },
+      select: { id: true, hostname: true, ipAddress: true, discoveredByIntegrationId: true },
+    });
+
+    const mine = candidates.filter(
+      (a: any) => a.discoveredByIntegrationId === integrationId || a.discoveredByIntegrationId === null,
+    );
+    const elsewhere = candidates.length - mine.length;
+    if (elsewhere > 0) {
+      syncLog("info", `${elsewhere} asset(s) left ${directoryLabel} but are managed by another integration — left active.`);
+    }
+    if (mine.length === 0) return decommissioned;
+
+    const ids = mine.map((a: any) => a.id);
+    await releaseAssetsForDecommission(ids, {
+      at: now,
+      actor,
+      statusChangedBy: integrationName,
+      reason: `no longer present in "${integrationName}"`,
+    });
+    await prisma.asset.updateMany({
+      where: { id: { in: ids } },
+      data: { status: "decommissioned", statusChangedAt: now, statusChangedBy: integrationName },
+    });
+
+    const events: LogEventInput[] = [];
+    for (const a of mine) {
+      const name = a.hostname || a.ipAddress || a.id;
+      const t = tally.get(a.id)!;
+      const why = t.gone > 0 ? "no longer present in" : "disabled in";
+      decommissioned.push(name);
+      events.push({
+        action: input.eventAction,
+        resourceType: "asset",
+        resourceId: a.id,
+        resourceName: name,
+        actor,
+        level: "info" as const,
+        message: `Asset "${name}" decommissioned — ${why} "${integrationName}", which manages it`,
+        details: {
+          reason: t.gone > 0 ? "missing-from-directory" : "disabled-in-directory",
+          integrationId,
+          integrationName,
+        },
+      });
+    }
+    await logEventsBatch(events);
+    syncLog("info", `Decommissioned ${mine.length} asset(s) that left ${directoryLabel} or were disabled in it.`);
+  } catch (err: any) {
+    syncLog("error", `Failed to sweep ${directoryLabel} disappearances: ${err.message || "Unknown error"}`);
+  }
+
+  return decommissioned;
+}
+
+/** Split an id list into DB-friendly batches for deleteMany. */
+function chunkIds(ids: string[], size = 500): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
 export async function syncEntraDevices(
   integrationId: string,
   integrationName: string,
   integrationConfig: Record<string, unknown> | null,
-  result: { devices: entraId.DiscoveredEntraDevice[] },
+  result: entraId.EntraDiscoveryResult,
   actor?: string,
-): Promise<{ created: string[]; updated: string[]; skipped: string[] }> {
+): Promise<{ created: string[]; updated: string[]; skipped: string[]; decommissioned: string[] }> {
   // Per-class addAsMonitored snapshot for the auto-monitor sweep. null = the
   // class block isn't enabled / present, in which case buildMonitoredSweep
   // returns {} and discovery leaves monitored alone.
@@ -8723,8 +8941,35 @@ export async function syncEntraDevices(
     }
   }
 
-  syncLog("info", `Entra ID sync: ${created.length} created, ${updated.length} updated, ${skipped.length} skipped`);
-  return { created, updated, skipped };
+  // Disappearance sweep — last pass, after every upsert, so "still claimed"
+  // is read from what this run actually wrote. See sweepDirectoryAbsence.
+  const decommissioned = await sweepDirectoryAbsence({
+    integrationId,
+    integrationName,
+    enabled: (integrationConfig as any)?.decommissionMissing === true,
+    blockedReason: () => entraId.entraSweepBlockedReason(result),
+    kinds: [
+      { sourceKind: "entra", present: result.presentDeviceIds, disabled: result.disabledDeviceIds },
+      // An Intune row is swept against the Intune roster, never against
+      // /devices: an Intune-only device is absent from the Entra read without
+      // having gone anywhere. `null` when Intune is off or its read failed.
+      {
+        sourceKind: "intune",
+        present: result.intuneRead === "ok" ? result.presentIntuneDeviceIds : null,
+        // Intune publishes no equivalent of accountEnabled; the disabled
+        // signal is Entra's alone.
+        disabled: [],
+      },
+    ],
+    directoryLabel: "Entra ID",
+    eventAction: "asset.entra.decommissioned",
+    now,
+    actor,
+    syncLog,
+  });
+
+  syncLog("info", `Entra ID sync: ${created.length} created, ${updated.length} updated, ${skipped.length} skipped, ${decommissioned.length} decommissioned`);
+  return { created, updated, skipped, decommissioned };
 }
 
 // ─── Active Directory asset sync ─────────────────────────────────────────────
@@ -8981,9 +9226,9 @@ export async function syncActiveDirectoryDevices(
   integrationId: string,
   integrationName: string,
   integrationConfig: Record<string, unknown> | null,
-  result: { devices: activeDirectory.DiscoveredAdDevice[] },
+  result: activeDirectory.AdDiscoveryResult,
   actor?: string,
-): Promise<{ created: string[]; updated: string[]; skipped: string[] }> {
+): Promise<{ created: string[]; updated: string[]; skipped: string[]; decommissioned: string[] }> {
   const syncLog = (level: "info" | "error" | "warning", message: string) => {
     logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
   };
@@ -9334,8 +9579,25 @@ export async function syncActiveDirectoryDevices(
     }
   }
 
-  syncLog("info", `Active Directory sync: ${created.length} created, ${updated.length} updated, ${skipped.length} skipped`);
-  return { created, updated, skipped };
+  // Disappearance sweep — last pass, after every upsert, so "still claimed"
+  // is read from what this run actually wrote. See sweepDirectoryAbsence.
+  const decommissioned = await sweepDirectoryAbsence({
+    integrationId,
+    integrationName,
+    enabled: (integrationConfig as any)?.decommissionMissing === true,
+    blockedReason: () => activeDirectory.adSweepBlockedReason(result),
+    kinds: [
+      { sourceKind: "ad", present: result.presentObjectGuids, disabled: result.disabledObjectGuids },
+    ],
+    directoryLabel: "Active Directory",
+    eventAction: "asset.ad.decommissioned",
+    now: new Date(),
+    actor,
+    syncLog,
+  });
+
+  syncLog("info", `Active Directory sync: ${created.length} created, ${updated.length} updated, ${skipped.length} skipped, ${decommissioned.length} decommissioned`);
+  return { created, updated, skipped, decommissioned };
 }
 
 // ─── vCenter asset sync ──────────────────────────────────────────────────────
