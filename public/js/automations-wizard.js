@@ -3188,6 +3188,46 @@ async function openAutomationWizard(existing, opts) {
     return n > 0 ? n * iv : 0;
   }
   /**
+   * MINUTES, the other unit a duration field can wear (2026-09-16). A field
+   * counted in polls is telling the truth only where the COUNT is what gets
+   * stored and counted — a hold (`forPolls`). A measurement WINDOW stores
+   * seconds (`windowSec`) and the engine reads it as wall-clock time, so
+   * "60 polls" there was never the rule: it was 60 × whatever cadence the
+   * wizard happened to observe, printed as if the operator had said it. The
+   * window fields say minutes now and convert against a constant, so the number
+   * on screen is the number stored. The poll count moves to the caption, where
+   * it belongs — it is a CONSEQUENCE of the window and this fleet's cadence,
+   * and it changes when the cadence does.
+   */
+  var MINUTE_SEC = 60;
+  function minutesFromSec(sec) {
+    var n = Math.round(Number(sec) || 0);
+    return n > 0 ? Math.max(1, Math.round(n / MINUTE_SEC)) : 0;
+  }
+  function secFromMinutes(min) {
+    var n = Math.round(Number(min) || 0);
+    return n > 0 ? n * MINUTE_SEC : 0;
+  }
+  /** The unit a rendered field is wearing. Polls unless it says otherwise, so a
+   *  field built before this existed keeps counting readings. */
+  function fieldUnit(input) {
+    return input && input.getAttribute("data-unit") === "min" ? "min" : "polls";
+  }
+  /** Convert a field between units IN PLACE. The seconds are the fixed point:
+   *  they are what both units stand for and what gets stored, so switching a
+   *  condition from `avg` to `latest` re-denominates the number on screen
+   *  instead of reinterpreting it — 5 minutes becomes however many polls that
+   *  is, never a bare 5 that silently means something else. */
+  function setFieldUnit(input, unit) {
+    if (!input) return;
+    var next = unit === "min" ? "min" : "polls";
+    if (fieldUnit(input) === next) return;
+    input.setAttribute("data-unit", next);
+    if (input === document.activeElement) return;
+    var sec = Number(input.getAttribute("data-sec")) || 0;
+    input.value = next === "min" ? minutesFromSec(sec) : pollsFromSec(sec, awCadence().sec);
+  }
+  /**
    * One poll-counted field. `attr` carries the id/class the caller identifies it
    * by; `sec` is the STORED value it round-trips. `zeroNote` is what the caption
    * says at 0, where there is no duration to convert.
@@ -3214,21 +3254,35 @@ async function openAutomationWizard(existing, opts) {
     // types one.
     var lock = opts.authority === "sec" ? "sec" : "";
     var authority = lock || (opts.polls != null ? "polls" : "sec");
+    // A minutes field needs none of the authority machinery above: minutes and
+    // seconds convert by a constant, so neither half can drift when a cadence
+    // lands late. `data-sec` still round-trips the exact stored value, which is
+    // what keeps a legacy 90-second window from being rounded to 2 minutes by
+    // the act of opening the wizard.
+    var unit = opts.unit === "min" ? "min" : "polls";
+    if (unit === "min") shown = minutesFromSec(sec);
     return '<div class="form-group ' + (opts.wrapClass || "aw-dur") + '"' +
         (opts.hidden ? ' style="margin:0.5rem 0 0;display:none"' : ' style="margin:0.5rem 0 0"') + '>' +
       '<label style="font-size:0.8rem">' + escapeHtml(opts.label || "Sustained for (polls)") +
         '<span class="aw-dur-req" style="display:none;color:var(--color-danger);font-weight:700;margin-left:2px">*</span></label>' +
-      '<input type="number" ' + attr + ' class="aw-poll-input" data-authority="' + authority + '"' +
+      '<input type="number" ' + attr + ' class="aw-poll-input" data-unit="' + unit + '" data-authority="' + authority + '"' +
         (lock ? ' data-authority-lock="sec"' : "") + ' data-sec="' + (Number(sec) || 0) + '" min="0" ' +
         'value="' + shown + '" placeholder="' + escapeHtml(opts.placeholder || DUR_PLACEHOLDER_OPTIONAL) + '">' +
       '<p class="aw-poll-note" style="margin:2px 0 0;font-size:0.78rem;color:var(--color-text-tertiary)"></p>' +
       '<p class="aw-dur-note" style="display:none;margin:2px 0 0;font-size:0.78rem;color:var(--color-text-tertiary)"></p></div>';
   }
-  function durationFieldHtml(attr, sec, polls, authority) {
+  function durationFieldHtml(attr, sec, polls, authority, unit) {
     // The asterisk is hidden until an aggregated condition makes the field
     // mandatory (syncDurationRequirement) — avg / median / min / max have no
     // period to measure over without it.
-    return pollFieldHtml(attr, sec, { label: "Sustained for (polls)", polls: polls, authority: authority });
+    // Label and unit move together and syncDurationRequirement owns both live;
+    // seeding them here only saves the field from rendering one unit and being
+    // re-denominated into the other before the operator's first paint.
+    var min = unit === "min";
+    return pollFieldHtml(attr, sec, {
+      label: min ? "Measured over (minutes)" : "Sustained for (polls)",
+      polls: polls, authority: authority, unit: min ? "min" : "polls",
+    });
   }
   /**
    * The SECOND time field a windowed-ratio trigger gets (2026-08-20): the base
@@ -3339,21 +3393,34 @@ async function openAutomationWizard(existing, opts) {
     }
     return { sec: CADENCE_FALLBACK_SEC, known: false, min: 0, max: 0, host: false, stream: (d && d.stream) || "", assetCount: (d && d.assetCount) || 0 };
   }
-  /** "≈ 5 min at the 60s CPU/memory poll interval these devices use." */
-  function cadenceNoteFor(polls) {
+  /**
+   * "5 polls ≈ 5 min at the 60s CPU/memory poll interval these devices use."
+   *
+   * `unit` says which half the operator typed, and the caption always names the
+   * OTHER one — the half they can't read off the box. For a hold that is the
+   * wall clock; for a minutes window it is the number of readings the window
+   * will hold, which is the thing that actually moves when the fleet's cadence
+   * changes and the number the operator needs to judge whether the window is
+   * big enough to average anything.
+   */
+  function cadenceNoteFor(value, unit) {
     var c = awCadence();
-    var n = Math.max(0, Math.round(Number(polls) || 0));
+    var typed = Math.max(0, Math.round(Number(value) || 0));
     // At 0 there is no duration to convert, and every field that accepts 0
     // already says what 0 means in its own words (placeholder / inline text).
-    if (n === 0) return "";
+    if (typed === 0) return "";
+    var minutes = unit === "min";
+    var total = minutes ? typed * MINUTE_SEC : typed * c.sec;
     // Formatted here rather than through PolarisMonitorDownAfter.human: this
     // caption is the wizard's own and must read "10m" even where that shared
     // file hasn't loaded (the down-detection caption below still uses it — that
     // arithmetic is genuinely shared with the asset surfaces). The formatter in
     // the sentences factory is out of scope from here, hence the local one.
-    var total = n * c.sec;
     var human = total % 3600 === 0 ? (total / 3600) + "h" : total % 60 === 0 ? (total / 60) + "m" : total + "s";
-    var head = n + " poll" + (n === 1 ? "" : "s") + " ≈ " + human;
+    var polls = minutes ? Math.max(1, Math.round(total / (c.sec > 0 ? c.sec : CADENCE_FALLBACK_SEC))) : typed;
+    var head = minutes
+      ? human + " ≈ " + polls + " poll" + (polls === 1 ? "" : "s")
+      : typed + " poll" + (typed === 1 ? "" : "s") + " ≈ " + human;
     if (c.host) return head + " — the Polaris host samples itself every " + c.sec + "s.";
     var noun = CADENCE_STREAM_NOUN[c.stream] ? CADENCE_STREAM_NOUN[c.stream] + " poll" : "poll";
     if (!c.known) {
@@ -3370,7 +3437,9 @@ async function openAutomationWizard(existing, opts) {
     if (!panel) return;
     var iv = awCadence().sec;
     Array.prototype.forEach.call(panel.querySelectorAll(".aw-poll-input"), function (input) {
-      if (cadenceChanged && input !== document.activeElement) {
+      // A minutes field has no cadence in it: both halves are already right and
+      // a new cadence moves only the poll estimate in its caption.
+      if (cadenceChanged && input !== document.activeElement && fieldUnit(input) !== "min") {
         if (input.getAttribute("data-authority") === "sec") {
           input.value = pollsFromSec(input.getAttribute("data-sec"), iv);
         } else {
@@ -3382,17 +3451,25 @@ async function openAutomationWizard(existing, opts) {
       if (note) {
         var wrap = input.parentNode;
         note.style.display = wrap && wrap.style && wrap.style.display === "none" ? "none" : "";
-        note.textContent = cadenceNoteFor(input.value);
+        note.textContent = cadenceNoteFor(input.value, fieldUnit(input));
       }
     });
     syncBandDurationMirrors(panel);
   }
   /** The COUNT a poll field states — what the engine counts, and what
-   *  collection stores as `forPolls` / `sustainPolls`. */
+   *  collection stores as `forPolls` / `sustainPolls`. A MINUTES field states
+   *  no count: it is a measurement window, and the engine reads windows as
+   *  wall-clock. Returning 0 here is what guarantees a window can never leak
+   *  into `forPolls` as a number of readings it never meant. */
   function pollFieldCount(input) {
-    if (!input || input.value === "") return 0;
+    if (!input || input.value === "" || fieldUnit(input) === "min") return 0;
     var n = Math.round(Number(input.value) || 0);
     return n > 0 ? n : 0;
+  }
+  /** "Does this field state a duration at all" — the question the severity-tier
+   *  mirrors ask, which must be answered the same way in either unit. */
+  function pollFieldHasValue(input) {
+    return !!input && input.value !== "" && Math.round(Number(input.value) || 0) > 0;
   }
   /**
    * Seconds a poll field stands for — the count's wall-clock MIRROR. The stored value
@@ -3405,16 +3482,24 @@ async function openAutomationWizard(existing, opts) {
   function pollFieldSec(input) {
     if (!input) return 0;
     if (input.value === "") return 0;
-    var iv = awCadence().sec;
     var stored = Number(input.getAttribute("data-sec"));
     var shown = Math.round(Number(input.value) || 0);
+    // Minutes: the same round-trip guard, against a constant instead of a
+    // cadence. A stored 90s window shows "2" and stays 90 until the operator
+    // types, at which point the number they typed is exactly what is stored.
+    if (fieldUnit(input) === "min") {
+      if (!isNaN(stored) && stored >= 0 && minutesFromSec(stored) === shown) return Math.round(stored);
+      return secFromMinutes(shown);
+    }
+    var iv = awCadence().sec;
     if (!isNaN(stored) && stored >= 0 && pollsFromSec(stored, iv) === shown) return Math.round(stored);
     return secFromPolls(shown, iv);
   }
   function setPollFieldSec(input, sec) {
     if (!input) return;
     input.setAttribute("data-sec", String(Math.max(0, Math.round(Number(sec) || 0))));
-    if (input !== document.activeElement) input.value = pollsFromSec(sec, awCadence().sec);
+    if (input === document.activeElement) return;
+    input.value = fieldUnit(input) === "min" ? minutesFromSec(sec) : pollsFromSec(sec, awCadence().sec);
   }
   /** An edit to the count IS the value: rewrite the seconds it stands for. */
   function wirePollFields(panel) {
@@ -3423,11 +3508,17 @@ async function openAutomationWizard(existing, opts) {
     panel.addEventListener("input", function (e) {
       var t = e.target;
       if (!t || !t.classList || !t.classList.contains("aw-poll-input")) return;
-      t.setAttribute("data-sec", String(secFromPolls(t.value, awCadence().sec)));
-      // A typed count is a STATED count: from here the number stands and the
-      // seconds follow it (unless this field is locked to seconds — a ratio's
-      // History window is a measurement, not a count).
-      if (t.getAttribute("data-authority-lock") !== "sec") t.setAttribute("data-authority", "polls");
+      if (fieldUnit(t) === "min") {
+        // Minutes ARE the stored value; there is no second half to keep in step
+        // and no authority to move.
+        t.setAttribute("data-sec", String(secFromMinutes(t.value)));
+      } else {
+        t.setAttribute("data-sec", String(secFromPolls(t.value, awCadence().sec)));
+        // A typed count is a STATED count: from here the number stands and the
+        // seconds follow it (unless this field is locked to seconds — a ratio's
+        // History window is a measurement, not a count).
+        if (t.getAttribute("data-authority-lock") !== "sec") t.setAttribute("data-authority", "polls");
+      }
       syncPollFields(panel, false);
     });
   }
@@ -3545,8 +3636,9 @@ async function openAutomationWizard(existing, opts) {
    * Every severity tier waits out the ONE hold on the trigger (rule 19), so each
    * tier renders it read-only rather than leaving the operator to infer that the
    * number above the first tier governs all of them. Mirrors the trigger field's
-   * LABEL too — a ratio's "History (polls)" and an aggregate's "Measured over
-   * (polls)" are the same shared field wearing a different name — and hides
+   * LABEL too — a ratio's "History (minutes)", an aggregate's "Measured over
+   * (minutes)" and a `latest` hold's "Sustained for (polls)" are the same shared
+   * field wearing a different name and unit — and hides
    * itself whenever the trigger states no hold or has no hold field at all
    * (an all-down-detection tree), where an empty box in every tier would read as
    * a field each tier was meant to fill in.
@@ -3566,7 +3658,7 @@ async function openAutomationWizard(existing, opts) {
     // not blank the hold out of the tiers below it.
     var hidden = !wrap || wrap.getAttribute("data-hold-off") === "1";
     var label = labelEl ? (labelEl.textContent || "").replace(/\*+\s*$/, "").trim() : "";
-    var show = !hidden && !!input && pollFieldCount(input) > 0;
+    var show = !hidden && !!input && pollFieldHasValue(input);
     Array.prototype.forEach.call(rows, function (mirror) {
       mirror.style.display = show ? "" : "none";
       if (!show) return;
@@ -3607,14 +3699,25 @@ async function openAutomationWizard(existing, opts) {
     // 60 here mean "measured over 15 minutes, held for 60".
     var ratio = !!(root && root.querySelector('.scr-row[data-ratio="1"]'));
     var cadSec = awCadence().sec;
-    var minPolls = ratio ? Math.max(1, Math.ceil(RATIO_WINDOW_MIN_SEC / cadSec)) : 0;
-    var maxPolls = ratio ? Math.max(minPolls, Math.floor(RATIO_WINDOW_MAX_SEC / cadSec)) : 0;
+    // MINUTES for the two window modes, polls for the hold. The field stores
+    // seconds in both window modes (`windowSec`) and a count in the third
+    // (`forPolls`), so this is the unit each mode can state truthfully — and it
+    // has to be re-decided here rather than at render, because switching a
+    // condition's aggregation flips the mode under a field that already exists.
+    var windowed = ratio || aggregated;
+    var minMinutes = ratio ? Math.max(1, Math.ceil(RATIO_WINDOW_MIN_SEC / MINUTE_SEC)) : 0;
+    var maxMinutes = ratio ? Math.max(minMinutes, Math.floor(RATIO_WINDOW_MAX_SEC / MINUTE_SEC)) : 0;
+    // Still stated in POLLS, because the resolution of a ratio genuinely is a
+    // count of probes: over the shortest legal window this fleet's cadence
+    // gives you this many, and loss can only land on multiples of 1/that.
+    var minPolls = ratio ? Math.max(1, Math.round(RATIO_WINDOW_MIN_SEC / (cadSec > 0 ? cadSec : CADENCE_FALLBACK_SEC))) : 0;
+    setFieldUnit(input, windowed ? "min" : "polls");
     var label = wrap.querySelector("label");
     if (label) {
-      // The unit is polls in every mode — what changes is what the polls are
-      // FOR: a measurement window for a ratio, a measurement period for an
-      // aggregate, a hold clock for `latest`.
-      label.innerHTML = (ratio ? "History (polls)" : aggregated ? "Measured over (polls)" : "Sustained for (polls)") +
+      // The unit follows the JOB: a measurement window for a ratio, a
+      // measurement period for an aggregate — both wall-clock — versus a hold
+      // clock for `latest`, which the engine really does count in readings.
+      label.innerHTML = (ratio ? "History (minutes)" : aggregated ? "Measured over (minutes)" : "Sustained for (polls)") +
         '<span class="aw-dur-req" style="' + (aggregated || ratio ? "" : "display:none;") + 'color:var(--color-danger);font-weight:700;margin-left:2px">*</span>';
       star = label.querySelector(".aw-dur-req");
     }
@@ -3627,27 +3730,29 @@ async function openAutomationWizard(existing, opts) {
         : "";
       note.style.display = aggregated || ratio || tiersNote ? "" : "none";
       note.textContent = ratio
-        ? "Required — loss is failed probes / total probes over this many polls, counting from the device's first successful probe in the window. " +
-          "A short window is more sensitive but coarser: over " + minPolls + " polls loss can only read in steps of " +
+        ? "Required — loss is failed probes / total probes over this window, counting from the device's first successful probe in it. " +
+          "A short window is more sensitive but coarser: " + minMinutes + " minutes is about " + minPolls +
+          " probe" + (minPolls === 1 ? "" : "s") + " at this fleet's cadence, so loss can only read in steps of " +
           Math.round(100 / minPolls) + "%."
         : aggregated ? "Required — this is the period the value is measured over." : tiersNote.trim();
     }
     if (input) {
-      input.placeholder = ratio ? "e.g. " + Math.max(1, Math.round(RATIO_WINDOW_DEFAULT_SEC / cadSec)) : aggregated ? "e.g. 5" : DUR_PLACEHOLDER_OPTIONAL;
-      input.setAttribute("min", ratio ? String(minPolls) : "0");
-      if (ratio) input.setAttribute("max", String(maxPolls));
+      input.placeholder = ratio ? "e.g. " + Math.max(1, Math.round(RATIO_WINDOW_DEFAULT_SEC / MINUTE_SEC)) : aggregated ? "e.g. 5" : DUR_PLACEHOLDER_OPTIONAL;
+      input.setAttribute("min", ratio ? String(minMinutes) : "0");
+      if (ratio) input.setAttribute("max", String(maxMinutes));
       else input.removeAttribute("max");
       if (aggregated || ratio) input.setAttribute("required", "required");
       else input.removeAttribute("required");
       // An empty field on a fresh loss automation lands on the default rather
       // than 0, which would save a window the engine has to invent. Set through
-      // the seconds the field really holds, so the count and the stored value
+      // the seconds the field really holds, so the minutes and the stored value
       // can't disagree.
       if (ratio && (input.value === "" || Number(input.value) === 0)) setPollFieldSec(input, RATIO_WINDOW_DEFAULT_SEC);
       // The engine floors a loss window at 5 minutes whatever the cadence — a
-      // count below that floor would save a window it silently widens.
+      // shorter one would save a window it silently widens. In minutes the
+      // clamp lands exactly on the floor instead of on the nearest poll above it.
       if (ratio && pollFieldSec(input) > 0 && pollFieldSec(input) < RATIO_WINDOW_MIN_SEC && input !== document.activeElement) {
-        setPollFieldSec(input, minPolls * cadSec);
+        setPollFieldSec(input, RATIO_WINDOW_MIN_SEC);
       }
     }
     // The ratio-only sustain field appears exactly when the History relabel
@@ -3703,6 +3808,7 @@ async function openAutomationWizard(existing, opts) {
           // A ratio's History is a measurement window in seconds; every other
           // use of this field is a hold, and a hold is a count.
           triggerIsWindowedRatio(tr) ? "sec" : "polls",
+          triggerDurationUnit(tr),
         ) +
         ratioSustainFieldHtml(tr) +
         ratioCeilingFieldHtml(tr);
@@ -3881,6 +3987,18 @@ async function openAutomationWizard(existing, opts) {
     return aggregated;
   }
   /**
+   * Which unit a STORED trigger's duration field opens in — the render-time
+   * twin of the decision syncDurationRequirement re-makes on every edit. An
+   * aggregated or windowed-ratio leaf means the field is a measurement window
+   * (seconds on the wire) and so reads in minutes; anything else is a hold and
+   * reads in polls.
+   */
+  function triggerDurationUnit(tr) {
+    if (!tr) return "polls";
+    var leaves = tr.type === "composite" ? tgLeaves(tr) : [tr];
+    return leaves.some(tgLeafAggregated) ? "min" : "polls";
+  }
+  /**
    * Stamp the saturation ceiling onto every windowed-ratio leaf, and STRIP it
    * from every other leaf. The strip half matters: switching a condition off
    * packet loss must not leave an ignoreAtOrAbove behind on a metric whose
@@ -4012,7 +4130,7 @@ async function openAutomationWizard(existing, opts) {
       return null;
     }
     if (tgLeafAggregated(leaf) && !(Number(leaf.windowSec) > 0)) {
-      return label + ': "' + leaf.aggregation + '" measures over a period — set "Measured over (polls)" to 1 or more.';
+      return label + ': "' + leaf.aggregation + '" measures over a period — set "Measured over (minutes)" to 1 or more.';
     }
     return null;
   }
@@ -4473,7 +4591,7 @@ async function openAutomationWizard(existing, opts) {
       // Reset leaves are measured over the TRIGGER's window (collectStep4), so an
       // averaged reset condition under a trigger that reads the current value has
       // no period to average over. tgValidateLeaf's generic message points at
-      // "Measured over (polls)", which on this step doesn't exist — and on a
+      // "Measured over (minutes)", which on this step doesn't exist — and on a
       // `latest` trigger that field is the sustain clock, not a window, so
       // setting it wouldn't help either. Say what actually fixes it.
       var win = triggerWindowSec(draft.trigger);
