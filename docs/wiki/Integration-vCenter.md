@@ -127,8 +127,11 @@ See [Dependency suppression](Dependency-Suppression).
 
 ## The disappearance sweep
 
-This is the one integration with a real fleet-absence pass, and its rule is
-worth knowing precisely.
+vCenter was the first integration with a fleet-absence pass, and its rule is
+worth knowing precisely — the AD and Entra sweep is opt-in and judged
+differently (by which integration *manages* the asset rather than by whether
+anything still claims it), so do not read one as the other. See
+[Integration-Directory](Integration-Directory).
 
 **A VM or ESXi host that leaves the inventory is decommissioned only if nothing
 else claims it.**

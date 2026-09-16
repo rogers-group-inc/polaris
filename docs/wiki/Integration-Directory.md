@@ -288,11 +288,15 @@ Servers class needs GPO, SCCM or [Azure Arc](Integration-Azure-Arc) regardless.
 
 ## Decommissioning
 
-Neither integration has a fleet-absence pass. The **only** `decommissioned`
-write comes from the directory object's own **disabled** flag.
+Out of the box, the **only** `decommissioned` write comes from the directory
+object's own **disabled** flag. A machine deleted from AD does not disappear
+from Polaris on its own — deliberately, because a device is not gone just
+because a directory record is.
 
-So a machine deleted from AD does not disappear from Polaris on its own. That is
-deliberate — a device is not gone because a directory record is.
+Switch on *Decommission devices that leave the directory* and it does. See
+[Decommissioning what leaves the directory](#decommissioning-what-leaves-the-directory)
+above for what it acts on, what refuses it, and why a filter edit is not a
+deletion.
 
 ---
 
