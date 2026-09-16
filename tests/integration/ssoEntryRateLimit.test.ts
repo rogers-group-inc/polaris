@@ -53,10 +53,18 @@ dbDescribe("SSO entry redirects are off the password-guessing budget", () => {
     }
   });
 
-  it("answers the SAML entry point with a redirect, never a 429, well past ten calls", async () => {
-    for (let i = 0; i < 11; i++) {
-      const res = await request(app).get("/api/v1/auth/azure/login");
-      expect(res.status, `call ${i + 1} was rate limited`).toBe(302);
+  it("clears a shift-start burst from one NAT egress address", async () => {
+    // The ceiling is sized against the CALLBACK limiter, not the login one:
+    // one sign-in is one entry then one callback from the same address, so an
+    // entry ceiling below the callback's makes the callback's unreachable. The
+    // old 30 / 15 min capped a whole site at ten sign-ins per five minutes.
+    // 40 consecutive calls is past that and past the old ceiling outright,
+    // which is the number this case exists to defend.
+    for (const path of ["/api/v1/auth/azure/login", "/api/v1/auth/oidc/login"]) {
+      for (let i = 0; i < 40; i++) {
+        const res = await request(app).get(path);
+        expect(res.status, `${path} call ${i + 1} was rate limited`).toBe(302);
+      }
     }
   });
 });
