@@ -401,6 +401,99 @@
             <code>children</code> lists infrastructure-type children only, capped at 300
             (<code>childrenTruncated</code> flags overflow).</p>
         </div>
+
+        <h3>Device onboarding (writes)</h3>
+        <p>
+          Creating a device and putting it under monitoring is <strong>two calls</strong>:
+          <code>POST /assets</code> carries inventory fields only, and the monitoring switch plus
+          its credential wiring live on <code>PUT /assets/:id</code>. Credentials themselves are
+          <em>not</em> created over the API in the normal flow &mdash; an operator saves them once
+          under Server&nbsp;Settings&nbsp;→&nbsp;Credentials and the integration references the
+          stored row by id.
+        </p>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /assets
+            <span class="gate">assets:write</span></div>
+          <p>Create a device. Body (all optional, but give it at least an address or a hostname):
+            <code>{ ipAddress?, macAddress?, hostname?, dnsName?, assetTag?, serialNumber?,
+            manufacturer?, model?, assetType?, status?, location?, latitude?/longitude?,
+            department?, assignedTo?, os?, acquiredAt?, warrantyExpiry?, purchaseOrder?, notes?,
+            description?, tags? }</code>. <code>assetType</code> defaults to <code>other</code> and
+            <code>status</code> to <code>active</code>.
+            <code>201</code> with the created record.</p>
+          <p><strong>Monitoring fields are not accepted here</strong> &mdash;
+            <code>monitored</code> and every <code>*CredentialId</code> belong to the PUT below.
+            A device created by this endpoint is a manual-source asset: only response time gets a
+            source default (ICMP), so every other stream stays dark until a polling method is
+            chosen for it.</p>
+          <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN"   -H "Content-Type: application/json"   -d '{"hostname":"sw-branch-12","ipAddress":"10.20.30.4","assetType":"switch"}'   "<span class="js-base-url">/api/v1</span>/assets"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-put">PUT</span> /assets/:id
+            <span class="gate">assets:write</span></div>
+          <p>Update any field <code>POST /assets</code> accepts, plus the monitoring surface:
+            <code>{ monitored?, monitorCredentialId?, monitorIntervalSec? (5–86400),
+            probeTimeoutMs? (100–60000) }</code>, the per-stream polling methods
+            <code>{ responseTimePolling?, cpuMemoryPolling?, temperaturePolling?,
+            interfacesPolling?, lldpPolling?, storagePolling? }</code> (one of
+            <code>rest_api, snmp, winrm, ssh, icmp, agent, vcenter, fortimanager,
+            disabled</code>), and the per-stream credentials
+            <code>{ responseTimeCredentialId?, cpuMemoryCredentialId?,
+            temperatureCredentialId?, interfacesCredentialId?, lldpCredentialId? }</code>.
+            <code>null</code> clears a slot and falls back to the next settings tier.</p>
+          <p>Refusals worth coding against:</p>
+          <ul>
+            <li><code>400</code> &mdash; <code>Credential … not found</code>, naming the id.
+              It is well-formed but matches no stored credential (commonly one deleted and recreated in
+              the UI, which issues a new id).</li>
+            <li><code>400</code> &mdash; a credential whose <strong>type</strong> cannot serve the
+              stream's transport, e.g. an <code>ssh</code> credential on a stream polling over
+              SNMP. The pairing is <code>snmp→snmp</code>, <code>winrm→winrm</code>,
+              <code>ssh→ssh</code>, <code>rest_api→restapi</code>; ICMP, Disabled, Agent,
+              vCenter and FortiManager take no per-asset credential, and a credential left beside
+              one of those is accepted as staged config. <code>monitorCredentialId</code> is never
+              type-checked &mdash; it is the fallback for every stream at once, and those streams
+              may legitimately poll over different transports.</li>
+            <li><code>400</code> &mdash; a polling method the asset's discovery source does not
+              support, or ICMP on any stream but response time.</li>
+            <li><code>409</code> &mdash; <code>monitored: true</code> on a status that cannot carry
+              monitoring (decommissioned / disposed / lost / disabled). Change status first.</li>
+            <li><code>400</code> &mdash; setting or clearing <code>status: "quarantined"</code>
+              (use the quarantine endpoints below).</li>
+          </ul>
+          <pre class="curl"><code>curl -X PUT -H "Authorization: Bearer $POLARIS_TOKEN"   -H "Content-Type: application/json"   -d '{"monitored":true,"cpuMemoryPolling":"snmp","cpuMemoryCredentialId":"'$CRED_ID'"}'   "<span class="js-base-url">/api/v1</span>/assets/$ASSET_ID"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /assets/bulk-monitor
+            <span class="gate">assets:write</span></div>
+          <p>Flip monitoring on many devices at once:
+            <code>{ ids: [uuid, …], monitored, monitorCredentialId?, monitorIntervalSec?,
+            probeTimeoutMs? }</code> → <code>{ updated, errors: [{ id, error }] }</code>.
+            A mixed selection is normal, so per-id problems (an unknown id, a status that cannot be
+            monitored) are <strong>reported in <code>errors</code> with HTTP 200</strong> while the
+            rest of the batch still applies. An unknown <code>monitorCredentialId</code> is the
+            exception and fails the whole call with <code>400</code> &mdash; it applies to every id
+            in the batch, so nothing would be written correctly.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /assets/:id
+            <span class="gate">assets:write</span></div>
+          <p><code>204</code>. <code>409</code> for a quarantined device &mdash; release it first.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /credentials
+            <span class="gate">credentials:read</span></div>
+          <p>List stored monitoring credentials so an integration can resolve the id it needs by
+            name: a JSON array of <code>{ id, name, type, config, createdBy, createdAt }</code>
+            with <strong>every secret masked</strong> (community strings, passwords, private keys,
+            passphrases and API tokens all read <code>••••••••</code>).
+            <code>type</code> is one of <code>snmp, winrm, ssh, restapi, http</code>.</p>
+        </div>
       </section>
 
       <section id="quarantine">

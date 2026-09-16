@@ -107,7 +107,50 @@ GET    /assets/:id
 GET    /assets/:id/sources                  every source's answer
 GET    /assets/:id/sightings                FortiGate sightings
 GET    /assets/:id/dependencies             the dependency tree
+POST   /assets                              create a device
+PUT    /assets/:id                          update + the monitoring surface
+POST   /assets/bulk-monitor                 flip monitoring on many at once
+DELETE /assets/:id
+GET    /credentials                         stored credentials, secrets masked
 ```
+
+### Onboarding a device over the API
+
+Creating a device and putting it under monitoring is **two calls**. `POST
+/assets` carries inventory fields only — `monitored` and every `*CredentialId`
+are rejected there and belong to the `PUT`.
+
+Credentials are **not** created over the API in the normal flow: an operator
+saves them once under Server Settings → Credentials, and the integration
+references the stored row by id (resolve it by name through `GET /credentials`,
+or paste the id into the client's config). This also sidesteps [the ownership
+trap](#the-ownership-trap) — a token that never writes a credential never needs
+`credentials:fullwrite`. `assets:write` alone covers both calls; add
+`credentials:read` only if the client resolves ids by name.
+
+A device created this way is a **manual-source** asset, and only response time
+gets a source default (ICMP). Every other stream stays dark until a polling
+method is chosen for it, so `monitored: true` on its own buys you ping and
+nothing else.
+
+Two refusals to code against, both `400`:
+
+- **`Credential <id> not found`** — the id is well-formed but names no stored
+  row. Usually a credential deleted and recreated in the UI, which issues a new
+  id.
+- **A credential type the stream's transport cannot use** — the pairing is
+  `snmp→snmp`, `winrm→winrm`, `ssh→ssh`, `rest_api→restapi`. ICMP, Disabled,
+  Agent, vCenter and FortiManager take no per-asset credential, and a credential
+  left beside one of those is accepted as staged config. `monitorCredentialId`
+  is never type-checked — it is the fallback for every stream at once, and those
+  streams may legitimately poll over different transports.
+
+`monitored: true` on a decommissioned, disposed, lost or disabled device is a
+`409` ([rule 10](Business-Rules#rule-10)) — change the status first.
+`POST /assets/bulk-monitor` is the exception to that shape: per-id problems come
+back in `errors[]` with HTTP 200 while the rest of the batch applies, because a
+mixed selection is the normal case. An unknown `monitorCredentialId` still fails
+the whole call, since it applies to every id in the batch.
 
 ### Quarantine (the SIEM flow)
 
