@@ -61,7 +61,16 @@ export const passwordChangeLimiter = makeRateLimiter({
   message: "Too many password change attempts. Please try again in 15 minutes.",
 });
 
-/** Unauthenticated SSO entry redirect (OIDC login kick-off). */
+/**
+ * Unauthenticated SSO entry redirects — the OIDC and SAML login kick-offs
+ * (`GET /oidc/login`, `GET /azure/login`). Nothing is guessed here: the
+ * request carries no credential and the response is a redirect to the IdP, so
+ * this bounds flood volume rather than attempts. Deliberately NOT the login
+ * limiter, and deliberately not its store: SSO must keep working from
+ * anywhere even when the password surface is exhausted or IP-restricted
+ * (rule 25's "SSO is never gated"), and sharing a budget with the password
+ * form breaks that in both directions.
+ */
 export const ssoEntryLimiter = makeRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 30,
