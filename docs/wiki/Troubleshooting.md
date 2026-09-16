@@ -128,6 +128,16 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 
 ---
 
+## Capacity and disk
+
+| Symptom | Cause |
+|---|---|
+| A filesystem filled up while **Maintenance said "All capacity checks passed"** | The card grades the volumes it can measure, so a volume missing from **Storage volumes** reads as healthy rather than unknown. Fixed as of 2026-09: an unreachable path is now measured from its nearest reachable ancestor instead of being dropped |
+| **Storage volumes lists only the application volume** on a host whose database is on its own filesystem | PGDATA and its parents are mode `0700 postgres` and Polaris runs unprivileged, so it could not measure that filesystem. On an install predating the fix, `chmod o+x` on the PGDATA parent directories restores it — the data directory itself stays `0700` |
+| The database volume fills with **`log/`, not data** | PostgreSQL's own server log. `log_rotation_size = 0` means no size cap, and a low `log_min_duration_statement` or `log_autovacuum_min_duration` can produce gigabytes a day. Compare `base/`, `pg_wal/` and `log/` before assuming the database grew |
+
+---
+
 ## When you are stuck
 
 1. **Read the Events tab** filtered to `warning` and `error`. Polaris is written

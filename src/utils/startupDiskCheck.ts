@@ -79,8 +79,15 @@ export async function pickFirstExistingPath(candidates: string[]): Promise<strin
     try {
       await stat(p);
       return p;
-    } catch {
-      // not present, keep going
+    } catch (err: any) {
+      // EACCES/EPERM means the path EXISTS but a parent denies search — the
+      // 0700 PGDATA-parent case on a PGDG install, where Polaris runs as the
+      // unprivileged app user. That is a HIT, not a miss: the caller wants
+      // this path, and statfsWithAncestorFallback() can still measure its
+      // filesystem from an ancestor. Only a genuine ENOENT means "keep going";
+      // treating EACCES as absent is what let a real PGDATA fall out of the
+      // candidate scan entirely.
+      if (err?.code === "EACCES" || err?.code === "EPERM") return p;
     }
   }
   return null;
@@ -114,14 +121,74 @@ export async function probeDiskFree(path: string): Promise<DiskFreeProbe | null>
   }
 }
 
-async function probe(role: ProbedVolume["role"], path: string): Promise<ProbedVolume | null> {
-  try {
-    const [base, st] = await Promise.all([probeDiskFree(path), stat(path)]);
-    if (!base) return null;
-    return { role, path, ...base, dev: Number(st.dev) };
-  } catch {
-    return null;
+/**
+ * statfs `path`, falling back to its nearest reachable ANCESTOR when the path
+ * itself cannot be reached.
+ *
+ * Why this exists: PGDATA and its parents are mode 0700 `postgres` on a PGDG
+ * install, and Polaris runs as the unprivileged `polaris` user. `statfs()`
+ * needs search permission on every component of the path, so the app cannot
+ * measure the filesystem holding the database even though free-space numbers
+ * are not themselves privileged. The EACCES used to be swallowed and the DB
+ * volume dropped silently out of the scan: on prod (2026-09) `/var` filled to
+ * 100% and `pg_upgrade` died of ENOSPC while the Maintenance card still read
+ * "All capacity checks passed", because `/var` was never in the volume list
+ * to be graded. A volume we cannot measure must degrade, not disappear.
+ *
+ * `statfs()` reports FILESYSTEM-level numbers, so any reachable path on the
+ * same mount answers identically — walking up is exact, not an approximation.
+ * The one layout it gets wrong is PGDATA on its own mount beneath an
+ * unreadable parent, where the ancestor is a different filesystem. That is
+ * unknowable without permission, so the caller is handed `degraded` + both
+ * paths rather than being quietly told a number about the wrong disk.
+ */
+export async function statfsWithAncestorFallback(
+  path: string,
+): Promise<(DiskFreeProbe & { dev: number; measuredPath: string; degraded: boolean }) | null> {
+  let current = path;
+  let degraded = false;
+
+  // Terminates: dirname() is a fixed point at the filesystem root, which is
+  // the loop's exit condition.
+  for (;;) {
+    try {
+      const [fs, st] = await Promise.all([statfs(current), stat(current)]);
+      const freeBytes = Number(fs.bavail) * Number(fs.bsize);
+      const totalBytes = Number(fs.blocks) * Number(fs.bsize);
+      return {
+        freeBytes,
+        totalBytes,
+        freePct: totalBytes > 0 ? freeBytes / totalBytes : 1,
+        dev: Number(st.dev),
+        measuredPath: current,
+        degraded,
+      };
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return null; // reached the root with nothing reachable
+      current = parent;
+      degraded = true;
+    }
   }
+}
+
+async function probe(role: ProbedVolume["role"], path: string): Promise<ProbedVolume | null> {
+  const measured = await statfsWithAncestorFallback(path);
+  if (!measured) return null;
+  if (measured.degraded) {
+    logger.debug(
+      { role, requestedPath: path, measuredPath: measured.measuredPath },
+      "startup disk check: path unreachable, measured its nearest reachable ancestor instead",
+    );
+  }
+  return {
+    role,
+    path,
+    freeBytes: measured.freeBytes,
+    totalBytes: measured.totalBytes,
+    freePct: measured.freePct,
+    dev: measured.dev,
+  };
 }
 
 /**
