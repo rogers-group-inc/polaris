@@ -31,6 +31,7 @@
  * others; each failure writes an `automation.action_error` warning Event.
  */
 
+import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { logEvent } from "./eventLogService.js";
 import { renderNotificationTemplate,
@@ -98,6 +99,18 @@ export async function executeActions(
 ): Promise<{ executed: number; failed: number }> {
   let executed = 0;
   let failed = 0;
+
+  // THE SEND. One id per fan-out, stamped onto every delivery row this call
+  // creates, so the email footer can name the audience of THIS message instead
+  // of everyone the alert has ever reached (see ExpandDeliveriesOptions.
+  // dispatchId, and buildRecipientBlocks, which is its only reader).
+  //
+  // Minted per CALL rather than per action, because the call IS the send: the
+  // engine fires a rule's whole action list in one of these, so the email
+  // action's footer can still say the on-call's phone buzzed — while the
+  // sweep's repeat pass runs one action per call, which is what keeps a
+  // reminder from naming an escalation tier's people.
+  const dispatchId = randomUUID();
 
   // Address-book contacts owning the triggering asset. Resolved AT MOST ONCE
   // per fire and only when an action actually asks for them — several notify
@@ -172,6 +185,9 @@ export async function executeActions(
           ...(followUpLine(ctx) ? { followUp: followUpLine(ctx) } : {}),
           escalation: exec.escalation,
           repeat: exec.repeat,
+          // Every row of this fan-out shares it — that is what makes the
+          // footer's audience "this send" and not "this alert".
+          dispatchId,
           ...(allClear ? { noAck: true } : {}),
           ...(action.respectUserPreference ? { enforceUserPreference: await groupOffersBothMethods() } : {}),
         });

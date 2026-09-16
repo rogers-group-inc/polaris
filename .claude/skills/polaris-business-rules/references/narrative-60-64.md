@@ -38,6 +38,34 @@ an operator is trying to reason about when they look. A Cc rider is a reader the
 not name. So a reader who checks the To line to see who else is on this ALERT still gets a
 confidently partial answer, and the partiality is invisible: the header looks complete.
 
+**The second of those three reasons was the one that had to go, and it took the alert scope
+with it (2026-09-16).** An operator read a reminder whose footer said `Email sent to <the
+division manager>` and concluded their reminders were escalating over their head. They were
+not: the manager sat on the T+30 tier and on no reminder at all. But the footer read every
+delivery row the alert had ever produced, so from the moment tier 1 fired, every later
+reminder named them — and the automation's own page, which showed the manager only under
+Escalation, read as though it were lying.
+
+"Who else knows about this alert" was an honest question and the answer was accurate. It was
+simply not the question a line at the bottom of one email gets read as. A footnote on a
+message is read as a claim about that message; no amount of correctness in the header comment
+reaches the person holding the phone at 3am. So **both lines now scope to the SEND**: the fire
+names the fire's recipients, a reminder names that reminder's, an escalation tier names the
+tier's.
+
+**The grain is the FAN-OUT, not the delivery row**, and that distinction is what keeps the
+feature alive rather than quietly killing it. One `executeActions` call is one send:
+`expandDeliveries` stamps the id it mints into every row's `meta.dispatch`, and
+`buildRecipientBlocks` narrows on that stamp — in the query, because a weekend-long outage
+reminding every five minutes leaves hundreds of rows hanging off one alert. Scoped to the
+row instead, an automation that mails the NOC and pushes the on-call would stop telling the
+NOC that the phone buzzed, which is the entire reason `{push.recipients}` was written. Scoped
+to the fan-out, it still does: those are two actions of one fire. The sweep's repeat pass runs
+one action per call, which is precisely what stops a reminder from borrowing a tier's
+audience. A row carrying no stamp — queued before this shipped and still draining — falls
+back to the alert-wide read rather than losing its footer, the same "a slightly-too-wide
+answer beats no answer" posture the `meta.userId` stamp already takes.
+
 Prod 2026-09-14 is the case that made it concrete. A FortiGate-down alert routed its reminder
 to the site's two people at region level 1 and escalated hourly to the division at level 2.
 Reading any one of those emails, none of the four recipients could see the other three: the
@@ -48,9 +76,9 @@ one message again — and the second half cannot be: an escalation tier that has
 has no recipients to name.
 
 So `{email.recipients}` renders beside its push sibling in the same 11px footer block, sourced
-from the alert's own email delivery rows, deduped by address across every copy, every notify
-action and every pass. Both lines scope to the ALERT rather than to the send, and both count
-ROWS rather than outcomes — the email and the push drain in the same pass, sometimes the same
+from the send's own email delivery rows, deduped by address across every copy and every notify
+action of that fan-out. Both lines scope to the SEND rather than to the alert (see above —
+they were alert-wide until 2026-09-16), and both count ROWS rather than outcomes — the email and the push drain in the same pass, sometimes the same
 chunk, and a push service's 202 was never proof of delivery anyway ("sent to" is the honest
 verb, the same reachability posture `preferenceWithholds` takes).
 

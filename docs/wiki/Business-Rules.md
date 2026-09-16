@@ -402,7 +402,9 @@ answered-but-absent is **`unknown`, never `down`**; it never touches
 **A footer that tells the reader who else knows must never name a Bcc.** A blind
 copy that appears in a footer every recipient reads has stopped being blind. The
 invariant is not "the renderer filters Bcc out" but **"the renderer is never
-handed one"**.
+handed one"**. The footer names the audience of the **send** — one dispatch of
+the automation's actions — rather than of the whole alert, so a reminder never
+names someone who is only on an escalation tier.
 
 ### Rule 61
 **Changing a credential ends every other session on it, and rotating your own must
