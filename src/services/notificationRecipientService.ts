@@ -560,6 +560,30 @@ export interface ExpandDeliveriesOptions {
    * Default false, so every firing send is byte-identical to what it was.
    */
   noAck?: boolean;
+  /**
+   * Which SEND these rows belong to — one `executeActions` fan-out, minted by
+   * that function and shared by every `expandDeliveries` call inside it.
+   *
+   * It exists for the email footer and nothing else. `{push.recipients}` /
+   * `{email.recipients}` name who else this alert reached, and they used to
+   * read every delivery row the alert had ever produced — so a reminder that
+   * drained after tier 1 had fired named the escalation manager on a message
+   * the manager was not on, and the operator reading it could only conclude
+   * their reminders were going over their head. Scoping the footer needs a
+   * key the drain can match rows on, and the pass provenance already there
+   * (`escalation` / `repeat`) is not one: two notify actions reminding on
+   * their own clocks both stamp `repeat`, and neither says which fan-out a
+   * row came from.
+   *
+   * The fan-out is the right grain rather than the row: an automation that
+   * mails the NOC and pushes the on-call does so as two actions of ONE fire,
+   * and a footer scoped tighter than that would drop the cross-transport line
+   * the whole feature exists for.
+   *
+   * Optional, so a caller that never sets it writes exactly the rows it wrote
+   * before and the footer falls back to alert scope (see buildRecipientBlocks).
+   */
+  dispatchId?: string;
 }
 
 export async function expandDeliveries(
@@ -567,7 +591,7 @@ export async function expandDeliveries(
   targets: DeliveryTarget[] | undefined,
   opts: ExpandDeliveriesOptions = {},
 ): Promise<number> {
-  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp, noAck } = opts;
+  const { scopeRegionTags, assetRegionTags, assetContactEmails, composedEmail, escalation, repeat, enforceUserPreference, followUp, noAck, dispatchId } = opts;
   if (!targets || targets.length === 0) return 0;
 
   // Resolve the referenced channels once (type + enabled).
@@ -592,13 +616,17 @@ export async function expandDeliveries(
     if (seen.has(key)) return;
     seen.add(key);
     // Fold in whichever provenance is present, and keep meta strictly
-    // undefined when neither is — so every pre-feature path still writes a
-    // byte-identical row.
-    const provenance = escalation || repeat
+    // undefined when none is — so a caller that stamps nothing still writes a
+    // byte-identical row. `dispatch` joins the two pass keys here rather than
+    // getting its own column: it is read by exactly one consumer (the footer,
+    // at drain time) and it has to travel on rows that otherwise carry no meta
+    // at all, which is what the `?? undefined` tail below would drop.
+    const provenance = escalation || repeat || dispatchId
       ? ({
           ...(meta && typeof meta === "object" ? (meta as Record<string, unknown>) : {}),
           ...(escalation ? { escalation } : {}),
           ...(repeat ? { repeat } : {}),
+          ...(dispatchId ? { dispatch: dispatchId } : {}),
         } as Prisma.InputJsonValue)
       : meta;
     rows.push({ notificationId, channelId, transport, target, meta: provenance ?? undefined });

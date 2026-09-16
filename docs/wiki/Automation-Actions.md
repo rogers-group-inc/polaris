@@ -229,12 +229,19 @@ A token palette is visible in both view modes.
 > To line and only the To line. Cc *is* named, being visible to everyone on that
 > copy already.
 >
-> Both recipient tokens scope to the **alert**, not to one send. A send itself
-> is never split — everyone a notify action names is on one To line — but the
-> alert is still wider than any one copy of it: a second notify action mails
-> its own list, a reminder or an escalation tier adds people the first copy
-> never had, a Cc rider is a reader the To line does not name, and the push
-> half names people the email never reached at all.
+> Both recipient tokens scope to the **send**, not to the whole alert. A send is
+> one dispatch of the automation's actions — the first alert, one reminder, or
+> one escalation tier — so a reminder's footer names that reminder's recipients
+> and never the people on a tier that has fired. That send is still wider than
+> any one copy of it, which is why the tokens earn their place: a second notify
+> action in the same dispatch mails its own list, a Cc rider is a reader the To
+> line does not name, and the push half names people the email never reached at
+> all.
+>
+> They were alert-wide until September 2026. A footer that named everyone the
+> alert had *ever* reached was read — reasonably — as naming everyone on the
+> message in front of you, so a reminder that arrived after an escalation
+> looked as though it had gone to the escalation's recipients.
 
 ---
 

@@ -11,11 +11,12 @@
  *
  * A composed send no longer splits at all (business rule 25 — one message, one
  * To line, whatever the reader's zone or role), so the To header now IS the
- * audience of that copy. The line still earns its place, because the ALERT is
- * wider than any one copy of it: a rule with two notify actions mails two
- * lists, a reminder or an escalation tier can add recipients the first copy
- * never had, a Cc rider is a reader the To line does not name, and the push
- * half names people the email never reached at all.
+ * audience of that copy. The line still earns its place, because a SEND is
+ * wider than any one copy of it: a fire with two notify actions mails two
+ * lists, a Cc rider is a reader the To line does not name, and the push half
+ * names people the email never reached at all. What it no longer claims is
+ * the part that was being misread — recipients of a DIFFERENT message about
+ * the same alert.
  *
  * It is a DEFERRED token (`{push.recipients}` — see notificationTemplate's
  * isDeferredToken), filled at delivery like the charts, the LLDP block and the
@@ -32,11 +33,30 @@
  * `preferenceWithholds` uses for reachability), so "sent to" is the honest
  * verb for both.
  *
- * Scope is the ALERT, not the send: a reminder at T+45min lists everyone this
- * alert has been pushed to, including the original fire's recipients, because
- * "who else knows about THIS" does not reset when the reminder does. That is
- * also why it survived the single-message cutover — the question it answers
- * was never "who is on this copy".
+ * Scope is the SEND, not the alert (changed 2026-09-16; business rule 60).
+ * Both lines name the audience of ONE fan-out — one `executeActions` call,
+ * identified by the `meta.dispatch` stamp `expandDeliveries` writes — so an
+ * alert's four kinds of message each footnote themselves: the fire names the
+ * fire's recipients, a reminder names that reminder's, an escalation tier
+ * names the tier's.
+ *
+ * It was alert-scoped until an operator read a reminder whose footer said
+ * "Email sent to <the escalation manager>" and concluded their reminders were
+ * going over their head. They were not — the manager was on the T+30 tier and
+ * on no reminder at all — but the footer of a message cannot describe an
+ * audience that message does not have, however carefully the header comment
+ * says otherwise. "Who else knows about this alert" was the honest question;
+ * it was not the question a line at the bottom of one email gets read as.
+ *
+ * The FAN-OUT is the grain, not the delivery row, and that is what keeps the
+ * feature alive: an automation that mails the NOC and pushes the on-call does
+ * both in one fire, so the NOC's copy still says the phone buzzed. Scoped any
+ * tighter, the cross-transport line this service exists for would never render
+ * again.
+ *
+ * A row carrying no `dispatch` stamp — one queued before this shipped and
+ * still draining — falls back to the old alert-wide read rather than losing
+ * its footer.
  *
  * The PUSH list names accounts, not addresses — a push endpoint has no address
  * behind it, and an email recipient may be an address-book contact with no
@@ -248,12 +268,20 @@ interface RecipientRow {
 }
 
 /**
- * The whole delivery-time step: who else this alert reached, as both rendered
+ * The whole delivery-time step: who else this SEND reached, as both rendered
  * bodies, for BOTH transports.
  *
- * One read of the alert's delivery rows (indexed on notificationId) feeds both
- * halves, because a rule that both mails and pushes would otherwise ask the
- * same indexed question twice per drained email.
+ * One read of the send's delivery rows (indexed on notificationId, narrowed by
+ * the `meta.dispatch` stamp) feeds both halves, because a rule that both mails
+ * and pushes would otherwise ask the same indexed question twice per drained
+ * email.
+ *
+ * `dispatchId` is the fan-out the calling row belongs to, read off its own
+ * `meta.dispatch`. Omitted — a row queued before the stamp existed and still
+ * draining — the read widens to the whole alert, which is exactly what this
+ * function used to do unconditionally. Degrading that way rather than to an
+ * empty footer is the same posture the `meta.userId` stamp takes below: a
+ * slightly-too-wide answer beats no answer while old rows drain out.
  *
  * Never throws. A footer is not worth failing an alert over — and it fails as
  * a PAIR, because a half-built footer that named the push audience and silently
@@ -262,10 +290,19 @@ interface RecipientRow {
  */
 export async function buildRecipientBlocks(
   notificationId: string,
+  dispatchId?: string | null,
 ): Promise<{ push: PushRecipientBlock; email: PushRecipientBlock }> {
   try {
     const rows = await prisma.notificationDelivery.findMany({
-      where: { notificationId, transport: { in: ["web_push", "email"] } },
+      where: {
+        notificationId,
+        transport: { in: ["web_push", "email"] },
+        // Narrowed in the DATABASE, not after the read: a weekend-long outage
+        // reminding every five minutes leaves hundreds of rows on one alert,
+        // and pulling all of them back to keep one send's worth is the shape
+        // of query the scale-check convention exists to catch.
+        ...(dispatchId ? { meta: { path: ["dispatch"], equals: dispatchId } } : {}),
+      },
       select: { transport: true, target: true, meta: true },
     });
     if (rows.length === 0) return { push: EMPTY, email: EMPTY };

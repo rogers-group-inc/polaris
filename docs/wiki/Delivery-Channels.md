@@ -128,11 +128,13 @@ line — not a copy each. Two things used to split it and no longer do:
   email. (Web **push** still omits the tray action for such a role: a push is
   addressed to one browser, so leaving it off costs nobody a shared To line.)
 
-An alert is still wider than one copy of it — a second notify action mails its
-own list, a reminder or escalation tier adds people the first copy never had,
-and a Cc rider is a reader the To line does not name — which is why the
-`{email.recipients}` and `{push.recipients}` tokens scope to the **alert**
-rather than to one send, and count delivery rows rather than outcomes.
+A send is still wider than one copy of it — a second notify action in the same
+dispatch mails its own list, a Cc rider is a reader the To line does not name,
+and the push half names people the email never reached at all — which is why the
+`{email.recipients}` and `{push.recipients}` tokens exist. They scope to the
+**send** (one dispatch: the first alert, one reminder, or one escalation tier)
+rather than to the whole alert, and count delivery rows rather than outcomes. So
+a reminder's footer never names someone who is only on an escalation tier.
 
 **A Bcc is never named in that footer** ([rule 60](Business-Rules#rule-60)).
 

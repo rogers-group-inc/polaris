@@ -102,9 +102,10 @@ interface DeliveryRow {
 interface RenderMemo {
   charts: Map<string, Promise<Map<ChartToken, RenderedChart>>>;
   lossWindow: Map<string, Promise<number | null>>;
-  /** Keyed by notification alone — unlike the charts, the recipient lines
-   *  have no per-body variant, so every composed row of one alert shares them.
-   *  Both transports resolve together: one indexed read answers both. */
+  /** Keyed by notification AND dispatch: the recipient lines describe one
+   *  fan-out, so the two email rows of a single fire share an entry while a
+   *  reminder drained in the same pass gets its own. Both transports resolve
+   *  together: one indexed read answers both. */
   recipients: Map<string, Promise<{ push: PushRecipientBlock; email: PushRecipientBlock }>>;
 }
 
@@ -262,15 +263,21 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
     // whole drain. The attachment only rides along when the substituted HTML
     // actually references it (the block degrades to text, or to nothing, when
     // the logo can't be read).
-    // Who else this alert reached — buzzed, and mailed. Built here for a reason
+    // Who else THIS SEND reached — buzzed, and mailed. Built here for a reason
     // the other deferred blocks only share by coincidence: the delivery rows
     // these lines count are created by `expandDeliveries` AFTER this body was
     // composed, so fire time is not merely the wrong place to read them — they
     // do not exist yet. The email half reads rows the drain is in the middle of
     // sending, this one included, which is the point: the footer names the
-    // whole audience of the alert, not the subset that happens to have drained.
-    // Memoized per alert, since a rule with two notify actions drains two
-    // email rows that would otherwise ask the identical question twice.
+    // whole audience of the fan-out, not the subset that happens to have
+    // drained.
+    //
+    // `meta.dispatch` is which fan-out that is — stamped by expandDeliveries,
+    // shared by every row one executeActions call produced. Absent on a row
+    // queued before this shipped, and buildRecipientBlocks then reads the whole
+    // alert exactly as it used to. Memoized per (alert, dispatch), since a fire
+    // with two notify actions drains two email rows that would otherwise ask
+    // the identical question twice.
     const wantsPushLine = pushRecipientTokensIn(text, html).size > 0;
     const wantsEmailLine = emailRecipientTokensIn(text, html).size > 0;
     if (wantsPushLine || wantsEmailLine) {
@@ -279,8 +286,9 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       // just one of the tokens is the uncommon case (both live in the default
       // footer). Splitting the memo per token would double the queries on the
       // common one to save nothing on the rare one.
-      const blocks = await memoize(memo.recipients, d.notification.id, () =>
-        buildRecipientBlocks(d.notification.id),
+      const dispatchId = typeof meta.dispatch === "string" && meta.dispatch ? meta.dispatch : null;
+      const blocks = await memoize(memo.recipients, `${d.notification.id}|${dispatchId ?? ""}`, () =>
+        buildRecipientBlocks(d.notification.id, dispatchId),
       );
       if (wantsPushLine) {
         text = pruneEmptyTextLines(substitutePushRecipientTokens(text, blocks.push.text));
@@ -459,6 +467,15 @@ export function readPushFallback(meta: unknown): PushFallback | null {
     : null;
 }
 
+/** Which fan-out a delivery row belongs to — `expandDeliveries`' `dispatch`
+ *  stamp, the key the email footer scopes itself by. Null on a row queued
+ *  before the stamp existed, which widens the footer back to the whole alert
+ *  rather than emptying it. */
+export function readDispatch(meta: unknown): string | null {
+  const d = (meta as { dispatch?: unknown } | null | undefined)?.dispatch;
+  return typeof d === "string" && d ? d : null;
+}
+
 /** One sibling delivery row of the same alert, as the fallback pass reads it. */
 export interface FallbackSibling {
   transport: string;
@@ -541,15 +558,22 @@ export function alreadyEmailedOnChannel(
  * is the plain per-address path, which renders the default alert email.
  */
 async function enqueuePushFallbacks(terminal: DeliveryRow[]): Promise<number> {
+  // The dead push row's own `meta.dispatch` rides along: this email exists
+  // because THAT send could not reach the person, so it belongs to that send's
+  // audience and not to whichever one happened to compose the body below.
   const wanted = terminal
-    .map((r) => ({ notificationId: r.notification.id, fallback: readPushFallback(r.meta) }))
-    .filter((x): x is { notificationId: string; fallback: PushFallback } => !!x.fallback);
+    .map((r) => ({
+      notificationId: r.notification.id,
+      fallback: readPushFallback(r.meta),
+      dispatch: readDispatch(r.meta),
+    }))
+    .filter((x): x is { notificationId: string; fallback: PushFallback; dispatch: string | null } => !!x.fallback);
   if (wanted.length === 0) return 0;
 
-  const byNotification = new Map<string, PushFallback[]>();
+  const byNotification = new Map<string, (PushFallback & { dispatch: string | null })[]>();
   for (const w of wanted) {
     const list = byNotification.get(w.notificationId) ?? [];
-    if (!list.some((f) => f.userId === w.fallback.userId)) list.push(w.fallback);
+    if (!list.some((f) => f.userId === w.fallback.userId)) list.push({ ...w.fallback, dispatch: w.dispatch });
     byNotification.set(w.notificationId, list);
   }
 
@@ -575,6 +599,11 @@ async function enqueuePushFallbacks(terminal: DeliveryRow[]): Promise<number> {
         target: f.address,
         meta: {
           ...(composed ? { ...composed, to: [f.address], cc: [], bcc: [] } : {}),
+          // AFTER the spread, deliberately: the cloned body may belong to an
+          // earlier fan-out (the fire's email row, while the push that died was
+          // a reminder's), and the footer has to follow the dead push, not the
+          // borrowed template.
+          ...(f.dispatch ? { dispatch: f.dispatch } : {}),
           // Audit provenance: this row exists because a push died, not because
           // the automation addressed this person by email.
           pushFallback: true,
