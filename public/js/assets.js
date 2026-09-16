@@ -4423,7 +4423,14 @@ async function openEditModal(id, opts) {
       editTabs.push({ key: "maintenance", label: "Maintenance", html: assetMaintenanceFormHTML(asset) });
     }
     var body = tabbedBodyHTML("asset-edit", editTabs);
-    var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+    // Delete sits on the far left of the footer (margin-right:auto), well away
+    // from Save, and only for an existing asset the operator may manage — the
+    // same gate the row menu's Delete carries, since DELETE /assets/:id is
+    // assets:write server-side.
+    var footer = (asset.id && canManageAssets()
+        ? '<button class="btn btn-danger" id="btn-delete-asset" style="margin-right:auto">Delete Asset</button>'
+        : '') +
+      '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
       '<button class="btn btn-primary" id="btn-save">Save Changes</button>';
     var title = "Edit Asset" + (asset.hostname ? " — " + asset.hostname : "");
     openModal(title, body, footer, { wide: true });
@@ -4453,6 +4460,33 @@ async function openEditModal(id, opts) {
         _openInstallAgentModal(asset);
       });
     }
+    // Delete from inside the edit modal. showConfirm builds its own overlay at a
+    // higher z-index, so this modal's form DOM survives a cancel and the
+    // operator lands back on their unsaved edits. On confirm the edit modal
+    // closes, and so does the details panel behind it when it is showing the
+    // asset we just removed — leaving it open would show a record that no
+    // longer exists and its refresh timers would 404 on the next tick.
+    var deleteBtn = document.getElementById("btn-delete-asset");
+    if (deleteBtn) {
+      deleteBtn.addEventListener("click", async function () {
+        var btn = this;
+        var ok = await showConfirm('Delete asset "' + (asset.hostname || "-") + '"? This cannot be undone.');
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await api.assets.delete(id);
+          closeModal();
+          if (_isCurrentAsset(id)) closeAssetPanel();
+          showToast("Asset deleted");
+          loadAssets();
+        } catch (err) {
+          showToast(err.message, "error");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+
     document.getElementById("btn-save").addEventListener("click", async function () {
       var btn = this;
       btn.disabled = true;
