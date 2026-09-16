@@ -1821,7 +1821,7 @@ describe("automation wizard DOM render", () => {
     // happens to poll every 120s — and the field is marked required.
     const dur = doc.querySelector("#tf-duration-min") as unknown as { value: string; placeholder: string; dispatchEvent: (e: unknown) => void };
     expect(dur.value).toBe("5");
-    expect((doc.querySelector(".aw-dur label") as unknown as { textContent: string }).textContent).toContain("Measured over (minutes)");
+    expect((doc.querySelector(".aw-dur label") as unknown as { textContent: string }).textContent).toContain("Measured over");
     const star = () => (doc.querySelector(".aw-dur .aw-dur-req") as unknown as { style: { display: string } }).style.display;
     expect(star()).not.toBe("none");
 
@@ -1890,6 +1890,141 @@ describe("automation wizard DOM render", () => {
     expect(saved.trigger.windowSec).toBe(1800);
     expect(saved.trigger.forDurationSec).toBe(360);
     expect(saved.trigger.forPolls).toBe(3);
+  });
+
+  // ── Count windows (business rule 66) ──────────────────────────────────────
+
+  it("switches an aggregate's window from minutes to a COUNT of readings, and back", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    const win = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-count-window", name: "Slow response time", description: null, enabled: true, severity: "warning",
+      trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 600, operator: ">", threshold: 500 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      messageTemplate: null,
+      actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+      escalation: null,
+      severityBands: null,
+      bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const unit = doc.querySelector("#tf-window-unit") as unknown as { value: string; style: { display: string }; dispatchEvent: (e: unknown) => void };
+    const dur = doc.querySelector("#tf-duration-min") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    // A stored TIME window opens in minutes, and the picker is offered.
+    expect(unit.value).toBe("min");
+    expect(unit.style.display).not.toBe("none");
+    expect(dur.value).toBe("10"); // 600s
+    // The hold field is absent for a time window: there the window IS the period.
+    expect((doc.querySelector(".aw-ratio-sustain") as unknown as { style: { display: string } }).style.display).toBe("none");
+
+    // Switch to readings. The 10 minutes RE-DENOMINATE at the stubbed 120s
+    // cadence into 5 readings rather than staying a bare 10.
+    unit.value = "polls";
+    unit.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(dur.value).toBe("5");
+    // ...and the breach counter appears beside it, named for what it counts.
+    const sustainWrap = doc.querySelector(".aw-ratio-sustain") as unknown as { style: { display: string } };
+    expect(sustainWrap.style.display).not.toBe("none");
+    expect((doc.querySelector(".aw-ratio-sustain label") as unknown as { textContent: string }).textContent)
+      .toContain("Alert after (recalculations)");
+
+    // Last 10 readings, alerting after 15 consecutive recalculations over the line.
+    dur.value = "10";
+    dur.dispatchEvent(new win.Event("input", { bubbles: true }));
+    (doc.querySelector("#tf-sustain-min") as unknown as { value: string }).value = "15";
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.windowPolls).toBe(10);
+    expect(saved.trigger.forPolls).toBe(15);
+    // Both counts keep their wall-clock mirrors — that is what sizes the
+    // engine's sample fetch (lookbackMsFor), so neither may be dropped.
+    expect(saved.trigger.windowSec).toBe(1200); // 10 x the stubbed 120s cadence
+    expect(saved.trigger.forDurationSec).toBe(1800); // 15 x 120s
+    expect(() => ruleInputSchema.parse(saved)).not.toThrow();
+  });
+
+  it("STRIPS the count when the operator switches back to minutes", async () => {
+    // The strip half of the stamp. A leftover windowPolls would keep the engine
+    // measuring in readings while the field, the sentence and the formula all
+    // said minutes — the rule doing something nothing on screen states.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    const win = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-count-strip", name: "Slow response time", description: null, enabled: true, severity: "warning",
+      trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 1200, windowPolls: 10, operator: ">", threshold: 500, forDurationSec: 1800, forPolls: 15 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      messageTemplate: null,
+      actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+      escalation: null,
+      severityBands: null,
+      bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    // A stored count window opens in readings, showing the COUNT it states
+    // rather than its seconds mirror divided by anything.
+    const unit = doc.querySelector("#tf-window-unit") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    expect(unit.value).toBe("polls");
+    expect((doc.querySelector("#tf-duration-min") as unknown as { value: string }).value).toBe("10");
+    expect((doc.querySelector("#tf-sustain-min") as unknown as { value: string }).value).toBe("15");
+
+    unit.value = "min";
+    unit.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.windowPolls).toBeUndefined();
+    expect(saved.trigger.windowSec).toBe(1200);
+    // The hold goes with it: a time-windowed aggregate has no second axis.
+    // (`forPolls` drops out of the payload entirely at 0 rather than being
+    // written as a zero — either spelling reads as "no hold" to the engine.)
+    expect(saved.trigger.forPolls).toBeFalsy();
+    expect(saved.trigger.forDurationSec).toBe(0);
+  });
+
+  it("says readings, not minutes, in the sentence and the formula", async () => {
+    doc.body.innerHTML = "";
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-count-prose", name: "Slow response time", description: null, enabled: true, severity: "warning",
+      trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 1200, windowPolls: 10, operator: ">", threshold: 500 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      messageTemplate: null,
+      actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+      escalation: null,
+      severityBands: null,
+      bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const sentence = (doc.querySelector("#aw-trigger-sentence") as unknown as { textContent: string }).textContent;
+    expect(sentence).toContain("the last 10 readings");
+    expect(sentence).not.toContain("20 minutes");
+    const formula = (doc.querySelector("#aw-trigger-formula") as unknown as { textContent: string }).textContent;
+    expect(formula).toContain("10p");
+    expect(formula).not.toContain("20m");
   });
 
   it("keeps a window whose seconds aren't a whole number of minutes until it's edited", async () => {
@@ -2149,7 +2284,7 @@ describe("automation wizard DOM render", () => {
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(savedPayloads).toHaveLength(0);
-    expect(toastErrors.join(" ")).toContain("Measured over (minutes)");
+    expect(toastErrors.join(" ")).toContain("Measured over");
   });
 
   it("the formula block under the sentence moves the minutes when the aggregation changes", async () => {

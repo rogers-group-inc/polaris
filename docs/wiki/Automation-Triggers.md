@@ -260,7 +260,7 @@ depending on the aggregation you picked. It renames itself — and changes its
 
 | Aggregation | The field | It means |
 |---|---|---|
-| `avg` / `median` / `min` / `max` | **Measured over (minutes)** | the **measurement window** — the period the value is computed over |
+| `avg` / `median` / `min` / `max` | **Measured over**, with a `minutes \| polls` picker | the **measurement window** — see the next section, which is the choice that picker offers |
 | `probeLossPct` | **History (minutes)** | the window the ratio is measured across (see above) |
 | `latest` | **Sustained for (polls)** | the **sustain clock** — how many consecutive readings the condition must stay true for |
 
@@ -319,15 +319,60 @@ The number of readings a window holds is a **consequence** of the window and the
 fleet's cadence, so it belongs in the caption, where it updates as the cadence
 does. Two consequences worth knowing when you read a window back:
 
-- **A window's denominator floats with availability.** Missed polls write no
+- **A time window's denominator floats with availability.** Missed polls write no
   value, so an hour of `avg` over a device dropping three quarters of its packets
   is the average of the quarter that answered — not of 60 slots with holes in
-  them. If you want the misses to count, that is what `probeLossPct` and down
-  detection are for.
+  them. A **count window** (below) is the fix for that; if you want the misses
+  themselves to alarm, that is what `probeLossPct` and down detection are for.
 - **A stored window that isn't a whole number of minutes is left alone** until
   you edit the field. A 90-second window shows `2` and stays 90 across a save
   that never touched it; type `2` and it becomes 120, because typing it is
   stating it.
+
+### Count windows: the last N readings, and a breach counter
+
+Switch the picker from **minutes** to **polls** and the window stops being a
+span of time and becomes **the last N readings that returned a number** — "the
+average of the last 10 responses" — recomputed every time a new one arrives.
+
+This is the answer to the floating denominator above. A miss is not counted, not
+filled and not given an invented value; it simply is not a member of the window.
+What stretches on a lossy device is the *wall-clock time* the window covers, not
+the number of measurements in it, so the reading means the same thing at 0 % loss
+and at 40 %: **when this device answers, this is how long it takes.**
+
+Choosing readings reveals a second field, **Alert after (recalculations)**, which
+a time window does not get. It is the **breach counter**: how many consecutive
+recalculations must be over the threshold before the alert fires. The two compose
+into "the last 10 responses have averaged over 500 ms, 15 times running."
+
+| | Time window | Count window |
+|---|---|---|
+| Window | last 60 **minutes** | last 10 **readings** |
+| Sample size | whatever landed — floats with availability | fixed at N |
+| A miss | shrinks the denominator | not a member; the window reaches further back |
+| Hold on top | none — the window *is* the period | the breach counter |
+| Below a full window | averages what it has | **no reading at all** — it abstains |
+
+Two behaviours worth knowing before you rely on it:
+
+- **Only successful polls advance the counter.** On a healthy device at a 60 s
+  cadence, 60 recalculations is about an hour; on a device losing half its
+  probes the same rule takes about twice as long, because it is waiting for
+  measurements rather than for the clock. That is deliberate — fewer
+  measurements means less certainty, so more evidence is required before paging.
+  During a total outage the counter stops entirely, and down detection owns that
+  case.
+- **Past about 50 % loss the metric abstains.** Polaris will not average a
+  partial window — an aggregate over fewer than N samples is a different
+  statistic wearing the same threshold. A device that lossy has a packet-loss
+  problem, not a latency problem, and `probeLossPct` is the metric that says so.
+
+The practical reason to reach for it: a count window plus a breach counter will
+not page you for a single spike. One 1500 ms response inside an otherwise healthy
+5-reading window never pulls the average over 500, so the counter never starts —
+while a device that has genuinely slowed clears the line at every recalculation
+and fires on schedule.
 
 ---
 

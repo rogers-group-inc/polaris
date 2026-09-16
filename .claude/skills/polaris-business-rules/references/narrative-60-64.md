@@ -556,3 +556,70 @@ When adding a new `{asset.*}` token, add its field to `SAMPLE_ALERT_DEVICE` as w
 engine's `ASSET_DETAIL_SELECT`. The specimen's value is that it prunes the same rows the real
 alert prunes; a field missing here mails a blank row for a fact a real alert prints, and the
 test quietly stops being faithful without anything failing.
+
+
+---
+
+## Rule 66 — A measurement window may be counted in readings, and then the hold counts recalculations
+
+A time window takes whatever samples landed inside it, which means the SAMPLE SIZE of an
+aggregated automation is a function of how well the device happens to be working. `avg` over
+an hour on a healthy device is the mean of sixty readings; on a device dropping three
+quarters of its probes it is the mean of the seventeen that answered, under the same
+threshold, wearing the same name, with nothing on screen saying the statistic changed. That
+is not a rounding problem, it is two different rules sharing one definition — and it gets
+worse exactly when the device is worst.
+
+**`windowPolls` states the window as a COUNT of readings instead: the last N samples that
+produced a value.** Misses are not counted, not filled, and not fabricated — a failed probe
+writes a NULL `responseTimeMs` and simply is not a member of the window. What stretches under
+loss is the WALL CLOCK the window spans, not the number of measurements in it, so the reading
+means the same thing at 0% loss and at 40%: *when this device answers, this is how long it
+takes*. `rollingAggregate` is the arithmetic, and its defining test is an equality — a holed
+series and a clean series carrying the same N values produce the same number.
+
+**Two shapes of window were considered and rejected before this one.** Filling a miss with
+**0 ms** flatters a dying device: the Roanoke FortiAP that prompted this read 507 ms over the
+polls it answered and would have read 144 ms with its 43 misses counted as zero, so the alert
+would have CLEARED as the device got worse. Median does not rescue that — past 50% loss the
+zeros ARE the distribution and the median is 0 — and it is the trap Zabbix's `icmppingsec`
+is known for, where every latency trigger has to be guarded with `and icmpping=1`. Filling
+with the **probe timeout** fails the other way: it poisons a latency metric into a loss alarm
+that fires about a device whose successful responses are perfectly fine. The standard every
+other NMS keeps — Nagios `check_icmp`'s `rta`/`pl` pair, SmokePing's median-of-replies with
+loss as the line colour, the SRE convention that latency is measured over SUCCESSFUL requests
+and failures are a separate availability signal — is that a failed probe's latency is
+UNDEFINED rather than any number, and packet loss is its own metric with its own threshold
+(business rule 29) and its own down detection (business rule 36).
+
+**The hold composes with it, and only with it.** Under a time window `forPolls` is refused,
+because there the window IS the period and a second clock on top would be two clocks doing
+one job. Under a count window the window is recomputed AT EVERY READING, so there is a series
+of aggregates to count and `forPolls` means *N consecutive recalculations over the line* — a
+breach counter. `reduceReadings` hands the rolling aggregates on AS the series, which is why
+every existing mechanism keeps working untouched: `leadingRun` counts the run, `tierRuns`
+gives each severity tier its own run against the same smoothed series, and the engine's
+fire/clear path never learns that the numbers it is counting were derived. That composition
+is the thing a time window cannot express: one 1500 ms spike inside an otherwise healthy
+5-reading window never clears the threshold, so the counter never starts, while a genuine
+climb clears it at every offset and the counter runs.
+
+**Not enough readings is NO reading, never a partial window.** An aggregate over fewer than N
+samples is a different statistic under the same threshold, so `rollingAggregate` returns
+empty and the asset is skipped exactly as one that has reported nothing is skipped. This is
+what bounds the feature's cost: `lookbackMsFor` reaches back over the wall-clock mirror of
+both counts, doubled — enough for a device losing half its probes — and a device worse than
+that produces too few readings to fill the window and abstains. Doubling rather than more is
+a fleet-scale decision, not a correctness one: this fetch is already the heaviest thing an
+automation does at 2000 assets, and a device at that loss rate is a packet-loss and
+down-detection problem those metrics already own.
+
+**Both counts keep their wall-clock mirrors.** `windowSec` beside `windowPolls` and
+`forDurationSec` beside `forPolls` are what size the engine's sample fetch and what the prose
+reads; the builder always writes them, and an API-authored rule that omits them gets the full
+6-hour lookback rather than a guessed cadence. The BUILDER states the unit the rule actually
+stores — "Measured over" with a minutes/polls picker, the breach counter appearing only
+beside a count window (and beside a ratio's History, the other window with a free hold axis)
+— and `tgStampWindowPolls` STRIPS the count from every leaf that must not carry it, because
+the engine prefers `windowPolls` wherever it finds one and a leftover would keep measuring in
+readings while the field, the sentence and the formula all said minutes.

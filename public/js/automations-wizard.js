@@ -559,6 +559,17 @@ function makeAutomationSentences(s) {
   function isWindowedRatio(m) {
     return (s.windowedRatioMetrics || ["probeLossPct"]).indexOf(m) !== -1;
   }
+  /** A leaf's COUNT window (business rule 66), or 0. Mirrors triggerWindowPolls
+   *  server-side: never on a ratio (its window is its own denominator) and never
+   *  on `latest` (no window at all), so the prose can't claim a count the engine
+   *  would ignore. Kept inside the pure factory — it reads the same draft the
+   *  sentence does and must not reach for anything in the DOM. */
+  function leafCountWindow(leaf) {
+    if (!leaf || isWindowedRatio(leaf.metric)) return 0;
+    if (!leaf.aggregation || leaf.aggregation === "latest") return 0;
+    var n = leaf.windowPolls;
+    return typeof n === "number" && n > 0 ? Math.round(n) : 0;
+  }
   function humanDuration(sec) {
     if (!sec || sec <= 0) return "";
     if (sec % 3600 === 0) { var h = sec / 3600; return h + (h === 1 ? " hour" : " hours"); }
@@ -614,6 +625,8 @@ function makeAutomationSentences(s) {
     // second average on top of a percentage).
     var agg = isWindowedRatio(leaf.metric)
       ? " (over the last " + (humanDuration(leaf.windowSec) || humanDuration(RATIO_WINDOW_DEFAULT_SEC)) + " of probe history, from the first successful probe)"
+      : leaf.aggregation && leaf.aggregation !== "latest" && leafCountWindow(leaf)
+        ? " (" + (AGG_PHRASE[leaf.aggregation] || leaf.aggregation) + " the last " + leafCountWindow(leaf) + " readings)"
       : leaf.aggregation && leaf.aggregation !== "latest" && leaf.windowSec
         ? " (" + (AGG_PHRASE[leaf.aggregation] || leaf.aggregation) + " " + humanDuration(leaf.windowSec) + ")" : "";
     var thr = leaf.threshold == null || isNaN(leaf.threshold) ? "…" : leaf.threshold;
@@ -717,7 +730,8 @@ function makeAutomationSentences(s) {
       var agg = isWindowedRatio(tr.metric)
         ? " (over the last " + (humanDuration(tr.windowSec) || humanDuration(RATIO_WINDOW_DEFAULT_SEC)) + " of probe history, from the first successful probe)"
         : tr.aggregation && tr.aggregation !== "latest" && tr.windowSec
-          ? " (" + escapeHtml(AGG_PHRASE[tr.aggregation] || tr.aggregation) + " " + humanDuration(tr.windowSec) + ")" : "";
+          ? " (" + escapeHtml(AGG_PHRASE[tr.aggregation] || tr.aggregation) + " " +
+            (leafCountWindow(tr) ? "the last " + leafCountWindow(tr) + " readings" : humanDuration(tr.windowSec)) + ")" : "";
       var thr = tr.threshold == null || isNaN(tr.threshold) ? "…" : tr.threshold;
       var unit = leafUnit(tr.metric, tr.dimensionFilter); unit = unit ? " " + unit : "";
       out = "When <strong>" + escapeHtml(subject) + agg + " " + escapeHtml(CMP_PHRASE[tr.operator] || tr.operator) + " " + escapeHtml(String(thr)) + escapeHtml(unit) + "</strong>";
@@ -841,7 +855,12 @@ function makeAutomationSentences(s) {
     // the whole point of the view. Every other aggregation always prints one,
     // falling back to the floor when the trigger carries no window at all (which
     // the wizard refuses to save, but a hand-written rule can).
-    var win = agg === "latest" ? "" : ", " + compactDuration(leaf.windowSec > 0 ? leaf.windowSec : SAMPLING_FLOOR_SEC);
+    // A COUNT window prints as the count (business rule 66) — "avg(RTT, 10p)"
+    // says the window is ten readings, where "10m" would claim a clock the rule
+    // does not keep.
+    var win = agg === "latest" ? ""
+      : leafCountWindow(leaf) ? ", " + leafCountWindow(leaf) + "p"
+      : ", " + compactDuration(leaf.windowSec > 0 ? leaf.windowSec : SAMPLING_FLOOR_SEC);
     return fn + "(" + subject + formulaDims(leaf, !!probeName) + win + ")";
   }
   /** The comparison side: `>= 65 °C`, or `== "Alarm"` for a flag. */
@@ -3173,6 +3192,11 @@ async function openAutomationWizard(existing, opts) {
   var RATIO_WINDOW_DEFAULT_SEC = 900;
   var RATIO_WINDOW_MIN_SEC = 300;
   var RATIO_WINDOW_MAX_SEC = 86400;
+  /** Count-window bounds (business rule 66). The cap mirrors WINDOW_POLLS_FIELD
+   *  server-side, which is itself what keeps `windowPolls + forPolls - 1` inside
+   *  the engine's 200-reading SERIES_CAP. */
+  var COUNT_WINDOW_MAX_POLLS = 100;
+  var COUNT_WINDOW_DEFAULT_POLLS = 10;
   /** Cadence when the server hasn't answered (yet, or at all). Every note that
    *  falls back to it SAYS so rather than presenting it as this fleet's. */
   var CADENCE_FALLBACK_SEC = 60;
@@ -3265,9 +3289,21 @@ async function openAutomationWizard(existing, opts) {
         (opts.hidden ? ' style="margin:0.5rem 0 0;display:none"' : ' style="margin:0.5rem 0 0"') + '>' +
       '<label style="font-size:0.8rem">' + escapeHtml(opts.label || "Sustained for (polls)") +
         '<span class="aw-dur-req" style="display:none;color:var(--color-danger);font-weight:700;margin-left:2px">*</span></label>' +
+      // The unit PICKER, rendered only where the operator genuinely has the
+      // choice (an aggregate — see syncDurationRequirement, which shows and
+      // hides it live). Where it appears the label drops its parenthetical, so
+      // the unit is stated once, by the control that sets it.
+      '<div style="display:flex;gap:0.4rem;align-items:center">' +
       '<input type="number" ' + attr + ' class="aw-poll-input" data-unit="' + unit + '" data-authority="' + authority + '"' +
         (lock ? ' data-authority-lock="sec"' : "") + ' data-sec="' + (Number(sec) || 0) + '" min="0" ' +
-        'value="' + shown + '" placeholder="' + escapeHtml(opts.placeholder || DUR_PLACEHOLDER_OPTIONAL) + '">' +
+        'value="' + shown + '" placeholder="' + escapeHtml(opts.placeholder || DUR_PLACEHOLDER_OPTIONAL) + '" style="flex:1">' +
+      (opts.unitPicker
+        ? '<select class="aw-window-unit" id="tf-window-unit" style="flex:0 0 auto;width:auto">' +
+            '<option value="min"' + (unit === "min" ? " selected" : "") + '>minutes</option>' +
+            '<option value="polls"' + (unit === "polls" ? " selected" : "") + '>polls</option>' +
+          '</select>'
+        : "") +
+      '</div>' +
       '<p class="aw-poll-note" style="margin:2px 0 0;font-size:0.78rem;color:var(--color-text-tertiary)"></p>' +
       '<p class="aw-dur-note" style="display:none;margin:2px 0 0;font-size:0.78rem;color:var(--color-text-tertiary)"></p></div>';
   }
@@ -3277,11 +3313,14 @@ async function openAutomationWizard(existing, opts) {
     // period to measure over without it.
     // Label and unit move together and syncDurationRequirement owns both live;
     // seeding them here only saves the field from rendering one unit and being
-    // re-denominated into the other before the operator's first paint.
+    // re-denominated into the other before the operator's first paint. The
+    // picker rides along for the same reason and is hidden there when the
+    // trigger turns out to have no choice to offer.
     var min = unit === "min";
     return pollFieldHtml(attr, sec, {
-      label: min ? "Measured over (minutes)" : "Sustained for (polls)",
+      label: min ? "Measured over" : "Sustained for (polls)",
       polls: polls, authority: authority, unit: min ? "min" : "polls",
+      unitPicker: true,
     });
   }
   /**
@@ -3293,14 +3332,19 @@ async function openAutomationWizard(existing, opts) {
    * live), the same rendered-not-omitted pattern the base field takes.
    */
   function ratioSustainFieldHtml(tr) {
+    // Shown for a ratio's History AND for a count window (business rule 66) —
+    // the two windows that leave a hold axis free beside them. Its LABEL and
+    // note change with which one it is; syncDurationRequirement owns both live.
+    var second = triggerIsWindowedRatio(tr) || triggerDurationUnit(tr) === "polls";
+    var count = !triggerIsWindowedRatio(tr) && triggerDurationUnit(tr) === "polls";
     return pollFieldHtml('id="tf-sustain-min"', triggerSustainSec(tr), {
       wrapClass: "aw-ratio-sustain",
-      hidden: !triggerIsWindowedRatio(tr),
-      label: "Sustained for (polls)",
-      polls: triggerIsWindowedRatio(tr) && triggerSustainSec(tr) > 0 ? storedHoldPolls(tr) : null,
+      hidden: !second,
+      label: count ? "Alert after (recalculations)" : "Sustained for (polls)",
+      polls: second && triggerSustainSec(tr) > 0 ? storedHoldPolls(tr) : null,
     }).replace(
       '<p class="aw-dur-note"',
-      '<p style="margin:2px 0 0;font-size:0.78rem;color:var(--color-text-tertiary)">Optional — how long the loss must stay over the threshold before the alert fires. Each reading still measures over the History window above.</p><p class="aw-dur-note"',
+      '<p class="aw-sustain-note" style="margin:2px 0 0;font-size:0.78rem;color:var(--color-text-tertiary)">Optional — how long the loss must stay over the threshold before the alert fires. Each reading still measures over the History window above.</p><p class="aw-dur-note"',
     );
   }
 
@@ -3447,9 +3491,12 @@ async function openAutomationWizard(existing, opts) {
           input.setAttribute("data-sec", String(secFromPolls(input.value, iv)));
         }
       }
-      var note = input.parentNode && input.parentNode.querySelector(".aw-poll-note");
+      // The form-group, NOT parentNode: the input sits inside a flex row beside
+      // its unit picker, so the caption and the group's own display live one
+      // level further out than they used to.
+      var wrap = input.closest(".form-group");
+      var note = wrap && wrap.querySelector(".aw-poll-note");
       if (note) {
-        var wrap = input.parentNode;
         note.style.display = wrap && wrap.style && wrap.style.display === "none" ? "none" : "";
         note.textContent = cadenceNoteFor(input.value, fieldUnit(input));
       }
@@ -3705,19 +3752,36 @@ async function openAutomationWizard(existing, opts) {
     // has to be re-decided here rather than at render, because switching a
     // condition's aggregation flips the mode under a field that already exists.
     var windowed = ratio || aggregated;
+    // THE THIRD MODE (business rule 66). An aggregate — and only an aggregate —
+    // may state its window as a COUNT of readings instead of a span of time:
+    // "the last 10 responses", recomputed at each one, with the hold below
+    // counting recalculations. A ratio is excluded because its window IS the
+    // ratio's denominator over time (business rule 29f), and `latest` because
+    // it has no window at all. The picker is the authority while it is on
+    // screen; off screen the mode falls back to what the trigger can express.
+    var unitSel = panel.querySelector("#tf-window-unit");
+    var canPickUnit = aggregated && !ratio;
+    var countWindow = canPickUnit && unitSel && unitSel.value === "polls";
+    if (unitSel) {
+      var unitWrap = unitSel.parentNode;
+      if (unitWrap && unitWrap.style) unitWrap.style.gap = canPickUnit ? "0.4rem" : "0";
+      unitSel.style.display = canPickUnit ? "" : "none";
+    }
     var minMinutes = ratio ? Math.max(1, Math.ceil(RATIO_WINDOW_MIN_SEC / MINUTE_SEC)) : 0;
     var maxMinutes = ratio ? Math.max(minMinutes, Math.floor(RATIO_WINDOW_MAX_SEC / MINUTE_SEC)) : 0;
     // Still stated in POLLS, because the resolution of a ratio genuinely is a
     // count of probes: over the shortest legal window this fleet's cadence
     // gives you this many, and loss can only land on multiples of 1/that.
     var minPolls = ratio ? Math.max(1, Math.round(RATIO_WINDOW_MIN_SEC / (cadSec > 0 ? cadSec : CADENCE_FALLBACK_SEC))) : 0;
-    setFieldUnit(input, windowed ? "min" : "polls");
+    setFieldUnit(input, countWindow ? "polls" : windowed ? "min" : "polls");
     var label = wrap.querySelector("label");
     if (label) {
       // The unit follows the JOB: a measurement window for a ratio, a
-      // measurement period for an aggregate — both wall-clock — versus a hold
-      // clock for `latest`, which the engine really does count in readings.
-      label.innerHTML = (ratio ? "History (minutes)" : aggregated ? "Measured over (minutes)" : "Sustained for (polls)") +
+      // measurement period for an aggregate — either of which may be wall-clock
+      // or a count of readings — versus a hold clock for `latest`, which the
+      // engine really does count in readings. Where the picker is on screen the
+      // label states no unit, because the picker already does.
+      label.innerHTML = (ratio ? "History (minutes)" : aggregated ? "Measured over" : "Sustained for (polls)") +
         '<span class="aw-dur-req" style="' + (aggregated || ratio ? "" : "display:none;") + 'color:var(--color-danger);font-weight:700;margin-left:2px">*</span>';
       star = label.querySelector(".aw-dur-req");
     }
@@ -3734,12 +3798,16 @@ async function openAutomationWizard(existing, opts) {
           "A short window is more sensitive but coarser: " + minMinutes + " minutes is about " + minPolls +
           " probe" + (minPolls === 1 ? "" : "s") + " at this fleet's cadence, so loss can only read in steps of " +
           Math.round(100 / minPolls) + "%."
+        : countWindow
+          ? "Required — the value is the aggregate of the last this-many readings that returned a number, recomputed at each one. "
+            + "Missed polls are not counted, so the window reaches further back on a lossy device instead of averaging fewer samples."
         : aggregated ? "Required — this is the period the value is measured over." : tiersNote.trim();
     }
     if (input) {
-      input.placeholder = ratio ? "e.g. " + Math.max(1, Math.round(RATIO_WINDOW_DEFAULT_SEC / MINUTE_SEC)) : aggregated ? "e.g. 5" : DUR_PLACEHOLDER_OPTIONAL;
-      input.setAttribute("min", ratio ? String(minMinutes) : "0");
+      input.placeholder = ratio ? "e.g. " + Math.max(1, Math.round(RATIO_WINDOW_DEFAULT_SEC / MINUTE_SEC)) : countWindow ? "e.g. 10" : aggregated ? "e.g. 5" : DUR_PLACEHOLDER_OPTIONAL;
+      input.setAttribute("min", ratio ? String(minMinutes) : countWindow ? "1" : "0");
       if (ratio) input.setAttribute("max", String(maxMinutes));
+      else if (countWindow) input.setAttribute("max", String(COUNT_WINDOW_MAX_POLLS));
       else input.removeAttribute("max");
       if (aggregated || ratio) input.setAttribute("required", "required");
       else input.removeAttribute("required");
@@ -3755,15 +3823,30 @@ async function openAutomationWizard(existing, opts) {
         setPollFieldSec(input, RATIO_WINDOW_MIN_SEC);
       }
     }
-    // The ratio-only sustain field appears exactly when the History relabel
-    // does — switching the metric to/from packet loss toggles both together.
     var ceilingWrap = panel.querySelector(".aw-ratio-ceiling");
     if (ceilingWrap) ceilingWrap.style.display = ratio ? "" : "none";
+    // THE SECOND FIELD serves both windows that leave room for a hold beside
+    // them: a ratio's History (the hold rides on top of the measurement) and a
+    // count window (the hold counts recalculations of it). A TIME-windowed
+    // aggregate is the one case with no second axis — there the window IS the
+    // period, and a hold on top would be two clocks doing one job.
     var sustainWrap = panel.querySelector(".aw-ratio-sustain");
+    var secondField = ratio || countWindow;
     if (sustainWrap) {
-      if (ratio) sustainWrap.removeAttribute("data-hold-off");
+      if (secondField) sustainWrap.removeAttribute("data-hold-off");
       else sustainWrap.setAttribute("data-hold-off", "1");
-      sustainWrap.style.display = ratio ? unfoldedDisplay(sustainWrap) : "none";
+      sustainWrap.style.display = secondField ? unfoldedDisplay(sustainWrap) : "none";
+      var sLabel = sustainWrap.querySelector("label");
+      if (sLabel) {
+        sLabel.textContent = countWindow ? "Alert after (recalculations)" : "Sustained for (polls)";
+      }
+      var sNote = sustainWrap.querySelector(".aw-sustain-note");
+      if (sNote) {
+        sNote.textContent = countWindow
+          ? "Optional — how many consecutive recalculations must be over the threshold before the alert fires. "
+            + "Each one is a fresh window, so this counts readings the device actually produced, not minutes."
+          : "Optional — how long the loss must stay over the threshold before the alert fires. Each reading still measures over the History window above.";
+      }
     }
     syncPollFields(panel, false);
   }
@@ -3804,7 +3887,9 @@ async function openAutomationWizard(existing, opts) {
         // seeds from the stored count.
         durationFieldHtml(
           'id="tf-duration-min"', triggerDurationSec(tr),
-          triggerIsWindowedRatio(tr) ? null : storedHoldPolls(tr),
+          // A COUNT window states its own number outright, so it seeds the box
+          // directly rather than being divided out of the seconds mirror.
+          triggerWindowPollsOf(tr) || (triggerIsWindowedRatio(tr) ? null : storedHoldPolls(tr)),
           // A ratio's History is a measurement window in seconds; every other
           // use of this field is a hold, and a hold is a count.
           triggerIsWindowedRatio(tr) ? "sec" : "polls",
@@ -3830,6 +3915,18 @@ async function openAutomationWizard(existing, opts) {
     // Stored selects must agree with the model before the first collection
     // (refreshTriggerSentence collects) — see pinTreeSelects.
     if (cat === "device" || cat === "host") pinTreeSelects(box.querySelector("#aw-trig-root"), tree);
+    // The unit picker is one of those selects, and from here it is the
+    // AUTHORITY on the window's unit — syncDurationRequirement reads it rather
+    // than the draft. So it has to be pinned from the model on the way in, or a
+    // stored rule's unit would be whatever the markup's `selected` attribute
+    // survived as (happy-dom mis-parses it outright, and it is the same reason
+    // renderBandCond assigns select values instead of trusting markup).
+    // Only a stored COUNT window pins it to readings: the picker answers "how is
+    // this WINDOW stated", and `latest`'s poll-counted hold is not a window at
+    // all — reading its unit off that would turn the first switch to `avg` into
+    // a count window the operator never asked for.
+    var unitPick = box.querySelector("#tf-window-unit");
+    if (unitPick) unitPick.value = triggerWindowPollsOf(draft.trigger) > 0 ? "polls" : "min";
     refreshTriggerSentence();
     refreshDimOptions(panel);
     syncDurationRequirement(panel);
@@ -3865,6 +3962,24 @@ async function openAutomationWizard(existing, opts) {
     // own change handler also calls it — a second render is harmless) and
     // re-syncs the severity mode (single dropdown vs multi tiers + accent).
     panel.addEventListener("input", function () { refreshTriggerSentence(); syncSeverityMode(panel); syncDurationRequirement(panel); syncDownDetection(panel); });
+    // The unit picker on a SELECT: `change` as well as `input`, since the unit
+    // switch re-denominates the number in the box and a browser that fires only
+    // one of the two would leave the field reading the old unit's value.
+    panel.addEventListener("change", function (e) {
+      var t = e.target;
+      if (!t || !t.classList || !t.classList.contains("aw-window-unit")) return;
+      // Seed a sensible count the first time an operator picks readings: the
+      // minutes-derived conversion is whatever their old window happened to be,
+      // which for a 60-minute window is 60 readings — a window nobody asked for.
+      var dEl = panel.querySelector("#tf-duration-min");
+      if (t.value === "polls" && dEl && pollFieldCount(dEl) > COUNT_WINDOW_MAX_POLLS) {
+        setFieldUnit(dEl, "polls");
+        dEl.value = String(COUNT_WINDOW_DEFAULT_POLLS);
+        dEl.setAttribute("data-sec", String(secFromPolls(dEl.value, awCadence().sec)));
+      }
+      syncDurationRequirement(panel);
+      refreshTriggerSentence();
+    });
     // syncBandsToBase runs AFTER syncSeverityMode so tiers built lazily on this
     // same event (first tick of the multi-severity checkbox, from a draft that
     // predates in-progress edits to the base condition) are corrected at once.
@@ -3908,16 +4023,30 @@ async function openAutomationWizard(existing, opts) {
         var cNum = cRaw === "" ? null : Math.max(0, Math.min(100, Number(cRaw)));
         tgStampCeiling(tree, cNum !== null && isFinite(cNum) ? cNum : null);
         var ratio = !!root.querySelector('.scr-row[data-ratio="1"]');
+        // COUNT WINDOW (business rule 66): the field states readings, not
+        // minutes, so the count is stamped as `windowPolls` and the seconds
+        // tgStampWindows already wrote stay on as the wall-clock mirror — which
+        // is what sizes the engine's sample fetch. Stamped AFTER tgStampWindows
+        // so the mirror is in place to be kept, and unconditionally (the
+        // function strips the field from every leaf that must not carry it), or
+        // switching a condition back to minutes would leave the count behind
+        // and the rule would keep measuring in readings with nothing on screen
+        // saying so.
+        var uSel = panel.querySelector("#tf-window-unit");
+        var countWindow = aggregated && !ratio && uSel && uSel.value === "polls";
+        tgStampWindowPolls(tree, countWindow ? pollFieldCount(dEl) : 0);
         var sEl = panel.querySelector("#tf-sustain-min");
-        var sustainSec = ratio ? Math.min(pollFieldSec(sEl), RATIO_WINDOW_MAX_SEC) : 0;
+        var secondField = ratio || countWindow;
+        var sustainSec = secondField ? Math.min(pollFieldSec(sEl), RATIO_WINDOW_MAX_SEC) : 0;
         // The hold is stored BOTH ways: `forPolls` is what the engine counts,
         // `forDurationSec` its wall-clock mirror (which also sizes the sample
-        // window the engine fetches to see that many readings). An aggregated
-        // trigger has no hold at all — its period is the measurement window.
-        var holdPolls = aggregated ? (ratio ? pollFieldCount(sEl) : 0) : pollFieldCount(dEl);
+        // window the engine fetches to see that many readings). A TIME-windowed
+        // aggregate has no hold at all — its period is the measurement window —
+        // while a ratio and a count window each leave the hold axis free.
+        var holdPolls = aggregated ? (secondField ? pollFieldCount(sEl) : 0) : pollFieldCount(dEl);
         draft.trigger = tgCollapse({
           type: "composite", kind: kind, op: tree.op, children: tree.children,
-          forDurationSec: aggregated ? (ratio ? sustainSec : 0) : holdSec,
+          forDurationSec: aggregated ? (secondField ? sustainSec : 0) : holdSec,
           forPolls: holdPolls,
         });
         // A count only means something on a BARE trigger; the server rejects
@@ -3987,6 +4116,28 @@ async function openAutomationWizard(existing, opts) {
     return aggregated;
   }
   /**
+   * Stamp the COUNT window (business rule 66) onto every aggregated non-ratio
+   * leaf, and STRIP it from every other one. The strip half is the load-bearing
+   * half, exactly as it is for the saturation ceiling: switching a condition
+   * back to minutes, or onto packet loss, or down to `latest`, must not leave a
+   * `windowPolls` behind — the engine prefers it over `windowSec` wherever it
+   * finds one, so a leftover would keep measuring in readings while the field
+   * on screen reads minutes and the sentence says minutes too.
+   *
+   * `windowSec` is deliberately NOT cleared: it stays as the wall-clock mirror,
+   * which is what `lookbackMsFor` sizes the engine's sample fetch from.
+   */
+  function tgStampWindowPolls(node, polls) {
+    var n0 = Math.max(0, Math.round(Number(polls) || 0));
+    (function walk(n) {
+      if (!n) return;
+      if (n.type === undefined && Array.isArray(n.children)) { n.children.forEach(walk); return; }
+      if (n.type === "asset_state") return;
+      if (n0 > 0 && tgLeafAggregated(n) && !tgLeafWindowedRatio(n)) n.windowPolls = n0;
+      else delete n.windowPolls;
+    })(node);
+  }
+  /**
    * Which unit a STORED trigger's duration field opens in — the render-time
    * twin of the decision syncDurationRequirement re-makes on every edit. An
    * aggregated or windowed-ratio leaf means the field is a measurement window
@@ -3996,7 +4147,28 @@ async function openAutomationWizard(existing, opts) {
   function triggerDurationUnit(tr) {
     if (!tr) return "polls";
     var leaves = tr.type === "composite" ? tgLeaves(tr) : [tr];
+    // A stored COUNT window (business rule 66) states its own unit outright:
+    // `windowPolls` IS a number of readings, so the field reads in polls and
+    // `windowSec` beside it is only the wall-clock mirror.
+    if (leaves.some(tgLeafCountWindow)) return "polls";
     return leaves.some(tgLeafAggregated) ? "min" : "polls";
+  }
+  /** A leaf whose measurement window is a COUNT of readings. Never a ratio (its
+   *  window is the ratio's own denominator, business rule 29f) and never
+   *  `latest` (no window at all) — both mirror triggerWindowPolls server-side. */
+  function tgLeafCountWindow(leaf) {
+    if (!leaf || leaf.type === "asset_state") return false;
+    if (tgLeafWindowedRatio(leaf)) return false;
+    if (!leaf.aggregation || leaf.aggregation === "latest") return false;
+    return typeof leaf.windowPolls === "number" && leaf.windowPolls > 0;
+  }
+  /** The stored count window a trigger states, or 0. */
+  function triggerWindowPollsOf(tr) {
+    if (!tr) return 0;
+    var leaves = tr.type === "composite" ? tgLeaves(tr) : [tr];
+    var n = 0;
+    leaves.forEach(function (l) { if (tgLeafCountWindow(l)) n = Math.max(n, Math.round(l.windowPolls)); });
+    return n;
   }
   /**
    * Stamp the saturation ceiling onto every windowed-ratio leaf, and STRIP it
@@ -4069,8 +4241,14 @@ async function openAutomationWizard(existing, opts) {
    * another 60" on the next save.
    */
   function triggerSustainSec(tr) {
-    if (!tr || !triggerIsWindowedRatio(tr)) return 0;
+    if (!tr) return 0;
     var leaves = tr.type === "composite" ? tgLeaves(tr) : [tr];
+    // A COUNT window (business rule 66) is the second shape with a hold axis
+    // free beside its window, so its stored hold belongs in this field too —
+    // without this the breach counter opens at 0 on every stored rule and one
+    // save silently drops it.
+    if (leaves.some(tgLeafCountWindow)) return Number(tr.forDurationSec) || 0;
+    if (!triggerIsWindowedRatio(tr)) return 0;
     var hasWindow = leaves.some(function (l) { return tgLeafWindowedRatio(l) && Number(l.windowSec) > 0; });
     return hasWindow ? Number(tr.forDurationSec) || 0 : 0;
   }
@@ -4115,22 +4293,29 @@ async function openAutomationWizard(existing, opts) {
     // engine would fall back to its own default lookback — so require the period
     // rather than quietly measuring something the operator never chose.
     if (tgLeafWindowedRatio(leaf)) {
-      // The floor and ceiling are the ENGINE's, in seconds; the field counts
-      // polls, so the message names the poll count that satisfies them at this
-      // fleet's cadence rather than a number of minutes the field can't take.
+      // The floor and ceiling are the ENGINE's, in seconds, and the field now
+      // states minutes — so the message names minutes. It named polls while the
+      // field counted them, and a message in a unit the box will not accept is
+      // an instruction the operator cannot follow.
       var winSec = Number(leaf.windowSec) || 0;
-      var cadSec = awCadence().sec;
       if (winSec < RATIO_WINDOW_MIN_SEC) {
         return label + ": packet loss is measured over a period — set History to at least " +
-          Math.max(1, Math.ceil(RATIO_WINDOW_MIN_SEC / cadSec)) + " polls (" + Math.round(RATIO_WINDOW_MIN_SEC / 60) + " minutes).";
+          Math.round(RATIO_WINDOW_MIN_SEC / 60) + " minutes.";
       }
       if (winSec > RATIO_WINDOW_MAX_SEC) {
-        return label + ": History can be at most " + Math.floor(RATIO_WINDOW_MAX_SEC / cadSec) + " polls (24 hours).";
+        return label + ": History can be at most " + Math.floor(RATIO_WINDOW_MAX_SEC / 60) + " minutes (24 hours).";
+      }
+      return null;
+    }
+    if (tgLeafCountWindow(leaf)) {
+      // A count window is bounded by the engine's SERIES_CAP, not by the clock.
+      if (leaf.windowPolls > COUNT_WINDOW_MAX_POLLS) {
+        return label + ': "Measured over" can be at most ' + COUNT_WINDOW_MAX_POLLS + " readings.";
       }
       return null;
     }
     if (tgLeafAggregated(leaf) && !(Number(leaf.windowSec) > 0)) {
-      return label + ': "' + leaf.aggregation + '" measures over a period — set "Measured over (minutes)" to 1 or more.';
+      return label + ': "' + leaf.aggregation + '" measures over a period — set "Measured over" to 1 or more.';
     }
     return null;
   }

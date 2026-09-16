@@ -77,6 +77,8 @@ import {
   downRecoveryConsumesSustain,
   DOWN_ALERT_HOLDING_STATES,
   triggerHoldPolls,
+  triggerWindowPolls,
+  rollingAggregate,
   resetSustainPolls,
   leadingRun,
   advanceRun,
@@ -119,8 +121,41 @@ const SERIES_CAP = 200;
  * hold that long is a wall-clock question anyway.
  */
 const HOLD_LOOKBACK_CAP_MS = 6 * 60 * 60 * 1000;
-function lookbackMsFor(trigger: { windowSec?: number; forDurationSec?: number; forPolls?: number | null }): number {
+/**
+ * A COUNT window needs its readings to have HAPPENED, and a lossy device
+ * produces them slower than the cadence suggests — the whole point of counting
+ * measurements instead of minutes (business rule 66). So a count-windowed
+ * trigger reaches back over the wall-clock mirror of BOTH counts (the window
+ * plus the hold, since the oldest recalculation in a run needs its own full
+ * window behind it) and doubles it.
+ *
+ * TWO, not more, and the reason is fleet scale rather than correctness. Doubling
+ * covers a device losing half its probes; past that the query would have to grow
+ * without bound on the 60s tick, and at 2000 assets this fetch is already the
+ * heaviest thing an automation does. A device worse than 50% simply produces too
+ * few readings to fill the window, which `rollingAggregate` reports as NO
+ * READING rather than as an average of whatever it happened to find — and that
+ * is the right answer twice over: the operator asked for the last N responses
+ * and there are not N of them, and a device at that loss rate is a packet-loss
+ * and down-detection problem which those metrics already own (business rule 29,
+ * business rule 36).
+ *
+ * A rule that states counts but NO wall-clock mirror gets the full cap. Only an
+ * API-authored rule can be in that state — the builder always writes the mirror
+ * — and guessing a cadence the trigger never stated would silently under-fetch
+ * and hold an alert open forever waiting for readings the query excluded.
+ */
+const COUNT_WINDOW_LOOKBACK_FACTOR = 2;
+function lookbackMsFor(trigger: {
+  windowSec?: number; forDurationSec?: number; forPolls?: number | null;
+  windowPolls?: number | null; aggregation?: string;
+}): number {
   const base = Math.max((trigger.windowSec ?? 0) * 1000, DEFAULT_LOOKBACK_MS);
+  if (triggerWindowPolls(trigger)) {
+    const span = ((trigger.windowSec ?? 0) + (trigger.forDurationSec ?? 0)) * 1000;
+    if (span <= 0) return HOLD_LOOKBACK_CAP_MS;
+    return Math.max(base, Math.min(span * COUNT_WINDOW_LOOKBACK_FACTOR, HOLD_LOOKBACK_CAP_MS));
+  }
   if (!triggerHoldPolls(trigger)) return base;
   return Math.max(base, Math.min((trigger.forDurationSec ?? 0) * 2000, HOLD_LOOKBACK_CAP_MS));
 }
@@ -647,7 +682,14 @@ export function applyDeviceFilters<T extends DeviceFilterAsset>(
   return assets.filter((a) => deviceFilterMatch(df, a));
 }
 
-/** Reduce sample rows to the latest per dimension key, or aggregate over window. */
+/**
+ * Reduce sample rows to the latest per dimension key, or aggregate over window.
+ *
+ * `windowPolls` (business rule 66) switches the window from time to a COUNT of
+ * readings: every row fetched is still a member of the series, but the value —
+ * and the series the hold is counted off — become the ROLLING aggregate over the
+ * last N valued readings, recomputed at each one.
+ */
 function reduceReadings(
   rows: Array<{ assetId: string; timestamp: Date }>,
   assetIndex: Map<string, ScopeAssetRow>,
@@ -655,6 +697,7 @@ function reduceReadings(
   dimLabelFn: (row: any) => string,
   valueFn: (row: any) => number | null,
   aggregation: string,
+  windowPolls = 0,
 ): Reading[] {
   // group by assetId|dimKey
   const groups = new Map<string, { asset: ScopeAssetRow; dimKey: string; dimLabel: string; values: number[]; series: Array<{ ts: number; v: number | null }>; latest: { ts: number; v: number | null } }>();
@@ -680,17 +723,34 @@ function reduceReadings(
   }
   const out: Reading[] = [];
   for (const g of groups.values()) {
+    g.series.sort((a, b) => b.ts - a.ts);
+    if (windowPolls > 0) {
+      // COUNT WINDOW. The series handed on is the sequence of ROLLING
+      // aggregates, newest-first, so a `forPolls` hold counts recalculations
+      // of the window rather than raw samples over the line — the composition
+      // the time-window branch below deliberately refuses. Empty when the
+      // device has not yet produced N valued readings, which reads downstream
+      // exactly like a device that has produced none: no reading, no fire.
+      const rolled = rollingAggregate(g.series.map((x) => x.v), windowPolls, aggregation);
+      if (!rolled.length) continue;
+      out.push({
+        assetId: g.asset.id, hostname: g.asset.hostname, tags: g.asset.tags,
+        dimKey: g.dimKey, dimLabel: g.dimLabel, value: rolled[0]!,
+        series: rolled.slice(0, SERIES_CAP),
+        readingAt: g.latest.ts >= 0 ? new Date(g.latest.ts) : null,
+      });
+      continue;
+    }
     let value: number | null;
     if (aggregation === "avg") value = g.values.length ? g.values.reduce((a, b) => a + b, 0) / g.values.length : null;
     else if (aggregation === "median") value = median(g.values);
     else if (aggregation === "min") value = g.values.length ? Math.min(...g.values) : null;
     else if (aggregation === "max") value = g.values.length ? Math.max(...g.values) : null;
     else value = g.latest.v; // latest
-    g.series.sort((a, b) => b.ts - a.ts);
     out.push({
       assetId: g.asset.id, hostname: g.asset.hostname, tags: g.asset.tags, dimKey: g.dimKey, dimLabel: g.dimLabel, value,
-      // RAW readings, never the aggregate: an aggregated trigger has no hold to
-      // count (its window IS the period), and a `latest` one needs exactly
+      // RAW readings, never the aggregate: a TIME-windowed trigger has no hold
+      // to count (its window IS the period), and a `latest` one needs exactly
       // these values in exactly this order.
       series: g.series.slice(0, SERIES_CAP).map((x) => x.v),
       readingAt: g.latest.ts >= 0 ? new Date(g.latest.ts) : null,
@@ -720,13 +780,18 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
   // Wide enough to SEE a poll-counted hold's N readings (lookbackMsFor).
   const since = new Date(Date.now() - lookbackMsFor(trigger));
   const agg = trigger.aggregation;
+  // 0 unless this trigger states a COUNT window (business rule 66). Passed to
+  // every reducer below rather than to the response-time one alone: an
+  // operator smoothing interface errors or a temperature sensor is asking the
+  // same question about the same kind of holed series.
+  const winPolls = triggerWindowPolls(trigger);
   const num = (b: bigint | null | undefined): number | null => (b === null || b === undefined ? null : Number(b));
 
   switch (trigger.metric) {
     case "cpuPct": case "memPct": case "memUsedBytes": case "sessionCount": {
       const rows = await prisma.assetTelemetrySample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, sessionCount: true } });
       const pick = (r: any) => trigger.metric === "memUsedBytes" ? num(r.memUsedBytes) : (r[trigger.metric] ?? null);
-      return reduceReadings(rows, index, () => "", () => "", pick, agg);
+      return reduceReadings(rows, index, () => "", () => "", pick, agg, winPolls);
     }
     case "responseTimeMs": case "uptimeSec": {
       // Response-time poll only (probeKind): the ICMP loss sampler writes a
@@ -734,7 +799,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       // scan cost — and an automation on response time must never see another
       // transport's timing.
       const rows = await prisma.assetMonitorSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since }, OR: [{ probeKind: null }, { probeKind: "primary" }] }, select: { assetId: true, timestamp: true, responseTimeMs: true, uptimeSec: true } });
-      return reduceReadings(rows, index, () => "", () => "", (r) => r[trigger.metric] ?? null, agg);
+      return reduceReadings(rows, index, () => "", () => "", (r) => r[trigger.metric] ?? null, agg, winPolls);
     }
     case "probeLossPct": {
       // Probe-failure ratio over the window — the same shared query the
@@ -799,7 +864,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       // matched like the other *Pattern dimensions. Uses the shared predicate so
       // the asset chart's tier lookup can't drift from what actually fires.
       const filtered = df.sensorNamePattern ? rows.filter((r) => hwSensorFilterMatches(df, r)) : rows;
-      return reduceReadings(filtered, index, (r) => r.sensorName, (r) => `${r.sensorName} (${r.sensorClass})`, (r) => r.value ?? null, agg);
+      return reduceReadings(filtered, index, (r) => r.sensorName, (r) => `${r.sensorName} (${r.sensorClass})`, (r) => r.value ?? null, agg, winPolls);
     }
     case "hwSensorAlarm": {
       // The device's OWN alarm bit, read off the column the hardware-sensor
@@ -829,6 +894,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
         (r) => `${r.sensorName} (${r.sensorClass})`,
         (r) => alarmStatusToFlag(r.alarmStatus),
         agg,
+        winPolls,
       );
     }
     case "storageUsedBytes": case "storageUsedPct": {
@@ -843,7 +909,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
         const used = num(r.usedBytes); const total = num(r.totalBytes);
         return used !== null && total ? (used / total) * 100 : null;
       };
-      return reduceReadings(filtered, index, (r) => r.mountPath, (r) => r.mountPath, valueFn, agg);
+      return reduceReadings(filtered, index, (r) => r.mountPath, (r) => r.mountPath, valueFn, agg, winPolls);
     }
     case "storageDaysUntilFull": {
       // Forecast metric: the shared 30-day trend (storageForecastService).
@@ -865,7 +931,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       const col = trigger.metric === "sdwanLatencyMs" ? "latencyMs" : trigger.metric === "sdwanJitterMs" ? "jitterMs" : "packetLoss";
       const rows = await prisma.assetPerfSlaSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, healthCheck: true, link: true, latencyMs: true, jitterMs: true, packetLoss: true } });
       const filtered = rows.filter((r) => substringMatch(r.healthCheck, df.healthCheck) && substringMatch(r.link, df.link));
-      return reduceReadings(filtered, index, (r) => `${r.healthCheck}|${r.link}`, (r) => `${r.healthCheck} / ${r.link}`, (r) => r[col] ?? null, agg);
+      return reduceReadings(filtered, index, (r) => `${r.healthCheck}|${r.link}`, (r) => `${r.healthCheck} / ${r.link}`, (r) => r[col] ?? null, agg, winPolls);
     }
     case "customWidgetValue": {
       const rows = await prisma.assetCustomWidgetSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since }, kind: "scalar", ...(df.widgetId ? { widgetId: df.widgetId } : {}) }, select: { assetId: true, timestamp: true, widgetId: true, value: true } });
@@ -877,7 +943,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       return reduceReadings(rows, index, (r) => r.widgetId, (r) => r.widgetId, (r) => {
         const n = typeof r.value === "number" ? r.value : Number(r.value);
         return Number.isFinite(n) ? n : null;
-      }, agg);
+      }, agg, winPolls);
     }
     case "customStateValue": {
       // 0/1 state-probe readings (utils/stateProbes). One dimension per probe
@@ -902,6 +968,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
         (r) => r.rowLabel,
         (r) => (r.value === 0 || r.value === 1 ? r.value : null),
         agg,
+        winPolls,
       );
     }
     case "ifInBps": case "ifOutBps": case "ifInErrorRate": case "ifOutErrorRate": {
@@ -1251,6 +1318,20 @@ async function resolveHostMetricReading(trigger: Extract<Trigger, { type: "host_
       default: return NaN;
     }
   };
+  // A COUNT window (business rule 66) makes the reading — and the series a hold
+  // is counted off — the ROLLING aggregate, exactly as it does for a device
+  // metric. The host is the one source that never misses a poll, so here the
+  // window is a plain last-N: it is offered for the smoothing, not for holes.
+  const winPolls = triggerWindowPolls(trigger);
+  if (winPolls > 0) {
+    const rolled = rollingAggregate(rows.map(valueOf), winPolls, trigger.aggregation);
+    if (!rolled.length) return null;
+    return {
+      assetId: "", hostname: "Polaris host", tags: [], dimKey: "", dimLabel: "", value: rolled[0]!,
+      series: rolled.slice(0, SERIES_CAP),
+      readingAt: rows[0]?.timestamp ?? null,
+    };
+  }
   let value: number;
   if (trigger.aggregation === "avg") value = rows.reduce((a, r) => a + valueOf(r), 0) / rows.length;
   else if (trigger.aggregation === "median") value = median(rows.map(valueOf)) ?? NaN;
