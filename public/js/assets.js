@@ -10884,17 +10884,25 @@ function assetMonitoringViewHTML(a) {
       overrideReset +
     '</div>';
   }
-  // Source label: integration name (with parent FortiGate appended for
-  // managed switches/APs) when integration-discovered, else credential
-  // name + polling method, else bare polling method.
-  var sourceLabel;
-  if (a.discoveredByIntegration) {
-    sourceLabel = _assetIntegrationLabelWithController(a, ": ");
-  } else {
-    var rtPolling = a.responseTimePolling || "icmp";
-    if (a.monitorCredential) sourceLabel = rtPolling.toUpperCase() + " · " + a.monitorCredential.name;
-    else sourceLabel = rtPolling.toUpperCase();
-  }
+  // "Managed by" label: the integration that OWNS this asset's monitoring
+  // configuration — `discoveredByIntegrationId`, the tier-3 class key of the
+  // polling/credential resolver — with the parent FortiGate appended for
+  // managed switches/APs. Single-valued by design: discovery guards the
+  // column (first-writer-wins on the directory/cloud paths, unconditional
+  // restamp for Fortinet managed infra), because the auto-monitor services,
+  // agent auto-deploy and the decommission sweep all scope on it.
+  //
+  // Deliberately NOT discovery provenance — a multi-source asset (AD + Entra
+  // + Intune + Arc) has one owning integration but many AssetSource rows, and
+  // the Sources tab is what enumerates those. This row used to be labelled
+  // "Source", which read as the provenance question it does not answer.
+  // Manual assets say "Manual" rather than naming their response-time
+  // transport: that belonged to the old "Source" framing (nothing is managing
+  // the asset), and the transport + credential + cadence + tier are already
+  // on the response-time chart's own badge a few rows below.
+  var managedByLabel = a.discoveredByIntegration
+    ? _assetIntegrationLabelWithController(a, ": ")
+    : "Manual";
   var discoverBtn = _assetDiscoverNowBtnHTML(a);
   // Admin-only "Dependency Test" trigger lives next to the Status pill on
   // the System tab. Eligible for Fortinet infra only — workstations etc.
@@ -10976,7 +10984,7 @@ function assetMonitoringViewHTML(a) {
               '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Loading…</span>' +
             '</span></div>'
         : '') +
-      viewRow("Source", sourceLabel) +
+      viewRow("Managed by", managedByLabel) +
       uptimeRow +
     '</div>' +
     '</div>' +

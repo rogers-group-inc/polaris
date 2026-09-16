@@ -133,7 +133,25 @@ older than 24 hours is not evidence.
 ### System
 
 Live telemetry and history: response time, CPU, memory, temperature,
-interfaces, storage, IPsec tunnels, SD-WAN. Charts carry:
+interfaces, storage, IPsec tunnels, SD-WAN.
+
+**Managed by** names the integration that owns this asset's monitoring
+configuration — whose class settings and stored credential it inherits, whose
+discovery sweep can decommission it — with the parent FortiGate appended for a
+managed FortiSwitch or FortiAP (`FortiManager: FMG-CORE → PLANT-FG-01`), since
+that is the device that actually answers polls for it. An asset nobody
+discovered reads `Manual`.
+
+It is one integration, not a list, and it is **not** the answer to "where did
+this asset come from". A device can be reported by several systems at once — a
+laptop in Active Directory *and* Entra *and* Intune *and* Azure Arc — and every
+one of those is a row under [Sources](#sources). For those, the first system to
+claim the asset keeps it, so a later integration finding the same device adds a
+source without taking over the monitoring configuration. Fortinet-managed
+switches and APs are the exception: they are always claimed by the integration
+that manages their controller, because that is where their polling comes from.
+
+Charts carry:
 
 - **Maintenance bands** — labelled translucent overlays over window gaps.
 - **Severity shading** — the line and dots fade through warning / serious /
