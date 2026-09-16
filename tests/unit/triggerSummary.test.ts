@@ -36,6 +36,26 @@ describe("triggerSubject", () => {
       .toBe("Response time (median over 5 minutes)");
   });
 
+  it("names a COUNT window as readings, never as the seconds mirror beside it", () => {
+    // business rule 66. `windowSec` rides along to size the engine's fetch, so
+    // printing it would put a clock in the alert's subject that the rule does
+    // not keep — and a different clock on every device's cadence.
+    expect(triggerSubject({
+      type: "asset_metric", metric: "responseTimeMs", aggregation: "avg",
+      windowSec: 1200, windowPolls: 10,
+    })).toBe("Response time (avg over the last 10 readings)");
+    // A count on `latest` is not a window, so the parenthetical still drops.
+    expect(triggerSubject({
+      type: "asset_metric", metric: "responseTimeMs", aggregation: "latest",
+      windowSec: 1200, windowPolls: 10,
+    })).toBe("Response time");
+    // A ratio's window is its own denominator and keeps saying minutes.
+    expect(triggerSubject({
+      type: "asset_metric", metric: "probeLossPct", aggregation: "latest",
+      windowSec: 900, windowPolls: 10,
+    })).toContain("15 minutes");
+  });
+
   it("omits the parenthetical for a latest-value trigger — there's no window to state", () => {
     expect(triggerSubject({ type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 300 }))
       .toBe("CPU utilization");

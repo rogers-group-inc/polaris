@@ -61,6 +61,9 @@ export interface SummarizableTrigger {
   field?: string;
   aggregation?: string;
   windowSec?: number;
+  /** A COUNT window (business rule 66) — the last N readings that produced a
+   *  value. Wins over `windowSec`, which is only its wall-clock mirror here. */
+  windowPolls?: number | null;
   operator?: string;
   threshold?: number | string | boolean | null;
   /** asset_state triggers compare against `value`, not `threshold`. */
@@ -88,9 +91,22 @@ export function triggerSubject(trigger: SummarizableTrigger, dimensionLabel?: st
   // the measurement, and its aggregation is "latest", so the ordinary clause
   // below would silently drop it. Mirrors the wizard's tgLeafPhrase, including
   // the default when a pre-History rule carries no window.
+  // A COUNT window is named as READINGS, never as the seconds it also carries:
+  // `windowSec` is only the mirror that sizes the engine's fetch, so printing
+  // it here would put a clock in the alert's own subject line that the rule
+  // does not keep — "avg 20 minutes" for a rule that averages ten responses,
+  // and a different 20 minutes on every device (business rule 66).
+  const countWindow =
+    trigger.aggregation && trigger.aggregation !== "latest" &&
+    typeof trigger.windowPolls === "number" && trigger.windowPolls > 0 &&
+    !(trigger.metric && (WINDOWED_RATIO_METRICS as readonly string[]).includes(trigger.metric))
+      ? Math.round(trigger.windowPolls)
+      : 0;
   const agg =
     trigger.metric && (WINDOWED_RATIO_METRICS as readonly string[]).includes(trigger.metric)
       ? ` (over the last ${humanDuration(probeLossWindowSec(trigger.windowSec))} of probe history)`
+      : countWindow
+        ? ` (${AGG_PHRASE[trigger.aggregation!] ?? trigger.aggregation} the last ${countWindow} readings)`
       : trigger.aggregation && trigger.aggregation !== "latest" && trigger.windowSec
         ? ` (${AGG_PHRASE[trigger.aggregation] ?? trigger.aggregation} ${humanDuration(trigger.windowSec)})`
         : "";
