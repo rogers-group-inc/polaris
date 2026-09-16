@@ -129,17 +129,14 @@ const JUNIPER = profile("Juniper", "juniper|junos", [
   row("temperature"), row("storage"), row("interfaces"), row("lldp"), row("wirelessStations"),
 ]);
 
-// MikroTik overrides ONLY the health sensor. RouterOS answers CPU, memory and
-// storage through HOST-RESOURCES-MIB, so those rows stay empty on purpose —
-// the profile is an override layer and there is nothing there to override.
-// (The `cpu` row used to read `mtxrSystemUserCPULoad`, a symbol that exists in
-// no MikroTik MIB; see the seed job's MikroTik note.)
-const MIKROTIK = profile("Mikrotik", "mikrotik|routeros", [
-  row("model"), row("cpu"), row("memory"),
-  row("temperature", {
-    defaultSymbol: "mtxrHlCpuTemperature", defaultLabel: "CPU",
-    defaultTransform: "tenths_to_units",
-  }),
+// MikroTik claims nothing: RouterOS answers CPU, memory and storage through
+// HOST-RESOURCES-MIB, so every row is empty on purpose — the profile is an
+// override layer and there is nothing there to override. (The `cpu` row used
+// to read `mtxrSystemUserCPULoad`, a symbol that exists in no MikroTik MIB;
+// see the seed job's MikroTik note.) Kept in the table so the tuple below
+// still exercises "a profile exists but says nothing the collectors can use".
+const MIKROTIK = profile("MikroTik", "mikrotik|routeros", [
+  row("model"), row("cpu"), row("memory"), row("temperature"),
   row("storage"), row("interfaces"), row("lldp"), row("wirelessStations"),
 ]);
 
@@ -197,7 +194,6 @@ const DELTAS: Record<string, string> = {
   "FortiAP by model · temperature": "sensorName restored from the row's label",
   "FortiAP, no model · temperature": "sensorName restored from the row's label",
   "FortiAP typed as switch · temperature": "sensorName restored from the row's label",
-  "Mikrotik router · temperature": "sensorName restored from the row's label — the same merge bug, on the one row MikroTik's profile carries",
 };
 
 function telemetryOf(p: VendorTelemetryProfile | null) {

@@ -124,10 +124,11 @@ in into the product, so they work the moment SNMP does. Those are fixed: they
 cannot be edited or deleted, and they change when you update Polaris.
 
 CPU, memory, hardware sensors and flash on network gear are different. Almost
-every vendor publishes them only in its **own** MIB. Polaris ships two of those —
-Cisco's and MikroTik's — but ships them *into the MIB Database* rather than
-baking them in, so they sit alongside anything you upload and you can delete
-them. For every other vendor, two pieces have to be in place:
+every vendor publishes them only in its **own** MIB. Polaris ships Cisco's — but
+*into the MIB Database* rather than baked in, so they sit alongside anything you
+upload and you can delete them, and only on a **fresh install**; an upgrade
+leaves your MIB Database exactly as you curated it. For every other vendor, two
+pieces have to be in place:
 
 1. **The vendor's MIB**, uploaded at Server Settings → Credentials → MIB
    Database. This supplies the OID *number* behind a symbol name. Keeping it as
@@ -138,11 +139,12 @@ them. For every other vendor, two pieces have to be in place:
    and so on.
 
 A profile is an **override** of what the generic MIBs already do, so Polaris
-ships one only where there is something to override, and only for the two
-manufacturers whose MIBs it also ships. MikroTik is the illustrative case:
+ships one only where there is something to override, and only for a
+manufacturer whose MIB it also ships. MikroTik is the illustrative counter-case:
 RouterOS reports CPU, memory and storage through HOST-RESOURCES-MIB, which
-Polaris already reads, so its profile carries a single row — the temperature
-sensor no standard MIB covers. A vendor with nothing to add needs no profile.
+Polaris already reads, so there is nothing for a profile to override and none is
+shipped. A vendor the generic MIBs already answer needs neither a profile nor
+its MIB.
 
 For anything else you create the profile once. The symbol names for the common
 vendors, and where to get each MIB, are in the install guide's *"A vendor's SNMP

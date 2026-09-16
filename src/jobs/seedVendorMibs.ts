@@ -30,6 +30,9 @@
  * profiles it seeds resolve on their first readiness check rather than
  * emitting an `unresolved` Event that corrects itself on the next boot.
  *
+ * **Fresh installs only** — see `EXISTING_INSTALL_MARKER`. An upgrade leaves
+ * the operator's MIB Database exactly as they curated it.
+ *
  * Deleting a seeded MIB is a supported operator action with a visible
  * consequence: its manufacturer profile's rows report `unresolved` and name
  * the module to re-upload, and vendor telemetry for that manufacturer falls
@@ -80,15 +83,49 @@ export const VENDOR_MIBS: readonly VendorMibDef[] = [
     manufacturer: "Cisco",
     notes:        "Shipped with Polaris. ciscoMemoryPoolUsed / ciscoMemoryPoolFree — per-pool bytes, walked and summed. Anchors on CISCO-SMI.",
   },
-  {
-    filename:     "MIKROTIK-MIB.txt",
-    manufacturer: "MikroTik",
-    notes:        "Shipped with Polaris. The mtxrHealth sensors (temperature, voltage, fan) — RouterOS reports CPU, memory and storage through HOST-RESOURCES-MIB, which Polaris already reads, so the health sensors are the only thing this module adds.",
-  },
+  // MIKROTIK-MIB was shipped here briefly and removed 2026-09-16. RouterOS
+  // reports CPU, memory and storage through HOST-RESOURCES-MIB, which Polaris
+  // already reads, so the only thing the module added was the mtxrHealth
+  // sensor group — and its `Temperature` is DISPLAY-HINT "d-1" (tenths of a
+  // degree), which needs SCALING AT COLLECTION that no collector does. A unary
+  // transform on a profile metric row is not that lever: `applyTransform` is
+  // called by the custom-widget collector and nowhere else, so the row would
+  // have charted 315 instead of 31.5. Shipping a MIB whose only use needs
+  // plumbing that does not exist is shipping a broken example.
 ];
+
+/**
+ * The marker a previous release stamped once it seeded the manufacturer
+ * profiles. Its presence is the signal that **this database has run Polaris
+ * before**, which is how a fresh install is told from an upgrade here.
+ *
+ * On a fresh install this job runs BEFORE `seedManufacturerProfiles` (see
+ * `app.ts`), so the marker is absent and the MIBs seed. On an upgrade it was
+ * stamped by an earlier release, so they do not.
+ */
+const EXISTING_INSTALL_MARKER = "seedManufacturerProfilesSeededAt";
 
 export async function seedVendorMibs(): Promise<{ seeded: number; skipped: boolean }> {
   if (await hasRunMarker(MARKER_KEY)) return { seeded: 0, skipped: true };
+
+  // FRESH INSTALLS ONLY. An existing install's MIB Database is the operator's:
+  // they have curated what is in it, and an upgrade that silently adds a
+  // vendor's modules is adding rows to their data for devices they may not
+  // own. Measured on the owner's production fleet (2026-09-16): 2,416
+  // monitored assets, of which ZERO were Cisco — seeding there would have been
+  // pure noise in a list they maintain by hand.
+  //
+  // An operator who does want them uploads the vendor's file, which is the
+  // same path and a supported one; `docs/INSTALL.md` names the modules and
+  // where to get them.
+  if (await hasRunMarker(EXISTING_INSTALL_MARKER)) {
+    logger.info(
+      { reason: "existing install" },
+      "Skipping shipped manufacturer MIBs — the MIB Database is the operator's on an upgrade",
+    );
+    await stampRunMarker(MARKER_KEY, { seeded: 0, skippedReason: "existing-install" });
+    return { seeded: 0, skipped: true };
+  }
 
   let seeded = 0;
   for (const def of VENDOR_MIBS) {

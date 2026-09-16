@@ -110,7 +110,12 @@ export const SEED_MAP: SeedRow[] = [
  */
 export const PROFILE_SEEDED_MANUFACTURERS: ReadonlySet<string> = new Set<string>([
   "Cisco",
-  "MikroTik",
+  // MikroTik was here briefly and removed 2026-09-16, as rule 2 above applied
+  // honestly: RouterOS answers CPU, memory and storage through
+  // HOST-RESOURCES-MIB, and the one thing left — the mtxrHealth temperature
+  // sensor — is DISPLAY-HINT "d-1" and needs scaling at COLLECTION, which no
+  // collector performs (`applyTransform` has one call site, the custom-widget
+  // collector). The row would have charted 315 instead of 31.5.
 ]);
 
 // Translate a VENDOR_TELEMETRY_PROFILES entry's metric queries into a per-

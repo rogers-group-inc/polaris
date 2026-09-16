@@ -25,6 +25,9 @@ import { join } from "node:path";
 const h = vi.hoisted(() => ({
   created: [] as Array<Record<string, any>>,
   throwOn: null as string | null,
+  /** Markers already stamped in this database — an existing install has the profile one. */
+  markers: new Set<string>(),
+  stamped: [] as string[],
 }));
 
 vi.mock("../../src/services/mibService.js", () => ({
@@ -38,8 +41,8 @@ vi.mock("../../src/services/mibService.js", () => ({
 }));
 
 vi.mock("../../src/jobs/_runOnce.js", () => ({
-  hasRunMarker: vi.fn(async () => false),
-  stampRunMarker: vi.fn(async () => {}),
+  hasRunMarker: vi.fn(async (key: string) => h.markers.has(key)),
+  stampRunMarker: vi.fn(async (key: string) => { h.stamped.push(key); h.markers.add(key); }),
 }));
 
 const { seedVendorMibs, VENDOR_MIBS, unclaimedVendorMibFiles } =
@@ -52,6 +55,45 @@ const STD_DIR = join(SRC, "stdMibs");
 beforeEach(() => {
   h.created = [];
   h.throwOn = null;
+  h.markers = new Set();
+  h.stamped = [];
+});
+
+describe("fresh installs only", () => {
+  it("seeds when no previous release has run against this database", async () => {
+    const res = await seedVendorMibs();
+    expect(res.skipped).toBe(false);
+    expect(res.seeded).toBe(VENDOR_MIBS.length);
+  });
+
+  it("leaves an UPGRADE's MIB Database alone", async () => {
+    // `seedManufacturerProfilesSeededAt` can only exist if an earlier release
+    // already ran here, so its presence means upgrade, not fresh install. An
+    // existing install's MIB Database is curated by its operator; adding a
+    // vendor's modules for devices they may not own is editing their data.
+    // Measured on the owner's production fleet: 2,416 monitored assets, ZERO
+    // of them Cisco.
+    h.markers.add("seedManufacturerProfilesSeededAt");
+    const res = await seedVendorMibs();
+    expect(res.skipped).toBe(true);
+    expect(res.seeded).toBe(0);
+    expect(h.created).toEqual([]);
+  });
+
+  it("stamps its own marker when it skips, so it does not re-decide every boot", async () => {
+    h.markers.add("seedManufacturerProfilesSeededAt");
+    await seedVendorMibs();
+    expect(h.stamped).toContain("seedVendorMibsSeededAt");
+  });
+
+  it("runs before the profile seed, which is what makes the fresh-install check work", async () => {
+    // If the order in app.ts flipped, the profile seed would stamp its marker
+    // first and this job would read it as "existing install" on a FRESH one —
+    // seeding nothing, forever, with no error.
+    const appTs = readFileSync(join(__dirname, "..", "..", "src", "app.ts"), "utf8");
+    expect(appTs.indexOf("seedVendorMibs.js"))
+      .toBeLessThan(appTs.indexOf("seedManufacturerProfiles.js"));
+  });
 });
 
 describe("the two directories stay separate", () => {
@@ -146,8 +188,19 @@ describe("what the shipped modules actually contain", () => {
     expect(cisco).toContain("cpmCPUTotal5secRev");
     expect(cisco).toContain("ciscoMemoryPoolUsed");
     expect(cisco).toContain("ciscoMemoryPoolFree");
+  });
 
-    const mt = readFileSync(join(VENDOR_DIR, "MIKROTIK-MIB.txt"), "utf8");
-    expect(mt).toContain("mtxrHlCpuTemperature");
+  it("ships a module only for a manufacturer whose profile is seeded", async () => {
+    // The two lists are a pair: a MIB with no profile is a file the operator
+    // never asked for, and a profile with no MIB reads UNRESOLVED. MIKROTIK-MIB
+    // was removed on 2026-09-16 when its profile was, for exactly this reason.
+    const { PROFILE_SEEDED_MANUFACTURERS } =
+      await import("../../src/jobs/seedManufacturerProfiles.js");
+    for (const def of VENDOR_MIBS) {
+      expect(
+        PROFILE_SEEDED_MANUFACTURERS.has(def.manufacturer),
+        `${def.filename} ships for ${def.manufacturer}, which seeds no profile`,
+      ).toBe(true);
+    }
   });
 });

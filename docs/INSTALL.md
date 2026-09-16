@@ -351,8 +351,8 @@ profile for that manufacturer at all**, or — on an install that upgraded from 
 release before September 2026 — shows one reading **N UNRESOLVED** with a
 `manufacturer_profile.unresolved` warning in the Events log from the last start.
 
-**Cisco and MikroTik work out of the box** and are not affected; if one of those
-is empty, see *"A shipped MIB or profile was deleted"* below.
+**Cisco works out of the box on a fresh install** and is not affected; if a Cisco
+device is empty, see *"A shipped MIB or profile was deleted"* below.
 
 **Why:** Polaris resolves a vendor's telemetry by MIB SYMBOL NAME, and the number
 behind that name comes from the vendor's MIB. That way a vendor changing or
@@ -388,7 +388,7 @@ symbols unresolved — needs FORTINET-CORE-MIB; upload it too."*
 | Fortinet (FortiSwitch / FortiAP) | `FORTINET-FORTISWITCH-MIB`, `FORTINET-FORTIAP-MIB` | Fortinet support portal (account required) → Download → Firmware Images → the product → Download tab. Not served by the device the way the FortiGate MIBs are. |
 | Cisco | `CISCO-SMI` + `CISCO-PROCESS-MIB` (CPU), `CISCO-MEMORY-POOL-MIB` (memory) | **Shipped with Polaris — nothing to do.** To replace with your own: <https://github.com/cisco/cisco-mibs>, public, no login. (The old `ftp.cisco.com` path was decommissioned in 2022.) |
 | Juniper | `JUNIPER-SMI` + `JUNIPER-MIB` | juniper.net enterprise-MIB download |
-| MikroTik | `MIKROTIK-MIB` | **Shipped with Polaris — nothing to do.** To replace with your own: <https://download.mikrotik.com/routeros/> under your RouterOS version. |
+| MikroTik | — *(none needed)* | RouterOS reports CPU, memory and storage through HOST-RESOURCES-MIB, which Polaris already reads. No MIB or profile required. |
 | HP / Aruba | `HP-ICF-OID` + `STATISTICS-MIB` | HPE / Aruba support |
 | Dell (PowerConnect / Force10) | `RADLAN-MIB` (with its `rnd` root) | Dell support |
 
@@ -405,7 +405,7 @@ module still missing.
 |---|---|---|---|
 | Cisco *(shipped)* | `cpmCPUTotal5secRev`, type **table**, walk **average rows** | `ciscoMemoryPoolUsed` + `ciscoMemoryPoolFree`, type **double scalar**, transform **a / (a+b) %**, walk **sum rows** | — |
 | Juniper | `jnxOperatingCPU`, type **table**, walk **average rows** | `jnxOperatingBuffer`, walk **average rows** | — |
-| MikroTik *(shipped)* | — *(RouterOS answers `hrProcessorLoad`; nothing to override)* | — *(`hrStorage` RAM row)* | Hardware Sensors: `mtxrHlCpuTemperature`, label `CPU`, transform **Tenths → Units** — the MIB's `Temperature` is DISPLAY-HINT `d-1`, so without it 31.5 °C charts as 315 |
+| MikroTik | — *(`hrProcessorLoad`)* | — *(`hrStorage` RAM row)* | — *(no profile needed; see the note below the table)* |
 | Fortinet (FortiGate) | `fgSysCpuUsage` | `fgSysMemUsage` | Hardware Sensors: `fgHwSensorTable`, type **table** |
 | Fortinet (FortiSwitch) | `fsSysCpuUsage` | `fsSysMemUsage` + `fsSysMemCapacity`, type **double scalar**, transform **a / b %** | Storage: `fsSysDiskUsage` + `fsSysDiskCapacity`, type **double scalar**, transform **a / b %**, label `flash`. Model identity: `fsSysVersion`, parse `^(?!v\d)(.+?)[-\s]v\d` → `FortiSwitch $1` |
 | Fortinet (FortiAP) | `fapCpuUsage` | `fapMemoryUsage` | Hardware Sensors: `fapTemperature`, label `System` |
@@ -428,10 +428,14 @@ in their MIB cell; nothing needs restarting.
 
 ## A shipped MIB or profile was deleted
 
-The Cisco and MikroTik MIBs and their manufacturer profiles are **yours to
-delete** — they are seeded on first start, not baked in. Both deletions are
-supported, neither is silent, and both are reversible. They are seeded once, so
-deleting one does not bring it back on the next restart.
+The Cisco MIBs and the Cisco manufacturer profile are **yours to delete** — they
+are seeded on the first start of a fresh install, not baked in. Both deletions
+are supported, neither is silent, and both are reversible. They are seeded once,
+so deleting one does not bring it back on the next restart.
+
+An install that was **upgraded** rather than installed fresh never received the
+MIBs at all: an existing MIB Database is yours, and an upgrade does not add
+vendor modules to it. Upload them from the table above if you want them.
 
 **Deleting a shipped manufacturer MIB** leaves its profile's rows reading
 *unresolved*, naming the module to re-upload, and that manufacturer's CPU and
@@ -447,9 +451,9 @@ Server Settings → Maintenance that records the seed having run
 (`seedVendorMibsSeededAt` / `seedManufacturerProfilesSeededAt`) and restart, and
 Polaris will seed whichever of the two is missing.
 
-If a Cisco or MikroTik device is missing CPU or memory and you have not deleted
-anything, check the MIB Database for the modules listed above — a `CISCO-SMI`
-that was removed takes the other two Cisco modules' symbols with it, since they
+If a Cisco device is missing CPU or memory and you have not deleted anything,
+check the MIB Database for the modules listed above — a `CISCO-SMI` that was
+removed takes the other two Cisco modules' symbols with it, since they
 anchor on it.
 
 ## Disk sizing — read this first

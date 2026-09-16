@@ -115,31 +115,41 @@ describe("aggregate — how a walked subtree collapses", () => {
   });
 });
 
-describe("MikroTik overrides only what the generic MIBs cannot do", () => {
-  it("seeds no CPU, memory or storage — HOST-RESOURCES-MIB already reports all three", () => {
-    // A profile exists to OVERRIDE the generic path. RouterOS answers
-    // hrProcessorLoad and hrStorageTable, so a vendor row for any of these
-    // would be an override of something already correct.
-    for (const key of ["cpu", "memory", "storage"]) {
-      expect(metricSeed("Mikrotik RouterOS", key), `MikroTik seeds ${key}`).toBeUndefined();
-    }
+describe("MikroTik claims nothing, because there is nothing it can honestly claim", () => {
+  it("seeds no rows at all", () => {
+    // RouterOS answers CPU, memory and storage through HOST-RESOURCES-MIB,
+    // which Polaris already reads — a profile exists to OVERRIDE the generic
+    // path and there is nothing here to override. The one thing MIKROTIK-MIB
+    // adds, the mtxrHealth temperature sensor, is DISPLAY-HINT "d-1" and needs
+    // scaling at COLLECTION, which nothing performs.
+    expect(seedsFor("Mikrotik RouterOS")).toEqual([]);
   });
 
   it("does not name mtxrSystemUserCPULoad — it does not exist in MIKROTIK-MIB", () => {
     // The constant claimed this symbol until 2026-09-16. It appears nowhere in
     // MikroTik's own MIB (checked against their download and the LibreNMS
     // mirror), so the row never resolved on any install and never could.
-    const seeded = JSON.stringify(seedsFor("Mikrotik RouterOS"));
-    expect(seeded).not.toContain("mtxrSystemUserCPULoad");
+    expect(JSON.stringify(seedsFor("Mikrotik RouterOS"))).not.toContain("mtxrSystemUserCPULoad");
   });
+});
 
-  it("seeds the health sensor WITH its tenths transform", () => {
-    // MIKROTIK-MIB's `Temperature` textual convention is DISPLAY-HINT "d-1":
-    // the raw integer is tenths of a degree. Without the transform a 31.5 °C
-    // reading charts as 315.
-    expect(metricSeed("Mikrotik RouterOS", "temperature")).toMatchObject({
-      symbol: "mtxrHlCpuTemperature", type: "scalar", transform: "tenths_to_units", label: "CPU",
-    });
+describe("no seeded row carries a transform nothing would apply", () => {
+  it("leaves unary transforms off cpu / temperature / storage rows", () => {
+    // `applyTransform` has ONE call site in src/ — the custom-widget collector.
+    // A unary transform on a profile METRIC row is stored, displayed in the
+    // Transform column, and never applied. Seeding one would ship a row whose
+    // readings are silently in the wrong unit, which is exactly how a MikroTik
+    // sensor row nearly shipped charting 315 °C instead of 31.5.
+    //
+    // `memory` and `storage` double_scalar rows are exempt: their `transform`
+    // is a CombinerKind read as a statement of WHICH PAIR the two symbols are,
+    // not as arithmetic to perform.
+    for (const entry of VENDOR_TELEMETRY_PROFILES) {
+      for (const s of profileToMetricSeeds(entry)) {
+        if (s.type === "double_scalar") continue;
+        expect(s.transform, `${entry.vendor} ${s.metricKey} carries an inert transform`).toBeNull();
+      }
+    }
   });
 });
 
