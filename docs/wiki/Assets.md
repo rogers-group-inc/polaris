@@ -92,8 +92,8 @@ A selection past the 500-id cap is refused **with the count**, rather than
 ## The asset slide-over
 
 Click a row. Tabs, in order: **General · System · Services · Quarantine ·
-Events · SNMP Walk · Sources**, plus **Alerts**, plus **ARP Table** and **MAC
-Table** where the device type has them.
+Events · SNMP Walk · Sources**, plus **Alerts**, plus **Wireless**, **MAC
+Table** and **ARP Table** where the device type has them.
 
 Two tabs are conditional:
 
@@ -101,6 +101,41 @@ Two tabs are conditional:
   actually resolves to SNMP for this asset.
 - **Services** — hidden on Fortinet infrastructure (firewall / switch / access
   point) and on the `other` catch-all, none of which report a unit list.
+
+Three are device-type specific: **Wireless** on a monitored access point, **MAC
+Table** on a switch, **ARP Table** on a firewall.
+
+### Snapshot tabs: Wireless, MAC Table, ARP Table
+
+These three are not charts. Each is a picture of what the device answered the
+last time Polaris asked — connected clients, a forwarding database, a neighbour
+cache — and every one of them empties out on its own between reads. So all
+three carry the same heading row:
+
+- **How often it is re-read** (`every 10m`), resolved for *this* device, not a
+  fleet-wide figure.
+- **How old the reading is** (`updated 3m ago`). It turns **amber with a ⚠ once
+  the reading is older than one poll cadence** — a poll is overdue. That is a
+  lower bar than the amber *Last successful update* banner elsewhere in the
+  slide-over, which waits for three; overdue and abandoned are different things.
+- **Refresh** — re-reads this device *now*, rather than waiting for the next
+  scheduled pass. It needs the **Asset Probes** permission, and it is hidden if
+  you do not have it.
+
+Read the pair together. An empty client list beside "updated 30s ago" means
+nobody is connected; the same empty list beside an amber "updated 2 days ago"
+means nobody has asked.
+
+Refresh dials the device and re-reads its current state. It does **not** run a
+response-time probe, so it cannot mark an asset up or down, and it will not
+disturb an in-progress outage count. If it reports *nothing to refresh*, this
+device does not deliver current-state data on its present polling method —
+monitoring is off, the Interfaces stream is set to Disabled, or a Polaris Agent
+on the host pushes on its own schedule instead.
+
+Refresh is also refused for a device your integration's **device filter**
+excludes. A filter you set to keep Polaris off a host keeps this button off it
+too.
 
 ### General
 
@@ -212,19 +247,67 @@ Trigger is the automation's plain-English sentence — every severity tier
 included, which is why there is no separate Severity column. The name opens the
 automation in the wizard in place, for `automationManagement:fullwrite`.
 
+### Wireless (access points)
+
+Radios → the SSIDs each one broadcasts → the clients connected to each, as one
+expandable tree. A radio row carries its channel, width and transmit power;
+transmit power is shown **as the source reported it** — a percentage of the
+radio's ceiling from the controller, and the AP's own MIB integers with no unit,
+because that MIB publishes none.
+
+Clients Polaris could not file under any broadcast SSID are listed at the bottom
+under *Not matched to a broadcast SSID* rather than dropped — usually radios and
+stations scraped a cycle apart.
+
+An AP whose radio inventory has not arrived yet falls back to a flat client
+table, so the tab never reads as empty while discovery fills it in. Radios and
+their SSIDs come from the discovery run against the controlling FortiGate;
+connected clients come from an SNMP walk, which needs the AP's **Interfaces**
+stream set to SNMP.
+
+Carries the cadence · freshness · **Refresh** row described above.
+
+### MAC Table (switches)
+
+The switch's layer-2 forwarding database, grouped **interface-first** — the
+question is "what is on port 32", not "where is this MAC". Each port is one
+expandable row carrying its MAC count and the reading that count supports: one
+learned address is an access port, many are an uplink or trunk. Only `learned`
+entries count toward that; the bridge's own address and static entries render
+but say nothing about what is reachable through the port.
+
+Entries on ports Polaris could not resolve to an interface are **hidden behind a
+count and a Show link**, not dropped. On a FortiSwitch these are the trunk/LAG
+pseudo-ports, which publish no port-to-interface mapping, so every address
+behind a trunk lands there unattributable and would swamp the real per-port rows.
+
+This is collected over SNMP on the system-info cadence. **A switch polled
+through its parent FortiGate reports none** — the empty state says so, and tells
+you when the last pass ran, so "scraped and genuinely empty" stays distinct from
+"never scraped".
+
+Carries the cadence · freshness · **Refresh** row described above. An unmonitored
+switch shows no cadence at all: nothing refreshes a forwarding database except
+the system-info pass, and discovery does not fill in for it.
+
 ### ARP Table (firewalls)
 
-The gate's layer-3 neighbour cache, grouped interface-first. Headed by:
+The gate's layer-3 neighbour cache, grouped interface-first. Headed by the
+cadence · freshness · **Refresh** row described above, plus:
 
 - A **range selector** — Current / 1h / 12h / 24h / 7d / 30d. An option past
   your configured retention is **disabled rather than hidden**, so you can see
   it exists and is not being kept.
 - A filter over IP / MAC / interface / matched hostname — what brings an
   operator here is a lookup, not a survey.
-- A **disclaimer stating this device's actual poll cadence**, and that each read
-  is a snapshot of a cache the gate ages out in roughly 1–5 minutes. Short-lived
-  entries can be missing entirely, and an absent address was not necessarily
-  absent from the network.
+- A **disclaimer** that each read is a snapshot of a cache the gate ages out in
+  roughly 1–5 minutes. Short-lived entries can be missing entirely, and an
+  absent address was not necessarily absent from the network.
+
+Unlike the other two, this table has a **second writer**: discovery reads it on
+every cycle. So an unmonitored gate still shows a cadence — its integration's
+poll interval, typically 12 hours rather than the 10 minutes a monitored one
+gets. The stated figure is always the one that actually applies to this device.
 
 A historical range adds a *Last seen* column; Current omits it because every row
 shares one instant.
