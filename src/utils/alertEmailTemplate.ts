@@ -427,3 +427,52 @@ export function pruneEmptyTextLines(text: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
+/**
+ * How a TEST email says so, in the three places a reader looks.
+ *
+ * NOT a template token, deliberately. `{test.notice}` in the default body would
+ * be marking an operator can delete — by customizing the body, or simply by
+ * having customized it before this existed — and the one email that must never
+ * be mistaken for an outage is the one whose marking cannot be edited away. So
+ * it is stitched on at delivery, after every substitution and every pruning
+ * pass, to whatever body the automation composed.
+ *
+ * Three surfaces, because a forwarded alert is read in three ways: the subject
+ * (all a phone's lock screen shows), the top of the body (what the reader sees
+ * before the severity bar), and the plain-text alternative (what a pager
+ * gateway or a text-only client renders).
+ */
+export const TEST_SUBJECT_PREFIX = "[TEST] ";
+
+const TEST_BANNER_HTML = [
+  '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6f8;font-family:-apple-system,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif">',
+  '<tr><td align="center" style="padding:16px 0 0">',
+  '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:100%;background:#fef3c7;border:1px solid #d97706;border-radius:10px">',
+  '<tr><td style="padding:12px 16px;font-size:13px;color:#7c2d12;line-height:1.45">',
+  '<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:700">Test message — not a real alert</div>',
+  '<div style="margin-top:4px">Sent from the automation builder to check that delivery works. The device, addresses, readings and charts below are invented sample data — no equipment is in this state, and nothing needs attention.</div>',
+  "</td></tr></table>",
+  "</td></tr></table>",
+].join("");
+
+const TEST_BANNER_TEXT = [
+  "*** TEST MESSAGE — NOT A REAL ALERT ***",
+  "Sent from the automation builder to check that delivery works. The device,",
+  "addresses and readings below are invented sample data — no equipment is in",
+  "this state, and nothing needs attention.",
+  "",
+].join("\n");
+
+/**
+ * Stamp a composed alert email as a test. Idempotent on the subject so a body
+ * whose own template already says TEST doesn't end up saying it twice.
+ */
+export function markEmailAsTest<T extends { subject: string; text: string; html?: string }>(msg: T): T {
+  return {
+    ...msg,
+    subject: msg.subject.startsWith(TEST_SUBJECT_PREFIX) ? msg.subject : `${TEST_SUBJECT_PREFIX}${msg.subject}`,
+    text: `${TEST_BANNER_TEXT}\n${msg.text}`,
+    ...(msg.html ? { html: `${TEST_BANNER_HTML}${msg.html}` } : {}),
+  };
+}

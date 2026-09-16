@@ -101,7 +101,10 @@ const testDeliverySchema = z.object({
   // omitted = its primary, i.e. every pre-multi-channel client.
   path: z.object({ index: z.number().int().min(0).max(199), channelId: z.string().max(100).optional() }),
   target: z.enum(["delivery", "event"]).default("delivery"),
-  assetId: z.string().max(100).optional(),
+  // No `assetId`. A test alert is about an INVENTED device
+  // (`utils/sampleAlertDevice`), never a real one, so there is no asset left to
+  // name — and this non-strict object strips the field from a stale client
+  // rather than 400ing it.
 });
 
 notificationRulesRouter.post("/test-delivery", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
@@ -114,7 +117,6 @@ notificationRulesRouter.post("/test-delivery", requirePermission("automationMana
       rule: body.rule,
       path: body.path,
       target: body.target,
-      assetId: body.assetId,
       actorUserId: userId,
       actorUsername: username,
     }));
