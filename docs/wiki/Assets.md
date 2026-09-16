@@ -281,6 +281,37 @@ A section your role cannot read says **"Not shown"**, never "none found".
 
 ---
 
+## Deleting an asset
+
+Two ways in, both `assets:write` and both the same act:
+
+- the row menu's **Delete**, on the list; or
+- **Delete Asset**, at the bottom-left of the **edit modal** — so a device you
+  opened to fix, and then decided should not exist, does not have to be found
+  again in the list.
+
+Either one asks you to confirm **by hostname** first, over the top of whatever
+you had open; cancelling leaves the edit modal and anything you had typed in it
+exactly as it was. Confirming closes the modal, closes the detail panel if it
+was showing that device, and removes the record.
+
+**There is no undo.** The asset's history goes with it — samples, alerts,
+sightings. If the device is simply gone from the network rather than gone from
+the business, set its **State** to `decommissioned` instead: that stops polling
+and keeps the record. A device a source still discovers will also come back on
+the next discovery run, as a new record with no history.
+
+Two things the delete does for you, and one it refuses:
+
+- a managed switch or AP gives its **infrastructure reservation** back first,
+  while the address is still readable off the record;
+- the deletion is written to [Events](Events) as `asset.deleted`, named;
+- a **quarantined** asset is refused outright — release the quarantine first,
+  or the MAC block stays on the firewalls with nothing left in Polaris that
+  remembers how to lift it.
+
+---
+
 ## The Settings modal
 
 **Settings** on the toolbar, one modal of stacked sections:
