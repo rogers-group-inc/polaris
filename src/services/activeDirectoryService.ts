@@ -29,6 +29,14 @@ export interface ActiveDirectoryConfig {
   ouInclude?: string[];   // Wildcards match against distinguishedName (e.g. *OU=Servers*)
   ouExclude?: string[];
   includeDisabled?: boolean;  // Default true — disabled accounts become `decommissioned` assets
+  /**
+   * Opt-in disappearance sweep (business rule 70, default OFF): decommission
+   * assets this integration manages once their computer object leaves the
+   * directory or is disabled in it. Deliberately not on by default — every
+   * install's AD hygiene differs, and the first run of a sweep nobody asked
+   * for is a fleet-wide status change.
+   */
+  decommissionMissing?: boolean;
 }
 
 export interface DiscoveredAdDevice {
@@ -48,6 +56,24 @@ export interface DiscoveredAdDevice {
 
 export interface AdDiscoveryResult {
   devices: DiscoveredAdDevice[];
+  /**
+   * Every objectGUID the LDAP read returned, taken BEFORE `ouInclude` /
+   * `ouExclude` and BEFORE the `includeDisabled=false` skip — the raw answer
+   * to "what does the directory still hold?", which is the only honest input
+   * to the disappearance sweep. `devices` is the filtered view and would read
+   * an OU-filter edit as a deletion.
+   */
+  presentObjectGuids: string[];
+  /** Of those, the ones carrying ACCOUNTDISABLE. */
+  disabledObjectGuids: string[];
+  /**
+   * False when the read may be partial — cancelled mid-parse, or the
+   * 10,000-object hard cap was reached. A partial read is indistinguishable
+   * from a deleted fleet, so the sweep refuses on it.
+   */
+  inventoryComplete: boolean;
+  /** True when the run was narrowed to one computer object ("Discover Now"). */
+  scoped: boolean;
 }
 
 export type AdDiscoveryProgressCallback = (
@@ -409,6 +435,11 @@ export async function discoverDevices(
   }
 
   const devices: DiscoveredAdDevice[] = [];
+  // Completeness, tracked rather than inferred: the parse loop below breaks on
+  // cancellation and the search is capped, and both produce a short list that
+  // looks exactly like a directory somebody emptied.
+  let aborted = false;
+  let capped = false;
 
   try {
     await withBoundLdapClient(config, signal, async (client) => {
@@ -424,9 +455,10 @@ export async function discoverDevices(
         timeLimit: 120,
       };
       const { searchEntries } = await client.search(config.baseDn, options);
+      capped = searchEntries.length >= DEVICES_HARD_CAP;
 
       for (const entry of searchEntries) {
-        if (signal?.aborted) break;
+        if (signal?.aborted) { aborted = true; break; }
         const dev = parseEntry(entry);
         if (!dev) continue;
         devices.push(dev);
@@ -439,6 +471,18 @@ export async function discoverDevices(
   }
 
   log("discover.ad.search", "info", `Active Directory: retrieved ${devices.length} computer object(s)`);
+
+  // Snapshot the RAW read for the disappearance sweep before either exclusion
+  // below narrows it — see the AdDiscoveryResult docblock.
+  const absence = {
+    presentObjectGuids: devices.map((d) => d.objectGuid),
+    disabledObjectGuids: devices.filter((d) => d.disabled).map((d) => d.objectGuid),
+    inventoryComplete: !aborted && !capped,
+    scoped: !!scope,
+  };
+  if (capped) {
+    log("discover.ad.search", "error", `Active Directory: hit the ${DEVICES_HARD_CAP}-object cap — the read is partial and the disappearance sweep will be skipped`);
+  }
 
   const filtered = filterDevices(devices, config.ouInclude, config.ouExclude);
   const dropped = devices.length - filtered.length;
@@ -453,10 +497,30 @@ export async function discoverDevices(
     if (disabledCount > 0) {
       log("discover.filter.disabled", "info", `Skipping ${disabledCount} disabled computer account(s) (includeDisabled=false)`);
     }
-    return { devices: active };
+    return { devices: active, ...absence };
   }
 
-  return { devices: filtered };
+  return { devices: filtered, ...absence };
+}
+
+/**
+ * Should the disappearance sweep run against this result?
+ *
+ * Absence is only evidence of deletion when the read was whole. Returns the
+ * reason to skip, or null when the read can be trusted. Mirrors
+ * `vcenterService.vcenterSweepBlockedReason`, scoped-run check first so an
+ * operator is told the real reason rather than a plausible wrong one.
+ */
+export function adSweepBlockedReason(
+  result: Pick<AdDiscoveryResult, "presentObjectGuids" | "inventoryComplete" | "scoped">,
+): string | null {
+  if (result.scoped) return "the run was scoped to a single computer object";
+  if (!result.inventoryComplete) return `the directory read was incomplete (cancelled, or the ${DEVICES_HARD_CAP}-object cap was reached)`;
+  // Zero computer objects under a baseDn that previously held a fleet is a
+  // bind/permission/baseDn answer far more often than an emptied domain —
+  // business rule 35's shrunken-read reasoning, same as vCenter's.
+  if (result.presentObjectGuids.length === 0) return "the directory read came back empty";
+  return null;
 }
 
 // ─── Parsing helpers ────────────────────────────────────────────────────────

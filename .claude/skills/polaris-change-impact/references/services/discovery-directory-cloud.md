@@ -44,7 +44,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** On-prem Active Directory device discovery via LDAP/LDAPS client (computer objects, OU filtering, SID/GUID identity, disabled-account handling).
 
-**Public API:** testConnection, proxyQuery, discoverDevices, ActiveDirectoryConfig, DiscoveredAdDevice, AdDiscoveryResult, AdDiscoveryProgressCallback.
+**Public API:** testConnection, proxyQuery, discoverDevices, adSweepBlockedReason, ActiveDirectoryConfig, DiscoveredAdDevice, AdDiscoveryResult, AdDiscoveryProgressCallback.
 
 **Scoped (single-object) discovery:** `discoverDevices` takes a 4th arg `scope?: { objectGuid }` — the asset slide-in's Discover Now. It ANDs `(objectGUID=\xx\xx…)` into the computer-object filter, still searching from `config.baseDn` at the configured scope (so an object moved out of the base DN correctly returns nothing — the same answer a full run gives). Keyed on the GUID, NOT the DN: a computer object that moves OU keeps its GUID and changes its DN, so a DN-based search would silently find nothing for exactly the machines most likely to need a refresh. The escaped-byte form comes from `ldapGuidFilterValue` (`src/services/discovery/discoveryScope.ts`), which is the exact inverse of `decodeObjectGuid` — both are wire-order, no byte-swapping — and a malformed GUID throws 400 rather than building a filter that matches the wrong object.
 
@@ -61,6 +61,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `lastLogonTimestamp` replicates ~14 days; use as coarse "last seen" signal only.
 - Paged subtree search under baseDn with filter `(&(objectCategory=computer)(objectClass=computer))`; hard cap 10,000 results.
 - proxyQuery is LDAP search pass-through (filter/baseDn/scope/attributes/sizeLimit configurable).
+- `AdDiscoveryResult` carries the disappearance sweep's inputs alongside `devices`: `presentObjectGuids` + `disabledObjectGuids` are the RAW read (before `ouInclude`/`ouExclude` and before the `includeDisabled=false` skip), `inventoryComplete` is false when the parse loop was cancelled or the 10,000-object cap was hit, `scoped` when the run was narrowed. A new early return, a new swallowed failure or a new exclusion in the read must keep those honest or the sweep reads the gap as deleted devices — the same contract `discoverInventory` has to `presentVmMorefs`. `adSweepBlockedReason` is pure and lives here for the same reason vCenter's does: it is the only unit-testable part of that pass (business rule 70).
 
 **When changing this:**
 - Verify LDAP bind connection + TLS options (verifyTls flag) still work for LDAPS.
@@ -70,6 +71,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Validate syncActiveDirectoryDevices creates correct AssetSource rows with sourceKind="ad".
 - Test paged search (page size 1000) doesn't miss assets with large OU hierarchies.
 - syncActiveDirectoryDevices in discoveryEngine.ts runs a forward-DNS pre-pass (via dnsService.getConfiguredResolver) to fill Asset.ipAddress for new + IP-less existing assets. Gate is `!existing.ipAddress` — never overwrites a non-empty IP from FortiGate/Entra/operator. ipSource stamped "activedirectory-dns".
+- Adding a config field that NARROWS what the search returns (a new filter, a scope knob, a skip) → decide whether the disappearance sweep must treat it as innocent absence, and if so snapshot the raw set BEFORE it, the way `ouInclude`/`includeDisabled` are handled. Getting this wrong decommissions whatever the new knob excludes.
 
 ---
 
@@ -150,7 +152,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Microsoft Entra ID (Azure AD) + Intune device discovery via OAuth2 Graph API client (device registration, Intune enrollment, compliance, user assignment).
 
-**Public API:** testConnection, proxyQuery, discoverDevices, EntraIdConfig, DiscoveredEntraDevice, EntraDiscoveryResult, EntraDiscoveryProgressCallback.
+**Public API:** testConnection, proxyQuery, discoverDevices, entraSweepBlockedReason, EntraIdConfig, DiscoveredEntraDevice, EntraDiscoveryResult, EntraDiscoveryProgressCallback.
 
 **Scoped (single-device) discovery:** `discoverDevices` takes a 4th arg `scope?: { deviceId }` — the asset slide-in's Discover Now (see `discovery/discoveryScope.ts` for the scope union and `assetDiscoveryScope.ts` for how an asset resolves to one). It swaps `$top=999` for `$filter=deviceId eq '<guid>'` on `/devices` and `$filter=azureADDeviceId eq '<guid>'` on `/deviceManagement/managedDevices`; the deviceId is GUID-validated before interpolation and a malformed one throws 400 rather than reaching an OData string. Everything downstream is untouched — the Intune merge, deviceInclude/deviceExclude and includeDisabled all still apply, so a scoped run on an excluded device correctly returns zero devices instead of smuggling one past the filter.
 
@@ -164,7 +166,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Device identity: Entra `deviceId` (GUID) is stable key → `AssetSource.externalId` with `sourceKind="entra"` or `"intune"`.
 - When enableIntune=true, both `/v1.0/devices` and `/v1.0/deviceManagement/managedDevices` are fetched & merged on azureADDeviceId ↔ deviceId; Intune data wins on shared fields.
 - Hybrid-joined devices carry `onPremisesSecurityIdentifier` (SID) → cross-link to activeDirectoryService via `sid:{SID}` tags.
-- Disabled devices (accountEnabled=false) → `decommissioned` status when `includeDisabled=true` (default).
+- Disabled devices (accountEnabled=false) → `decommissioned` status when `includeDisabled=true` (default). `includeDisabled` reached `EntraIdConfigSchema` only in 2026-09; before that `z.object`'s strip dropped what the modal posted and the checkbox did nothing.
+- `EntraDiscoveryResult` carries the disappearance sweep's inputs alongside `devices`: `presentDeviceIds` + `disabledDeviceIds` are the RAW `/devices` read (before `deviceInclude`/`deviceExclude` and before the `includeDisabled=false` skip), `presentIntuneDeviceIds` + `intuneRead` are the Intune half (the two source kinds are swept against their OWN endpoint — an Intune-only device is absent from `/devices` without having gone anywhere, and a failed or switched-off Intune read must leave every intune row alone), `inventoryComplete` is `graphPage`'s `meta.complete` (false on cancellation or the 10,000-device cap — a page FAILURE throws, so only those two produce a silently short list), `scoped` when the run was narrowed. `entraSweepBlockedReason` is pure and lives here for the same reason vCenter's does: it is the only unit-testable part of that pass (business rule 70).
 - Asset type inferred from Intune `chassisType` (desktop/laptop → workstation; other → other); Entra-only defaults to workstation.
 - `deviceInclude`/`deviceExclude` filters match against displayName with wildcard support.
 - proxyQuery is read-only Graph API pass-through (GET only, /v1.0/ or /beta/ prefix required).
@@ -176,6 +179,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Check hybrid-join SID cross-link still tags assets correctly for AD ↔ Entra matching.
 - Validate deviceInclude/deviceExclude wildcard matching against displayName.
 - Confirm syncEntraDevices in integrations.ts creates AssetSource rows with correct sourceKind ("entra"/"intune") based on sources array.
+- Adding a config field that NARROWS what Graph returns (a new filter, a `$filter` clause, a skip) → decide whether the disappearance sweep must treat it as innocent absence, and if so snapshot the raw set BEFORE it, the way `deviceInclude`/`includeDisabled` are handled. Getting this wrong decommissions whatever the new knob excludes.
+- `syncEntraDevices` still does NOT stamp `Asset.discoveredByIntegrationId` (the AD, Windows-Server and Arc paths do). Every Entra-discovered asset is therefore unowned, which is why business rule 70's ownership test counts "managed by nothing" as this directory's. Stamping it would also let Entra assets inherit the integration's per-class monitoring block — worth doing, but it is a monitoring-config change with its own blast radius.
 
 ---
 

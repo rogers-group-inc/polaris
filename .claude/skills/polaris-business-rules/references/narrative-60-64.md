@@ -865,3 +865,105 @@ second. That incidentally fixed something nobody had reported: the archive confi
 quoting the filtered-looking count while the success toast that follows it reports
 `reservationCount` straight off `archiveSubnet`'s unfiltered `rows.length`, so on a churned
 network the dialog and the toast named different numbers for the same operation.
+
+---
+
+---
+
+## Rule 70 — Absence from a directory decommissions what the directory manages, and only when the read was whole
+
+vCenter has had a disappearance sweep since 2026-08-28: a VM that leaves the inventory is
+decommissioned, because a hypervisor's inventory is the definitive statement of which VMs
+exist. Active Directory and Entra ID are the same kind of claim about the machines they
+hold — an operator deleting a computer object or disabling a device account is performing
+the decommission, and Polaris was not hearing it. Aging out on `lastSeen` eventually caught
+those assets, months later, and only if nothing else kept touching them.
+
+The whole difficulty is that **absence is not one signal**. Five different things produce a
+device that is missing from a directory read, and exactly one of them is a deletion:
+
+1. The object really was deleted, or the device was disabled in the directory.
+2. The operator edited `ouInclude` / `ouExclude` / `deviceInclude` / `deviceExclude`.
+3. `includeDisabled=false` dropped the device before the sync ever saw it.
+4. The read was cut short — cancelled, or over the 10,000-object hard cap.
+5. The search scope or the grant narrowed: a `baseDn` moved down a level, an OU delegated
+   away, a service principal that lost `Device.Read.All` over half the tenant.
+
+### The toggle, and why it is off
+
+`decommissionMissing` defaults to **false** on both integrations. Polaris is installed by
+strangers, and the first run of a sweep nobody asked for is a fleet-wide status change on
+somebody else's estate — an install whose AD carries a decade of never-cleaned computer
+objects gets a different answer from one with tidy hygiene, and only its operator knows
+which it is. Off, the pass does nothing at all: the stale source rows are left in place too,
+because deleting them is the same judgement wearing a smaller hat, and because a sweep that
+deleted rows but skipped the status flip would leave the next run with nothing to notice.
+
+### The three guards, in the order they fire
+
+**`adSweepBlockedReason` / `entraSweepBlockedReason`** refuse the whole pass on cause 4 —
+a scoped ("Discover Now") run, a cancelled or capped read — and on an empty one. Zero
+computer objects under a `baseDn` that previously held a fleet is a bind or permission
+answer far more often than an emptied domain; that is business rule 35's shrunken-read
+reasoning, and `vcenterSweepBlockedReason` makes the identical call. The scoped check is
+first so an operator is told the real reason rather than a plausible wrong one.
+
+**`classifyDirectoryRows`** covers causes 2 and 3, and it can only do so because it is fed
+the **raw** identifier set — every device the directory returned, snapshotted before the
+name/OU filter and before the `includeDisabled` skip. That is the same trick
+`partitionStaleVcenterSources` plays with `presentVmMorefs`, and it has the same second-order
+payoff: re-widening a filter re-matches the same asset instead of orphaning its identity. It
+sorts rows three ways, not two — `gone`, `disabled`, `alive` — because a disabled device has
+not left the directory: the asset is decommissioned and its **source row is kept**.
+
+**`absenceExceedsGuard`** is the last one, and it is the only thing that can see cause 5.
+A narrowed `baseDn` returns a complete, non-empty, perfectly well-formed read that is simply
+missing most of the estate; nothing in the shape of the answer betrays it. So the sweep
+refuses outright when the vanished set exceeds `max(50, 20% of what this integration owns)`
+— `directorySyncService.deleteExceedsGuard`'s formula, applied to assets instead of contacts.
+The floor matters as much as the ratio: 20% of a 40-machine lab is eight rows, and refusing
+ordinary turnover would need an operator every time a laptop is retired. The failure being
+guarded against is categorical, not incremental.
+
+### Ownership decides, not provenance
+
+The vCenter sweep asks "does any other source still claim this device?" and leaves the asset
+active if one does. The directory sweep asks a different question, because the answer to that
+one is almost always yes: on a FortiGate-managed network nearly every workstation carries a
+`fortigate-endpoint` row from a DHCP lease or an ARP sighting, and a rule that treated a
+sighting as a claim would make the feature inert on exactly the fleets that need it.
+
+So an asset is judged by **`Asset.discoveredByIntegrationId`** — the "Managed by" row on the
+asset slide-over's System tab, which is ownership of the monitoring configuration rather than
+discovery provenance. Managed by **this** integration, and the directory's word is final: a
+sighting, a vCenter row, an Arc record or an agent check-in does not keep a deleted computer
+object alive. Managed by **another** integration, and the sweep only drops its own stale
+source row and says so — vCenter losing sight of a VM is not AD's business, and the reverse
+holds too. Managed by **nothing** is treated as "this directory is as close to an owner as it
+has", which is load-bearing rather than an edge case: `syncEntraDevices` has never stamped
+`discoveredByIntegrationId` at all, unlike the AD, Windows-Server and Arc paths, so every
+Entra-discovered asset is unowned and the sweep would otherwise skip the entire Entra estate.
+(That asymmetry is worth fixing on its own terms — an unowned asset also cannot inherit the
+integration's per-class monitoring block — but it is a monitoring-config change, not this one.)
+
+An asset is only judged once **every** row this integration holds on it agrees: an Entra
+device that left `/devices` but is still in Intune is still in the tenant. And a source kind
+whose endpoint was not read this cycle — Intune switched off, or its call failed, which is
+caught so an Intune outage cannot fail the whole run — leaves its rows alive. Not read is not
+the same as not there.
+
+### Where it sits
+
+Both sweeps run as the last pass of their sync, after every upsert, through one shared
+`sweepDirectoryAbsence` in `discovery/discoveryEngine.ts` — shared so two integrations cannot
+drift apart on a pass that changes asset lifecycle state. `releaseAssetsForDecommission` runs
+first so an open maintenance window is force-closed and the 30-second reconcile cannot
+re-flip the status back (business rule 16's carve-out, the same one vCenter takes). Each
+decommission writes an `asset.ad.decommissioned` / `asset.entra.decommissioned` Event naming
+which of the two reasons applied. Time-based aging stays with `decommissionStaleAssets`; this
+is the evidence-based path, the same division vCenter's sweep draws.
+
+One bug surfaced alongside it: `EntraIdConfigSchema` never declared `includeDisabled`, so
+`z.object`'s strip dropped it on every save and the modal's checkbox had done nothing since
+the integration shipped — disabled Entra devices always synced as `decommissioned`. The AD
+schema had always had the field.

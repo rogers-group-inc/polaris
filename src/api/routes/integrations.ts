@@ -733,6 +733,15 @@ const EntraIdConfigSchema = z.object({
   enableIntune:  z.boolean().optional().default(false),
   deviceInclude: z.array(z.string()).optional().default([]),
   deviceExclude: z.array(z.string()).optional().default([]),
+  // The modal has posted this since the integration shipped and
+  // entraIdService reads it, but it was never declared here — so z.object's
+  // strip dropped it on every save and the checkbox did nothing (disabled
+  // devices always synced as `decommissioned`). Declared now; the AD schema
+  // has always had it.
+  includeDisabled: z.boolean().optional().default(true),
+  // Business rule 70, default OFF: decommission assets this integration
+  // manages once their device leaves the tenant or is disabled in it.
+  decommissionMissing: z.boolean().optional().default(false),
   // Post-sync network-presence verification (agent/probe signals + ICMP
   // fallback) — keeps Asset.lastSeen honest now that directory timestamps
   // no longer write it. Default ON (read-only against the targets); see
@@ -854,6 +863,9 @@ const ActiveDirectoryConfigSchema = z.object({
   ouInclude:       z.array(z.string()).optional().default([]),
   ouExclude:       z.array(z.string()).optional().default([]),
   includeDisabled: z.boolean().optional().default(true),
+  // Business rule 70, default OFF: decommission assets this integration
+  // manages once their computer object leaves the directory or is disabled.
+  decommissionMissing: z.boolean().optional().default(false),
   // Post-sync network-presence verification — see EntraIdConfigSchema note.
   verifyPresence:  z.boolean().optional().default(true),
   // Address-book GAL search (live typeahead; nothing is persisted). Default

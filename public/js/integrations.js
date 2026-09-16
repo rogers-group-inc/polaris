@@ -715,6 +715,7 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Search Scope</span><span class="detail-value">' + escapeHtml(config.searchScope || "sub") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifyTls ? "Yes" : "No") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Include Disabled</span><span class="detail-value">' + (config.includeDisabled === false ? "No (skipped)" : "Yes (as disabled)") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Decommission Missing</span><span class="detail-value">' + (config.decommissionMissing === true ? "Yes" : "No") + '</span></div>' +
           filterRow("OUs", config.ouInclude, config.ouExclude);
       } else if (intg.type === "entraid") {
         detailRows =
@@ -722,6 +723,7 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Client ID</span><span class="detail-value mono">' + escapeHtml(config.clientId || "-") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Intune Sync</span><span class="detail-value">' + (config.enableIntune ? "Enabled" : "Disabled") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Include Disabled</span><span class="detail-value">' + (config.includeDisabled === false ? "No (skipped)" : "Yes (as disabled)") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Decommission Missing</span><span class="detail-value">' + (config.decommissionMissing === true ? "Yes" : "No") + '</span></div>' +
           filterRow("Devices", config.deviceInclude, config.deviceExclude);
       } else if (intg.type === "azurearc") {
         var arcSubs = config.subscriptionInclude || [];
@@ -4938,6 +4940,7 @@ function entraIdFormHTML(defaults) {
   var devNames = devMode === "include" ? (d.deviceInclude || []) : (d.deviceExclude || []);
   var intuneChecked = d.enableIntune ? "checked" : "";
   var includeDisabled = d.includeDisabled !== false;
+  var decommissionMissing = d.decommissionMissing === true;
   var enabledChecked = d.enabled !== false ? "checked" : "";
   var autoChecked = d.autoDiscover !== false ? "checked" : "";
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Corporate Entra ID"></div>' +
@@ -4956,6 +4959,11 @@ function entraIdFormHTML(defaults) {
       '<input type="checkbox" id="f-includeDisabled" ' + (includeDisabled ? "checked" : "") + ' style="width:auto">' +
       '<label for="f-includeDisabled" style="margin:0">Include disabled devices (as <em>disabled</em>)</label>' +
     '</div>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-decommissionMissing" ' + (decommissionMissing ? "checked" : "") + ' style="width:auto">' +
+      '<label for="f-decommissionMissing" style="margin:0">Decommission devices that leave Entra ID</label>' +
+    '</div>' +
+    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, an asset <strong style="color:var(--color-text-primary)">this integration manages</strong> is set to <em>decommissioned</em> once its device record is deleted from the tenant or disabled there — other sources still describing it do not keep it active. Assets managed by another integration are never touched. A partial, cancelled or empty read, a change to the device filter, and any run that would decommission an implausibly large share of the fleet are all refused and logged instead.</div>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
       '<label for="f-enabled" style="margin:0">Enabled</label>' +
@@ -4990,6 +4998,7 @@ function getEntraFormConfig() {
     clientSecret: val("f-clientSecret"),
     enableIntune: document.getElementById("f-enableIntune").checked,
     includeDisabled: document.getElementById("f-includeDisabled").checked,
+    decommissionMissing: document.getElementById("f-decommissionMissing").checked,
     deviceInclude: devMode === "include" ? devNames : [],
     deviceExclude: devMode === "exclude" ? devNames : [],
     verboseLogging: readVerboseLoggingFromForm(),
@@ -5004,6 +5013,7 @@ function activeDirectoryFormHTML(defaults) {
   var autoChecked = d.autoDiscover !== false ? "checked" : "";
   var scope = d.searchScope || "sub";
   var includeDisabled = d.includeDisabled !== false;
+  var decommissionMissing = d.decommissionMissing === true;
   var devMode = (d.ouInclude && d.ouInclude.length > 0) ? "include" : "exclude";
   var devNames = devMode === "include" ? (d.ouInclude || []) : (d.ouExclude || []);
   var defaultPort = useLdaps ? 636 : 389;
@@ -5037,6 +5047,11 @@ function activeDirectoryFormHTML(defaults) {
       '<input type="checkbox" id="f-includeDisabled" ' + (includeDisabled ? "checked" : "") + ' style="width:auto">' +
       '<label for="f-includeDisabled" style="margin:0">Include disabled computer accounts (as <em>disabled</em>)</label>' +
     '</div>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-decommissionMissing" ' + (decommissionMissing ? "checked" : "") + ' style="width:auto">' +
+      '<label for="f-decommissionMissing" style="margin:0">Decommission computers that leave the directory</label>' +
+    '</div>' +
+    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, an asset <strong style="color:var(--color-text-primary)">this integration manages</strong> is set to <em>decommissioned</em> once its computer object is deleted from the directory or disabled there — other sources still describing it do not keep it active. Assets managed by another integration are never touched. A partial, cancelled or empty search, a change to the base DN scope or OU filter, and any run that would decommission an implausibly large share of the fleet are all refused and logged instead.</div>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
       '<label for="f-enabled" style="margin:0">Enabled</label>' +
@@ -5076,6 +5091,7 @@ function getAdFormConfig() {
     baseDn: val("f-baseDn"),
     searchScope: document.getElementById("f-searchScope").value === "one" ? "one" : "sub",
     includeDisabled: document.getElementById("f-includeDisabled").checked,
+    decommissionMissing: document.getElementById("f-decommissionMissing").checked,
     ouInclude: devMode === "include" ? devNames : [],
     ouExclude: devMode === "exclude" ? devNames : [],
     verboseLogging: readVerboseLoggingFromForm(),
@@ -5961,6 +5977,7 @@ function _intgEditFormSpec(intg, config) {
         baseDn: config.baseDn,
         searchScope: config.searchScope || "sub",
         includeDisabled: config.includeDisabled !== false,
+        decommissionMissing: config.decommissionMissing === true,
         enabled: intg.enabled,
         autoDiscover: intg.autoDiscover !== false,
         pollInterval: intg.pollInterval,
@@ -5983,6 +6000,8 @@ function _intgEditFormSpec(intg, config) {
         clientSecret: "",
         clientSecretPlaceholder: "Leave blank to keep current secret",
         enableIntune: config.enableIntune,
+        includeDisabled: config.includeDisabled !== false,
+        decommissionMissing: config.decommissionMissing === true,
         enabled: intg.enabled,
         autoDiscover: intg.autoDiscover !== false,
         pollInterval: intg.pollInterval,

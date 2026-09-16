@@ -27,6 +27,13 @@ export interface EntraIdConfig {
   clientSecret: string;
   enableIntune?: boolean;
   includeDisabled?: boolean;  // Default true — disabled (accountEnabled=false) devices become `decommissioned` assets
+  /**
+   * Opt-in disappearance sweep (business rule 70, default OFF): decommission
+   * assets this integration manages once their device record leaves the tenant
+   * or is disabled in it. Off by default — the first run of a sweep nobody
+   * asked for is a fleet-wide status change.
+   */
+  decommissionMissing?: boolean;
   deviceInclude?: string[];  // Match against displayName; wildcards supported
   deviceExclude?: string[];
 }
@@ -77,6 +84,31 @@ export interface DiscoveredEntraDevice {
 
 export interface EntraDiscoveryResult {
   devices: DiscoveredEntraDevice[];
+  /**
+   * Every meaningful deviceId `/v1.0/devices` returned, taken BEFORE
+   * `deviceInclude` / `deviceExclude` and BEFORE the `includeDisabled=false`
+   * skip — the raw answer to "what does the tenant still hold?", which is the
+   * only honest input to the disappearance sweep. `devices` is the filtered
+   * view and would read a filter edit as a deletion.
+   */
+  presentDeviceIds: string[];
+  /** Of those, the ones with `accountEnabled=false`. */
+  disabledDeviceIds: string[];
+  /**
+   * The `azureADDeviceId`s the Intune managedDevices read returned. Only
+   * meaningful when `intuneRead === "ok"` — when Intune is switched off, or
+   * its call failed (which is caught so an Intune outage can't fail the whole
+   * run), every intune source row must be left alone rather than swept.
+   */
+  presentIntuneDeviceIds: string[];
+  intuneRead: "ok" | "disabled" | "failed";
+  /**
+   * False when the Entra read may be partial — cancelled mid-page, or the
+   * 10,000-device hard cap was reached.
+   */
+  inventoryComplete: boolean;
+  /** True when the run was narrowed to one device ("Discover Now"). */
+  scoped: boolean;
 }
 
 export type EntraDiscoveryProgressCallback = (
@@ -322,19 +354,25 @@ function extractGraphError(body: string): string {
 
 // Page through a Graph collection, concatenating `value` arrays until
 // nextLink is absent or hardCap items have been collected.
+// `meta.complete` reports whether the caller is holding the WHOLE collection:
+// a page fetch throws, but cancellation and the hard cap both break the loop
+// and return a short list that is indistinguishable from a small tenant. Only
+// the disappearance sweep cares, and only it passes a meta object.
 async function graphPage(
   config: EntraIdConfig,
   initialUrl: string,
   hardCap: number,
   signal?: AbortSignal,
+  meta?: { complete: boolean },
 ): Promise<any[]> {
   const results: any[] = [];
   let url: string | undefined = initialUrl;
+  if (meta) meta.complete = true;
   while (url) {
-    if (signal?.aborted) break;
+    if (signal?.aborted) { if (meta) meta.complete = false; break; }
     const page = await graphGet(config, url, signal);
     if (Array.isArray(page.value)) results.push(...page.value);
-    if (results.length >= hardCap) break;
+    if (results.length >= hardCap) { if (meta) meta.complete = false; break; }
     url = page["@odata.nextLink"];
   }
   return results.slice(0, hardCap);
@@ -684,9 +722,13 @@ export async function discoverDevices(
   ].join(",");
 
   let entraDevices: any[] = [];
+  const entraMeta = { complete: false };
   try {
-    entraDevices = await graphPage(config, entraUrl, DEVICES_HARD_CAP, signal);
+    entraDevices = await graphPage(config, entraUrl, DEVICES_HARD_CAP, signal, entraMeta);
     log("discover.entra.devices", "info", `Entra ID: retrieved ${entraDevices.length} device(s)`);
+    if (!entraMeta.complete) {
+      log("discover.entra.devices", "error", `Entra ID: the device read is partial (cancelled, or the ${DEVICES_HARD_CAP}-device cap was reached) — the disappearance sweep will be skipped`);
+    }
   } catch (err: any) {
     log("discover.entra.devices", "error", `Entra ID: failed to list devices — ${err.message || "Unknown error"}`);
     throw err;
@@ -694,6 +736,7 @@ export async function discoverDevices(
 
   // 2. Intune managed devices (optional overlay)
   const intuneByDeviceId = new Map<string, any>();
+  let intuneRead: EntraDiscoveryResult["intuneRead"] = "disabled";
   if (config.enableIntune && !signal?.aborted) {
     const intuneUrl = (scopedDeviceId
       ? `https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$filter=azureADDeviceId eq '${scopedDeviceId}'&$select=`
@@ -713,16 +756,22 @@ export async function discoverDevices(
       "lastSyncDateTime",
     ].join(",");
 
+    const intuneMeta = { complete: false };
     try {
-      const intuneDevices = await graphPage(config, intuneUrl, DEVICES_HARD_CAP, signal);
+      const intuneDevices = await graphPage(config, intuneUrl, DEVICES_HARD_CAP, signal, intuneMeta);
       for (const d of intuneDevices) {
         const key = String(d.azureADDeviceId || "").toLowerCase();
         if (key) intuneByDeviceId.set(key, d);
       }
       log("discover.intune.devices", "info", `Intune: retrieved ${intuneDevices.length} managed device(s)`);
+      // A partial Intune page is treated exactly like a failed one: the only
+      // consumer that cares is the sweep, and half a roster would read as
+      // "these devices left Intune".
+      intuneRead = intuneMeta.complete ? "ok" : "failed";
     } catch (err: any) {
       log("discover.intune.devices", "error", `Intune: failed to list managed devices — ${err.message || "Unknown error"}`);
       // Continue with Entra-only results rather than failing the whole run
+      intuneRead = "failed";
     }
   }
 
@@ -807,6 +856,20 @@ export async function discoverDevices(
     log("discover.filter.null_id", "info", `Skipping ${nullIdSkipped} device(s) with empty or null deviceId (e.g. 00000000-0000-0000-0000-000000000000)`);
   }
 
+  // Snapshot the RAW reads for the disappearance sweep before either exclusion
+  // below narrows them — see the EntraDiscoveryResult docblock. Taken from the
+  // per-endpoint responses rather than from `merged`, because the two source
+  // kinds are swept against their OWN endpoint: an Intune-only device is
+  // absent from /devices without having left the tenant.
+  const absence = {
+    presentDeviceIds: [...seenDeviceIds],
+    disabledDeviceIds: merged.filter((d) => !d.accountEnabled).map((d) => d.deviceId),
+    presentIntuneDeviceIds: [...intuneByDeviceId.keys()],
+    intuneRead,
+    inventoryComplete: entraMeta.complete,
+    scoped: !!scopedDeviceId,
+  };
+
   // 4. Apply device include/exclude filter (match displayName)
   const filtered = filterDevices(merged, config.deviceInclude, config.deviceExclude);
   const dropped = merged.length - filtered.length;
@@ -823,10 +886,34 @@ export async function discoverDevices(
     if (disabledCount > 0) {
       log("discover.filter.disabled", "info", `Skipping ${disabledCount} disabled Entra device(s) (includeDisabled=false)`);
     }
-    return { devices: active };
+    return { devices: active, ...absence };
   }
 
-  return { devices: filtered };
+  return { devices: filtered, ...absence };
+}
+
+/**
+ * Should the disappearance sweep run against this result?
+ *
+ * Absence is only evidence of deletion when the read was whole. Returns the
+ * reason to skip, or null when the read can be trusted. Mirrors
+ * `vcenterService.vcenterSweepBlockedReason`, scoped-run check first so an
+ * operator is told the real reason rather than a plausible wrong one.
+ *
+ * The Intune half needs no gate here: `intuneRead` travels with the result and
+ * the sweep leaves every intune row alone unless it says `"ok"`, so an Intune
+ * outage costs the Intune rows only and never blocks the Entra ones.
+ */
+export function entraSweepBlockedReason(
+  result: Pick<EntraDiscoveryResult, "presentDeviceIds" | "inventoryComplete" | "scoped">,
+): string | null {
+  if (result.scoped) return "the run was scoped to a single device";
+  if (!result.inventoryComplete) return `the tenant read was incomplete (cancelled, or the ${DEVICES_HARD_CAP}-device cap was reached)`;
+  // Zero devices against a tenant that previously had them is a
+  // consent/permission answer far more often than an emptied tenant —
+  // business rule 35's shrunken-read reasoning, same as vCenter's.
+  if (result.presentDeviceIds.length === 0) return "the tenant read came back empty";
+  return null;
 }
 
 // Reject Entra device IDs that are empty or the canonical null GUID. Some
