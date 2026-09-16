@@ -449,6 +449,27 @@ so customizing the email template cannot remove it.
 
 ---
 
+### Rule 68
+**A reservation count is of addresses held, and a release is history.** Polaris
+never deletes a reservation when it is given up — it marks it `released` or
+`expired` and keeps it, because that history is how you answer "who had .47 in
+March". So every count of how full a network is counts only reservations that
+are **active and sitting on an address**: the Networks list's Reservations
+column, its Utilization percentage, and the bar at the bottom of the address
+list all use that same figure, and they agree by construction. A whole-network
+reservation holds no individual address and is not counted either — you see it
+as the network's `reserved` status instead. The percentage is over the addresses
+the CIDR can hand out (254 on a /24); where there is no sensible denominator —
+IPv6 — you get an em dash rather than a 0% bar, which would claim the network is
+empty.
+
+The unfiltered total still exists and is used for exactly one thing: **what a
+deletion or an archive takes with it.** Both remove every reservation row
+whatever its status, so both confirmations name that larger number before you
+commit.
+
+---
+
 ## Reading a rule correctly
 
 Three habits make these easier to apply:

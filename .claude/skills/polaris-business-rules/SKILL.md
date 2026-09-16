@@ -11,13 +11,13 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(68 is the next free number.)
+(69 is the next free number.)
 
 ## How to read
 
 | You are about to… | Read |
 |---|---|
-| touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11 below; 20a, 23, 26, 41, 42 in the references |
+| touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11 below; 20a, 23, 26, 41, 42, 68 in the references |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | rules 9–10 below; 12, 16, 36, 37 |
 | touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 67 |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 66, 67 |
@@ -120,6 +120,7 @@ before changing anything the invariant constrains.
 | 65 | A delivery test is a specimen of the alert, not a rehearsal against live inventory | invariants-30-43 | narrative-60-64 |
 | 66 | A measurement window may be counted in readings, and then the hold counts poll GROUPS | invariants-30-43 | narrative-60-64 |
 | 67 | A missed response-time poll is the timeout it cost, and an outage resets the window | invariants-30-43 | narrative-60-64 |
+| 68 | A reservation count is of addresses HELD; a release is history, and only a cascade counts it | invariants-30-43 | narrative-60-64 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

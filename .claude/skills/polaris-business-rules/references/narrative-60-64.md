@@ -718,3 +718,65 @@ V5 was adding a new knob whose default an operator might reasonably disagree wit
 fixes what the existing knob MEASURES, and an edited rule is no less wrong than an unedited one.
 It names every rule it changed and its old window in a warning Event, because it alters when
 existing alerts fire and an operator must be able to see it happened and put a rule back.
+
+---
+
+## Rule 68 — A reservation count is of addresses held, and a release is history
+
+The IPAM Networks list has carried a Reservations column since the beginning, and until
+2026-09-16 it was `prisma.subnet.findMany`'s unfiltered `_count.reservations`. That reads as
+the obvious thing to show, and on a hand-curated network it is: an operator adds ten
+reservations, the column says ten.
+
+It stops being the obvious thing the moment the network is one Polaris discovered. **Polaris
+soft-releases.** `reservationService` sets `status` to `released` when a reservation is given
+up; `reservationStaleService` sets `expired` when one ages out; `subnetRefreshService` releases
+the rows a FortiGate no longer reports. None of them delete. The only code that ever removes a
+reservation row is `cleanupStaleDnsResolvedReleased`, and that covers one narrow `dns_resolved`
+case. A reservation table is an append-mostly ledger, on purpose — the history is how an
+operator answers "who had .47 in March".
+
+So on a `/24` whose DHCP leases have cycled for a year, the unfiltered count is in the
+hundreds. It was already a confusing number to read; it became an untenable one the moment a
+percentage was put beside it, because 300 reservations on 254 usable addresses is 118% full.
+
+### One numerator, stated once
+
+The numerator is **active reservations carrying an address** — `status: "active"` AND
+`ipAddress` not null. That is not a new definition invented for the column; it is what
+`ipService.subnetCapacity` has always counted and what the IP panel's footer bar has always
+drawn. The change made `subnetService.listSubnets` agree with them rather than adding a third
+opinion, and a fourth surface that counts addresses takes the same filter. Three places
+disagreeing about how full a network is would be three places an operator has to decide
+between.
+
+A **whole-subnet reservation** — `ipAddress` null, the row that sets the subnet's status to
+`reserved` — is excluded from all of them. It consumes no individual address, so it belongs in
+neither the count nor the numerator, and the operator already sees it: the Status column says
+`reserved`.
+
+### The denominator, and why it may be absent
+
+`usableHostCount(cidr)` in `utils/cidr.ts` owns it, like every other piece of IP math — a `/24`
+is 254, network and broadcast excluded, with the `/31` and `/32` special cases the RFCs
+require. It is `null`, never 0, for IPv6 and for any CIDR the parser refuses. Zero would be
+arithmetically convenient and a lie in the UI: a percentage of nothing renders as an empty bar,
+and an empty bar is a positive claim that the network is free. The cell draws an em dash
+instead (`polaris-ui-canon` → canon-tables-lists.md § Utilization bar, which carries the same
+rule for a storage volume with no reading).
+
+### The unfiltered count is not wrong — it answers a different question
+
+There is exactly one kind of caller that needs it, and it is not a display: **what a cascade
+removes.** Deleting a `Subnet` cascades to every reservation row it has, whatever the status,
+and `subnetArchiveService.archiveSubnet` copies every row into `ArchivedReservation` with no
+status filter at all. A confirmation saying "this will also delete 12 reservations" before
+removing 240 rows is telling the operator something false at the one moment they are deciding
+whether to proceed.
+
+So `listSubnets` returns both, under names that say which is which: `_count.reservations`
+(held) and `totalReservations` (every row). The delete and archive confirmations take the
+second. That incidentally fixed something nobody had reported: the archive confirmation was
+quoting the filtered-looking count while the success toast that follows it reports
+`reservationCount` straight off `archiveSubnet`'s unfiltered `rows.length`, so on a churned
+network the dialog and the toast named different numbers for the same operation.

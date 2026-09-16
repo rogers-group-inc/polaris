@@ -290,10 +290,10 @@ export async function listSubnets(filter: ListSubnetsFilter = {}) {
       include: {
         block: { select: { name: true, cidr: true } },
         integration: { select: { id: true, name: true } },
-        // FILTERED on purpose: `_count.reservations` is what the Networks
-        // list's Reservations column shows and sorts on, so it counts the
-        // addresses actually held — active rows carrying an IP. Released and
-        // expired rows are kept forever (reservationService soft-releases; only
+        // FILTERED on purpose (business rule 68): `_count.reservations` is what
+        // the Networks list's Reservations column shows and sorts on, so it
+        // counts the addresses actually held — active rows carrying an IP.
+        // Released and expired rows are kept forever (soft-release; only
         // cleanupStaleDnsResolvedReleased ever prunes any of them), so the old
         // unfiltered count read 300 reservations on a /24 once a DHCP-leased
         // network had churned, and the utilization beside it would have been
@@ -310,9 +310,10 @@ export async function listSubnets(filter: ListSubnetsFilter = {}) {
       take: limit,
     }),
     prisma.subnet.count({ where }),
-    // Every reservation row, live or not, grouped by subnet: the delete /
-    // archive confirmations name how many rows the cascade takes with it, and
-    // that number has to include the released history the column hides. One
+    // Every reservation row, live or not, grouped by subnet (business rule 68):
+    // the delete / archive confirmations name how many rows the cascade takes
+    // with it, and that number has to include the released history the column
+    // hides — subnetArchiveService copies rows with no status filter at all. One
     // aggregate scoped by the same WHERE — not a per-row count, which at 2000
     // networks would be 2000 queries.
     prisma.reservation.groupBy({
