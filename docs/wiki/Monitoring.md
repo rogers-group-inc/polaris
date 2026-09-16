@@ -116,6 +116,48 @@ sent**, not when the chunk finished.
 
 ---
 
+## Vendor SNMP telemetry needs two things you supply
+
+Standard SNMP covers a lot — interfaces, LLDP, PoE, bridge and VLAN tables,
+`hrStorage`, ENTITY sensors — and Polaris bundles the IETF and IEEE MIBs those
+live in, so they work the moment SNMP does.
+
+CPU, memory, hardware sensors and flash on network gear are different. Almost
+every vendor publishes them only in its **own** MIB, and Polaris ships none of
+those. Two pieces have to be in place:
+
+1. **The vendor's MIB**, uploaded at Server Settings → Credentials → MIB
+   Database. This supplies the OID *number* behind a symbol name. Keeping it as
+   an upload rather than baking it in means a vendor adding or moving an object
+   is a MIB upload, not a wait for a Polaris release.
+2. **A manufacturer profile**, at Server Settings → Credentials → Manufacturer
+   Profiles. This says which symbol *is* the CPU, which pair *is* the memory,
+   and so on.
+
+Polaris ships a profile only for manufacturers whose MIB it also bundles. For
+anything else you create the profile once — shipping a half-built one whose rows
+resolve to nothing would just look broken. The symbol names for the common
+vendors, and where to get each MIB, are in the install guide's *"A vendor's SNMP
+CPU / memory / storage is empty"* section.
+
+Two things worth knowing when you build one:
+
+- **FortiGate MIBs come from the FortiGate.** System → SNMP has download links
+  for the FortiGate and Fortinet Core MIB files, so no support account is needed.
+  FortiSwitch and FortiAP MIBs are support-portal downloads.
+- **Scope a row by device type, not just by model.** A row keyed on a model
+  regex only matches an asset whose model actually states the family, and
+  FortiSwitches often arrive with an empty model. Adding the same row again
+  scoped to a device type covers those. Where both exist, a stated model wins —
+  so an asset that discovery typed wrongly still routes by what it says it is.
+
+A profile row that cannot resolve says so: its MIB cell reads *unresolved* and
+names the module still missing, the profile header shows **N UNRESOLVED**, and
+one warning Event per profile appears in the Events log at startup. Nothing
+needs restarting once a MIB lands — collection resumes on the next cadence.
+
+---
+
 ## Packet loss is a separate measurement
 
 A **uniform burst of 5 echoes at every eligible asset each cycle** — `down`

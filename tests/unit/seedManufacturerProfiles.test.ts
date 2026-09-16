@@ -1,24 +1,33 @@
 /**
- * tests/unit/seedManufacturerProfiles.test.ts — a fresh install gets what the
- * Phase 4 migration gives an upgraded one.
+ * tests/unit/seedManufacturerProfiles.test.ts — what a FRESH install's
+ * manufacturer profiles are, and which vendors get one at all.
  *
- * These are the two halves of one pair, and they are NOT interchangeable. On
- * a fresh install `prisma migrate deploy` runs BEFORE this job, so every
- * backfill UPDATE in `20260915020000_manufacturer_profile_resolver_swap`
- * matches zero rows and only what the seed writes survives. That asymmetry is
- * invisible to anyone developing against an existing database, and since the
- * resolver swap made these rows the only source of vendor telemetry OIDs, a
- * column the seed forgets is a vendor that silently stops collecting on every
- * new install — the deployment shape we are least likely to be running.
+ * Two separable things, tested separately because they change for different
+ * reasons:
  *
- * It already happened once: Phase 4 added the `model` metric key, this job
- * kept its own hardcoded copy of METRIC_KEYS, and fresh installs got no
- * identity query at all — which is the prod FortiSwitch deadlock (a switch
- * whose model is empty can never fill it in) coming straight back.
+ * 1. **The shape** each vendor's rows take — `profileToMetricSeeds`, a pure
+ *    translation of the hardcoded vendor entry. This is the fresh-install half
+ *    of a pair with the `20260915020000_manufacturer_profile_resolver_swap`
+ *    migration: on a fresh install `prisma migrate deploy` runs BEFORE this
+ *    job, so every backfill UPDATE in that migration matches zero rows and only
+ *    what the seed writes survives. The expectations are written as that
+ *    migration's end state so the two can be diffed by eye. It already went
+ *    wrong once — Phase 4 added the `model` metric key, this job kept a private
+ *    copy of METRIC_KEYS, and fresh installs got no identity query at all,
+ *    which is the FortiSwitch deadlock (a switch whose model is empty can never
+ *    fill it in) coming straight back.
  *
- * So the expectations below are written as the MIGRATION's end state, vendor
- * by vendor, and are meant to be diffed against that SQL by eye. Prisma is
- * mocked; what is asserted is the payloads the job would write.
+ *    These cases run for EVERY vendor regardless of what is bundled, because
+ *    the translation is what the operator's own profile will be built from
+ *    whether Polaris seeds it or not.
+ *
+ * 2. **Which vendors are seeded** — `BUNDLED_MIB_MANUFACTURERS`, which tracks
+ *    a licensing decision and is expected to move. A profile is an OVERRIDE
+ *    layer over what already resolves; seeding one for a vendor whose MIB
+ *    Polaris does not ship names symbols nothing can resolve, and ships an
+ *    `N UNRESOLVED` page plus a warning Event the operator never asked for.
+ *
+ * Prisma is mocked; what is asserted is the payloads the job would write.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -59,8 +68,11 @@ vi.mock("../../src/services/manufacturerProfileService.js", async (orig) => {
   return { ...actual, refreshProfileCache: vi.fn(async () => {}), emitProfileReadinessEvents: vi.fn(async () => 0) };
 });
 
-const { seedManufacturerProfiles } = await import("../../src/jobs/seedManufacturerProfiles.js");
+const {
+  seedManufacturerProfiles, profileToMetricSeeds, SEED_MAP, BUNDLED_MIB_MANUFACTURERS,
+} = await import("../../src/jobs/seedManufacturerProfiles.js");
 const { METRIC_KEYS } = await import("../../src/services/manufacturerProfileService.js");
+const { VENDOR_TELEMETRY_PROFILES } = await import("../../src/services/vendorTelemetryProfiles.js");
 
 beforeEach(async () => {
   h.profiles = [];
@@ -69,20 +81,142 @@ beforeEach(async () => {
   await seedManufacturerProfiles();
 });
 
-const profile = (mfr: string) => h.profiles.find((p) => p.manufacturer === mfr);
-const metric = (mfr: string, key: string) => {
-  const p = profile(mfr);
-  return h.metrics.find((m) => m.profileId === p?.id && m.metricKey === key);
-};
-const override = (mfr: string, key: string, scope: { assetType?: string | null; modelPattern?: string | null }) => {
-  const m = metric(mfr, key);
-  return h.overrides.find((o) =>
-    o.metricRowId === m?.id &&
-    (o.assetType ?? null) === (scope.assetType ?? null) &&
-    (o.modelPattern ?? null) === (scope.modelPattern ?? null));
-};
+/** The metric seeds for one vendor entry, by its human label. */
+function seedsFor(vendorLabel: string) {
+  const entry = VENDOR_TELEMETRY_PROFILES.find((p) => p.vendor === vendorLabel);
+  if (!entry) throw new Error(`no vendor entry named "${vendorLabel}"`);
+  return profileToMetricSeeds(entry);
+}
+const metricSeed = (vendorLabel: string, key: string) =>
+  seedsFor(vendorLabel).find((s) => s.metricKey === key);
 
-describe("every profile gets a row per metric key", () => {
+// ─── 1. The shape — every vendor, bundled or not ─────────────────────────
+
+describe("aggregate — how a walked subtree collapses", () => {
+  it("sums Cisco's memory pools and averages its CPU table", () => {
+    // The delta the whole Phase 4 swap exists for: the old merge hardcoded
+    // walkSubtree=false on the pair path, so a seeded Cisco did a scalar GET
+    // of a table column and fell to HOST-RESOURCES-MIB.
+    expect(metricSeed("Cisco IOS / IOS-XE / NX-OS", "memory")).toMatchObject({
+      symbol: "ciscoMemoryPoolUsed", symbolB: "ciscoMemoryPoolFree",
+      type: "double_scalar", aggregate: "sum",
+    });
+    expect(metricSeed("Cisco IOS / IOS-XE / NX-OS", "cpu")).toMatchObject({ type: "table", aggregate: "avg" });
+  });
+
+  it("averages Juniper's per-entity readings, both of them", () => {
+    expect(metricSeed("Juniper Junos", "cpu")).toMatchObject({ symbol: "jnxOperatingCPU", aggregate: "avg" });
+    expect(metricSeed("Juniper Junos", "memory")).toMatchObject({ symbol: "jnxOperatingBuffer", aggregate: "avg" });
+  });
+
+  it("leaves a shape that walks nothing at none", () => {
+    expect(metricSeed("Mikrotik RouterOS", "cpu")!.aggregate).toBe("none");
+    expect(metricSeed("Fortinet FortiOS (SNMP path)", "cpu")!.aggregate).toBe("none");
+    expect(metricSeed("Fortinet FortiSwitch (SNMP path)", "memory")!.aggregate).toBe("none");
+  });
+});
+
+describe("label — the synthesized sample row's name", () => {
+  it("labels FortiSwitch storage flash and a FortiAP's one sensor System", () => {
+    // Both are keys an operator's pins and thresholds attach to; a row that
+    // seeds without them comes back as the collector's default ("system") and
+    // an existing pin stops matching.
+    expect(metricSeed("Fortinet FortiSwitch (SNMP path)", "storage")!.label).toBe("flash");
+    expect(metricSeed("Fortinet FortiAP (SNMP path)", "temperature")!.label).toBe("System");
+  });
+});
+
+describe("the Fortinet umbrella temperature row", () => {
+  it("names the sensor TABLE, so the walk is the profile's fact and not the collector's", () => {
+    // This block did not exist in the constant until 2026-09 — the walk was
+    // dispatched by /fortinet/i inside collectHardwareSensorsSnmp, so the row
+    // seeded empty and a fresh install collected no FortiGate sensors.
+    expect(metricSeed("Fortinet FortiOS (SNMP path)", "temperature")).toMatchObject({
+      symbol: "fgHwSensorTable", type: "table",
+    });
+  });
+});
+
+describe("the model identity query", () => {
+  it("carries FortiSwitch's symbol WITH its parse", () => {
+    // A symbol with no parse would stamp raw firmware strings onto Asset.model.
+    expect(metricSeed("Fortinet FortiSwitch (SNMP path)", "model")).toMatchObject({
+      symbol: "fsSysVersion",
+      parsePattern: "^(?!v\\d)(.+?)[-\\s]v\\d",
+      parseTemplate: "FortiSwitch $1",
+    });
+  });
+
+  it("is absent for every vendor with no identity query", () => {
+    for (const label of ["Cisco IOS / IOS-XE / NX-OS", "Juniper Junos", "Mikrotik RouterOS",
+                         "HP / Aruba ProCurve", "Dell PowerConnect / Networking"]) {
+      expect(metricSeed(label, "model"), `${label} has a model seed`).toBeUndefined();
+    }
+  });
+
+  it("never seeds a model symbol without a parse", () => {
+    for (const entry of VENDOR_TELEMETRY_PROFILES) {
+      const m = profileToMetricSeeds(entry).find((s) => s.metricKey === "model");
+      if (!m) continue;
+      expect(m.parsePattern, `${entry.vendor} model seed has no parse`).toBeTruthy();
+    }
+  });
+});
+
+describe("matchPattern is the vendor entry's own regex, never retyped", () => {
+  it("matches the migration's six literal UPDATEs", () => {
+    // Both sides come from `match`, which is why they agree.
+    const src = (label: string) => VENDOR_TELEMETRY_PROFILES.find((p) => p.vendor === label)!.match.source;
+    expect(src("Cisco IOS / IOS-XE / NX-OS")).toBe("cisco|ios-?xe|nx-?os");
+    expect(src("Juniper Junos")).toBe("juniper|junos");
+    expect(src("Mikrotik RouterOS")).toBe("mikrotik|routeros");
+    expect(src("Fortinet FortiOS (SNMP path)")).toBe("fortinet|fortigate|fortios");
+    expect(src("HP / Aruba ProCurve")).toBe("aruba|hpe|hewlett|procurve|^hp\\b");
+    expect(src("Dell PowerConnect / Networking")).toBe("\\bdell\\b|powerconnect|force10");
+  });
+});
+
+// ─── 2. Which vendors are seeded ─────────────────────────────────────────
+
+describe("a profile is seeded only for a vendor whose MIB Polaris bundles", () => {
+  it("seeds exactly the bundled manufacturers, and nothing else", () => {
+    expect(h.profiles.map((p) => p.manufacturer).sort())
+      .toEqual([...BUNDLED_MIB_MANUFACTURERS].sort());
+  });
+
+  it("keeps every vendor in SEED_MAP regardless — that is where the symbol names live", () => {
+    // Removing a vendor from SEED_MAP would discard the knowledge of WHICH
+    // symbol is the CPU. That is not vendor-OID ownership, it is the part the
+    // docs table and Phase 6's profile packs are written from.
+    expect(SEED_MAP.map((s) => s.manufacturer)).toEqual(
+      expect.arrayContaining(["Cisco", "Juniper", "Mikrotik", "Fortinet", "HP", "Dell"]),
+    );
+    for (const row of SEED_MAP) {
+      expect(
+        VENDOR_TELEMETRY_PROFILES.some((p) => p.vendor === row.vendorLabel),
+        `SEED_MAP names "${row.vendorLabel}", which no vendor entry matches`,
+      ).toBe(true);
+    }
+  });
+
+  it("every bundled manufacturer is one SEED_MAP actually knows", () => {
+    // A typo here would seed nothing and say nothing about it.
+    for (const mfr of BUNDLED_MIB_MANUFACTURERS) {
+      expect(SEED_MAP.some((s) => s.manufacturer === mfr), `${mfr} is not in SEED_MAP`).toBe(true);
+    }
+  });
+
+  it("writes no override for an unseeded manufacturer", () => {
+    const seededIds = new Set(h.metrics.map((m) => m.id));
+    for (const o of h.overrides) {
+      expect(seededIds.has(o.metricRowId), "override on a metric row no seeded profile owns").toBe(true);
+    }
+  });
+});
+
+// ─── The structural rules, for whatever IS seeded ────────────────────────
+
+describe("the rows a seeded profile writes", () => {
   it("uses the service's METRIC_KEYS, not a copy of it", () => {
     // The copy is exactly what went wrong: Phase 4 added `model` to the
     // service's list and this job never heard about it.
@@ -93,110 +227,15 @@ describe("every profile gets a row per metric key", () => {
     }
   });
 
-  it("seeds the six vendors the constant describes", () => {
-    expect(h.profiles.map((p) => p.manufacturer).sort())
-      .toEqual(["Cisco", "Dell", "Fortinet", "HP", "Juniper", "Mikrotik"]);
-  });
-});
-
-describe("matchPattern — the migration's per-vendor UPDATEs", () => {
-  it("stamps each umbrella entry's own regex", () => {
-    // Compare to the six UPDATE statements in the migration; they are these
-    // strings verbatim, because both come from the constant's `match`.
-    expect(profile("Cisco")!.matchPattern).toBe("cisco|ios-?xe|nx-?os");
-    expect(profile("Juniper")!.matchPattern).toBe("juniper|junos");
-    expect(profile("Mikrotik")!.matchPattern).toBe("mikrotik|routeros");
-    expect(profile("Fortinet")!.matchPattern).toBe("fortinet|fortigate|fortios");
-    expect(profile("HP")!.matchPattern).toBe("aruba|hpe|hewlett|procurve|^hp\\b");
-    expect(profile("Dell")!.matchPattern).toBe("\\bdell\\b|powerconnect|force10");
-  });
-});
-
-describe("aggregate — how a walked subtree collapses", () => {
-  it("sums Cisco's memory pools and averages its CPU table", () => {
-    // The delta the whole swap exists for: the old merge hardcoded
-    // walkSubtree=false on the pair path, so a seeded Cisco did a scalar GET
-    // of a table column and fell to HOST-RESOURCES-MIB.
-    expect(metric("Cisco", "memory")).toMatchObject({
-      defaultSymbol: "ciscoMemoryPoolUsed", defaultSymbolB: "ciscoMemoryPoolFree",
-      defaultType: "double_scalar", defaultAggregate: "sum",
-    });
-    expect(metric("Cisco", "cpu")).toMatchObject({ defaultType: "table", defaultAggregate: "avg" });
-  });
-
-  it("averages Juniper's per-entity readings, both of them", () => {
-    expect(metric("Juniper", "cpu")).toMatchObject({ defaultSymbol: "jnxOperatingCPU", defaultAggregate: "avg" });
-    expect(metric("Juniper", "memory")).toMatchObject({ defaultSymbol: "jnxOperatingBuffer", defaultAggregate: "avg" });
-  });
-
-  it("leaves a shape that walks nothing at none", () => {
-    expect(metric("Fortinet", "cpu")!.defaultAggregate).toBe("none");
-    expect(metric("Mikrotik", "cpu")!.defaultAggregate).toBe("none");
-    expect(override("Fortinet", "memory", { modelPattern: "FortiSwitch" })!.aggregate).toBe("none");
-  });
-});
-
-describe("label — the synthesized sample row's name", () => {
-  it("labels FortiSwitch storage flash and a FortiAP's one sensor System", () => {
-    // Both are keys an operator's pins and thresholds attach to; a row that
-    // seeds without them comes back as the collector's default ("system")
-    // and an existing pin stops matching.
-    expect(override("Fortinet", "storage", { modelPattern: "FortiSwitch" })!.label).toBe("flash");
-    expect(override("Fortinet", "temperature", { modelPattern: "FortiAP" })!.label).toBe("System");
-  });
-});
-
-describe("the Fortinet umbrella temperature row", () => {
-  it("names the sensor TABLE, so the walk is the profile's fact and not the collector's", () => {
-    // This block did not exist in the constant until 2026-09 — the walk was
-    // dispatched by /fortinet/i inside collectHardwareSensorsSnmp, so the row
-    // seeded empty and a fresh install collected no FortiGate sensors.
-    expect(metric("Fortinet", "temperature")).toMatchObject({
-      defaultSymbol: "fgHwSensorTable", defaultType: "table",
-    });
-  });
-});
-
-describe("the model identity query", () => {
-  it("seeds FortiSwitch's symbol WITH its parse, under both keyings", () => {
-    // A symbol with no parse would stamp raw firmware strings onto
-    // Asset.model; the migration inserts the pair twice, once per keying.
-    const expected = {
-      symbol: "fsSysVersion",
-      parsePattern: "^(?!v\\d)(.+?)[-\\s]v\\d",
-      parseTemplate: "FortiSwitch $1",
-    };
-    expect(override("Fortinet", "model", { modelPattern: "FortiSwitch" })).toMatchObject(expected);
-    expect(override("Fortinet", "model", { assetType: "switch" })).toMatchObject(expected);
-  });
-
-  it("leaves every other vendor's model row empty — none of them has an identity query", () => {
-    for (const mfr of ["Cisco", "Juniper", "Mikrotik", "HP", "Dell"]) {
-      expect(metric(mfr, "model")!.defaultSymbol, `${mfr} model row`).toBeNull();
+  it("stamps each profile's matchPattern from its umbrella entry", () => {
+    for (const p of h.profiles) {
+      const row = SEED_MAP.find((s) => s.manufacturer === p.manufacturer && s.modelPattern === null);
+      const entry = VENDOR_TELEMETRY_PROFILES.find((v) => v.vendor === row?.vendorLabel);
+      expect(p.matchPattern, `${p.manufacturer}`).toBe(entry!.match.source);
     }
   });
-});
 
-describe("device-type siblings — the family said as data", () => {
-  it("gives every FortiSwitch/FortiAP model row a type default beside it", () => {
-    // The model regex only matches an asset whose model STATES the family. A
-    // Fortinet switch discovered with an empty model (the managed-switch CMDB
-    // has no model field) reached these symbols only through the
-    // Fortinet-specific `fortinetClassHint` before Phase 4.
-    for (const key of ["cpu", "memory", "storage"]) {
-      const byModel = override("Fortinet", key, { modelPattern: "FortiSwitch" });
-      const byType = override("Fortinet", key, { assetType: "switch" });
-      if (!byModel) continue; // FortiAP has no storage block
-      expect(byType, `switch default for ${key}`).toBeTruthy();
-      expect(byType!.symbol).toBe(byModel.symbol);
-      expect(byType!.symbolB ?? null).toBe(byModel.symbolB ?? null);
-      expect(byType!.type).toBe(byModel.type);
-    }
-    expect(override("Fortinet", "cpu", { assetType: "access_point" })!.symbol).toBe("fapCpuUsage");
-    expect(override("Fortinet", "temperature", { assetType: "access_point" })!.label).toBe("System");
-  });
-
-  it("never scopes a row to neither half — the DB CHECK constraint would reject it", () => {
+  it("never scopes an override to neither half — the DB CHECK constraint would reject it", () => {
     for (const o of h.overrides) {
       expect(Boolean(o.assetType) || Boolean(o.modelPattern), JSON.stringify(o)).toBe(true);
     }
@@ -209,6 +248,23 @@ describe("device-type siblings — the family said as data", () => {
       const key = `${o.metricRowId}:${o.assetType}`;
       expect(seen.has(key), `duplicate type default ${key}`).toBe(false);
       seen.add(key);
+    }
+  });
+
+  it("gives every sub-family model row a device-type sibling", () => {
+    // The model regex only matches an asset whose model STATES the family. A
+    // Fortinet switch discovered with an empty model (the managed-switch CMDB
+    // has no model field) reached these symbols only through the
+    // Fortinet-specific `fortinetClassHint` before Phase 4.
+    const byModel = h.overrides.filter((o) => o.modelPattern && !o.assetType);
+    for (const m of byModel) {
+      const row = SEED_MAP.find((s) => s.modelPattern === m.modelPattern);
+      if (!row?.assetType) continue;
+      const sibling = h.overrides.find(
+        (o) => o.metricRowId === m.metricRowId && o.assetType === row.assetType && !o.modelPattern,
+      );
+      expect(sibling, `no ${row.assetType} default beside ${m.modelPattern}/${m.symbol}`).toBeTruthy();
+      expect(sibling!.symbol).toBe(m.symbol);
     }
   });
 });

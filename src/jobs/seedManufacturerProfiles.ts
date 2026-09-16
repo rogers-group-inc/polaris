@@ -19,7 +19,15 @@
  * SPECIFIC model (FortiSwitch / FortiAP — the two pre-Fortinet entries)
  * becomes a `ManufacturerProfileMetricOverride` row under the umbrella
  * "Fortinet" manufacturer profile. Every other entry becomes its own
- * top-level profile (Cisco / Juniper / Mikrotik / Fortinet / HP / Dell).
+ * top-level profile.
+ *
+ * **Only a manufacturer whose MIB Polaris BUNDLES is seeded** — see
+ * `BUNDLED_MIB_MANUFACTURERS`. A manufacturer profile is an override layer
+ * over what already resolves; one seeded for a vendor whose MIB is absent
+ * resolves nothing, and ships as a page full of `N UNRESOLVED` rows plus a
+ * warning Event on every boot. SEED_MAP still carries all eight entries,
+ * because that is where the symbol knowledge lives and the vendor table in
+ * `docs/INSTALL.md` is written from it.
  */
 
 import { prisma } from "../db.js";
@@ -52,7 +60,7 @@ interface SeedRow {
   assetType: string | null;
 }
 
-const SEED_MAP: SeedRow[] = [
+export const SEED_MAP: SeedRow[] = [
   { vendorLabel: "Cisco IOS / IOS-XE / NX-OS",        manufacturer: "Cisco",    modelPattern: null,          assetType: null },
   { vendorLabel: "Juniper Junos",                     manufacturer: "Juniper",  modelPattern: null,          assetType: null },
   { vendorLabel: "Mikrotik RouterOS",                 manufacturer: "Mikrotik", modelPattern: null,          assetType: null },
@@ -62,6 +70,39 @@ const SEED_MAP: SeedRow[] = [
   { vendorLabel: "HP / Aruba ProCurve",               manufacturer: "HP",       modelPattern: null,          assetType: null },
   { vendorLabel: "Dell PowerConnect / Networking",    manufacturer: "Dell",     modelPattern: null,          assetType: null },
 ];
+
+/**
+ * The manufacturers Polaris SEEDS a profile for — the ones whose MIB it also
+ * bundles (`services/stdMibs/`, listed in that directory's SOURCES.md).
+ *
+ * A manufacturer profile is an OVERRIDE layer over what resolves by default.
+ * Seeding one for a vendor whose MIB Polaris does not ship produces a profile
+ * that names symbols nothing can resolve: the page shows `N UNRESOLVED`, the
+ * boot log carries a `manufacturer_profile.unresolved` Event, and every row is
+ * an instruction the operator did not ask for. The symbol NAMES are still
+ * knowledge worth having — they are in `docs/INSTALL.md`'s vendor table and
+ * `docs/wiki/Monitoring.md`, so an operator who uploads the vendor's MIB can
+ * build the profile from them, and Phase 6's profile packs will make that one
+ * click. What is wrong is shipping it half-built and calling it broken.
+ *
+ * **A manufacturer joins this list in the SAME commit that bundles its MIB**,
+ * never before. Its entry stays in `SEED_MAP` either way, because the entry is
+ * where the symbol knowledge lives and `VENDOR_TELEMETRY_PROFILES` is still
+ * the source the docs table is written from.
+ *
+ * Existing installs are untouched: this job is marker-keyed, so a profile
+ * seeded by an earlier release stays exactly as the operator left it. Only a
+ * FRESH install sees the shorter list.
+ */
+export const BUNDLED_MIB_MANUFACTURERS: ReadonlySet<string> = new Set<string>([
+  // Nothing yet. Cisco and Mikrotik are the intended first entries — their
+  // MIBs are publicly downloadable — but bundling a vendor's MIB REDISTRIBUTES
+  // a copyrighted file from this repo, which SOURCES.md reserves for a human
+  // licensing review (LLDP-MIB got one; the IEEE8021-* modules were declined
+  // on those grounds). Neither Cisco's mirror nor MikroTik's EULA grants
+  // redistribution in writing, so the files are not bundled and no vendor is
+  // seeded until that review says yes.
+]);
 
 // Translate a VENDOR_TELEMETRY_PROFILES entry's metric queries into a per-
 // metric seed shape. Memory may be either `scalar` (single percent OID) or
@@ -85,7 +126,7 @@ interface MetricSeed {
 /** Everything below "none" is derived from the hardcoded shape, never typed twice. */
 const NO_EXTRAS = { aggregate: "none", label: null, parsePattern: null, parseTemplate: null } as const;
 
-function profileToMetricSeeds(p: VendorTelemetryProfile): MetricSeed[] {
+export function profileToMetricSeeds(p: VendorTelemetryProfile): MetricSeed[] {
   const out: MetricSeed[] = [];
   if (p.cpu) {
     out.push({
@@ -194,7 +235,11 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
   // canonical manufacturer. Pre-populate metric defaults from the hardcoded
   // entry that DOESN'T have a modelPattern (the "umbrella" entry — e.g.
   // FortiOS for Fortinet; the only entry for Cisco/Juniper/etc.).
-  const distinctMfrs = Array.from(new Set(SEED_MAP.map((s) => s.manufacturer)));
+  // Only the manufacturers whose MIB ships with Polaris — see
+  // BUNDLED_MIB_MANUFACTURERS. The rest stay in SEED_MAP as the source of the
+  // symbol names the docs table is written from.
+  const distinctMfrs = Array.from(new Set(SEED_MAP.map((s) => s.manufacturer)))
+    .filter((m) => BUNDLED_MIB_MANUFACTURERS.has(m));
   for (const mfrRaw of distinctMfrs) {
     const mfr = normalizeManufacturer(mfrRaw) ?? mfrRaw;
     const profileId = (await import("crypto")).randomUUID();
@@ -272,8 +317,13 @@ export async function seedManufacturerProfiles(): Promise<{ profiles: number; ov
   // override under the parent profile's matching metric row.
   for (const seedRow of SEED_MAP) {
     if (!seedRow.modelPattern) continue;
+    // Its manufacturer was filtered out of pass 1 for want of a bundled MIB —
+    // expected, and not worth a line in the boot log on every fresh install.
+    if (!BUNDLED_MIB_MANUFACTURERS.has(seedRow.manufacturer)) continue;
     const parent = profilesByMfr.get(seedRow.manufacturer);
     if (!parent) {
+      // Now genuinely unexpected: a bundled manufacturer whose pass-1 create
+      // failed. Worth saying so.
       logger.warn({ vendorLabel: seedRow.vendorLabel }, "No parent profile for override seed; skipping");
       continue;
     }

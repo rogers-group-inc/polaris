@@ -82,3 +82,18 @@ Changing `ASSIGNMENT_RE` to close the gap is guarded by the 102 cases in
   human licensing review LLDP-MIB got. Operators can upload them instead — the
   IEEE 802.1 anchor chain is seeded in `BUILT_IN_OIDS` so a single leaf module
   resolves without also uploading IEEE8021-TC-MIB.
+- **No VENDOR MIB is bundled**, for the same reason one step further out. The
+  candidates raised (2026-09-16) were Cisco and MikroTik, both publicly
+  downloadable — but *publicly downloadable is not redistributable*, and
+  bundling means redistributing a copyrighted file from this repo. Neither
+  grants it in writing: <https://github.com/cisco/cisco-mibs> carries **no
+  LICENSE file** and its modules read `Copyright (c) … by cisco Systems, Inc.
+  All rights reserved.`; MikroTik's EULA (<https://mikrotik.com/software/legal>)
+  is proprietary and silent on MIBs. Other FOSS NMS projects do ship them
+  (LibreNMS, Observium, netdisco-mibs), which is a norm, not a grant. **A human
+  decides this, as for LLDP-MIB.** Until one does, `BUNDLED_MIB_MANUFACTURERS`
+  in `jobs/seedManufacturerProfiles.ts` stays empty and Polaris seeds no
+  manufacturer profile — operators upload the MIB and build the profile from
+  the symbol tables in `docs/INSTALL.md` / `docs/wiki/Monitoring.md`. Adding a
+  vendor is two steps in one commit: the file here (with its row in the table
+  above and a licensing line in this section) and its manufacturer in that set.
