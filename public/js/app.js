@@ -3992,6 +3992,49 @@ function statusBadge(status) {
   return '<span class="badge badge-' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>';
 }
 
+// ─── Subnet utilization cell ─────────────────────────────────────────────────
+// How full a network is, as the canonical utilization bar (.util-row /
+// -bar-track / -bar-fill) plus a right-aligned figure. Lives here rather than
+// in subnets.js because three surfaces on three pages draw the same reading and
+// must not drift: the IPAM → Networks list (ipam.html + the legacy
+// subnets.html), the block drill-in panel (block-panel.js on ipam.html +
+// blocks.html), and — by sharing its colour bands — the Block utilization
+// dashboard widget. app.js is the only script all of those load.
+//
+// The bands are the Block utilization widget's verbatim (widgets/
+// blockUtilization.js): > 75% red, > 50% amber, otherwise the accent blue. A
+// network reading amber on the dashboard and blue on the list reads as a bug in
+// one of the two.
+function subnetUtilBarColor(pct) {
+  return pct > 75 ? "#ff1744" : pct > 50 ? "#ffd600" : "#4fc3f7";
+}
+
+/**
+ * @param {number|null} pct    utilizationPercent off the subnet row (null = no denominator)
+ * @param {number|null} used   active reservations holding an address
+ * @param {number|null} usable usable host addresses in the CIDR
+ */
+function subnetUtilCellHTML(pct, used, usable) {
+  // No denominator (IPv6, or a CIDR the server could not measure) is a muted
+  // em dash, never a 0%-wide bar — an empty bar is a positive claim that the
+  // network is empty.
+  if (pct == null) return '<span style="color:var(--color-text-tertiary)">&mdash;</span>';
+  // A reservation sitting on the network or broadcast address can push the
+  // numerator past the usable count; the bar clamps, the tooltip doesn't.
+  var w = Math.max(0, Math.min(100, pct));
+  var title = used != null && usable != null
+    ? used + " of " + usable + " usable addresses reserved (" + pct + "%)"
+    : pct + "% of usable addresses reserved";
+  // A /24 with one address taken is 0.4%, and "0%" beside a bar reads as an
+  // empty network — which is exactly the claim the em-dash rule above exists to
+  // avoid. Anything occupied but under half a percent says "<1%" instead.
+  var label = pct > 0 && Math.round(pct) === 0 ? "&lt;1%" : Math.round(pct) + "%";
+  return '<div class="util-row" title="' + escapeHtml(title) + '">' +
+    '<div class="util-bar-track"><div class="util-bar-fill" style="width:' + w + '%;background:' + subnetUtilBarColor(w) + '"></div></div>' +
+    '<span style="width:34px;flex:0 0 auto;text-align:right;font-size:0.78rem;color:var(--color-text-secondary)">' + label + '</span>' +
+  '</div>';
+}
+
 // Trimmed value of an input by id — THE copy (was five identical top-level
 // copies across page scripts, shadowing each other on co-loaded pages).
 function val(id) { return document.getElementById(id).value.trim(); }

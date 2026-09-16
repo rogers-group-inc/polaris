@@ -117,10 +117,19 @@
                 <th data-sf-key="_integration" data-sf-type="string" data-sf-options="">Integration</th>
                 <th data-sf-key="createdBy" data-sf-type="string" data-sf-options="">Creator</th>
                 <th style="width:120px" data-col-no-resize="true" data-sf-key="_count.reservations" data-sf-type="number">Reservations</th>
+                <!-- Utilization is its own column rather than a second line inside
+                     Reservations so it can be SORTED on its own — one click puts the
+                     networks about to run out at the top, which is the whole reason
+                     the percentage is here. Sort-only (data-sf-nofilter): TableSF's
+                     filters are substring matches with no numeric operators, so a
+                     filter box here would offer "8" matching 8, 18, 78 and 80.8 —
+                     the same call the asset Services tab's CPU % / Memory columns
+                     make. Last column, so the bar gets the width left over. -->
+                <th style="width:150px" data-col-no-resize="true" data-sf-key="utilizationPercent" data-sf-type="number" data-sf-nofilter>Utilization</th>
               </tr>
             </thead>
             <tbody id="subnets-tbody">
-              <tr><td colspan="12" class="empty-state">Loading...</td></tr>
+              <tr><td colspan="13" class="empty-state">Loading...</td></tr>
             </tbody>
           </table>
         </div>

@@ -123,6 +123,7 @@ function _renderBlockSubnetList(subnets) {
     '<th>Sources</th>' +
     '<th>Integration</th>' +
     '<th>Reservations</th>' +
+    '<th style="width:130px">Utilization</th>' +
     (showActions ? '<th style="width:100px">Actions</th>' : '') +
     '</tr></thead><tbody>';
 
@@ -138,6 +139,10 @@ function _renderBlockSubnetList(subnets) {
     var integration = s.integration
       ? escapeHtml(s.integration.name)
       : '<span style="color:var(--color-text-tertiary)">Manual</span>';
+    // Active reservations holding an address (what the server counts into
+    // `_count.reservations`) — the Utilization bar beside it is this over the
+    // CIDR's usable hosts. The Del confirmation takes `totalReservations`
+    // instead: the cascade also removes the released and expired history.
     var reservations = s._count ? s._count.reservations : 0;
 
     html += '<tr>' +
@@ -147,6 +152,7 @@ function _renderBlockSubnetList(subnets) {
       '<td style="font-size:0.8rem">' + server + '</td>' +
       '<td style="font-size:0.8rem">' + integration + '</td>' +
       '<td>' + reservations + '</td>' +
+      '<td>' + subnetUtilCellHTML(s.utilizationPercent, reservations, s.usableHosts) + '</td>' +
       (showActions
         ? '<td class="actions">' +
             (canEditSubnet(s)
@@ -154,7 +160,7 @@ function _renderBlockSubnetList(subnets) {
                 '<button class="btn btn-sm btn-danger subnet-panel-del-btn"' +
                   ' data-sid="' + s.id + '"' +
                   ' data-cidr="' + escapeHtml(s.cidr) + '"' +
-                  ' data-reservations="' + reservations + '">Del</button>'
+                  ' data-reservations="' + (s.totalReservations || 0) + '">Del</button>'
               : '') +
           '</td>'
         : '') +

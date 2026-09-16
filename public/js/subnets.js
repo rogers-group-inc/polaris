@@ -72,13 +72,13 @@ async function _initSubnetsPage() {
       if (permAtLeast("subnets", "fullwrite")) {
         items.push({
           label: "Archive",
-          onSelect: function () { confirmArchiveSubnet(id, s.cidr, s._count ? s._count.reservations : 0); },
+          onSelect: function () { confirmArchiveSubnet(id, s.cidr, s.totalReservations || 0); },
         });
       }
       items.push({
         label: "Delete",
         danger: true,
-        onSelect: function () { confirmDeleteSubnet(id, s.cidr, s._count ? s._count.reservations : 0); },
+        onSelect: function () { confirmDeleteSubnet(id, s.cidr, s.totalReservations || 0); },
       });
     }
     showRowMenu(trigger, items, { label: "Actions for " + s.name });
@@ -183,7 +183,7 @@ async function loadSubnets() {
     _subnetsData = _allSubnetsData;
     renderSubnetsPage();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="12" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
   }
 }
 
@@ -223,13 +223,13 @@ function _rebuildCreatorColumnOptions() {
 function renderSubnetsPage() {
   var tbody = document.getElementById("subnets-tbody");
   if (_subnetsData.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="12" class="empty-state">No networks found. Create one to get started.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">No networks found. Create one to get started.</td></tr>';
     clearPageControls("pagination");
     return;
   }
   var sfData = _subnetsSF ? _subnetsSF.apply(_subnetsData) : _subnetsData;
   if (sfData.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="12" class="empty-state">No results match the current filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="empty-state">No results match the current filters.</td></tr>';
     clearPageControls("pagination");
     return;
   }
@@ -243,6 +243,10 @@ function renderSubnetsPage() {
     var source = s.integration
       ? escapeHtml(s.integration.name)
       : '<span style="color:var(--color-text-tertiary)">Manual</span>';
+    // Active reservations holding an address — the same figure the Utilization
+    // bar beside it is a percentage of, and what the server counts into
+    // `_count.reservations`. Released and expired rows are deliberately not in
+    // it; the delete confirmation uses `totalReservations` for those.
     var resvCount = s._count ? s._count.reservations : 0;
     return '<tr>' +
       starCellHTML("subnets", s.id) +
@@ -259,6 +263,7 @@ function renderSubnetsPage() {
       '<td>' + source + '</td>' +
       '<td>' + (s.createdBy ? escapeHtml(s.createdBy) : '<span style="color:var(--color-text-tertiary)">-</span>') + '</td>' +
       '<td>' + resvCount + '</td>' +
+      '<td>' + subnetUtilCellHTML(s.utilizationPercent, resvCount, s.usableHosts) + '</td>' +
       '</tr>';
   }).join("");
   renderPageControls("pagination", sfData.length, _subnetsPageSize, _subnetsPage, function (p) {
@@ -1338,7 +1343,7 @@ function generateNetworkPdf(networks, label) {
   doc.setTextColor(120, 120, 120);
   doc.text("Generated: " + timestamp + "  |  Scope: " + label + "  |  Count: " + networks.length, 40, 52);
 
-  var head = [["Name", "Network", "Block", "Purpose", "VLAN", "Status", "Sources", "Integration", "Reservations"]];
+  var head = [["Name", "Network", "Block", "Purpose", "VLAN", "Status", "Sources", "Integration", "Reservations", "Utilization"]];
   var body = networks.map(function (s) {
     return [
       s.name || "-",
@@ -1350,6 +1355,7 @@ function generateNetworkPdf(networks, label) {
       s.fortigateDevice || "-",
       s.integration ? s.integration.name : "Manual",
       s._count ? String(s._count.reservations) : "0",
+      _utilExportText(s),
     ];
   });
 
@@ -1380,8 +1386,17 @@ function generateNetworkPdf(networks, label) {
   showToast("Exported " + networks.length + " networks to " + filename);
 }
 
+// Utilization as an export cell: "12 / 254 (5%)", or a dash where there is no
+// denominator to quote (IPv6). Shared by the PDF and CSV builders so the two
+// can't phrase the same column differently.
+function _utilExportText(s) {
+  if (s.utilizationPercent == null || s.usableHosts == null) return "-";
+  var used = s._count ? s._count.reservations : 0;
+  return used + " / " + s.usableHosts + " (" + Math.round(s.utilizationPercent) + "%)";
+}
+
 function generateNetworkCsv(networks) {
-  var headers = ["Name", "Network", "Block", "Purpose", "VLAN", "Status", "Tags", "Sources", "Integration", "Reservations"];
+  var headers = ["Name", "Network", "Block", "Purpose", "VLAN", "Status", "Tags", "Sources", "Integration", "Reservations", "Utilization"];
   var rows = networks.map(function (s) {
     return [
       s.name || "", s.cidr || "", s.block ? s.block.name : "",
@@ -1389,6 +1404,7 @@ function generateNetworkCsv(networks) {
       (s.tags || []).join("; "), s.fortigateDevice || "",
       s.integration ? s.integration.name : "Manual",
       s._count ? String(s._count.reservations) : "0",
+      _utilExportText(s),
     ];
   });
   var filename = "polaris-networks-" + new Date().toISOString().slice(0, 10) + ".csv";

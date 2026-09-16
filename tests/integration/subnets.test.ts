@@ -177,6 +177,56 @@ d("GET /api/v1/subnets", () => {
     expect(avl.body.subnets.find((s: any) => s.id === sub.body.id)).toBeUndefined();
   });
 
+  it("counts only live reservations into _count and carries the utilization denominator", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await createBlock(agent, csrf, "Parent", "10.56.0.0/16");
+    const sub = await agent
+      .post("/api/v1/subnets")
+      .set("X-CSRF-Token", csrf)
+      .send({ blockId: block.id, cidr: "10.56.1.0/24", name: "Churned" });
+
+    // Three live addresses, plus the kind of row the column used to over-count:
+    // a released reservation (soft-released, kept forever) and a whole-subnet
+    // reservation, which holds no individual address.
+    await prisma.reservation.createMany({
+      data: [
+        { subnetId: sub.body.id, ipAddress: "10.56.1.10", status: "active" },
+        { subnetId: sub.body.id, ipAddress: "10.56.1.11", status: "active" },
+        { subnetId: sub.body.id, ipAddress: "10.56.1.12", status: "active" },
+        { subnetId: sub.body.id, ipAddress: "10.56.1.13", status: "released" },
+        { subnetId: sub.body.id, ipAddress: "10.56.1.14", status: "expired" },
+        { subnetId: sub.body.id, ipAddress: null, status: "active" },
+      ],
+    });
+
+    const resp = await agent.get(`/api/v1/subnets?blockId=${block.id}`);
+    expect(resp.status).toBe(200);
+    const row = resp.body.subnets.find((s: any) => s.id === sub.body.id);
+    expect(row._count.reservations).toBe(3);
+    expect(row.usableHosts).toBe(254);
+    expect(row.utilizationPercent).toBeCloseTo(1.2, 5);
+    // The delete/archive confirmations quote this one: the cascade takes the
+    // released and expired history with it.
+    expect(row.totalReservations).toBe(6);
+  });
+
+  it("quotes no utilization denominator for an IPv6 network", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await createBlock(agent, csrf, "V6", "2001:db8::/32");
+    const sub = await agent
+      .post("/api/v1/subnets")
+      .set("X-CSRF-Token", csrf)
+      .send({ blockId: block.id, cidr: "2001:db8:1::/64", name: "V6 net" });
+    expect(sub.status).toBe(201);
+
+    const resp = await agent.get(`/api/v1/subnets?blockId=${block.id}`);
+    const row = resp.body.subnets.find((s: any) => s.id === sub.body.id);
+    // A /64 is not a thing anyone fills, and the count would not survive a
+    // double — the cell shows the reservation count with a dash beside it.
+    expect(row.usableHosts).toBeNull();
+    expect(row.utilizationPercent).toBeNull();
+  });
+
   it("filters by tag in SQL: total counts only matches and pages stay full", async () => {
     const { agent, csrf } = await authedAgent(app);
     const block = await createBlock(agent, csrf, "Parent", "10.55.0.0/16");

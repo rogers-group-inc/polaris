@@ -42,9 +42,27 @@ A network is a CIDR inside a block. This is the row that says a broadcast
 domain exists.
 
 **Columns:** favourite · Name · Network · Block · Purpose · VLAN · Status ·
-Tags · **Sources** · Integration · Creator · Reservations (count).
+Tags · **Sources** · Integration · Creator · **Reservations** · **Utilization**.
 
 **Status** is `available`, `reserved` or `deprecated`.
+
+**Reservations** counts the addresses the network is holding right now —
+reservations that are active and sit on an address. Released and expired
+reservations are kept as history and are *not* counted, so on a busy
+DHCP-discovered network this number is smaller than the number of rows the
+address list has ever had. (Deleting a network still removes that history, and
+the delete confirmation names the full row count it will take with it.)
+
+**Utilization** is that count over the addresses the CIDR can hand out — a /24
+has 254, network and broadcast excluded. It draws as a bar so a page of
+networks reads as a shape: blue up to 50%, amber above it, red above 75%, the
+same bands as the *Block utilization* dashboard widget. Click the column
+heading to sort, and the networks about to run out come to the top. Hover a bar
+for the exact figure ("200 of 254 usable addresses reserved (78.7%)"). A
+network with something in it but under half a percent reads `<1%`, never `0%`.
+IPv6 networks show an em dash — a /64 is not a thing anyone fills.
+
+Both columns are in the PDF and CSV exports.
 
 **Sources** is the same column the Assets page carries: `location ||
 learnedLocation`, and which source supplies the learned half is

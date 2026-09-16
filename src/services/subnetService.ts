@@ -53,6 +53,7 @@ import {
   detectIpVersion,
   enumerateSubnetIps,
   packIntoAnchor,
+  usableHostCount,
 } from "../utils/cidr.js";
 import {
   assertNotExcluded,
@@ -254,6 +255,22 @@ export interface ListSubnetsFilter {
 
 // ─── List ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Usable host addresses in a subnet, or `null` when the figure would be
+ * meaningless or unsafe to quote: IPv6 (2^64-scale counts don't survive a
+ * double, and nobody fills one) and any CIDR the parser refuses. Callers treat
+ * `null` as "no denominator" and show the count alone — never a 0% bar, which
+ * would be a positive claim that the network is empty.
+ */
+function usableHostsOrNull(cidr: string): number | null {
+  try {
+    if (detectIpVersion(cidr) !== "v4") return null;
+    return usableHostCount(cidr);
+  } catch {
+    return null;
+  }
+}
+
 export async function listSubnets(filter: ListSubnetsFilter = {}) {
   const limit = Math.min(filter.limit || 50, 10000);
   const offset = filter.offset || 0;
@@ -267,22 +284,64 @@ export async function listSubnets(filter: ListSubnetsFilter = {}) {
   // `total` counted the unfiltered set.
   if (filter.tag) where.tags = { has: filter.tag };
 
-  const [subnets, total] = await Promise.all([
+  const [subnets, total, allRowCounts] = await Promise.all([
     prisma.subnet.findMany({
       where,
       include: {
         block: { select: { name: true, cidr: true } },
         integration: { select: { id: true, name: true } },
-        _count: { select: { reservations: true } },
+        // FILTERED on purpose: `_count.reservations` is what the Networks
+        // list's Reservations column shows and sorts on, so it counts the
+        // addresses actually held — active rows carrying an IP. Released and
+        // expired rows are kept forever (reservationService soft-releases; only
+        // cleanupStaleDnsResolvedReleased ever prunes any of them), so the old
+        // unfiltered count read 300 reservations on a /24 once a DHCP-leased
+        // network had churned, and the utilization beside it would have been
+        // over 100%. A whole-subnet reservation (ipAddress = null) is excluded
+        // deliberately — it consumes no individual address and already shows as
+        // status "reserved". Same numerator as ipService.subnetCapacity and the
+        // IP panel's footer bar, which is what keeps the three agreeing.
+        _count: {
+          select: { reservations: { where: { status: "active", ipAddress: { not: null } } } },
+        },
       },
       orderBy: { cidr: "asc" },
       skip: offset,
       take: limit,
     }),
     prisma.subnet.count({ where }),
+    // Every reservation row, live or not, grouped by subnet: the delete /
+    // archive confirmations name how many rows the cascade takes with it, and
+    // that number has to include the released history the column hides. One
+    // aggregate scoped by the same WHERE — not a per-row count, which at 2000
+    // networks would be 2000 queries.
+    prisma.reservation.groupBy({
+      by: ["subnetId"],
+      where: { subnet: where as Prisma.SubnetWhereInput },
+      _count: { _all: true },
+    }),
   ]);
 
-  return { subnets, total, limit, offset };
+  const totalBySubnet = new Map(allRowCounts.map((r) => [r.subnetId, r._count._all]));
+
+  const withUtilization = subnets.map((s) => {
+    const usableHosts = usableHostsOrNull(s.cidr);
+    const active = s._count.reservations;
+    return {
+      ...s,
+      usableHosts,
+      // Rounded to one decimal: the cell prints a whole number and carries the
+      // precise figure in its tooltip, but the sort has to separate a /22 at
+      // 12.1% from one at 12.4%.
+      utilizationPercent:
+        usableHosts && usableHosts > 0
+          ? Math.round((active / usableHosts) * 1000) / 10
+          : null,
+      totalReservations: totalBySubnet.get(s.id) ?? 0,
+    };
+  });
+
+  return { subnets: withUtilization, total, limit, offset };
 }
 
 // ─── Get ──────────────────────────────────────────────────────────────────────
