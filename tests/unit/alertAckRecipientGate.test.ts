@@ -1,18 +1,21 @@
 /**
- * tests/unit/alertAckRecipientGate.test.ts — a recipient who cannot
- * acknowledge does not get the Acknowledge button.
+ * tests/unit/alertAckRecipientGate.test.ts — who carries the Acknowledge
+ * button, and what may split an alert email (business rule 25: nothing).
  *
- * Business rule 25 gives every reader of an alert the SAME link and lets the
- * page decide who may act, which is what collapsed the send back into one
- * message. That still holds for anyone Polaris cannot identify — an
- * address-book contact, an operator-typed address — but not for an account
- * whose role we can read: mailing a read-only operator a button that can only
- * refuse them is noise, so the body goes out twice at most (with and without
- * the button), never once per person.
+ * The rule gives every reader of an alert the SAME link and lets the PAGE
+ * decide who may act. For a while the email hedged that: an account whose role
+ * we could read was mailed a second copy with the button pruned out. That
+ * second copy is gone — it fractured the To line, so the operator who named
+ * two people on an automation saw only one address and read it as Polaris
+ * mailing each of them separately. A read-only recipient now reads the same
+ * message as everyone else and is refused at the page, with a reason.
  *
- * The three surfaces that carry the link are pinned here: the composed email
- * (two variants), the plain per-address email (`noAck` in meta) and web push
- * (no tray action at all).
+ * WEB PUSH still withholds the tray action, and the asymmetry is deliberate: a
+ * push is addressed to one browser, so leaving the action off costs nobody a
+ * shared To line, and the tray has room for only two actions.
+ *
+ * Pinned here: the composed email (ONE row, whoever is on it), the plain
+ * per-address email, and web push.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -75,8 +78,6 @@ vi.mock("../../src/services/regionScopeService.js", () => ({
 import {
   expandDeliveries,
   bumpRecipientIndex,
-  ackCapabilityByAddress,
-  splitAckVariants,
   type ComposedEmail,
 } from "../../src/services/notificationRecipientService.js";
 
@@ -97,98 +98,24 @@ const composed = (): ComposedEmail => ({
 const emailRows = () => createdRows.filter((r) => r.transport === "email");
 const metaOf = (r: Record<string, unknown>) => (r.meta ?? {}) as Record<string, unknown>;
 
-describe("splitAckVariants", () => {
-  const cap = new Map<string, boolean>([["yes@x.com", true], ["no@x.com", false]]);
-
-  it("returns ONE variant, unchanged, when nobody is known to lack the permission", () => {
-    // The pre-feature shape: an install with no read-only recipient on the
-    // message must still produce a single delivery row.
-    const out = splitAckVariants(["yes@x.com", "stranger@x.com"], ["cc@x.com"], ["bcc@x.com"], cap);
-    expect(out).toEqual([
-      { ack: true, to: ["yes@x.com", "stranger@x.com"], cc: ["cc@x.com"], bcc: ["bcc@x.com"] },
-    ]);
-  });
-
-  it("treats an address with no Polaris account as capable", () => {
-    // Contacts and typed addresses keep the button — the page decides.
-    const out = splitAckVariants(["stranger@x.com"], [], [], cap);
-    expect(out).toEqual([{ ack: true, to: ["stranger@x.com"], cc: [], bcc: [] }]);
-  });
-
-  it("splits into two copies when a recipient cannot acknowledge", () => {
-    const out = splitAckVariants(["yes@x.com", "no@x.com"], [], [], cap);
-    expect(out).toEqual([
-      { ack: true, to: ["yes@x.com"], cc: [], bcc: [] },
-      { ack: false, to: ["no@x.com"], cc: [], bcc: [] },
-    ]);
-  });
-
-  it("splits Cc and Bcc by the same test", () => {
-    const out = splitAckVariants(
-      ["yes@x.com", "no@x.com"],
-      ["yes@x.com".replace("yes", "cc-yes"), "no@x.com"],
-      ["no@x.com"],
-      new Map([...cap, ["cc-yes@x.com", true]]),
-    );
-    expect(out[0]).toEqual({ ack: true, to: ["yes@x.com"], cc: ["cc-yes@x.com"], bcc: [] });
-    expect(out[1]).toEqual({ ack: false, to: ["no@x.com"], cc: ["no@x.com"], bcc: ["no@x.com"] });
-  });
-
-  it("promotes Cc into To when a variant loses its whole To line", () => {
-    // Otherwise the empty-To guard drops the message and the Cc'd reader
-    // never hears about the alert.
-    const out = splitAckVariants(["no@x.com"], ["yes@x.com"], [], cap);
-    expect(out[0]).toEqual({ ack: true, to: ["yes@x.com"], cc: [], bcc: [] });
-    expect(out[1]).toEqual({ ack: false, to: ["no@x.com"], cc: [], bcc: [] });
-  });
-
-  it("sends a Bcc-only variant one message per address so the blind list stays blind", () => {
-    const out = splitAckVariants(["no@x.com"], [], ["yes@x.com", "other@x.com"], cap);
-    expect(out.filter((v) => v.ack)).toEqual([
-      { ack: true, to: ["yes@x.com"], cc: [], bcc: [] },
-      { ack: true, to: ["other@x.com"], cc: [], bcc: [] },
-    ]);
-  });
-
-  it("drops nobody: every input address lands in exactly one variant", () => {
-    const out = splitAckVariants(["yes@x.com", "no@x.com"], ["cc@x.com"], ["bcc@x.com"], cap);
-    const landed = out.flatMap((v) => [...v.to, ...v.cc, ...v.bcc]).sort();
-    expect(landed).toEqual(["bcc@x.com", "cc@x.com", "no@x.com", "yes@x.com"]);
-  });
-});
-
-describe("ackCapabilityByAddress", () => {
-  it("reads the role matrix through the shared level ladder", async () => {
-    const cap = await ackCapabilityByAddress();
-    expect(cap.get("noc@example.com")).toBe(true);
-    expect(cap.get("ro@example.com")).toBe(false);
-  });
-
-  it("omits an address nobody signs in with", async () => {
-    const cap = await ackCapabilityByAddress();
-    expect(cap.has("contact@example.com")).toBe(false);
-  });
-});
-
 describe("expandDeliveries — composed email", () => {
-  it("mails the read-only recipient the same alert with no acknowledge link", async () => {
+  it("puts a read-only recipient on the SAME message, button and all", async () => {
+    // The regression this file now guards: two recipients, one delivery row,
+    // both names on the To line. A role that cannot acknowledge is refused at
+    // the page, not by being mailed a copy of its own.
     await expandDeliveries(
       "n-1",
       [{ channelId: "c-mail", recipientRegions: ["Atlanta"] }] as never,
       { composedEmail: composed() },
     );
     const rows = emailRows();
-    expect(rows).toHaveLength(2);
-
-    const withAck = rows.find((r) => (metaOf(r).to as string[]).includes("noc@example.com"))!;
-    const without = rows.find((r) => (metaOf(r).to as string[]).includes("ro@example.com"))!;
-    expect(metaOf(withAck).text).toContain(ACK_URL);
-    expect(metaOf(withAck).html).toContain(ACK_URL);
-    // Not merely a dead link — the whole line/button is pruned away.
-    expect(metaOf(without).text).not.toContain("Acknowledge");
-    expect(metaOf(without).html).not.toContain("Acknowledge");
-    // Same alert, same subject: only the button differs.
-    expect(metaOf(without).subject).toBe(metaOf(withAck).subject);
+    expect(rows).toHaveLength(1);
+    const meta = metaOf(rows[0]!);
+    expect([...(meta.to as string[])].sort()).toEqual(["noc@example.com", "ro@example.com"]);
+    // `target` is the To line verbatim — business rule 60 reads it back.
+    expect(String(rows[0]!.target).split(", ").sort()).toEqual(["noc@example.com", "ro@example.com"]);
+    expect(meta.text).toContain(ACK_URL);
+    expect(meta.html).toContain(ACK_URL);
   });
 
   it("keeps ONE row when every recipient may acknowledge", async () => {
@@ -205,12 +132,15 @@ describe("expandDeliveries — composed email", () => {
 });
 
 describe("expandDeliveries — plain email + web push", () => {
-  it("stamps noAck on the read-only address only", async () => {
+  it("stamps noAck on nobody while the alert is live", async () => {
+    // The plain path is one row per address by construction (the legacy shape),
+    // but the READER no longer decides anything on it either: only an
+    // all-clear stamps noAck, and that is a fact about the alert.
     await expandDeliveries("n-1", [
       { channelId: "c-mail", recipientRegions: ["Atlanta"], addresses: ["contact@example.com"] },
     ] as never);
     const byTarget = new Map(emailRows().map((r) => [r.target as string, metaOf(r).noAck]));
-    expect(byTarget.get("ro@example.com")).toBe(true);
+    expect(byTarget.get("ro@example.com")).toBeUndefined();
     expect(byTarget.get("noc@example.com")).toBeUndefined();
     expect(byTarget.get("contact@example.com")).toBeUndefined();
   });
@@ -244,9 +174,6 @@ describe("expandDeliveries — an all-clear carries no acknowledge button", () =
       { composedEmail: composed(), noAck: true },
     );
     const rows = emailRows();
-    // Capability stops splitting the send: with no button on either copy there
-    // is nothing for the two variants to differ about, so the read-only
-    // recipient rides the same message as everyone else.
     expect(rows).toHaveLength(1);
     const meta = metaOf(rows[0]!);
     expect([...(meta.to as string[])].sort()).toEqual(
@@ -288,15 +215,15 @@ describe("expandDeliveries — an all-clear carries no acknowledge button", () =
     expect(rows.every((r) => metaOf(r).noAck === true)).toBe(true);
   });
 
-  it("leaves a FIRING send exactly as it was", async () => {
-    // The option defaults off: same two variants, same links.
+  it("leaves a FIRING send with its button", async () => {
+    // The option defaults off: one row either way, and this one keeps the link.
     await expandDeliveries(
       "n-1",
       [{ channelId: "c-mail", recipientRegions: ["Atlanta"] }] as never,
       { composedEmail: composed() },
     );
     const rows = emailRows();
-    expect(rows).toHaveLength(2);
-    expect(rows.some((r) => String(metaOf(r).text).includes(ACK_URL))).toBe(true);
+    expect(rows).toHaveLength(1);
+    expect(String(metaOf(rows[0]!).text)).toContain(ACK_URL);
   });
 });

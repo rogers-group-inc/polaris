@@ -652,10 +652,17 @@ function _openTimezoneModal() {
 
   var hint = document.getElementById("tz-hint");
   if (hint) {
+    // Deliberately says what this does NOT cover. An alert email is one message
+    // to everyone the automation names (business rule 25), so it is written on
+    // the install's clock and names the zone in its footer — this setting moves
+    // the UI and nothing else, and an operator who expects otherwise will
+    // reasonably read a 3-hour gap as a bug.
     hint.textContent = currentServerTimezone
-      ? 'Automatic follows this browser, and tells Polaris to send your alert emails on the same clock. ' +
-        'Accounts that have never signed in on a browser fall back to the server (' + currentServerTimezone + ').'
-      : 'Automatic follows this browser and is used for your alert emails too.';
+      ? 'Automatic follows this browser. Times in alert emails are not affected — an alert is one ' +
+        'message to everyone it names, so it is written in the server timezone (' + currentServerTimezone +
+        ') and says so in its footer.'
+      : 'Automatic follows this browser. Times in alert emails are not affected — an alert is one ' +
+        'message to everyone it names, so it is written in the server timezone and says so in its footer.';
   }
 
   var save = document.getElementById("tz-save");

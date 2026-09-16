@@ -186,7 +186,7 @@ body, and a script's args:
 **The alert**
 `{asset}` `{metric}` `{value}` `{threshold}` `{dimension}` `{conditions}`
 `{message}` `{severity}` `{severity.upper}` `{severity.color}` `{time}`
-`{time.local}` `{link}`
+`{time.local}` `{time.zone}` `{link}`
 
 **The automation**
 `{rule}` `{rule.description}` `{trigger.summary}`
@@ -210,17 +210,31 @@ body, and a script's args:
 
 A token palette is visible in both view modes.
 
+> **One email, one To line, one clock.** Everyone a notify action names
+> receives the *same* message, with each other's addresses visible on it — an
+> alert is a thing a team handles together, and a private copy hides who else
+> is already on it. Two consequences follow. Times are rendered in the
+> **Polaris server's** timezone rather than each reader's, so `{time.zone}`
+> ("CDT (America/Chicago)") rides the default footer and every timestamp
+> carries its abbreviation. And the **Acknowledge** button goes to everyone,
+> including a reader whose role cannot acknowledge — they are told so on the
+> acknowledge page rather than by quietly receiving a different email.
+>
+> A user's own timezone setting (account menu → Timezone) still governs every
+> time *in the Polaris UI*; it no longer changes what an alert email says.
+
 > **`{email.recipients}` never names a Bcc** ([rule 60](Business-Rules#rule-60)).
 > A blind copy that appears in a footer every recipient reads has stopped being
 > blind. It is safe only because the delivery row's `target` field carries the
 > To line and only the To line. Cc *is* named, being visible to everyone on that
 > copy already.
 >
-> Both recipient tokens scope to the **alert**, not to one send, because no
-> single copy's To header is the whole audience: a send splits per recipient
-> timezone and per acknowledge capability, a second notify action mails its own
-> list, and a reminder or an escalation tier adds people the first copy never
-> had.
+> Both recipient tokens scope to the **alert**, not to one send. A send itself
+> is never split — everyone a notify action names is on one To line — but the
+> alert is still wider than any one copy of it: a second notify action mails
+> its own list, a reminder or an escalation tier adds people the first copy
+> never had, a Cc rider is a reader the To line does not name, and the push
+> half names people the email never reached at all.
 
 ---
 

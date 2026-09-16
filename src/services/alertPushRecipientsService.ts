@@ -7,10 +7,15 @@
  * only one who has heard about this, and that question decides whether they
  * pick the device up or leave it to whoever is already on it. This puts the
  * answer in the email's footer: the accounts this alert was pushed to, and
- * — since the same question has a second half — the people it was mailed to,
- * which no single copy's To line can show once a send splits (per timezone, or
- * historically per acknowledge capability) or once a reminder adds recipients
- * the first copy never had.
+ * — since the same question has a second half — the people it was mailed to.
+ *
+ * A composed send no longer splits at all (business rule 25 — one message, one
+ * To line, whatever the reader's zone or role), so the To header now IS the
+ * audience of that copy. The line still earns its place, because the ALERT is
+ * wider than any one copy of it: a rule with two notify actions mails two
+ * lists, a reminder or an escalation tier can add recipients the first copy
+ * never had, a Cc rider is a reader the To line does not name, and the push
+ * half names people the email never reached at all.
  *
  * It is a DEFERRED token (`{push.recipients}` — see notificationTemplate's
  * isDeferredToken), filled at delivery like the charts, the LLDP block and the
@@ -29,7 +34,9 @@
  *
  * Scope is the ALERT, not the send: a reminder at T+45min lists everyone this
  * alert has been pushed to, including the original fire's recipients, because
- * "who else knows about THIS" does not reset when the reminder does.
+ * "who else knows about THIS" does not reset when the reminder does. That is
+ * also why it survived the single-message cutover — the question it answers
+ * was never "who is on this copy".
  *
  * The PUSH list names accounts, not addresses — a push endpoint has no address
  * behind it, and an email recipient may be an address-book contact with no
@@ -192,7 +199,7 @@ export function renderEmailRecipients(names: string[], opts: { html: boolean }):
  * The To addresses on one delivery row.
  *
  * Both email paths put To — and only To — in `target`: the composed path joins
- * the whole To line into one row (`v.to.join(", ")`), the plain per-address
+ * the whole To line into one row (`to.join(", ")`), the plain per-address
  * path writes one address. So parsing `target` can never leak a Bcc, which is
  * the one thing this footer must not do: naming a blind recipient to the To
  * line would unblind them, and a footnote about who else knows is not worth

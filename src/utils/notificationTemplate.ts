@@ -62,7 +62,8 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{email.recipients}", label: "Email recipients", description: "Who this alert was also emailed to — the footer line beside {push.recipients}. Filled at send time from the alert's own email deliveries, deduped by address across every copy and every reminder; an address with a Polaris account prints as that account's name, anything else prints as the address. Bcc is never listed, and the line renders away entirely when there is nothing to name", group: "notification" },
   { token: "{interface.lldp}", label: "Interface LLDP neighbors", description: "The LLDP neighbours on the INTERFACE this alert fired on — what was plugged into the port, its own port, management IP and when it last advertised. Renders away entirely unless the automation triggers on an interface (status, PoE, throughput, error rate) and the port has a neighbour", group: "notification" },
   { token: "{time}", label: "Time", description: "Trigger time (ISO-8601)", group: "notification" },
-  { token: "{time.local}", label: "Time (readable)", description: "Trigger time in the Polaris server's own timezone, e.g. \"Aug 12, 2026, 1:46 PM CDT\" — what the default email prints", group: "notification" },
+  { token: "{time.local}", label: "Time (readable)", description: "Trigger time in this install's own timezone, e.g. \"Aug 12, 2026, 1:46 PM CDT\" — what the default email prints. Every copy of an alert reads the same clock, whichever zone its recipients sit in", group: "notification" },
+  { token: "{time.zone}", label: "Timezone", description: "The timezone every time in this email is rendered in, named in full — e.g. \"CDT (America/Chicago)\". The default email prints it in the footer so a reader in another zone converts rather than guesses", group: "notification" },
   { token: "{link}", label: "Link", description: "Notifications page URL (empty if POLARIS_PUBLIC_URL unset)", group: "notification" },
   { token: "{ack}", label: "Acknowledge link", description: "URL of this alert's acknowledge page in Polaris — the reader signs in (unless they already are), adds a note and acknowledges. The same link for every recipient; empty when POLARIS_PUBLIC_URL is unset", group: "notification" },
   { token: "{asset.link}", label: "Open asset", description: "URL that opens this device in Polaris (empty if POLARIS_PUBLIC_URL unset)", group: "asset" },
@@ -205,14 +206,14 @@ export interface TemplateContextParts {
    */
   repeatQuiet?: string;
   /**
-   * IANA zone to render `{time.local}` in. Omitted = the server's zone, which
-   * is what every caller had before User.timezone existed and what every
-   * recipient-less surface (webhook, Slack post, test preview) still wants.
+   * IANA zone to render `{time.local}` and `{time.zone}` in. Omitted — which
+   * is every caller today — means the INSTALL's own zone, and that is now the
+   * whole story: an alert email is one message to one To line, so there is no
+   * recipient whose zone could claim a copy of its own (business rule 25).
    *
-   * The EMAIL path sets this per recipient group — see rebuildForTimeZone in
-   * notificationRecipientService. It is deliberately NOT part of the snapshot
-   * identity: Notification.templateCtx stores the server-zone rendering, and a
-   * per-recipient copy is rebuilt from the same parts rather than stored.
+   * Kept as a parameter rather than inlined because the pair must always be
+   * rendered in the SAME zone: a body whose timestamp says one thing and whose
+   * footer names another is worse than either alone.
    */
   timeZone?: string | null;
 }
@@ -271,35 +272,61 @@ export function formatLocalTime(value: Date | string | null | undefined, timeZon
 }
 
 /**
- * Re-render an ALREADY-BUILT context's zone-dependent tokens in `timeZone`.
+ * "CDT (America/Chicago)" — the zone `{time.local}` was rendered in, named so
+ * a reader somewhere else converts rather than guesses.
  *
- * The email path needs one body per recipient zone, but by then the context is
- * a flat token→string map (it has been snapshotted onto
- * Notification.templateCtx and may have come back out of the database) — the
- * TemplateContextParts it was built from are long gone. This rebuilds the
- * derived tokens from the ones that survived the flattening.
+ * Every alert email is ONE message now (business rule 25), so its times are on
+ * the install's clock rather than each reader's, and the email has to say
+ * whose clock that is. The abbreviation alone is not enough to say it: "CST"
+ * names zones six hours apart depending on who is reading, and a zone with no
+ * abbreviation at all renders as "GMT+5:30". The IANA name in brackets is the
+ * unambiguous half; the abbreviation is there because it is what the reader
+ * sees stamped on the timestamp itself.
  *
- * `{time}` is the ISO-8601 instant and is what makes this possible: it is
- * kept in the context precisely because it is machine-read, so `{time.local}`
- * can always be re-derived from it. That is the ONLY zone-dependent token in
- * the catalogue — every other time-ish token ({escalation.elapsed},
- * {repeat.elapsed}) is a DURATION, which reads the same in every zone.
+ * Labelled AT the alert's own instant, not at render time: an alert raised in
+ * July is "CDT" even if the escalation re-renders it in December.
  *
- * Anything a new zone-dependent token is added for must be re-derived here
- * too, or half an alert's copies will disagree with the other half.
- *
- * A context with no usable `{time}` is returned untouched rather than blanked:
- * a pre-upgrade snapshot keeps whatever `{time.local}` it was stored with.
+ * Degrades in both halves independently — a build whose ICU cannot name the
+ * zone still prints the abbreviation, and one that cannot abbreviate still
+ * prints the zone. "" requires BOTH to fail, which takes a Node with no ICU
+ * data at all; there `formatLocalTime` has already fallen back to an ISO
+ * string, so the footer reading "Times shown in" with nothing after it is the
+ * least of that install's problems. Note it is NOT pruned if it happens: the
+ * default body's line carries no colon (deliberately — `pruneEmptyTextLines`
+ * deletes a "Label:" line with nothing after it, which would take the line out
+ * on every alert), so nothing downstream is watching for an empty value.
  */
-export function retimeContext(
-  ctx: Record<string, string>,
-  timeZone: string,
-): Record<string, string> {
-  const iso = ctx["time"];
-  if (!iso) return ctx;
-  const local = formatLocalTime(iso, timeZone);
-  if (!local) return ctx;
-  return { ...ctx, "time.local": local };
+export function describeTimeZone(
+  value: Date | string | null | undefined,
+  timeZone?: string | null,
+): string {
+  let zone = (timeZone ?? "").trim();
+  if (!zone) {
+    // The same resolution `toLocaleString` performs with no timeZone option —
+    // read here rather than imported from userTimezoneService, because a util
+    // must not reach up into a service.
+    try {
+      zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    } catch {
+      zone = "";
+    }
+  }
+  const at = value instanceof Date ? value : value ? new Date(value) : new Date();
+  const when = Number.isNaN(at.getTime()) ? new Date() : at;
+  let short = "";
+  try {
+    short =
+      new Intl.DateTimeFormat("en-US", {
+        ...(zone ? { timeZone: zone } : {}),
+        timeZoneName: "short",
+      })
+        .formatToParts(when)
+        .find((part) => part.type === "timeZoneName")?.value ?? "";
+  } catch {
+    short = "";
+  }
+  if (short && zone && short !== zone) return `${short} (${zone})`;
+  return short || zone;
 }
 
 /**
@@ -328,6 +355,9 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     // for our own default body) and the "Raised" row prunes away — a missing
     // row, never a literal "{time.local}" in an operator's inbox.
     "time.local": formatLocalTime(parts.time ?? null, parts.timeZone ?? null),
+    // Which clock the line above is on. Rendered from the SAME zone argument,
+    // so the two can never disagree — see describeTimeZone.
+    "time.zone": describeTimeZone(parts.time ?? null, parts.timeZone ?? null),
     "link": str(parts.link),
     "rule": str(parts.ruleName),
     "rule.description": str(parts.ruleDescription),

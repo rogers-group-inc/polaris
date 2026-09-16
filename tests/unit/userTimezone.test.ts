@@ -1,18 +1,16 @@
 /**
- * Per-user display timezone.
+ * Display timezone — the per-user setting, and the zone an alert email says
+ * it is written in.
  *
- * The pure halves are tested here because every one of them fails SILENTLY in
- * the direction that matters:
+ * The pure halves are tested here because each fails SILENTLY in the direction
+ * that matters: a wrong resolution order shows an operator the wrong wall
+ * clock in the UI, and a `describeTimeZone` that comes back empty or wrong
+ * mails a perfectly deliverable alert whose reader cannot tell 1:46 PM in
+ * Nashville from 1:46 PM anywhere else.
  *
- *   - a resolution order that skips `detectedTimezone` sends every default
- *     account its email on the SERVER's clock, which is the exact misreading
- *     the column set exists to stop — and the email still arrives, so nothing
- *     reports it;
- *   - a `splitTimeZoneGroups` that groups wrongly either mails somebody the
- *     wrong wall clock or fans one alert out into a copy per person, and both
- *     look like a working alert from the outside;
- *   - `retimeContext` losing a token blanks a row out of the body rather than
- *     erroring.
+ * The email path itself no longer renders per recipient at all (business rule
+ * 25 — one message, one To line, the install's clock); `describeTimeZone` is
+ * what pays for that, so it is pinned hardest.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -23,8 +21,7 @@ import {
   resolveTimeZone,
   serverTimeZone,
 } from "../../src/services/userTimezoneService.js";
-import { splitTimeZoneGroups } from "../../src/services/notificationRecipientService.js";
-import { formatLocalTime, retimeContext } from "../../src/utils/notificationTemplate.js";
+import { buildTemplateContext, describeTimeZone, formatLocalTime } from "../../src/utils/notificationTemplate.js";
 import { lockoutRemaining } from "../../src/utils/loginLockout.js";
 
 describe("normalizeUserTimezone", () => {
@@ -113,92 +110,46 @@ describe("formatLocalTime", () => {
   });
 });
 
-describe("retimeContext", () => {
-  const iso = "2026-08-12T18:46:00.000Z";
+describe("describeTimeZone", () => {
+  const summer = new Date("2026-08-12T18:46:00Z");
+  const winter = new Date("2026-01-12T18:46:00Z");
 
-  it("re-derives time.local from the ISO token", () => {
-    const ctx = { time: iso, "time.local": formatLocalTime(iso, "UTC"), asset: "sw1" };
-    const out = retimeContext(ctx, "America/Chicago");
-    expect(out["time.local"]).toBe(formatLocalTime(iso, "America/Chicago"));
-    // Everything else survives untouched — this rebuilds one token, not a ctx.
-    expect(out.asset).toBe("sw1");
-    expect(out.time).toBe(iso);
+  it("names the abbreviation AND the IANA zone", () => {
+    // Both halves, because neither is enough alone: "CST" names zones six
+    // hours apart depending on who is reading it, and an operator who has
+    // never seen "America/Chicago" written down still recognizes "CDT".
+    expect(describeTimeZone(summer, "America/Chicago")).toBe("CDT (America/Chicago)");
+    expect(describeTimeZone(summer, "Asia/Kolkata")).toContain("(Asia/Kolkata)");
   });
 
-  it("leaves a context with no usable time alone", () => {
-    // A pre-upgrade Notification.templateCtx keeps whatever it was stored
-    // with rather than being blanked.
-    const ctx = { "time.local": "Aug 12, 2026, 1:46 PM CDT" };
-    expect(retimeContext(ctx, "America/Denver")).toBe(ctx);
+  it("labels the alert's own instant, not today's", () => {
+    // An escalation re-rendering a July alert in December must not relabel it.
+    expect(describeTimeZone(summer, "America/Chicago")).toBe("CDT (America/Chicago)");
+    expect(describeTimeZone(winter, "America/Chicago")).toBe("CST (America/Chicago)");
   });
 
-  it("does not mutate its input", () => {
-    const ctx = { time: iso, "time.local": "x" };
-    retimeContext(ctx, "America/Chicago");
-    expect(ctx["time.local"]).toBe("x");
-  });
-});
-
-describe("splitTimeZoneGroups", () => {
-  const zones = new Map([
-    ["chi@example.com", "America/Chicago"],
-    ["chi2@example.com", "America/Chicago"],
-    ["ny@example.com", "America/New_York"],
-  ]);
-
-  it("returns ONE group when every recipient agrees", () => {
-    // The ordinary fleet. Splitting here would fan one alert out into a copy
-    // per person, which business rule 25 retired.
-    const g = splitTimeZoneGroups(["chi@example.com", "chi2@example.com"], [], [], zones, "UTC");
-    expect(g).toHaveLength(1);
-    expect(g[0]!.timeZone).toBe("America/Chicago");
-    expect(g[0]!.to).toEqual(["chi@example.com", "chi2@example.com"]);
+  it("falls back to the install's own zone when none is given", () => {
+    // Which is every caller today — the email renders install-wide.
+    const out = describeTimeZone(summer, null);
+    expect(out).toBeTruthy();
+    expect(out).toContain(serverTimeZone());
   });
 
-  it("splits only when the readers genuinely disagree", () => {
-    const g = splitTimeZoneGroups(["chi@example.com", "ny@example.com"], [], [], zones, "UTC");
-    expect(g).toHaveLength(2);
-    expect(g.map((x) => x.timeZone)).toEqual(["America/Chicago", "America/New_York"]);
+  it("degrades to something legible rather than throwing", () => {
+    // A zone this build's ICU cannot apply must never cost a send.
+    const out = describeTimeZone(summer, "Mars/Olympus");
+    expect(out).toContain("Mars/Olympus");
+    expect(describeTimeZone(null, "America/Chicago")).toBeTruthy();
+    expect(describeTimeZone("not a date", "America/Chicago")).toBeTruthy();
   });
 
-  it("falls unknown addresses back to the fallback zone", () => {
-    // A typed address or an address-book contact owns no account, so there is
-    // no zone to read — it gets what every recipient got before this existed.
-    const g = splitTimeZoneGroups(["typed@example.com"], [], [], zones, "UTC");
-    expect(g).toHaveLength(1);
-    expect(g[0]!.timeZone).toBe("UTC");
-  });
-
-  it("groups an empty map into exactly one send", () => {
-    // The no-op path: a caller that cannot rebuild its body per zone must
-    // produce the single row the composed path always did.
-    const g = splitTimeZoneGroups(["a@x.com", "b@y.com"], ["c@z.com"], [], new Map(), "UTC");
-    expect(g).toHaveLength(1);
-    expect(g[0]!.to).toEqual(["a@x.com", "b@y.com"]);
-    expect(g[0]!.cc).toEqual(["c@z.com"]);
-  });
-
-  it("groups Cc and Bcc on the same key as To", () => {
-    // An address is mailed in its OWNER's zone whichever line it sits on, so
-    // nobody gets two copies and a Cc'd reader sees the same wall clock.
-    const g = splitTimeZoneGroups(["chi@example.com"], ["ny@example.com"], ["chi2@example.com"], zones, "UTC");
-    const chi = g.find((x) => x.timeZone === "America/Chicago")!;
-    const ny = g.find((x) => x.timeZone === "America/New_York")!;
-    expect(chi.to).toEqual(["chi@example.com"]);
-    expect(chi.bcc).toEqual(["chi2@example.com"]);
-    expect(ny.to).toEqual([]);
-    expect(ny.cc).toEqual(["ny@example.com"]);
-  });
-
-  it("matches addresses case- and whitespace-insensitively", () => {
-    const g = splitTimeZoneGroups(["  CHI@Example.com "], [], [], zones, "UTC");
-    expect(g[0]!.timeZone).toBe("America/Chicago");
-  });
-
-  it("leads with the primary recipients' zone", () => {
-    // Insertion order is first appearance across to, then cc, then bcc.
-    const g = splitTimeZoneGroups(["ny@example.com"], ["chi@example.com"], [], zones, "UTC");
-    expect(g[0]!.timeZone).toBe("America/New_York");
+  it("agrees with the abbreviation stamped on {time.local}", () => {
+    // The whole point of the footer line: it explains the suffix the reader is
+    // already looking at, so the two may never be rendered from different
+    // zones. buildTemplateContext derives both from the same argument.
+    const ctx = buildTemplateContext({ time: summer, timeZone: "America/Chicago" } as never);
+    expect(ctx["time.local"]).toContain("CDT");
+    expect(ctx["time.zone"]).toBe("CDT (America/Chicago)");
   });
 });
 
