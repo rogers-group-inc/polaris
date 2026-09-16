@@ -2933,7 +2933,12 @@ async function openAutomationWizard(existing, opts) {
       // and pickers as a metric leaf, minus the aggregation select a
       // current-state comparison has no use for. With filter rows available,
       // the liftable dims render inline only as UNLIFTED LEFTOVERS (a stored
-      // value tgFilterLift couldn't raise into a row) — see tgInlineDims.
+      // value tgFilterLift couldn't raise into a row) — see tgInlineDims. The
+      // exception is the leaf's INTEGRAL dimension, which every per-component
+      // state field now names (the interface on the ifOper/ifAdmin/ifIp/poe
+      // quartet, the tunnel on ipsecStatus): that one always renders, filled or
+      // blank, because it is the control that says which component the
+      // comparison is about.
       var fDims = kind === "host" ? [] : tgInlineDims((s.fieldDimensions && s.fieldDimensions[leaf.field]) || [], leaf.dimensionFilter, leaf);
       var isDD = ddMeta && isDownDetectionLeaf(leaf);
       if (fDims.length || isDD) {
