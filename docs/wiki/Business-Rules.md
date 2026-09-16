@@ -162,7 +162,12 @@ from a port that has no such feature.
 and the acknowledger is a session.** One URL for email and push, identity from
 the session behind it. **Loading is a GET and acknowledging is a POST**, so a
 mail gateway prefetching links cannot acknowledge anything. **An alert that is
-over carries no button at all.** See
+over carries no button at all.** And **one notify action sends one email**:
+everyone it names is on the same To line, so each reader can see who else is
+already on it. Nothing about the reader splits that message — not their
+timezone (times are the Polaris server's, and the footer names the zone) and
+not their permissions (a reader who cannot acknowledge gets the button and is
+refused, with a reason, on the acknowledge page). See
 [Actions](Automation-Actions#acknowledgement).
 
 ### Rule 26

@@ -100,11 +100,17 @@ rather than route it, so it is ignored.
 
 ### Timezone
 
-Sets the zone every timestamp is drawn in, for you. The default is `auto`,
-which the browser reports — and Polaris stores that detected zone, because an
-alert **email** has no browser to ask. This is the one `/me/*` route with no
-permission gate at all: what zone a timestamp renders in changes nothing about
-which data you can reach.
+Sets the zone every timestamp in the Polaris **UI** is drawn in, for you. The
+default is `auto`, which the browser reports. This is the one `/me/*` route with
+no permission gate at all: what zone a timestamp renders in changes nothing
+about which data you can reach.
+
+**Alert emails are not affected.** An alert is one message to everyone the
+automation names ([rule 25](Business-Rules#rule-25)), so it is written on the
+Polaris server's clock and names that zone in its footer — "Times shown in CDT
+(America/Chicago)". Rendering per reader would mean a separate copy per zone,
+and a copy per zone is a To line that no longer shows you who else is on the
+alert.
 
 ### Change password
 

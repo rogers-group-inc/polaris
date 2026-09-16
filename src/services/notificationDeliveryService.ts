@@ -221,9 +221,12 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
         d.notification.assetId,
         d.notification.metric,
         d.notification.dimension,
-        // Rendered in the same zone as the body this block is stitched into —
-        // see the timeZone stamp in expandDeliveries. Absent on a send that
-        // did not split by zone, which keeps the server-zone default.
+        // Rendered in the same zone as the body this block is stitched into.
+        // Nothing stamps this any more — a composed alert is one message on the
+        // install's clock (business rule 25) — but rows queued by an older
+        // build carry a zone their body was genuinely rendered in, so the read
+        // stays until those have drained. Absent = the install's zone, which is
+        // what the body around it now uses.
         typeof meta.timeZone === "string" ? meta.timeZone : null,
       );
       text = pruneEmptyTextLines(substituteInterfaceTokens(text, lldp.text));

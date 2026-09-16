@@ -115,6 +115,13 @@ export const DEFAULT_ALERT_TEXT = [
   // nothing after it, and a "Web push:" heading would delete itself.
   "{push.recipients}",
   "{email.recipients}",
+  // Which clock every time in this email is on. It earns its line because the
+  // email is ONE message to everyone the automation names (business rule 25):
+  // the times are the install's, not the reader's, so an operator in another
+  // zone has to be told which one rather than left to assume it is theirs.
+  // The timestamps themselves already carry the abbreviation; this says what
+  // the abbreviation means, which is the half "CST" cannot say on its own.
+  "Times shown in {time.zone}",
 ].join("\n");
 
 /**
@@ -293,6 +300,9 @@ export const DEFAULT_ALERT_HTML = [
   '<div style="font-size:11px;color:#9ca3af;margin-top:10px">',
   "{push.recipients}",
   "{email.recipients}",
+  // See the text body. Above the sender line and inside the same footer block,
+  // so the three read as one footnote.
+  '<div>Times shown in {time.zone}</div>',
   '<div>Sent by Polaris · automation "{rule}"</div>',
   "</div>",
   "</td></tr></table>",

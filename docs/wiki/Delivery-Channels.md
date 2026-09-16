@@ -114,15 +114,24 @@ Two consequences:
 When an automation fires, each notify action expands into one **delivery
 target** per channel, and each target into delivery rows.
 
-Two things split a send that you may not expect:
+**Nothing about the reader splits an email** ([rule 25](Business-Rules#rule-25)).
+One notify action produces **one message**, with everyone it names on the To
+line — not a copy each. Two things used to split it and no longer do:
 
-- **Recipient timezone** — timestamps are rendered in each recipient's own zone.
-- **Acknowledge capability** — at most **two** copies, never one per person
-  ([rule 25](Business-Rules#rule-25)): one carrying the Acknowledge button, one
-  with it pruned out for recipients whose role holds `alerts` below `write`.
+- **Recipient timezone.** Timestamps are now rendered in the Polaris server's
+  own zone for everybody, and the default footer says which zone that is
+  (`{time.zone}` — e.g. "Times shown in CDT (America/Chicago)"). A user's
+  timezone setting still governs the Polaris UI; it no longer reaches email.
+- **Acknowledge capability.** Everyone gets the Acknowledge button, including a
+  reader whose role holds `alerts` below `write`. They are refused, with a
+  reason, on the acknowledge page — not by silently receiving a different
+  email. (Web **push** still omits the tray action for such a role: a push is
+  addressed to one browser, so leaving it off costs nobody a shared To line.)
 
-Because of that, no single copy's To header is the whole audience — which is why
-the `{email.recipients}` and `{push.recipients}` tokens scope to the **alert**
+An alert is still wider than one copy of it — a second notify action mails its
+own list, a reminder or escalation tier adds people the first copy never had,
+and a Cc rider is a reader the To line does not name — which is why the
+`{email.recipients}` and `{push.recipients}` tokens scope to the **alert**
 rather than to one send, and count delivery rows rather than outcomes.
 
 **A Bcc is never named in that footer** ([rule 60](Business-Rules#rule-60)).

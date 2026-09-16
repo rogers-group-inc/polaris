@@ -24,20 +24,28 @@ question decides whether they pick the device up or leave it to whoever is alrea
 
 The mail half was missing, and the reason it could not simply be read off the To header is
 the part worth writing down. **No single copy's To line is the whole audience of an alert.**
-A composed send splits per recipient TIMEZONE, because the body is re-rendered per zone. It
-splits again per acknowledge CAPABILITY whenever a recipient's role holds `alerts` below
-`write`, which is rule 25's `splitAckVariants`. A second notify action on the same automation
-mails its own recipient list. A reminder, and every escalation tier, adds people the first
-copy never had — which is exactly the situation an operator is trying to reason about when
-they look. So a reader who checks the To line to see who else is on it gets a confidently
-partial answer, and the partiality is invisible: the header looks complete.
+When this shipped, a composed send split per recipient TIMEZONE (the body being re-rendered
+per zone) and again per acknowledge CAPABILITY (rule 25's `splitAckVariants`). **Both splits
+were removed on 2026-09-15** — for this exact reason, arrived at from the other end: an
+operator looked at their own copy of a FortiAP-down alert, saw one address on the To line and
+a footer naming two, and read it as Polaris mailing each recipient separately. A footnote
+that has to explain away the header is a sign the header is wrong.
+
+The line still earns its place, because three of the reasons never depended on the split. A
+second notify action on the same automation mails its own recipient list. A reminder, and
+every escalation tier, adds people the first copy never had — which is exactly the situation
+an operator is trying to reason about when they look. A Cc rider is a reader the To line does
+not name. So a reader who checks the To line to see who else is on this ALERT still gets a
+confidently partial answer, and the partiality is invisible: the header looks complete.
 
 Prod 2026-09-14 is the case that made it concrete. A FortiGate-down alert routed its reminder
 to the site's two people at region level 1 and escalated hourly to the division at level 2.
 Reading any one of those emails, none of the four recipients could see the other three: the
 two site people were on a second copy split off by acknowledge capability, and the division
 pair were only ever on the escalation. Each copy's To line was accurate and each was a quarter
-of the picture.
+of the picture. The first half of that has since been fixed at the source — the site pair are
+one message again — and the second half cannot be: an escalation tier that has not fired yet
+has no recipients to name.
 
 So `{email.recipients}` renders beside its push sibling in the same 11px footer block, sourced
 from the alert's own email delivery rows, deduped by address across every copy, every notify

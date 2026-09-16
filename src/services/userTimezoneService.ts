@@ -8,10 +8,18 @@
  * shape, for the same reason):
  *
  *   The STORED value (User.timezone) is the account's answer, and it lives
- *   server-side rather than per browser because it has to reach a surface that
- *   HAS no browser. An alert email is composed on the server and handed to
- *   SMTP; before this column the only zone it could name was the server's,
- *   which on a UTC-clocked host reads hours off to every operator.
+ *   server-side rather than per browser so that every browser this account
+ *   signs in from renders the same clock.
+ *
+ *   ALERT EMAIL IS NOT ONE OF ITS CONSUMERS, and deliberately so since
+ *   2026-09. A composed alert is ONE message to one To line (business rule
+ *   25), so it is rendered in the INSTALL's zone and says which zone that is
+ *   ({time.zone} in the default footer). Rendering per recipient meant mailing
+ *   the same alert once per zone among its recipients — and since an account
+ *   that had never signed in on a browser fell back to the server's zone, two
+ *   colleagues at the same desk could land in different copies, each seeing
+ *   only themselves on the To line. Do not reintroduce a per-recipient zone
+ *   on the email path without reopening that decision.
  *
  *   The RESOLUTION half is `resolveTimeZone` — pure, and deliberately
  *   permissive. It is asked once per render and once per recipient per send,
@@ -26,20 +34,14 @@
  *
  * SERVER-side there is no browser to ask, so "auto" falls to
  * User.detectedTimezone — the zone the account's browser reported on its last
- * boot — and only then to the server's zone. That middle step is the point of
- * the whole feature: almost nobody will open the picker, because their laptop
- * is already in their zone and the UI therefore looks right, and without it
- * every one of those accounts would keep receiving email on the SERVER's
- * clock. See resolveTimeZone.
- *
- * A write bumps the recipient index (notificationRecipientService caches user
- * rows for 30s and now carries the zone alongside the preference), so a new
- * choice applies to the next alert rather than up to half a minute later.
+ * boot — and only then to the install's zone. See resolveTimeZone. No sending
+ * surface consumes that resolution today (see the note above); it is kept
+ * because it is the only correct answer for one that ever needs to render a
+ * single account's own wall clock — a per-user digest, an export.
  */
 
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
-import { bumpRecipientIndex } from "./notificationRecipientService.js";
 import { logEvent } from "./eventLogService.js";
 
 /** The "let the render decide" marker. Not a zone — see the header. */
@@ -193,9 +195,10 @@ export async function recordDetectedTimezone(userId: string, tz: unknown): Promi
 
 /**
  * Set the caller's own zone. Audited for the same reason the notification
- * preference is: it changes what an operator SEES on a timestamp, so "the
- * email said 03:00 but the chart said 21:00" has to be answerable from the
- * Events tab. Actor is the username — this is always a self-service write.
+ * preference is: it changes what an operator SEES on a timestamp, so "the UI
+ * said 03:00 but the alert email said 21:00" has to be answerable from the
+ * Events tab — and with the email now on the install's clock, that gap is a
+ * question someone WILL ask. Actor is the username — always self-service.
  */
 export async function setUserTimezone(
   userId: string,
@@ -212,10 +215,10 @@ export async function setUserTimezone(
   if (previous === next) return next;
 
   await prisma.user.update({ where: { id: userId }, data: { timezone: next } });
-  // The recipient index caches the zone alongside each user's tag scope and
-  // notification preference; without this the change takes up to the 30s TTL
-  // to reach the engine, and the next alert mails the old zone.
-  bumpRecipientIndex();
+  // No recipient-index bump: the alerting path stopped carrying a per-account
+  // zone when the composed email became one message (business rule 25), so
+  // there is nothing cached for this write to invalidate. The browser reads
+  // the new value on its next /auth/me.
 
   await logEvent({
     action: "user.timezone.changed",
