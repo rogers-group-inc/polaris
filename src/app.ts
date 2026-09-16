@@ -1043,6 +1043,34 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
     logger.warn({ err: err?.message }, "asset type registry refresh failed; using shipped matching rules");
   }
 
+  // Warm the manufacturer-profile cache on EVERY role, and for a sharper
+  // reason than the two above: since the Phase 4 resolver swap those rows are
+  // the ONLY source of vendor CPU / memory / temperature / storage OIDs.
+  // `seedManufacturerProfiles` warms the cache, but it runs only where
+  // `runsMigrations` is true (web / all), so in the split-role layout the
+  // MONITOR process — the one that actually walks devices — would start with
+  // an empty cache and resolve nothing at all for every vendor. (Before the
+  // swap this was masked: an empty cache fell through to the hardcoded
+  // constant, which also meant an operator's profile edits never reached a
+  // split-role monitor process.) Never throws — but a process that fails the
+  // warm collects no vendor telemetry until the interval below succeeds,
+  // which is why it logs at that volume.
+  try {
+    const { refreshProfileCache, refreshProfileCacheIfStale } =
+      await import("./services/manufacturerProfileService.js");
+    await refreshProfileCache();
+    // …and keep it current. The write paths refresh the cache of whichever
+    // process SERVED the write, which leaves every other process holding a
+    // copy nothing will correct: the monitor consumers that run the
+    // collectors, and — behind a load balancer or an HA pair — the web
+    // replica that did not handle the request. One clock comparison per tick
+    // and, at most, one small read per minute per process. Unref'd so it
+    // never holds the process open through a shutdown.
+    setInterval(() => { void refreshProfileCacheIfStale(); }, 30_000).unref();
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, "manufacturer profile cache warm failed; vendor telemetry will not resolve until it succeeds");
+  }
+
   if (cfg.runsMigrations) {
     // One-shot startup migrations / seeds / backfills — idempotent, marker-keyed.
     for (const p of [

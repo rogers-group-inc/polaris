@@ -222,6 +222,17 @@ const profileCache = new Map<string, ProfileFull>();
 let cacheLoaded = false;
 /** Lazily built by `listCachedProfiles`; dropped whenever the cache refills. */
 let sortedCache: ProfileFull[] | null = null;
+/** When the cache was last filled, for `refreshProfileCacheIfStale`. */
+let cacheFilledAt = 0;
+/**
+ * How stale a monitor process's copy of the profiles may get. An operator
+ * edits a profile on the WEB process, whose write paths refresh their own
+ * cache synchronously; nothing tells the monitor process. A minute is the
+ * longest an operator should watch a corrected OID not take effect, and it is
+ * two heavy ticks — so the DB sees one small read per minute per monitor
+ * process rather than one per tick.
+ */
+const PROFILE_CACHE_TTL_MS = 60_000;
 
 function asMetricKey(value: unknown): MetricKey {
   if (typeof value !== "string" || !(METRIC_KEYS as string[]).includes(value)) {
@@ -526,6 +537,31 @@ export async function refreshProfileCache(): Promise<void> {
     profileCache.set(shaped.manufacturer.toLowerCase(), shaped);
   }
   cacheLoaded = true;
+  cacheFilledAt = Date.now();
+}
+
+/**
+ * Refresh only if this process's copy is older than PROFILE_CACHE_TTL_MS.
+ *
+ * For the MONITOR role, which has no other way to learn that a profile
+ * changed: the write paths refresh the cache of the process that served the
+ * write, and that is the web process. Cheap enough to call on every heavy
+ * tick — the common path is one clock comparison — and the read it does make
+ * is the whole profile table, which is one row per manufacturer.
+ *
+ * Never throws: a monitor pass must not fail because a refresh could not
+ * reach the database. The previous cache stays in place, which is the right
+ * answer anyway — stale vendor OIDs collect, an empty cache collects nothing.
+ */
+export async function refreshProfileCacheIfStale(now = Date.now()): Promise<boolean> {
+  if (cacheLoaded && now - cacheFilledAt < PROFILE_CACHE_TTL_MS) return false;
+  try {
+    await refreshProfileCache();
+    return true;
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, "manufacturer profile cache refresh failed; keeping the previous copy");
+    return false;
+  }
 }
 
 /**

@@ -9,21 +9,19 @@
  * here touches Prisma; `getProfileFor` is the default lookup and reads the
  * warm cache.
  *
- * TWO resolvers live here during the swap:
+ * TWO resolvers live here, and only one of them has a caller:
  *
- *   `pickVendorProfileMerged` — what the collectors call TODAY. Picks the
- *   hardcoded VENDOR_TELEMETRY_PROFILES entry by regex over
- *   `manufacturer + os + model + fortinetClassHint`, then LAYERS the
- *   operator-editable ManufacturerProfile rows over a clone of it for the
- *   four metric keys the collectors read (cpu / memory / temperature /
- *   storage). The constant remains the fallback and the source of everything
- *   the pre-Phase-4 rows could not express.
+ *   `pickDbProfile` — what the four SNMP collectors call. Reads the
+ *   operator-editable ManufacturerProfile ROWS ALONE. The hardcoded
+ *   VENDOR_TELEMETRY_PROFILES constant is not consulted on this path at all.
  *
- *   `pickDbProfile` — its replacement, reading ROWS ALONE. Same answer for a
- *   seeded install (the parity test pins it tuple by tuple) plus the four
- *   things the constant's shape got wrong; see the comment above it. Not
- *   wired into the collectors yet — that is the next step, and keeping both
- *   callable is what lets one test drive them side by side.
+ *   `pickVendorProfileMerged` — the resolver it replaced: pick the hardcoded
+ *   entry by regex over `manufacturer + os + model + fortinetClassHint`, then
+ *   LAYER the rows over a clone of it for cpu / memory / temperature /
+ *   storage. It has NO production caller. It stays so that
+ *   profileResolverParity.test.ts can keep driving both over the same rows
+ *   and proving the answers still match, which is the whole argument that the
+ *   swap was safe; it goes when the constant does.
  */
 
 import {

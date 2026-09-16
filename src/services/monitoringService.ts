@@ -137,7 +137,7 @@ import {
   deriveDiskBytes,
   type VendorTelemetryProfile,
 } from "./vendorTelemetryProfiles.js";
-import { pickVendorProfileMerged } from "./profileResolver.js";
+import { pickDbProfile, type ProfileSubject } from "./profileResolver.js";
 import { getProfileFor as getDbManufacturerProfile } from "./manufacturerProfileService.js";
 import {
   startPassTimer,
@@ -4884,9 +4884,9 @@ export async function collectHardwareSensors(assetId: string, preloaded?: Teleme
 
 /**
  * Open an SNMP session and run the collectHardwareSensorsSnmp walk inside it.
- * Mirrors collectTelemetrySnmp's MIB-pin pattern so that pinning an uploaded
- * MIB on the (temperature) stream feeds the right manufacturer / module-name /
- * model into pickVendorProfileMerged.
+ * Shares collectTelemetrySnmp's MIB-pin handling (`profileSubjectFor`), so
+ * pinning an uploaded MIB on the temperature stream feeds the right
+ * manufacturer / module name / model into `pickDbProfile`.
  */
 async function collectHardwareSensorsViaSnmpSession(
   host: string,
@@ -4899,21 +4899,9 @@ async function collectHardwareSensorsViaSnmpSession(
   assetType?: string | null,
 ): Promise<HardwareSensorSample[]> {
   await ensureRegistryLoaded();
-  let profileManufacturer = manufacturer;
-  let profileModel        = model;
-  let profileOs           = os;
-  if (temperatureMibId && !temperatureMibId.startsWith("std:")) {
-    const mib = await prisma.mibFile.findUnique({
-      where:  { id: temperatureMibId },
-      select: { moduleName: true, manufacturer: true, model: true },
-    }).catch(() => null);
-    if (mib) {
-      profileManufacturer = mib.manufacturer ?? manufacturer;
-      profileModel        = mib.model        ?? model;
-      profileOs           = mib.moduleName;
-    }
-  }
-  const profile = pickVendorProfileMerged(profileManufacturer, profileOs, profileModel, assetType);
+  const profile = pickDbProfile(
+    await profileSubjectFor({ manufacturer, model, os, assetType, pinnedMibId: temperatureMibId }),
+  );
   const scope   = { manufacturer, model };
   return await withSnmpSession(host, config, async (session) => {
     return await collectHardwareSensorsSnmp(session, manufacturer, profile, scope);
@@ -7134,8 +7122,58 @@ export async function snmpWalkRaw(
 }
 
 // Vendor-profile selection lives in profileResolver.ts (Phase 4 of uniform
-// SNMP): `pickVendorProfileMerged` is imported above. It moved out verbatim
-// so the parity test can drive it with in-memory rows.
+// SNMP): `pickDbProfile` is imported above, and reads the operator's
+// ManufacturerProfile rows ALONE — the hardcoded VENDOR_TELEMETRY_PROFILES
+// constant is no longer consulted on this path.
+
+/**
+ * The identity `pickDbProfile` reads for one asset on one stream, with the
+ * operator's per-stream MIB pin applied.
+ *
+ * When a MIB is pinned on this asset's stream (Asset / class-override /
+ * integration tier), its own manufacturer + model override the asset's, and
+ * its MODULE NAME is carried alongside them. That is how an operator
+ * redirects a misclassified asset — a FortiSwitch whose discovery sources
+ * stamped `manufacturer=Fortinet` with no model hint — into the right profile
+ * without renaming the asset. `"std:<key>"` ids are display hints only and
+ * never bias selection.
+ *
+ * The module name used to be stuffed into the `os` slot, because the only
+ * matcher was a single haystack and that was the one place it would be seen.
+ * `ProfileSubject.mibModule` is its own field now, so the asset's real OS
+ * survives the redirect and the module name reaches BOTH the profile match
+ * and the model match — a pinned FORTINET-FORTISWITCH-MIB now selects the
+ * FortiSwitch rows as well as the Fortinet profile.
+ */
+async function profileSubjectFor(args: {
+  manufacturer?: string | null;
+  model?:        string | null;
+  os?:           string | null;
+  assetType?:    string | null;
+  pinnedMibId?:  string | null;
+}): Promise<ProfileSubject> {
+  const subject: ProfileSubject = {
+    manufacturer: args.manufacturer ?? null,
+    os:           args.os ?? null,
+    model:        args.model ?? null,
+    assetType:    args.assetType ?? null,
+    mibModule:    null,
+  };
+  if (!args.pinnedMibId || args.pinnedMibId.startsWith("std:")) return subject;
+
+  const mib = await prisma.mibFile.findUnique({
+    where:  { id: args.pinnedMibId },
+    select: { moduleName: true, manufacturer: true, model: true },
+  }).catch(() => null);
+  if (!mib) return subject;
+
+  return {
+    ...subject,
+    manufacturer: mib.manufacturer ?? subject.manufacturer,
+    model:        mib.model        ?? subject.model,
+    mibModule:    mib.moduleName ?? null,
+  };
+}
 
 async function collectTelemetrySnmp(
   host: string,
@@ -7151,31 +7189,11 @@ async function collectTelemetrySnmp(
   // vendor symbols. ensureRegistryLoaded short-circuits after the first call.
   await ensureRegistryLoaded();
 
-  // When the operator pinned an uploaded MIB on this asset's telemetry stream
-  // (Asset / class-override / integration tier), look it up and feed its
-  // module name + manufacturer + model into pickVendorProfile *instead of*
-  // the asset's own identity. Lets operators redirect a misclassified asset
-  // (e.g. a FortiSwitch whose discovery sources stamped manufacturer=Fortinet
-  // with no model hint) into the right profile without renaming the asset.
-  // `"std:<key>"` ids are UI hints only — they don't bias selection here.
-  let profileManufacturer = manufacturer;
-  let profileModel        = model;
-  let profileOs           = os;
-  if (telemetryMibId && !telemetryMibId.startsWith("std:")) {
-    const mib = await prisma.mibFile.findUnique({
-      where:  { id: telemetryMibId },
-      select: { moduleName: true, manufacturer: true, model: true },
-    }).catch(() => null);
-    if (mib) {
-      profileManufacturer = mib.manufacturer ?? manufacturer;
-      profileModel        = mib.model        ?? model;
-      // Stuff the MIB's module name into the `os` slot so the existing
-      // haystack-based matcher can see it (e.g. "FORTINET-FORTISWITCH-MIB"
-      // contains "FortiSwitch" which the FortiSwitch profile matches).
-      profileOs           = mib.moduleName;
-    }
-  }
-  const profile = pickVendorProfileMerged(profileManufacturer, profileOs, profileModel, assetType);
+  // The operator's per-stream MIB pin can redirect this asset into a
+  // different profile; see profileSubjectFor.
+  const profile = pickDbProfile(
+    await profileSubjectFor({ manufacturer, model, os, assetType, pinnedMibId: telemetryMibId }),
+  );
   // Scope still uses the *asset's* manufacturer/model so symbol resolution
   // through oidRegistry continues to pick up device-specific MIB overrides
   // for the actual asset, not the MIB pointed at by telemetryMibId.
@@ -8223,9 +8241,16 @@ async function collectSystemInfoSnmp(
   } = {},
 ): Promise<SystemInfoSample> {
   // Vendor profile is read once up-front so the disk fallback (below) can
-  // consult it without re-deriving. Cheap — VENDOR_TELEMETRY_PROFILES is in
-  // memory; ensureRegistryLoaded is called by the disk fallback when it runs.
-  const vendorProfile = pickVendorProfileMerged(opts.manufacturer, opts.os, opts.model, opts.assetType);
+  // consult it without re-deriving. Cheap — the profile rows are in this
+  // process's warm cache; ensureRegistryLoaded is called by the disk fallback
+  // when it runs. No MIB pin here: this is the systemInfo stream, whose pin
+  // the caller has already applied to the interfaces/storage walks.
+  const vendorProfile = pickDbProfile({
+    manufacturer: opts.manufacturer ?? null,
+    os:           opts.os ?? null,
+    model:        opts.model ?? null,
+    assetType:    opts.assetType ?? null,
+  });
   const vendorScope   = { manufacturer: opts.manufacturer, model: opts.model };
 
   return await withSnmpSession(host, config, async (session) => {
@@ -12835,7 +12860,12 @@ export async function collectStorageOnlySnmp(
   timeoutMs?: number,
   assetType?: string | null,
 ): Promise<StorageSample[]> {
-  const vendorProfile = pickVendorProfileMerged(manufacturer ?? null, null, model ?? null, assetType);
+  const vendorProfile = pickDbProfile({
+    manufacturer: manufacturer ?? null,
+    os:           null,
+    model:        model ?? null,
+    assetType:    assetType ?? null,
+  });
   const vendorScope   = { manufacturer: manufacturer ?? null, model: model ?? null };
   return await withSnmpSession(host, config, async (session) => {
     const storage: StorageSample[] = [];
