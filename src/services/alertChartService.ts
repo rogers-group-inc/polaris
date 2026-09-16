@@ -30,6 +30,7 @@ import { logger } from "../utils/logger.js";
 import { sparklineSvg, seriesStats, formatReading, timeAxisLabel, type SparkPoint } from "../utils/sparklineSvg.js";
 import { alarmStatusToFlag, convertSensorForDisplay, sensorDisplayUnit } from "../utils/hardwareSensors.js";
 import { getBranding } from "./brandingService.js";
+import { SAMPLE_SDWAN_HEALTH_CHECK, SAMPLE_SDWAN_LINK } from "../utils/sampleAlertDevice.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 
 /**
@@ -1071,13 +1072,124 @@ function summaryLine(
   return `${label} (${win}): now ${formatReading(s.last, unit)}, avg ${formatReading(avg, unit)}, peak ${formatReading(s.max, unit)}`;
 }
 
+/** One sample point per minute — the cadence an agent host reports at. */
+const SAMPLE_STEP_MS = 60_000;
+
+/**
+ * Two incommensurate sines, so a generated trace reads as telemetry rather
+ * than as a sine wave. Deterministic on purpose: the same test email twice
+ * draws the same picture, which is what makes "did the chart change?" a
+ * meaningful question while someone is editing a template.
+ */
+function sampleWave(from: number, to: number, at: (fraction: number, i: number) => number): SparkPoint[] {
+  const points: SparkPoint[] = [];
+  const span = Math.max(1, to - from);
+  for (let t = from, i = 0; t <= to; t += SAMPLE_STEP_MS, i++) {
+    points.push({ t, v: Math.round(at((t - from) / span, i) * 10) / 10 });
+  }
+  return points;
+}
+
+const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
+
+/**
+ * INVENTED telemetry for a TEST alert's charts (business rule 65) — see
+ * `utils/sampleAlertDevice`.
+ *
+ * A test alert is attached to no asset (`Notification.assetId` is null), so
+ * there is nothing to query and nothing that SHOULD be queried: charting a real
+ * device's last hour under a made-up hostname would put real telemetry back in
+ * the one email whose whole point is that it carries none. These series are
+ * generated instead, shaped so each chart shows what its real counterpart
+ * shows: a ramp on CPU, a spike on response time, a couple of lossy buckets,
+ * an SLA line the path is about to cross.
+ *
+ * PURE and deterministic. `fail` spans are deliberately not generated — the
+ * dives mean "Polaris missed polls here", and inventing an outage on a device
+ * that does not exist teaches the reader the wrong thing about the picture.
+ */
+export function sampleChartSeries(
+  tokens: Iterable<ChartToken>,
+  opts: { since: Date; now: Date; lossSince: Date; lossBucketMs: number; displayUnit: "c" | "f" },
+): { cpu: SparkPoint[]; mem: SparkPoint[]; rt: SparkPoint[]; loss: ProbeLossSeries; sensor: SensorSeries; sdwan: SdwanSeries | null } {
+  const wanted = new Set(tokens);
+  const from = opts.since.getTime();
+  const to = opts.now.getTime();
+
+  const cpu = wanted.has("chart.cpu")
+    // A working day's drift, then a climb over the last fifth of the window —
+    // the shape that makes a "CPU is above 80%" automation make sense.
+    ? sampleWave(from, to, (f, i) => clamp(34 + 9 * Math.sin(f * 6.1) + 4 * Math.sin(i * 1.7) + (f > 0.8 ? (f - 0.8) * 190 : 0), 0, 100))
+    : [];
+  const mem = wanted.has("chart.memory")
+    ? sampleWave(from, to, (f, i) => clamp(61 + 4 * Math.sin(f * 3.3) + 1.5 * Math.sin(i * 0.9), 0, 100))
+    : [];
+  const rt = wanted.has("chart.responseTime")
+    ? sampleWave(from, to, (f, i) => Math.max(1, 9 + 3 * Math.sin(f * 5.2) + 1.4 * Math.sin(i * 2.1) + (f > 0.85 ? (f - 0.85) * 820 : 0)))
+    : [];
+
+  let loss: ProbeLossSeries = { points: [], ratioPct: null, engineRatioPct: null };
+  if (wanted.has("chart.probeLoss")) {
+    const lossFrom = opts.lossSince.getTime();
+    const buckets = Math.max(1, Math.round((to - lossFrom) / opts.lossBucketMs));
+    const points: SparkPoint[] = [];
+    let lost = 0;
+    let total = 0;
+    for (let i = 0; i < buckets; i++) {
+      // Quiet, then a burst in the last few buckets: one clean stretch and one
+      // lossy one is the comparison the chart exists to draw.
+      const pct = i >= buckets - 3 ? [12, 34, 21][i - (buckets - 3)] ?? 0 : 0;
+      points.push({ t: lossFrom + i * opts.lossBucketMs, v: pct });
+      total += 10;
+      lost += Math.round(pct / 10);
+    }
+    const ratio = total > 0 ? Math.round((lost / total) * 1000) / 10 : null;
+    loss = { points, ratioPct: ratio, engineRatioPct: ratio };
+  }
+
+  // The sensor reads in whatever unit the install displays — the chart beside
+  // the sentence must not say °C while `sensorReadingDisplay` says °F.
+  const sensor: SensorSeries = wanted.has("chart.sensor")
+    ? {
+        points: sampleWave(from, to, (f, i) => {
+          const c = 46 + 6 * Math.sin(f * 4.1) + 2 * Math.sin(i * 1.3);
+          return opts.displayUnit === "f" ? c * 1.8 + 32 : c;
+        }),
+        alarmSpans: [],
+        unit: opts.displayUnit === "f" ? "°F" : "°C",
+        sensorClass: "temperature",
+      }
+    : { points: [], alarmSpans: [], unit: "", sensorClass: null };
+
+  const sdwan: SdwanSeries | null = SDWAN_CHART_TOKENS.some((t) => wanted.has(t))
+    ? {
+        healthCheck: SAMPLE_SDWAN_HEALTH_CHECK,
+        link: SAMPLE_SDWAN_LINK,
+        latency: sampleWave(from, to, (f, i) => Math.max(1, 64 + 11 * Math.sin(f * 4.7) + 5 * Math.sin(i * 1.9) + (f > 0.8 ? (f - 0.8) * 340 : 0))),
+        jitter: sampleWave(from, to, (f, i) => Math.max(0, 8 + 4 * Math.sin(f * 7.3) + 2 * Math.sin(i * 2.4) + (f > 0.8 ? (f - 0.8) * 90 : 0))),
+        loss: sampleWave(from, to, (f, i) => Math.max(0, 0.3 + 0.3 * Math.sin(i * 1.1) + (f > 0.85 ? (f - 0.85) * 40 : 0))),
+        // The SLA lines the generated traces cross near the end, so the dashed
+        // rule is doing its job in the specimen too.
+        latencyThresholdMs: 120,
+        jitterThresholdMs: 30,
+        packetLossThreshold: 2,
+        downSpans: [],
+      }
+    : null;
+
+  return { cpu, mem, rt, loss, sensor, sdwan };
+}
+
 /**
  * Build the requested charts for one alert. `threshold` draws the automation's
  * own line on the chart of the metric it watches, when that metric is one of
  * these three.
+ *
+ * `assetId` is null only for a TEST alert, which is attached to no asset; that
+ * call must pass `sampleData` and gets generated series instead of a query.
  */
 export async function buildAlertCharts(
-  assetId: string,
+  assetId: string | null,
   tokens: Iterable<ChartToken>,
   opts?: {
     now?: Date;
@@ -1113,6 +1225,13 @@ export async function buildAlertCharts(
      * last-hour context regardless.
      */
     lossWindowMs?: number | null;
+    /**
+     * Draw INVENTED series instead of reading the database — the automation
+     * wizard's test buttons, whose alert is about a made-up device
+     * (`utils/sampleAlertDevice`) and so has no telemetry to read and none it
+     * ought to borrow. Every other caller leaves this unset.
+     */
+    sampleData?: boolean;
   },
 ): Promise<Map<ChartToken, RenderedChart>> {
   const wanted = new Set(tokens);
@@ -1160,41 +1279,56 @@ export async function buildAlertCharts(
   let sensor: SensorSeries = { points: [], alarmSpans: [], unit: "", sensorClass: null };
   let fail: FailSpanSeries = { spans: [], recoverySpans: [], failedCount: 0 };
   let sdwan: SdwanSeries | null = null;
-  try {
-    const needTelemetry = wanted.has("chart.cpu") || wanted.has("chart.memory");
-    const needFailSpans = [...wanted].some((t) => FAIL_SPAN_TOKENS.has(t));
-    const needSdwan = SDWAN_CHART_TOKENS.some((t) => wanted.has(t));
-    // The display unit is install-wide branding, not per-user: an alert email
-    // has no session behind it. Read once, only when a sensor is charted.
+  if (opts?.sampleData) {
+    // The display unit is still read for real: the generated sensor trace and
+    // the sentence above it in the email have to agree about °C vs °F.
     const displayUnit = wanted.has("chart.sensor")
       ? await getBranding().then((b) => b.temperatureUnit).catch(() => "c" as const)
       : ("c" as const);
-    const [tel, rtRows, sensorRows, lossRows, failRows, sdwanRows] = await Promise.all([
-      needTelemetry ? loadTelemetry(assetId, since) : Promise.resolve({ cpu: [], mem: [] }),
-      wanted.has("chart.responseTime") ? loadResponseTimes(assetId, since) : Promise.resolve([]),
-      wanted.has("chart.sensor")
-        ? loadSensorSeries(assetId, opts!.sensorName!, since, displayUnit)
-        : Promise.resolve(sensor),
-      wanted.has("chart.probeLoss") ? loadProbeLoss(assetId, lossSince, lossBucketMs(lossWindowMs)) : Promise.resolve(loss),
-      needFailSpans ? loadFailSpans(assetId, since, now) : Promise.resolve(fail),
-      // Two reads at most, and only for a path alert: the rule → health-check
-      // lookup, then the health check's samples. An unresolvable path (a rule
-      // with no performance SLA, a dimension from before the metric existed)
-      // yields null and every SD-WAN token renders away.
-      needSdwan
-        ? resolveSdwanTarget(assetId, opts?.metric, opts?.dimension ?? opts?.sensorName ?? null)
-            .then((target) => (target ? loadSdwanSeries(assetId, target, since) : null))
-        : Promise.resolve(null),
-    ]);
-    cpu = tel.cpu;
-    mem = tel.mem;
-    rt = rtRows;
-    sensor = sensorRows;
-    loss = lossRows;
-    fail = failRows;
-    sdwan = sdwanRows;
-  } catch (err) {
-    logger.warn({ err: (err as Error)?.message, assetId }, "alert chart sample load failed — sending without charts");
+    const s = sampleChartSeries(wanted, {
+      since, now, lossSince, lossBucketMs: lossBucketMs(lossWindowMs), displayUnit,
+    });
+    cpu = s.cpu; mem = s.mem; rt = s.rt; loss = s.loss; sensor = s.sensor; sdwan = s.sdwan;
+  } else if (!assetId) {
+    // No asset and no sample mode: nothing to chart, and nothing to query for.
+    return out;
+  } else {
+    try {
+      const needTelemetry = wanted.has("chart.cpu") || wanted.has("chart.memory");
+      const needFailSpans = [...wanted].some((t) => FAIL_SPAN_TOKENS.has(t));
+      const needSdwan = SDWAN_CHART_TOKENS.some((t) => wanted.has(t));
+      // The display unit is install-wide branding, not per-user: an alert email
+      // has no session behind it. Read once, only when a sensor is charted.
+      const displayUnit = wanted.has("chart.sensor")
+        ? await getBranding().then((b) => b.temperatureUnit).catch(() => "c" as const)
+        : ("c" as const);
+      const [tel, rtRows, sensorRows, lossRows, failRows, sdwanRows] = await Promise.all([
+        needTelemetry ? loadTelemetry(assetId, since) : Promise.resolve({ cpu: [], mem: [] }),
+        wanted.has("chart.responseTime") ? loadResponseTimes(assetId, since) : Promise.resolve([]),
+        wanted.has("chart.sensor")
+          ? loadSensorSeries(assetId, opts!.sensorName!, since, displayUnit)
+          : Promise.resolve(sensor),
+        wanted.has("chart.probeLoss") ? loadProbeLoss(assetId, lossSince, lossBucketMs(lossWindowMs)) : Promise.resolve(loss),
+        needFailSpans ? loadFailSpans(assetId, since, now) : Promise.resolve(fail),
+        // Two reads at most, and only for a path alert: the rule → health-check
+        // lookup, then the health check's samples. An unresolvable path (a rule
+        // with no performance SLA, a dimension from before the metric existed)
+        // yields null and every SD-WAN token renders away.
+        needSdwan
+          ? resolveSdwanTarget(assetId, opts?.metric, opts?.dimension ?? opts?.sensorName ?? null)
+              .then((target) => (target ? loadSdwanSeries(assetId, target, since) : null))
+          : Promise.resolve(null),
+      ]);
+      cpu = tel.cpu;
+      mem = tel.mem;
+      rt = rtRows;
+      sensor = sensorRows;
+      loss = lossRows;
+      fail = failRows;
+      sdwan = sdwanRows;
+    } catch (err) {
+      logger.warn({ err: (err as Error)?.message, assetId }, "alert chart sample load failed — sending without charts");
+    }
   }
 
   const series: Record<ChartToken, SparkPoint[]> = {

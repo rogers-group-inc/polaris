@@ -41,7 +41,7 @@ Reference files (all verbatim):
 - [references/narrative-25-35.md](references/narrative-25-35.md) — full narrative, rules 25–35
 - [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–43 (the filename is a stable citation key — see the numbering note)
 - [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–59 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
-- [references/narrative-60-64.md](references/narrative-60-64.md) — full narrative, rules 60–64 (split out 2026-09-15 when the 44–48 file reached the 1500-line ceiling)
+- [references/narrative-60-64.md](references/narrative-60-64.md) — full narrative, rules 60–65 (the filename keeps its original range: it is a stable citation key. Split out 2026-09-15 when the 44–48 file reached the 1500-line ceiling)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -117,6 +117,7 @@ before changing anything the invariant constrains.
 | 62 | An install is identified by something it persists, never by the name the runtime handed the process | invariants-30-43 | narrative-60-64 |
 | 63 | The complexity bar belongs to the operator, and a password that no longer meets it is replaced on the far side of the second factor | invariants-30-43 | narrative-60-64 |
 | 64 | A passkey is bound to the origin that issued its challenge, the install decides what a passkey is for, and it never names an account that does not already exist | invariants-30-43 | narrative-60-64 |
+| 65 | A delivery test is a specimen of the alert, not a rehearsal against live inventory | invariants-30-43 | narrative-60-64 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

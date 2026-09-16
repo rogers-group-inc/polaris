@@ -7,7 +7,17 @@
  * trigger. This fires ONE action of a draft — saved or not — through the exact
  * delivery path a real alert takes.
  *
- * Three safety properties, each of which is the whole reason for its code:
+ * Four safety properties, each of which is the whole reason for its code:
+ *
+ *  0. It is about a MADE-UP device, and says so (business rule 65). The alert
+ *     used to be fired against whichever real asset the draft would match, so
+ *     the email carried a live hostname, management IP, site code and the
+ *     device's own admin description — mailed on demand to an address the
+ *     caller typed, into an inbox nobody treats as inventory. Every
+ *     fact in a test email now comes from `utils/sampleAlertDevice` and every
+ *     chart from `sampleChartSeries`; the message, the subject and a banner at
+ *     the head of the body all say TEST, so no forwarded copy of one can be
+ *     mistaken for an outage.
  *
  *  1. The test alert ALWAYS carries `ruleId: null` (and `testRun: true`), even
  *     when the draft is a saved rule. notificationEscalationService sweeps
@@ -37,13 +47,12 @@ import { logEvent } from "./eventLogService.js";
 import { logger } from "../utils/logger.js";
 import { executeActions } from "./automationActionService.js";
 import { drainPendingDeliveries } from "./notificationDeliveryService.js";
-import { sensorReadingDisplay } from "./alertChartService.js";
 import { buildTemplateContext } from "../utils/notificationTemplate.js";
 import { scopeRegionTagsOf } from "./notificationRecipientService.js";
 import type { AutomationAction, PreviewRuleInput, Severity } from "./notificationTypes.js";
 import { allRuleActionRefs, notifyChannelIds } from "./notificationTypes.js";
-import { previewRule } from "./notificationEngine.js";
 import { triggerSummary } from "../utils/triggerSummary.js";
+import { SAMPLE_ALERT_DEVICE, SAMPLE_ALERT_HOSTNAME, sampleDimensionFor } from "../utils/sampleAlertDevice.js";
 
 export type TestTarget = "delivery" | "event";
 
@@ -130,55 +139,6 @@ export function selectTestActions(
   };
 }
 
-/**
- * For a hardware-sensor draft, the sensor a test alert should be "about".
- *
- * Picks a sensor the device has actually reported in the last day AND that the
- * draft's own dimensionFilter would match — the same predicate the engine uses
- * (`hwSensorFilterMatches`), so the test can't chart a sensor the real
- * automation would never fire on. Null for every other trigger, which is what
- * makes the sensor chart render away in an ordinary test email.
- */
-export interface TestReading {
-  assetId: string | null;
-  dimensionKey: string | null;
-  dimensionLabel: string | null;
-  value: number | string | boolean | null;
-}
-
-/**
- * A REAL current reading for the draft, so a test email says what a real one
- * would: which device, which sensor/interface/mount, and what the value is.
- *
- * This runs the engine's own `previewRule` — the same dry-run the wizard's
- * "Test against current data" uses — rather than re-deriving per-metric
- * queries here. Its matches come back sorted meets-first, so a test prefers a
- * device that would actually fire, and falls back to any device reporting the
- * metric at all. Null for event/change/composite drafts, which have no single
- * reading to quote.
- */
-async function resolveTestReading(rule: PreviewRuleInput): Promise<TestReading | null> {
-  const t = rule.trigger;
-  if (!t || (t.type !== "asset_metric" && t.type !== "host_metric" && t.type !== "asset_state")) return null;
-  try {
-    const preview = await previewRule(rule);
-    if (!preview.supported) return null;
-    const best = preview.matches.find((m) => m.assetId) ?? preview.matches[0];
-    if (!best) return null;
-    return {
-      assetId: best.assetId,
-      dimensionKey: best.dimensionKey ?? null,
-      dimensionLabel: best.dimension || null,
-      value: best.value,
-    };
-  } catch (err) {
-    // A test must still send when the dry-run can't resolve — it just won't be
-    // able to quote a number.
-    logger.warn({ err: (err as Error)?.message }, "test delivery: preview lookup failed");
-    return null;
-  }
-}
-
 /** The alert body a test produces — clearly a test, in the message itself. */
 function testMessage(ruleName: string, hostname: string | null): string {
   return `[TEST] ${ruleName || "Automation"} — delivery test${hostname ? ` for ${hostname}` : ""}`;
@@ -188,7 +148,6 @@ export interface RunTestArgs {
   rule: PreviewRuleInput;
   path: TestActionPath;
   target: TestTarget;
-  assetId?: string;
   actorUserId: string;
   actorUsername: string;
 }
@@ -196,42 +155,23 @@ export interface RunTestArgs {
 export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryResult> {
   const { rule, actorUserId, actorUsername } = args;
 
-  // A real device makes the test email look like a real one (the facts table
-  // and the last-hour charts all key off it). Any monitored asset will do when
-  // the caller didn't name one.
-  // The same fields the engine's ASSET_DETAIL_SELECT feeds a real fire: a test
-  // email that lacked them would prune down to a bare shell and mislead the
-  // operator about what a real alert looks like.
-  const detailSelect = {
-    id: true, hostname: true, tags: true, ipAddress: true, macAddress: true, assetType: true,
-    status: true, location: true, learnedLocation: true, description: true, manufacturer: true, model: true,
-    serialNumber: true, os: true, osVersion: true, department: true, assignedTo: true,
-    lastSeenSwitch: true, lastSeenAp: true,
-  } as const;
-  // Prefer the device the draft would actually fire on: the test email then
-  // carries a real value and the real sensor/interface, rather than the
-  // alphabetically-first monitored asset that may report neither.
-  const reading = await resolveTestReading(rule);
-  const preferredId = args.assetId ?? reading?.assetId ?? null;
-  const asset = preferredId
-    ? await prisma.asset.findUnique({ where: { id: preferredId }, select: detailSelect })
-    : await prisma.asset.findFirst({ where: { monitored: true }, select: detailSelect, orderBy: { hostname: "asc" } });
+  // The device a test alert is about is INVENTED — see the header, and
+  // `utils/sampleAlertDevice` for why every field in it is documentation-range
+  // or "Example"-prefixed. It carries the same field set the engine's
+  // ASSET_DETAIL_SELECT feeds a real fire, so the facts table renders the same
+  // rows rather than pruning down to a bare shell.
+  const asset = SAMPLE_ALERT_DEVICE;
 
   const severity: Severity = rule.severity ?? "warning";
-  const message = testMessage(rule.name, asset?.hostname ?? null);
-  // A hardware-sensor automation's email charts the sensor it fired on, so a
-  // TEST of one has to name a sensor too — otherwise the button can't show the
-  // operator the very thing they're testing. Pick a real sensor the chosen
-  // device reports that the draft's own filter would match.
-  const dimension = reading?.dimensionKey ?? null;
+  const message = testMessage(rule.name, SAMPLE_ALERT_HOSTNAME);
   const metric = rule.trigger && (rule.trigger.type === "asset_metric" || rule.trigger.type === "host_metric")
     ? rule.trigger.metric
     : rule.trigger && rule.trigger.type === "asset_state" ? rule.trigger.field : null;
-  // A sensor value is stated in the install's display unit, matching the chart
-  // below it — see sensorReadingDisplay.
-  const sensorShown = metric === "hwSensorValue" && asset && dimension
-    ? await sensorReadingDisplay(asset.id, dimension, reading?.value ?? null)
-    : null;
+  // A sensor or SD-WAN automation's email charts the sub-asset it fired on, so
+  // a TEST of one has to name one too — otherwise the button can't show the
+  // operator the very thing they're testing. Made up per metric family, like
+  // everything else here.
+  const dimension = sampleDimensionFor(metric);
 
   const notif = await prisma.notification.create({
     data: {
@@ -239,8 +179,12 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
       // the escalation sweep.
       ruleId: null,
       testRun: true,
-      assetId: asset?.id ?? null,
-      assetHostname: asset?.hostname ?? null,
+      // Null for the same reason the sample device has no id: a test alert
+      // belongs to no device, so it can never surface on a real asset's alert
+      // list, and the charts are generated rather than read (see
+      // `sampleChartSeries`, reached through `testRun` in the delivery drain).
+      assetId: null,
+      assetHostname: SAMPLE_ALERT_HOSTNAME,
       severity,
       message,
       regionTags: [],
@@ -259,7 +203,7 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
       actor: actorUsername,
       level: severity === "critical" || severity === "serious" ? "error" : severity === "warning" ? "warning" : "info",
       message,
-      details: { test: true, ruleId: null, assetId: asset?.id ?? null, severity },
+      details: { test: true, ruleId: null, assetId: null, severity },
     });
     return {
       ok: true,
@@ -284,31 +228,33 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
   }
 
   const ctx = buildTemplateContext({
-    asset: asset?.hostname ?? "test device",
+    asset: SAMPLE_ALERT_HOSTNAME,
     severity,
     time: new Date(),
     ruleName: rule.name,
     ruleDescription: rule.description ?? null,
     message,
     metric: metric ?? "test",
-    value: reading?.value == null ? "" : String(reading.value),
-    dimension: reading?.dimensionLabel ?? "",
-    // The same sentence a real fire produces, with the CURRENT reading in it —
-    // otherwise a test is the one email that can't say what the automation is
-    // actually about.
+    // No reading, deliberately: the only honest number here would be a real
+    // device's, and `triggerSummary` already falls back to stating the
+    // CONDITION ("Response time (median over 5 minutes) is above 500 ms"),
+    // which is what the operator wrote and what they are testing the wording
+    // of. A made-up number would read as a measurement.
+    value: "",
+    dimension: dimension ?? "",
     triggerSummary: triggerSummary({
       trigger: rule.trigger as never,
-      value: sensorShown?.value ?? reading?.value ?? null,
-      dimensionLabel: reading?.dimensionLabel ?? null,
-      sensorUnit: sensorShown?.unit ?? null,
+      value: null,
+      dimensionLabel: dimension,
+      sensorUnit: null,
     }),
-    assetDetail: asset ? { ...asset, status: String(asset.status) } : null,
+    assetDetail: asset,
   });
 
   await executeActions(notif.id, actions, ctx, {
     scopeRegionTags: scopeRegionTagsOf(rule.scope as never),
-    assetRegionTags: (asset?.tags ?? []).filter((t) => t.toLowerCase().startsWith("region:")).map((t) => t.slice(7)),
-    assetId: asset?.id ?? null,
+    assetRegionTags: [],
+    assetId: null,
     ruleName: rule.name,
     ruleEmailComposition: rule.emailComposition ?? null,
     actor: actorUsername,

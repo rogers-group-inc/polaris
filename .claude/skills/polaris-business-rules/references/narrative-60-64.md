@@ -425,3 +425,134 @@ endpoint 403s every caller; and a `passkeyCeremonyLimiter` mount. The CSRF entry
 `/passkeys/register` and `/passkeys/:id` — mutating session routes one segment away —
 protected. A bare `startsWith` would exempt every one of them, which is the mistake the HA
 enrollment entry already made once (rule 50's neighbourhood).
+
+---
+
+## Rule 65 — A delivery test is a specimen of the alert, not a rehearsal against live inventory
+
+The automation wizard's Summary step carries a **Test delivery** block: one button per
+distinct delivery the draft would perform, each firing ONE action of the draft — saved or
+unsaved — through the exact path a real alert takes. It exists because authoring an
+automation used to be a blind flight; the only way to learn whether the SMTP channel
+authenticates, whether Web Push reaches your phone, or whether the audit Event lands was to
+save the rule and provoke a real trigger.
+
+It was built on a reasonable-sounding premise: a test should look exactly like the real
+thing, so it should be **about** a real thing. `resolveTestReading` ran the engine's own
+`previewRule` and picked the device the draft would actually fire on — matches come back
+sorted meets-first — so the email quoted a real current reading, on a real sensor, for a real
+device, with that device's last hour charted underneath.
+
+What came out the other end was an ordinary-looking alert email carrying a live hostname, a
+management IP, a site code parsed out of the device's own admin description, and the model of
+the switch it was about. Nothing in it said "test": the `[TEST]` marker lives in
+`Notification.message`, and the default email body deliberately does not print `{message}`
+(the trigger sentence above it says the same thing, and printing both read as a log line
+stapled to a headline). A reader — or anyone the mail was forwarded to — had no way to tell
+it from an outage.
+
+The premise is what was wrong. A test email is sent **on demand**, by anyone holding
+`automationManagement:fullwrite`, to an address they type at the keyboard, and it lands in an
+inbox nobody treats as inventory. Against that, "looks exactly like the real thing" is worth
+much less than it costs. So a test is now a **specimen**: the same email, the same layout, the
+same pruning behaviour, made of facts that are invented end to end.
+
+### Where the facts come from
+
+`utils/sampleAlertDevice.ts` holds the device. Its values are drawn from the ranges reserved
+for documentation, so nothing in a test email can ever collide with something real:
+
+- IPv4 from **192.0.2.0/24** (RFC 5737 TEST-NET-1)
+- MAC from **00:00:5E:00:53:00–FF** (the RFC 7042 documentation block)
+- every name **"Example"-prefixed** — `EXAMPLE-SWITCH-01`, `Example Networks`,
+  `Example Site: Building A, Floor 1`, `EXAMPLE-TMP1`, `Example-SLA`
+
+`sampleDimensionFor(metric)` does the same job for the sub-asset a test should name, per
+metric family: a sensor name for `hwSensorValue` / `hwSensorAlarm`, a
+`"<healthCheck>|<link>"` pair for the SD-WAN metrics (the chart code parses it apart, and a
+bare name charts nothing), an interface for the port-scoped ones, null for everything else.
+Without that, a test of a sensor or path automation could not show the operator the chart the
+real alert leads with — the very thing they are testing.
+
+`SAMPLE_ALERT_DEVICE` deliberately carries **no `id`**, and the test `Notification` carries
+**no `assetId`**. Both absences are load-bearing rather than incidental:
+
+- A test belongs to no device, so it can never appear on a real asset's alert list — the one
+  place a stray test alert used to be visible for the hour before
+  `clearExpiredTestAlerts` sweeps it.
+- `{asset.link}` renders empty, so `pruneDeadLinks` drops the "Open device" button. A button
+  that opens nothing is worse than no button; the acknowledge page falls back to
+  `/automations.html` the same way.
+- `alertChartService` has no asset to query, which is what routes it to the generated series.
+
+### No reading is quoted
+
+`triggerSummary` already had the behaviour this needed. Given no value it falls back to
+stating the **condition** — "Response time (median over 5 minutes) is above 500 ms",
+"Monitor status is down" — rather than a bare subject, which reads as a broken template. That
+sentence is the one the operator wrote in the builder and the one they are checking the
+wording of, so a test now passes `value: null` deliberately.
+
+The alternative was a made-up number, and a made-up number in the headline position reads as
+a measurement. The only honest number available would have been some real device's, which is
+the thing being removed.
+
+### The charts are generated
+
+`sampleChartSeries` (in `alertChartService.ts`, behind `buildAlertCharts(null, …,
+{sampleData: true})`) produces each series instead of reading it. It is pure and
+deterministic — the same test email twice draws the same picture, which is what makes "did
+the chart change?" a meaningful question while someone edits a template — and each series is
+shaped like its real counterpart: a ramp on CPU, a spike on response time, a quiet stretch
+and a burst on packet loss, an SLA line the SD-WAN path crosses near the right edge. The
+sensor trace is generated in the install's own display unit, because the chart and the
+sentence above it must not disagree about °C versus °F.
+
+Two things it deliberately does **not** invent: fail spans and SD-WAN down spans. Those bands
+do not mean "a bad reading" — they mean *Polaris measured nothing here* and *the device
+declared this member dead*. Drawing them on a device that does not exist teaches a reader the
+wrong thing about what the picture means, on the one send whose whole job is to teach them
+what the picture means.
+
+Dropping the charts entirely was the other option and was rejected: a test email whose whole
+chart section is missing does not answer the question the button is pressed to ask.
+
+### The marking is not a token
+
+The obvious implementation was a `{test.notice}` token in `DEFAULT_ALERT_HTML` /
+`DEFAULT_ALERT_TEXT`, deferred like `{chart.*}` and `{brand.header}` and filled from
+`Notification.testRun` at delivery. It was rejected, and the reason generalizes:
+
+> A token in the default body is marking the operator can delete — by customizing the email,
+> or simply by having customized it before the token existed.
+
+Every notify action can carry its own `emailComposition`, and the wizard prefills it from the
+default template, so a rule customized last year holds a frozen copy of a body with no such
+token in it. On the one email that must never be mistaken for an outage, the marking has to
+be something no template controls.
+
+So `markEmailAsTest` (`utils/alertEmailTemplate.ts`) is applied in
+`notificationDeliveryService.emailMessageFor`, on **both** compose branches, as the **last**
+thing that touches the message — after every substitution and every pruning pass:
+
+- `[TEST] ` prefixed to the subject (idempotent, so a template that already says TEST does not
+  say it twice) — this is all a phone's lock screen shows
+- a banner table above the card, before the severity bar
+- a block above the plain-text body, which is what a pager gateway or a text-only client
+  renders
+
+Push, Slack, Teams and Pushbullet bodies need none of this: they print
+`Notification.message` directly, and that string has carried its `[TEST]` prefix since the
+feature shipped. The email was the one surface where the marker was composed away.
+
+### What this costs, and what to keep true
+
+The test no longer proves that *this* automation would fire on *that* device — but it never
+reliably did: the preview picked whatever currently matched, which on an unfiring draft was
+"any device reporting the metric at all". What the button is for, and still answers, is "does
+this channel work, and what does the message look like".
+
+When adding a new `{asset.*}` token, add its field to `SAMPLE_ALERT_DEVICE` as well as to the
+engine's `ASSET_DETAIL_SELECT`. The specimen's value is that it prunes the same rows the real
+alert prunes; a field missing here mails a blank row for a fact a real alert prints, and the
+test quietly stops being faithful without anything failing.

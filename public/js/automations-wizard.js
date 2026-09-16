@@ -6085,8 +6085,13 @@ async function openAutomationWizard(existing, opts) {
     // "does this channel work and what does the message look like", and
     // answering it by paging the on-call is a cost nobody asked for.
     box.innerHTML =
-      '<p class="hint" style="margin:0 0 8px">Each test creates a <strong>real alert</strong> (flagged as a test) and delivers it through that one action immediately — ' +
+      '<p class="hint" style="margin:0 0 8px">Each test delivers through that one action immediately — ' +
         '<strong>to you only</strong>, never to this automation’s recipients.<br>' +
+        // What arrives is a SPECIMEN, not a rehearsal against live inventory:
+        // the device, its addresses and the charts are invented, and the
+        // message says TEST in its subject and at the head of its body. Say so
+        // here, or the first reaction to the email is "which switch is this?".
+        '<span style="color:var(--color-text-tertiary)">It’s marked as a test and is about a made-up example device — no real device’s details are sent.</span><br>' +
         '<span style="color:var(--color-text-tertiary)">You: ' + escapeHtml(selfDesc) + '</span></p>' +
       '<div id="aw-test-buttons">' + targets.map(function (t) {
         return '<div class="awtd-row" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">' +

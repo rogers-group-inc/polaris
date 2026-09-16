@@ -33,7 +33,7 @@ import {
   substituteEmailRecipientTokens,
   type PushRecipientBlock,
 } from "./alertPushRecipientsService.js";
-import { pruneEmptyChartSection, pruneEmptyTextLines } from "../utils/alertEmailTemplate.js";
+import { markEmailAsTest, pruneEmptyChartSection, pruneEmptyTextLines } from "../utils/alertEmailTemplate.js";
 import { logEvent } from "./eventLogService.js";
 import { type ChannelType, probeLossWindowSecFromTrigger } from "./notificationTypes.js";
 import { sendSmtpEmail, sendM365Email, type EmailMessage } from "./notificationChannels/emailChannel.js";
@@ -74,6 +74,11 @@ interface DeliveryRow {
     /** The automation — read back (lazily) for the loss chart's History window. */
     ruleId: string | null;
     triggeredAt: Date;
+    /** A wizard "Send Test Email" fire. Decides two things here: the body is
+     *  banner-marked and subject-prefixed TEST, and its charts are generated
+     *  rather than read (the alert is about an invented device with no
+     *  telemetry — see `utils/sampleAlertDevice`). */
+    testRun: boolean;
   };
 }
 
@@ -171,7 +176,24 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
     const wanted = chartTokensIn(text, html);
     if (wanted.size > 0) {
       const assetId = d.notification.assetId;
-      const charts = assetId
+      // A test alert has no asset and no telemetry — it is about an invented
+      // device — so its charts are GENERATED. Same memo key shape, same
+      // pruning afterwards: the operator is testing what the email looks like,
+      // and an email whose whole chart section is missing does not answer that.
+      const charts = d.notification.testRun
+        ? await memoize(
+            memo.charts,
+            `${d.notification.id}|${Array.from(wanted).sort().join(",")}`,
+            () =>
+              buildAlertCharts(null, wanted, {
+                sampleData: true,
+                sensorName: d.notification.dimension,
+                dimension: d.notification.dimension,
+                metric: d.notification.metric,
+                lossWindowMs: null,
+              }),
+          )
+        : assetId
         // Keyed by the alert plus the exact chart set this body asks for — two
         // notify actions on one rule can compose different bodies, so the token
         // set is part of the identity, not just the notification.
@@ -281,7 +303,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       }
     }
 
-    return {
+    const composedMsg: EmailMessage = {
       to,
       cc: asStringArray(meta.cc),
       bcc: asStringArray(meta.bcc),
@@ -290,8 +312,13 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       html,
       ...(attachments?.length ? { attachments } : {}),
     };
+    // LAST, after every substitution and pruning pass: the TEST marking is
+    // stitched onto whatever body the automation composed — including a fully
+    // customized one — so it cannot be edited away by the operator whose
+    // template it is. See markEmailAsTest.
+    return d.notification.testRun ? markEmailAsTest(composedMsg) : composedMsg;
   }
-  return {
+  const legacyMsg: EmailMessage = {
     to: d.target,
     subject: titleFor(d.notification),
     // `noAck` is stamped at fan-out for an address whose Polaris role can't
@@ -303,6 +330,9 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       meta.noAck === true ? null : ackUrlForEmail(d.notification.id),
     ),
   };
+  // A test always composes, so this is belt-and-braces — but the marking rides
+  // the notification, not the compose path, and must stay true of both.
+  return d.notification.testRun ? markEmailAsTest(legacyMsg) : legacyMsg;
 }
 
 /** Append the acknowledge line to a plain-text body. Pure. */
@@ -590,7 +620,7 @@ export async function drainPendingDeliveries(
       // ruleId feeds the loss chart's window: the automation's own History is
       // what the chart should span (resolved lazily, only when a loss chart is
       // actually in the body).
-      notification: { select: { id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, metric: true, ruleId: true, triggeredAt: true } },
+      notification: { select: { id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, metric: true, ruleId: true, triggeredAt: true, testRun: true } },
     },
   })) as DeliveryRow[];
 

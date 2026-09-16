@@ -434,6 +434,19 @@ wearing those refusals.
 
 ---
 
+### Rule 65
+**A delivery test is a specimen of the alert, not a rehearsal against live
+inventory.** The automation wizard's test buttons fire against a **made-up
+device** — hostname, IP, MAC, location, model, description, sub-asset and charts
+are all invented sample data, from the ranges reserved for documentation — and
+the alert is attached to no asset, so it never appears on a real device's alert
+list. No reading is quoted; the headline states the **condition** you
+configured. The email is marked **TEST** in its subject, in a banner above the
+body, and in the plain-text alternative, and that marking is added at send time,
+so customizing the email template cannot remove it.
+
+---
+
 ## Reading a rule correctly
 
 Three habits make these easier to apply:

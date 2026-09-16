@@ -223,6 +223,18 @@ escalation tiers, resolved and reset actions.
 
 - Each press creates a **real** `[TEST]` alert and dispatches that one action
   immediately.
+- **The alert is about a made-up device, not one of yours**
+  ([rule 65](Business-Rules#rule-65)). Hostname, IP, MAC,
+  location, model, description and the last-hour charts are all invented sample
+  data (`EXAMPLE-SWITCH-01` at `192.0.2.51`, and so on), so a test email can be
+  forwarded to a vendor or a colleague without carrying any of your inventory.
+  It is attached to no asset, so it never appears on a real device's alert list.
+- **It says so in three places** — `[TEST]` in the subject, a banner at the head
+  of the body, and a line in the plain-text alternative. The marking is added at
+  send time, so customizing the email template cannot remove it.
+- No reading is quoted. The headline states the **condition** you configured
+  ("Response time (median over 5 minutes) is above 500 ms") rather than a number,
+  because the only real number available would be some device's.
 - **Every button sends to you and nobody else.** That is a server-side recipient
   rewrite, not a flag. There is no mode to choose, so this step cannot page
   anyone.
