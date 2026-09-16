@@ -3817,6 +3817,14 @@ model MibFile {
 model ManufacturerProfile {
   id           String   @id @default(uuid())
   manufacturer String   @unique // canonical form via ManufacturerAlias map
+  // Operator-owned regex, case-insensitive, tested against
+  // `${manufacturer} ${os} ${pinnedMibModuleName}` ONLY when no profile is
+  // keyed by the asset's canonical manufacturer. Replaces the hardcoded vendor
+  // constant's `match` for alias spellings the seed did not key ("Aruba",
+  // "HPE" → the HP profile), OS-only identity ("Cisco IOS" with no
+  // manufacturer), and the MIB-pin redirect. Seeded from the constant's
+  // alternations; validated like modelPattern.
+  matchPattern String?
   createdBy    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -3843,8 +3851,26 @@ model ManufacturerProfileMetric {
   id               String              @id @default(uuid())
   profileId        String
   profile          ManufacturerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  metricKey        String // "cpu" | "memory" | "temperature" | "interfaces" | "lldp" | "storage" | "wirelessStations"
+  metricKey        String // "model" | "cpu" | "memory" | "temperature" | "interfaces" | "storage" | "lldp" | "wirelessStations" (METRIC_KEYS in manufacturerProfileService is the page order)
   defaultSymbol    String?
+  // How a WALKED subtree collapses to one reading: "none" (a scalar GET, or
+  // a table walk used as-is) | "avg" | "sum". Kept apart from defaultType
+  // because the axis is orthogonal — Cisco memory is double_scalar AND
+  // walked+summed, Juniper memory scalar AND averaged, FortiSwitch memory
+  // double_scalar and not walked. Replaces the hardcoded profile's
+  // `walkSubtree`, which the editable rows could not express.
+  defaultAggregate String              @default("none")
+  // Label for the sample row a scalar-form metric synthesizes: the
+  // StorageSample mountPath ("flash" on a FortiSwitch — the key pins and
+  // thresholds attach to) or the hardware-sensor sensorName ("System" for a
+  // FortiAP's one reading). Null → the collector's default.
+  defaultLabel     String?
+  // `model` metric only: a regex with a capture group and a `$1` template
+  // (src/utils/modelParse.ts) that turn the vendor scalar's raw string into
+  // Asset.model — "S548DF-v7.2.5-…" → "FortiSwitch S548DF". Replaces the JS
+  // parse FUNCTION the hardcoded FortiSwitch profile carried.
+  defaultParsePattern  String?
+  defaultParseTemplate String?
   defaultMibId     String?
   defaultMib       MibFile?            @relation("ManufacturerProfileMetricDefaultMib", fields: [defaultMibId], references: [id], onDelete: SetNull)
   // Operator-pinned standard MIB key (e.g. "std:lldp", "std:host-resources").
@@ -3888,8 +3914,31 @@ model ManufacturerProfileMetricOverride {
   id           String                    @id @default(uuid())
   metricRowId  String
   metricRow    ManufacturerProfileMetric @relation(fields: [metricRowId], references: [id], onDelete: Cascade)
-  modelPattern String // regex tested against Asset.model
+  // The row's SCOPE is the pair (assetType, modelPattern); at least one is set
+  // (CHECK constraint manufacturer_profile_metric_overrides_scope_check):
+  //   assetType only   → the DEVICE-TYPE DEFAULT: what every asset of that
+  //     type under this manufacturer walks (Fortinet switch → fsSysCpuUsage).
+  //     Replaces keying a device family off a model regex ("FortiSwitch"),
+  //     which matched an empty model only through `fortinetClassHint`.
+  //   both             → a per-model exception UNDER that device type.
+  //   modelPattern only→ a per-model exception for any device type — the
+  //     pre-2026-09 shape, kept: a stated model outranks an inferred type,
+  //     so a mis-typed asset whose model names the family still routes.
+  // Resolution (profileResolver.pickDbProfile) is most-specific-first:
+  // type+model → model → type default → the metric row's own defaults.
+  // One type default per (metricRowId, assetType) is enforced by the PARTIAL
+  // unique index mfg_profile_metric_overrides_type_default_key (WHERE
+  // modelPattern IS NULL) — SQL only; Prisma cannot express a partial index,
+  // and a full @@unique would forbid two model exceptions under one type.
+  assetType    String? // AssetTypeDef.name, registry-validated at write time
+  modelPattern String? // regex tested against Asset.model (+ the pinned MIB's module name)
   symbol       String
+  // Mirrors of the metric row's defaultAggregate / defaultLabel /
+  // defaultParse* — see ManufacturerProfileMetric.
+  aggregate     String  @default("none")
+  label         String?
+  parsePattern  String?
+  parseTemplate String?
   mibId        String?
   mib          MibFile?                  @relation("ManufacturerProfileMetricOverrideMib", fields: [mibId], references: [id], onDelete: SetNull)
   // Same display-only standard-MIB hint as the parent metric row. See
@@ -3907,6 +3956,7 @@ model ManufacturerProfileMetricOverride {
   composition  Json?
 
   @@index([metricRowId, order])
+  @@index([metricRowId, assetType])
   @@index([mibId])
   @@map("manufacturer_profile_metric_overrides")
 }

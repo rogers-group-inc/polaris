@@ -21,6 +21,8 @@ import {
 import { AppError } from "../utils/errors.js";
 import { symbolReadiness, ensureRegistryLoaded, type SymbolReadiness } from "./oidRegistry.js";
 import { logEvent } from "./eventLogService.js";
+import { isKnownAssetType, normalizeAssetTypeName } from "../utils/assetTypes.js";
+import { validateModelParse } from "../utils/modelParse.js";
 import { validateHttpCheckDefinition } from "./credentialService.js";
 import { logger } from "../utils/logger.js";
 import {
@@ -30,17 +32,35 @@ import {
 } from "../utils/stateProbes.js";
 
 export type MetricKey =
+  | "model"
   | "cpu"
   | "memory"
   | "temperature"
   | "interfaces"
-  | "lldp"
   | "storage"
+  | "lldp"
   | "wirelessStations";
 
+// ORDER IS THE PROFILE PAGE'S ROW ORDER, and it mirrors the order the same
+// streams appear in the asset details slide-over: `model` first (identity, on
+// the General tab), then the System tab's sections top to bottom (CPU &
+// Memory · Hardware Sensors · Interfaces · Storage · LLDP), then the tabs.
+// `shapeProfile` sorts every read by this list, so a row a migration appends
+// still renders in sequence. The client mirror is METRIC_KEY_LABELS in
+// public/js/server-settings.js — reorder both together.
+//
+// `model` is the identity query (Phase 4): which vendor scalar carries the
+// hardware model and how to parse it (`defaultParsePattern` /
+// `defaultParseTemplate`, src/utils/modelParse.ts). It replaces the
+// `ModelQuery.parse` FUNCTION the hardcoded FortiSwitch profile carried —
+// the last profile fact that could not be a row.
 export const METRIC_KEYS: MetricKey[] = [
-  "cpu", "memory", "temperature", "interfaces", "lldp", "storage", "wirelessStations",
+  "model", "cpu", "memory", "temperature", "interfaces", "storage", "lldp", "wirelessStations",
 ];
+
+/** How a walked subtree collapses to one reading. Replaces the hardcoded `walkSubtree`. */
+export type Aggregate = "none" | "avg" | "sum";
+export const AGGREGATES: Aggregate[] = ["none", "avg", "sum"];
 
 // Allowed display-only standard-MIB hints an operator can pin on a profile
 // metric or override. Must stay in sync with the frontend `_SNMP_STANDARD_MIBS`
@@ -97,13 +117,32 @@ export interface RowReadiness {
 
 export interface MetricOverrideRow {
   id:           string;
-  modelPattern: string;
+  /**
+   * The row's scope, half one: an `AssetTypeDef.name` this row applies to, or
+   * null for "any device type". With `modelPattern` null this row IS the
+   * device-type default (every Fortinet switch walks fsSysCpuUsage);
+   * alongside a `modelPattern` it is a per-model exception under that type.
+   */
+  assetType:    string | null;
+  /**
+   * The row's scope, half two: a regex tested against `Asset.model` (and the
+   * pinned MIB's module name), or null on a device-type default. At least one
+   * half is always set (DB CHECK constraint + `assertOverrideScope`).
+   */
+  modelPattern: string | null;
   symbol:       string;
   symbolB:      string | null;
   mibId:        string | null;
   mibStdKey:    string | null;
   type:         MetricRowType;
   transform:    TransformKind | CombinerKind | null;
+  /** How a walked subtree collapses (none | avg | sum); see `Aggregate`. */
+  aggregate:    Aggregate;
+  /** Sample-row label: storage mountPath / sensor name. Null → collector default. */
+  label:        string | null;
+  /** `model` metric only — see src/utils/modelParse.ts. */
+  parsePattern:  string | null;
+  parseTemplate: string | null;
   order:        number;
   readiness?:   RowReadiness;
 }
@@ -117,6 +156,10 @@ export interface MetricRow {
   defaultMibStdKey: string | null;
   defaultType:      MetricRowType;
   defaultTransform: TransformKind | CombinerKind | null;
+  defaultAggregate: Aggregate;
+  defaultLabel:     string | null;
+  defaultParsePattern:  string | null;
+  defaultParseTemplate: string | null;
   overrides:        MetricOverrideRow[];
   /** Null when the row is unconfigured (built-in seed answers); see RowReadiness. */
   readiness?:       RowReadiness | null;
@@ -166,6 +209,8 @@ export interface ProfileSummary {
 export interface ProfileFull {
   id:           string;
   manufacturer: string;
+  /** "Also applies when" regex over `manufacturer os mibModuleName`, used only when no profile is keyed by the canonical manufacturer. */
+  matchPattern: string | null;
   createdBy:    string | null;
   createdAt:    string;
   updatedAt:    string;
@@ -315,6 +360,50 @@ function trimOrNull(value: unknown): string | null {
   return t ? t : null;
 }
 
+function asAggregate(value: unknown): Aggregate {
+  if (value === null || value === undefined || value === "") return "none";
+  if (value === "none" || value === "avg" || value === "sum") return value;
+  throw new AppError(400, "Invalid aggregate — expected 'none' | 'avg' | 'sum'");
+}
+
+// The (assetType, modelPattern) scope pair every override row carries. The
+// three legal shapes are spelled out on `MetricOverrideRow`; this is the one
+// place that admits or rejects a pair, so both write paths resolve the
+// EFFECTIVE pair (input merged over the stored row) and hand it here.
+//
+// `assetType` is checked against the asset-type REGISTRY rather than the
+// built-ins, so an operator who added a custom type (camera, pdu) can give it
+// a default too. `isKnownAssetType` falls back to the built-ins before the
+// registry cache warms — the safe direction: an early write naming a custom
+// type is rejected rather than stored unvalidated.
+function assertOverrideScope(assetType: string | null, modelPattern: string | null): void {
+  if (!assetType && !modelPattern) {
+    throw new AppError(400, "An override needs a device type, a model pattern, or both");
+  }
+  if (assetType && !isKnownAssetType(assetType)) {
+    throw new AppError(400, `Unknown device type: ${assetType}`);
+  }
+  if (modelPattern) assertValidModelPattern(modelPattern);
+}
+
+// The `model` metric row turns a vendor scalar into Asset.model, so a symbol
+// with no parse would stamp raw firmware strings onto assets; and a parse on
+// any other row is a typo the resolver would ignore silently.
+function assertParseFieldsFor(metricKey: MetricKey, symbol: string | null, parsePattern: string | null, parseTemplate: string | null): void {
+  if (metricKey !== "model") {
+    if (parsePattern || parseTemplate) throw new AppError(400, "parsePattern / parseTemplate apply to the model metric only");
+    return;
+  }
+  if (!symbol) return; // an unconfigured model row is fine
+  const err = validateModelParse(parsePattern, parseTemplate);
+  if (err) throw new AppError(400, err);
+}
+
+function asTypeNameOrNull(value: unknown): string | null {
+  const t = trimOrNull(value);
+  return t ? normalizeAssetTypeName(t) : null;
+}
+
 // Validate that the per-row shape is internally consistent:
 //   scalar:        symbol required, symbolB must be null
 //   double_scalar: symbol + symbolB both required
@@ -357,34 +446,62 @@ function validateMetricRowShape(args: {
   if (!symbolB) throw new AppError(400, `${label}: symbolB (B) is required for type="double_scalar"`);
 }
 
+// One shaping seam for override rows — the cached read path, both write paths
+// and updateMetricRow's echo all return through it, so a just-written row and
+// the cache can't disagree about a row's scope (the same reason `shapeWidget`
+// exists).
+function shapeOverride(o: any): MetricOverrideRow {
+  return {
+    id:            o.id,
+    assetType:     o.assetType ?? null,
+    modelPattern:  o.modelPattern ?? null,
+    symbol:        o.symbol,
+    symbolB:       o.symbolB ?? null,
+    mibId:         o.mibId ?? null,
+    mibStdKey:     o.mibStdKey ?? null,
+    type:          asMetricRowType(o.type),
+    transform:     readStoredTransform(o.transform),
+    aggregate:     asAggregate(o.aggregate),
+    label:         o.label ?? null,
+    parsePattern:  o.parsePattern ?? null,
+    parseTemplate: o.parseTemplate ?? null,
+    order:         o.order,
+  };
+}
+
+function shapeMetricRow(m: any): MetricRow {
+  return {
+    id:                   m.id,
+    metricKey:            asMetricKey(m.metricKey),
+    defaultSymbol:        m.defaultSymbol ?? null,
+    defaultSymbolB:       m.defaultSymbolB ?? null,
+    defaultMibId:         m.defaultMibId ?? null,
+    defaultMibStdKey:     m.defaultMibStdKey ?? null,
+    defaultType:          asMetricRowType(m.defaultType),
+    defaultTransform:     readStoredTransform(m.defaultTransform),
+    defaultAggregate:     asAggregate(m.defaultAggregate),
+    defaultLabel:         m.defaultLabel ?? null,
+    defaultParsePattern:  m.defaultParsePattern ?? null,
+    defaultParseTemplate: m.defaultParseTemplate ?? null,
+    overrides:            (m.overrides || []).map(shapeOverride),
+  };
+}
+
 function shapeProfile(row: any): ProfileFull {
-  const metrics: MetricRow[] = (row.metrics || []).map((m: any) => ({
-    id:               m.id,
-    metricKey:        asMetricKey(m.metricKey),
-    defaultSymbol:    m.defaultSymbol ?? null,
-    defaultSymbolB:   m.defaultSymbolB ?? null,
-    defaultMibId:     m.defaultMibId ?? null,
-    defaultMibStdKey: m.defaultMibStdKey ?? null,
-    defaultType:      asMetricRowType(m.defaultType),
-    defaultTransform: readStoredTransform(m.defaultTransform),
-    overrides: (m.overrides || []).map((o: any) => ({
-      id:           o.id,
-      modelPattern: o.modelPattern,
-      symbol:       o.symbol,
-      symbolB:      o.symbolB ?? null,
-      mibId:        o.mibId ?? null,
-      mibStdKey:    o.mibStdKey ?? null,
-      type:         asMetricRowType(o.type),
-      transform:    readStoredTransform(o.transform),
-      order:        o.order,
-    })),
-  }));
+  const metrics: MetricRow[] = (row.metrics || []).map(shapeMetricRow);
+  // METRIC_KEYS order, not DB order. The rows come back in whatever order
+  // Postgres hands them over, which matched METRIC_KEYS only for as long as
+  // nothing was ever inserted afterwards — the `model` row a migration added
+  // would land at the end of the heap. Sorting here means every consumer sees
+  // the one order the page documents.
+  metrics.sort((a, b) => METRIC_KEYS.indexOf(a.metricKey) - METRIC_KEYS.indexOf(b.metricKey));
   // Same shaping as the write paths return (state fields included) — one
   // function so the cached read and a just-written row can't disagree.
   const widgets: CustomWidgetRow[] = (row.widgets || []).map((w: any) => shapeWidget(w));
   return {
     id:           row.id,
     manufacturer: row.manufacturer,
+    matchPattern: row.matchPattern ?? null,
     createdBy:    row.createdBy ?? null,
     createdAt:    row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     updatedAt:    row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
@@ -784,6 +901,10 @@ export async function updateMetricRow(
     defaultMibStdKey?: string | null;
     defaultType?:      string;
     defaultTransform?: string | null;
+    defaultAggregate?: string | null;
+    defaultLabel?:     string | null;
+    defaultParsePattern?:  string | null;
+    defaultParseTemplate?: string | null;
   },
 ): Promise<MetricRow> {
   const mk = asMetricKey(metricKey);
@@ -791,6 +912,11 @@ export async function updateMetricRow(
     where: { profileId_metricKey: { profileId, metricKey: mk } },
   });
   if (!row) throw new AppError(404, "Metric row not found for this profile");
+
+  const nextAggregate     = input.defaultAggregate     === undefined ? asAggregate(row.defaultAggregate) : asAggregate(input.defaultAggregate);
+  const nextLabel         = input.defaultLabel         === undefined ? (row.defaultLabel ?? null)        : trimOrNull(input.defaultLabel);
+  const nextParsePattern  = input.defaultParsePattern  === undefined ? (row.defaultParsePattern ?? null) : trimOrNull(input.defaultParsePattern);
+  const nextParseTemplate = input.defaultParseTemplate === undefined ? (row.defaultParseTemplate ?? null) : trimOrNull(input.defaultParseTemplate);
 
   // Mutual exclusion: a metric row points at AT MOST one MIB source —
   // either an uploaded MibFile (defaultMibId) or a built-in standard MIB
@@ -822,6 +948,7 @@ export async function updateMetricRow(
     transform: nextTransform,
     label:     "metric",
   });
+  assertParseFieldsFor(mk, nextSymbol, nextParsePattern, nextParseTemplate);
 
   const updated = await (prisma as any).manufacturerProfileMetric.update({
     where: { id: row.id },
@@ -835,46 +962,54 @@ export async function updateMetricRow(
       defaultMibStdKey: input.defaultMibStdKey === undefined ? undefined : nextStdKey,
       defaultType:      input.defaultType      === undefined ? undefined : nextType,
       defaultTransform: input.defaultTransform === undefined ? undefined : (nextTransform ?? null),
+      defaultAggregate:     input.defaultAggregate     === undefined ? undefined : nextAggregate,
+      defaultLabel:         input.defaultLabel         === undefined ? undefined : nextLabel,
+      defaultParsePattern:  input.defaultParsePattern  === undefined ? undefined : nextParsePattern,
+      defaultParseTemplate: input.defaultParseTemplate === undefined ? undefined : nextParseTemplate,
     },
     include: { overrides: { orderBy: { order: "asc" } } },
   });
   await touchProfile(profileId);
   await refreshProfileCache();
-  return {
-    id:               updated.id,
-    metricKey:        mk,
-    defaultSymbol:    updated.defaultSymbol ?? null,
-    defaultSymbolB:   updated.defaultSymbolB ?? null,
-    defaultMibId:     updated.defaultMibId ?? null,
-    defaultMibStdKey: updated.defaultMibStdKey ?? null,
-    defaultType:      asMetricRowType(updated.defaultType),
-    defaultTransform: readStoredTransform(updated.defaultTransform),
-    overrides: (updated.overrides || []).map((o: any) => ({
-      id:           o.id,
-      modelPattern: o.modelPattern,
-      symbol:       o.symbol,
-      symbolB:      o.symbolB ?? null,
-      mibId:        o.mibId ?? null,
-      mibStdKey:    o.mibStdKey ?? null,
-      type:         asMetricRowType(o.type),
-      transform:    readStoredTransform(o.transform),
-      order:        o.order,
-    })),
-  };
+  return shapeMetricRow(updated);
+}
+
+/**
+ * Profile-level fields: today only `matchPattern`, the "also applies when"
+ * regex consulted when no profile is keyed by an asset's canonical
+ * manufacturer. Null clears it.
+ */
+export async function updateProfile(profileId: string, input: { matchPattern?: string | null }): Promise<ProfileFull> {
+  const existing = await (prisma as any).manufacturerProfile.findUnique({ where: { id: profileId }, select: { id: true } });
+  if (!existing) throw new AppError(404, "Profile not found");
+  if (input.matchPattern !== undefined) {
+    const next = trimOrNull(input.matchPattern);
+    if (next) assertValidModelPattern(next);
+    await (prisma as any).manufacturerProfile.update({ where: { id: profileId }, data: { matchPattern: next } });
+  }
+  await refreshProfileCache();
+  const updated = await getProfile(profileId);
+  if (!updated) throw new AppError(500, "Profile update failed");
+  return updated;
 }
 
 export async function createOverride(
   profileId: string,
   metricKey: string,
   input: {
-    modelPattern: string;
-    symbol?:      string;
-    symbolB?:     string | null;
-    mibId?:       string | null;
-    mibStdKey?:   string | null;
-    type?:        string;
-    transform?:   string | null;
-    order?:       number;
+    assetType?:     string | null;
+    modelPattern?:  string | null;
+    symbol?:        string;
+    symbolB?:       string | null;
+    mibId?:         string | null;
+    mibStdKey?:     string | null;
+    type?:          string;
+    transform?:     string | null;
+    aggregate?:     string | null;
+    label?:         string | null;
+    parsePattern?:  string | null;
+    parseTemplate?: string | null;
+    order?:         number;
   },
 ): Promise<MetricOverrideRow> {
   const mk = asMetricKey(metricKey);
@@ -882,60 +1017,73 @@ export async function createOverride(
     where: { profileId_metricKey: { profileId, metricKey: mk } },
   });
   if (!row) throw new AppError(404, "Metric row not found for this profile");
-  if (!input.modelPattern || !input.modelPattern.trim()) {
-    throw new AppError(400, "modelPattern is required");
-  }
-  assertValidModelPattern(input.modelPattern);
+  const assetType    = asTypeNameOrNull(input.assetType);
+  const modelPattern = trimOrNull(input.modelPattern);
+  assertOverrideScope(assetType, modelPattern);
   const stdKey = asStdMibKeyOrNull(input.mibStdKey ?? null);
   if (input.mibId && stdKey) {
     throw new AppError(400, "mibId and mibStdKey are mutually exclusive");
   }
 
-  const type      = asMetricRowType(input.type ?? "scalar");
-  const symbol    = trimOrNull(input.symbol);
-  const symbolB   = trimOrNull(input.symbolB);
-  const transform = asTransformForType(input.transform ?? null, type);
+  const type          = asMetricRowType(input.type ?? "scalar");
+  const symbol        = trimOrNull(input.symbol);
+  const symbolB       = trimOrNull(input.symbolB);
+  const transform     = asTransformForType(input.transform ?? null, type);
+  const aggregate     = asAggregate(input.aggregate);
+  const label         = trimOrNull(input.label);
+  const parsePattern  = trimOrNull(input.parsePattern);
+  const parseTemplate = trimOrNull(input.parseTemplate);
   validateMetricRowShape({ type, symbol, symbolB, transform, label: "override" });
+  assertParseFieldsFor(mk, symbol, parsePattern, parseTemplate);
 
   const created = await (prisma as any).manufacturerProfileMetricOverride.create({
     data: {
       metricRowId:  row.id,
-      modelPattern: input.modelPattern,
+      assetType,
+      modelPattern,
       symbol:       symbol ?? "",
       symbolB:      type === "double_scalar" ? (symbolB ?? null) : null,
       mibId:        input.mibId ?? null,
       mibStdKey:    stdKey,
       type,
       transform:    transform ?? null,
+      aggregate,
+      label,
+      parsePattern,
+      parseTemplate,
       order:        Number.isFinite(input.order) ? Number(input.order) : 0,
     },
+  }).catch((err: any) => {
+    // The PARTIAL unique index on (metricRowId, assetType) WHERE modelPattern
+    // IS NULL — a second default for a device type that already has one.
+    // Editing the existing row is what the operator wants; say so rather
+    // than surfacing a constraint name.
+    if (err?.code === "P2002") {
+      throw new AppError(409, `This metric already has a default for device type "${assetType}" — edit that row instead`);
+    }
+    throw err;
   });
   await touchProfile(profileId);
   await refreshProfileCache();
-  return {
-    id:           created.id,
-    modelPattern: created.modelPattern,
-    symbol:       created.symbol,
-    symbolB:      created.symbolB ?? null,
-    mibId:        created.mibId ?? null,
-    mibStdKey:    created.mibStdKey ?? null,
-    type:         asMetricRowType(created.type),
-    transform:    readStoredTransform(created.transform),
-    order:        created.order,
-  };
+  return shapeOverride(created);
 }
 
 export async function updateOverride(
   overrideId: string,
   input: {
-    modelPattern?: string;
-    symbol?:       string;
-    symbolB?:      string | null;
-    mibId?:        string | null;
-    mibStdKey?:    string | null;
-    type?:         string;
-    transform?:    string | null;
-    order?:        number;
+    assetType?:     string | null;
+    modelPattern?:  string | null;
+    symbol?:        string;
+    symbolB?:       string | null;
+    mibId?:         string | null;
+    mibStdKey?:     string | null;
+    type?:          string;
+    transform?:     string | null;
+    aggregate?:     string | null;
+    label?:         string | null;
+    parsePattern?:  string | null;
+    parseTemplate?: string | null;
+    order?:         number;
   },
 ): Promise<MetricOverrideRow> {
   const existing = await (prisma as any).manufacturerProfileMetricOverride.findUnique({
@@ -943,6 +1091,7 @@ export async function updateOverride(
     include: { metricRow: true },
   });
   if (!existing) throw new AppError(404, "Override not found");
+  const mk = asMetricKey(existing.metricRow.metricKey);
 
   // Mutual exclusion: an override row points at AT MOST one MIB source.
   const nextMibId  = input.mibId     === undefined ? existing.mibId     : (input.mibId  ?? null);
@@ -952,10 +1101,14 @@ export async function updateOverride(
   if (nextMibId && nextStdKey) {
     throw new AppError(400, "mibId and mibStdKey are mutually exclusive");
   }
-  if (input.modelPattern !== undefined) {
-    if (!input.modelPattern.trim()) throw new AppError(400, "modelPattern is required");
-    assertValidModelPattern(input.modelPattern);
-  }
+  // Scope is validated on the EFFECTIVE pair, so clearing one half is only
+  // allowed while the other still carries the row: blanking the model
+  // pattern on a type-scoped row promotes it to that type's default, and
+  // blanking it on a row with no device type would leave a row matching
+  // nothing — rejected.
+  const nextAssetType    = input.assetType    === undefined ? (existing.assetType ?? null)    : asTypeNameOrNull(input.assetType);
+  const nextModelPattern = input.modelPattern === undefined ? (existing.modelPattern ?? null) : trimOrNull(input.modelPattern);
+  assertOverrideScope(nextAssetType, nextModelPattern);
 
   const nextType      = input.type      === undefined ? asMetricRowType(existing.type) : asMetricRowType(input.type);
   const nextSymbol    = input.symbol    === undefined ? (existing.symbol ?? null)     : trimOrNull(input.symbol);
@@ -963,6 +1116,10 @@ export async function updateOverride(
   const nextTransform = input.transform === undefined
     ? readStoredTransform(existing.transform)
     : asTransformForType(input.transform, nextType);
+  const nextAggregate     = input.aggregate     === undefined ? asAggregate(existing.aggregate) : asAggregate(input.aggregate);
+  const nextLabel         = input.label         === undefined ? (existing.label ?? null)         : trimOrNull(input.label);
+  const nextParsePattern  = input.parsePattern  === undefined ? (existing.parsePattern ?? null)  : trimOrNull(input.parsePattern);
+  const nextParseTemplate = input.parseTemplate === undefined ? (existing.parseTemplate ?? null) : trimOrNull(input.parseTemplate);
 
   validateMetricRowShape({
     type:      nextType,
@@ -971,33 +1128,36 @@ export async function updateOverride(
     transform: nextTransform,
     label:     "override",
   });
+  assertParseFieldsFor(mk, nextSymbol, nextParsePattern, nextParseTemplate);
 
   const updated = await (prisma as any).manufacturerProfileMetricOverride.update({
     where: { id: overrideId },
     data: {
-      modelPattern: input.modelPattern === undefined ? undefined : input.modelPattern,
-      symbol:       input.symbol       === undefined ? undefined : (nextSymbol ?? ""),
-      symbolB:      nextType === "double_scalar" ? (nextSymbolB ?? null) : null,
-      mibId:        input.mibId        === undefined ? undefined : (input.mibId ?? null),
-      mibStdKey:    input.mibStdKey    === undefined ? undefined : nextStdKey,
-      type:         input.type         === undefined ? undefined : nextType,
-      transform:    input.transform    === undefined ? undefined : (nextTransform ?? null),
-      order:        input.order        === undefined ? undefined : Number(input.order),
+      assetType:     input.assetType     === undefined ? undefined : nextAssetType,
+      modelPattern:  input.modelPattern  === undefined ? undefined : nextModelPattern,
+      symbol:        input.symbol        === undefined ? undefined : (nextSymbol ?? ""),
+      symbolB:       nextType === "double_scalar" ? (nextSymbolB ?? null) : null,
+      mibId:         input.mibId         === undefined ? undefined : (input.mibId ?? null),
+      mibStdKey:     input.mibStdKey     === undefined ? undefined : nextStdKey,
+      type:          input.type          === undefined ? undefined : nextType,
+      transform:     input.transform     === undefined ? undefined : (nextTransform ?? null),
+      aggregate:     input.aggregate     === undefined ? undefined : nextAggregate,
+      label:         input.label         === undefined ? undefined : nextLabel,
+      parsePattern:  input.parsePattern  === undefined ? undefined : nextParsePattern,
+      parseTemplate: input.parseTemplate === undefined ? undefined : nextParseTemplate,
+      order:         input.order         === undefined ? undefined : Number(input.order),
     },
+  }).catch((err: any) => {
+    // Same partial unique index as createOverride — reached here by editing
+    // a row INTO a device-type default that already exists.
+    if (err?.code === "P2002") {
+      throw new AppError(409, `This metric already has a default for device type "${nextAssetType}" — edit that row instead`);
+    }
+    throw err;
   });
   await touchProfile(existing.metricRow.profileId);
   await refreshProfileCache();
-  return {
-    id:           updated.id,
-    modelPattern: updated.modelPattern,
-    symbol:       updated.symbol,
-    symbolB:      updated.symbolB ?? null,
-    mibId:        updated.mibId ?? null,
-    mibStdKey:    updated.mibStdKey ?? null,
-    type:         asMetricRowType(updated.type),
-    transform:    readStoredTransform(updated.transform),
-    order:        updated.order,
-  };
+  return shapeOverride(updated);
 }
 
 export async function deleteOverride(overrideId: string): Promise<void> {

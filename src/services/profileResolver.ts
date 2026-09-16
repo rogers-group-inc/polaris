@@ -55,6 +55,9 @@ export function resolveDbMetric(metric: MetricRow | undefined, model: string | n
   if (!metric) return null;
   const modelStr = model ?? "";
   for (const o of (metric.overrides || [])) {
+    // A device-type default (assetType set, no pattern) is a Phase 4 row this
+    // pre-swap resolver does not read; `pickDbProfile` does. Skip, don't match.
+    if (!o.modelPattern) continue;
     try {
       if (new RegExp(o.modelPattern, "i").test(modelStr)) {
         return {

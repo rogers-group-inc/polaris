@@ -16,16 +16,22 @@ import { pickVendorProfileMerged, resolveDbMetric } from "../../src/services/pro
 import type { ProfileFull, MetricRow, MetricOverrideRow } from "../../src/services/manufacturerProfileService.js";
 
 function ov(modelPattern: string, symbol: string, extra: Partial<MetricOverrideRow> = {}): MetricOverrideRow {
-  return { id: `o-${symbol}`, modelPattern, symbol, symbolB: null, mibId: null, mibStdKey: null, type: "scalar", transform: null, order: 0, ...extra };
+  return {
+    id: `o-${symbol}`, assetType: null, modelPattern, symbol, symbolB: null, mibId: null, mibStdKey: null, type: "scalar", transform: null,
+    aggregate: "none", label: null, parsePattern: null, parseTemplate: null, order: 0, ...extra,
+  };
 }
 function row(metricKey: MetricRow["metricKey"], extra: Partial<MetricRow> = {}): MetricRow {
-  return { id: `m-${metricKey}`, metricKey, defaultSymbol: null, defaultSymbolB: null, defaultMibId: null, defaultMibStdKey: null, defaultType: "scalar", defaultTransform: null, overrides: [], ...extra };
+  return {
+    id: `m-${metricKey}`, metricKey, defaultSymbol: null, defaultSymbolB: null, defaultMibId: null, defaultMibStdKey: null, defaultType: "scalar", defaultTransform: null,
+    defaultAggregate: "none", defaultLabel: null, defaultParsePattern: null, defaultParseTemplate: null, overrides: [], ...extra,
+  };
 }
 
 // The Fortinet profile exactly as the seed stamps it: FortiOS defaults on the
 // rows, FortiSwitch / FortiAP as model-pattern overrides.
 const FORTINET: ProfileFull = {
-  id: "p-fortinet", manufacturer: "Fortinet", createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
+  id: "p-fortinet", manufacturer: "Fortinet", matchPattern: null, createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
   metrics: [
     row("cpu", { defaultSymbol: "fgSysCpuUsage", overrides: [ov("FortiSwitch", "fsSysCpuUsage"), ov("FortiAP", "fapCpuUsage")] }),
     row("memory", { defaultSymbol: "fgSysMemUsage", overrides: [
@@ -38,7 +44,7 @@ const FORTINET: ProfileFull = {
   ],
 };
 const CISCO: ProfileFull = {
-  id: "p-cisco", manufacturer: "Cisco", createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
+  id: "p-cisco", manufacturer: "Cisco", matchPattern: null, createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
   metrics: [
     row("cpu", { defaultSymbol: "cpmCPUTotal5secRev", defaultType: "table" }),
     row("memory", { defaultSymbol: "ciscoMemoryPoolUsed", defaultSymbolB: "ciscoMemoryPoolFree", defaultType: "double_scalar", defaultTransform: "a_over_a_plus_b_as_percent" }),

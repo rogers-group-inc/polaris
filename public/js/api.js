@@ -1343,6 +1343,7 @@ const api = {
     listManufacturerSuggestions: ()      => request("GET",    "/server-settings/manufacturer-profiles/suggestions"),
     getManufacturerProfile:      (id)    => request("GET",    `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}`),
     createManufacturerProfile:   (body)  => request("POST",   "/server-settings/manufacturer-profiles", body),
+    updateManufacturerProfile:   (id, body) => request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}`, body),
     deleteManufacturerProfile:   (id)    => request("DELETE", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}`),
     updateProfileMetric:         (id, metricKey, body) =>
       request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}/metrics/${encodeURIComponent(metricKey)}`, body),

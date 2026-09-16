@@ -8690,7 +8690,12 @@ async function deleteApiToken(id, name) {
 // for now we just surface the widget count per profile.
 // ────────────────────────────────────────────────────────────────────────
 
+// Keys mirror METRIC_KEYS in src/services/manufacturerProfileService.ts. The
+// ORDER rows render in comes from the server (it sorts by that list, which
+// follows the asset details slide-over: identity first, then the System tab's
+// sections, then the tabs); this map only supplies labels.
 var METRIC_KEY_LABELS = {
+  model:             "Model identity",
   cpu:               "CPU",
   memory:            "Memory",
   temperature:       "Hardware Sensors",
@@ -8763,15 +8768,17 @@ function renderProfileDetail(detail) {
   var html = '<div style="padding:8px 12px 12px;border-top:1px solid var(--color-border)">';
   html += '<div style="font-size:0.78rem;color:var(--color-text-secondary);margin-bottom:6px">' +
     'Each row is one System-tab metric. The <b>Default</b> column is what Polaris walks for ' +
-    'every asset under this profile; per-model exceptions fall under each row.' +
+    'every asset under this profile; a device type narrows that, and a model regex narrows it again.' +
   '</div>';
+  html += _mfgMatchPatternHTML(detail);
   html += '<table class="ip-table" style="margin-bottom:8px"><thead><tr>' +
     '<th style="width:8%">Metric</th>' +
-    '<th style="width:12%">Model</th>' +
-    '<th style="width:18%">MIB</th>' +
+    '<th style="width:10%">Device type</th>' +
+    '<th style="width:11%">Model</th>' +
+    '<th style="width:16%">MIB</th>' +
     '<th style="width:9%">Type</th>' +
     '<th>Symbol</th>' +
-    '<th style="width:12%">Transform</th>' +
+    '<th style="width:11%">Transform</th>' +
     '<th style="width:140px">Action</th>' +
   '</tr></thead><tbody>';
 
@@ -8780,11 +8787,12 @@ function renderProfileDetail(detail) {
     var editing = !!_mfgProfileMetricEdit[editKey];
     html += '<tr data-profile-id="' + escapeHtml(detail.id) + '" data-metric-key="' + escapeHtml(m.metricKey) + '">' +
       '<td><b>' + escapeHtml(METRIC_KEY_LABELS[m.metricKey] || m.metricKey) + '</b></td>' +
-      // MODEL column for the default row — "DEFAULT" badge marks the
-      // profile-wide entry the resolver falls back to when no per-model
-      // override matches. Override rows fill this column with their model
-      // pattern instead.
-      '<td><span style="font-size:0.74rem;font-weight:600;letter-spacing:0.04em;color:var(--color-text-tertiary)">DEFAULT</span></td>';
+      // DEVICE TYPE + MODEL columns for the profile-wide default row: the
+      // entry the resolver falls back to when no device-type default and no
+      // per-model exception matches, so both halves of its scope read "any".
+      // Scoped rows fill these columns with their own device type / pattern.
+      '<td>' + _mfgScopeBadge("ANY") + '</td>' +
+      '<td>' + _mfgScopeBadge("DEFAULT") + '</td>';
     if (editing) {
       // Use the row's current MIB selection (if the operator has changed
       // it during this edit session it lives in the shadow store via the
@@ -8805,7 +8813,8 @@ function renderProfileDetail(detail) {
       html +=
         '<td>' + renderMibSelect(editMibId, "mfg-edit-mib", detail.manufacturer) + '</td>' +
         '<td>' + renderTypeSelect(editType, "mfg-edit-type") + '</td>' +
-        '<td>' + _symbolCellEditHTML(editType, editMibId, m.defaultSymbol, m.defaultSymbolB, "mfg-edit-sym") + '</td>' +
+        '<td>' + _symbolCellEditHTML(editType, editMibId, m.defaultSymbol, m.defaultSymbolB, "mfg-edit-sym") +
+          _mfgExtraEditHTML(m.metricKey, "mfg-edit", { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate }) + '</td>' +
         '<td>' + renderTransformSelect(m.defaultTransform, "mfg-edit-transform", editType) + '</td>' +
         '<td><button class="btn btn-sm btn-primary mfg-metric-save">Save</button> ' +
           '<button class="btn btn-sm mfg-metric-cancel">Cancel</button></td>';
@@ -8820,18 +8829,18 @@ function renderProfileDetail(detail) {
       html +=
         '<td>' + mibDisplay + '</td>' +
         '<td><span style="font-size:0.78rem">' + escapeHtml(typeLabel) + '</span></td>' +
-        '<td>' + defaultDisplay + '</td>' +
+        '<td>' + defaultDisplay + _mfgExtraViewHTML(m.metricKey, { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate }) + '</td>' +
         '<td><span style="font-size:0.78rem;color:var(--color-text-secondary)">' + (m.defaultTransform ? escapeHtml(transformLabel(m.defaultTransform)) : "—") + '</span></td>' +
         '<td><button class="btn btn-sm mfg-metric-edit">Edit</button></td>';
     }
     html += '</tr>';
 
-    // Override rows hang under the metric row.
-    if (m.overrides && m.overrides.length > 0) {
-      m.overrides.forEach(function (o) {
-        html += renderOverrideRow(detail.id, m.metricKey, o, detail.manufacturer);
-      });
-    }
+    // Scoped rows hang under the metric row, grouped so the hierarchy reads
+    // top-down: each device type's default followed by that type's model
+    // exceptions, then the model exceptions that apply to any device type.
+    _mfgGroupOverrides(m.overrides).forEach(function (o) {
+      html += renderOverrideRow(detail.id, m.metricKey, o, detail.manufacturer);
+    });
     // Add-override form — single inline row (Model · Symbol · MIB · Type ·
     // Transform · Add) sized so wrap is rare on the typical Identification
     // tab width. Each cell of the parent table gets its own field so the
@@ -8839,18 +8848,24 @@ function renderProfileDetail(detail) {
     var newMibId = _mfgNewOverrideMibId(detail.id, m.metricKey) || null;
     // Add-override row layout matches the override view + edit rows:
     //   METRIC (blank) · MODEL (↳ add label + pattern input) · MIB · TYPE · SYMBOL · TRANSFORM · ACTION
+    // A device type with no pattern adds that type's DEFAULT; a pattern with
+    // no device type adds a model exception for every type; both together
+    // add a model exception under that type.
+    var newTypeCell = '<td>' + _mfgDeviceTypeSelect(null, "mfg-new-override-assettype") + '</td>';
     var newPatternCell =
       '<td style="padding-left:20px"><div style="display:flex;align-items:center;gap:4px">' +
         '<span style="color:var(--color-text-tertiary);font-size:0.74rem">↳ add</span>' +
-        '<input type="text" class="mfg-new-override-pattern" placeholder="Model regex" style="flex:1;font-size:0.78rem">' +
+        '<input type="text" class="mfg-new-override-pattern" placeholder="Model regex (optional)" style="flex:1;font-size:0.78rem">' +
       '</div></td>';
     var newType = _mfgEditTypeFor("new:" + detail.id + ":" + m.metricKey, "scalar");
     html += '<tr class="mfg-add-override-row" data-profile-id="' + escapeHtml(detail.id) + '" data-metric-key="' + escapeHtml(m.metricKey) + '" style="background:var(--color-bg-primary)">' +
       '<td></td>' +
+      newTypeCell +
       newPatternCell +
       '<td>' + renderMibSelect(newMibId, "mfg-new-override-mib", detail.manufacturer, true) + '</td>' +
       '<td>' + renderTypeSelect(newType, "mfg-new-override-type") + '</td>' +
-      '<td>' + _symbolCellEditHTML(newType, newMibId, "", "", "mfg-new-override-sym") + '</td>' +
+      '<td>' + _symbolCellEditHTML(newType, newMibId, "", "", "mfg-new-override-sym") +
+        _mfgExtraEditHTML(m.metricKey, "mfg-new-override", {}) + '</td>' +
       '<td>' + renderTransformSelect(null, "mfg-new-override-transform", newType) + '</td>' +
       '<td><button class="btn btn-sm mfg-override-add">Add</button></td>' +
     '</tr>';
@@ -9314,36 +9329,55 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
     var oMibId = _mfgOverrideEditMibId(o.id);
     if (oMibId === undefined) oMibId = joinMibSelection(o.mibId, o.mibStdKey); // first render: persisted value
     // Column order matches the metric default row above:
-    //   METRIC (blank) · MODEL (↳ pattern input) · MIB · TYPE · SYMBOL · TRANSFORM · ACTION
+    //   METRIC (blank) · DEVICE TYPE (select) · MODEL (↳ pattern input) ·
+    //   MIB · TYPE · SYMBOL · TRANSFORM · ACTION
+    // Clearing the pattern on a type-scoped row promotes it to that type's
+    // default; clearing it on an any-type row is refused by the server,
+    // since the row would then match nothing.
+    var scopeTypeCell = '<td>' + _mfgDeviceTypeSelect(o.assetType || null, "mfg-edit-override-assettype") + '</td>';
     var patternCell =
       '<td style="padding-left:20px"><div style="display:flex;align-items:center;gap:4px">' +
         '<span style="color:var(--color-text-tertiary);font-size:0.78rem">↳</span>' +
-        '<input type="text" class="mfg-edit-override-pattern" value="' + escapeHtml(o.modelPattern) + '" placeholder="Model regex" style="flex:1;font-size:0.78rem">' +
+        '<input type="text" class="mfg-edit-override-pattern" value="' + escapeHtml(o.modelPattern || "") + '" placeholder="Model regex (optional)" style="flex:1;font-size:0.78rem">' +
       '</div></td>';
     var oEditType = _mfgEditTypeFor("override:" + o.id, o.type);
     return head +
+      scopeTypeCell +
       patternCell +
       '<td>' + renderMibSelect(oMibId, "mfg-edit-override-mib", manufacturer) + '</td>' +
       '<td>' + renderTypeSelect(oEditType, "mfg-edit-override-type") + '</td>' +
-      '<td>' + _symbolCellEditHTML(oEditType, oMibId, o.symbol, o.symbolB, "mfg-edit-override-sym") + '</td>' +
+      '<td>' + _symbolCellEditHTML(oEditType, oMibId, o.symbol, o.symbolB, "mfg-edit-override-sym") +
+        _mfgExtraEditHTML(metricKey, "mfg-edit-override", { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate }) + '</td>' +
       '<td>' + renderTransformSelect(o.transform, "mfg-edit-override-transform", oEditType) + '</td>' +
       '<td><button class="btn btn-sm btn-primary mfg-override-save">Save</button> ' +
         '<button class="btn btn-sm mfg-override-cancel">Cancel</button></td>' +
     '</tr>';
   }
   var mibLabel = _mfgMibCellHTML(o.readiness, o.mibId, o.mibStdKey);
-  // MODEL column carries the regex literal (e.g. "FortiSwitch") with a
-  // leading ↳ to nest it visually under its default row above.
-  var modelCell =
-    '<td style="padding-left:20px"><span style="color:var(--color-text-tertiary);font-size:0.78rem">↳</span> ' +
-      '<code style="font-size:0.8rem">' + escapeHtml(o.modelPattern) + '</code>' +
-    '</td>';
+  // DEVICE TYPE + MODEL columns carry the row's scope, indented to show its
+  // tier: a device-type default sits one level under the profile default, a
+  // model exception one level under the type it belongs to.
+  var isTypeDefault = !!o.assetType && !o.modelPattern;
+  var deviceCell = o.assetType
+    ? '<td style="padding-left:' + (isTypeDefault ? 20 : 32) + 'px">' +
+        '<span style="color:var(--color-text-tertiary);font-size:0.78rem">↳</span> ' +
+        '<span style="font-size:0.78rem;font-weight:600">' + escapeHtml(_dtLabelFor(o.assetType)) + '</span>' +
+      '</td>'
+    : '<td>' + _mfgScopeBadge("ANY") + '</td>';
+  var modelCell = o.modelPattern
+    ? '<td style="padding-left:' + (o.assetType ? 32 : 20) + 'px">' +
+        '<span style="color:var(--color-text-tertiary);font-size:0.78rem">↳</span> ' +
+        '<code style="font-size:0.8rem">' + escapeHtml(o.modelPattern) + '</code>' +
+      '</td>'
+    : '<td style="padding-left:20px">' + _mfgScopeBadge("DEFAULT") + '</td>';
   var typeLabelO = _MFG_TYPE_LABELS[o.type] || o.type;
   return head +
+    deviceCell +
     modelCell +
     '<td><span style="font-size:0.78rem">' + mibLabel + '</span></td>' +
     '<td><span style="font-size:0.78rem">' + escapeHtml(typeLabelO) + '</span></td>' +
-    '<td>' + _symbolCellViewHTML(o.type, o.symbol, o.symbolB) + '</td>' +
+    '<td>' + _symbolCellViewHTML(o.type, o.symbol, o.symbolB) +
+      _mfgExtraViewHTML(metricKey, { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate }) + '</td>' +
     '<td><span style="font-size:0.78rem;color:var(--color-text-secondary)">' + (o.transform ? escapeHtml(transformLabel(o.transform)) : "—") + '</span></td>' +
     '<td><button class="btn btn-sm mfg-override-edit">Edit</button> ' +
       '<button class="btn btn-sm btn-danger mfg-override-del">Del</button></td>' +
@@ -9388,6 +9422,194 @@ function joinMibSelection(mibId, mibStdKey) {
   if (mibStdKey) return mibStdKey;
   if (mibId)     return mibId;
   return "";
+}
+
+// ─── "Also applies when" (the profile's match pattern) ─────────────────
+//
+// A profile is normally found by its CANONICAL manufacturer, and that is the
+// only lookup for an asset whose manufacturer the alias map already folds
+// into this profile's name. `matchPattern` is the second chance, consulted
+// ONLY when no profile is keyed by the asset's manufacturer, and tested
+// case-insensitively against `manufacturer os pinnedMibModuleName` — so it
+// covers the three cases the hardcoded vendor constant's regex covered:
+//   · an alias spelling the seed did not key ("Aruba", "HPE" → the HP profile)
+//   · OS-only identity (SNMP reports "Cisco IOS" and no manufacturer)
+//   · a MIB-pin redirect (the asset's pinned MIB module names the vendor)
+// Empty is the normal state for an operator-made profile; the seeded ones
+// carry the constant's alternations, backfilled by the Phase 4 migration.
+function _mfgMatchPatternHTML(detail) {
+  var v = detail.matchPattern || "";
+  return '<div class="mfg-profile-scope" data-profile-id="' + escapeHtml(detail.id) + '" ' +
+      'style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
+    '<span style="font-size:0.78rem;color:var(--color-text-secondary);white-space:nowrap">Also applies when</span>' +
+    '<input type="text" class="mfg-matchpattern" value="' + escapeHtml(v) + '" ' +
+      'placeholder="Manufacturer / OS regex, e.g. aruba|hpe|procurve" ' +
+      'title="Case-insensitive regex tested against the asset\'s manufacturer, OS and pinned MIB module — used only when no profile is keyed by its manufacturer" ' +
+      'style="flex:1;min-width:200px;font-size:0.78rem">' +
+    '<button class="btn btn-sm mfg-matchpattern-save">Save</button>' +
+    '<span style="font-size:0.72rem;color:var(--color-text-tertiary)">' +
+      'Only consulted when no profile matches the asset\'s manufacturer. Leave blank for none.' +
+    '</span>' +
+  '</div>';
+}
+
+async function saveMatchPattern(el) {
+  var box = el.closest(".mfg-profile-scope");
+  if (!box) return;
+  var profileId = box.getAttribute("data-profile-id");
+  var input = box.querySelector(".mfg-matchpattern");
+  var value = ((input || {}).value || "").trim();
+  try {
+    // Null clears it — an empty string would store a regex that matches
+    // everything, which is the opposite of "no second chance".
+    var resp = await api.serverSettings.updateManufacturerProfile(profileId, { matchPattern: value || null });
+    // Same refresh shape as every other write on this card: fold the returned
+    // profile into the detail cache, then re-render from it.
+    if (resp && resp.profile) _mfgProfileDetail[profileId] = resp.profile;
+    showToast(value ? "Match pattern saved" : "Match pattern cleared");
+    renderIdentificationTab();
+  } catch (err) {
+    showToast(err.message || "Save match pattern failed", "error");
+  }
+}
+
+// ─── Scope helpers (device type + model pattern) ───────────────────────
+//
+// A scoped row under a metric carries (assetType, modelPattern) and at least
+// one of the two. The three shapes render as three tiers:
+//   assetType only   → that DEVICE TYPE'S DEFAULT, one indent in
+//   both             → a model exception under that type, two indents in
+//   modelPattern only→ a model exception for any device type
+// Identical wording lives in manufacturerProfileService's MetricOverrideRow.
+
+// The small uppercase marker the DEFAULT / ANY cells use, so the profile-wide
+// row and the device-type rows read as the same kind of thing.
+function _mfgScopeBadge(text) {
+  return '<span style="font-size:0.74rem;font-weight:600;letter-spacing:0.04em;color:var(--color-text-tertiary)">' +
+    escapeHtml(text) + '</span>';
+}
+
+// Order the scoped rows into the hierarchy the table draws: per device type
+// (alphabetical by the label the operator sees), that type's default first
+// and its model exceptions after, then the any-type model exceptions last.
+// Within a tier the server's `order` is preserved — it decides which regex
+// wins at probe time, so the page must not show a different sequence.
+function _mfgGroupOverrides(overrides) {
+  var rows = (overrides || []).slice();
+  var types = [];
+  rows.forEach(function (o) {
+    if (o.assetType && types.indexOf(o.assetType) === -1) types.push(o.assetType);
+  });
+  types.sort(function (a, b) { return _dtLabelFor(a).localeCompare(_dtLabelFor(b)); });
+  var out = [];
+  types.forEach(function (t) {
+    rows.forEach(function (o) { if (o.assetType === t && !o.modelPattern) out.push(o); });
+    rows.forEach(function (o) { if (o.assetType === t && o.modelPattern) out.push(o); });
+  });
+  rows.forEach(function (o) { if (!o.assetType) out.push(o); });
+  return out;
+}
+
+// Device-type picker, drawn from the asset-type REGISTRY (`_assetTypes`, the
+// same list the Device Types card edits) rather than a hardcoded four, so a
+// custom type an operator added can carry a default too. "Any device type"
+// is the empty value.
+function _mfgDeviceTypeSelect(selected, cls) {
+  var types = (_assetTypes || []).slice().sort(function (a, b) {
+    return (a.label || a.name || "").localeCompare(b.label || b.name || "");
+  });
+  var html = '<select class="' + cls + '" style="width:100%;font-size:0.78rem">' +
+    '<option value=""' + (selected ? '' : ' selected') + '>Any device type</option>';
+  var known = false;
+  types.forEach(function (t) {
+    if (t.name === selected) known = true;
+    html += '<option value="' + escapeHtml(t.name) + '"' + (t.name === selected ? ' selected' : '') + '>' +
+      escapeHtml(t.label || t.name) + '</option>';
+  });
+  // A stored type the registry no longer carries (renamed or deleted) must
+  // still be selectable, or opening the editor would silently rewrite the
+  // row's scope to "any" on the next save.
+  if (selected && !known) {
+    html += '<option value="' + escapeHtml(selected) + '" selected>' + escapeHtml(selected) + ' (unknown)</option>';
+  }
+  return html + '</select>';
+}
+
+// ─── The row facts the hardcoded profile used to own ───────────────────
+//
+// Three metric-specific extras live under the Symbol cell, keyed by metric:
+//   cpu / memory          → aggregate: how a walked subtree collapses
+//                           (none | avg | sum) — Cisco pools are summed,
+//                           Juniper buffers averaged.
+//   storage / temperature → label: the sample row's name ("flash" for a
+//                           FortiSwitch's storage; "System" for a FortiAP's
+//                           one temperature).
+//   model                 → parse pattern + template turning the raw vendor
+//                           scalar into Asset.model ("FortiSwitch $1").
+// Every input carries an `mfg-<prefix>-…` class, which is what the
+// form-preserve snapshot keys on, so nothing typed here is lost to a chained
+// re-render.
+
+var _MFG_AGGREGATE_LABELS = { none: "as read", avg: "average rows", sum: "sum rows" };
+
+function _mfgExtrasFor(metricKey) {
+  if (metricKey === "cpu" || metricKey === "memory") return "aggregate";
+  if (metricKey === "storage" || metricKey === "temperature") return "label";
+  if (metricKey === "model") return "parse";
+  return null;
+}
+
+function _mfgExtraEditHTML(metricKey, prefix, vals) {
+  var kind = _mfgExtrasFor(metricKey);
+  vals = vals || {};
+  var small = 'style="width:100%;font-size:0.74rem;margin-top:3px"';
+  if (kind === "aggregate") {
+    var cur = vals.aggregate || "none";
+    var html = '<select class="' + prefix + '-aggregate" ' + small + ' title="How a walked subtree collapses to one reading">';
+    ["none", "avg", "sum"].forEach(function (k) {
+      html += '<option value="' + k + '"' + (cur === k ? ' selected' : '') + '>walk: ' + _MFG_AGGREGATE_LABELS[k] + '</option>';
+    });
+    return html + '</select>';
+  }
+  if (kind === "label") {
+    return '<input type="text" class="' + prefix + '-label" value="' + escapeHtml(vals.label || "") + '" placeholder="Row label (e.g. flash, System)" ' + small + '>';
+  }
+  if (kind === "parse") {
+    return '<input type="text" class="' + prefix + '-parsepattern" value="' + escapeHtml(vals.parsePattern || "") + '" placeholder="Parse regex with (capture), e.g. ^(?!v\\d)(.+?)[-\\s]v\\d" ' + small + '>' +
+      '<input type="text" class="' + prefix + '-parsetemplate" value="' + escapeHtml(vals.parseTemplate || "") + '" placeholder="Template with $1, e.g. FortiSwitch $1" ' + small + '>';
+  }
+  return "";
+}
+
+function _mfgExtraViewHTML(metricKey, vals) {
+  var kind = _mfgExtrasFor(metricKey);
+  vals = vals || {};
+  var chip = 'style="display:inline-block;margin-top:3px;font-size:0.7rem;color:var(--color-text-secondary)"';
+  if (kind === "aggregate" && vals.aggregate && vals.aggregate !== "none") {
+    return '<div ' + chip + '>walk: ' + escapeHtml(_MFG_AGGREGATE_LABELS[vals.aggregate] || vals.aggregate) + '</div>';
+  }
+  if (kind === "label" && vals.label) {
+    return '<div ' + chip + '>label: ' + escapeHtml(vals.label) + '</div>';
+  }
+  if (kind === "parse" && (vals.parsePattern || vals.parseTemplate)) {
+    return '<div ' + chip + '>parse: <code>' + escapeHtml(vals.parsePattern || "") + '</code>' +
+      (vals.parseTemplate ? ' → <code>' + escapeHtml(vals.parseTemplate) + '</code>' : '') + '</div>';
+  }
+  return "";
+}
+
+// Read the extras back out of a row for the save payload. Absent controls
+// (a metric with no extras) come back null / "none", which the server treats
+// as "leave as is" on the fields it does not own.
+function _mfgReadExtras(tr, prefix, metricKey) {
+  var kind = _mfgExtrasFor(metricKey);
+  var val = function (suffix) { var el = tr.querySelector("." + prefix + "-" + suffix); return el ? (el.value || "").trim() : ""; };
+  return {
+    aggregate:     kind === "aggregate" ? (val("aggregate") || "none") : "none",
+    label:         kind === "label"     ? (val("label") || null) : null,
+    parsePattern:  kind === "parse"     ? (val("parsepattern") || null) : null,
+    parseTemplate: kind === "parse"     ? (val("parsetemplate") || null) : null,
+  };
 }
 
 // ─── Readiness rendering ────────────────────────────────────────────────
@@ -9736,6 +9958,9 @@ function wireManufacturerProfileControls() {
     var header = target.closest(".mfg-profile-header");
     if (header) return toggleProfileExpand(header.parentElement.getAttribute("data-profile-id"));
 
+    var matchSaveBtn = target.closest(".mfg-matchpattern-save");
+    if (matchSaveBtn) return saveMatchPattern(matchSaveBtn);
+
     var editBtn = target.closest(".mfg-metric-edit");
     if (editBtn) return beginMetricEdit(editBtn.closest("tr"));
 
@@ -9961,7 +10186,7 @@ function _widgetCardKey(cardEl) {
 /** The editing container an element belongs to (widget card or table row). */
 function _mfgEditContainerOf(el) {
   if (!el || !el.closest) return null;
-  return el.closest(".mfg-widget-edit-card, .mfg-widget-add-card, tr");
+  return el.closest(".mfg-widget-edit-card, .mfg-widget-add-card, .mfg-profile-scope, tr");
 }
 
 /** Stable identity for a container, matching the handlers' shadow-store keys so
@@ -9971,6 +10196,12 @@ function _mfgEditContainerKey(container) {
   if (container.classList.contains("mfg-widget-edit-card") ||
       container.classList.contains("mfg-widget-add-card")) {
     return _widgetCardKey(container);
+  }
+  // The profile's "also applies when" box is a per-profile editor with no
+  // metric key — an unsaved pattern must survive a re-render kicked off by
+  // any row below it, so it gets its own container identity.
+  if (container.classList.contains("mfg-profile-scope")) {
+    return "profile:" + container.getAttribute("data-profile-id");
   }
   var ovr = container.getAttribute("data-override-id");
   if (ovr) return "override:" + ovr;
@@ -10023,7 +10254,7 @@ function _mfgRerenderPreserving(el) {
 /** Every open editing container's live values, keyed by container identity. */
 function _mfgSnapshotAllEditors() {
   var snap = {};
-  document.querySelectorAll(".mfg-widget-edit-card, .mfg-widget-add-card, tr[data-metric-key], tr[data-override-id]")
+  document.querySelectorAll(".mfg-widget-edit-card, .mfg-widget-add-card, .mfg-profile-scope, tr[data-metric-key], tr[data-override-id]")
     .forEach(function (c) {
       var key = _mfgEditContainerKey(c);
       if (!key) return;
@@ -10036,7 +10267,7 @@ function _mfgSnapshotAllEditors() {
 /** Write a snapshot back into whichever containers now carry those keys. */
 function _mfgRestoreEditors(snap) {
   if (!snap) return;
-  document.querySelectorAll(".mfg-widget-edit-card, .mfg-widget-add-card, tr[data-metric-key], tr[data-override-id]")
+  document.querySelectorAll(".mfg-widget-edit-card, .mfg-widget-add-card, .mfg-profile-scope, tr[data-metric-key], tr[data-override-id]")
     .forEach(function (c) {
       var vals = snap[_mfgEditContainerKey(c)];
       if (!vals) return;
@@ -10302,6 +10533,7 @@ async function saveMetricEdit(tr) {
     showToast("Both Symbol A and Symbol B are required for double scalar", "error");
     return;
   }
+  var extras = _mfgReadExtras(tr, "mfg-edit", metricKey);
   var payload = {
     defaultSymbol:    pair.symbol || null,
     defaultSymbolB:   type === "double_scalar" ? (pair.symbolB || null) : null,
@@ -10309,6 +10541,10 @@ async function saveMetricEdit(tr) {
     defaultMibStdKey: mibSplit.mibStdKey,
     defaultType:      type,
     defaultTransform: transform || null,
+    defaultAggregate:     extras.aggregate,
+    defaultLabel:         extras.label,
+    defaultParsePattern:  extras.parsePattern,
+    defaultParseTemplate: extras.parseTemplate,
   };
   try {
     var resp = await api.serverSettings.updateProfileMetric(profileId, metricKey, payload);
@@ -10329,25 +10565,37 @@ async function addOverride(tr) {
   var profileId = tr.getAttribute("data-profile-id");
   var metricKey = tr.getAttribute("data-metric-key");
   var pattern   = (tr.querySelector(".mfg-new-override-pattern")   || {}).value || "";
+  var devType   = (tr.querySelector(".mfg-new-override-assettype") || {}).value || "";
   var transform = (tr.querySelector(".mfg-new-override-transform") || {}).value || "";
   var mibSel    = (tr.querySelector(".mfg-new-override-mib")       || {}).value || "";
   var type      = (tr.querySelector(".mfg-new-override-type")      || {}).value || "scalar";
   var mibSplit  = splitMibSelection(mibSel);
-  if (!pattern.trim()) { showToast("Model regex is required", "error"); return; }
+  // Scope rule, mirrored from the server: a row needs a device type, a model
+  // pattern, or both. Neither would match anything.
+  if (!pattern.trim() && !devType) {
+    showToast("Pick a device type, a model regex, or both", "error");
+    return;
+  }
   var pair = _readSymbolPair(tr, "mfg-new-override-sym", type);
-  if (!pair.symbol) { showToast("Pattern and Symbol A are required", "error"); return; }
+  if (!pair.symbol) { showToast("Symbol A is required", "error"); return; }
   if (type === "double_scalar" && !pair.symbolB) {
     showToast("Symbol B is required for double scalar", "error");
     return;
   }
+  var extras = _mfgReadExtras(tr, "mfg-new-override", metricKey);
   var payload = {
-    modelPattern: pattern.trim(),
+    assetType:    devType || null,
+    modelPattern: pattern.trim() || null,
     symbol:       pair.symbol,
     symbolB:      type === "double_scalar" ? pair.symbolB : null,
     mibId:        mibSplit.mibId,
     mibStdKey:    mibSplit.mibStdKey,
     type:         type,
     transform:    transform || null,
+    aggregate:     extras.aggregate,
+    label:         extras.label,
+    parsePattern:  extras.parsePattern,
+    parseTemplate: extras.parseTemplate,
   };
   try {
     var resp = await api.serverSettings.createProfileMetricOverride(profileId, metricKey, payload);
@@ -10383,25 +10631,35 @@ async function saveOverrideEdit(tr) {
   var metricKey  = tr.getAttribute("data-metric-key");
   var overrideId = tr.getAttribute("data-override-id");
   var pattern    = (tr.querySelector(".mfg-edit-override-pattern")   || {}).value || "";
+  var devType    = (tr.querySelector(".mfg-edit-override-assettype") || {}).value || "";
   var mibSel     = (tr.querySelector(".mfg-edit-override-mib")       || {}).value || "";
   var transform  = (tr.querySelector(".mfg-edit-override-transform") || {}).value || "";
   var type       = (tr.querySelector(".mfg-edit-override-type")      || {}).value || "scalar";
   var mibSplit   = splitMibSelection(mibSel);
-  if (!pattern.trim()) { showToast("Model regex is required", "error"); return; }
+  if (!pattern.trim() && !devType) {
+    showToast("Pick a device type, a model regex, or both", "error");
+    return;
+  }
   var pair = _readSymbolPair(tr, "mfg-edit-override-sym", type);
-  if (!pair.symbol) { showToast("Pattern and Symbol A are required", "error"); return; }
+  if (!pair.symbol) { showToast("Symbol A is required", "error"); return; }
   if (type === "double_scalar" && !pair.symbolB) {
     showToast("Symbol B is required for double scalar", "error");
     return;
   }
+  var extras = _mfgReadExtras(tr, "mfg-edit-override", metricKey);
   var payload = {
-    modelPattern: pattern.trim(),
+    assetType:    devType || null,
+    modelPattern: pattern.trim() || null,
     symbol:       pair.symbol,
     symbolB:      type === "double_scalar" ? pair.symbolB : null,
     mibId:        mibSplit.mibId,
     mibStdKey:    mibSplit.mibStdKey,
     type:         type,
     transform:    transform || null,
+    aggregate:     extras.aggregate,
+    label:         extras.label,
+    parsePattern:  extras.parsePattern,
+    parseTemplate: extras.parseTemplate,
   };
   try {
     var resp = await api.serverSettings.updateProfileMetricOverride(profileId, metricKey, overrideId, payload);
