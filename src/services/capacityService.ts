@@ -34,8 +34,7 @@
  */
 
 import { totalmem, freemem, cpus, loadavg } from "node:os";
-import { statfs, stat } from "node:fs/promises";
-import { PG_DATA_DIR_CANDIDATES, pickFirstExistingPath } from "../utils/startupDiskCheck.js";
+import { PG_DATA_DIR_CANDIDATES, pickFirstExistingPath, statfsWithAncestorFallback } from "../utils/startupDiskCheck.js";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,7 +44,7 @@ import { getMonitorSettings, RETENTION_PRUNE_INTERVAL_MS, type MonitorSettings }
 import { isTimescaleAvailable, isHypertable, ALL_HYPERTABLE_CANDIDATES, getEffectiveCompressAfterDays } from "./timescaleService.js";
 import { getSampleRetention, SELECTION_AWARE_ENTITIES, UNSELECTED_DETAIL_HOURS, type RetentionEntity, type RetentionTier, type SampleRetention } from "./sampleRetentionService.js";
 import { isPgbossInstalled, getBootTimeMode, getQueueMode } from "./queueService.js";
-import { getDeploymentContext } from "../utils/deploymentContext.js";
+import { dbIsLocal, getDeploymentContext } from "../utils/deploymentContext.js";
 import { BACKUP_DIR, STATE_DIR } from "../utils/paths.js";
 import { logger } from "../utils/logger.js";
 import { getDirectDatabaseUrl, isPgbouncerMode } from "../utils/dbConnections.js";
@@ -229,6 +228,16 @@ export interface VolumeStat {
   roles: VolumeRole[];
   freeBytes: number;
   totalBytes: number;
+  /**
+   * Present only when the numbers came from an ANCESTOR of the requested path
+   * because the path itself could not be reached — a 0700 PGDATA parent on a
+   * least-privilege install. `statfs()` is filesystem-level, so the figures are
+   * exact whenever the ancestor shares the mount, which is every layout we
+   * ship. They would describe the wrong filesystem only if PGDATA were its own
+   * mount beneath an unreadable parent, so both paths are kept here rather than
+   * the degradation being invisible.
+   */
+  measuredVia?: { requestedPath: string; measuredPath: string };
 }
 
 export interface CapacitySampleTable {
@@ -611,13 +620,13 @@ const APP_DIR = dirname(fileURLToPath(import.meta.url));
 // Candidate list + probe shared with the boot-time check — see
 // utils/startupDiskCheck.ts (was a verbatim copy here until the 2026-08 audit).
 
-function isDbLocal(): boolean {
-  const url = process.env.DATABASE_URL || "";
-  const m = url.match(/@([^:/?]+)/);
-  if (!m) return false;
-  const host = m[1].toLowerCase();
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
-}
+// "Is the DB on this host" is `deploymentContext.dbIsLocal()` and nothing else.
+// This module carried a private copy that matched only the three loopback
+// literals, so a DATABASE_URL naming the host's own FQDN or LAN address — or
+// a socket URL with no host at all — reported the database as remote, which
+// skipped the DB volume entirely AND mislabelled `dbColocated` on the card.
+// startupDiskCheck was moved onto the shared helper in the 2026-08 audit and
+// this copy was missed; the two are one function again.
 
 /**
  * Resolve PostgreSQL's data directory. Tries `SHOW data_directory` first
@@ -628,7 +637,7 @@ function isDbLocal(): boolean {
  * when no candidate path exists on disk.
  */
 async function resolveDbDataDirectory(): Promise<string | null> {
-  if (!isDbLocal()) return null;
+  if (!dbIsLocal()) return null;
   try {
     const rows = await prisma.$queryRawUnsafe<{ data_directory: string }[]>(
       "SHOW data_directory",
@@ -642,25 +651,39 @@ async function resolveDbDataDirectory(): Promise<string | null> {
 }
 
 /**
- * Statfs a single path. Returns null on any failure (path missing, permission
- * denied, statfs unsupported). Caller drops null entries.
+ * Statfs a single path, measuring its nearest reachable ancestor when the path
+ * itself is unreachable (see `statfsWithAncestorFallback`). Returns null only
+ * when nothing up the chain can be measured or the path does not exist.
+ *
+ * The ancestor fallback is what keeps a 0700 PGDATA on its own filesystem in
+ * the volume list. Dropping it was silent: no log, no degraded marker, just
+ * one fewer row on a card that went on saying every check passed.
  */
 async function statfsPath(
   path: string,
   role: VolumeRole,
-): Promise<{ role: VolumeRole; path: string; dev: number; freeBytes: number; totalBytes: number } | null> {
-  try {
-    const [fs, st] = await Promise.all([statfs(path), stat(path)]);
-    return {
-      role,
-      path,
-      dev: Number(st.dev),
-      freeBytes: Number(fs.bavail) * Number(fs.bsize),
-      totalBytes: Number(fs.blocks) * Number(fs.bsize),
-    };
-  } catch {
-    return null;
+): Promise<
+  | { role: VolumeRole; path: string; dev: number; freeBytes: number; totalBytes: number;
+      measuredPath: string; degraded: boolean }
+  | null
+> {
+  const measured = await statfsWithAncestorFallback(path);
+  if (!measured) return null;
+  if (measured.degraded) {
+    logger.debug(
+      { role, requestedPath: path, measuredPath: measured.measuredPath },
+      "capacityService: path unreachable, measured its nearest reachable ancestor instead",
+    );
   }
+  return {
+    role,
+    path,
+    dev: measured.dev,
+    freeBytes: measured.freeBytes,
+    totalBytes: measured.totalBytes,
+    measuredPath: measured.measuredPath,
+    degraded: measured.degraded,
+  };
 }
 
 /**
@@ -695,6 +718,7 @@ async function getVolumes(dataDirectory: string | null): Promise<VolumeStat[]> {
         roles: [p.role],
         freeBytes: p.freeBytes,
         totalBytes: p.totalBytes,
+        ...(p.degraded ? { measuredVia: { requestedPath: p.path, measuredPath: p.measuredPath } } : {}),
       });
     }
   }
@@ -2011,7 +2035,7 @@ export async function getCapacitySnapshot(opts: {
       freeMemoryBytes: freemem(),
       loadAvg: loadavg() as [number, number, number],
       volumes,
-      dbColocated: isDbLocal(),
+      dbColocated: dbIsLocal(),
     },
     database: {
       sizeBytes: dbSizeBytes,
