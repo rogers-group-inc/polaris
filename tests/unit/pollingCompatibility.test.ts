@@ -19,6 +19,7 @@ import {
   isMethodValidForStream,
   methodsForStream,
   responseTimeProbeShouldQueue,
+  credentialTypeForPollingMethod,
 } from "../../src/utils/pollingCompatibility.js";
 
 describe("compatibility matrix — locked values per asset source", () => {
@@ -265,6 +266,45 @@ describe("responseTimeProbeShouldQueue — the probe publishers' gate", () => {
   it("keeps queueing every real transport, agent included", () => {
     (["rest_api", "snmp", "winrm", "ssh", "icmp", "agent", "vcenter"] as const).forEach((m) => {
       expect(responseTimeProbeShouldQueue(m), m).toBe(true);
+    });
+  });
+});
+
+// The server half of the method -> credential-type map. Before this existed the
+// mapping lived only in the browser (_credTypeForPolling in public/js/assets.js),
+// so PUT /assets/:id accepted an SSH credential on an SNMP-polled stream: the
+// asset saved clean and then collected nothing, because the collector's
+// resolveSnmpConfigForStream drops a credential whose type doesn't match.
+describe("credentialTypeForPollingMethod — which credential type a transport needs", () => {
+  it("maps each authenticating transport to its credential type", () => {
+    expect(credentialTypeForPollingMethod("snmp")).toBe("snmp");
+    expect(credentialTypeForPollingMethod("winrm")).toBe("winrm");
+    expect(credentialTypeForPollingMethod("ssh")).toBe("ssh");
+    // The one place the names differ: the method is rest_api, the credential
+    // type is restapi.
+    expect(credentialTypeForPollingMethod("rest_api")).toBe("restapi");
+  });
+
+  // These five take no PER-ASSET credential: ICMP carries no auth, "disabled"
+  // polls nothing, "agent" uses its own enrollment bearer, and vcenter /
+  // fortimanager authenticate with the INTEGRATION's credential. Callers use
+  // the null to SKIP the check rather than refuse, so that an operator can
+  // stage a credential before flipping the method.
+  it("returns null for every method that takes no per-asset credential", () => {
+    (["icmp", "disabled", "agent", "vcenter", "fortimanager"] as const).forEach((m) => {
+      expect(credentialTypeForPollingMethod(m), m).toBeNull();
+    });
+  });
+
+  // Guards the lockstep in polling-method-resolver.md: a new method added to
+  // the union without a branch here would fall off the end of the switch and
+  // return undefined, which reads as "needs no credential" and silently
+  // disables the type check for it.
+  it("answers for every method in the union — no undefined fall-through", () => {
+    allPollingMethods().forEach((m) => {
+      const t = credentialTypeForPollingMethod(m);
+      expect(t === null || typeof t === "string", m).toBe(true);
+      expect(t, m).not.toBeUndefined();
     });
   });
 });

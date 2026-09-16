@@ -314,3 +314,36 @@ export function pollingMethodLabel(method: PollingMethod): string {
     case "fortimanager": return "FortiManager";
   }
 }
+
+/**
+ * Which credential TYPE a polling method needs, or null when it needs none.
+ *
+ * ICMP carries no auth; "disabled" polls nothing; "agent" authenticates with
+ * the agent's own enrollment bearer; "vcenter" and "fortimanager" read a
+ * batched fetch that authenticates with the INTEGRATION's credential, not the
+ * asset's. Those five take no per-asset credential at all, so a credential
+ * assigned alongside them is dead config rather than a contradiction — callers
+ * skip the check instead of refusing (an operator may be staging a credential
+ * before flipping the method).
+ *
+ * The browser mirror is `_credTypeForPolling` in public/js/assets.js (and
+ * `_credtypeForMethod` in the class-override modal); keep all three in step —
+ * see polaris-change-impact -> cross-cutting/polling-method-resolver.md,
+ * "If adding a new polling method".
+ */
+export function credentialTypeForPollingMethod(
+  method: PollingMethod,
+): "snmp" | "winrm" | "ssh" | "restapi" | null {
+  switch (method) {
+    case "snmp":     return "snmp";
+    case "winrm":    return "winrm";
+    case "ssh":      return "ssh";
+    case "rest_api": return "restapi";
+    case "icmp":
+    case "disabled":
+    case "agent":
+    case "vcenter":
+    case "fortimanager":
+      return null;
+  }
+}
