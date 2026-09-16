@@ -16,6 +16,7 @@
   function render(el, config, rows) {
     PolarisTopN.renderRows(el, rows || [], {
       unit: "%", thresholds: THRESHOLDS, baseColor: "#4fc3f7", emptyText: EMPTY, config: config || {},
+      valueNoun: "loss",
     });
   }
 
@@ -26,7 +27,7 @@
     description: "Monitored assets with the highest recent probe loss (failed-probe ratio). Fully-down assets (100% loss) are excluded — see Down Assets.",
     defaultSize: { width: 4, height: 1 },
     minSize: { width: 3, height: 1 },
-    defaultConfig: { rowLimit: 1000, regionScope: "mine" },
+    defaultConfig: { rowLimit: 1000, regionScope: "mine", sortBy: "severity" },
     requiredPermission: { key: "assets", level: "read" },
 
     fetchData: function (config) {

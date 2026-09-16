@@ -15,6 +15,31 @@
   var BAR_HORIZON_DAYS = 90; // bar is full at 0 days, empty at ≥90 days out
   var EMPTY = "No growing filesystems (or not enough history yet)";
 
+  // The ⇅ header button's menu (edit mode). options[0] is the widget's
+  // historical order — severity first, soonest-full within a band — so a
+  // dashboard saved before this control keeps behaving exactly as it did.
+  // LOWER is worse here, so "soonest" is this widget's version of "highest".
+  var CMP = PolarisWidgets.sortCmp;
+  function daysOf(r) { return r.value; }
+  var SORTS = [
+    {
+      key: "severity",
+      label: "Severity, then soonest full",
+      cmp: CMP.then(CMP.severity(), CMP.low(daysOf)),
+    },
+    { key: "soonest", label: "Soonest full first", cmp: CMP.low(daysOf) },
+    // The other end: the mounts with room. Useful for reading the whole
+    // forecast rather than only the emergencies — the red guarantee still
+    // pulls anything inside the red window back onto the screen.
+    { key: "furthest", label: "Furthest out first", cmp: CMP.high(daysOf) },
+    // Stable on a wallboard: rows keep their places across the refresh.
+    {
+      key: "hostname",
+      label: "Hostname A–Z",
+      cmp: CMP.then(CMP.text(function (r) { return r.hostname || r.ipAddress; }), CMP.text(function (r) { return r.detail; })),
+    },
+  ];
+
   function colorFor(days) {
     if (days <= RED_DAYS) return "#ff1744";
     if (days <= YELLOW_DAYS) return "#ffd600";
@@ -31,6 +56,10 @@
     // Gear "Minimum severity": narrow to volumes whose asset carries an active
     // alert at/above the tier, before the export / horizon filter / clip.
     rows = PolarisWidgets.filterByMinSeverity(rows, config);
+    // Operator's sort (⇅, edit mode) — applied BEFORE the export provider and
+    // the clip so all three agree on which volumes lead and which get cut.
+    rows = PolarisWidgets.applySort(rows, SORTS, config);
+    PolarisWidgets.setHeaderSort(el, { options: SORTS, config: config });
     // Header export: every fetched volume row (pre horizon filter + clip),
     // severity-tiered on the owning asset's active automation alert.
     PolarisWidgets.setHeaderExport(el, {
@@ -44,10 +73,7 @@
       ],
       rows: rows || [],
     });
-    var sorted = (rows || []).slice().sort(function (a, b) {
-      var d = (b.alertRank || 0) - (a.alertRank || 0);
-      return d !== 0 ? d : (a.value || 0) - (b.value || 0); // soonest-full first
-    });
+    var sorted = rows.slice();
     // "Hide beyond" horizon (days) — cut far-out forecasts before the clip.
     if (config.horizonDays != null) {
       sorted = sorted.filter(function (r) { return (r.value || 0) <= config.horizonDays; });
@@ -95,7 +121,7 @@
     description: "Growing filesystems ranked by projected days until full (30-day trend).",
     defaultSize: { width: 4, height: 1 },
     minSize: { width: 3, height: 1 },
-    defaultConfig: { rowLimit: 20, regionScope: "mine" },
+    defaultConfig: { rowLimit: 20, regionScope: "mine", sortBy: "severity" },
     requiredPermission: { key: "assets", level: "read" },
 
     fetchData: function (config) {

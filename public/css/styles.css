@@ -5294,6 +5294,18 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 .widget-export-menu button:hover:not(:disabled) { background: var(--color-hover-tint); }
 .widget-export-menu button:disabled { color: var(--color-text-tertiary); cursor: default; }
+/* Sort-order menu (widget header ⇅ button — setHeaderSort). Shares the export
+   menu's chrome; only the current-option check mark is its own. The mark is an
+   ::after so the option labels stay left-aligned with each other — a leading ✓
+   on one row would indent that row alone. */
+.widget-sort-menu button { gap: 10px; }
+.widget-sort-menu button[aria-checked="true"] { font-weight: 600; }
+.widget-sort-menu button[aria-checked="true"]::after {
+  content: "✓";
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
 .widget-export-count {
   font-size: 0.72rem;
   color: var(--color-text-secondary);

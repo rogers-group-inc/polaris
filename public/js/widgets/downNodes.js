@@ -36,6 +36,47 @@
     return node.site || "(unknown)";
   }
 
+  // The ⇅ header button's menu (edit mode). options[0] is the feed's own
+  // historical order (severity-first, youngest outage next), so a dashboard
+  // saved before this control keeps behaving exactly as it did. The Row limit
+  // clips whatever order is chosen, so this also decides which outages are cut.
+  //
+  // Built per render because the place option follows the gear's Group by:
+  // asking to sort by Site while the widget buckets by Division would read as
+  // the two controls disagreeing.
+  var CMP = PolarisWidgets.sortCmp;
+  function downSinceOf(n) { return n.monitorStatusChangedAt; }
+  function sortsFor(config) {
+    var byDivision = config && config.groupBy === "division";
+    var placeLabel = byDivision ? "Division" : "Site";
+    var placeOf = byDivision
+      ? function (n) { return n.division; }
+      : function (n) { return n.site; };
+    return [
+      {
+        key: "severity",
+        label: "Severity, then newest",
+        cmp: CMP.then(CMP.severity(), CMP.newest(downSinceOf)),
+      },
+      { key: "newest", label: "Most recent first", cmp: CMP.newest(downSinceOf) },
+      // The outage that has been up there longest — the one a severity-first
+      // feed buries at the bottom.
+      { key: "oldest", label: "Down longest first", cmp: CMP.oldest(downSinceOf) },
+      // Stable on a wallboard: rows keep their places across the 30s refresh
+      // instead of jumping as outages age under the auto-scroll.
+      {
+        key: "hostname",
+        label: "Hostname A–Z",
+        cmp: CMP.then(CMP.text(function (n) { return n.hostname || n.ipAddress; }), CMP.newest(downSinceOf)),
+      },
+      {
+        key: "place",
+        label: placeLabel + " A–Z, then severity",
+        cmp: CMP.then(CMP.text(placeOf), CMP.severity(), CMP.newest(downSinceOf)),
+      },
+    ];
+  }
+
   function nodeRowHTML(n) {
     var typeLabel = typeName(n.assetType, "asset");
     var name = n.hostname || n.ipAddress || "(unnamed)";
@@ -78,6 +119,11 @@
     if (PolarisWidgets.minSeverityRank(config)) {
       nodes = PolarisWidgets.filterByMinSeverity(nodes, config);
     }
+    // Operator's sort (⇅, edit mode) — applied BEFORE the export provider and
+    // the clip so all three agree on which outages lead and which get cut.
+    var sorts = sortsFor(config);
+    nodes = PolarisWidgets.applySort(nodes, sorts, config);
+    PolarisWidgets.setHeaderSort(el, { options: sorts, config: config });
     // Header export: the full fetched list (pre-clip), severity-tiered on each
     // node's active automation alert (alertSeverity).
     PolarisWidgets.setHeaderExport(el, {
@@ -109,7 +155,8 @@
       el.innerHTML = clipped.map(nodeRowHTML).join("");
       return;
     }
-    // Bucket into groups preserving first-seen order; sort groups by size desc.
+    // Bucket into groups preserving first-seen order — which, since the rows
+    // arrive sorted, is the order of each group's LEADING row.
     var groups = {};
     var order = [];
     clipped.forEach(function (n) {
@@ -117,7 +164,13 @@
       if (!groups[k]) { groups[k] = []; order.push(k); }
       groups[k].push(n);
     });
-    order.sort(function (a, b) { return groups[b].length - groups[a].length; });
+    // On the default sort the groups order by size desc, as they always have.
+    // On an explicit sort they keep first-seen order instead: asking for "down
+    // longest first" and getting the biggest site on top regardless is the
+    // control appearing not to work — the rows moved, the widget didn't.
+    if (!PolarisWidgets.isCustomSort(sorts, config)) {
+      order.sort(function (a, b) { return groups[b].length - groups[a].length; });
+    }
     el.innerHTML = order.map(function (k) {
       var list = groups[k];
       return '<div class="dash-alert-group-header" style="display:flex;align-items:center;gap:8px;margin:6px 0 4px;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--color-text-secondary)">' +
@@ -136,7 +189,7 @@
     description: "Monitored assets currently down — newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise.",
     defaultSize: { width: 6, height: 1 },
     minSize: { width: 4, height: 1 },
-    defaultConfig: { groupBy: "site", rowLimit: 10, regionScope: "mine", includeDependencyDown: false },
+    defaultConfig: { groupBy: "site", rowLimit: 10, regionScope: "mine", includeDependencyDown: false, sortBy: "severity" },
     requiredPermission: { key: "assets", level: "read" },
 
     fetchData: function (config) {

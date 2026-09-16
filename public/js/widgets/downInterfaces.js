@@ -66,6 +66,38 @@
     return row.gate || "(unknown)";
   }
 
+  // The ⇅ header button's menu (edit mode). options[0] reproduces mergeRows'
+  // own order — severity first, then youngest outage, nulls last — so a
+  // dashboard saved before this control keeps behaving exactly as it did; the
+  // widget's historical within-group alphabetical pass still runs on top of it
+  // (see render). The Row limit clips whatever order is chosen, so this also
+  // decides which down ports and tunnels are cut.
+  var CMP = PolarisWidgets.sortCmp;
+  function lastUpOf(n) { return n.lastUpAt; }
+  var SORTS = [
+    {
+      key: "severity",
+      label: "Severity, then newest",
+      cmp: CMP.then(CMP.severity(), CMP.newest(lastUpOf)),
+    },
+    { key: "newest", label: "Most recent first", cmp: CMP.newest(lastUpOf) },
+    // Down the longest — a port that has been dark for a week outranks one
+    // that dropped a minute ago. A row with no observed "up" sample in the
+    // window has an unknown age, so it sinks rather than claiming the top.
+    { key: "oldest", label: "Down longest first", cmp: CMP.oldest(lastUpOf) },
+    // Stable on a wallboard: rows keep their places across the 30s refresh.
+    {
+      key: "hostname",
+      label: "Hostname A–Z",
+      cmp: CMP.then(CMP.text(function (n) { return n.hostname || n.ipAddress; }), CMP.text(function (n) { return n.name; })),
+    },
+    {
+      key: "place",
+      label: "Gate A–Z, then severity",
+      cmp: CMP.then(CMP.text(function (n) { return n.gate; }), CMP.severity(), CMP.newest(lastUpOf)),
+    },
+  ];
+
   function rowHTML(n) {
     var typeLabel = typeName(n.assetType, "asset");
     var host = n.hostname || n.ipAddress || "(unnamed)";
@@ -103,6 +135,11 @@
     // alert at/above the configured tier, before the header count / export /
     // clip so all three agree.
     rows = PolarisWidgets.filterByMinSeverity(rows, config);
+    // Operator's sort (⇅, edit mode) — applied BEFORE the export provider and
+    // the clip so all three agree on which rows lead and which get cut.
+    var customSort = PolarisWidgets.isCustomSort(SORTS, config);
+    rows = PolarisWidgets.applySort(rows, SORTS, config);
+    PolarisWidgets.setHeaderSort(el, { options: SORTS, config: config });
     // Header export: the merged interface + tunnel list (pre-clip),
     // severity-tiered on the owning asset's active automation alert.
     PolarisWidgets.setHeaderExport(el, {
@@ -134,12 +171,15 @@
     }
 
     if (groupBy === "none") {
-      el.innerHTML = clipped.slice().sort(byName).map(rowHTML).join("");
+      el.innerHTML = (customSort ? clipped : clipped.slice().sort(byName)).map(rowHTML).join("");
       return;
     }
-    // Bucket into groups preserving first-seen order — rows arrive youngest
-    // outage first (mergeRows), so the gates render newest-outage-first.
-    // Within each gate the rows sort alphabetically by name.
+    // Bucket into groups preserving first-seen order — rows arrive in the
+    // active sort order, so each gate lands where its leading row does. On the
+    // DEFAULT sort that is newest-outage-first with the rows inside each gate
+    // re-sorted alphabetically by name, exactly as before; on an explicit sort
+    // the alphabetical pass is dropped, since it would otherwise undo within
+    // each group the very order the operator just asked for.
     var groups = {};
     var order = [];
     clipped.forEach(function (n) {
@@ -154,7 +194,7 @@
         // Count pill colored to the group's most severe row, so a gate whose
         // rows are all `serious` reads orange instead of critical-red.
         '<span class="' + PolarisWidgets.countPillClass(list) + '">' + list.length + '</span>' +
-      '</div>' + list.slice().sort(byName).map(rowHTML).join("");
+      '</div>' + (customSort ? list : list.slice().sort(byName)).map(rowHTML).join("");
     }).join("");
   }
 
@@ -165,7 +205,7 @@
     description: "Monitored (pinned) interfaces admin-up but operationally down, plus fully-down IPsec tunnels, grouped by the gate they're on.",
     defaultSize: { width: 6, height: 1 },
     minSize: { width: 4, height: 1 },
-    defaultConfig: { groupBy: "gate", rowLimit: 10, regionScope: "mine", showInterfaces: true, showTunnels: true },
+    defaultConfig: { groupBy: "gate", rowLimit: 10, regionScope: "mine", showInterfaces: true, showTunnels: true, sortBy: "severity" },
     requiredPermission: { key: "assets", level: "read" },
 
     fetchData: function (config) {

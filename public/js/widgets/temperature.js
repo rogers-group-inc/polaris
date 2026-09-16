@@ -31,6 +31,7 @@
     PolarisTopN.renderRows(el, shown, {
       unit: TU ? TU.celsiusLabel() : "°C",
       thresholds: thresholds, baseColor: "#4fc3f7", emptyText: EMPTY, config: config || {}, fillTo: 20,
+      valueNoun: "temperature",
     });
   }
 
@@ -45,7 +46,7 @@
     description: "Hottest hardware temperature sensors across monitored assets, per sensor.",
     defaultSize: { width: 4, height: 1 },
     minSize: { width: 3, height: 1 },
-    defaultConfig: { rowLimit: 20, regionScope: "mine" },
+    defaultConfig: { rowLimit: 20, regionScope: "mine", sortBy: "severity" },
     requiredPermission: { key: "assets", level: "read" },
 
     fetchData: function (config) {
