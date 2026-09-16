@@ -344,26 +344,36 @@ on the install; the policy page above says how to contact the operators.
 
 ## A vendor's SNMP CPU / memory / storage is empty
 
-**Symptom:** A Fortinet, Cisco, Juniper, MikroTik, HP/Aruba or Dell device polls
-fine (reachability, interfaces) but CPU, memory, storage or hardware sensors over
-SNMP stay empty. Server Settings → Credentials → Manufacturer Profiles shows **no
+**Symptom:** A Fortinet, Juniper, HP/Aruba or Dell device polls fine
+(reachability, interfaces) but CPU, memory, storage or hardware sensors over SNMP
+stay empty. Server Settings → Credentials → Manufacturer Profiles shows **no
 profile for that manufacturer at all**, or — on an install that upgraded from a
-release before September 2026 — shows one reading **N UNRESOLVED** with an
+release before September 2026 — shows one reading **N UNRESOLVED** with a
 `manufacturer_profile.unresolved` warning in the Events log from the last start.
 
+**Cisco and MikroTik work out of the box** and are not affected; if one of those
+is empty, see *"A shipped MIB or profile was deleted"* below.
+
 **Why:** Polaris resolves a vendor's telemetry by MIB SYMBOL NAME, and the number
-behind that name comes from the vendor's own MIB, which you upload. That way a
-vendor changing or adding an object is a MIB upload rather than a Polaris
-release. Polaris bundles the IETF/IEEE standard MIBs only, so out of the box it
-collects everything those cover (interfaces, LLDP, PoE, bridge/VLAN, hrStorage,
-ENTITY sensors) and nothing vendor-proprietary.
+behind that name comes from the vendor's MIB. That way a vendor changing or
+adding an object is a MIB upload rather than a Polaris release. Polaris ships
+MIBs in two forms:
+
+- The **generic IETF/IEEE modules** are baked into the product and cannot be
+  deleted or edited — they change only when you update Polaris. These cover
+  interfaces, LLDP, PoE, bridge/VLAN, `hrStorage` and ENTITY sensors, which is
+  why those collect the moment SNMP works.
+- A few **manufacturer MIBs** (Cisco's and MikroTik's, both published publicly by
+  the vendor) are loaded into the MIB Database on first start as ordinary
+  entries. They appear alongside anything you upload, and **you can delete
+  them** — they are the vendor's files, not part of Polaris.
 
 A **manufacturer profile** is the other half: it says which symbol is the CPU,
-which pair is the memory, and so on. Polaris ships a profile only for
-manufacturers whose MIB it also bundles — shipping one for a vendor whose MIB is
-absent would just be a page of rows that resolve to nothing. For every other
-vendor you create the profile yourself, once, after uploading the MIB. The table
-below has the symbol names to put in it.
+which pair is the memory, and so on. It is an *override* of what the generic MIBs
+already do, so Polaris ships one only where there is something to override, and
+only for the two manufacturers whose MIBs it also ships. For every other vendor
+you create the profile yourself, once, after uploading the MIB — the table below
+has the symbol names, and the shipped Cisco profile is a worked example to copy.
 
 ### 1. Upload the vendor's MIB
 
@@ -376,9 +386,9 @@ symbols unresolved — needs FORTINET-CORE-MIB; upload it too."*
 |---|---|---|
 | Fortinet (FortiGate) | `FORTINET-CORE-MIB` + `FORTINET-FORTIGATE-MIB` | **From the FortiGate itself — no support account needed:** System → SNMP → *Download FortiGate MIB File* and *Download Fortinet Core MIB File*. Also on the Fortinet support portal. |
 | Fortinet (FortiSwitch / FortiAP) | `FORTINET-FORTISWITCH-MIB`, `FORTINET-FORTIAP-MIB` | Fortinet support portal (account required) → Download → Firmware Images → the product → Download tab. Not served by the device the way the FortiGate MIBs are. |
-| Cisco | `CISCO-SMI` + `CISCO-PROCESS-MIB` (CPU), `CISCO-MEMORY-POOL-MIB` (memory) | <https://github.com/cisco/cisco-mibs> — public, no login. (The old `ftp.cisco.com` path was decommissioned in 2022.) |
+| Cisco | `CISCO-SMI` + `CISCO-PROCESS-MIB` (CPU), `CISCO-MEMORY-POOL-MIB` (memory) | **Shipped with Polaris — nothing to do.** To replace with your own: <https://github.com/cisco/cisco-mibs>, public, no login. (The old `ftp.cisco.com` path was decommissioned in 2022.) |
 | Juniper | `JUNIPER-SMI` + `JUNIPER-MIB` | juniper.net enterprise-MIB download |
-| MikroTik | `MIKROTIK-MIB` | mikrotik.com |
+| MikroTik | `MIKROTIK-MIB` | **Shipped with Polaris — nothing to do.** To replace with your own: <https://download.mikrotik.com/routeros/> under your RouterOS version. |
 | HP / Aruba | `HP-ICF-OID` + `STATISTICS-MIB` | HPE / Aruba support |
 | Dell (PowerConnect / Force10) | `RADLAN-MIB` (with its `rnd` root) | Dell support |
 
@@ -393,9 +403,9 @@ module still missing.
 
 | Vendor | CPU | Memory | Other |
 |---|---|---|---|
-| Cisco | `cpmCPUTotal5secRev`, type **table**, walk **average rows** | `ciscoMemoryPoolUsed` + `ciscoMemoryPoolFree`, type **double scalar**, transform **a / (a+b) %**, walk **sum rows** | — |
+| Cisco *(shipped)* | `cpmCPUTotal5secRev`, type **table**, walk **average rows** | `ciscoMemoryPoolUsed` + `ciscoMemoryPoolFree`, type **double scalar**, transform **a / (a+b) %**, walk **sum rows** | — |
 | Juniper | `jnxOperatingCPU`, type **table**, walk **average rows** | `jnxOperatingBuffer`, walk **average rows** | — |
-| MikroTik | `mtxrSystemUserCPULoad` | — | — |
+| MikroTik *(shipped)* | — *(RouterOS answers `hrProcessorLoad`; nothing to override)* | — *(`hrStorage` RAM row)* | Hardware Sensors: `mtxrHlCpuTemperature`, label `CPU`, transform **Tenths → Units** — the MIB's `Temperature` is DISPLAY-HINT `d-1`, so without it 31.5 °C charts as 315 |
 | Fortinet (FortiGate) | `fgSysCpuUsage` | `fgSysMemUsage` | Hardware Sensors: `fgHwSensorTable`, type **table** |
 | Fortinet (FortiSwitch) | `fsSysCpuUsage` | `fsSysMemUsage` + `fsSysMemCapacity`, type **double scalar**, transform **a / b %** | Storage: `fsSysDiskUsage` + `fsSysDiskCapacity`, type **double scalar**, transform **a / b %**, label `flash`. Model identity: `fsSysVersion`, parse `^(?!v\d)(.+?)[-\s]v\d` → `FortiSwitch $1` |
 | Fortinet (FortiAP) | `fapCpuUsage` | `fapMemoryUsage` | Hardware Sensors: `fapTemperature`, label `System` |
@@ -415,6 +425,32 @@ model still routes.
 
 Telemetry resumes on the next collection cadence once the rows show a module name
 in their MIB cell; nothing needs restarting.
+
+## A shipped MIB or profile was deleted
+
+The Cisco and MikroTik MIBs and their manufacturer profiles are **yours to
+delete** — they are seeded on first start, not baked in. Both deletions are
+supported, neither is silent, and both are reversible. They are seeded once, so
+deleting one does not bring it back on the next restart.
+
+**Deleting a shipped manufacturer MIB** leaves its profile's rows reading
+*unresolved*, naming the module to re-upload, and that manufacturer's CPU and
+memory fall back to HOST-RESOURCES-MIB — the generic path every device gets. You
+lose the vendor-specific figures (Cisco's per-pool memory and 5-second CPU), not
+monitoring. Re-upload the vendor's file at manufacturer scope to restore it; the
+sources are in the table above.
+
+**Deleting a shipped manufacturer profile** falls back the same way: with no
+profile, Polaris uses the generic MIBs, so the device keeps reporting. To get the
+profile back, recreate it from the symbol table above — or delete the row in
+Server Settings → Maintenance that records the seed having run
+(`seedVendorMibsSeededAt` / `seedManufacturerProfilesSeededAt`) and restart, and
+Polaris will seed whichever of the two is missing.
+
+If a Cisco or MikroTik device is missing CPU or memory and you have not deleted
+anything, check the MIB Database for the modules listed above — a `CISCO-SMI`
+that was removed takes the other two Cisco modules' symbols with it, since they
+anchor on it.
 
 ## Disk sizing — read this first
 

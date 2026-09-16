@@ -30,7 +30,8 @@ export type TransformKind =
   | "ticks_to_seconds"
   | "ratio_to_percent"
   | "percent_to_ratio"
-  | "signed_to_unsigned";
+  | "signed_to_unsigned"
+  | "tenths_to_units";
 
 export const TRANSFORM_KINDS: TransformKind[] = [
   "celsius_to_fahrenheit",
@@ -42,6 +43,7 @@ export const TRANSFORM_KINDS: TransformKind[] = [
   "ratio_to_percent",
   "percent_to_ratio",
   "signed_to_unsigned",
+  "tenths_to_units",
 ];
 
 export const TRANSFORM_LABELS: Record<TransformKind, string> = {
@@ -54,6 +56,7 @@ export const TRANSFORM_LABELS: Record<TransformKind, string> = {
   ratio_to_percent:      "Ratio (0..1) → Percent (0..100)",
   percent_to_ratio:      "Percent (0..100) → Ratio (0..1)",
   signed_to_unsigned:    "Signed Int32 → Unsigned (negative values shifted by 2³²)",
+  tenths_to_units:       "Tenths → Units (DISPLAY-HINT d-1)",
 };
 
 export function isTransformKind(value: unknown): value is TransformKind {
@@ -80,6 +83,10 @@ export function applyTransform(value: number | null | undefined, kind: Transform
     case "ratio_to_percent":      return value * 100;
     case "percent_to_ratio":      return value / 100;
     case "signed_to_unsigned":    return value < 0 ? value + 2 ** 32 : value;
+    // SMI DISPLAY-HINT "d-1" — the raw integer carries one implied decimal
+    // place, so 315 means 31.5. Common on vendor sensor objects; MikroTik's
+    // Temperature / Power / Voltage textual conventions all use it.
+    case "tenths_to_units":       return value / 10;
     default:                      return value;
   }
 }

@@ -33,7 +33,7 @@ export interface ManufacturerAliasRow {
 // Seed list — common IEEE legal names → marketing names. Admins can add to or
 // override this list at runtime; the seed only fills in the gap for fresh
 // installs and never overwrites existing rows.
-const DEFAULT_ALIASES: ReadonlyArray<{ alias: string; canonical: string }> = [
+export const DEFAULT_ALIASES: ReadonlyArray<{ alias: string; canonical: string }> = [
   // Fortinet
   { alias: "Fortinet, Inc.",                          canonical: "Fortinet" },
   { alias: "Fortinet Inc.",                           canonical: "Fortinet" },

@@ -172,6 +172,11 @@ async function main() {
   sourcesLines.push("  historically allows reproduction of standalone MIB modules; the boilerplate is");
   sourcesLines.push("  preserved in the file. Re-read the in-file header on every refresh and have a");
   sourcesLines.push("  human verify before committing significant version changes.");
+  sourcesLines.push("- **A manufacturer MIB never goes in this directory.** The vendor MIBs Polaris");
+  sourcesLines.push("  ships live in `../vendorMibs/` and are SEEDED into the MIB Database as rows an");
+  sourcesLines.push("  operator can delete, not baked in here where `loadStandardLayer` globs them and");
+  sourcesLines.push("  nobody can. See that directory's SOURCES.md for the distinction and the");
+  sourcesLines.push("  licensing position on shipping a vendor's file at all.");
   sourcesLines.push("- **IEEE8021-* modules are deliberately NOT bundled** (e.g. IEEE8021-MSTP-MIB for");
   sourcesLines.push("  per-MSTI spanning tree). They carry IEEE copyright and would need the same");
   sourcesLines.push("  human licensing review LLDP-MIB got. Operators can upload them instead — the");

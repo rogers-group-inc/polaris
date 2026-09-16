@@ -20,6 +20,7 @@
 
 import { fortiswitchModelFromFsSysVersion, FORTISWITCH_MODEL_PARSE } from "../utils/fortiswitchModel.js";
 import type { ModelParse } from "../utils/modelParse.js";
+import type { TransformKind } from "../utils/symbolTransforms.js";
 
 export interface CpuQuery {
   symbol: string;                       // symbolic OID name (resolved via oidRegistry)
@@ -79,6 +80,13 @@ export interface TemperatureQuery {
   mode: "scalar" | "table";
   /** Display label for the synthesized hardware-sensor row. Defaults to "System" when omitted. */
   sensorName?: string;
+  /**
+   * Unary transform applied to the raw reading. Needed wherever a vendor's
+   * sensor object is not already in the unit Polaris charts — MikroTik's
+   * `Temperature` is DISPLAY-HINT "d-1", i.e. tenths of a degree, so 315
+   * means 31.5 °C and charts as 315 without `tenths_to_units`.
+   */
+  transform?: TransformKind;
 }
 
 /**
@@ -171,10 +179,29 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
   {
     vendor: "Mikrotik RouterOS",
     match: /mikrotik|routeros/i,
-    // MIKROTIK-MIB::mtxrSystemUserCPULoad — scalar percent
-    cpu: { symbol: "mtxrSystemUserCPULoad", mode: "scalar" },
-    // Mikrotik exposes RAM bytes via HOST-RESOURCES-MIB only, so leave the
-    // memory profile empty and let the HRM fallback handle it.
+    // NO cpu / memory / disk block, on purpose. RouterOS reports all three
+    // through HOST-RESOURCES-MIB — hrProcessorLoad, hrStorage's RAM row, and
+    // hrStorageTable — which Polaris reads generically for every device. A
+    // vendor profile exists to OVERRIDE what the generic MIBs already do, and
+    // here they do it, so there is nothing to override.
+    //
+    // This block used to claim `cpu: { symbol: "mtxrSystemUserCPULoad" }`.
+    // That symbol does not exist: it appears nowhere in MIKROTIK-MIB, checked
+    // 2026-09-16 against MikroTik's own download and the LibreNMS mirror. The
+    // MIB has no CPU-load object at all. The row therefore never resolved on
+    // any install and never could — it read as a profile with an unresolved
+    // symbol, when the truth was that the generic path was already correct.
+    //
+    // The one thing MIKROTIK-MIB adds is the mtxrHealth sensor group, which no
+    // standard MIB covers. Its `Temperature` textual convention is
+    // DISPLAY-HINT "d-1" — TENTHS of a degree — hence the transform; without
+    // it a 31.5 °C reading charts as 315.
+    temperature: {
+      symbol:     "mtxrHlCpuTemperature",
+      mode:       "scalar",
+      sensorName: "CPU",
+      transform:  "tenths_to_units",
+    },
   },
   {
     // FortiSwitch sits BEFORE the generic Fortinet entry so FortiSwitches

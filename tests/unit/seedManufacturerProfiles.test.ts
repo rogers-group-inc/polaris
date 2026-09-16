@@ -17,15 +17,15 @@
  *    which is the FortiSwitch deadlock (a switch whose model is empty can never
  *    fill it in) coming straight back.
  *
- *    These cases run for EVERY vendor regardless of what is bundled, because
+ *    These cases run for EVERY vendor regardless of which are seeded, because
  *    the translation is what the operator's own profile will be built from
  *    whether Polaris seeds it or not.
  *
- * 2. **Which vendors are seeded** — `BUNDLED_MIB_MANUFACTURERS`, which tracks
- *    a licensing decision and is expected to move. A profile is an OVERRIDE
- *    layer over what already resolves; seeding one for a vendor whose MIB
- *    Polaris does not ship names symbols nothing can resolve, and ships an
- *    `N UNRESOLVED` page plus a warning Event the operator never asked for.
+ * 2. **Which vendors are seeded** — `PROFILE_SEEDED_MANUFACTURERS`, which is
+ *    expected to move as vendors are added. A profile is an OVERRIDE layer
+ *    over what the generic MIBs already do, so a vendor earns one only when
+ *    Polaris also seeds its MIB (`jobs/seedVendorMibs.ts`) AND it has
+ *    something the standard MIBs cannot say.
  *
  * Prisma is mocked; what is asserted is the payloads the job would write.
  */
@@ -69,7 +69,7 @@ vi.mock("../../src/services/manufacturerProfileService.js", async (orig) => {
 });
 
 const {
-  seedManufacturerProfiles, profileToMetricSeeds, SEED_MAP, BUNDLED_MIB_MANUFACTURERS,
+  seedManufacturerProfiles, profileToMetricSeeds, SEED_MAP, PROFILE_SEEDED_MANUFACTURERS,
 } = await import("../../src/jobs/seedManufacturerProfiles.js");
 const { METRIC_KEYS } = await import("../../src/services/manufacturerProfileService.js");
 const { VENDOR_TELEMETRY_PROFILES } = await import("../../src/services/vendorTelemetryProfiles.js");
@@ -110,9 +110,36 @@ describe("aggregate — how a walked subtree collapses", () => {
   });
 
   it("leaves a shape that walks nothing at none", () => {
-    expect(metricSeed("Mikrotik RouterOS", "cpu")!.aggregate).toBe("none");
     expect(metricSeed("Fortinet FortiOS (SNMP path)", "cpu")!.aggregate).toBe("none");
     expect(metricSeed("Fortinet FortiSwitch (SNMP path)", "memory")!.aggregate).toBe("none");
+  });
+});
+
+describe("MikroTik overrides only what the generic MIBs cannot do", () => {
+  it("seeds no CPU, memory or storage — HOST-RESOURCES-MIB already reports all three", () => {
+    // A profile exists to OVERRIDE the generic path. RouterOS answers
+    // hrProcessorLoad and hrStorageTable, so a vendor row for any of these
+    // would be an override of something already correct.
+    for (const key of ["cpu", "memory", "storage"]) {
+      expect(metricSeed("Mikrotik RouterOS", key), `MikroTik seeds ${key}`).toBeUndefined();
+    }
+  });
+
+  it("does not name mtxrSystemUserCPULoad — it does not exist in MIKROTIK-MIB", () => {
+    // The constant claimed this symbol until 2026-09-16. It appears nowhere in
+    // MikroTik's own MIB (checked against their download and the LibreNMS
+    // mirror), so the row never resolved on any install and never could.
+    const seeded = JSON.stringify(seedsFor("Mikrotik RouterOS"));
+    expect(seeded).not.toContain("mtxrSystemUserCPULoad");
+  });
+
+  it("seeds the health sensor WITH its tenths transform", () => {
+    // MIKROTIK-MIB's `Temperature` textual convention is DISPLAY-HINT "d-1":
+    // the raw integer is tenths of a degree. Without the transform a 31.5 °C
+    // reading charts as 315.
+    expect(metricSeed("Mikrotik RouterOS", "temperature")).toMatchObject({
+      symbol: "mtxrHlCpuTemperature", type: "scalar", transform: "tenths_to_units", label: "CPU",
+    });
   });
 });
 
@@ -181,7 +208,7 @@ describe("matchPattern is the vendor entry's own regex, never retyped", () => {
 describe("a profile is seeded only for a vendor whose MIB Polaris bundles", () => {
   it("seeds exactly the bundled manufacturers, and nothing else", () => {
     expect(h.profiles.map((p) => p.manufacturer).sort())
-      .toEqual([...BUNDLED_MIB_MANUFACTURERS].sort());
+      .toEqual([...PROFILE_SEEDED_MANUFACTURERS].sort());
   });
 
   it("keeps every vendor in SEED_MAP regardless — that is where the symbol names live", () => {
@@ -189,7 +216,7 @@ describe("a profile is seeded only for a vendor whose MIB Polaris bundles", () =
     // symbol is the CPU. That is not vendor-OID ownership, it is the part the
     // docs table and Phase 6's profile packs are written from.
     expect(SEED_MAP.map((s) => s.manufacturer)).toEqual(
-      expect.arrayContaining(["Cisco", "Juniper", "Mikrotik", "Fortinet", "HP", "Dell"]),
+      expect.arrayContaining(["Cisco", "Juniper", "MikroTik", "Fortinet", "HP", "Dell"]),
     );
     for (const row of SEED_MAP) {
       expect(
@@ -199,9 +226,35 @@ describe("a profile is seeded only for a vendor whose MIB Polaris bundles", () =
     }
   });
 
+  it("names every manufacturer in its CANONICAL form, so seeding never depends on cache warmth", async () => {
+    // `normalizeManufacturer` returns its input UNCHANGED while the alias map
+    // is unloaded (`if (!map) return trimmed`), and the startup jobs' IIFEs are
+    // fire-and-forget, so whether the alias refresh has landed when this job
+    // runs is a race. Observed 2026-09-16: the same boot wrote the MIB row as
+    // "MikroTik" (normalized) and the profile as "Mikrotik" (not), because the
+    // two touched the map either side of it being filled.
+    //
+    // Writing the canonical spelling here makes the outcome identical either
+    // way — a fixed point of the map is unchanged whether or not it is loaded.
+    const { setAliasMap } = await import("../../src/utils/manufacturerNormalize.js");
+    const { DEFAULT_ALIASES } = await import("../../src/services/manufacturerAliasService.js");
+    setAliasMap(DEFAULT_ALIASES.map((a) => [a.alias.toLowerCase(), a.canonical] as [string, string]));
+    const { normalizeManufacturer } = await import("../../src/utils/manufacturerNormalize.js");
+
+    for (const row of SEED_MAP) {
+      expect(
+        normalizeManufacturer(row.manufacturer),
+        `SEED_MAP has "${row.manufacturer}" but the alias map canonicalizes it`,
+      ).toBe(row.manufacturer);
+    }
+    for (const mfr of PROFILE_SEEDED_MANUFACTURERS) {
+      expect(normalizeManufacturer(mfr), `PROFILE_SEEDED_MANUFACTURERS has "${mfr}"`).toBe(mfr);
+    }
+  });
+
   it("every bundled manufacturer is one SEED_MAP actually knows", () => {
     // A typo here would seed nothing and say nothing about it.
-    for (const mfr of BUNDLED_MIB_MANUFACTURERS) {
+    for (const mfr of PROFILE_SEEDED_MANUFACTURERS) {
       expect(SEED_MAP.some((s) => s.manufacturer === mfr), `${mfr} is not in SEED_MAP`).toBe(true);
     }
   });
