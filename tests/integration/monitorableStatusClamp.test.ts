@@ -154,4 +154,26 @@ d("the operator write paths say WHY rather than silently clamping", () => {
     expect(res.body.errors[0].id).toBe(quarantined);
     expect(String(res.body.errors[0].error)).toMatch(/cannot be monitored/i);
   });
+
+  // The batch carries ONE credential id for every asset in it, so this guard is
+  // a single query regardless of selection size. Without it the id reached
+  // Postgres as an FK violation on the updateMany and the whole batch came back
+  // as a bare 500.
+  it("POST /assets/bulk-monitor 400s a credential id that names no credential", async () => {
+    const live = await seedAsset({ hostname: `${HOST}-cred`, status: "active", monitored: false });
+    const { agent, csrf } = await authedAgent(app);
+    const res = await agent
+      .post("/api/v1/assets/bulk-monitor")
+      .set("X-CSRF-Token", csrf)
+      .send({
+        ids: [live],
+        monitored: true,
+        monitorCredentialId: "00000000-0000-0000-0000-000000000002",
+      });
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/not found/i);
+    // Nothing was written — the guard runs before the updateMany.
+    const row = await prisma.asset.findUnique({ where: { id: live } });
+    expect(row?.monitored).toBe(false);
+  });
 });

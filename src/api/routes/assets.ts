@@ -103,6 +103,7 @@ import {
   type PollingMethod,
   type Stream,
   assetSourceKindFromIntegrationType,
+  credentialTypeForPollingMethod,
   isFortinetIntegrationType,
   isMethodValidForStream,
   isPollingMethodCompatible,
@@ -353,6 +354,118 @@ function assertMonitorableStatus(monitored: unknown, status: unknown): void {
     `A ${String(status)} asset cannot be monitored — ${UNMONITORABLE_STATUSES.join(" / ")} assets are not polled. ` +
       "Change the status first, then enable monitoring.",
   );
+}
+
+// ─── Credential assignment guards ───────────────────────────────────────────
+//
+// `monitorCredentialId` and the per-stream slots are plain UUID FKs in the Zod
+// schema, so before this guard a well-formed id naming no row reached Postgres
+// and came back as a foreign-key violation — which errorHandler.ts has no
+// Prisma branch for, so the caller got a bare 500 "Internal server error". That
+// is the worst shape of failure for an unattended API client: it reads as a
+// Polaris outage rather than a stale id in its config. A wrong TYPE was worse
+// still, because it wasn't an error at all — `loadClassOverrideStreamCredential`
+// and `resolveSnmpConfigForStream` in monitoringService drop a credential whose
+// type doesn't match the transport, so the asset saved clean and then silently
+// collected nothing until somebody read the probe output.
+
+/** The asset-level default, which is not stream-bound (see the type note below). */
+const ASSET_DEFAULT_CREDENTIAL_FIELD = "monitorCredentialId" as const;
+
+/**
+ * Per-stream credential slots PUT /assets/:id exposes, each paired with the
+ * polling-method column that decides which credential TYPE it needs. Storage
+ * is absent deliberately — it rides the `interfaces` credential (see the
+ * CREDENTIAL_STREAMS invariant in polaris-change-impact ->
+ * services/auth-identity.md). The three slots with no PUT surface yet
+ * (customWidget / processes / eventLog) join this list when they get one.
+ */
+const STREAM_CREDENTIAL_FIELDS = [
+  ["responseTimeCredentialId", "responseTimePolling", "responseTime"],
+  ["cpuMemoryCredentialId",    "cpuMemoryPolling",    "cpuMemory"],
+  ["temperatureCredentialId",  "temperaturePolling",  "temperature"],
+  ["interfacesCredentialId",   "interfacesPolling",   "interfaces"],
+  ["lldpCredentialId",         "lldpPolling",         "lldp"],
+] as const;
+
+type CredentialField = typeof ASSET_DEFAULT_CREDENTIAL_FIELD | typeof STREAM_CREDENTIAL_FIELDS[number][0];
+const ALL_CREDENTIAL_FIELDS: ReadonlyArray<CredentialField> = [
+  ASSET_DEFAULT_CREDENTIAL_FIELD,
+  ...STREAM_CREDENTIAL_FIELDS.map((f) => f[0]),
+];
+
+/** The asset columns this guard reads; structural so bulk-monitor can pass null. */
+type AssetPollingColumns = Partial<Record<typeof STREAM_CREDENTIAL_FIELDS[number][1], string | null>>;
+
+/**
+ * Refuse a credential assignment that names no credential, or that hands a
+ * stream a credential type its transport cannot use.
+ *
+ * `existing` is the asset's own polling columns; pass null to check existence
+ * only. The type check is deliberately narrow, and skips rather than refuses
+ * in three cases, because each one has a legitimate reading:
+ *
+ *  - **The asset default (`monitorCredentialId`) is never type-checked.** It is
+ *    the fallback for all eight streams at once, which may legitimately poll
+ *    over different transports, so no single type is "correct" for it. This
+ *    matches the credential-usage resolver, which is wired by FK and explicitly
+ *    NOT by polling-method type-match.
+ *  - **A method that takes no credential** (icmp / disabled / agent / vcenter /
+ *    fortimanager) leaves the slot dead rather than contradictory — an operator
+ *    may be staging a credential before flipping the method.
+ *  - **A method this request doesn't pin down** — cleared to null (inherit), or
+ *    absent on both the request and the asset's own tier — would need the
+ *    four-tier resolver to guess at, and that resolver falls THROUGH silently
+ *    by design. Refusing on a guess would punish a plain re-save.
+ *
+ * So a 400 here means the contradiction is unambiguous: this stream polls over
+ * this transport on this asset's own tier, and the credential cannot serve it.
+ */
+async function assertCredentialAssignments(
+  input: Partial<Record<CredentialField, string | null>> & Partial<Record<typeof STREAM_CREDENTIAL_FIELDS[number][1], PollingMethod | null>>,
+  existing: AssetPollingColumns | null,
+): Promise<void> {
+  // Only ids being SET are checked — null clears the slot and undefined leaves
+  // it alone, and neither can name a missing row.
+  const assigned: Array<[CredentialField, string]> = [];
+  for (const field of ALL_CREDENTIAL_FIELDS) {
+    const value = input[field];
+    if (typeof value === "string") assigned.push([field, value]);
+  }
+  if (assigned.length === 0) return;
+
+  // One query for the batch, not one per field.
+  const rows = await prisma.credential.findMany({
+    where:  { id: { in: [...new Set(assigned.map(([, id]) => id))] } },
+    select: { id: true, name: true, type: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  for (const [field, id] of assigned) {
+    if (!byId.has(id)) {
+      throw new AppError(400, `Credential ${id} not found (field: ${field})`);
+    }
+  }
+  if (!existing) return;
+
+  for (const [credField, pollingField, stream] of STREAM_CREDENTIAL_FIELDS) {
+    const credentialId = input[credField];
+    if (typeof credentialId !== "string") continue;
+    // Request wins over the stored column so a PUT that sets both is judged on
+    // the method it is actually installing, not the one it is replacing.
+    const method = input[pollingField] !== undefined ? input[pollingField] : (existing[pollingField] as PollingMethod | null | undefined);
+    if (!method) continue;
+    const needed = credentialTypeForPollingMethod(method);
+    if (!needed) continue;
+    const cred = byId.get(credentialId)!;
+    if (cred.type !== needed) {
+      throw new AppError(
+        400,
+        `Credential "${cred.name}" is a ${cred.type} credential, but the ${stream} stream polls over ` +
+          `${pollingMethodLabel(method)} and needs a ${needed} credential (field: ${credField})`,
+      );
+    }
+  }
 }
 
 // ─── ipContext helpers ──────────────────────────────────────────────────────
@@ -1075,6 +1188,14 @@ router.post("/bulk-monitor", requirePermission("assets", "write"), async (req, r
       monitorIntervalSec:  z.number().int().min(5).max(86400).nullable().optional(),
       probeTimeoutMs:      z.number().int().min(100).max(60000).nullable().optional(),
     }).parse(req.body);
+
+    // Existence only, and deliberately so: the batch carries ONE credential id
+    // for every asset in it, so this is a single query no matter how many ids
+    // were selected. The per-stream TYPE check the PUT does would need each
+    // asset's own polling columns — 2000 rows of them on a full-fleet select —
+    // to answer a question this endpoint cannot ask anyway, since it only sets
+    // the asset-level default, which is never type-checked.
+    await assertCredentialAssignments({ monitorCredentialId: body.monitorCredentialId }, null);
 
     // Build the per-asset data shape ONCE — every selected asset gets the
     // same monitor config in a bulk operation. monitorOverride is NOT set
@@ -3603,6 +3724,9 @@ async function validateAssetUpdate(id: string, existing: ExistingAssetForUpdate,
   }
   const coordErr = manualCoordPatchError(input.latitude, input.longitude);
   if (coordErr) throw new AppError(400, coordErr);
+  // Last: it is the only guard here that queries, so the cheap refusals above
+  // get to fail first.
+  await assertCredentialAssignments(input, existing);
 }
 
 // Phase 2 — stage the update patch: field normalization, the hostname/IP

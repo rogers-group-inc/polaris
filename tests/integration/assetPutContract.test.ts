@@ -178,6 +178,99 @@ d("PUT /assets/:id contract", () => {
     expect(row?.monitored).toBe(false);
   });
 
+  // ── Credential assignment guards ─────────────────────────────────────────
+  // Before these, a well-formed-but-unknown credential id reached Postgres and
+  // came back as an FK violation the error handler renders as a bare 500, and a
+  // wrong-TYPE credential was accepted outright and then dropped at collect
+  // time — the asset saved clean and silently collected nothing.
+
+  it("400s (not 500) a credential id that names no credential", async () => {
+    const resp = await put({ monitorCredentialId: "00000000-0000-0000-0000-000000000001" });
+    expect(resp.status).toBe(400);
+    expect(resp.body.error).toMatch(/not found/i);
+    expect(resp.body.error).toMatch(/monitorCredentialId/);
+  });
+
+  it("400s a per-stream credential whose type can't serve that stream's transport", async () => {
+    const cred = await prisma.credential.create({
+      data: { name: `${HOST}-ssh`, type: "ssh", config: { username: "svc", password: "x" } as never },
+    });
+    try {
+      const resp = await put({ cpuMemoryPolling: "snmp", cpuMemoryCredentialId: cred.id });
+      expect(resp.status).toBe(400);
+      expect(resp.body.error).toMatch(/ssh credential/i);
+      expect(resp.body.error).toMatch(/needs a snmp credential/i);
+    } finally {
+      await prisma.credential.delete({ where: { id: cred.id } });
+    }
+  });
+
+  it("judges the type against the method in the SAME request, not the stored one", async () => {
+    // The asset already polls cpuMemory over SNMP; this request moves it to SSH
+    // and supplies an SSH credential. Judging against the stored column would
+    // refuse a perfectly coherent switch.
+    await prisma.asset.update({ where: { id: assetId }, data: { cpuMemoryPolling: "snmp" } as never });
+    const cred = await prisma.credential.create({
+      data: { name: `${HOST}-ssh2`, type: "ssh", config: { username: "svc", password: "x" } as never },
+    });
+    try {
+      const resp = await put({ cpuMemoryPolling: "ssh", cpuMemoryCredentialId: cred.id });
+      expect(resp.status).toBe(200);
+    } finally {
+      await prisma.asset.updateMany({ where: { id: assetId }, data: { cpuMemoryCredentialId: null } as never });
+      await prisma.credential.delete({ where: { id: cred.id } });
+    }
+  });
+
+  it("checks a credential against the method already stored on the asset", async () => {
+    await prisma.asset.update({ where: { id: assetId }, data: { interfacesPolling: "snmp" } as never });
+    const cred = await prisma.credential.create({
+      data: { name: `${HOST}-winrm`, type: "winrm", config: { username: "svc", password: "x" } as never },
+    });
+    try {
+      const resp = await put({ interfacesCredentialId: cred.id });
+      expect(resp.status).toBe(400);
+      expect(resp.body.error).toMatch(/needs a snmp credential/i);
+    } finally {
+      await prisma.credential.delete({ where: { id: cred.id } });
+    }
+  });
+
+  it("never type-checks the asset-level default — it serves every stream at once", async () => {
+    // monitorCredentialId is the fallback for all eight streams, which may
+    // legitimately poll over different transports, so an SSH credential here is
+    // valid config even on an SNMP-polled stream.
+    await prisma.asset.update({ where: { id: assetId }, data: { cpuMemoryPolling: "snmp" } as never });
+    const cred = await prisma.credential.create({
+      data: { name: `${HOST}-default`, type: "ssh", config: { username: "svc", password: "x" } as never },
+    });
+    try {
+      const resp = await put({ monitorCredentialId: cred.id });
+      expect(resp.status).toBe(200);
+    } finally {
+      await prisma.asset.updateMany({ where: { id: assetId }, data: { monitorCredentialId: null } as never });
+      await prisma.credential.delete({ where: { id: cred.id } });
+    }
+  });
+
+  it("allows a credential alongside a method that takes none — staging, not a contradiction", async () => {
+    const cred = await prisma.credential.create({
+      data: { name: `${HOST}-stage`, type: "snmp", config: { version: "v2c", community: "public" } as never },
+    });
+    try {
+      const resp = await put({ cpuMemoryPolling: "disabled", cpuMemoryCredentialId: cred.id });
+      expect(resp.status).toBe(200);
+    } finally {
+      await prisma.asset.updateMany({ where: { id: assetId }, data: { cpuMemoryCredentialId: null } as never });
+      await prisma.credential.delete({ where: { id: cred.id } });
+    }
+  });
+
+  it("clearing a credential slot to null is never checked", async () => {
+    const resp = await put({ monitorCredentialId: null, cpuMemoryCredentialId: null });
+    expect(resp.status).toBe(200);
+  });
+
   it("unmapping a process deletes its accumulated connection rows immediately", async () => {
     await prisma.asset.update({ where: { id: assetId }, data: { mappedProcesses: ["postgres", "nginx"] } });
     await prisma.assetProcessConnection.createMany({
