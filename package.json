@@ -86,7 +86,7 @@
     "cytoscape-dagre": "^4.0.1",
     "dagre": "^0.8.5",
     "eslint": "^10.10.0",
-    "happy-dom": "^20.14.0",
+    "happy-dom": "^20.14.5",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "prisma": "^7.10.0",
