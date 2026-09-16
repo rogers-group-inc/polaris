@@ -250,6 +250,151 @@ export function leadingRun<T>(readings: readonly T[], meets: (v: T) => boolean):
 }
 
 /**
+ * POLL-GROUP AGGREGATION (business rule 66): the readings that produced a value
+ * are cut into DISJOINT groups of N, newest-first, and each group is aggregated
+ * into one reading.
+ *
+ * `values` arrives newest-first and may be holed — a failed probe writes a row
+ * with a NULL value, and for `responseTimeMs` that is the only thing a NULL
+ * means. The holes are DROPPED rather than filled, which is what makes the
+ * window a count of measurements instead of a count of opportunities: a device
+ * dropping three quarters of its packets still averages its last N real
+ * responses, over more wall-clock time than a healthy one. Neither a shrinking
+ * denominator (the time window's failure) nor an invented value (0 ms flatters
+ * a dying device, the timeout turns a latency metric into a loss alarm) can
+ * arise, because a miss contributes nothing to a window it is not counted in.
+ *
+ * The RESULT is itself a series, newest-first, of DISJOINT group aggregates:
+ * `out[0]` covers the newest N values, `out[1]` the N before those, and so on.
+ * Each group is an independent look at the device, which is what lets a hold
+ * above it mean something — `leadingRun` over this answers "how many groups in
+ * a row came out over the line", and three groups agreeing is three separate
+ * measurements agreeing. (Stepping by 1 instead of N would make consecutive
+ * entries overlap by N-1 samples, so "sustained for 3" would be three
+ * near-identical numbers and barely stronger than one. That is why the groups
+ * do not slide.) It also makes the wall clock legible: time to alert is
+ * groupSize x sustained polls, not groupSize + sustained - 1.
+ *
+ * Returns EMPTY when fewer than N values exist, and DROPS a trailing partial
+ * group. An aggregate over a partial group is a different statistic wearing the
+ * same threshold, and the one thing a rule must not do is fire off a number it
+ * did not describe — so a device that has not yet answered N times simply has
+ * no reading, exactly as one that has not answered at all does.
+ */
+export function rollingAggregate(
+  values: readonly (number | null)[],
+  windowPolls: number,
+  aggregation: string,
+): number[] {
+  const n = Math.max(1, Math.round(windowPolls));
+  const vals: number[] = [];
+  for (const v of values) if (v !== null && v !== undefined && Number.isFinite(v)) vals.push(v);
+  if (vals.length < n) return [];
+  const out: number[] = [];
+  // DISJOINT groups, newest-first: [0..n), [n..2n), [2n..3n). Stepping by n
+  // rather than by 1 is the whole difference between a poll GROUP and a rolling
+  // average, and it is what makes the hold above mean something. Consecutive
+  // ROLLING windows overlap by n-1 samples, so three of them agreeing is three
+  // near-identical numbers agreeing — almost no more evidence than one. Three
+  // disjoint groups are three INDEPENDENT looks at the device, which is what an
+  // operator means by "it has been slow for a while", and it makes the time to
+  // alert exactly groupSize x sustained instead of groupSize + sustained - 1.
+  //
+  // A trailing partial group is dropped for the same reason a partial window is
+  // (the aggregate would be a different statistic under the same threshold), so
+  // the series is floor(vals.length / n) long.
+  for (let k = 0; k + n <= vals.length; k += n) {
+    out.push(aggregateOver(vals.slice(k, k + n), aggregation));
+  }
+  return out;
+}
+
+/** The five aggregations over a non-empty slice. `latest` is the newest member,
+ *  which is what it means everywhere else — a count window of 1 under any
+ *  aggregation is therefore the raw reading, not a special case. */
+function aggregateOver(slice: readonly number[], aggregation: string): number {
+  switch (aggregation) {
+    case "avg": return slice.reduce((a, b) => a + b, 0) / slice.length;
+    case "median": {
+      const s = [...slice].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+    }
+    case "min": return Math.min(...slice);
+    case "max": return Math.max(...slice);
+    default: return slice[0]!; // latest
+  }
+}
+
+/** One response-time probe as the count window sees it, newest-first. */
+export interface ProbeEntry {
+  /** The measured RTT, or null when the probe failed. */
+  responseTimeMs: number | null;
+  /** How long the failed probe waited. Null on a success, and on any failure
+   *  recorded before the column existed. */
+  timeoutMs: number | null;
+  /** True when this failed probe is the one that declared (or continued) an
+   *  outage — `AssetMonitorSample.assetDown`, business rule 29h. */
+  assetDown: boolean;
+}
+
+/**
+ * RESPONSE TIME'S OWN WINDOW (business rule 67), applied before the rolling
+ * aggregate turns it into readings.
+ *
+ * Two things happen here that no other metric wants, and both exist because a
+ * response-time poll has a failure mode with a DURATION attached:
+ *
+ *  1. **A miss that did not put the asset Down is the timeout.** The probe
+ *     genuinely waited that long and heard nothing, so the honest reading is
+ *     "at least this slow" — not a gap (which would let a device answering once
+ *     an hour read as fast as one answering every minute) and not a zero (which
+ *     would make the worst device on the network look like the best). A failure
+ *     with no recorded timeout is a row written before the column existed;
+ *     those are EXCLUDED, which is exactly the pre-feature behaviour and
+ *     self-heals within one window.
+ *
+ *  2. **An outage RESETS the window.** Walking newest-first, everything at and
+ *     before the most recent `assetDown` probe is discarded. Without this, the
+ *     timeouts of an outage would sit in the window for ten polls after the
+ *     device came back, so a recovered device would keep alerting about a
+ *     slowness that was really the outage the down automation already owns —
+ *     the same failure rule 29h exists to stop for packet loss, in the metric
+ *     next door. It is also what keeps (1) safe: filling misses with the
+ *     timeout is only honest while the device is still considered reachable.
+ *
+ * The consequence is deliberate: a device that has just recovered has NO
+ * reading until its window refills, because `rollingAggregate` refuses a
+ * partial window. At a 60s cadence that is ten quiet minutes after every
+ * outage — a settling period, not a blind spot, since `down` is a different
+ * automation's subject the whole time.
+ */
+export function prepareResponseTimeWindow(entries: readonly ProbeEntry[]): Array<number | null> {
+  const out: Array<number | null> = [];
+  for (const e of entries) {
+    if (e.assetDown) break; // the outage ends the window; everything older is its
+    if (e.responseTimeMs !== null && e.responseTimeMs !== undefined) { out.push(e.responseTimeMs); continue; }
+    // A miss. Worth the timeout it waited, or nothing at all if we never
+    // recorded one — `rollingAggregate` drops the nulls.
+    out.push(typeof e.timeoutMs === "number" && e.timeoutMs > 0 ? e.timeoutMs : null);
+  }
+  return out;
+}
+
+/** The measurement window as a COUNT OF READINGS, or 0 when the trigger states
+ *  a wall-clock window instead. Only ever set alongside a real aggregation:
+ *  `latest` has nothing to measure over, and a windowed ratio's window IS its
+ *  reading (business rule 29f), so neither accepts one. */
+export function triggerWindowPolls(
+  trigger: { windowPolls?: number | null; aggregation?: string } | null | undefined,
+): number {
+  const n = trigger?.windowPolls;
+  if (typeof n !== "number" || !(n > 0)) return 0;
+  if (!trigger?.aggregation || trigger.aggregation === "latest") return 0;
+  return Math.round(n);
+}
+
+/**
  * One step of a current-state source's run counter. `readingAt` is the poll
  * anchor for this reading; `lastAt` is the anchor that last advanced it.
  *
@@ -524,11 +669,36 @@ const dimensionFilterSchema = z
  */
 const FOR_POLLS_FIELD = z.number().int().min(0).max(100).optional();
 
+/**
+ * THE MEASUREMENT WINDOW AS A COUNT OF READINGS (business rule 66).
+ *
+ * `windowSec` measures over a period of TIME and takes whatever samples landed
+ * in it, so a device that answered four times in the hour is averaged over four
+ * readings and one that answered sixty over sixty — the same rule describing two
+ * different statistics depending on how well the device happens to be working.
+ * `windowPolls` measures over the last N readings that produced a value, so the
+ * sample size is the thing the operator fixed and the WALL CLOCK is what
+ * stretches when the device gets lossy.
+ *
+ * Set alongside it, `forPolls` stops meaning "N raw samples over the line" and
+ * starts meaning "N consecutive recalculations of this window over the line" —
+ * the two compose, which they deliberately do not for a time window (there the
+ * window IS the period, and a hold on top would be two clocks doing one job).
+ *
+ * Capped at 100 like every other count that defines rather than filters a
+ * condition. The cap is also what keeps `windowPolls + forPolls - 1` inside the
+ * engine's 200-reading `SERIES_CAP`, which is the series a hold is counted off.
+ */
+const WINDOW_POLLS_FIELD = z.number().int().min(1).max(100).optional();
+
 const assetMetricTrigger = z.object({
   type: z.literal("asset_metric"),
   metric: z.enum(ASSET_METRICS),
   aggregation: z.enum(AGGREGATIONS).default("latest"),
   windowSec: z.number().int().min(0).max(86400).default(0),
+  /** The measurement window as a COUNT OF READINGS — see WINDOW_POLLS_FIELD.
+   *  Wins over `windowSec`, which stays written as its wall-clock mirror. */
+  windowPolls: WINDOW_POLLS_FIELD,
   operator: z.enum(COMPARATORS),
   threshold: z.number(),
   forDurationSec: z.number().int().min(0).max(86400).default(0),
@@ -582,6 +752,9 @@ const hostMetricTrigger = z.object({
   metric: z.enum(HOST_METRICS),
   aggregation: z.enum(AGGREGATIONS).default("latest"),
   windowSec: z.number().int().min(0).max(86400).default(0),
+  /** The measurement window as a COUNT OF READINGS — see WINDOW_POLLS_FIELD.
+   *  The host samples itself every 30s, so a reading here is 30s. */
+  windowPolls: WINDOW_POLLS_FIELD,
   operator: z.enum(COMPARATORS),
   threshold: z.number(),
   forDurationSec: z.number().int().min(0).max(86400).default(0),

@@ -56,8 +56,9 @@ maps to null — an empty SFP cage is not a fault.
 
 `probeLossPct` is a **windowed ratio**, not an aggregation. Its field is
 relabelled **History (minutes)** — mandatory, default 15, range 5–1440 — and
-that window *is* the reading. A separate optional **Sustained for** field
-carries a hold on top of it.
+that window *is* the reading. A separate optional **Sustained for (polls)** field
+carries a hold on top of it — the window in minutes, the hold in readings, each
+stating the unit it is actually stored in.
 
 Three things it does that no other metric does
 ([rule 29](Business-Rules#rule-29)):
@@ -253,13 +254,26 @@ using **device filter rows** (below).
 
 ## Windows, holds and the one field that means two things
 
-The step has a **single** "Sustained for (minutes)" field, and it means one of
-two things depending on the aggregation you picked:
+The step has a **single** duration field, and it means one of two things
+depending on the aggregation you picked. It renames itself — and changes its
+**unit** — to say which:
 
-| Aggregation | The field means |
-|---|---|
-| `avg` / `median` / `min` / `max` | the **measurement window** — the period the value is computed over |
-| `latest` | the **sustain clock** — how long the condition must stay true |
+| Aggregation | The field | It means |
+|---|---|---|
+| `avg` / `median` / `min` / `max` | **Measured over** / **Poll Group Size**, with a `minutes \| polls` picker | the **measurement window** — a span of time, or a group of polls; see Poll groups below, which is the choice that picker offers |
+| `probeLossPct` | **History (minutes)** | the window the ratio is measured across (see above) |
+| `latest` | **Sustained for (polls)** | the **sustain clock** — how many consecutive readings the condition must stay true for |
+
+The two units are not a cosmetic difference, and which one you get is not a
+preference — it is what the rule actually stores. A window is saved as
+`windowSec` and the engine reads it as wall-clock time, so stating it in polls
+meant multiplying by whatever cadence the wizard had observed and presenting the
+result as though you had said it; a hold is saved as `forPolls` and the engine
+genuinely counts readings. Each field now states the half that is true, and its
+caption names the other half — the poll estimate under a window, the wall clock
+under a hold. Switching a condition's aggregation **re-denominates** the number
+in the box rather than reinterpreting it: 10 minutes on a fleet polled every two
+minutes becomes 5 polls, never a bare 10 that would quietly double the hold.
 
 That ambiguity is real, so the step renders the trigger **twice**: once as an
 English sentence, and once as a **formula** directly underneath. The formula puts
@@ -290,6 +304,121 @@ This matters because the engine ticks every 60 seconds while a device may be
 polled every five minutes. Counting ticks would charge five polls against one.
 The wizard asks the server for **the actual cadence of the draft's own devices**
 so it can convert, and says which cadence it converted at.
+
+### Windows are measured in minutes, not readings
+
+The same is not true of a measurement window, and since 2026-09-16 the two are
+no longer stated in the same unit. A window is `windowSec` — the engine takes
+every sample whose timestamp falls inside it and reduces them. It does not count
+to N. So "60 polls" was never what the rule said: it was 60 × the cadence the
+wizard happened to observe when you typed it, and it stopped describing the rule
+the moment that cadence changed — a window authored against a 60s poll stayed an
+hour after the fleet moved to 300s, while the label still claimed 60 readings.
+
+The number of readings a window holds is a **consequence** of the window and the
+fleet's cadence, so it belongs in the caption, where it updates as the cadence
+does. Two consequences worth knowing when you read a window back:
+
+- **A time window's denominator floats with availability.** Missed polls write no
+  value, so an hour of `avg` over a device dropping three quarters of its packets
+  is the average of the quarter that answered — not of 60 slots with holes in
+  them. **Poll groups** (below) are the fix for that; if you want the misses
+  themselves to alarm, that is what `probeLossPct` and down detection are for.
+- **A stored window that isn't a whole number of minutes is left alone** until
+  you edit the field. A 90-second window shows `2` and stays 90 across a save
+  that never touched it; type `2` and it becomes 120, because typing it is
+  stating it.
+
+### Poll groups
+
+Switch the picker from **minutes** to **polls** and the field becomes **Poll
+Group Size**. Polls are then taken in groups of that many, and **each group is
+aggregated into one reading**.
+
+This is the answer to the floating denominator above. Every group is the same
+size, so a lossy device is measured over the same number of samples as a healthy
+one — what stretches is the *wall-clock time* a group takes to fill, not the
+number of measurements in it. The reading means the same thing at 0 % loss and at
+40 %: **when this device answers, this is how long it takes.**
+
+Choosing polls also reveals **Sustained for (poll groups)**, which a minutes
+window does not get: how many consecutive groups must come out over the
+threshold before the alert fires. The two compose into "the last three groups of
+ten polls each averaged over 500 ms".
+
+**The groups do not overlap**, and that is the point of them. Group 1 is polls
+1–10, group 2 is polls 11–20, group 3 is polls 21–30 — three separate looks at
+the device, so three of them agreeing is real corroboration. It also makes the
+timing something you can work out in your head:
+
+> **Time to alert = Poll Group Size × Sustained for.**
+> A group size of 10 at a 60-second cadence takes 10 minutes to produce its first
+> reading. Sustained for 3 means the alert arrives after 30 minutes — assuming
+> all three group averages were over the threshold.
+
+| | Minutes window | Poll groups |
+|---|---|---|
+| Window | last 60 **minutes** | groups of 10 **polls** |
+| Sample size | whatever landed — floats with availability | fixed at the group size |
+| A miss | shrinks the denominator | (response time: counts as the timeout — see below) |
+| Hold on top | none — the window *is* the period | **Sustained for**, in groups |
+| Before a full group | averages what it has | **no reading at all** — it abstains |
+| Time to alert | the window, once | size × sustained |
+
+Two behaviours worth knowing before you rely on it:
+
+- **A group has to fill before it reads anything.** Nothing fires during the first
+  group, however bad the device looks inside it — that is the smoothing you asked
+  for. Set the group size to the smallest number that hides the noise you don't
+  care about, not the largest you can imagine.
+- **On a lossy device everything takes proportionally longer**, because a group
+  waits for measurements rather than for the clock. That is deliberate: fewer
+  measurements means less certainty, so more evidence before paging. A device bad
+  enough that groups never fill has a packet-loss problem rather than a latency
+  one, and `probeLossPct` is the metric that says so.
+
+The practical reason to reach for it: poll groups will not page you for a single
+spike. One 1500 ms response inside an otherwise healthy group of ten never pulls
+that group's average over 500, so the run never starts — while a device that has
+genuinely slowed clears the line in group after group and fires on schedule.
+
+### Response time measures misses too, and forgets an outage
+
+**Response time defaults to a poll group size of 10**, and it behaves differently
+from every other metric inside that window — because it is the only metric whose
+*failure* has a duration attached. A missed CPU reading is an absence; there is no
+number to put there. A missed response-time poll waited the device's full probe
+timeout and heard nothing, which is a fact about the device measured in the same
+unit as the metric.
+
+So, inside a response-time poll group:
+
+- **A missed poll counts as the probe timeout configured for that device.** Not
+  skipped, not zero. Skipping it would let a device answering one poll in ten read
+  exactly as fast as one answering every poll; zero would make the worst device on
+  the network look like the best.
+- **Going Down resets the window.** Everything up to and including the poll that
+  declared the outage is discarded. Without this, an outage's timeouts would sit
+  in the window for ten polls after the device came back, and a recovered device
+  would keep alerting about the outage your down automation already paged you for.
+- **Only Down resets it.** A missed poll that has *not* yet crossed your
+  "Declare Down after" count is still a degraded device, not an outage — it counts,
+  filled with its timeout. The line between the two is your own missed-poll
+  setting, not a second threshold hidden in here.
+- **A recovered device is quiet until a group refills.** Ten polls, so about
+  ten minutes at a 60-second cadence. That is a settling period rather than a blind
+  spot — `down` was your down automation's business for the whole outage.
+
+You can still change the number, or switch back to minutes, on any individual
+automation. The default only applies to a new automation that hasn't stated a
+window yet, and it never overrides a choice you have made.
+
+> **On upgrade, existing response-time automations were converted** to the
+> 10-poll group, including ones you had edited. Each one is named in an Event
+> along with the window it used to have, so you can see exactly what changed and
+> set any of them back by hand. They were not left alone because the problem being
+> fixed is what a minutes window *measures* — an edited rule measured it just as
+> wrongly as an unedited one.
 
 ---
 

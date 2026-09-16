@@ -1,0 +1,15 @@
+-- How long a FAILED response-time probe waited, in ms (business rule 67).
+--
+-- A missed poll that did not put the asset Down is a reading of "at least this
+-- long", and the count window fills it with this value rather than dropping it
+-- or inventing a zero. Recorded at probe time because a window of past probes
+-- must use the timeout that actually applied to each one — not whatever the
+-- asset's monitor settings say when the rule is evaluated.
+--
+-- Nullable with NO DEFAULT, which makes this catalog-only on the TimescaleDB
+-- hypertable: no chunk rewrite, no decompression, no downtime on a fleet with
+-- 400 days of samples. Same shape as uptimeSec / dependencyDown / assetDown.
+-- Existing rows stay NULL and read as "not known", which the count window
+-- treats as an excluded miss — the pre-feature behaviour, self-healing within
+-- one window.
+ALTER TABLE "asset_monitor_samples" ADD COLUMN "timeoutMs" INTEGER;

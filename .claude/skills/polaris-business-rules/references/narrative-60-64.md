@@ -556,3 +556,137 @@ When adding a new `{asset.*}` token, add its field to `SAMPLE_ALERT_DEVICE` as w
 engine's `ASSET_DETAIL_SELECT`. The specimen's value is that it prunes the same rows the real
 alert prunes; a field missing here mails a blank row for a fact a real alert prints, and the
 test quietly stops being faithful without anything failing.
+
+
+---
+
+## Rule 66 — A measurement window may be counted in readings, and then the hold counts poll groups
+
+A time window takes whatever samples landed inside it, which means the SAMPLE SIZE of an
+aggregated automation is a function of how well the device happens to be working. `avg` over
+an hour on a healthy device is the mean of sixty readings; on a device dropping three
+quarters of its probes it is the mean of the seventeen that answered, under the same
+threshold, wearing the same name, with nothing on screen saying the statistic changed. That
+is not a rounding problem, it is two different rules sharing one definition — and it gets
+worse exactly when the device is worst.
+
+**`windowPolls` states the window as a COUNT of readings instead: the last N samples that
+produced a value.** Misses are not counted, not filled, and not fabricated — a failed probe
+writes a NULL `responseTimeMs` and simply is not a member of the window. What stretches under
+loss is the WALL CLOCK the window spans, not the number of measurements in it, so the reading
+means the same thing at 0% loss and at 40%: *when this device answers, this is how long it
+takes*. `rollingAggregate` is the arithmetic, and its defining test is an equality — a holed
+series and a clean series carrying the same N values produce the same number.
+
+**Two shapes of window were considered and rejected before this one.** Filling a miss with
+**0 ms** flatters a dying device: the Roanoke FortiAP that prompted this read 507 ms over the
+polls it answered and would have read 144 ms with its 43 misses counted as zero, so the alert
+would have CLEARED as the device got worse. Median does not rescue that — past 50% loss the
+zeros ARE the distribution and the median is 0 — and it is the trap Zabbix's `icmppingsec`
+is known for, where every latency trigger has to be guarded with `and icmpping=1`. Filling
+with the **probe timeout** fails the other way: it poisons a latency metric into a loss alarm
+that fires about a device whose successful responses are perfectly fine. The standard every
+other NMS keeps — Nagios `check_icmp`'s `rta`/`pl` pair, SmokePing's median-of-replies with
+loss as the line colour, the SRE convention that latency is measured over SUCCESSFUL requests
+and failures are a separate availability signal — is that a failed probe's latency is
+UNDEFINED rather than any number, and packet loss is its own metric with its own threshold
+(business rule 29) and its own down detection (business rule 36).
+
+**The hold composes with it, and only with it.** Under a time window `forPolls` is refused,
+because there the window IS the period and a second clock on top would be two clocks doing
+one job. Under a count window the readings are cut into DISJOINT GROUPS of N, so there is a
+series of group aggregates to count and `forPolls` means *M consecutive GROUPS over the line*.
+`reduceReadings` hands those group aggregates on AS the series, which is why every existing
+mechanism keeps working untouched: `leadingRun` counts the run, `tierRuns` gives each severity
+tier its own run against the same series, and the engine's fire/clear path never learns that
+the numbers it is counting were derived. That composition is the thing a time window cannot
+express: one 1500 ms spike inside an otherwise healthy 5-reading group never clears the
+threshold, so the run never starts, while a genuine climb clears it in group after group.
+
+**The groups step by N, never by 1, and that is the load-bearing half of the design.** The
+first cut of this shipped as a ROLLING window recomputed at every reading, and the flaw was
+statistical rather than mechanical: consecutive rolling windows overlap by N-1 samples, so
+"sustained for 3" was three near-identical averages agreeing — barely more evidence than one,
+while reading like three times as much. Disjoint groups are three INDEPENDENT looks at the
+device, which is what an operator means by "it has been slow for a while". It also makes the
+wall clock legible and predictable: time to alert is **groupSize x sustained** polls, not
+groupSize + sustained - 1, which is what the builder's own labels now promise ("Poll Group
+Size" of 10 held for 3 groups = 30 polls = 30 minutes at a 60s cadence). The consequence for
+the engine is that `lookbackMsFor` sizes a count window from the PRODUCT of the two counts
+rather than their sum — get that wrong and the hold can never be satisfied, because the query
+excluded the readings the older groups needed. A trailing partial group is dropped for the
+same reason a partial window is.
+
+**Not enough readings is NO reading, never a partial window.** An aggregate over fewer than N
+samples is a different statistic under the same threshold, so `rollingAggregate` returns
+empty and the asset is skipped exactly as one that has reported nothing is skipped. This is
+what bounds the feature's cost: `lookbackMsFor` reaches back over the wall-clock mirror of
+both counts, doubled — enough for a device losing half its probes — and a device worse than
+that produces too few readings to fill the window and abstains. Doubling rather than more is
+a fleet-scale decision, not a correctness one: this fetch is already the heaviest thing an
+automation does at 2000 assets, and a device at that loss rate is a packet-loss and
+down-detection problem those metrics already own.
+
+**Both counts keep their wall-clock mirrors.** `windowSec` beside `windowPolls` and
+`forDurationSec` beside `forPolls` are what size the engine's sample fetch and what the prose
+reads; the builder always writes them, and an API-authored rule that omits them gets the full
+6-hour lookback rather than a guessed cadence. The BUILDER states the unit the rule actually
+stores — "Measured over" with a minutes/polls picker, the breach counter appearing only
+beside a count window (and beside a ratio's History, the other window with a free hold axis)
+— and `tgStampWindowPolls` STRIPS the count from every leaf that must not carry it, because
+the engine prefers `windowPolls` wherever it finds one and a leftover would keep measuring in
+readings while the field, the sentence and the formula all said minutes.
+
+
+---
+
+## Rule 67 — A missed response-time poll is the timeout it cost, and an outage resets the window
+
+Response time is the one metric whose FAILURE has a duration attached. Every other metric's
+miss is an absence — the collector did not read a CPU percentage, and there is no number to
+put there. A failed response-time probe waited the asset's full `probeTimeoutMs` and heard
+nothing, which is a fact about how the device is behaving and is measured in the same unit as
+the metric itself.
+
+Business rule 66 dropped misses out of the count window, and for a general metric that is
+right. For response time it is a hole: a device answering one poll in ten reads exactly as
+fast as one answering every poll, because both windows contain only the answers. **A miss that
+did not put the asset Down is therefore filled with `AssetMonitorSample.timeoutMs`** — the
+resolved timeout for that asset AT PROBE TIME, recorded on the row by `recordProbeResult`
+rather than re-resolved when the rule runs. Recorded for two reasons: a window of past probes
+must use the timeout that actually applied to each one rather than whatever the setting says
+today, and resolving per-asset monitor settings inside the engine's tick would mean widening
+its deliberately tight asset select at 2000 assets. A failure with NO recorded timeout is a row
+written before the column existed; those stay excluded, which is exactly the pre-feature
+behaviour and self-heals within one window.
+
+**What makes the fill safe is the reset.** Filling misses with the timeout is honest only while
+the device is still considered reachable; through a real outage it would turn a latency metric
+into a loss alarm, firing about the thing the down automation already owns — which is the
+objection that sank "count a miss as the timeout" as a general rule, and the exact failure
+business rule 29h exists to stop for packet loss in the metric next door. So **walking
+newest-first, everything at and before the most recent `assetDown` probe is discarded.**
+`assetDown` is stamped from the status the probe RESULTS in (`monitorStatusFor`), so the line
+between "degraded" and "out" is the operator's own `missedPolls` (business rule 36) rather than
+a second threshold invented here: an amber miss — below their threshold, not an outage yet —
+still counts and is still filled, and only the misses their own automation calls Down reset
+anything.
+
+**The consequence is deliberate: a recovered device has no reading until its window refills.**
+`rollingAggregate` refuses a partial window (business rule 66), so at a 60s cadence a device is
+quiet for ten minutes after an outage. That is a settling period rather than a blind spot —
+`down` was a different automation's subject the whole time, and the alternative is comparing an
+average of one or two samples against a threshold meant for ten, at the moment a device is
+least stable.
+
+**Response time therefore DEFAULTS to a count window of 10** in the builder, and the unit is
+chosen for the operator rather than offered neutrally: picking minutes for response time is
+picking the denominator that floats. It is a default, not a lock — the number and the unit stay
+editable — but the default only asserts itself on a draft that states no window at all, and
+never after the operator has touched the picker (`data-touched`) or on a stored rule.
+**Existing response-time rules were migrated** by the `V7` one-shot
+(`seedBaselineAutomationsV7ResponseTimeWindowAt`), which unlike V5 does NOT spare edited rules:
+V5 was adding a new knob whose default an operator might reasonably disagree with, while this
+fixes what the existing knob MEASURES, and an edited rule is no less wrong than an unedited one.
+It names every rule it changed and its old window in a warning Event, because it alters when
+existing alerts fire and an operator must be able to see it happened and put a rule back.

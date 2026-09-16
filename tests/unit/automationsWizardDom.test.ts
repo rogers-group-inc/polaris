@@ -1816,18 +1816,20 @@ describe("automation wizard DOM render", () => {
     expect(agg.value).toBe("avg");
     expect(agg.textContent).toContain("median");
 
-    // A stored aggregation window renders as the duration in POLLS (300s at the
-    // stubbed 120s cadence ≈ 3 readings) and the field is marked required.
+    // A stored aggregation window renders in MINUTES — 300s is 5 minutes at any
+    // cadence, where counting it in polls made it "3" only because this fleet
+    // happens to poll every 120s — and the field is marked required.
     const dur = doc.querySelector("#tf-duration-min") as unknown as { value: string; placeholder: string; dispatchEvent: (e: unknown) => void };
-    expect(dur.value).toBe("3");
+    expect(dur.value).toBe("5");
+    expect((doc.querySelector(".aw-dur label") as unknown as { textContent: string }).textContent).toContain("Measured over");
     const star = () => (doc.querySelector(".aw-dur .aw-dur-req") as unknown as { style: { display: string } }).style.display;
     expect(star()).not.toBe("none");
 
-    // Switch to median + 5 readings: the window follows the duration (5 × the
-    // stubbed 120s cadence = 600s) and no sustain clock is stacked on top of it.
+    // Switch to median + 10 minutes: the window is what was typed, times 60 —
+    // no cadence in it — and no sustain clock is stacked on top of it.
     agg.value = "median";
     agg.dispatchEvent(new win.Event("change", { bubbles: true }));
-    dur.value = "5";
+    dur.value = "10";
     dur.dispatchEvent(new win.Event("input", { bubbles: true }));
     expect(star()).not.toBe("none");
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
@@ -1846,6 +1848,252 @@ describe("automation wizard DOM render", () => {
     agg.dispatchEvent(new win.Event("change", { bubbles: true }));
     expect(star()).toBe("none");
     expect(dur.placeholder).toContain("0 = fire as soon as");
+    // And it RE-DENOMINATES rather than reinterpreting: the 10 minutes the
+    // operator typed is 5 readings at the stubbed 120s cadence, so the box says
+    // 5. Leaving a bare "10" there would silently double the hold.
+    expect((doc.querySelector(".aw-dur label") as unknown as { textContent: string }).textContent).toContain("Sustained for (polls)");
+    expect(dur.value).toBe("5");
+  });
+
+  it("a window field is minutes and a hold field is polls, in the same trigger", async () => {
+    // The two units side by side, which is the whole point of the split: the
+    // History box states wall-clock (windowSec is seconds) while the sustain box
+    // below it states readings (forPolls is a count the engine counts).
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...LOSS_BASE, id: "r-units", name: "High packet loss",
+      trigger: { type: "asset_metric", metric: "probeLossPct", aggregation: "latest", windowSec: 1800, operator: ">", threshold: 5, forDurationSec: 360, forPolls: 3 },
+      reset: { mode: "auto" }, severityBands: null, bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const labelOf = (sel: string) =>
+      (doc.querySelector(sel) as unknown as { textContent: string }).textContent;
+    expect(labelOf(".aw-dur label")).toContain("History (minutes)");
+    expect(labelOf(".aw-ratio-sustain label")).toContain("Sustained for (polls)");
+    // 1800s of History is 30 minutes; the hold states 3 readings and keeps them.
+    expect((doc.querySelector("#tf-duration-min") as unknown as { value: string }).value).toBe("30");
+    expect((doc.querySelector("#tf-sustain-min") as unknown as { value: string }).value).toBe("3");
+    // Each caption names the half its box can't: polls under the window, wall
+    // clock under the hold.
+    expect((doc.querySelector(".aw-dur .aw-poll-note") as unknown as { textContent: string }).textContent).toContain("15 polls");
+    expect((doc.querySelector(".aw-ratio-sustain .aw-poll-note") as unknown as { textContent: string }).textContent).toContain("6m");
+    // Saved untouched, both halves exactly as stored.
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.windowSec).toBe(1800);
+    expect(saved.trigger.forDurationSec).toBe(360);
+    expect(saved.trigger.forPolls).toBe(3);
+  });
+
+  // ── Count windows (business rule 66) ──────────────────────────────────────
+
+  it("switches an aggregate's window from minutes to a COUNT of readings, and back", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    const win = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-count-window", name: "Slow response time", description: null, enabled: true, severity: "warning",
+      trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 600, operator: ">", threshold: 500 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      messageTemplate: null,
+      actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+      escalation: null,
+      severityBands: null,
+      bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const unit = doc.querySelector("#tf-window-unit") as unknown as { value: string; style: { display: string }; dispatchEvent: (e: unknown) => void };
+    const dur = doc.querySelector("#tf-duration-min") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    // A stored TIME window opens in minutes, and the picker is offered.
+    expect(unit.value).toBe("min");
+    expect(unit.style.display).not.toBe("none");
+    expect(dur.value).toBe("10"); // 600s
+    // The hold field is absent for a time window: there the window IS the period.
+    expect((doc.querySelector(".aw-ratio-sustain") as unknown as { style: { display: string } }).style.display).toBe("none");
+
+    // Switch to readings. The 10 minutes RE-DENOMINATE at the stubbed 120s
+    // cadence into 5 readings rather than staying a bare 10.
+    unit.value = "polls";
+    unit.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(dur.value).toBe("5");
+    // ...the field renames itself to the job it is now doing...
+    expect((doc.querySelector(".aw-dur label") as unknown as { textContent: string }).textContent)
+      .toContain("Poll Group Size");
+    // ...and the sustain appears beside it, counting GROUPS rather than polls.
+    const sustainWrap = doc.querySelector(".aw-ratio-sustain") as unknown as { style: { display: string } };
+    expect(sustainWrap.style.display).not.toBe("none");
+    expect((doc.querySelector(".aw-ratio-sustain label") as unknown as { textContent: string }).textContent)
+      .toContain("Sustained for (poll groups)");
+
+    // Groups of 10, sustained for 3 groups.
+    dur.value = "10";
+    dur.dispatchEvent(new win.Event("input", { bubbles: true }));
+    const sus = doc.querySelector("#tf-sustain-min") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    sus.value = "3";
+    sus.dispatchEvent(new win.Event("input", { bubbles: true }));
+    // The caption does the arithmetic the operator would otherwise do in their
+    // head: 3 groups of 10 is 30 polls, which at the stubbed 120s cadence is 1h.
+    expect((doc.querySelector(".aw-ratio-sustain .aw-poll-note") as unknown as { textContent: string }).textContent)
+      .toContain("3 groups of 10 ≈ 30 polls");
+
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.windowPolls).toBe(10);
+    expect(saved.trigger.forPolls).toBe(3);
+    // Both counts keep their wall-clock mirrors. The hold's is the time an
+    // operator actually waits — groups x groupSize x cadence — because the
+    // groups do not overlap.
+    expect(saved.trigger.windowSec).toBe(1200);     // 10 polls x the stubbed 120s
+    expect(saved.trigger.forDurationSec).toBe(3600); // 3 x 10 x 120s = 1h
+    expect(() => ruleInputSchema.parse(saved)).not.toThrow();
+  });
+
+  it("STRIPS the count when the operator switches back to minutes", async () => {
+    // The strip half of the stamp. A leftover windowPolls would keep the engine
+    // measuring in readings while the field, the sentence and the formula all
+    // said minutes — the rule doing something nothing on screen states.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    const win = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-count-strip", name: "Slow response time", description: null, enabled: true, severity: "warning",
+      trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 1200, windowPolls: 10, operator: ">", threshold: 500, forDurationSec: 1800, forPolls: 15 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      messageTemplate: null,
+      actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+      escalation: null,
+      severityBands: null,
+      bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    // A stored count window opens in readings, showing the COUNT it states
+    // rather than its seconds mirror divided by anything.
+    const unit = doc.querySelector("#tf-window-unit") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    expect(unit.value).toBe("polls");
+    expect((doc.querySelector("#tf-duration-min") as unknown as { value: string }).value).toBe("10");
+    expect((doc.querySelector("#tf-sustain-min") as unknown as { value: string }).value).toBe("15");
+
+    unit.value = "min";
+    unit.dispatchEvent(new win.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.windowPolls).toBeUndefined();
+    expect(saved.trigger.windowSec).toBe(1200);
+    // The hold goes with it: a time-windowed aggregate has no second axis.
+    // (`forPolls` drops out of the payload entirely at 0 rather than being
+    // written as a zero — either spelling reads as "no hold" to the engine.)
+    expect(saved.trigger.forPolls).toBeFalsy();
+    expect(saved.trigger.forDurationSec).toBe(0);
+  });
+
+  it("says readings, not minutes, in the sentence and the formula", async () => {
+    doc.body.innerHTML = "";
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-count-prose", name: "Slow response time", description: null, enabled: true, severity: "warning",
+      trigger: { type: "asset_metric", metric: "responseTimeMs", aggregation: "avg", windowSec: 1200, windowPolls: 10, operator: ">", threshold: 500 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      messageTemplate: null,
+      actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+      escalation: null,
+      severityBands: null,
+      bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const sentence = (doc.querySelector("#aw-trigger-sentence") as unknown as { textContent: string }).textContent;
+    expect(sentence).toContain("the last 10 readings");
+    expect(sentence).not.toContain("20 minutes");
+    const formula = (doc.querySelector("#aw-trigger-formula") as unknown as { textContent: string }).textContent;
+    expect(formula).toContain("10p");
+    expect(formula).not.toContain("20m");
+  });
+
+  it("keeps a window whose seconds aren't a whole number of minutes until it's edited", async () => {
+    // The same round-trip guard the poll fields carry, against a constant. A
+    // 90-second window shows "2" and STAYS 90 through a save that never touched
+    // it — opening the wizard must not quietly re-round somebody's rule.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    const win = g.window as InstanceType<typeof Window>;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-odd-window", name: "Hot CPU", description: null, enabled: true, severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 90, operator: ">", threshold: 90 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      messageTemplate: null,
+      actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+      escalation: null,
+      severityBands: null,
+      bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect((doc.querySelector("#tf-duration-min") as unknown as { value: string }).value).toBe("2");
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect((savedPayloads[0]! as Record<string, any>).trigger.windowSec).toBe(90);
+
+    // Typing the same number it was already showing IS a statement of it, and
+    // from there the rule says what the box says. (A fresh wizard: saving closes
+    // the one above.)
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-odd-window-2", name: "Hot CPU", description: null, enabled: true, severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 90, operator: ">", threshold: 90 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      messageTemplate: null,
+      actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+      escalation: null,
+      severityBands: null,
+      bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const dur = doc.querySelector("#tf-duration-min") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    dur.value = "2";
+    dur.dispatchEvent(new win.Event("input", { bubbles: true }));
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect((savedPayloads[0]! as Record<string, any>).trigger.windowSec).toBe(120);
   });
 
   it("a `latest` condition's minutes stay the sustain clock, not a window", async () => {
@@ -2047,7 +2295,7 @@ describe("automation wizard DOM render", () => {
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(savedPayloads).toHaveLength(0);
-    expect(toastErrors.join(" ")).toContain("Measured over (polls)");
+    expect(toastErrors.join(" ")).toContain("Measured over");
   });
 
   it("the formula block under the sentence moves the minutes when the aggregation changes", async () => {
@@ -2184,16 +2432,16 @@ describe("automation wizard DOM render", () => {
     expect(label.textContent).not.toContain("Sustained");
     expect((doc.querySelector(".aw-dur .aw-dur-req") as unknown as { style: { display: string } }).style.display).toBe("");
     // ...defaults rather than leaving a window the engine has to invent (the
-    // 15-minute default, counted at the stubbed 120s cadence ≈ 8 readings)...
-    expect((doc.querySelector("#tf-duration-min") as unknown as { value: string }).value).toBe("8");
+    // 15-minute default, which stated in minutes is just 15)...
+    expect((doc.querySelector("#tf-duration-min") as unknown as { value: string }).value).toBe("15");
     // ...and the aggregation control is hidden, since a ratio has nothing to aggregate.
     expect((doc.querySelector('#aw-trig-root .tgl-agg[data-ratio="1"]') as unknown as { style: { display: string } }).style.display).toBe("none");
     // The ratio-only sustain field surfaces beside it (hidden for other metrics).
     expect((doc.querySelector(".aw-ratio-sustain") as unknown as { style: { display: string } }).style.display).toBe("");
 
-    // An operator-typed 30 POLLS saves as the WINDOW (30 × the stubbed 120s
-    // cadence = 3600s); the untouched sustain stays 0.
-    (doc.querySelector("#tf-duration-min") as unknown as { value: string }).value = "30";
+    // An operator-typed 60 MINUTES saves as the WINDOW (60 × 60 = 3600s,
+    // whatever this fleet polls at); the untouched sustain stays 0.
+    (doc.querySelector("#tf-duration-min") as unknown as { value: string }).value = "60";
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);
@@ -2221,9 +2469,9 @@ describe("automation wizard DOM render", () => {
     // ...and appears with the History relabel.
     expect((doc.querySelector(".aw-ratio-sustain") as unknown as { style: { display: string } }).style.display).toBe("");
 
-    // Counted in readings: 30 polls of History and 5 of hold, at the stubbed
-    // 120s cadence → 3600s over 600s.
-    (doc.querySelector("#tf-duration-min") as unknown as { value: string }).value = "30";
+    // Two units, one trigger: 60 MINUTES of History (× 60 = 3600s) and a hold
+    // of 5 READINGS (× the stubbed 120s cadence = 600s).
+    (doc.querySelector("#tf-duration-min") as unknown as { value: string }).value = "60";
     (doc.querySelector("#tf-sustain-min") as unknown as { value: string }).value = "5";
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
@@ -2253,8 +2501,8 @@ describe("automation wizard DOM render", () => {
     }
     // The stored rule renders from the model, so the fields prefill without a
     // metric re-pick (data-ratio rides the row markup).
-    // 600s at the stubbed 120s cadence = 5 readings of History, and no hold.
-    expect((doc.querySelector("#tf-duration-min") as unknown as { value: string }).value).toBe("5");
+    // 600s of History is 10 minutes, and there is no hold.
+    expect((doc.querySelector("#tf-duration-min") as unknown as { value: string }).value).toBe("10");
     expect((doc.querySelector("#tf-sustain-min") as unknown as { value: string }).value).toBe("0");
   });
 
@@ -2306,11 +2554,11 @@ describe("automation wizard DOM render", () => {
     expect(doc.querySelectorAll("#aw-bands .band-duration").length).toBe(0);
     await pickMetric("probeLossPct");
     expect(doc.querySelectorAll("#aw-bands .band-duration").length).toBe(0);
-    // Tiers share the History window AND the sustain: 10 polls of History at the
-    // stubbed 120s cadence is the 1200s window every tier is measured over.
-    // (8 would round-trip to the default 900s it already stands for — the field
-    // keeps the exact stored seconds while the count still represents them.)
-    (doc.querySelector("#tf-duration-min") as unknown as { value: string }).value = "10";
+    // Tiers share the History window AND the sustain: 20 minutes of History is
+    // the 1200s window every tier is measured over.
+    // (15 would round-trip to the default 900s it already stands for — the field
+    // keeps the exact stored seconds while the minutes still represent them.)
+    (doc.querySelector("#tf-duration-min") as unknown as { value: string }).value = "20";
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);

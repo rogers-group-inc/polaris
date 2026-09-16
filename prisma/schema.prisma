@@ -1322,6 +1322,22 @@ model AssetMonitorSample {
   // defaulted so the add is free on the hypertable (the uptimeSec precedent);
   // readers must treat NULL as false, never as unknown.
   assetDown       Boolean?
+  // How long this probe WAITED, in ms, when it failed — the resolved
+  // `probeTimeoutMs` for the asset at probe time (business rule 67). Recorded
+  // rather than re-resolved at evaluation time for two reasons: a rule reading
+  // a window of PAST probes must use the timeout that actually applied to each
+  // one, not whatever the setting says today; and resolving per-asset monitor
+  // settings inside the engine's tick would mean widening its deliberately
+  // tight asset select at 2000 assets.
+  //
+  // Set ONLY on a failed response-time poll. A success carries a real
+  // `responseTimeMs` and needs none; the ICMP sweep never calls
+  // recordProbeResult. NULL on every row written before this column existed —
+  // readers must treat that as "not known", which for the count window means
+  // the miss is EXCLUDED rather than filled, exactly as it was before. That
+  // self-heals within one window. Nullable with no default so the add is
+  // catalog-only on the hypertable (the uptimeSec / dependencyDown precedent).
+  timeoutMs       Int?
 
   // Composite PK (id, timestamp) — required by TimescaleDB hypertables to
   // include the partitioning column. Works fine on plain Postgres too;
