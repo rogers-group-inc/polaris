@@ -30,6 +30,7 @@ real explanation.
 | Header SSO does not log anyone in | The connector IP is not allowlisted. An **empty allowlist disables header login, failing closed**. The Test button reports the IP as Polaris sees it |
 | An SSO user landed on `readonly` | No group mapping matched. New users get `readonly` plus a review flag |
 | Azure group mapping matches nothing | Azure AD emits group **object IDs**. Map the GUIDs unless the IdP is configured to emit names |
+| "Too many login attempts" when clicking **Sign in with Microsoft**, before typing anything | Fixed in 0.9. The SAML redirect used to share the password form's budget of 10 attempts per 15 minutes per source address, so a site behind one NAT address could exhaust it and lose SSO as well. SSO sign-in now has its own allowance. On an older build, wait 15 minutes |
 
 ### Passkeys
 

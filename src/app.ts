@@ -439,7 +439,12 @@ const loginLimiter = rateLimit({
   message: { error: "Too many login attempts. Please try again in 15 minutes." },
 });
 app.use("/api/v1/auth/login", loginLimiter);
-app.use("/api/v1/auth/azure/login", loginLimiter);
+// /auth/azure/login is deliberately NOT here. It was, until 2026-09-16, and that
+// put the SAML entry redirect on the same ten-guess store as the password form:
+// a site that spent the budget signing in lost its SSO redirect too, and the
+// redirect itself guesses at nothing. It now carries ssoEntryLimiter at the
+// route, like its /oidc/login sibling — which also lets CodeQL see the limiter,
+// since a prefix mount here is invisible from the route file (alert 90).
 
 /**
  * Test seam: forget every counted login attempt. Never called in production —

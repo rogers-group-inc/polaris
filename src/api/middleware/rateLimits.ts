@@ -61,11 +61,31 @@ export const passwordChangeLimiter = makeRateLimiter({
   message: "Too many password change attempts. Please try again in 15 minutes.",
 });
 
-/** Unauthenticated SSO entry redirect (OIDC login kick-off). */
+/**
+ * Unauthenticated SSO entry redirects — the OIDC and SAML login kick-offs
+ * (`GET /oidc/login`, `GET /azure/login`). Nothing is guessed here: the
+ * request carries no credential and the response is a redirect to the IdP, so
+ * this bounds flood volume rather than attempts. Deliberately NOT the login
+ * limiter, and deliberately not its store: SSO must keep working from
+ * anywhere even when the password surface is exhausted or IP-restricted
+ * (rule 25's "SSO is never gated"), and sharing a budget with the password
+ * form breaks that in both directions.
+ *
+ * The ceiling is sized against `ssoCallbackLimiter`, not against the login
+ * limiter, because **one sign-in is exactly one entry followed by one
+ * callback** from the same address. Anything tighter here than the callback
+ * allows makes the callback's ceiling unreachable — this is the request that
+ * gates it. It was 30 / 15 min until 2026-09-16, i.e. ten per five minutes
+ * against the callback's three hundred, so a site could never produce more
+ * than ten sign-ins per five minutes however roomy the callback was. Same
+ * per-IP NAT reasoning as the callback: a whole office arrives at one egress
+ * address at shift start, and 120 / 5 min clears a burst of that size while
+ * still sitting well below the callback and bounding a runaway client.
+ */
 export const ssoEntryLimiter = makeRateLimiter({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  message: "Too many login attempts. Please try again in 15 minutes.",
+  windowMs: 5 * 60 * 1000,
+  max: 120,
+  message: "Too many sign-in attempts — please try again shortly.",
 });
 
 /**

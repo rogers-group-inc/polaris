@@ -23,7 +23,7 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   │   ├── middleware/
 │   │   │   ├── auth.ts              # Session auth + RBAC middleware
 │   │   │   ├── csrf.ts              # Synchronizer-token CSRF protection (`polaris_csrf` cookie + `X-CSRF-Token` header). `EXEMPT_PATH_PREFIXES` entries are matched on a whole path SEGMENT by `isExemptPath()`, never with a bare `startsWith` — under prefix matching the `/api/v1/ha/enroll` entry also exempted `/api/v1/ha/enrollments/:id/approve`, the route that releases the HA bundle. The invariant and the incident are in `polaris-api-rbac` → auth-rbac.md
-│   │   │   ├── rateLimits.ts        # Shared per-route rate limiters (TOTP code attempts, OIDC login kick-off, admin maintenance/backup, agent bearer router + binary downloads). The login limiter predates this file and stays in `src/app.ts`.
+│   │   │   ├── rateLimits.ts        # Shared per-route rate limiters (TOTP code attempts, the SSO login kick-offs — OIDC and SAML alike, admin maintenance/backup, agent bearer router + binary downloads). The login limiter predates this file and stays in `src/app.ts`, mounted as a path PREFIX — so a route file can carry no limiter and still be limited, which is how `/auth/azure/login` sat on the password budget unnoticed until 2026-09-16.
 │   │   │   └── errorHandler.ts      # Global error handler
 │   │   └── routes/
 │   │       ├── auth.ts              # Login, logout, Azure SAML SSO

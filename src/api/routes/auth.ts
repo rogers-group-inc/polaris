@@ -845,7 +845,10 @@ router.get("/azure/config", async (_req, res) => {
 });
 
 // GET /api/v1/auth/azure/login — redirects to IdP SAML login
-router.get("/azure/login", async (req, res) => {
+// ssoEntryLimiter, NOT the login limiter: this redirect guesses at nothing, and
+// SSO entry must keep working from anywhere even when the password surface is
+// exhausted or restricted. Mirrors /oidc/login exactly.
+router.get("/azure/login", ssoEntryLimiter, async (req, res) => {
   const configured = await isAzureSsoConfiguredAsync();
   if (!configured) {
     return res.redirect("/login.html?error=azure_not_configured");
