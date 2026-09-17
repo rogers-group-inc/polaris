@@ -18,6 +18,7 @@
     "db:reset": "prisma migrate reset --force && npm run db:seed",
     "mock:compare": "node --env-file=.env --import tsx/esm prisma/mock-compare.ts",
     "mock:notifications": "node --env-file=.env --import tsx/esm prisma/mock-notifications.ts",
+    "mock:demo": "node --env-file=.env --import tsx/esm prisma/mock-demo.ts",
     "test:fmg": "node scripts/test-fmg.mjs",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
