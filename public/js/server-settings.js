@@ -2097,6 +2097,7 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
   // ~0, indistinguishable from empty) and a catalog that has never been
   // ANALYZEd (relpages 0 regardless of content — the state a pg_upgrade leaves
   // behind until vacuumdb runs).
+  // Business rule 71: a degraded measurement degrades VISIBLY.
   var sizingWarnings = "";
   if (acct && acct.sizing === "parent-only") {
     sizingWarnings +=

@@ -967,3 +967,76 @@ One bug surfaced alongside it: `EntraIdConfigSchema` never declared `includeDisa
 `z.object`'s strip dropped it on every save and the modal's checkbox had done nothing since
 the integration shipped — disabled Entra devices always synced as `decommissioned`. The AD
 schema had always had the field.
+
+## Rule 71 — A figure Polaris reports about itself accounts for itself, and a broken measurement says so
+
+The Maintenance tab's Database card read **Current size 76.6 GB** directly above a table list
+whose largest row was `events` at 1455 MB and whose every visible row summed to about 2.6 GB
+(prod, 2026-09-17). Nothing on the card was a lie in isolation; there was simply no way to ask it
+where the other 74 GB was.
+
+Three gaps, none of them visible:
+
+- **The total and the list had different scopes.** The total summed `pg_class.relpages` over every
+  relation in the database; the list was `public`-schema-only. The pg-boss queue's schema and
+  PostgreSQL's own catalog were therefore counted in the figure and structurally unlistable
+  underneath it.
+- **Every row was understated by its TOAST.** Rows counted heap plus indexes while the total
+  counted `relkind = 't'` as well. For an ordinary table that is a rounding error; for a
+  TimescaleDB chunk it is not, because a COMPRESSED chunk keeps its compressed batches in TOAST —
+  10.6 MB of a 32.4 MB test hypertable.
+- **The chunk fold had stopped working, and said so only in a log.** Sample-table bytes live in
+  chunk relations under `_timescaledb_internal`; the card folded them back onto the hypertable via
+  `_timescaledb_catalog`. TimescaleDB 2.30 — which this install took with the PostgreSQL 17 move a
+  day earlier — replaced that catalog's `schema_name`/`table_name` with a single `relid`, so the
+  query failed outright with `42703`, fell back to parent-only sizing, and reported all 28
+  hypertables at their parent relation's size, which is approximately zero. A 15 GB table and an
+  empty one look identical in that state.
+
+### The parts are the whole, by construction
+
+`services/dbSizeService.ts` is now the only thing that measures the database, and it attributes
+**every relation to exactly one bucket**: an index to the schema of the table it indexes, a TOAST
+relation to the table it stores for (a TOAST index takes two hops), and a TimescaleDB chunk —
+compressed or not — to its user hypertable rather than to the internal schema it physically sits
+in. The total is then the SUM of those buckets, not a separate query, so the headline figure and
+the list explaining it cannot disagree. What is not one of Polaris's tables is still on the same
+disk, so it is still named: the pg-boss job queue, the PostgreSQL catalog, other schemas, and an
+`Unattributed` line that is zero on a healthy install and is the residual made visible when it is
+not. The Total row at the foot of the list matches Current size.
+
+Two consequences worth knowing as an operator. **Chunks are found by relation NAME prefix**
+(`_hyper_<hypertableId>_<chunkId>_chunk…`, plus a `_compressed` suffix on 2.30 or a
+`compress_hyper_…` name before it), not through the internal catalog — because 2.30 does not merely
+rename things, it stops registering compressed chunks anywhere at all: no internal compression
+hypertable, `compressed_chunk_id` zero, no `pg_depend` link. Nothing in the catalog points at a
+compressed chunk relation, so a mechanically repaired join would have kept reporting confident,
+wrong, smaller numbers. And **`database.sizeBytes` deliberately still means every relation in the
+database**, because the disk-overflow reasons compare it against free space and the steady-state
+projection subtracts the measured sample tables from it; scoping it to Polaris's own tables would
+have quietly dropped pg-boss's bytes out of both while they occupy the same filesystem.
+
+### A degraded measurement degrades visibly
+
+This is the half that let the incident last. Polaris reads sizes from PostgreSQL's catalog rather
+than by measuring the data directory, because `pg_database_size()` and `pg_total_relation_size()`
+stat() every relfilenode behind a relation and a hypertable decomposes into hundreds of chunks —
+at fleet scale that made the tab wait minutes. The trade-off is that a catalog figure is only as
+fresh as the last `VACUUM`/`ANALYZE`, and a `pg_upgrade` does not carry planner statistics across
+before PostgreSQL 18. So both ways these numbers can be wrong rather than merely unexplained are
+reported in place:
+
+- `sizing: "parent-only"` reaches the card as **"Hypertable sizing is degraded"**, naming the log
+  line to grep for, because the alternative is a sample table reading 0 B and looking healthy.
+- `neverAnalyzedRelations` counts relations with `reltuples = -1` and the card says **"N relations
+  have never been vacuumed or analyzed"** with the `vacuumdb --analyze-in-stages` to run — those
+  relations report zero pages whatever they hold, so every figure on the card understates until it
+  is run. This is the normal state right after a restore or a major-version upgrade.
+
+`capacityService` already applied this principle to filesystems: a volume it cannot measure is
+reported as degraded rather than dropped from the list, after an unmeasured `/var` filled to 100%
+on a least-privilege host while the card reported "All capacity checks passed". Rule 71 states it
+once and extends it from the list of things measured to the numbers themselves. The corollary for
+whoever maintains this: a TimescaleDB major upgrade is the risk event, and
+`tests/integration/dbSize.test.ts` is what catches it — the unit tests cannot see a fold that
+silently stops folding, which is exactly how this shipped.

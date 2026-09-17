@@ -28,6 +28,9 @@
  *    hypertable in `public`, not to `_timescaledb_internal`
  * so `polarisBytes` is "the bytes of Polaris's own tables, everything included"
  * and the residual is honestly labelled as pg-boss + PostgreSQL's own catalog.
+ *
+ * Business rule 71: the parts are the whole by construction, and a measurement whose
+ * mechanism broke reports that rather than reading zero.
  */
 
 import { prisma } from "../db.js";
