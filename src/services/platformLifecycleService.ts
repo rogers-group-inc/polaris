@@ -636,9 +636,10 @@ export async function recordPlatformLifecycleTransition(result: PlatformLifecycl
     // A distinct recovery action, rather than one action for both. The
     // notification layer's event-mode reset accepts only actionPattern and
     // resourceType — no detailsMatch — so a single-action design would have its
-    // reset match its own escalation and self-clear immediately. That is why
-    // the capacity rule settled for a timed reset; emitting two actions costs
-    // nothing and makes the automation genuinely self-clearing on an upgrade.
+    // reset match its own escalation and self-clear immediately. Emitting two
+    // actions costs nothing and makes the automation genuinely self-clearing on
+    // an upgrade. `capacityService` splits its verb the same way, for the same
+    // reason (CAPACITY_CHANGED_ACTION / CAPACITY_RECOVERED_ACTION).
     const recovered = result.severity === "none" && direction === "recovered";
     const action = recovered ? LIFECYCLE_RECOVERED_ACTION : LIFECYCLE_CHANGED_ACTION;
 

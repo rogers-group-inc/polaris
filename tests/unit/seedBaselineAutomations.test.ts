@@ -178,6 +178,7 @@ describe("marker gating (V2 reaches existing installs)", () => {
     settings.set("seedBaselineAutomationsV5LossCeilingSeededAt", { key: "v", value: {} });
     settings.set("seedBaselineAutomationsV6PlatformLifecycleSeededAt", { key: "u", value: {} });
     settings.set("seedBaselineAutomationsV7ResponseTimeWindowAt", { key: "t", value: {} });
+    settings.set("seedBaselineAutomationsV8CapacityResetEventAt", { key: "s", value: {} });
     const res = await seedBaselineAutomations();
     expect(res).toEqual({ created: 0, skipped: true });
     expect(createdRules).toEqual([]);
@@ -242,6 +243,84 @@ describe("V4 counterpart-event repoint", () => {
   });
 });
 
+/**
+ * V8 — the capacity rule's repoint onto `capacity.severity_recovered`. It needs
+ * its own marker because V4's is already stamped on every install that has
+ * booted since the counterpart-reset cutover, so adding the capacity pair to
+ * RESET_EVENT_SUGGESTIONS alone would reach new installs and no existing one.
+ */
+describe("V8 capacity recovery repoint", () => {
+  const seededMarkers = (): void => {
+    settings.set("seedBaselineAutomationsSeededAt", { key: "x", value: {} });
+    settings.set("seedBaselineAutomationsV2SeededAt", { key: "y", value: {} });
+    settings.set("seedBaselineAutomationsV3SeededAt", { key: "z", value: {} });
+    // V4 stamped: the install this migration exists for. Also keeps V4 from
+    // repointing the same fixture first — the mock never mutates existingRules,
+    // so both passes would otherwise see a timed rule and update it twice.
+    settings.set("seedBaselineAutomationsV4ResetEventSeededAt", { key: "w", value: {} });
+  };
+  const t = new Date("2026-01-01T00:00:00Z");
+  const capacityRule = (over: Record<string, unknown> = {}): any => ({
+    id: "cap1", name: "Capacity severity escalated",
+    trigger: { type: "event", actionPattern: "capacity.severity_changed", detailsMatch: { direction: "escalated" } },
+    reset: { mode: "timed", afterSec: 86400 }, clearBehavior: "timed",
+    createdAt: t, updatedAt: t, ...over,
+  });
+
+  it("repoints an untouched timed capacity rule onto the all-clear verb", async () => {
+    seededMarkers();
+    existingRules = [capacityRule()];
+    await seedBaselineAutomations();
+    expect(ruleUpdates).toHaveLength(1);
+    expect(ruleUpdates[0].data.reset).toEqual({
+      mode: "event",
+      resetEvent: { actionPattern: "capacity.severity_recovered", resourceType: null },
+    });
+    expect(ruleUpdates[0].data.clearBehavior).toBe("auto");
+    expect(ruleUpdates[0].data.clearAfterSec).toBeNull();
+    const ev = loggedEvents.find((e) => e.action === "automation.seed.v8_capacity_reset_event");
+    expect(ev?.level).toBe("info");
+    expect(ev?.details.repointed).toEqual(["Capacity severity escalated"]);
+  });
+
+  it("leaves an EDITED rule on its timer and NAMES it, at warning level", async () => {
+    // The operator has to be told: a capacity alert on a 24-hour timer calls
+    // the host healthy a day after a disk warning whether or not any space
+    // came back.
+    seededMarkers();
+    existingRules = [capacityRule({ name: "Disk watch", updatedAt: new Date("2026-03-01T00:00:00Z") })];
+    await seedBaselineAutomations();
+    expect(ruleUpdates).toEqual([]);
+    const ev = loggedEvents.find((e) => e.action === "automation.seed.v8_capacity_reset_event");
+    expect(ev?.level).toBe("warning");
+    expect(ev?.details.leftAlone).toEqual(["Disk watch"]);
+    expect(ev?.message).toContain("capacity.severity_recovered");
+  });
+
+  it("skips a rule already on an event reset, a manual one, and other patterns", async () => {
+    seededMarkers();
+    existingRules = [
+      capacityRule({ id: "e", reset: { mode: "event", resetEvent: { actionPattern: "capacity.severity_recovered" } }, clearBehavior: "auto" }),
+      capacityRule({ id: "m", reset: { mode: "manual" }, clearBehavior: "manual" }),
+      capacityRule({ id: "o", trigger: { type: "event", actionPattern: "platform.lifecycle_changed" } }),
+      // A glob that would sweep the recovery verb in too is NOT this rule —
+      // the migration matches the exact action, so an operator's wildcard rule
+      // keeps whatever reset they chose.
+      capacityRule({ id: "g", trigger: { type: "event", actionPattern: "capacity.*" } }),
+    ];
+    await seedBaselineAutomations();
+    expect(ruleUpdates).toEqual([]);
+  });
+
+  it("is seed-once: a stamped marker skips the pass entirely", async () => {
+    seededMarkers();
+    settings.set("seedBaselineAutomationsV8CapacityResetEventAt", { key: "v8", value: {} });
+    existingRules = [capacityRule()];
+    await seedBaselineAutomations();
+    expect(ruleUpdates).toEqual([]);
+  });
+});
+
 describe("actionPattern globs vs the real logEvent action strings", () => {
   const patternOf = (name: string): string => {
     const rule = EVENT_BASELINE_RULES.find((r) => (r as { name: string }).name === name) as { trigger: { actionPattern: string } };
@@ -301,6 +380,20 @@ describe("actionPattern globs vs the real logEvent action strings", () => {
       trigger: { detailsMatch?: Record<string, unknown> };
     };
     expect(rule.trigger.detailsMatch).toEqual({ direction: "escalated" });
+  });
+
+  it("the capacity alert clears on the all-clear verb, not on a clock", () => {
+    // The pair only works because the two directions have DISTINCT actions: a
+    // reset matches on actionPattern alone, so a reset pointed back at
+    // `capacity.severity_changed` would clear the alert with its own
+    // escalation.
+    const rule = EVENT_BASELINE_RULES.find((r) => (r as { name: string }).name === "Capacity severity escalated") as {
+      trigger: { actionPattern: string };
+      reset: { mode: string; resetEvent?: { actionPattern?: string } };
+    };
+    expect(rule.reset.mode).toBe("event");
+    expect(rule.reset.resetEvent?.actionPattern).toBe("capacity.severity_recovered");
+    expect(rule.reset.resetEvent?.actionPattern).not.toBe(rule.trigger.actionPattern);
   });
 });
 

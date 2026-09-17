@@ -35,7 +35,7 @@ Fresh installs are documented in `docs/INSTALL.md` (RHEL/Rocky/AlmaLinux 9, Ubun
 Three layers catch a filling DB volume before it crashes Postgres:
 
 1. **Boot-time diagnostic** — `runStartupDiskCheck` in `src/utils/startupDiskCheck.ts` statfs's the app/state/backups dirs plus conventional PostgreSQL data directory candidates per platform. Emits an info/warn/error log line per volume. Non-fatal — never blocks boot.
-2. **Periodic capacityWatch job** — every 10 minutes, builds a capacity snapshot and calls `recordCapacityTransition` to write a `capacity.severity_changed` Event when severity flips (ok ↔ watch ↔ amber ↔ red). Events flow out through eventArchiveService → syslog/SFTP archival, so the alert reaches on-call independent of whether the UI is reachable.
+2. **Periodic capacityWatch job** — every 10 minutes, builds a capacity snapshot and calls `recordCapacityTransition` to write an Event when severity flips (ok ↔ watch ↔ amber ↔ red): `capacity.severity_recovered` on a landing back at ok, `capacity.severity_changed` otherwise. Events flow out through eventArchiveService → syslog/SFTP archival, so the alert reaches on-call independent of whether the UI is reachable.
 3. **Maintenance tab volume bars** — Server Settings → Maintenance → Database card renders one bar per distinct filesystem (deduped by stat.dev) with severity-colored fill and the Polaris-named role(s) each volume serves. Severity tiering: **watch** at 20–30% free (Event-only), **amber** at 10–20%, **red** below 10% (drives the non-dismissible sidebar banner).
 
 ### First-run setup lock

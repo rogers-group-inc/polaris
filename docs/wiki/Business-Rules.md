@@ -221,8 +221,12 @@ error; the save refuses a scope excluding the caller.
 trigger inverted — and it resolves where the alert lives.** While firing, the
 tree is the sole recovery authority. Resolution is dimension-first with a
 per-asset fallback. Reset leaves inherit the trigger's window. Event and change
-triggers get a **counterpart Event** instead. The re-notify cooldown was retired
-from the builder and its stored values cleared.
+triggers get a **counterpart Event** instead — and a signal Polaris writes under
+one action for both directions is split so it has one (`capacity.severity_recovered`,
+`platform.lifecycle_recovered`), written only on a landing back at healthy, never
+on a partial recovery. The direction a trigger fires on is an editable **detail
+condition** on the trigger step, not a hidden setting. The re-notify cooldown was
+retired from the builder and its stored values cleared.
 
 ### Rule 33
 **A device that answers is not a device that works — and the check belongs to the

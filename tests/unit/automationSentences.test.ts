@@ -404,6 +404,23 @@ describe("makeAutomationSentences", () => {
     expect(out).not.toMatch(/re-fire|cooldown/i);
   });
 
+  it("an event trigger names its detail conditions, so a one-way rule reads as one", () => {
+    const s = make(SCHEMA as never);
+    const out = s.triggerSentence({
+      type: "event",
+      actionPattern: "capacity.severity_changed",
+      detailsMatch: { direction: "escalated" },
+    });
+    expect(out).toContain("<strong>capacity.severity_changed</strong>");
+    expect(out).toContain("saying <strong>direction = escalated</strong>");
+    // Several conditions are all required, and the sentence says so.
+    expect(
+      s.triggerSentence({ type: "event", actionPattern: "capacity.*", detailsMatch: { direction: "escalated", to: "critical" } }),
+    ).toContain("<strong>direction = escalated</strong> and <strong>to = critical</strong>");
+    // No conditions, no clause — the pattern alone still reads as a sentence.
+    expect(s.triggerSentence({ type: "event", actionPattern: "agent.disconnected" })).not.toContain("saying");
+  });
+
   it("an event reset says which event clears it, and that it is the same subject", () => {
     const s = make(SCHEMA as never);
     const out = s.resetSentence(

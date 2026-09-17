@@ -211,6 +211,24 @@ devices.
 Fires when a matching audit Event is written. Flat fields: an action pattern, a
 minimum level (`info` / `warning` / `error`), a resource type.
 
+### Only when the event says…
+
+Under those fields is a list of **detail conditions** — a field inside the
+event's own details and the value it has to read. Every condition must hold, and
+each is compared as text, so `direction` `is` `escalated` matches the string the
+event carries.
+
+This is how an automation is made **directional**. `capacity.severity_changed`
+is written both when capacity gets worse and when it partly recovers; the
+built-in **Capacity severity escalated** rule carries `direction = escalated` so
+it alerts on the way up and stays quiet on the way back down. **Platform
+end-of-life warning** carries the same condition. Open either rule's trigger
+step to see the row, change it, or take it off.
+
+To find the field names an action offers, open **Events**, click the event you
+want to alert on and read its details — those keys are what a condition can
+name.
+
 Since 2026-09 an event automation **is** device-scoped, and the filter filters
 the event's **subject** ([rule 46](Business-Rules#rule-46)). Two refusals follow
 from "the subject is a device":
@@ -582,3 +600,32 @@ subject** the alert is about.
 
 A new draft with a known counterpart lands on that mode rather than on the
 four-hour timer that used to be the default.
+
+The known counterparts are `agent.disconnected` → `agent.connected`,
+`agent.upgrade_failed` / `agent.upgrade_skipped` → `agent.upgrade_succeeded`,
+`agent.install_failed` → `agent.installed`, `agent.uninstall_failed` →
+`agent.uninstalled`, `agent.build.failed` → `agent.build.completed`,
+`integration.discover.error` → `integration.discover.completed`,
+`platform.lifecycle_changed` → `platform.lifecycle_recovered`, and
+`capacity.severity_changed` → `capacity.severity_recovered`.
+
+**The all-clear is its own action, and it means fully recovered.** Polaris
+writes `capacity.severity_recovered` only when capacity lands back on **OK** —
+a drop from critical to warning keeps the ordinary
+`capacity.severity_changed`, so the alert stays up while the host is still
+degraded. Platform lifecycle works the same way. Two actions rather than one
+because a reset matches on the action pattern alone: a rule pointed back at its
+own trigger action would clear itself the moment it fired.
+
+**To be told about the all-clear, not just have it clear the alert**, add an
+action under **When it clears** on the Actions step. The alert clearing is
+silent by default — the built-in rules ship with in-app alerts only and no
+delivery channel, so they resolve the alert on the Alerts tab and write a
+`notification.auto_cleared` Event (which reaches syslog/SFTP archival if you
+have it configured) without emailing anyone.
+
+Existing installs had their **Capacity severity escalated** rule moved off its
+24-hour timer and onto the all-clear automatically, unless you had edited that
+rule — an edited rule keeps whatever reset you chose, and an Event
+(`automation.seed.v8_capacity_reset_event`) names it so you can change it
+yourself.

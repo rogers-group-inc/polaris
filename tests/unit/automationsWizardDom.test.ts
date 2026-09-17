@@ -3971,3 +3971,91 @@ describe("multi-channel notify + the user-preference filter", () => {
     expect(a.channelId).toBe("c1");
   });
 });
+
+/**
+ * The event trigger's detail conditions — the `detailsMatch` rows that make an
+ * automation directional.
+ *
+ * The seeded capacity and platform-lifecycle rules fire on `direction =
+ * escalated` so a recovery doesn't raise a second alert. That condition was
+ * stored, and matched by the engine, and rendered by nothing: the trigger step
+ * neither showed it nor collected it, so visiting step 3 on one of those rules
+ * and saving silently dropped it — and the rule started alerting on the way
+ * back down as well as the way up.
+ */
+describe("event trigger: detail conditions", () => {
+  const eventRule = (detailsMatch?: Record<string, unknown>) => ({
+    id: "r-cap",
+    name: "Capacity severity escalated",
+    description: null,
+    enabled: true,
+    severity: "warning",
+    trigger: { type: "event", actionPattern: "capacity.severity_changed", ...(detailsMatch ? { detailsMatch } : {}) },
+    scope: {},
+    reset: { mode: "event", resetEvent: { actionPattern: "capacity.severity_recovered", resourceType: null } },
+    cooldownSec: 600,
+    messageTemplate: "{value}",
+  });
+
+  /** Open in edit mode and land on the trigger step, where the fields render. */
+  async function openStep3(rule: Record<string, unknown>): Promise<void> {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(rule);
+    (doc.querySelector('.stepper-step[data-step="3"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  const save = async (): Promise<Record<string, any>> => {
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    return savedPayloads[0] as Record<string, any>;
+  };
+
+  it("renders a stored condition as an editable row and survives a save", async () => {
+    await openStep3(eventRule({ direction: "escalated" }));
+    expect(toastErrors).toEqual([]);
+    const rows = doc.querySelectorAll("#aw-step-3 .tf-drow");
+    expect(rows.length).toBe(1);
+    expect((rows[0]!.querySelector(".tf-dkey") as unknown as { value: string }).value).toBe("direction");
+    expect((rows[0]!.querySelector(".tf-dval") as unknown as { value: string }).value).toBe("escalated");
+    const p = await save();
+    expect(toastErrors).toEqual([]);
+    expect(p.trigger.detailsMatch).toEqual({ direction: "escalated" });
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("adds a condition, and removing the last one clears the field entirely", async () => {
+    await openStep3(eventRule());
+    expect(doc.querySelectorAll("#aw-step-3 .tf-drow").length).toBe(0);
+    (doc.querySelector("#aw-step-3 .tf-add-detail") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const win = g.window as InstanceType<typeof Window>;
+    const row = doc.querySelector("#aw-step-3 .tf-drow")!;
+    const key = row.querySelector(".tf-dkey") as unknown as { value: string };
+    const val = row.querySelector(".tf-dval") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    key.value = "to";
+    val.value = "critical";
+    val.dispatchEvent(new win.Event("input", { bubbles: true }));
+    expect((await save()).trigger.detailsMatch).toEqual({ to: "critical" });
+
+    await openStep3(eventRule({ to: "critical" }));
+    (doc.querySelector("#aw-step-3 .tf-dremove") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const p = await save();
+    // Absent, not an empty object: the schema's field is optional, and {} would
+    // read as a condition the operator never wrote.
+    expect(p.trigger.detailsMatch).toBeUndefined();
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("a row with no field name is dropped, so a half-typed condition can't silence the rule", async () => {
+    await openStep3(eventRule({ direction: "escalated" }));
+    (doc.querySelector("#aw-step-3 .tf-add-detail") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const rows = doc.querySelectorAll("#aw-step-3 .tf-drow");
+    expect(rows.length).toBe(2);
+    (rows[1]!.querySelector(".tf-dval") as unknown as { value: string }).value = "orphan";
+    expect((await save()).trigger.detailsMatch).toEqual({ direction: "escalated" });
+  });
+});

@@ -35,8 +35,10 @@
  * event family (discovery failures, push failures, agent drop-offs, capacity
  * escalations, conflicts, lockouts…) so the alert text, delivery, and
  * escalation for those events are operator-controllable from the Automations
- * page. All are event triggers with timed reset + a cooldown — the engine's
- * event-tail cooldown + timed-clear passes keep them storm-proof.
+ * page. All are event triggers with a cooldown, and each resets either on a
+ * clock or — where Polaris writes the recovery itself — on the counterpart
+ * event (business rule 32(e)); the engine's event-tail cooldown, timed-clear
+ * and event-reset passes keep them storm-proof.
  *
  * The V3 DOWN-DETECTION SET is different in kind from the first two: it is
  * COMPUTED from live data rather than a static array. Down stopped being a
@@ -55,7 +57,9 @@
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV3SeededAt'; -- down detection
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV4ResetEventSeededAt'; -- counterpart resets
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV5LossCeilingSeededAt'; -- loss ceiling
+ *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV6PlatformLifecycleSeededAt'; -- platform end-of-life
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV7ResponseTimeWindowAt'; -- response-time count windows
+ *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV8CapacityResetEventAt'; -- capacity all-clear reset
  * then restart. (This resurrects that ENTIRE set, including rules you deleted.
  * For V3 that means re-deriving the thresholds from the settings tiers, which
  * are dormant but still stored — and it will NOT re-retire an Asset down rule
@@ -72,6 +76,10 @@ import { logEvent } from "../services/eventLogService.js";
 import { resolveMonitorSettings } from "../services/monitoringService.js";
 import { DEFAULT_MISSED_POLLS } from "../services/notificationTypes.js";
 import { invalidateDownDetectionCache } from "../services/downDetectionService.js";
+// The two capacity verbs, from the service that writes them — the V8 migration
+// below selects rows by one and repoints them at the other, and a literal on
+// this side is how the pair silently stops matching.
+import { CAPACITY_CHANGED_ACTION, CAPACITY_RECOVERED_ACTION } from "../services/capacityService.js";
 
 const MARKER_KEY = "seedBaselineAutomationsSeededAt";
 const MARKER_KEY_V2 = "seedBaselineAutomationsV2SeededAt";
@@ -80,6 +88,7 @@ const MARKER_KEY_V4 = "seedBaselineAutomationsV4ResetEventSeededAt";
 const MARKER_KEY_V5 = "seedBaselineAutomationsV5LossCeilingSeededAt";
 const MARKER_KEY_V6 = "seedBaselineAutomationsV6PlatformLifecycleSeededAt";
 const MARKER_KEY_V7 = "seedBaselineAutomationsV7ResponseTimeWindowAt";
+const MARKER_KEY_V8 = "seedBaselineAutomationsV8CapacityResetEventAt";
 /** The window every migrated response-time rule lands on (business rule 67). */
 const RESPONSE_TIME_WINDOW_POLLS = 10;
 
@@ -94,10 +103,11 @@ const RESPONSE_TIME_WINDOW_POLLS = 10;
  * The reset is event-mode on a DISTINCT recovery action. `resetEventSchema`
  * accepts only actionPattern and resourceType — no detailsMatch — so a
  * single-action design would have this rule's reset match its own escalation
- * and clear itself immediately. That is exactly why "Capacity severity
- * escalated" settled for a timed reset; the lifecycle service emits
+ * and clear itself immediately. The lifecycle service emits
  * platform.lifecycle_recovered so this one can genuinely self-clear when the
- * operator finishes the upgrade.
+ * operator finishes the upgrade. Capacity was the rule that settled for a
+ * timed reset for want of the same split; it has one now
+ * (capacity.severity_recovered, migration V8 below).
  *
  * The cooldown is a week. An end-of-life condition is continuously true for
  * months, so a short cooldown re-notifies on every daily tick that shifts the
@@ -363,10 +373,10 @@ const EVENT_BASELINE_RULES: Record<string, unknown>[] = [
   {
     name: "Capacity severity escalated",
     description:
-      "Fires when the Polaris host's capacity severity worsens (capacity.severity_changed with direction=escalated — recoveries never alert). Baseline example — edit or delete freely.",
+      "Fires when the Polaris host's capacity severity worsens (capacity.severity_changed, direction=escalated — a partial recovery does not re-alert) and clears when capacity is back to OK (capacity.severity_recovered). Add a \"when it clears\" action on the Actions step to be told about the all-clear as well. Baseline example — edit or delete freely.",
     severity: "warning",
     trigger: { type: "event", actionPattern: "capacity.severity_changed", detailsMatch: { direction: "escalated" } },
-    reset: { mode: "timed", afterSec: 86400 },
+    reset: { mode: "event", resetEvent: { actionPattern: "capacity.severity_recovered" } },
     cooldownSec: 600,
     messageTemplate: "{value}",
   },
@@ -861,6 +871,90 @@ async function migrateResponseTimeWindowV7(): Promise<{ updated: number; skipped
   return { updated: updated.length, skipped: false };
 }
 
+/**
+ * V8 — repoint the capacity automation onto the all-clear it never had.
+ *
+ * "Capacity severity escalated" shipped with a 24-hour timed reset because the
+ * capacity service wrote ONE action for both directions, and an event reset
+ * matches on actionPattern + resourceType alone — so pointing the reset at
+ * `capacity.severity_changed` would have cleared the alert with its own
+ * escalation. The service now splits the verb (`capacity.severity_recovered`
+ * is written only on a landing at `ok`), so the reset can be the thing an
+ * operator would actually call recovery: capacity is fine again.
+ *
+ * This cannot ride V4. V4's marker is stamped on every install that has booted
+ * since the counterpart-reset cutover, and a stamped marker never re-runs — so
+ * adding the capacity pair to RESET_EVENT_SUGGESTIONS alone would reach new
+ * installs and no existing one. (A fresh install seeds the rule already
+ * repointed and this finds nothing to do.)
+ *
+ * Bounded like V4: only a trigger on exactly `capacity.severity_changed`, only
+ * a reset still on a TIMER, and only a rule the operator has never edited. An
+ * edited rule is left alone AND NAMED in the Event at warning level — a
+ * capacity alert that still self-clears on a clock is precisely the thing the
+ * operator needs told about, since it will declare the host healthy 24 hours
+ * after a disk warning whether or not any space came back.
+ */
+async function migrateCapacityResetV8(): Promise<{ updated: number; skipped: boolean }> {
+  if (await hasRunMarker(MARKER_KEY_V8)) return { updated: 0, skipped: true };
+
+  const rows = await prisma.notificationRule.findMany({
+    select: { id: true, name: true, trigger: true, reset: true, clearBehavior: true, createdAt: true, updatedAt: true },
+  });
+  const repointed: string[] = [];
+  const leftAlone: string[] = [];
+  for (const row of rows) {
+    const trigger = row.trigger as { type?: string; actionPattern?: string } | null;
+    if (!trigger || trigger.type !== "event" || trigger.actionPattern !== CAPACITY_CHANGED_ACTION) continue;
+    // The stored v2 reset when there is one; the legacy column otherwise — the
+    // same two-source read V4 does, for rows that predate the v2 cutover.
+    const mode = (row.reset as { mode?: string } | null)?.mode ?? row.clearBehavior;
+    if (mode !== "timed") continue;
+    if (row.updatedAt.getTime() !== row.createdAt.getTime()) {
+      leftAlone.push(row.name);
+      continue;
+    }
+    try {
+      await prisma.notificationRule.update({
+        where: { id: row.id },
+        data: {
+          reset: { mode: "event", resetEvent: { actionPattern: CAPACITY_RECOVERED_ACTION, resourceType: null } },
+          // The legacy mirror for a mode with no legacy spelling, matching
+          // legacyMirrorOfV2 — a pre-wizard reader sees "clears without
+          // operator action" rather than a stale 24-hour timer.
+          clearBehavior: "auto",
+          clearAfterSec: null,
+        },
+      });
+      repointed.push(row.name);
+    } catch (err) {
+      logger.warn({ err, rule: row.name }, "Failed to repoint the capacity automation onto its recovery event");
+    }
+  }
+
+  if (repointed.length > 0 || leftAlone.length > 0) {
+    await logEvent({
+      action: "automation.seed.v8_capacity_reset_event",
+      resourceType: "notification-rule",
+      actor: SEED_ACTOR,
+      level: leftAlone.length > 0 ? "warning" : "info",
+      message:
+        (repointed.length > 0
+          ? `${repointed.length} capacity automation(s) now clear when capacity is back to OK ` +
+            `(${CAPACITY_RECOVERED_ACTION}) instead of 24 hours after the alert: ${repointed.join(", ")}. `
+          : "") +
+        (leftAlone.length > 0
+          ? `Left alone because they have been edited, and each still clears on a timer whether or not capacity ` +
+            `recovered — set Reset to "when a matching event arrives" on ${CAPACITY_RECOVERED_ACTION} to fix: ` +
+            `${leftAlone.join(", ")}.`
+          : ""),
+      details: { repointed, leftAlone, resetPattern: CAPACITY_RECOVERED_ACTION },
+    }).catch(() => {});
+  }
+  await stampRunMarker(MARKER_KEY_V8, { updated: repointed.length, leftAlone: leftAlone.length });
+  return { updated: repointed.length, skipped: false };
+}
+
 export async function seedBaselineAutomations(): Promise<{ created: number; skipped: boolean }> {
   // Independent markers: a pre-V2 install has the first marker stamped and
   // still picks up the event set; a fresh install seeds both.
@@ -888,9 +982,14 @@ export async function seedBaselineAutomations(): Promise<{ created: number; skip
   // V6 is its own set with its own marker so installs that stamped V2 long ago
   // still receive the platform end-of-life rule.
   const v6 = await seedRuleSet(MARKER_KEY_V6, PLATFORM_LIFECYCLE_RULES);
+  // V8 runs after V2 so a fresh install's capacity rule is already seeded on
+  // the recovery event and this finds nothing to do; it exists for installs
+  // that stamped V2 (and V4) while capacity wrote one verb for both directions
+  // and the rule could only clear on a clock.
+  const v8 = await migrateCapacityResetV8();
   return {
     created: v1.created + v2.created + v3.created + v6.created,
-    skipped: v1.skipped && v2.skipped && v3.skipped && v4.skipped && v5.skipped && v6.skipped && v7.skipped,
+    skipped: v1.skipped && v2.skipped && v3.skipped && v4.skipped && v5.skipped && v6.skipped && v7.skipped && v8.skipped,
   };
 }
 

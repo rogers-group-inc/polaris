@@ -1750,6 +1750,10 @@ export const RESET_EVENT_SUGGESTIONS: Record<string, string> = {
   "agent.build.failed": "agent.build.completed",
   "integration.discover.error": "integration.discover.completed",
   "platform.lifecycle_changed": "platform.lifecycle_recovered",
+  // Written only on a landing at `ok` — a partial recovery (critical →
+  // warning) keeps the `changed` verb, so this pair clears the alert when
+  // capacity is actually healthy and not a step before it.
+  "capacity.severity_changed": "capacity.severity_recovered",
 };
 
 export const resetEventSchema = z
