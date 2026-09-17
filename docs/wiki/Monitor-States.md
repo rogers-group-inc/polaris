@@ -20,8 +20,11 @@ Polaris does **not** define down on its own ([rule 36](Business-Rules#rule-36)).
 
 A `monitorStatus == down` automation carries a **`missedPolls`** count, and
 that count *is* the definition of down for every device that automation covers.
-Precedence resolves which one governs a given device — same-rank ties go to the
-**smaller count**, then older, then lower id.
+You state it in the automation wizard's trigger step, in the
+**Sustained for (polls)** field below the condition — on an automation whose only
+condition is `monitor status is down`, that field is the count itself, and there
+is no second hold on top of it. Precedence resolves which one governs a given
+device — same-rank ties go to the **smaller count**, then older, then lower id.
 
 > **A device covered by no down automation reads `passive`.** It is still
 > polled, still sampled, still charted — Polaris just declines to render a
