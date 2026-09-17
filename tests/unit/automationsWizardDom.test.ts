@@ -3268,11 +3268,28 @@ describe("trigger filter rows", () => {
       }
     }
 
-    it("renders the missed-poll count on the condition row and round-trips it", async () => {
+    /** The trigger's one time field — which on a sole down condition IS the
+     *  missed-poll count (business rule 36), not a hold on top of it. */
+    const durField = () => doc.querySelector("#tf-duration-min") as unknown as {
+      value: string; getAttribute: (k: string) => string | null; dispatchEvent: (e: unknown) => void;
+    };
+    const durLabel = () => (doc.querySelector(".aw-dur label") as unknown as { textContent: string }).textContent;
+    const typeInto = async (el: { value: string; dispatchEvent: (e: unknown) => void }, v: string) => {
+      const w = g.window as InstanceType<typeof Window>;
+      el.value = v;
+      el.dispatchEvent(new w.Event("input", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    };
+
+    it("states the count ONCE — on the Sustained-for field, not on the condition row", async () => {
       await openOnTrigger(downRule());
-      const miss = doc.querySelector(".tgl-misses") as unknown as { value: string } | null;
-      expect(miss).toBeTruthy();
-      expect(miss!.value).toBe("3");
+      // The row's own box is gone: two boxes for one number is what this
+      // replaced, and the second one was collected by nothing.
+      expect(doc.querySelector(".tgl-misses")).toBeNull();
+      const dur = durField();
+      expect(dur.value).toBe("3");
+      expect(dur.getAttribute("data-down-threshold")).toBe("1");
+      expect(durLabel()).toContain("Sustained for (polls)");
       (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
       await new Promise((r) => setTimeout(r, 30));
       expect(savedPayloads).toHaveLength(1);
@@ -3280,27 +3297,39 @@ describe("trigger filter rows", () => {
       expect(() => ruleInputSchema.parse(savedPayloads[0])).not.toThrow();
     });
 
-    it("saves an edited count, and the sentence says what it means", async () => {
+    it("never renders the poll-GROUP sustain box beside it", async () => {
+      // The ratio/count-window hold used to leak onto a down automation: the
+      // all-down branch returned before the code that hides it, so an inert
+      // "Sustained for (poll groups)" box sat under the tree collecting a number
+      // collectStep3 has never read. Poll groups belong to a windowed metric.
       await openOnTrigger(downRule());
-      const w = g.window as InstanceType<typeof Window>;
-      const miss = doc.querySelector(".tgl-misses") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
-      miss.value = "7";
-      miss.dispatchEvent(new w.Event("input", { bubbles: true }));
-      await new Promise((r) => setTimeout(r, 20));
+      const sustain = doc.querySelector(".aw-ratio-sustain") as unknown as { style: { display: string } } | null;
+      if (sustain) expect(sustain.style.display).toBe("none");
+      const ceiling = doc.querySelector(".aw-ratio-ceiling") as unknown as { style: { display: string } } | null;
+      if (ceiling) expect(ceiling.style.display).toBe("none");
+      expect(doc.body.innerHTML).not.toContain("poll groups");
+    });
+
+    it("saves an edited count as the definition of down, with no hold stacked on top", async () => {
+      await openOnTrigger(downRule());
+      await typeInto(durField(), "7");
       // The PHRASING is pinned deterministically in automationSentences.test.ts
       // against the factory directly; here we only care that the edited number
-      // reaches the payload.
+      // reaches the payload — as the count, and only as the count.
       (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
       await new Promise((r) => setTimeout(r, 30));
-      expect((savedPayloads[0] as { trigger: { missedPolls: number } }).trigger.missedPolls).toBe(7);
+      const t = (savedPayloads[0] as { trigger: { missedPolls: number; forPolls?: number; forDurationSec?: number } }).trigger;
+      expect(t.missedPolls).toBe(7);
+      // A hold beside the count would wait out a state the count just defined —
+      // the operator's 7 would quietly mean 14.
+      expect(t.forPolls ?? 0).toBe(0);
+      expect(t.forDurationSec ?? 0).toBe(0);
+      expect(() => ruleInputSchema.parse(savedPayloads[0])).not.toThrow();
     });
 
     it("refuses to save a blank count rather than silently governing at the default", async () => {
       await openOnTrigger(downRule());
-      const w = g.window as InstanceType<typeof Window>;
-      const miss = doc.querySelector(".tgl-misses") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
-      miss.value = "";
-      miss.dispatchEvent(new w.Event("input", { bubbles: true }));
+      await typeInto(durField(), "");
       toastErrors.length = 0;
       (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
       await new Promise((r) => setTimeout(r, 30));
@@ -3308,11 +3337,40 @@ describe("trigger filter rows", () => {
       expect(toastErrors.join(" ")).toMatch(/consecutive missed polls/i);
     });
 
-    it("hides the count on a MULTI-condition trigger and strips it from the payload", async () => {
+    it("takes the job on the keystroke that makes the condition `down`", async () => {
+      // Switching the value select is a `change`, which the panel's delegated
+      // `input` listener never sees — so the tree's own onChange has to re-dress
+      // the field. Before it did, the automation stated no count until the
+      // operator happened to type somewhere else on the step.
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "warning", forDurationSec: 0 },
+      }));
+      expect(durField().getAttribute("data-down-threshold")).toBeNull();
+      const w = g.window as InstanceType<typeof Window>;
+      const val = doc.querySelector(".tgl-value") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+      val.value = "down";
+      val.dispatchEvent(new w.Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 20));
+      const dur = durField();
+      expect(dur.getAttribute("data-down-threshold")).toBe("1");
+      expect(dur.value).toBe("3");
+      (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 30));
+      expect((savedPayloads[0] as { trigger: { missedPolls: number } }).trigger.missedPolls).toBe(3);
+    });
+
+    it("opens a stored count at the number the rule states, not at the default", async () => {
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 10, forDurationSec: 0 },
+      }));
+      expect(durField().value).toBe("10");
+    });
+
+    it("gives the field back its ordinary hold job on a MULTI-condition trigger", async () => {
       // Authority lives on a bare trigger only — the probe loop cannot evaluate
       // a CPU reading on the way to deciding down, and the server rejects a
-      // count inside a composite. The control must not sit there collecting a
-      // number nothing would honour.
+      // count inside a composite. So beside a second condition the same field is
+      // a plain hold again, and the row says why.
       await openOnTrigger(downRule({
         trigger: {
           type: "composite", kind: "asset", op: "and", forDurationSec: 0,
@@ -3322,8 +3380,11 @@ describe("trigger filter rows", () => {
           ],
         },
       }));
-      const miss = doc.querySelector(".tgl-misses") as unknown as { style: { display: string } } | null;
-      if (miss) expect(miss.style.display).toBe("none");
+      expect(durField().getAttribute("data-down-threshold")).toBeNull();
+      const why = doc.querySelector(".tgl-dd-multi") as unknown as { style: { display: string }; textContent: string } | null;
+      expect(why).toBeTruthy();
+      expect(why!.style.display).not.toBe("none");
+      expect(why!.textContent).toMatch(/only condition/i);
       (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
       await new Promise((r) => setTimeout(r, 30));
       expect(savedPayloads).toHaveLength(1);
