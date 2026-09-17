@@ -750,9 +750,19 @@ function makeAutomationSentences(s) {
         if (sdf[k]) out += " " + escapeHtml((DIM_PHRASE[k] || k + " = {value}").replace("{value}", sdf[k]));
       });
     } else if (tr.type === "event") {
+      // The detail conditions are named here, not summarised as "with filters":
+      // an automation that fires one way only (direction = escalated) reads as
+      // one that fires on everything unless the sentence says the word.
+      var dmt = (tr.detailsMatch && typeof tr.detailsMatch === "object") ? tr.detailsMatch : {};
+      var dmKeys = Object.keys(dmt);
       out = "When an audit event matching <strong>" + escapeHtml(tr.actionPattern || "…") + "</strong>" +
         (tr.resourceType ? " on <strong>" + escapeHtml(tr.resourceType) + "</strong> resources" : "") +
-        (tr.minLevel ? " at level <strong>" + escapeHtml(tr.minLevel) + "</strong> or above" : "") + " occurs";
+        (tr.minLevel ? " at level <strong>" + escapeHtml(tr.minLevel) + "</strong> or above" : "") +
+        (dmKeys.length
+          ? " saying " + dmKeys.map(function (k) {
+              return "<strong>" + escapeHtml(k) + " = " + escapeHtml(String(dmt[k])) + "</strong>";
+            }).join(" and ")
+          : "") + " occurs";
     } else if (tr.type === "change") {
       out = "When <strong>" + escapeHtml(changeLabel(tr.changeType)) + "</strong> is detected";
     } else {
@@ -4077,6 +4087,12 @@ async function openAutomationWizard(existing, opts) {
       html += '<div class="form-group"><label>Action pattern (glob)</label><input type="text" id="tf-action" value="' + escapeHtml(ev.actionPattern || "") + '" placeholder="e.g. monitor.status_changed or integration.test.*"></div>';
       html += '<div class="form-group"><label>Resource type (optional)</label><input type="text" id="tf-restype" value="' + escapeHtml(ev.resourceType || "") + '" placeholder="e.g. asset / integration"></div>';
       html += '<div class="form-group"><label>Minimum event level (optional)</label><select id="tf-minlevel"><option value="">(any)</option>' + opt(s.eventLevels || ["info", "warning", "error"], ev.minLevel || "") + '</select></div>';
+      var dm = (ev.detailsMatch && typeof ev.detailsMatch === "object") ? ev.detailsMatch : {};
+      html += '<div class="form-group"><label>Only when the event says… (optional)</label>' +
+        '<div class="tf-details">' + Object.keys(dm).map(function (k) { return detailMatchRowHtml(k, dm[k]); }).join("") + '</div>' +
+        '<button type="button" class="btn btn-sm btn-secondary tf-add-detail" style="margin-top:4px">+ Condition</button>' +
+        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:4px 0 0">Matches a field inside the event’s own details, so one action can be split into the cases worth alerting on — <code>direction</code> is <code>escalated</code> on <code>capacity.severity_changed</code> fires on the way up and stays quiet on the way back down. Every field is compared as text.</p>' +
+        '</div>';
       html += '<p style="font-size:0.78rem;color:var(--color-text-tertiary)">Audit-event triggers aren’t tied to assets — the device filter from the previous step is ignored.</p>';
     } else if (cat === "change") {
       var ch = tr.type === "change" ? tr : {};
@@ -4180,7 +4196,34 @@ async function openAutomationWizard(existing, opts) {
     // same event (first tick of the multi-severity checkbox, from a draft that
     // predates in-progress edits to the base condition) are corrected at once.
     panel.addEventListener("change", function () { refreshTriggerSentence(); syncSeverityMode(panel); syncBandsToBase(panel); refreshDimOptions(panel); syncDurationRequirement(panel); syncDownDetection(panel); refreshCadence(panel); });
+    // Event-detail condition rows. Delegated on the panel rather than wired in
+    // renderTriggerFields: that function replaces the fields' innerHTML on
+    // every trigger-type switch, so per-button listeners would be re-bound (or
+    // leak) each time. A click here is not an `input` event, so both branches
+    // re-collect by hand.
+    panel.addEventListener("click", function (e) {
+      var t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest(".tf-add-detail")) {
+        var host = panel.querySelector(".tf-details");
+        if (!host) return;
+        var div = document.createElement("div");
+        div.innerHTML = detailMatchRowHtml("", "");
+        host.appendChild(div.firstChild);
+        refreshTriggerSentence();
+      } else if (t.closest(".tf-dremove")) {
+        t.closest(".tf-drow").remove();
+        refreshTriggerSentence();
+      }
+    });
     panel.querySelector("#aw-trigger-test").addEventListener("click", runTriggerPreview);
+    // The category picker is a STORED select, and the one that decides which
+    // fields render and therefore what the first collection reads — so it is
+    // pinned from the model rather than from its own `selected` markup, for
+    // the same reason as the window-unit picker below renderTriggerFields.
+    // (happy-dom mis-parses `selected` outright, which turned a stored event
+    // rule into a device rule before any test could look at it.)
+    panel.querySelector("#aw-trigger-type").value = triggerCategoryOf(draft.trigger);
     renderTriggerFields();
     syncSeverityMode(panel);
   }
@@ -4276,6 +4319,16 @@ async function openAutomationWizard(existing, opts) {
       var ev = { type: "event", actionPattern: panel.querySelector("#tf-action").value.trim() };
       var rt = panel.querySelector("#tf-restype").value.trim(); if (rt) ev.resourceType = rt;
       var ml = panel.querySelector("#tf-minlevel").value; if (ml) ev.minLevel = ml;
+      // Detail conditions are collected as STRINGS even when the stored rule
+      // held a number or a boolean. The engine compares String(detail) ===
+      // String(match), so the match is unchanged — and a text box is the only
+      // honest editor for a field whose type the wizard cannot know.
+      var dmOut = {};
+      panel.querySelectorAll(".tf-drow").forEach(function (dr) {
+        var k = dr.querySelector(".tf-dkey").value.trim();
+        if (k) dmOut[k] = dr.querySelector(".tf-dval").value.trim();
+      });
+      if (Object.keys(dmOut).length) ev.detailsMatch = dmOut;
       draft.trigger = ev;
     } else if (cat === "change") {
       draft.trigger = { type: "change", changeType: panel.querySelector("#tf-changetype").value };
@@ -7837,6 +7890,16 @@ async function openAutomationWizard(existing, opts) {
         ? '<p style="font-size:0.82rem;color:var(--color-warning,#d97706);margin:0">This automation is triggered BY Events, so it deliberately writes none of its own — an audit Event here would feed back into the trigger. Remove this action; it has no effect.</p>'
         : '<p style="font-size:0.82rem;color:var(--color-text-tertiary);margin:0">Writes a <strong>notification.triggered</strong> audit Event on every fire, at the alert’s severity, carrying the message from the card above. Visible on the Events tab and forwarded by syslog / SFTP archival. Remove it for a deliberately noisy automation — the in-app alert is unaffected.</p>';
     }
+  }
+  /** One `detailsMatch` row on the event trigger: a field in the event's own
+   *  details and the value it has to read. */
+  function detailMatchRowHtml(k, v) {
+    return '<div class="tf-drow" style="display:flex;gap:6px;align-items:center;margin-bottom:4px">' +
+      '<input type="text" class="tf-dkey" value="' + escapeHtml(k) + '" placeholder="direction" style="width:38%">' +
+      '<span style="color:var(--color-text-tertiary)">is</span>' +
+      '<input type="text" class="tf-dval" value="' + escapeHtml(v === null || v === undefined ? "" : String(v)) + '" placeholder="escalated" style="flex:1">' +
+      '<button type="button" class="btn btn-sm btn-danger tf-dremove">&times;</button>' +
+    '</div>';
   }
   function apiHeaderRowHtml(k, v) {
     return '<div class="ac-hrow" style="display:flex;gap:6px;margin-bottom:4px">' +

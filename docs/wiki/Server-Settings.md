@@ -181,6 +181,15 @@ bytes, because TimescaleDB's absence is a broken install from the first byte,
 not a problem that begins at a threshold ([rule 52](Business-Rules#rule-52)).
 The old 1 GB threshold now only chooses *watch* vs *warning*.
 
+Every change of overall severity writes an Event, whether or not anyone has this
+tab open: `capacity.severity_changed` on the way up (and on a partial recovery
+that is still degraded), `capacity.severity_recovered` on a landing back at OK.
+The built-in **Capacity severity escalated** automation alerts on the first and
+clears on the second, so a capacity alert retires when capacity is actually
+healthy rather than on a timer. Add a **When it clears** action to that
+automation if you want the all-clear delivered as well — see
+[Automation-Triggers](Automation-Triggers).
+
 ### Platform Lifecycle
 
 Grades what this host is actually running — Node, PostgreSQL, TimescaleDB, Go,

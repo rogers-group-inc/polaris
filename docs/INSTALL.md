@@ -1316,7 +1316,7 @@ If your service doesn't support TimescaleDB, Polaris stays on plain-Postgres pru
 After install, Polaris monitors disk space on every filesystem it (and PostgreSQL, when co-located) writes to:
 
 - **At boot**: `runStartupDiskCheck` logs a clear "X volume has Y MB free" line at info/warn/error per volume. Catches the "polaris flapping because /var is full" case before the operator has to dig through Prisma errors.
-- **Every 10 minutes**: the `capacityWatch` job re-runs the snapshot and emits a `capacity.severity_changed` Event whenever severity transitions (ok ↔ watch ↔ amber ↔ red). Events flow through the configured syslog/SFTP archival pipeline so you get the alert even when the UI is unreachable.
+- **Every 10 minutes**: the `capacityWatch` job re-runs the snapshot and emits an Event whenever severity transitions (ok ↔ watch ↔ amber ↔ red) — `capacity.severity_recovered` on a landing back at ok, `capacity.severity_changed` on every other move. Events flow through the configured syslog/SFTP archival pipeline so you get the alert even when the UI is unreachable.
 - **Server Settings → Maintenance**: live volume bars + per-reason advisory cards. Severity tiering is **watch** at 20–30% free, **amber** at 10–20%, **red** below 10%.
 
 The watch tier is the new "you have weeks, not minutes" warning. Don't ignore it.

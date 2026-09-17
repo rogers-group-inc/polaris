@@ -2167,6 +2167,15 @@ export async function getCapacitySnapshotWithAdvisor(
 
 const SEVERITY_SETTING_KEY = "capacity.lastSeverity";
 
+/**
+ * The two audit actions a capacity transition can write — the same shape as
+ * `LIFECYCLE_CHANGED_ACTION` / `LIFECYCLE_RECOVERED_ACTION`. The baseline
+ * automation pairs them (trigger ← changed, reset ← recovered) and
+ * `RESET_EVENT_SUGGESTIONS` publishes that pairing to the wizard.
+ */
+export const CAPACITY_CHANGED_ACTION = "capacity.severity_changed";
+export const CAPACITY_RECOVERED_ACTION = "capacity.severity_recovered";
+
 interface StoredSeverity {
   severity: Severity;
   recordedAt: string;
@@ -2208,12 +2217,22 @@ function pickHeadlineReason(reasons: CapacityReason[]): CapacityReason | null {
 
 /**
  * Compare current snapshot severity against the last-stored severity and emit
- * one `capacity.severity_changed` Event if they differ. Best-effort — failures
- * are logged at debug level and never thrown so a transient DB hiccup doesn't
- * break the snapshot fetch.
+ * one Event if they differ. Best-effort — failures are logged at debug level
+ * and never thrown so a transient DB hiccup doesn't break the snapshot fetch.
  *
  * Maps severity to Event level: red → "error", amber/watch → "warning",
  * ok → "info" (recovery).
+ *
+ * TWO ACTIONS, not one. A return to `ok` writes `capacity.severity_recovered`;
+ * every other transition (escalation, and a partial recovery that lands on a
+ * still-degraded severity) writes `capacity.severity_changed`. The split is
+ * what lets the baseline automation self-clear: the notification layer's
+ * event-mode reset matches on actionPattern + resourceType only — no
+ * detailsMatch — so a single action would have the rule's reset match its own
+ * escalation and clear the alert the instant it fired. `platform.lifecycle_*`
+ * is split for the same reason (business rule 32(e)); this is the pair that
+ * comment predicted. A partial recovery deliberately does NOT clear: capacity
+ * dropping critical → warning is still capacity to answer for.
  */
 export async function recordCapacityTransition(snap: CapacitySnapshot): Promise<void> {
   try {
@@ -2232,12 +2251,19 @@ export async function recordCapacityTransition(snap: CapacitySnapshot): Promise<
         ? "escalated"
         : "recovered";
 
+    // Only a landing on `ok` is the all-clear. A downward step that stops at
+    // watch/warning stays on the `changed` action so it neither clears the
+    // alert nor announces a recovery that hasn't happened.
+    const recovered = direction === "recovered" && snap.severity === "ok";
+
     const headline = pickHeadlineReason(snap.reasons);
     const message = !prior
       ? `Capacity baseline established at ${snap.severity}.`
       : direction === "escalated"
         ? `Capacity ${prior.severity} → ${snap.severity}${headline ? `: ${headline.message}` : "."}`
-        : `Capacity ${prior.severity} → ${snap.severity} (recovered).`;
+        : recovered
+          ? `Capacity is back to OK (was ${prior.severity}).`
+          : `Capacity ${prior.severity} → ${snap.severity} (recovered).`;
 
     // Routed through logEvent so Setting.eventRetention.minLevel applies
     // uniformly across the codebase — an operator who muted info events
@@ -2245,7 +2271,7 @@ export async function recordCapacityTransition(snap: CapacitySnapshot): Promise<
     // recovery transitions. Escalations (warning/error level) still flow
     // through regardless because those outrank the default minLevel.
     await logEvent({
-      action: "capacity.severity_changed",
+      action: recovered ? CAPACITY_RECOVERED_ACTION : CAPACITY_CHANGED_ACTION,
       resourceType: "system",
       actor: "system",
       level,
