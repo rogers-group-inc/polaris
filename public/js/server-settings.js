@@ -1434,6 +1434,26 @@ function _capacityFormatBytes(b) {
   return formatBytes(b);
 }
 
+/**
+ * A row in the Database card's table list that is NOT one of Polaris's tables —
+ * pg-boss, the PostgreSQL catalog, the unattributed residual. Rendered subdued
+ * and without a row count so it reads as accounting rather than as a table.
+ * Returns "" for a zero/absent bucket: an install with no pg-boss schema should
+ * not carry a 0 B line for it.
+ */
+function _capacityUnlistedRow(label, bytes, hint) {
+  if (!bytes || bytes <= 0) return "";
+  return '<tr title="' + escapeHtml(hint) + '">' +
+    '<td style="font-size:0.78rem;font-style:italic;color:var(--color-text-secondary)">' +
+      escapeHtml(label) +
+    '</td>' +
+    '<td style="text-align:right;color:var(--color-text-secondary)">—</td>' +
+    '<td style="text-align:right;font-size:0.82rem;color:var(--color-text-secondary)">' +
+      escapeHtml(_capacityFormatBytes(bytes)) +
+    '</td>' +
+    '</tr>';
+}
+
 function _capacityFormatPct(num, denom) {
   if (denom == null || denom <= 0) return "—";
   return Math.round((num / denom) * 100) + "%";
@@ -2042,6 +2062,60 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
       '</tr>';
   }).join("");
 
+  // The rest of "Current size": bytes that are really on disk but are not one of
+  // Polaris's tables, so they can never appear as a row above. Listing them is
+  // the whole point — the card used to print a whole-database total over a
+  // public-schema-only list and leave the difference unexplained (on prod,
+  // 76.6 GB over a list summing to 2.6 GB).
+  var acct = (dbInfo && dbInfo.sizeAccounting) || null;
+  var unlisted = acct && acct.unlisted ? acct.unlisted : null;
+  if (unlisted) {
+    tablesHtml +=
+      _capacityUnlistedRow("pg-boss job queue", unlisted.pgbossBytes,
+        "The monitor work queue's own schema. Real bytes on the same disk, but not a Polaris table.") +
+      _capacityUnlistedRow("PostgreSQL catalog", unlisted.catalogBytes,
+        "pg_catalog + information_schema — PostgreSQL's own bookkeeping.") +
+      _capacityUnlistedRow("Other schemas", unlisted.otherBytes,
+        "Anything outside public, pgboss and the system catalogs, including TimescaleDB's own catalog.") +
+      _capacityUnlistedRow("Unattributed", unlisted.unattributedBytes,
+        "Polaris-owned bytes the table list could not attribute to a table. Expected to be zero — " +
+        "anything here means the hypertable rows above are understated.");
+    if (dbInfo && dbInfo.sizeBytes != null) {
+      tablesHtml +=
+        '<tr style="border-top:1px solid var(--color-border)">' +
+          '<td style="font-size:0.78rem;font-weight:600">Total</td>' +
+          '<td></td>' +
+          '<td style="text-align:right;font-size:0.82rem;font-weight:600">' +
+            escapeHtml(_capacityFormatBytes(dbInfo.sizeBytes)) +
+          '</td>' +
+        '</tr>';
+    }
+  }
+
+  // Two ways these figures can be wrong rather than merely unexplained, both
+  // previously invisible: the chunk fold failing (every hypertable then reads
+  // ~0, indistinguishable from empty) and a catalog that has never been
+  // ANALYZEd (relpages 0 regardless of content — the state a pg_upgrade leaves
+  // behind until vacuumdb runs).
+  var sizingWarnings = "";
+  if (acct && acct.sizing === "parent-only") {
+    sizingWarnings +=
+      '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
+      'Hypertable sizing is degraded — the TimescaleDB chunk catalog could not be read, so every sample ' +
+      'table is listed at its parent size (near zero) and their real bytes appear under Unattributed. ' +
+      'Check the server log for <span class="mono">dbSize.chunk_aware_sizing_failed</span>.' +
+      '</p>';
+  }
+  if (acct && acct.neverAnalyzedRelations > 0) {
+    sizingWarnings +=
+      '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
+      escapeHtml(formatNumber(acct.neverAnalyzedRelations)) +
+      ' relation(s) have never been vacuumed or analyzed, so they report zero pages and are missing from ' +
+      'every size on this card. Run <span class="mono">vacuumdb --analyze-in-stages</span> (expected right ' +
+      'after a restore or a PostgreSQL major-version upgrade).' +
+      '</p>';
+  }
+
   // TimescaleDB three-state: not installed / installed but no hypertables / enabled
   var ts = db.timescale || {};
   var tsLabel = "Not installed";
@@ -2072,7 +2146,14 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
     '<div class="capacity-stat-card">' +
       '<h5>Database</h5>' +
       '<div class="db-info-grid">' +
-        dbInfoRow("Current size", _capacityFormatBytes(db.sizeBytes)) +
+        dbInfoRow(
+          "Current size",
+          _capacityFormatBytes(db.sizeBytes),
+          "Every relation in the database: Polaris's tables with their indexes, TOAST and TimescaleDB " +
+          "chunks, plus the pg-boss queue schema and PostgreSQL's own catalog. The table list below " +
+          "accounts for all of it. Read from the catalog (pg_class.relpages) rather than by measuring " +
+          "the data directory, so it is accurate as of the last ANALYZE.",
+        ) +
         dbInfoRow(
           "Steady-state at current settings",
           _capacityFormatBytes(work.steadyStateSizeBytes),
@@ -2094,6 +2175,7 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
             '</tr></thead><tbody>' + tablesHtml + '</tbody></table>' +
           '</div>'
         : '') +
+      sizingWarnings +
     '</div>';
 
   var workHtml =
