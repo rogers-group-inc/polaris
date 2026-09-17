@@ -494,6 +494,31 @@ one alert each — which is what these conditions have always meant. A filter ro
 still works there too — it folds into the condition and re-opens on the row —
 but the row is where these say what they are about.
 
+**One condition reaches further than the pins: a PoE fault.** *Interface PoE
+status* **is** `fault` (or `other-fault`) alerts on every PoE-capable port on the
+scoped switches, whether or not you pinned it, and its picker lists those ports
+rather than the pinned set. The reason is in the values themselves — a port with
+nothing plugged in reports *searching*, a port you switched PoE off on reports
+*disabled*, so *fault* can only mean the switch found a powered device and
+failed to power it. That is the one PoE failure nothing else tells you about:
+the access point or camera on the far end never comes up, so it never becomes a
+device that can go down. Three things follow:
+
+- **It applies to `is fault` only.** Written as *is not* `delivering` the same
+  condition would sweep in every empty and switched-off port in the fleet, so
+  that form stays pinned-only.
+- **Un-pinning does not switch it off.** For every other interface condition,
+  un-pinning the port is how you stop the alerts. For a PoE fault, narrow the
+  automation's devices, or name a port pattern on the condition row.
+- **It counts in slow polls.** On an unpinned port the reading comes from the
+  full inventory scrape (every 10 minutes by default) rather than the fast
+  monitoring pass, so a *Sustained for* of 3 polls is about half an hour. A
+  faulted port does not flicker, so this delays the alert rather than missing it.
+
+Be deliberate with the devices you scope it to: one failed PoE supply can fault
+every port on a switch at once, and Polaris raises **one alert per port**, each
+with its own email and its own Acknowledge button.
+
 These render as *"`<what>` matches `<value>`"* rows and mean **"narrow every
 condition in this group"**. The stored rule never carries a filter row — each
 one is folded into its AND-group's leaves at save, and re-derived when you open

@@ -993,6 +993,91 @@ Each of the three cutovers carried the same warning, and the storage one is the 
 written into the rule: check the storage automations against their scoped devices' pin arrays
 BEFORE the release, not after the alerts stop.
 
+### The one VALUE that is carved out: a PoE fault (2026-09-17)
+
+Every argument above is an argument about IDLE components. A device reports forty-eight ports
+and nobody plugged anything into forty of them; it reports every filesystem it has and half of
+them are ISO mounts and recovery partitions. The pin is how the operator says which of those
+they meant. That reasoning is airtight for `ifOperStatus == down`, and it collapses completely
+for one value: `poeStatus == fault`.
+
+Read the MIB. RFC 3621's `pethPsePortDetectionStatus` gives an empty port `searching(2)` — a
+port with nothing plugged in searches forever — and a port the operator switched PoE off on
+`disabled(1)`. Neither is `fault`. The ONLY way a port reports `fault(4)` or `otherFault(6)` is
+for the PSE to have detected a powered device and failed to power it. There is no idle-port
+case to protect against, because an idle port cannot produce the value.
+
+So the gate was not buying what it usually buys. What it was costing was the alert itself:
+a PoE fault is the one thing on that device an operator cannot find out any other way. The AP
+or the camera on the far end never comes up, so it never had a `lastSeen` to go stale, never
+enters the fleet as a monitored asset, and never appears in a down automation — it is simply
+absent, and absence pages nobody. Catching it through the pin set would mean pinning every
+port on every access switch in the fleet, which is precisely the thing the gate exists to stop
+anyone having to do, and which would then subject all of those ports to every OTHER interface
+rule. Business rule 24 already says the preference: alert on the device's own alarm bit before
+inventing a threshold. This IS the device's own alarm bit.
+
+`poeFaultCoversUnpinned` is therefore scoped as narrowly as the argument is. `==` only, on the
+two fault values. `!= delivering` would cover fault too — and would cover `searching` and
+`disabled` with it, which is every empty and every switched-off port in the fleet, the storm in
+its purest form. That rule is still authorable; it just stays pinned-only, and the distinction
+is the whole carve-out: the value, not the field, is what earns the exception.
+
+### What it cost to build, which is the part worth remembering
+
+Deleting the gate would have done nothing at all. `asset_interface_samples` has no unpinned
+rows to read — the 2026-06 cutover stopped writing them, because they were never compressed
+(deleted at 24h, under the 2-day compression floor), never rolled up, and their row-level
+DELETE was behind the 2026-06-08 and 2026-06-17 compressed-chunk bloat incidents. The unpinned
+ports live in exactly one place, `asset_interfaces`, the current-state table written by the
+full scrape. So the carve-out is a SECOND SOURCE, not a lifted gate, and the two are unioned
+rather than one replacing the other: a pinned port keeps its sample-backed reading with its
+real series and its fast-cadence timestamp, so no rule that works today is quietly coarsened,
+and only the unpinned ports are new.
+
+Three consequences ride on that second source.
+
+**An unpinned reading has no series.** The current-state table keeps one row per port, not a
+history, so a `forPolls` hold counts through the firing row's own counter anchored on
+`lastSeen` — the shape `fortilinkStatus` already uses. That counter advances on FULL SCRAPES
+(`systemInfoIntervalSec`, default 600s), not the 60s fast pass, so "sustained for 3 polls" on
+an unpinned port is half an hour rather than three minutes. A fault does not flicker, so this
+costs latency and not correctness, but it is why the wizard's placeholder says which set blank
+compares.
+
+**A row can outlive the device.** `asset_interfaces` is delete-replaced per scrape, so a port
+that goes away is removed — but if the whole device stops being scraped, every row freezes at
+whatever the last pass saw. Freezing is mostly right (a switch we cannot reach has not told us
+the fault cleared, and freezing is what the engine does with every other collection gap), but
+not forever, so the query carries a 48h `lastSeen` floor. 48h because `systemInfoIntervalSec`
+validates at most 86400: the slowest cadence an operator can legally configure still lands two
+refreshes inside the window, so the floor can only ever catch a device that genuinely stopped
+being scraped.
+
+**`pinTestForTrigger` must return null for it.** This is the one that would have shipped
+broken. The sweep uses the pin predicate to tell a configuration edge from a collection gap —
+an unpinned dimension produces no readings by the operator's own hand, so its firing row may
+clear even on a tick that read nothing. Leave the arm in place and every unpinned-port alert is
+retired on the first sweep after it fires, by the very mechanism that makes un-pinning work.
+The rule that replaces it is worth stating plainly: **un-pinning stops a `== searching` rule
+and does not stop a `== fault` one.**
+
+The builder follows the same split. `sourceFor` hands a fault condition the PoE inventory
+(noun "PoE-capable interfaces", `poeStatus IS NOT NULL`, which also drops every pinned port
+with no PSE behind it) and every other condition the pin set, so the ports a rule can fire on
+stay the ports it offers. The wizard sends the row's own comparison as a narrowing input for
+this — the only narrowing input that is not a sibling dimension value — and only for a
+`poeStatus` row, so no other picker re-fetches when an operator edits a threshold.
+
+Announced rather than discovered, like every other change to this rule: an existing
+`poeStatus == fault` automation started covering unpinned ports on the next tick, with no edit
+and no migration. That is the intended reading — "tell me when a port fails to power
+something" was never a statement about the pin set — but on a fleet of access switches it is a
+step change in how many ports one rule watches, and the storm it can raise is correlated: a PSU
+browning out or a stack member rebooting faults many ports at once, and the engine keys alert
+state per `(rule, asset, dimension)` with no per-asset coalescing, so that is one alert, one
+email and one ack link per port.
+
 <a id="rule-58"></a>
 
 ## Rule 58 — A tag that names no region strands the ranking, so level routing abstains

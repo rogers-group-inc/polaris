@@ -37,7 +37,11 @@ let optionsHtml: (res: DimResult | null, current: string) => string;
 let suggestHtml: (res: DimResult | null | { loading: true } | { error: true }, query: string) => string;
 let matchCue: (res: DimResult | null | { loading: true } | { error: true }, value: string) => { text: string; warn: boolean };
 let note: (res: DimResult | null | { loading: true } | { error: true }) => { text: string; warn: boolean };
-let narrow: (dim: string, df: Record<string, string> | null) => Record<string, string>;
+let narrow: (
+  dim: string,
+  df: Record<string, string> | null,
+  state?: { stateOperator?: string; stateValue?: string } | null,
+) => Record<string, string>;
 
 beforeAll(() => {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -305,5 +309,29 @@ describe("sibling narrowing", () => {
     expect(narrow("sensorNamePattern", null)).toEqual({});
     expect(narrow("sensorClass", { sensorNamePattern: "CPU" })).toEqual({});
     expect(narrow("ifNamePattern", { sensorClass: "temperature" })).toEqual({});
+  });
+
+  // The interface list is the one narrowing input that is NOT a sibling
+  // dimension: `poeStatus == fault` fires on every PoE-capable port while every
+  // other PoE comparison stays pinned-only (business rule 57's carve-out), so
+  // the picker has to tell the server which comparison the row is making or it
+  // offers the wrong set of ports.
+  it("carries the row's comparison into the interface list", () => {
+    expect(narrow("ifNamePattern", {}, { stateOperator: "==", stateValue: "fault" }))
+      .toEqual({ stateOperator: "==", stateValue: "fault" });
+    expect(narrow("ifNamePattern", {}, { stateOperator: "==", stateValue: "searching" }))
+      .toEqual({ stateOperator: "==", stateValue: "searching" });
+  });
+
+  it("carries nothing when the row states no comparison, so no other picker re-fetches", () => {
+    expect(narrow("ifNamePattern", {}, null)).toEqual({});
+    expect(narrow("ifNamePattern", {}, {})).toEqual({});
+    expect(narrow("ifNamePattern", {})).toEqual({});
+  });
+
+  it("leaves the other component dimensions' narrowing alone", () => {
+    const poe = { stateOperator: "==", stateValue: "fault" };
+    expect(narrow("mountPathPattern", {}, poe)).toEqual({});
+    expect(narrow("tunnelName", {}, poe)).toEqual({});
   });
 });

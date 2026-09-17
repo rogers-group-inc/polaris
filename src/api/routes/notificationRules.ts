@@ -146,6 +146,11 @@ const dimensionValuesSchema = z.object({
     // State-probe rows belong to one probe (the row list for "PSU alarm" is not
     // the row list for "fan tray OK").
     stateProbeId: z.string().max(200).optional(),
+    // Not a sibling dimension: the row's own comparison. `poeStatus == fault`
+    // is the one condition that reads unpinned ports (business rule 57), so its
+    // interface list differs from every other PoE comparison's.
+    stateOperator: z.string().max(10).optional(),
+    stateValue: z.string().max(200).optional(),
   }).optional(),
 });
 
