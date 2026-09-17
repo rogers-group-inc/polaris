@@ -32,6 +32,7 @@ import { prisma } from "../db.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { triggerDimensionApplicable, type RuleScope } from "./notificationTypes.js";
+import { poeIsFault } from "../utils/poePorts.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import { listStateProbes } from "./manufacturerProfileService.js";
 
@@ -104,6 +105,17 @@ export interface DimensionNarrow {
   sensorClass?: string;
   healthCheck?: string;
   stateProbeId?: string;
+  /**
+   * The COMPARISON the condition row is making, not a sibling dimension value —
+   * the only narrowing input that isn't. It exists for one case: `poeStatus ==
+   * fault` reads every PoE-capable port while every other PoE comparison stays
+   * pinned-only (business rule 57's carve-out, `poeFaultCoversUnpinned`), so
+   * the interface list depends on the operator and value as well as the field.
+   * Sent by the wizard only for a `poeStatus` row, so no other picker re-fetches
+   * when an operator edits a threshold.
+   */
+  stateOperator?: string;
+  stateValue?: string;
 }
 
 interface DimensionSource {
@@ -370,6 +382,52 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
 
 /** Dimensions this service can populate — the wizard reads it off /schema so it
  *  knows which inputs become pickers without hardcoding the list. */
+/**
+ * `ifNamePattern` for a PoE FAULT condition — the one interface rule that fires
+ * on unpinned ports (business rule 57's carve-out, `poeFaultCoversUnpinned`).
+ * Offering the pin set there would be the picker's usual mistake in the other
+ * direction: hiding the very ports the rule exists to catch, on switches where
+ * nothing is pinned at all.
+ *
+ * Source is `AssetInterface`, not the pin array and not the sample table —
+ * `poeStatus IS NOT NULL` is what "this port has a PSE behind it" means, and
+ * the current-state table is the only place an unpinned port is recorded. A
+ * port with no PSE is left out even when it IS pinned: a PoE condition can
+ * never fire about it, which is the same contract the pin-set source keeps.
+ *
+ * A VARIANT, not an entry in DIMENSION_SOURCES: it is reachable only through
+ * `sourceFor`, so it can't be named as a dimension by a client and can't leak
+ * into `dimensionPickerMeta` as a picker the wizard would try to render.
+ */
+const IF_NAME_POE_FAULT_SOURCE: DimensionSource = {
+  noun: "PoE-capable interfaces",
+  strict: false,
+  candidateWhere: { interfaces: { some: { poeStatus: { not: null } } } },
+  pairs: async (ids) =>
+    (await prisma.assetInterface.findMany({
+      where: { assetId: { in: ids }, poeStatus: { not: null } },
+      select: { assetId: true, ifName: true },
+    })).map((r) => ({ value: r.ifName, assetId: r.assetId })),
+};
+
+/**
+ * The value source for one (dimension, metric, comparison). Everything reads
+ * its source by dimension alone except the interface list, which has to know
+ * whether the condition is the PoE fault carve-out — the one comparison whose
+ * readings don't come from the pin set.
+ */
+function sourceFor(dimension: string, metric: string, narrow: DimensionNarrow): DimensionSource | undefined {
+  if (
+    dimension === "ifNamePattern"
+    && metric === "poeStatus"
+    && narrow.stateOperator === "=="
+    && poeIsFault(narrow.stateValue)
+  ) {
+    return IF_NAME_POE_FAULT_SOURCE;
+  }
+  return DIMENSION_SOURCES[dimension];
+}
+
 export function dimensionPickerMeta(): Record<string, { strict: boolean; noun: string }> {
   const out: Record<string, { strict: boolean; noun: string }> = {};
   for (const [dim, src] of Object.entries(DIMENSION_SOURCES)) {
@@ -427,7 +485,7 @@ export async function listDimensionValues(
   if (!triggerDimensionApplicable(metric, dimension)) {
     throw new AppError(400, `"${dimension}" is not a dimension of metric "${metric}"`);
   }
-  const source = DIMENSION_SOURCES[dimension];
+  const source = sourceFor(dimension, metric, narrow);
   if (!source) throw new AppError(400, `No value source for dimension "${dimension}"`);
 
   // Monitored-only: a value only an unmonitored device reports is a filter that

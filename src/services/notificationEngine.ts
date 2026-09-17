@@ -29,6 +29,7 @@ import { logEvent } from "./eventLogService.js";
 import { triggerSummary } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent } from "./alertChartService.js";
+import { poeIsFault } from "../utils/poePorts.js";
 import { REGION_TAG_PREFIX } from "./notificationService.js";
 import {
   type Trigger,
@@ -563,6 +564,41 @@ export function interfaceIsPinned(asset: { monitoredInterfaces?: string[] } | un
 }
 
 /**
+ * The ONE carve-out from the pin gate (business rule 57): a PoE trigger that
+ * names a FAULT value reads every PoE-capable port, pinned or not.
+ *
+ * Why this field and no other. The pin gate exists because a device reports
+ * every port it has and most of them are idle, so an ungated `ifOperStatus ==
+ * down` rule turns one switch into a page of alerts about ports nobody plugged
+ * anything into. `poeStatus == fault` cannot do that: RFC 3621 gives an empty
+ * port `searching` and an operator-disabled one `disabled`, so the only way to
+ * read `fault` (or `otherFault`) is for the PSE to have detected a powered
+ * device and FAILED to power it. That is the device's own alarm bit, which
+ * business rule 24 says to prefer over a threshold we invented — and a port
+ * faulting is exactly the event an operator cannot discover by other means,
+ * because the AP or camera on the far end simply never comes up. Pinning every
+ * port on every switch to catch it would defeat the pin gate everywhere else.
+ *
+ * Scoped to `==` deliberately. `!= delivering` also "covers" fault, but it
+ * covers `searching` and `disabled` with it — every empty port in the fleet —
+ * which is the alert storm the gate exists to stop. An operator who wants the
+ * wider rule can still write it; it just stays pinned-only.
+ *
+ * Consequence, stated because rule 57 requires an un-gating to be announced
+ * rather than discovered: an existing `poeStatus == fault` automation starts
+ * covering unpinned ports on the next tick, with no edit. That is the intended
+ * reading — "tell me when a port fails to power something" was never a
+ * statement about the pin set — but it is a fleet-wide behaviour change.
+ */
+export function poeFaultCoversUnpinned(trigger: Trigger): boolean {
+  return trigger.type === "asset_state"
+    && trigger.field === "poeStatus"
+    && trigger.operator === "=="
+    && typeof trigger.value === "string"
+    && poeIsFault(trigger.value);
+}
+
+/**
  * What an interface-dimensioned alert CALLS the port.
  *
  * The dimension KEY stays the stored `ifName` — it is the identity the state
@@ -637,8 +673,16 @@ export function storageIsPinned(asset: { monitoredStorage?: string[] } | undefin
  * this, unpinning a device's only alerting interface stranded the alert
  * forever, because the no-readings freeze (which exists for genuine scrape
  * gaps) also swallowed the unpin.
+ *
+ * Null for a PoE FAULT trigger (poeFaultCoversUnpinned), and it has to be: that
+ * rule's readings no longer come from the pin set, so pin-testing its firing
+ * rows would clear every alert about an unpinned port on the first sweep —
+ * retiring the alert the carve-out exists to raise. Un-pinning therefore stops
+ * a `== searching` rule and not a `== fault` one, which is the same statement
+ * the resolver makes, made once more where the sweep can see it.
  */
 function pinTestForTrigger(trigger: Trigger): ((asset: ScopeAssetRow, dimKey: string) => boolean) | null {
+  if (poeFaultCoversUnpinned(trigger)) return null;
   if (trigger.type === "asset_metric") {
     if (trigger.metric === "ifInBps" || trigger.metric === "ifOutBps" || trigger.metric === "ifInErrorRate" || trigger.metric === "ifOutErrorRate") return interfaceIsPinned;
     if (trigger.metric === "ipsecThroughputBps") return tunnelIsPinned;
@@ -1167,6 +1211,89 @@ export function interfaceStateSeries<T extends InterfaceStateRow>(
   };
 }
 
+/**
+ * Backstop age for a current-state interface row. `asset_interfaces` is
+ * delete-replaced per scrape, so a port that goes away is REMOVED rather than
+ * left stale — the row can only go stale when the whole device stops being
+ * scraped, and then its `lastSeen` freezes at whatever the last pass saw.
+ * Freezing is mostly right (a switch we cannot reach has not told us the fault
+ * cleared, and the no-readings freeze is what the engine does with every other
+ * collection gap), but it must not be forever, or a device left monitored and
+ * permanently unreachable holds a PoE alert for good.
+ *
+ * 48h because `systemInfoIntervalSec` is validated at most 86400 (24h): the
+ * slowest cadence an operator can legally configure still lands two refreshes
+ * inside the window, so this can only ever catch a device that genuinely
+ * stopped being scraped.
+ */
+const POE_INVENTORY_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * PoE readings for the ports the pin gate leaves out, for a fault trigger only
+ * (business rule 57's carve-out — see poeFaultCoversUnpinned).
+ *
+ * Source is `asset_interfaces`, the current-state table, because
+ * `asset_interface_samples` HAS no unpinned rows: the 2026-06 cutover stopped
+ * writing them (they were never compressed, never rolled up, and their
+ * row-level DELETE was behind two compressed-chunk bloat incidents). So this is
+ * not a gate that could be lifted by deleting a line — the data for these ports
+ * lives in exactly one place, and this is it.
+ *
+ * UNIONED with the pinned sample readings rather than replacing them. A pinned
+ * port keeps its sample-backed reading, which carries a real series and a
+ * fast-cadence timestamp; switching it to current-state would silently coarsen
+ * every `poeStatus == fault` rule that works today. So a pinned port is read
+ * exactly as before and an unpinned one is new, which is what makes this change
+ * additive.
+ *
+ * What an unpinned reading gives up, and why it is still enough: no series
+ * (this table keeps one row per port, not a history), so a `forPolls` hold
+ * counts observations through the firing row's own counter, anchored on
+ * `lastSeen` — the same shape `fortilinkStatus` uses, and the reason `readingAt`
+ * exists. The hold therefore counts FULL SCRAPES (default 600s), not the 60s
+ * fast pass: "sustained for 3 polls" on an unpinned port is half an hour, not
+ * three minutes. A fault does not flicker, so this costs latency rather than
+ * correctness — but it is why the builder says so on the field.
+ *
+ * Scale (100 vs 2000 assets): one indexed `findMany` per tick over
+ * `(assetId IN …)`, narrowed in SQL by `poeStatus IS NOT NULL`, which is the
+ * filter that matters — it drops every routed interface, VLAN, aggregate and
+ * tunnel, and every port on every device with no PSE at all, so a fleet of
+ * firewalls and servers reads back nothing. What remains is roughly the switch
+ * ports, one small row each, with no series to carry.
+ */
+async function unpinnedPoeFaultReadings(
+  index: Map<string, ScopeAssetRow>,
+  ids: string[],
+  df: { ifNamePattern?: string },
+  mk: (a: ScopeAssetRow, dimKey: string, dimLabel: string, value: any) => Reading,
+): Promise<Reading[]> {
+  if (ids.length === 0) return [];
+  const freshSince = new Date(Date.now() - POE_INVENTORY_MAX_AGE_MS);
+  const rows = await prisma.assetInterface.findMany({
+    where: { assetId: { in: ids }, poeStatus: { not: null }, lastSeen: { gte: freshSince } },
+    select: { assetId: true, ifName: true, alias: true, poeStatus: true, lastSeen: true },
+  });
+  const out: Reading[] = [];
+  for (const r of rows) {
+    const a = index.get(r.assetId);
+    if (!a) continue;
+    // The pinned ports came from the sample table above — taking them again
+    // here would hand the state machine two readings for one dimension key.
+    if (interfaceIsPinned(a, r.ifName)) continue;
+    // Same operator-choice gate the pinned path applies. Inert for a fault
+    // trigger (a disabled port reports "disabled", never "fault"), kept so the
+    // two paths can't drift into disagreeing about what a port reports.
+    if (r.poeStatus === "disabled") continue;
+    if (!substringMatch(r.ifName, df.ifNamePattern)) continue;
+    out.push({
+      ...mk(a, r.ifName, interfaceDimLabel(r.ifName, r.alias), r.poeStatus),
+      readingAt: r.lastSeen,
+    });
+  }
+  return out;
+}
+
 async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asset_state" }>, assets: ScopeAssetRow[]): Promise<Reading[]> {
   const df = trigger.dimensionFilter ?? {};
   assets = applyDeviceFilters(assets, df); // same asset-set narrowing as the metric resolver
@@ -1247,6 +1374,12 @@ async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asse
           ? (v: string | null) => (v == null ? null : bareInterfaceIp(v))
           : (v: string | null) => v;
         out.push({ ...mk(a!, r.ifName, interfaceDimLabel(r.ifName, r.alias), norm(r[col])), series: series.map(norm), readingAt: r.timestamp });
+      }
+      // The pinned ports are done. A FAULT rule adds the rest of the PoE ports
+      // from the current-state table — see unpinnedPoeFaultReadings for why the
+      // two sources are unioned rather than one replacing the other.
+      if (poeFaultCoversUnpinned(trigger)) {
+        out.push(...await unpinnedPoeFaultReadings(index, ids, df, mk));
       }
       return out;
     }

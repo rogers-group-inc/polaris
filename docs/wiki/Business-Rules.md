@@ -387,7 +387,14 @@ truthiness** — an explicit `false` is an answer, an absent key inherits.
 **A sub-asset alerts only if the operator pinned it — the pin IS the statement of
 what may alert.** The pin is a gate, never a side effect of retention: every
 stream writes samples for unpinned members too. There is **no opt-out**;
-un-pinning is how alerting stops.
+un-pinning is how alerting stops. **One exception:** a PoE condition written as
+*Interface PoE status* **is** `fault` (or `other-fault`) alerts on every
+PoE-capable port, pinned or not. A port with nothing plugged in reports
+*searching* and a port you switched PoE off on reports *disabled*, so *fault*
+can only mean the switch detected a powered device and failed to power it —
+which is the one PoE failure you cannot find another way, because the access
+point or camera on the far end never comes up at all. Every other PoE
+comparison, and every other interface condition, stays pinned-only.
 
 ### Rule 58
 **A region tag naming no region strands the whole ranking, so level routing

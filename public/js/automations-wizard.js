@@ -1262,7 +1262,7 @@ function awDimMatchCue(res, value, dim) {
  *  condition row: sensor NAMES belong to the chosen class, WAN members to the
  *  chosen health-check. Offering the unnarrowed list would let an operator build
  *  a filter (class=temperature + name=FAN1) that matches nothing. */
-function awDimNarrow(dim, df) {
+function awDimNarrow(dim, df, state) {
   df = df || {};
   if (dim === "sensorNamePattern") return df.sensorClass ? { sensorClass: df.sensorClass } : {};
   if (dim === "link") return df.healthCheck ? { healthCheck: df.healthCheck } : {};
@@ -1270,6 +1270,12 @@ function awDimNarrow(dim, df) {
   // fan-tray probe, so offering every probe's rows would invite a combination
   // that matches nothing.
   if (dim === "stateRowPattern") return df.stateProbeId ? { stateProbeId: df.stateProbeId } : {};
+  // The interface list is the one that depends on the row's COMPARISON and not
+  // only on its siblings: `poeStatus == fault` alerts on every PoE port while
+  // every other PoE comparison stays pinned-only, so the two need different
+  // lists. `state` is supplied only for a poeStatus row (awDimStateOfRow), so
+  // no other picker's cache key moves when an operator edits a value.
+  if (dim === "ifNamePattern" && state && state.stateOperator) return { stateOperator: state.stateOperator, stateValue: state.stateValue || "" };
   return {};
 }
 
@@ -1582,6 +1588,26 @@ async function openAutomationWizard(existing, opts) {
     ifNamePattern: "which interface — click to pick (blank compares every monitored interface)",
     tunnelName: "which IPsec tunnel — click to pick (blank compares every monitored tunnel)",
   };
+  // What blank means on the ONE condition that isn't pinned-only: a PoE fault
+  // reads every PoE-capable port, pinned or not (business rule 57's carve-out),
+  // so the hint must not promise "monitored interface" — on a switch with
+  // nothing pinned, blank still compares all 48 ports.
+  var DIM_INTEGRAL_PLACEHOLDER_POE_FAULT =
+    "which interface — click to pick (blank compares every PoE-capable interface, pinned or not)";
+  // The PoE values that read unpinned ports. Mirrors poeIsFault in
+  // src/utils/poePorts.ts — the server decides, this only picks the hint and
+  // which list the picker asks for.
+  function awIsPoeFaultState(metric, state) {
+    if (metric !== "poeStatus" || !state || state.stateOperator !== "==") return false;
+    return state.stateValue === "fault" || state.stateValue === "other-fault";
+  }
+  /** The comparison a STATE leaf is making, for the pickers whose list depends
+   *  on it — the render-time counterpart of dimStateOfRow. Null for every leaf
+   *  but a PoE one, so nothing else's cache key moves. */
+  function awDimStateOfLeaf(leaf) {
+    if (!leaf || leaf.type !== "asset_state" || leaf.field !== "poeStatus") return null;
+    return { stateOperator: leaf.operator || "", stateValue: leaf.value == null ? "" : String(leaf.value) };
+  }
   // Dimension VALUE pickers. The server says which dimensionFilter fields it can
   // populate and whether each is a closed enum (`strict` → select-only, e.g.
   // sensorClass) or a substring match (→ suggestions, typing still allowed);
@@ -2649,18 +2675,20 @@ async function openAutomationWizard(existing, opts) {
   // a select (closed enum) or a COMBOBOX (substring match — click to pick one of
   // the values the scoped devices report, or type a pattern); anything else stays
   // the plain text box it always was.
-  function dimControlHtml(d, df, metric) {
+  function dimControlHtml(d, df, metric, state) {
     var value = (df && df[d]) || "";
     var meta = DIM_PICKERS[d];
     // An INTEGRAL dimension's hint says what the row is about and what leaving
     // it blank means, rather than the generic "any interface" a filter row's
     // own picker reads with — blank here widens the comparison to every
     // monitored component, which is rarely what a per-component gate wants.
-    var placeholder = escapeHtml((d === tgIntegralDimOf(metric) && DIM_INTEGRAL_PLACEHOLDER[d]) || DIM_PLACEHOLDER[d] || d);
+    var integralHint = (d === tgIntegralDimOf(metric) && DIM_INTEGRAL_PLACEHOLDER[d]) || "";
+    if (integralHint && d === "ifNamePattern" && awIsPoeFaultState(metric, state)) integralHint = DIM_INTEGRAL_PLACEHOLDER_POE_FAULT;
+    var placeholder = escapeHtml(integralHint || DIM_PLACEHOLDER[d] || d);
     if (!meta) {
       return '<input type="text" class="tgl-dim" data-dim="' + escapeHtml(d) + '" placeholder="' + placeholder + '" value="' + escapeHtml(value) + '" style="flex:1;min-width:120px">';
     }
-    var res = dimResult(metric, d, awDimNarrow(d, df));
+    var res = dimResult(metric, d, awDimNarrow(d, df, state));
     if (meta.strict) {
       return '<select class="tgl-dim" data-dim="' + escapeHtml(d) + '" style="flex:1;min-width:150px;font-size:0.8rem" title="' + placeholder + '">' +
         awDimOptionsHtml(res, value) + '</select>';
@@ -2700,13 +2728,26 @@ async function openAutomationWizard(existing, opts) {
     });
     return df;
   }
+  /** The row's own comparison, for the one picker whose list depends on it (see
+   *  awDimNarrow). Returns {} for every row that is not a PoE state condition,
+   *  so the dimension cache key — and therefore the fetch — only moves for the
+   *  rows that actually need it. */
+  function dimStateOfRow(row) {
+    if (!row) return {};
+    var what = row.querySelector(".tgl-what");
+    if (!what || what.value !== "f:poeStatus") return {};
+    var op = row.querySelector(".tgl-op");
+    var val = row.querySelector(".tgl-value");
+    if (!op) return {};
+    return { stateOperator: op.value || "", stateValue: (val && val.value) || "" };
+  }
   /** The dimension-value result for a control, read live off its row (metric +
    *  sibling narrowing), or null before it's been asked for. */
   function dimResultOf(el) {
     var d = el.getAttribute("data-dim");
     var metric = dimMetricOf(el);
     if (!metric) return null;
-    return _dimValues[dimKeyFor(metric, d, awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row"))))] || null;
+    return _dimValues[dimKeyFor(metric, d, awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")), dimStateOfRow(el.closest(".scr-row"))))] || null;
   }
   function dimSuggestOf(el) {
     var combo = el.closest && el.closest(".aw-combo");
@@ -2726,7 +2767,7 @@ async function openAutomationWizard(existing, opts) {
     var d = el.getAttribute("data-dim");
     if (!DIM_PICKERS[d]) return;
     var metric = dimMetricOf(el);
-    var narrow = awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")));
+    var narrow = awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")), dimStateOfRow(el.closest(".scr-row")));
     var res = metric ? _dimValues[dimKeyFor(metric, d, narrow)] : null;
     // Cue + any open suggestion list track the LATEST result and value, so the
     // loading→loaded transition fills them in without the operator re-clicking.
@@ -2861,7 +2902,7 @@ async function openAutomationWizard(existing, opts) {
       if (!DIM_PICKERS[d]) return;
       var metric = dimMetricOf(el);
       if (!metric) return;
-      var narrow = awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")));
+      var narrow = awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")), dimStateOfRow(el.closest(".scr-row")));
       var key = dimKeyFor(metric, d, narrow);
       if (!_dimValues[key]) need[key] = { metric: metric, dimension: d, narrow: narrow };
     });
@@ -2972,7 +3013,7 @@ async function openAutomationWizard(existing, opts) {
         var fDf = leaf.dimensionFilter || {};
         line2 =
           '<div class="tgl-line2" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 0 22px;font-size:0.8rem;color:var(--color-text-tertiary)">' +
-            fDims.map(function (d) { return dimControlHtml(d, fDf, leaf.field); }).join("") +
+            fDims.map(function (d) { return dimControlHtml(d, fDf, leaf.field, awDimStateOfLeaf(leaf)); }).join("") +
             (fDims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
             // Both painted asynchronously (syncDownDetection) and rendered
             // rather than omitted, so there is somewhere to paint into: the

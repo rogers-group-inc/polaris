@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { compareNum, compareValue, globToRegExp, readingMeets, interfaceIsPinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned, applyDeviceFilters } from "../../src/services/notificationEngine.js";
+import { compareNum, compareValue, globToRegExp, readingMeets, interfaceIsPinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned, applyDeviceFilters, poeFaultCoversUnpinned } from "../../src/services/notificationEngine.js";
 import { scopeMatchesAsset, type ScopeAsset } from "../../src/services/notificationRuleService.js";
 import { stripRegionPrefix } from "../../src/services/notificationService.js";
 import { bareInterfaceIp } from "../../src/utils/cidr.js";
@@ -102,6 +102,50 @@ describe("interfaceIsPinned", () => {
     // A reading whose asset fell out of the scope index is dropped rather than
     // defaulting to allowed — fail closed, same as the resolvers' `index.get`.
     expect(interfaceIsPinned(undefined, "port1")).toBe(false);
+  });
+});
+
+describe("poeFaultCoversUnpinned", () => {
+  // The one carve-out from the pin gate (business rule 57): a PoE FAULT
+  // condition reads every PoE-capable port, because a port can only report
+  // "fault" by detecting a powered device and failing to power it — an empty
+  // port reports "searching" and a switched-off one "disabled", so this value
+  // cannot produce the "one switch, forty-eight alerts" storm the gate exists
+  // to stop.
+  const poe = (operator: string, value: unknown) =>
+    ({ type: "asset_state", field: "poeStatus", operator, value, forDurationSec: 0, forPolls: 0 }) as any;
+
+  it("covers unpinned ports on both fault values", () => {
+    expect(poeFaultCoversUnpinned(poe("==", "fault"))).toBe(true);
+    // RFC 3621 keeps fault(4) and otherFault(6) distinct and so does Polaris —
+    // an operator alerting on one means the same thing by the other.
+    expect(poeFaultCoversUnpinned(poe("==", "other-fault"))).toBe(true);
+  });
+
+  it("stays pinned-only for every non-fault value", () => {
+    // "searching" is the empty-port value: ungated it would alert on every
+    // unused port in the fleet, which is exactly rule 57's storm.
+    expect(poeFaultCoversUnpinned(poe("==", "searching"))).toBe(false);
+    expect(poeFaultCoversUnpinned(poe("==", "delivering"))).toBe(false);
+    expect(poeFaultCoversUnpinned(poe("==", "disabled"))).toBe(false);
+    expect(poeFaultCoversUnpinned(poe("==", "test"))).toBe(false);
+  });
+
+  it("stays pinned-only for a negated comparison, which would sweep the empty ports in with the faults", () => {
+    expect(poeFaultCoversUnpinned(poe("!=", "delivering"))).toBe(false);
+    expect(poeFaultCoversUnpinned(poe("!=", "fault"))).toBe(false);
+  });
+
+  it("is false for every other interface field, so un-pinning still stops them", () => {
+    for (const field of ["ifOperStatus", "ifAdminStatus", "ifIpAddress", "ipsecStatus"]) {
+      expect(poeFaultCoversUnpinned({ ...poe("==", "fault"), field } as any)).toBe(false);
+    }
+  });
+
+  it("is false for a non-state trigger and for a non-string value", () => {
+    expect(poeFaultCoversUnpinned({ type: "asset_metric", metric: "ifInBps", operator: "==", threshold: 0 } as any)).toBe(false);
+    expect(poeFaultCoversUnpinned(poe("==", 4))).toBe(false);
+    expect(poeFaultCoversUnpinned(poe("==", null))).toBe(false);
   });
 });
 
