@@ -593,6 +593,66 @@ describe("automation wizard DOM render", () => {
     expect(() => ruleInputSchema.parse(p)).not.toThrow();
   });
 
+  // ── The recipient guard ────────────────────────────────────────────────
+  //
+  // "Choose at least one recipient" is the wizard's own check — the server has
+  // no equivalent refusal for a v2 notify action — so a source missing from it
+  // is a recipient the picker offers and the wizard then refuses to save. These
+  // pin the whole To vocabulary against usersForTarget, one source per rule.
+  const RECIP_BASE = {
+    id: "r-recip",
+    name: "Hot CPU",
+    description: null,
+    enabled: true,
+    severity: "warning",
+    trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">", threshold: 90 },
+    scope: { allAssets: true },
+    reset: { mode: "auto", clearThreshold: 75 },
+    cooldownSec: null,
+    messageTemplate: "{asset} cpu {value}",
+  };
+  /** Open in edit mode with one notify action and save straight from step 1. */
+  async function saveWithNotifyAction(action: Record<string, unknown>): Promise<Record<string, any> | null> {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({ ...RECIP_BASE, actions: [action] });
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    return (savedPayloads[0] as Record<string, any>) ?? null;
+  }
+
+  it.each([
+    ["an L-level region dynamic group", { recipientDeviceRegionLevels: [2] }],
+    ["the asset's own region users", { recipientDeviceRegion: true }],
+    ["a registry tag", { recipientTags: ["oncall"] }],
+    ["a map region", { recipientRegions: ["Atlanta"] }],
+    ["the asset's responsible contacts", { recipientAssetContacts: true }],
+  ])("routes an email by %s alone without demanding another recipient", async (_what, recip) => {
+    const p = await saveWithNotifyAction({ type: "notify", channelId: "c1", ...recip });
+    expect(toastErrors).toEqual([]);
+    expect(p).not.toBeNull();
+    expect(p!.actions[0]).toMatchObject(recip);
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("still refuses a notify action that names nobody at all", async () => {
+    const p = await saveWithNotifyAction({ type: "notify", channelId: "c1" });
+    expect(p).toBeNull();
+    expect(toastErrors.join(" ")).toContain("choose at least one recipient");
+  });
+
+  it("counts an L-level group as the To a Cc/Bcc-only email is missing", async () => {
+    // expandDeliveries drops a target whose To resolves empty, so a Cc-only
+    // action delivers nothing — but a level group IS a To, and the guard used
+    // to see only the three it had been told about.
+    const cc = { emailComposition: { cc: { addresses: ["audit@example.com"] } } };
+    const ok = await saveWithNotifyAction({ type: "notify", channelId: "c1", recipientDeviceRegionLevels: [1], ...cc });
+    expect(toastErrors).toEqual([]);
+    expect(ok).not.toBeNull();
+    expect(ok!.actions[0].emailComposition.cc).toEqual({ addresses: ["audit@example.com"] });
+  });
+
   it("repeat control: hydrates from a stored rule and round-trips through save", async () => {
     doc.body.innerHTML = "";
     savedPayloads.length = 0;

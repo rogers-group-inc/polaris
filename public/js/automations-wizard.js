@@ -8128,11 +8128,20 @@ async function openAutomationWizard(existing, opts) {
       // them — not repeated per channel with the same answer.
       var ch = chs.filter(function (x) { return isRouted(x.type); })[0];
       if (ch) {
+        // Everything usersForTarget folds into the To list, static and dynamic
+        // alike. It has to be the WHOLE set: a source missing here is a
+        // recipient the operator picked and the wizard then refuses to save
+        // (recipientDeviceRegionLevels — the "Asset's Ln Region Users" pills —
+        // was such a hole), and a source listed here that resolves to nobody
+        // would be the opposite mistake. The two push-only broadcast flags are
+        // deliberately NOT in this set: usersForTarget honours them on the
+        // web_push transport only, so they are a recipient for the action but
+        // never a To for its email half.
         var hasTo = (a.recipientUserIds && a.recipientUserIds.length) || (a.addresses && a.addresses.length) ||
-          (a.recipientRoles && a.recipientRoles.length);
-        var hasRecip = hasTo || a.recipientDeviceRegion || a.recipientScopeRegion || a.recipientAssetContacts ||
-          a.recipientAllUsers || a.recipientAllRegions || (a.recipientRegions && a.recipientRegions.length) ||
-          (a.recipientTags && a.recipientTags.length);
+          (a.recipientRoles && a.recipientRoles.length) || (a.recipientRegions && a.recipientRegions.length) ||
+          (a.recipientTags && a.recipientTags.length) || (a.recipientDeviceRegionLevels && a.recipientDeviceRegionLevels.length) ||
+          a.recipientDeviceRegion || a.recipientScopeRegion || a.recipientAssetContacts;
+        var hasRecip = hasTo || a.recipientAllUsers || a.recipientAllRegions;
         if (!hasRecip) return label + " (" + ch.name + "): choose at least one recipient.";
         // A Cc/Bcc-only action silently sends NOTHING: expandDeliveries skips a
         // target whose resolved To list is empty (Graph rejects an empty To).
@@ -8140,7 +8149,7 @@ async function openAutomationWizard(existing, opts) {
         var comp = a.emailComposition;
         var hasCcBcc = !!(comp && ((comp.cc && (comp.cc.addresses || comp.cc.recipientUserIds)) ||
                                    (comp.bcc && (comp.bcc.addresses || comp.bcc.recipientUserIds))));
-        if (hasCcBcc && !hasTo && !a.recipientDeviceRegion && !a.recipientScopeRegion && !a.recipientAssetContacts) {
+        if (hasCcBcc && !hasTo) {
           return label + " (" + ch.name + "): add a To recipient — a Cc/Bcc-only email is never sent.";
         }
       }
