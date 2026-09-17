@@ -35,8 +35,10 @@
  * event family (discovery failures, push failures, agent drop-offs, capacity
  * escalations, conflicts, lockouts…) so the alert text, delivery, and
  * escalation for those events are operator-controllable from the Automations
- * page. All are event triggers with timed reset + a cooldown — the engine's
- * event-tail cooldown + timed-clear passes keep them storm-proof.
+ * page. All are event triggers with a cooldown, and each resets either on a
+ * clock or — where Polaris writes the recovery itself — on the counterpart
+ * event (business rule 32(e)); the engine's event-tail cooldown, timed-clear
+ * and event-reset passes keep them storm-proof.
  *
  * The V3 DOWN-DETECTION SET is different in kind from the first two: it is
  * COMPUTED from live data rather than a static array. Down stopped being a
@@ -55,7 +57,9 @@
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV3SeededAt'; -- down detection
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV4ResetEventSeededAt'; -- counterpart resets
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV5LossCeilingSeededAt'; -- loss ceiling
+ *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV6PlatformLifecycleSeededAt'; -- platform end-of-life
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV7ResponseTimeWindowAt'; -- response-time count windows
+ *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV8CapacityResetEventAt'; -- capacity all-clear reset
  * then restart. (This resurrects that ENTIRE set, including rules you deleted.
  * For V3 that means re-deriving the thresholds from the settings tiers, which
  * are dormant but still stored — and it will NOT re-retire an Asset down rule
