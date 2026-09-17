@@ -17,6 +17,8 @@ import {
   assertValidPublicKey,
   assertValidUsername,
   assertValidServerIp,
+  WINDOWS_ACCOUNT_DESCRIPTION,
+  WINDOWS_DESCRIPTION_MAX,
 } from "../../src/services/sshOnboardingScript.js";
 
 /** A real generated key, so the tests exercise the actual shape we emit. */
@@ -85,6 +87,48 @@ describe("assertValidUsername", () => {
 
   it("rejects a username longer than 64 characters", () => {
     expect(() => assertValidUsername("a".repeat(65), "existing")).toThrow();
+  });
+
+  // PROD, 2026-09-17. New-LocalUser refuses a -Name over 20 characters, and
+  // nothing checked: a longer name passed validation here and then failed
+  // identically on every endpoint the script reached. Same class of bug as the
+  // Description overflow below — a PowerShell parameter limit that only shows
+  // up on the host — and the same reason the domain-account case is refused.
+  it("refuses a create-mode name over the 20-character SAM limit", () => {
+    expect(() => assertValidUsername("a".repeat(21), "create")).toThrow(/20 characters/i);
+  });
+
+  it("accepts exactly 20 characters in create mode", () => {
+    expect(assertValidUsername("a".repeat(20), "create")).toBe("a".repeat(20));
+  });
+
+  it("does NOT apply the 20-char cap to an existing account", () => {
+    // The account demonstrably exists, so a length rule could only refuse
+    // something that already works.
+    expect(assertValidUsername("a".repeat(21), "existing")).toBe("a".repeat(21));
+  });
+});
+
+describe("New-LocalUser parameter limits", () => {
+  // PROD, 2026-09-17. The description shipped at 68 characters against a
+  // 48-character limit, so create mode failed on EVERY Windows endpoint with
+  // ParameterArgumentValidationError — it had never been run on a real host.
+  // The assertion is on the emitted script, not just the constant, because the
+  // failure lands on the endpoint where nobody is reading our source.
+  it("keeps the account description inside the 48-character limit", () => {
+    expect(WINDOWS_ACCOUNT_DESCRIPTION.length).toBeLessThanOrEqual(WINDOWS_DESCRIPTION_MAX);
+  });
+
+  it("emits a -Description the cmdlet will accept", () => {
+    const script = buildWindowsOnboardingScript({ ...BASE, accountMode: "create" });
+    const m = script.match(/-Description '([^']*)'/);
+    expect(m).not.toBeNull();
+    expect(m![1].length).toBeLessThanOrEqual(WINDOWS_DESCRIPTION_MAX);
+  });
+
+  it("only emits New-LocalUser in create mode", () => {
+    expect(buildWindowsOnboardingScript({ ...BASE, accountMode: "create" })).toContain("New-LocalUser");
+    expect(buildWindowsOnboardingScript({ ...BASE, accountMode: "existing" })).not.toContain("New-LocalUser");
   });
 });
 

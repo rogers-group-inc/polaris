@@ -139,6 +139,34 @@ Platform differences that matter:
   `sudo -n`, so key auth alone cannot install an agent. It deliberately does
   **not** install `openssh-server`.
 
+### The account Polaris signs in as
+
+Section **2** of the card, and the setting most likely to bite:
+
+| Mode | What the script does |
+|---|---|
+| **Use an existing administrator account** | installs the key **only**. It does not create the account or change its group membership — the account must already exist and already be in the local Administrators group |
+| **Create a dedicated local account on each endpoint** | creates it with a random password it never reports (key auth only), and adds it to Administrators |
+
+A created Windows name is capped at **20 characters** — the limit `New-LocalUser`
+enforces — and is refused on save rather than failing later on every endpoint.
+`DOMAIN\user` is legal only with an **existing** account: a domain account
+cannot be created locally.
+
+**Troubleshooting a login that fails after a successful onboarding run.** If an
+agent install or upgrade reports `All configured authentication methods failed`,
+the account is the first thing to check, not the key. `administrators_authorized_keys`
+is **machine-wide** — it authorises any member of Administrators — so the key
+lands correctly even when the account named on the card does not exist, and
+every later login then fails in a way that reads like a key problem.
+
+**Windows detection cannot catch this**: it checks the capability, the service,
+the file and the key, never the account. (Linux detection *does* check its
+account and the sudoers drop-in.) So a clean detection pass plus a failing login
+points at the account. Confirm with `Get-LocalUser` and `Get-LocalGroupMember
+-Group Administrators` on the endpoint, against the username the managed
+credential carries.
+
 The scripts are **delivery-neutral and fleet-generic** — no machine-specific
 values — so the same body runs under Intune, GPO startup, SCCM, Arc, an RMM or a
 one-off remote invocation.
