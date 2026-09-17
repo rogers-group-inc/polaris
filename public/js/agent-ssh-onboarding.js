@@ -661,7 +661,7 @@
     if (create && create.checked) {
       hint.textContent = isLinux
         ? "The script creates the account with its password locked — authentication is by key only — and gives it passwordless sudo."
-        : "The script creates the account with a random password it never reports — authentication is by key only — and adds it to the local Administrators group.";
+        : "The script creates the account with a random password it never reports — authentication is by key only — and adds it to the local Administrators group. Max 20 characters — the limit New-LocalUser enforces.";
     } else {
       hint.textContent = isLinux
         ? "The script installs the key and the sudoers drop-in, but will not create the account — it fails if the account is missing."

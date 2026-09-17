@@ -84,6 +84,28 @@ const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const DOMAIN_USERNAME_RE = /^[A-Za-z0-9._-]{1,64}\\[A-Za-z0-9._-]{1,64}$/;
 
 /**
+ * SAM account-name ceiling. `New-LocalUser` refuses a -Name over 20 characters,
+ * so a longer one is rejected HERE rather than emitted into a script that fails
+ * identically on every endpoint in the fleet — the same reasoning as the
+ * domain-account refusal below, and the Linux 32-char cap in LINUX_USERNAME_RE.
+ *
+ * Only enforced for accountMode="create", where Polaris is the one creating the
+ * account. An existing account is the operator's to name: it demonstrably
+ * exists, so a length rule here could only refuse something that already works.
+ */
+const WINDOWS_CREATE_USERNAME_MAX = 20;
+
+/**
+ * `New-LocalUser -Description` is capped at 48 characters and throws
+ * ParameterArgumentValidationError above it. The string below is interpolated
+ * into the emitted script, so this is asserted by a unit test rather than left
+ * to whoever next edits the wording — the failure lands on the endpoint, not
+ * here, and create mode shipped broken on a 68-character description.
+ */
+export const WINDOWS_ACCOUNT_DESCRIPTION = "Polaris Agent deployment (SSH key auth only)";
+export const WINDOWS_DESCRIPTION_MAX = 48;
+
+/**
  * An authorized_keys line: algorithm, base64 blob, optional comment. The
  * comment is the only free-form part, so it is held to a conservative charset
  * (no quotes, no newlines) instead of being escaped.
@@ -138,6 +160,13 @@ export function assertValidUsername(username: string, accountMode: SshOnboarding
     throw new AppError(
       400,
       "Windows username may only contain letters, digits, dot, dash and underscore (optionally DOMAIN\\user)",
+    );
+  }
+  if (accountMode === "create" && u.length > WINDOWS_CREATE_USERNAME_MAX) {
+    throw new AppError(
+      400,
+      `A local Windows account name is limited to ${WINDOWS_CREATE_USERNAME_MAX} characters — ` +
+        `"${u}" is ${u.length}. Shorten it, or use the "existing account" mode to name an account that already exists.`,
     );
   }
   return u;
@@ -312,7 +341,7 @@ if (-not (Get-LocalUser -Name $PolarisUser -ErrorAction SilentlyContinue)) {
   New-LocalUser -Name $PolarisUser \`
                 -Password (ConvertTo-SecureString $pwPlain -AsPlainText -Force) \`
                 -FullName 'Polaris Agent Deployment' \`
-                -Description 'Used by Polaris to deploy the Polaris Agent over SSH (key auth only)' \`
+                -Description '${WINDOWS_ACCOUNT_DESCRIPTION}' \`
                 -PasswordNeverExpires -AccountNeverExpires | Out-Null
   Remove-Variable pwPlain, pwBytes
   Write-Host ('Created local account ' + $PolarisUser)
