@@ -122,6 +122,8 @@ before changing anything the invariant constrains.
 | 67 | A missed response-time poll is the timeout it cost, and an outage resets the window | invariants-30-43 | narrative-60-64 |
 | 68 | What Polaris ships and what the operator owns are two different kinds of MIB, and a profile is only ever an override | invariants-30-43 | narrative-60-64 |
 | 69 | A reservation count is of addresses HELD; a release is history, and only a cascade counts it | invariants-30-43 | narrative-60-64 |
+| 70 | Absence from a directory decommissions what the directory MANAGES, and only when the read was whole | invariants-30-43 | narrative-60-64 |
+| 71 | A figure Polaris reports about itself accounts for itself, and a measurement whose mechanism broke says so instead of reading zero | invariants-30-43 | narrative-60-64 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

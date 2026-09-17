@@ -42,6 +42,7 @@ import pg from "pg";
 import { prisma } from "../db.js";
 import { getMonitorSettings, RETENTION_PRUNE_INTERVAL_MS, type MonitorSettings } from "./monitoringService.js";
 import { isTimescaleAvailable, isHypertable, ALL_HYPERTABLE_CANDIDATES, getEffectiveCompressAfterDays } from "./timescaleService.js";
+import { getTableSizes, getDatabaseSizeBreakdown, type DatabaseSizeBreakdown } from "./dbSizeService.js";
 import { getSampleRetention, SELECTION_AWARE_ENTITIES, UNSELECTED_DETAIL_HOURS, type RetentionEntity, type RetentionTier, type SampleRetention } from "./sampleRetentionService.js";
 import { isPgbossInstalled, getBootTimeMode, getQueueMode } from "./queueService.js";
 import { dbIsLocal, getDeploymentContext } from "../utils/deploymentContext.js";
@@ -275,6 +276,14 @@ export interface CapacitySnapshot {
   };
   database: {
     sizeBytes: number;
+    /**
+     * `sizeBytes` split into the buckets that make it up — Polaris's own tables
+     * (chunks, indexes and TOAST included), the pg-boss queue schema,
+     * PostgreSQL's catalog, and the rest. The buckets sum to `sizeBytes` by
+     * construction, so the Maintenance card's table list can be shown to
+     * account for the total instead of sitting under it unexplained.
+     */
+    sizeBreakdown: DatabaseSizeBreakdown;
     sampleTables: CapacitySampleTable[];
     /**
      * PostgreSQL `SHOW data_directory` value. Null when the DB is remote
@@ -732,93 +741,31 @@ async function getVolumes(dataDirectory: string | null): Promise<VolumeStat[]> {
   });
 }
 
-interface PgStatRow {
-  relname: string;
-  n_live_tup: bigint;
-  n_dead_tup: bigint;
-  bytes: bigint;
-  last_autovacuum: Date | null;
-}
-
+/**
+ * Per-sample-table stats for the capacity snapshot and the steady-state
+ * projection's `baseBytes` subtraction.
+ *
+ * Sizing is delegated to `dbSizeService.getTableSizes()` — one catalog pass that
+ * folds in indexes, TOAST, and BOTH halves of a compressed chunk pair. The
+ * predecessor query walked `pg_inherits`, which cannot see a compressed chunk at
+ * all (it hangs off the internal compression hypertable, not the user one), so
+ * compressed sample bytes were never subtracted from the database size and rode
+ * into the projection at face value — the same class of bug as a hypertable
+ * missing from `SAMPLE_TABLES`, just quieter, and it grows as compression
+ * engages.
+ */
 async function getSampleTableStats(): Promise<CapacitySampleTable[]> {
   const names = SAMPLE_TABLES.map((t) => t.name);
-  // Catalog-only sizing — chunk-aware. `pg_total_relation_size(parent)` on a
-  // PG11+ partitioned/inheritance parent recursively sums all children's
-  // relfilenodes via stat(); for TimescaleDB hypertables (asset_monitor_samples
-  // + the 5 *_hourly / *_daily rollups, each potentially backed by hundreds
-  // of chunks in _timescaledb_internal.*) that becomes thousands of fs
-  // syscalls per call and dominated the Maintenance tab's last 30s of
-  // wall-clock. We replace it with a sum of relpages over the parent + its
-  // inheritance children (chunks) + their indexes, all read from pg_class.
-  // n_live_tup / n_dead_tup likewise aggregate parent + chunks because the
-  // parent's own pg_stat_user_tables row is 0/0 for hypertables.
-  const rows = await prisma.$queryRawUnsafe<PgStatRow[]>(
-    `WITH parents AS (
-       SELECT c.oid, c.relname, c.relpages
-       FROM pg_class c
-       JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = 'public'
-         AND c.relname = ANY($1::text[])
-     ),
-     children AS (
-       SELECT p.oid AS parent_oid, i.inhrelid AS rel_oid
-       FROM parents p
-       JOIN pg_inherits i ON i.inhparent = p.oid
-     ),
-     parent_index_pages AS (
-       SELECT p.oid AS parent_oid, COALESCE(SUM(ic.relpages), 0)::bigint AS pages
-       FROM parents p
-       LEFT JOIN pg_index ix ON ix.indrelid = p.oid
-       LEFT JOIN pg_class ic ON ic.oid = ix.indexrelid
-       GROUP BY p.oid
-     ),
-     child_heap_pages AS (
-       SELECT c.parent_oid, COALESCE(SUM(cls.relpages), 0)::bigint AS pages
-       FROM children c
-       JOIN pg_class cls ON cls.oid = c.rel_oid
-       GROUP BY c.parent_oid
-     ),
-     child_index_pages AS (
-       SELECT c.parent_oid, COALESCE(SUM(ic.relpages), 0)::bigint AS pages
-       FROM children c
-       JOIN pg_index ix ON ix.indrelid = c.rel_oid
-       JOIN pg_class ic ON ic.oid = ix.indexrelid
-       GROUP BY c.parent_oid
-     ),
-     child_stats AS (
-       SELECT
-         c.parent_oid,
-         COALESCE(SUM(s.n_live_tup), 0)::bigint AS n_live_tup,
-         COALESCE(SUM(s.n_dead_tup), 0)::bigint AS n_dead_tup,
-         MAX(s.last_autovacuum) AS last_autovacuum
-       FROM children c
-       LEFT JOIN pg_stat_user_tables s ON s.relid = c.rel_oid
-       GROUP BY c.parent_oid
-     )
-     SELECT
-       p.relname,
-       (COALESCE(ps.n_live_tup, 0) + COALESCE(cs.n_live_tup, 0))::bigint AS n_live_tup,
-       (COALESCE(ps.n_dead_tup, 0) + COALESCE(cs.n_dead_tup, 0))::bigint AS n_dead_tup,
-       ((p.relpages + COALESCE(pip.pages, 0) + COALESCE(chp.pages, 0) + COALESCE(cip.pages, 0))::bigint
-         * current_setting('block_size')::bigint)::bigint AS bytes,
-       GREATEST(ps.last_autovacuum, cs.last_autovacuum) AS last_autovacuum
-     FROM parents p
-     LEFT JOIN pg_stat_user_tables ps ON ps.relid = p.oid
-     LEFT JOIN parent_index_pages pip ON pip.parent_oid = p.oid
-     LEFT JOIN child_heap_pages chp ON chp.parent_oid = p.oid
-     LEFT JOIN child_index_pages cip ON cip.parent_oid = p.oid
-     LEFT JOIN child_stats cs ON cs.parent_oid = p.oid`,
-    names,
-  );
+  const { tables } = await getTableSizes(names);
 
   // Index by name so we can return a stable, complete list even when a table
   // isn't yet in pg_stat_user_tables (fresh install before first insert).
-  const byName = new Map(rows.map((r) => [r.relname, r]));
+  const byName = new Map(tables.map((t) => [t.name, t]));
   return SAMPLE_TABLES.map((t) => {
     const r = byName.get(t.name);
-    const live = r ? Number(r.n_live_tup) : 0;
-    const dead = r ? Number(r.n_dead_tup) : 0;
-    const bytes = r ? Number(r.bytes) : 0;
+    const live = r?.rows ?? 0;
+    const dead = r?.deadRows ?? 0;
+    const bytes = r?.bytes ?? 0;
     const total = live + dead;
     // Divide by (live + dead) so a bloated table — tiny live count, large dead
     // count from a recent aggressive prune — doesn't produce an absurd per-row
@@ -831,7 +778,7 @@ async function getSampleTableStats(): Promise<CapacitySampleTable[]> {
       bytes,
       avgBytesPerRow,
       deadTupRatio: total > 0 ? dead / total : 0,
-      lastAutovacuum: r?.last_autovacuum ? r.last_autovacuum.toISOString() : null,
+      lastAutovacuum: r?.lastAutovacuum ? r.lastAutovacuum.toISOString() : null,
     };
   });
 }
@@ -1902,7 +1849,7 @@ export async function getCapacitySnapshot(opts: {
     systemInfoEligibleRow,
     monitoredPinRow,
     volumes,
-    dbSizeRow,
+    dbBreakdown,
     sampleTables,
     connRow,
     dbIoState,
@@ -1923,18 +1870,22 @@ export async function getCapacitySnapshot(opts: {
         WHERE monitored = true`,
     ),
     getVolumes(dataDirectory),
-    prisma.$queryRawUnsafe<{ size: bigint }[]>(
-      // Catalog-only size sum. pg_database_size() stat()'s every relfilenode in
-      // the data directory; with TimescaleDB hypertable chunks (asset_monitor_samples
-      // + the 5 *_hourly / *_daily rollups, each potentially with hundreds of
-      // chunks) that becomes thousands of fs syscalls and dominates the
-      // capacity-advisor wall-clock. Reading relpages from pg_class is an
-      // in-memory catalog lookup; values are accurate as of the last ANALYZE
-      // (minute-scale lag is acceptable for the capacity advisor's RAM-target
-      // recommendation).
-      `SELECT (current_setting('block_size')::bigint * SUM(relpages::bigint))::bigint AS size
-         FROM pg_class WHERE relkind IN ('r', 'i', 't', 'm')`,
-    ),
+    // Catalog-only size sum, bucketed. pg_database_size() stat()'s every
+    // relfilenode in the data directory; with TimescaleDB hypertable chunks
+    // (asset_monitor_samples + the 5 *_hourly / *_daily rollups, each
+    // potentially with hundreds of chunks) that becomes thousands of fs
+    // syscalls and dominates the capacity-advisor wall-clock. Reading relpages
+    // from pg_class is an in-memory catalog lookup; values are accurate as of
+    // the last ANALYZE (minute-scale lag is acceptable for the capacity
+    // advisor's RAM-target recommendation), which is why the breakdown also
+    // carries `neverAnalyzedRelations`.
+    //
+    // `totalBytes` is still every relation in the database — unchanged
+    // semantics, because the disk-overflow reasons compare it against free
+    // space and `projectSteadyStateSize` subtracts the measured sample tables
+    // from it to get `baseBytes`. Scoping it to Polaris's own tables would
+    // quietly drop pg-boss's bytes out of both, and they occupy the same disk.
+    getDatabaseSizeBreakdown(),
     getSampleTableStats(),
     readPgStatActivity(),
     computeDbIoState(),
@@ -1957,7 +1908,7 @@ export async function getCapacitySnapshot(opts: {
   const monitoredInterfaceCount =
     Number(monitoredPinRow[0]?.interfaces ?? 0) + Number(monitoredPinRow[0]?.ipsec ?? 0);
   const monitoredStorageCount = Number(monitoredPinRow[0]?.storage ?? 0);
-  const dbSizeBytes = Number(dbSizeRow[0]?.size ?? 0);
+  const dbSizeBytes = dbBreakdown.totalBytes;
 
   // Connection-pool snapshot. Update the rolling peak before reading it back
   // so the snapshot reflects the new high-water mark when this call is the
@@ -2039,6 +1990,7 @@ export async function getCapacitySnapshot(opts: {
     },
     database: {
       sizeBytes: dbSizeBytes,
+      sizeBreakdown: dbBreakdown,
       sampleTables,
       dataDirectory,
       timescale: {

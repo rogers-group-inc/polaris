@@ -190,6 +190,37 @@ healthy rather than on a timer. Add a **When it clears** action to that
 automation if you want the all-clear delivered as well — see
 [Automation-Triggers](Automation-Triggers).
 
+### Where the database size figures come from
+
+**Current size** is every relation in the database: Polaris's own tables with
+their indexes, TOAST and TimescaleDB chunks, plus the pg-boss job queue's schema
+and PostgreSQL's own catalog. The table list under it accounts for all of it —
+Polaris's tables as rows, then an italic line each for the pg-boss queue, the
+PostgreSQL catalog, anything in another schema, and a **Total** that matches the
+figure above. If a number looks wrong, the row that explains it is in that list.
+
+Sizes are read from PostgreSQL's catalog rather than by measuring the data
+directory, which keeps the tab instant on a large install. The trade-off is
+freshness: a figure is accurate as of the last `VACUUM`/`ANALYZE`. Two
+conditions are called out in place rather than left to guess at:
+
+- **"N relations have never been vacuumed or analyzed"** — those relations
+  report zero pages whatever they hold, so every size on the card is
+  understated. This is the normal state immediately after a restore or a
+  PostgreSQL major-version upgrade, which does not carry statistics across. Run
+  `vacuumdb --analyze-in-stages` and reload.
+- **"Hypertable sizing is degraded"** — Polaris could not read TimescaleDB's
+  chunk catalog, so every sample table is listed at its parent size, which is
+  near zero, and its real bytes show up under *Unattributed*. The sizes are
+  wrong until it is fixed; the total is not. This is the shape a TimescaleDB
+  major upgrade can break, so it is worth a look after one.
+
+**Steady-state at current settings** is a projection, not a measurement: the
+peak size the database reaches if monitoring settings stay as they are. It
+legitimately sits ABOVE the current size while sample tables are still filling,
+and it accounts for retention being reclaimed a whole chunk at a time — each
+tier keeps its configured window plus one chunk interval plus one prune cycle.
+
 ### Platform Lifecycle
 
 Grades what this host is actually running — Node, PostgreSQL, TimescaleDB, Go,

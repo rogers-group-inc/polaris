@@ -145,10 +145,23 @@ compression, and restore gates that gate nothing.
    dropped PostgreSQL 15, so on 15 the ceiling is the 2.28.x line.
 3. Backup, then update the package, restart PostgreSQL, then `ALTER EXTENSION timescaledb UPDATE`.
 4. Confirm hypertables, chunk intervals and retention policies survived.
+5. **Load the Maintenance tab and check the Database card's table list.** The INTERNAL catalog
+   shape moves between versions and Polaris reads it to attribute chunk bytes to their
+   hypertable. 2.30 replaced `_timescaledb_catalog.chunk.schema_name`/`table_name` with a single
+   `relid` AND stopped registering compressed chunks anywhere at all (`compression_state` 0,
+   `compressed_hypertable_id` NULL, `compression_chunk_size.compressed_chunk_id` 0, no pg_depend
+   link), which is why `services/dbSizeService.ts` now finds chunk relations by NAME PREFIX.
+   The symptom of it breaking again is a card whose largest table is an ordinary one and whose
+   sample tables read ~0, with `Hypertable sizing is degraded` under the list and the bytes
+   parked in `Unattributed` — on prod after the 2026-09-16 PG17 move that was 74 GB of a 76.6 GB
+   database. `tests/integration/dbSize.test.ts` catches it against a real database; the unit
+   tests cannot.
 
 ### Blast radius
 Compression and continuous-aggregate behaviour changes between minors. The app detects the
 extension at boot and caches that state, so a version change needs a restart to be observed.
+The internal catalog is not a stable interface and Polaris reads it in one place
+(`services/dbSizeService.ts`) — check that module against a new major, not just the hypertables.
 
 ### Verification
 Manual, against a dev stack with real data volume. There is no CI signal.

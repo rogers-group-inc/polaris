@@ -211,7 +211,7 @@ const dbDeadTupleRatio = new Gauge({
 
 const dbSizeBytes = new Gauge({
   name: "polaris_db_size_bytes",
-  help: "Total Polaris database size in bytes (pg_database_size).",
+  help: "Total Polaris database size in bytes — every relation in the database, summed from pg_class.relpages by capacityService (NOT pg_database_size, which stat()s every chunk relfilenode and is minutes-slow at fleet scale). Accurate as of the last ANALYZE. Decomposed on the Maintenance tab into Polaris's tables, the pg-boss queue schema and PostgreSQL's catalog.",
   registers: [registry],
 });
 
