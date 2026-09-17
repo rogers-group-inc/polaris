@@ -6,6 +6,12 @@
  */
 
 (function () {
+  // The shared widget status palette (api.js). Read once here rather than per
+  // use because TILE_DEFS below is built at module scope: an undeclared WC
+  // threw "WC is not defined" before register() was ever reached, which took
+  // this whole widget out of the registry rather than just mis-coloring it.
+  var WC = window.POLARIS_WIDGET_STATUS_COLORS;
+
   // Tile catalog: id → { label, color, value(data) }. Color drives the tile's
   // left border + number. Uptime / alerts colors are computed per-value.
   var TILE_DEFS = [

@@ -6,6 +6,63 @@ Seven integrations — FortiManager / FortiGate, Entra ID / Intune, Active Direc
 
 Made with Fortinet devices particularly in mind: it pushes DHCP reservations and lease revocation, and pushes asset quarantine, to FortiGates. It also keeps a full IPv4/IPv6 address registry — blocks, networks, reservations and conflict detection — for the estate it discovers.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/desktop-nightfall-dashboard.png">
+  <img alt="The Polaris dashboard: status tiles counting monitored assets by state, an active-alert feed, a down-asset list grouped by site, and ranked CPU, memory and response-time widgets." src="docs/img/screenshots/desktop-noon-dashboard.png">
+</picture>
+
+<sub>The dashboard is a per-user grid of widgets over a 12-column layout. Every screenshot on this page is captured from a development instance seeded with **invented** devices, addresses and alerts — see [DEVELOPMENT.md](DEVELOPMENT.md#demo-data-and-documentation-screenshots).</sub>
+
+<details>
+<summary><b>More screens</b> — assets, address registry, automations, events, mobile</summary>
+
+### Assets
+
+One record per device, with the source that reported each field, its monitoring transport and live state.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/desktop-nightfall-assets.png">
+  <img alt="The Assets table: hostname, IP, serial, type, state, monitor status and monitoring transport, with a per-column filter row and a bulk-action bar." src="docs/img/screenshots/desktop-noon-assets.png">
+</picture>
+
+### Address registry
+
+Blocks are the namespaces; networks are the subnets carved out of them, with utilization, VLAN and reservation counts.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/desktop-nightfall-ipam.png">
+  <img alt="The IPAM page's Networks tab: each network's CIDR, parent block, purpose, VLAN, status, tags, reservation count and utilization bar." src="docs/img/screenshots/desktop-noon-ipam.png">
+</picture>
+
+### Automations
+
+What fires, on which devices, at what severity, and what it does — 29 of them ship enabled.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/desktop-nightfall-automations.png">
+  <img alt="The Automations table: name, trigger type, severity, enabled toggle, device scope, trigger and reset conditions, actions and recipients." src="docs/img/screenshots/desktop-noon-automations.png">
+</picture>
+
+### Events
+
+The audit trail — every create, update, delete and discovery event.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/desktop-nightfall-events.png">
+  <img alt="The Events page: a filterable, time-ordered audit log of configuration changes and discovery activity." src="docs/img/screenshots/desktop-noon-events.png">
+</picture>
+
+### Mobile
+
+An installable PWA for the phone — search, device map, assets and reservations.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/screenshots/mobile-nightfall-mobile.png">
+  <img alt="The Polaris mobile web app: a scoped search screen with a bottom tab bar for Search, Device Map, Assets, Reservations and More." src="docs/img/screenshots/mobile-noon-mobile.png" width="320">
+</picture>
+
+</details>
+
 ## Documentation
 
 | | |

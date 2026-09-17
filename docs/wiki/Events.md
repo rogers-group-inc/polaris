@@ -4,6 +4,8 @@ The audit log. **Every audit-worthy action writes an Event** — creates, update
 deletes, discovery results, alert lifecycle, login outcomes, agent activity,
 script runs.
 
+![The Events page: a filterable, time-ordered audit log of configuration changes and discovery activity.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-events.png)
+
 Gated by `events`.
 
 ---

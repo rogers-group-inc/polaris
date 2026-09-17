@@ -46,6 +46,13 @@ podman compose -f compose.dev.yml -p polaris-<slug> up -d app
 previews and monitored/unmonitored splits run `prisma/seed-review-assets.ts` by hand
 (`node --env-file=.env --import tsx/esm prisma/seed-review-assets.ts`, re-runnable).
 
+For a stack that looks like a working install rather than a fresh one — telemetry curves,
+fired alerts, and a monitor status other than "Pending" on every asset — run the full
+ordered chain (`mock:compare` → `mock:notifications` → `mock:demo`, the last one being the
+presentation pass) under "Demo data and documentation screenshots" in `DEVELOPMENT.md`.
+That section also covers `scripts/capture-screenshots.mjs`, which shoots the docs images
+off such a stack.
+
 ## Run the full test suite against it
 
 ```

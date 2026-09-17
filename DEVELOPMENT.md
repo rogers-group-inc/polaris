@@ -191,6 +191,45 @@ To run any of these inside the containerized app:
 `podman compose -f compose.dev.yml run --rm app <command>` (or `exec` against
 the running `app` service).
 
+### Demo data and documentation screenshots
+
+`prisma/seed-review-assets.ts` covers the device pickers; three more scripts fill in
+the monitoring surfaces, and they are order-dependent. Run the whole chain against a
+throwaway dev database:
+
+```bash
+npm run db:seed
+node --env-file=.env --import tsx/esm prisma/seed-review-assets.ts
+npm run mock:compare        # 7 days of samples — response time, CPU/mem, interfaces, storage
+npm run mock:notifications  # notification rules + already-fired alerts
+npm run mock:demo           # presentation pass — run LAST
+```
+
+`mock:demo` is the one that makes the result presentable rather than merely populated.
+The earlier scripts leave every monitored asset at `monitorStatus = null`, which the UI
+labels "Pending", so the Assets table and every health widget read as an install that
+has never polled; it stamps a plausible steady state instead (mostly up, one down, one
+missing polls, with staggered transition times). It also strips the `Mock: ` /
+`Mock demo: ` prefixes `mock-notifications.ts` uses as its own idempotency key, because
+in a screenshot they read as if the product shipped placeholder alerts. It is
+idempotent and refuses to run with `NODE_ENV=production`.
+
+`scripts/capture-screenshots.mjs` then drives that stack with a real browser and writes
+one PNG per page per theme for `README.md` and `docs/wiki/`. Playwright is deliberately
+NOT a devDependency — it is a docs-only tool:
+
+```bash
+npm install --no-save playwright
+node scripts/capture-screenshots.mjs --base http://127.0.0.1:3000 \
+     --out docs/img/screenshots --themes noon,nightfall
+```
+
+It uses the locally installed Chrome, so `playwright install` is not needed. **Screenshots
+come from seeded synthetic data only, never from a production install** — a real one's
+hostnames, serials, addresses and (once GAL directory sync has run) employee names would
+be published along with the image. The script header lists the pages it does not yet cover
+and what each would need.
+
 ### Running the full test suite
 
 Use `--no-file-parallelism`; the default parallel mode fails spuriously on the

@@ -3,6 +3,8 @@
 The device inventory, and the page most operators live on. Everything Polaris
 knows about a device is reachable from here.
 
+![The Assets table: hostname, IP, serial, type, state, monitor status and monitoring transport, with a per-column filter row and a bulk-action bar above it.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-assets.png)
+
 | Gate | Grants |
 |---|---|
 | `assets:read` | see the page |

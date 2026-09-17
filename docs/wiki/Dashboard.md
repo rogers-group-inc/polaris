@@ -3,6 +3,8 @@
 The landing page. It is a **widget canvas** — you choose which widgets are on
 it, where they sit and how wide they are, and the layout is yours.
 
+![The Polaris dashboard: status tiles counting monitored assets by state, an active-alert feed, a down-asset list grouped by site, and ranked CPU, memory and response-time widgets.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-dashboard.png)
+
 The Dashboard has **no permission key of its own**. It is gated per widget: a
 widget whose data your role cannot read hides itself rather than erroring, so
 two people on the same install legitimately see different dashboards.

@@ -3,6 +3,8 @@
 The address registry. Two tabs — **IP Blocks** and **Networks** — plus the
 address panel you reach by opening a network.
 
+![The IPAM page's Networks tab: each network's CIDR, parent block, purpose, VLAN, status, tags, reservation count and utilization bar.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-ipam.png)
+
 | Gate | Grants |
 |---|---|
 | `ipBlocks:read` / `subnets:read` | see the page |
