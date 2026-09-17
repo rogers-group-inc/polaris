@@ -66,6 +66,30 @@ Anything edited in the GitHub wiki UI is **overwritten by the next sync, with
 no warning and no conflict** — this is a one-way publish. Corrections belong in
 `docs/wiki/` as an ordinary commit.
 
+## Images
+
+The publish step copies `docs/wiki/*.md` and nothing else, so **a relative path
+to an image outside this directory resolves while you read the file in the repo
+and 404s on the published wiki** — the one failure mode here that looks fine
+right up until it is live. Reference images by absolute raw URL instead:
+
+```markdown
+![alt text](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-dashboard.png)
+```
+
+That pins to `main`, so an image is only as current as the last push — which is
+the right trade for a wiki nobody clones. A fork publishing its own wiki changes
+the org and repo in that URL, as it already changes `WIKI_URL`.
+
+Plain Markdown, not the `<picture>` element the README uses for its light/dark
+pair: the wiki's HTML support is narrower, so the pages carry the light
+(`noon`) shot only. The images themselves are produced by
+`scripts/capture-screenshots.mjs` from a dev instance seeded with invented data
+— **never from a real install**, whose hostnames, serials, addresses and
+(after GAL directory sync) employee names would be published with the picture.
+Re-run it after a UI change: the filenames are stable, so the images are
+overwritten in place.
+
 ## Keeping it true
 
 A wiki that documents behaviour the app no longer has is worse than no wiki:

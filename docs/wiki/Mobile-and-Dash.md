@@ -7,6 +7,8 @@ unauthenticated NOC wallboard.
 
 # The mobile app
 
+![The Polaris mobile web app: a scoped search screen with a bottom tab bar for Search, Device Map, Assets, Reservations and More.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/mobile-noon-mobile.png)
+
 An installable **PWA** with push notifications. Phones hitting `/` are
 redirected to it; `?desktop=1` escapes.
 

@@ -4,6 +4,8 @@ An **automation** is the whole unit: which devices, what to watch, at what
 severity, what to do about it, and when it resets. Automations are what make
 Polaris a monitoring tool rather than an inventory.
 
+![The Automations table: name, trigger type, severity, enabled toggle, device scope, trigger and reset conditions, actions and recipients.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/desktop-noon-automations.png)
+
 | Gate | Grants |
 |---|---|
 | `automationManagement:read` | see the page, preview, export, view code |
