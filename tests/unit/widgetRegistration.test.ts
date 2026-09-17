@@ -28,7 +28,13 @@ import { Window } from "happy-dom";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const WIDGET_DIR = resolve(here, "../../public/js/widgets");
-const INDEX_HTML = resolve(here, "../../public/index.html");
+// The Dash wallboard mirrors the Dashboard's widget script list; both files
+// carry a lockstep comment saying so. A widget added to one and not the other
+// exists on that page only.
+const PAGES = {
+  "public/index.html": resolve(here, "../../public/index.html"),
+  "public/dash.html": resolve(here, "../../public/dash.html"),
+};
 
 /**
  * Modules that are NOT widgets: the registry itself and the shared top-N bar
@@ -128,14 +134,13 @@ describe("dashboard widget registration", () => {
   });
 });
 
-describe("public/index.html loads every widget module", () => {
-  const html = readFileSync(INDEX_HTML, "utf8");
+describe.each(Object.entries(PAGES))("%s loads every widget module", (_name, path) => {
   const loaded = new Set(
-    [...html.matchAll(/js\/widgets\/([A-Za-z_]+\.js)/g)].map((m) => m[1]),
+    [...readFileSync(path, "utf8").matchAll(/js\/widgets\/([A-Za-z_]+\.js)/g)].map((m) => m[1]),
   );
 
   it("has a script tag for each module on disk", () => {
-    // A module the page never loads is a widget the dashboard cannot offer,
+    // A module the page never loads is a widget that page cannot offer,
     // however correct the file is.
     expect(moduleFiles.filter((f) => !loaded.has(f))).toEqual([]);
   });
@@ -143,5 +148,19 @@ describe("public/index.html loads every widget module", () => {
   it("loads no widget script that is not on disk", () => {
     const onDisk = new Set(readdirSync(WIDGET_DIR));
     expect([...loaded].filter((f) => !onDisk.has(f))).toEqual([]);
+  });
+});
+
+describe("index.html and dash.html stay in lockstep", () => {
+  // The wallboard is where dashboards actually live, and it is the page least
+  // likely to be opened while developing — so a widget added to index.html
+  // alone is invisible exactly where it matters most.
+  it("both pages load the same widget scripts", () => {
+    const [a, b] = Object.values(PAGES).map((p) =>
+      [...readFileSync(p, "utf8").matchAll(/js\/widgets\/([A-Za-z_]+\.js)/g)]
+        .map((m) => m[1])
+        .sort(),
+    );
+    expect([...new Set(a)]).toEqual([...new Set(b)]);
   });
 });
