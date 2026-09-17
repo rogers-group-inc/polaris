@@ -2535,26 +2535,30 @@ async function openAutomationWizard(existing, opts) {
     if (!rootEl || !tree) return;
     var leaves = tgLeaves(tree);
     rootEl.querySelectorAll(".scr-row").forEach(function (row, i) {
-      var leaf = leaves[i];
-      if (!leaf) return;
-      var what = row.querySelector(".tgl-what");
-      if (what) what.value = leaf.type === "asset_filter" ? "d:" + leaf.dim : leaf.type === "asset_state" ? "f:" + leaf.field : "m:" + leaf.metric;
-      var op = row.querySelector(".tgl-op");
-      if (op && leaf.operator) op.value = leaf.operator;
-      var agg = row.querySelector(".tgl-agg");
-      if (agg && !agg.getAttribute("data-ratio")) agg.value = leaf.aggregation || "latest";
-      if (leaf.type === "asset_state") {
-        var v = row.querySelector("select.tgl-value");
-        if (v && leaf.value != null) v.value = String(leaf.value);
-      } else {
-        var flag = row.querySelector("select.tgl-flag");
-        var t = Number(leaf.threshold);
-        if (flag && (t === 0 || t === 1)) flag.value = String(t);
-      }
-      row.querySelectorAll("select.tgl-dim").forEach(function (el) {
-        var d = el.getAttribute("data-dim");
-        el.value = (leaf.dimensionFilter && leaf.dimensionFilter[d]) || "";
-      });
+      pinRowSelects(row, leaves[i]);
+    });
+  }
+  /** One row's worth of that, so a row RE-RENDERED on its own (a value or probe
+   *  switch) is pinned the same way the whole tree is on the way in. */
+  function pinRowSelects(row, leaf) {
+    if (!row || !leaf) return;
+    var what = row.querySelector(".tgl-what");
+    if (what) what.value = leaf.type === "asset_filter" ? "d:" + leaf.dim : leaf.type === "asset_state" ? "f:" + leaf.field : "m:" + leaf.metric;
+    var op = row.querySelector(".tgl-op");
+    if (op && leaf.operator) op.value = leaf.operator;
+    var agg = row.querySelector(".tgl-agg");
+    if (agg && !agg.getAttribute("data-ratio")) agg.value = leaf.aggregation || "latest";
+    if (leaf.type === "asset_state") {
+      var v = row.querySelector("select.tgl-value");
+      if (v && leaf.value != null) v.value = String(leaf.value);
+    } else {
+      var flag = row.querySelector("select.tgl-flag");
+      var t = Number(leaf.threshold);
+      if (flag && (t === 0 || t === 1)) flag.value = String(t);
+    }
+    row.querySelectorAll("select.tgl-dim").forEach(function (el) {
+      var d = el.getAttribute("data-dim");
+      el.value = (leaf.dimensionFilter && leaf.dimensionFilter[d]) || "";
     });
   }
   function tgGroupOpOptions(sel) {
@@ -2910,20 +2914,15 @@ async function openAutomationWizard(existing, opts) {
       valueControl = '<input type="number" step="any" class="tgl-threshold" value="' + (leaf.threshold != null && !isNaN(leaf.threshold) ? leaf.threshold : "") + '" placeholder="value" style="width:110px">' +
         (unit ? '<span class="tgl-unit" style="font-size:0.8rem;color:var(--color-text-tertiary);white-space:nowrap">' + escapeHtml(unit) + '</span>' : "");
     }
-    // The missed-poll count rides the same row as the condition it qualifies.
-    // Deliberately NOT a separate block below the tree: with two or more
-    // conditions there would be no way to tell which leaf it modified, which is
-    // the exact failure mode the "Sustained for" field's own history is about.
-    var ddControls = "";
+    // The missed-poll count USED to ride this row ("after N missed poll(s)").
+    // It doesn't any more: on a sole `monitor status is down` condition the
+    // trigger's own "Sustained for (polls)" field below the tree IS that count
+    // (business rule 36), so the row carried a second box saying the same thing
+    // in different words — and the field below, which the operator could also
+    // fill in, was collected by nothing. One control, one number.
+    // The row keeps its two async notes (see line2): the multi-condition
+    // explanation and the carve-out coverage line.
     var ddMeta = downDetectionMeta();
-    if (isState && ddMeta && isDownDetectionLeaf(leaf)) {
-      ddControls =
-        '<span class="tgl-dd-word" style="font-size:0.85rem;white-space:nowrap;color:var(--color-text-secondary)">after</span>' +
-        '<input type="number" class="tgl-misses" min="' + ddMeta.min + '" max="' + ddMeta.max + '"' +
-          ' value="' + missedPollsOf(leaf) + '" style="width:72px"' +
-          ' title="' + escapeHtml(ddMeta.help || "") + '">' +
-        '<span class="tgl-dd-word" style="font-size:0.85rem;white-space:nowrap;color:var(--color-text-secondary)">missed poll(s)</span>';
-    }
     // A monitorStatus value is one of six names — an ordered comparator over it
     // is meaningless ("status >= down"), and allowing one would also let a rule
     // look like a down-detection automation without being one.
@@ -2941,7 +2940,6 @@ async function openAutomationWizard(existing, opts) {
         // offers only is / is-not rather than letting an operator write ">= 1".
         '<select class="tgl-op" style="width:64px">' + opt(isFlag || enumState ? ["==", "!="] : s.comparators, leaf.operator || (isState || isFlag ? "==" : ">=")) + '</select>' +
         valueControl +
-        ddControls +
         '<button type="button" class="btn btn-sm btn-danger scr-remove" title="Remove condition">&times;</button>' +
       '</div>';
     var line2 = "";
@@ -2968,10 +2966,12 @@ async function openAutomationWizard(existing, opts) {
             (fDims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
             // Both painted asynchronously (syncDownDetection) and rendered
             // rather than omitted, so there is somewhere to paint into: the
-            // derived time-to-down depends on the scoped devices' poll
-            // intervals, and the coverage line on the carve-out preview.
+            // coverage line depends on the carve-out preview, and the
+            // multi-condition note on how many conditions end up beside it.
+            // The derived time-to-down moved to the count itself — it now reads
+            // under the "Sustained for" field (syncPollFields), the one place
+            // the number is stated.
             (isDD ? '<span class="tgl-dd-multi" style="flex-basis:100%;font-size:0.78rem;display:none"></span>' : "") +
-            (isDD ? '<span class="tgl-dd-derived" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
             (isDD ? '<span class="tgl-dd-coverage" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
           '</div>';
       }
@@ -3042,10 +3042,11 @@ async function openAutomationWizard(existing, opts) {
       var sDf = {};
       rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = el.value.trim(); if (v) sDf[el.getAttribute("data-dim")] = v; });
       if (Object.keys(sDf).length) sLeaf.dimensionFilter = sDf;
-      // Only stamped when the control is actually present, so a non-down leaf
-      // can never carry a stray count into the payload (the server rejects it).
-      var mEl = rowEl.querySelector(".tgl-misses");
-      if (mEl && String(mEl.value).trim() !== "") sLeaf.missedPolls = Number(mEl.value);
+      // No missed-poll count is read here any more: the row no longer states
+      // one. On a sole down condition it comes off the trigger's "Sustained
+      // for" field, stamped in collectStep3 once the tree is known to be that
+      // one leaf — which is also the only shape the server will accept a count
+      // on (validateMissedPolls).
       return sLeaf;
     }
     var leaf = {
@@ -3149,15 +3150,28 @@ async function openAutomationWizard(existing, opts) {
         var prow = t.closest(".scr-row");
         if (prow) prow.outerHTML = tgLeafRowHtml(tgCollectLeaf(prow, kindFn()), kindFn());
       } else if (t.classList.contains("tgl-value")) {
-        // The missed-poll control exists only for the down-detection value, so
-        // picking "Down" has to re-render the row to reveal it (and picking
-        // anything else to hide it) — same reason changing the state probe
-        // relabels its value control above. Scoped to monitorStatus rows so an
-        // unrelated enum row doesn't churn on every selection.
+        // The down-detection notes (the multi-condition explanation, the
+        // carve-out coverage line) exist only for the `down` value, so picking
+        // it has to re-render the row to give them somewhere to paint — same
+        // reason changing the state probe relabels its value control above.
+        // Scoped to monitorStatus rows so an unrelated enum row doesn't churn on
+        // every selection. The count itself is not on the row any more: it
+        // follows on the duration field, which syncDurationRequirement
+        // re-dresses from the same test on the very same keystroke.
         var vrow = t.closest(".scr-row");
         var vwhat = vrow && vrow.querySelector(".tgl-what");
         if (vrow && vwhat && vwhat.value === "f:monitorStatus") {
-          vrow.outerHTML = tgLeafRowHtml(tgCollectLeaf(vrow, kindFn()), kindFn());
+          var vleaf = tgCollectLeaf(vrow, kindFn());
+          var vparent = vrow.parentNode;
+          var vidx = Array.prototype.indexOf.call(vparent.children, vrow);
+          vrow.outerHTML = tgLeafRowHtml(vleaf, kindFn());
+          // Pin the re-rendered selects from the MODEL rather than trusting the
+          // markup's `selected` — the same reason pinTreeSelects exists on the
+          // way in, and the reason it matters more here than it used to: what
+          // these selects hold now decides whether the duration field below is
+          // the missed-poll count, and onChange (two lines down) asks them that
+          // question immediately.
+          pinRowSelects(vparent.children[vidx], vleaf);
         }
       }
       onChange();
@@ -3339,17 +3353,40 @@ async function openAutomationWizard(existing, opts) {
     // Shown for a ratio's History AND for a count window (business rule 66) —
     // the two windows that leave a hold axis free beside them. Its LABEL and
     // note change with which one it is; syncDurationRequirement owns both live.
-    var second = triggerIsWindowedRatio(tr) || triggerDurationUnit(tr) === "polls";
-    var count = !triggerIsWindowedRatio(tr) && triggerDurationUnit(tr) === "polls";
+    // A hold axis is free beside a WINDOW — a ratio's History, or a count
+    // window's poll groups. `triggerDurationUnit(tr) === "polls"` is not that
+    // test: it is also what a plain hold answers, and every asset_state trigger
+    // is a plain hold. Asking it that way is what rendered an inert "Sustained
+    // for (poll groups)" box under a `monitor status is down` automation, which
+    // no collection path has ever read.
+    var second = triggerIsWindowedRatio(tr) || triggerWindowPollsOf(tr) > 0;
+    var count = !triggerIsWindowedRatio(tr) && triggerWindowPollsOf(tr) > 0;
     return pollFieldHtml('id="tf-sustain-min"', triggerSustainSec(tr), {
       wrapClass: "aw-ratio-sustain",
       hidden: !second,
-      label: count ? "Sustained for (poll groups)" : "Sustained for (polls)",
+      label: sustainLabelFor(count),
       polls: second && triggerSustainSec(tr) > 0 ? storedHoldPolls(tr) : null,
     }).replace(
       '<p class="aw-dur-note"',
-      '<p class="aw-sustain-note" style="margin:2px 0 0;font-size:0.78rem;color:var(--color-text-tertiary)">Optional — how long the loss must stay over the threshold before the alert fires. Each reading still measures over the History window above.</p><p class="aw-dur-note"',
+      '<p class="aw-sustain-note" style="margin:2px 0 0;font-size:0.78rem;color:var(--color-text-tertiary)">' +
+        escapeHtml(sustainNoteFor(count)) + '</p><p class="aw-dur-note"',
     );
+  }
+  // The sustain field's two wordings, in ONE place. Both halves — label and note
+  // — are painted twice: once into the markup above and again by
+  // syncDurationRequirement as the trigger is edited. Written out twice they
+  // drifted: the markup always said the loss wording while the label beside it
+  // could already say poll groups.
+  function sustainLabelFor(count) {
+    return count ? "Sustained for (poll groups)" : "Sustained for (polls)";
+  }
+  function sustainNoteFor(count) {
+    return count
+      ? "Optional — how many consecutive poll groups must average over the threshold before the alert fires. "
+        + "The groups do not overlap, so each is an independent look at the device — and the alert takes "
+        + "group size x this many polls to arrive."
+      : "Optional — how long the loss must stay over the threshold before the alert fires. "
+        + "Each reading still measures over the History window above.";
   }
 
   /**
@@ -3508,7 +3545,11 @@ async function openAutomationWizard(existing, opts) {
       var note = wrap && wrap.querySelector(".aw-poll-note");
       if (note) {
         note.style.display = wrap && wrap.style && wrap.style.display === "none" ? "none" : "";
-        note.textContent = cadenceNoteFor(input.value, fieldUnit(input), input.getAttribute("data-group-size"));
+        // The missed-poll count is the one poll field whose wall clock is not
+        // count × interval — each miss also costs its timeout (business rule 36).
+        note.textContent = input.getAttribute("data-down-threshold") === "1"
+          ? downAfterNoteFor(input.value)
+          : cadenceNoteFor(input.value, fieldUnit(input), input.getAttribute("data-group-size"));
       }
     });
     syncBandDurationMirrors(panel);
@@ -3637,49 +3678,19 @@ async function openAutomationWizard(existing, opts) {
   }
   function syncDownDetection(panel) {
     var rows = panel.querySelectorAll('.scr-row');
-    // Down-detection authority lives on a BARE trigger only — the server
-    // refuses a count inside a multi-condition trigger. So the control is
-    // hidden the moment a second condition appears, with a note saying why,
-    // rather than sitting there collecting a number nothing would honour.
+    // Down-detection authority lives on a BARE trigger only — the server refuses
+    // a count inside a multi-condition trigger. The count itself now lives on the
+    // duration field below the tree (applyDownThresholdField, which the same
+    // test gates), so all that is left on the row is saying WHY it went away the
+    // moment a second condition appeared: without the note the field would just
+    // stop being the definition of down with nothing on screen admitting it.
     var multi = rows.length > 1;
     Array.prototype.forEach.call(rows, function (row) {
-      var m = row.querySelector('.tgl-misses');
-      if (!m) return;
-      var show = !multi;
-      m.style.display = show ? '' : 'none';
-      Array.prototype.forEach.call(row.querySelectorAll('.tgl-dd-word'), function (el) {
-        el.style.display = show ? '' : 'none';
-      });
       var note = row.querySelector('.tgl-dd-multi');
-      if (note) {
-        note.style.display = show ? 'none' : '';
-        note.textContent = 'Down detection needs this to be the only condition — the probe loop can only see whether the device answered. ' +
-          'As one of several conditions this just reads the status column.';
-      }
-    });
-    Array.prototype.forEach.call(rows, function (row) {
-      var missEl = row.querySelector('.tgl-misses');
-      var derived = row.querySelector('.tgl-dd-derived');
-      if (!missEl || !derived) return;
-      var n = Number(missEl.value) > 0 ? Math.round(Number(missEl.value)) : 3;
-      var cad = awCadence();
-      var calc = window.PolarisMonitorDownAfter && window.PolarisMonitorDownAfter.calc;
-      if (!calc) { derived.textContent = ''; return; }
-      var mode = cad.sec;
-      var to   = cad.timeoutMs > 0 ? cad.timeoutMs : 5000;
-      var c = calc(n, mode, to);
-      var human = window.PolarisMonitorDownAfter.human(c.realSec);
-      if (!cad.known) {
-        // Say so rather than presenting a guessed interval as this fleet's.
-        derived.textContent = '≈ ' + human + ' at a ' + mode + 's poll interval — this fleet’s actual intervals were unavailable.';
-      } else if (cad.min === cad.max) {
-        derived.textContent = '≈ ' + human + ' at the ' + mode + 's poll interval these devices use.';
-      } else {
-        var lo = window.PolarisMonitorDownAfter.human(calc(n, cad.min, to).realSec);
-        var hi = window.PolarisMonitorDownAfter.human(calc(n, cad.max, to).realSec);
-        derived.textContent = '≈ ' + human + ' at the ' + mode + 's interval most of these devices use' +
-          ' (range across the matched devices: ' + lo + ' to ' + hi + ').';
-      }
+      if (!note) return;
+      note.style.display = multi && rowIsDownDetection(row) ? '' : 'none';
+      note.textContent = 'Down detection needs this to be the only condition — the probe loop can only see whether the device answered. ' +
+        'As one of several conditions this just reads the status column, and the field below is an ordinary hold.';
     });
   }
   /**
@@ -3730,6 +3741,116 @@ async function openAutomationWizard(existing, opts) {
       if (box) box.value = input.value;
     });
   }
+  /**
+   * Is this condition row the down-detection comparison? Read off the row's own
+   * controls rather than off the markup it happened to render with, so an
+   * operator switching the value select answers the question correctly on the
+   * keystroke rather than on the re-render.
+   */
+  function rowIsDownDetection(row) {
+    var dd = downDetectionMeta();
+    if (!dd || !row) return false;
+    var what = row.querySelector(".tgl-what");
+    var op = row.querySelector(".tgl-op");
+    var val = row.querySelector(".tgl-value");
+    if (!what || !val) return false;
+    return what.value === "f:" + dd.field &&
+      String(op ? op.value : "==") === String(dd.operator || "==") &&
+      String(val.value).toLowerCase() === String(dd.value).toLowerCase();
+  }
+  /**
+   * "≈ 9m 3s at the 60s poll interval these devices use." — the missed-poll
+   * count's own caption, and deliberately NOT cadenceNoteFor's count × interval:
+   * a missed poll costs its TIMEOUT as well as its slot, so the real time to
+   * Down is longer than the arithmetic. PolarisMonitorDownAfter is the shared
+   * calculator every surface quoting this number goes through.
+   */
+  function downAfterNoteFor(value) {
+    var n = Number(value) > 0 ? Math.round(Number(value)) : 0;
+    // NOT named `api`: tests/unit/apiClientReferences.test.ts reads every
+    // `api.<name>` in public/ as a call on the REST client and fails on the ones
+    // that are not.
+    var dn = window.PolarisMonitorDownAfter;
+    if (!n || !dn || !dn.calc) return "";
+    var cad = awCadence();
+    var mode = cad.sec;
+    var to = cad.timeoutMs > 0 ? cad.timeoutMs : 5000;
+    var human = dn.human(dn.calc(n, mode, to).realSec);
+    // Say the interval is a guess rather than presenting it as this fleet's.
+    if (!cad.known) return "≈ " + human + " at a " + mode + "s poll interval — this fleet’s actual intervals were unavailable.";
+    if (cad.min === cad.max) return "≈ " + human + " at the " + mode + "s poll interval these devices use.";
+    return "≈ " + human + " at the " + mode + "s interval most of these devices use" +
+      " (range across the matched devices: " + dn.human(dn.calc(n, cad.min, to).realSec) +
+      " to " + dn.human(dn.calc(n, cad.max, to).realSec) + ").";
+  }
+  /**
+   * Dress the trigger's duration field as the missed-poll count — the whole of
+   * what a sole `monitor status is down` automation has to say about timing.
+   * Bounds, default and help all come from the server's `downDetection` block,
+   * the same place the retired row control read them from, so the field cannot
+   * state something the API would reject.
+   */
+  function applyDownThresholdField(panel, wrap, ddMeta) {
+    var input = wrap.querySelector("#tf-duration-min");
+    wrap.style.display = unfoldedDisplay(wrap);
+    // Visible, but NOT a per-tier hold: the severity tiers must not mirror it
+    // (syncBandDurationMirrors reads this attribute, not the display).
+    wrap.setAttribute("data-hold-off", "1");
+    // Minutes are not on offer: the count is a number of polls by definition.
+    var unitSel = wrap.querySelector("#tf-window-unit");
+    if (unitSel) {
+      unitSel.style.display = "none";
+      var uw = unitSel.parentNode;
+      if (uw && uw.style) uw.style.gap = "0";
+    }
+    var label = wrap.querySelector("label");
+    if (label) {
+      label.innerHTML = "Sustained for (polls)" +
+        '<span class="aw-dur-req" style="color:var(--color-danger);font-weight:700;margin-left:2px">*</span>';
+    }
+    if (input) {
+      // Is the field taking this job ON right now, or was it already doing it?
+      // Only the transition may pre-fill: a blank box the operator cleared
+      // themselves has to STAY blank, because saving an automation whose
+      // definition of down was silently supplied by Polaris is exactly what the
+      // validation refuses to do.
+      var becoming = input.getAttribute("data-down-threshold") !== "1";
+      setFieldUnit(input, "polls");
+      input.setAttribute("data-down-threshold", "1");
+      input.removeAttribute("data-group-size");
+      input.setAttribute("min", String(ddMeta.min));
+      input.setAttribute("max", String(ddMeta.max));
+      input.setAttribute("required", "required");
+      input.placeholder = "e.g. " + (ddMeta.default || 3);
+      // A condition SWITCHED to `down` arrives with whatever the old hold said,
+      // often nothing; open at the server's default, the same number the retired
+      // row control opened at, so the common case needs no typing at all.
+      // Blank or 0 both mean "no hold was stated", and 0 is what a trigger that
+      // never had one renders.
+      if (becoming && !(Number(input.value) > 0) && input !== document.activeElement) {
+        input.value = String(ddMeta.default || 3);
+        input.setAttribute("data-sec", String(secFromPolls(input.value, awCadence().sec)));
+      }
+    }
+    var note = wrap.querySelector(".aw-dur-note");
+    if (note) {
+      note.style.display = "";
+      note.textContent = ddMeta.help || "";
+    }
+    // The two ratio-only fields below are not merely irrelevant here — they used
+    // to LEAK. This branch returned before the code that hides them, so a down
+    // automation rendered an inert "Sustained for (poll groups)" box (and, after
+    // an edit from a loss condition, a saturation ceiling) that collection never
+    // read and no keystroke could make matter.
+    var sustainWrap = panel.querySelector(".aw-ratio-sustain");
+    if (sustainWrap) {
+      sustainWrap.style.display = "none";
+      sustainWrap.setAttribute("data-hold-off", "1");
+    }
+    var ceilingWrap = panel.querySelector(".aw-ratio-ceiling");
+    if (ceilingWrap) ceilingWrap.style.display = "none";
+    syncPollFields(panel, false);
+  }
   function syncDurationRequirement(panel) {
     var wrap = panel.querySelector("#tf-duration-min");
     wrap = wrap && wrap.closest(".aw-dur");
@@ -3738,17 +3859,24 @@ async function openAutomationWizard(existing, opts) {
     var aggs = root ? root.querySelectorAll(".scr-row .tgl-agg") : [];
     var aggregated = false;
     Array.prototype.forEach.call(aggs, function (el) { if (el.value && el.value !== "latest") aggregated = true; });
-    // A tree made ENTIRELY of down-detection conditions already has a debounce:
-    // the missed-poll count IS the hold. A second "Sustained for" on top would
-    // be two clocks meaning almost the same thing, and would stack invisibly on
-    // the wall-clock time to Down. A MIXED composite keeps the field, where it
-    // legitimately applies to the whole tree.
-    var ddRows = root ? root.querySelectorAll(".scr-row .tgl-misses") : [];
+    // THE ONE KNOB (business rule 36). A trigger whose ONLY condition is
+    // `monitor status is down` has a single number to state, and this is the
+    // field that states it: how many polls in a row the device must miss before
+    // Polaris calls it down. It is not a hold on top of that verdict — it IS
+    // the verdict, so collectStep3 stores it as `missedPolls` (where the probe
+    // loop reads it) and zeroes the hold. The field used to hide here, with the
+    // count living in a box on the condition row instead; two boxes for one
+    // number is what that cost, and the hidden one was collected by nothing.
+    //
+    // ONE row, not "every row is down detection": a count is authority only on a
+    // bare trigger (the server refuses one inside a composite, because the probe
+    // loop cannot evaluate a second condition on its way to deciding down), so a
+    // two-condition tree — even two down conditions — gets the ordinary hold.
     var allRows = root ? root.querySelectorAll(".scr-row") : [];
-    if (allRows.length && ddRows.length === allRows.length) {
-      wrap.style.display = "none";
-      wrap.setAttribute("data-hold-off", "1");
-      syncBandDurationMirrors(panel);
+    var ddMetaNow = downDetectionMeta();
+    var downOnly = !!ddMetaNow && allRows.length === 1 && rowIsDownDetection(allRows[0]);
+    if (downOnly) {
+      applyDownThresholdField(panel, wrap, ddMetaNow);
       return;
     }
     wrap.removeAttribute("data-hold-off");
@@ -3756,6 +3884,10 @@ async function openAutomationWizard(existing, opts) {
     var star = wrap.querySelector(".aw-dur-req");
     var note = wrap.querySelector(".aw-dur-note");
     var input = wrap.querySelector("#tf-duration-min");
+    // Left behind by a tree that WAS a sole down condition until a second one
+    // was added: from here the field is an ordinary hold again, and its caption
+    // has to go back to plain arithmetic.
+    if (input) input.removeAttribute("data-down-threshold");
     // A windowed-ratio condition (packet loss) relabels the field outright: it
     // is HISTORY, not a hold clock, and calling it "sustained for" is what let a
     // 60 here mean "measured over 15 minutes, held for 60".
@@ -3868,9 +4000,7 @@ async function openAutomationWizard(existing, opts) {
       else sustainWrap.setAttribute("data-hold-off", "1");
       sustainWrap.style.display = secondField ? unfoldedDisplay(sustainWrap) : "none";
       var sLabel = sustainWrap.querySelector("label");
-      if (sLabel) {
-        sLabel.textContent = countWindow ? "Sustained for (poll groups)" : "Sustained for (polls)";
-      }
+      if (sLabel) sLabel.textContent = sustainLabelFor(countWindow);
       // The hold counts GROUPS beside a poll-group window, and a group is only
       // meaningful next to its size — so the size rides along on the field and
       // the caption can say "3 groups of 10 ≈ 30 polls ≈ 30m".
@@ -3881,13 +4011,7 @@ async function openAutomationWizard(existing, opts) {
         else sInput.removeAttribute("data-group-size");
       }
       var sNote = sustainWrap.querySelector(".aw-sustain-note");
-      if (sNote) {
-        sNote.textContent = countWindow
-          ? "Optional — how many consecutive poll groups must average over the threshold before the alert fires. "
-            + "The groups do not overlap, so each is an independent look at the device — and the alert takes "
-            + "group size x this many polls to arrive."
-          : "Optional — how long the loss must stay over the threshold before the alert fires. Each reading still measures over the History window above.";
-      }
+      if (sNote) sNote.textContent = sustainNoteFor(countWindow);
     }
     syncPollFields(panel, false);
   }
@@ -3929,8 +4053,15 @@ async function openAutomationWizard(existing, opts) {
         durationFieldHtml(
           'id="tf-duration-min"', triggerDurationSec(tr),
           // A COUNT window states its own number outright, so it seeds the box
-          // directly rather than being divided out of the seconds mirror.
-          triggerWindowPollsOf(tr) || (triggerIsWindowedRatio(tr) ? null : storedHoldPolls(tr)),
+          // directly rather than being divided out of the seconds mirror. So
+          // does a down automation's missed-poll count, which is this same field
+          // wearing its third job (business rule 36) — and seeding it from
+          // `missedPolls` is what keeps a stored "down after 10" from opening at
+          // the default the moment the row control stopped carrying it. A rule
+          // authored before the count existed seeds at that default, which is
+          // the number already governing its devices.
+          isDownDetectionLeaf(tr) ? missedPollsOf(tr)
+            : triggerWindowPollsOf(tr) || (triggerIsWindowedRatio(tr) ? null : storedHoldPolls(tr)),
           // A ratio's History is a measurement window in seconds; every other
           // use of this field is a hold, and a hold is a count.
           triggerIsWindowedRatio(tr) ? "sec" : "polls",
@@ -4007,7 +4138,19 @@ async function openAutomationWizard(existing, opts) {
     });
     wireTgTree(panel, "#aw-trig-root", function () {
       return panel.querySelector("#aw-trigger-type").value === "host" ? "host" : "asset";
-    }, refreshTriggerSentence);
+    }, function () {
+      // Adding, removing or retyping a condition can change what the duration
+      // field IS — a sole `monitor status is down` condition makes it the
+      // missed-poll count, a second condition makes it an ordinary hold again
+      // (business rule 36). The tree's own mutations arrive as clicks and drops,
+      // which the panel's delegated `input` listener never sees, so the syncs
+      // have to run from here too. BEFORE the sentence: it re-collects, and a
+      // field still dressed for the other job would be collected as the wrong
+      // number.
+      syncDurationRequirement(panel);
+      syncDownDetection(panel);
+      refreshTriggerSentence();
+    });
     // Delegated: any input/select change re-renders the sentence (the tree's
     // own change handler also calls it — a second render is harmless) and
     // re-syncs the severity mode (single dropdown vs multi tiers + accent).
@@ -4113,6 +4256,21 @@ async function openAutomationWizard(existing, opts) {
         // single-leaf tree down to that bare trigger, so anything still
         // composite here must shed its counts rather than 400 on save.
         if (draft.trigger && draft.trigger.type === "composite") stripMissedPolls(draft.trigger);
+        // THE ONE KNOB (business rule 36). A sole `monitor status is down`
+        // condition has exactly one number, and the duration field states it:
+        // the polls the device must miss in a row before Polaris calls it down
+        // — which is also when this alert fires, because the alert's condition
+        // is that verdict. So the count lands on `missedPolls`, where the probe
+        // loop reads it, and the hold is zeroed: a hold on top would be a
+        // second clock waiting out a state the first clock just defined, and
+        // the operator's number would silently mean twice what it says.
+        else if (draft.trigger && isDownDetectionLeaf(draft.trigger)) {
+          var ddCount = pollFieldCount(dEl);
+          if (ddCount > 0) draft.trigger.missedPolls = ddCount;
+          else delete draft.trigger.missedPolls;
+          draft.trigger.forPolls = 0;
+          draft.trigger.forDurationSec = 0;
+        }
       }
     } else if (cat === "event") {
       var ev = { type: "event", actionPattern: panel.querySelector("#tf-action").value.trim() };
@@ -4351,14 +4509,17 @@ async function openAutomationWizard(existing, opts) {
     if (leaf.type === "asset_state") {
       if (leaf.value == null || String(leaf.value).trim() === "") return label + ": choose or enter a value.";
       // A count is required only where it can DO anything: on the automation's
-      // sole condition. Inside a multi-condition trigger the control is hidden
-      // and the server rejects a count outright, so demanding one there would
-      // make a perfectly legal composite unsaveable.
+      // sole condition. Inside a multi-condition trigger the field below the
+      // tree is an ordinary hold and the server rejects a count outright, so
+      // demanding one there would make a perfectly legal composite unsaveable.
+      // The message names the FIELD, not the condition row: the number is
+      // typed below the tree now, and an error pointing at "Condition 1" would
+      // send the operator to a row that has no box to fill in.
       var vdd = downDetectionMeta();
       if (vdd && isSoleCondition && isDownDetectionLeaf(leaf)) {
         var n = Number(leaf.missedPolls);
         if (!(isFinite(n) && n >= vdd.min && n <= vdd.max && n === Math.round(n))) {
-          return label + ": enter how many consecutive missed polls make the device Down (" +
+          return "Sustained for: enter how many consecutive missed polls make the device Down (" +
             vdd.min + "–" + vdd.max + "). This automation is the only place that number lives.";
         }
       }

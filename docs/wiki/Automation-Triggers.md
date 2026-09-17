@@ -116,6 +116,12 @@ This is the trigger that **defines what down means**. It carries a
 `missedPolls` count, and that count *is* the definition of down for every device
 it covers ([rule 36](Business-Rules#rule-36)).
 
+- **You type it in the trigger step's `Sustained for (polls)` field**, below the
+  condition tree — the same field every other trigger states its hold in, doing
+  its third job (see the table below). The caption under it turns the count into
+  the wall-clock time to Down at the cadence your matched devices actually use,
+  which is longer than count × interval because a missed poll also costs its
+  timeout.
 - Precedence resolves it — same-rank ties go to the **smaller count**, then
   older, then lower id.
 - **A device no such automation covers reads `passive`** and is never judged.
@@ -252,17 +258,24 @@ using **device filter rows** (below).
 
 ---
 
-## Windows, holds and the one field that means two things
+## Windows, holds and the one field that means three things
 
-The step has a **single** duration field, and it means one of two things
-depending on the aggregation you picked. It renames itself — and changes its
-**unit** — to say which:
+The step has a **single** duration field, and what it means depends on the
+condition above it. It renames itself — and changes its **unit** — to say which:
 
-| Aggregation | The field | It means |
+| Condition | The field | It means |
 |---|---|---|
 | `avg` / `median` / `min` / `max` | **Measured over** / **Poll Group Size**, with a `minutes \| polls` picker | the **measurement window** — a span of time, or a group of polls; see Poll groups below, which is the choice that picker offers |
 | `probeLossPct` | **History (minutes)** | the window the ratio is measured across (see above) |
 | `latest` | **Sustained for (polls)** | the **sustain clock** — how many consecutive readings the condition must stay true for |
+| `monitor status is down`, as the automation's **only** condition | **Sustained for (polls)**, required | the **missed-poll count** — how many polls in a row the device must miss before Polaris calls it down, which is also when this alert fires ([rule 36](Business-Rules#rule-36)) |
+
+The last row is the one field that is not merely a clock on a reading: it is the
+reading's *definition*. So there is no hold stacked on top of it — a hold would
+wait out a state the count itself just declared, and your number would quietly
+mean twice what it says. Add a second condition and the field goes back to being
+an ordinary sustain clock, because a count can only carry authority on an
+automation whose sole condition is that verdict.
 
 The two units are not a cosmetic difference, and which one you get is not a
 preference — it is what the rule actually stores. A window is saved as
