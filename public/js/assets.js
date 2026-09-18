@@ -6189,13 +6189,13 @@ function _openInstallAgentModal(a) {
         '<label>Transport</label>' +
         '<div style="display:flex;gap:1rem;align-items:center;padding:0.25rem 0">' +
           '<label style="display:flex;align-items:center;gap:0.35rem;font-weight:normal;cursor:pointer">' +
-            '<input type="radio" name="agent-install-transport" value="winrm" checked> WinRM' +
+            '<input type="radio" name="agent-install-transport" value="ssh" checked> SSH' +
           '</label>' +
           '<label style="display:flex;align-items:center;gap:0.35rem;font-weight:normal;cursor:pointer">' +
-            '<input type="radio" name="agent-install-transport" value="ssh"> SSH' +
+            '<input type="radio" name="agent-install-transport" value="winrm"> WinRM' +
           '</label>' +
         '</div>' +
-        '<p class="hint" id="agent-install-transport-hint">WinRM must be enabled and reachable on port 5986 (HTTPS) or 5985 (HTTP).</p>' +
+        '<p class="hint" id="agent-install-transport-hint">SSH requires OpenSSH Server enabled on the Windows host. The credential needs admin rights to register the polaris-agent Windows Service.</p>' +
       '</div>' +
       '<div class="form-group" id="agent-install-cred-ssh-wrap">' +
         '<label for="agent-install-cred-ssh">SSH credential</label>' +
@@ -6225,7 +6225,7 @@ function _openInstallAgentModal(a) {
     // hidden and SSH is the only choice.
     function selectedTransport() {
       var checked = document.querySelector('input[name="agent-install-transport"]:checked');
-      return checked ? checked.value : "winrm";
+      return checked ? checked.value : "ssh";
     }
     // Keep the install-method picker + its description in sync with the OS.
     function refreshScriptRow() {
