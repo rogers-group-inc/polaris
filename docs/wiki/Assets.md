@@ -128,6 +128,9 @@ Read the pair together. An empty client list beside "updated 30s ago" means
 nobody is connected; the same empty list beside an amber "updated 2 days ago"
 means nobody has asked.
 
+The [SD-WAN](#sd-wan-fortigate-firewalls) tab's sections carry the same source
+and age pair, without a Refresh button.
+
 Refresh dials the device and re-reads its current state. It does **not** run a
 response-time probe, so it cannot mark an asset up or down, and it will not
 disturb an in-progress outage count. If it reports *nothing to refresh*, this
