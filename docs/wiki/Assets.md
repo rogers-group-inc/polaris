@@ -314,6 +314,26 @@ gets. The stated figure is always the one that actually applies to this device.
 A historical range adds a *Last seen* column; Current omits it because every row
 shares one instant.
 
+### SD-WAN (FortiGate firewalls)
+
+Shown on a monitored FortiGate that reported SD-WAN data, with the **SD-WAN**
+toggle on its integration. Three sections: **SD-WAN Members** (the WAN members
+and overlays, grouped by zone, with per-health-check state), **SD-WAN Rules**
+(the service rules in the gate's own priority order, selected member
+highlighted) and **Performance SLA** (latency, jitter and packet-loss charts per
+health check).
+
+Each section states **where its data came from and how old it is** — the polling
+method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the
+reading is older than one cadence, exactly as on the snapshot tabs above. Each
+states its **own** age rather than the device's last poll: the rules table and
+the health-check metrics are separate reads on the same pass, and one can land
+while the other fails. A section that has never been collected says so instead
+of showing nothing.
+
+There is no Refresh button here — SD-WAN is read on the system-info pass, and
+the tab is showing you what that pass last brought back.
+
 ### Sources
 
 Every `AssetSource` row — one per system that reported this device — with what

@@ -4954,7 +4954,7 @@ async function openViewModal(id, opts) {
     var sdwanP = assetP.then(function (asset) {
       var sk = (asset.discoveredByIntegration && asset.discoveredByIntegration.type) || "manual";
       if (!(asset.monitored && asset.assetType === "firewall" && (sk === "fortimanager" || sk === "fortigate"))) {
-        return { rules: [], links: [], members: [] };
+        return { rules: [], links: [], members: [], meta: {} };
       }
       return Promise.all([
         api.assets.sdwanRules(asset.id).catch(function (err) { console.warn("Failed to load SD-WAN rules", err); return { rules: [] }; }),
@@ -4965,6 +4965,16 @@ async function openViewModal(id, opts) {
           rules:   (r[0] && r[0].rules)   || [],
           links:   (r[1] && r[1].links)   || [],
           members: (r[2] && r[2].members) || [],
+          // Per-table scrape stamp + cadence, for the section freshness strips.
+          // Each table states its OWN age: the rules table and the perf-SLA
+          // stream are separate writes on the same pass, and one can land
+          // without the other.
+          meta: {
+            rulesAt:      (r[0] && r[0].collectedAt) || null,
+            rulesPollSec: (r[0] && r[0].pollIntervalSec) || null,
+            membersAt:      (r[2] && r[2].collectedAt) || null,
+            membersPollSec: (r[2] && r[2].pollIntervalSec) || null,
+          },
         };
       });
     });
@@ -5013,6 +5023,7 @@ async function openViewModal(id, opts) {
     var sdwanRules   = wave[11].rules;
     var sdwanLinks   = wave[11].links;
     var sdwanMembers = wave[11].members;
+    var sdwanMeta    = wave[11].meta || {};
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -5049,7 +5060,7 @@ async function openViewModal(id, opts) {
     // (rules or health-check links exist); the trio was prefetched in the wave
     // above so the tab is present + pre-populated on first paint.
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) {
-      tabs.push({ key: "sdwan", label: "SD-WAN", html: _assetSdwanTabHTML(a, sdwanRules, sdwanLinks, sdwanMembers) });
+      tabs.push({ key: "sdwan", label: "SD-WAN", html: _assetSdwanTabHTML(a, sdwanRules, sdwanLinks, sdwanMembers, sdwanMeta) });
     }
     // MAC Table tab — the switch's layer-2 forwarding database. Switch-class
     // only, mirroring where the collector spends the walk; lazy-loaded on
@@ -13421,10 +13432,44 @@ function _sdwanMembersTableHTML(members) {
     '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
-function _assetSdwanTabHTML(a, rules, links, members) {
+// Provenance + freshness strip carried by all three SD-WAN sections.
+//
+// Every section on this tab is a SNAPSHOT of what the gate last answered, and
+// each is a separate write on the system-info pass: a rules scrape can land
+// while the perf-SLA one fails, and vice versa. So each states its OWN stamp
+// rather than the asset's lastSystemInfoAt — otherwise an empty members table
+// reads "this gate has no WAN members" when it means "not answered since
+// yesterday". `lastAt`/`cadenceSec` come from the endpoint that served the
+// section (collectedAt / pollIntervalSec), so the number an operator reads is
+// the number the amber threshold compares against.
+//
+// The badge is the full stream badge, not a bare cadence chip: SD-WAN is
+// REST-only, and which transport and credential answered is the next question
+// after "is this current". `_wireSdwanTab` upgrades it to authoritative
+// provenance once /effective-monitor-settings lands.
+//
+// `extraHTML` sits between the heading and the badge (Performance SLA's
+// health-check selector); `rightHTML` is pushed to the far end of the row (its
+// range buttons). Both empty for the two tables, which then render as a plain
+// left-aligned strip.
+function _sdwanSectionHeaderHTML(a, title, lastAt, cadenceSec, neverText, extraHTML, rightHTML) {
+  var badge = _streamSourceBadgeHTML(a, "interfaces");
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin:0 0 0.5rem">' +
+      '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
+        '<h4 style="margin:0">' + escapeHtml(title) + '</h4>' +
+        (extraHTML || "") +
+        badge +
+        _freshnessStampHTML(lastAt, cadenceSec, neverText) +
+      '</div>' +
+      (rightHTML ? '<div style="display:flex;gap:6px">' + rightHTML + '</div>' : '') +
+    '</div>';
+}
+
+function _assetSdwanTabHTML(a, rules, links, members, meta) {
   rules = rules || [];
   links = links || [];
   members = members || [];
+  meta = meta || {};
   var html = '<div style="padding:0.25rem 0">';
 
   // ── SD-WAN Members table (above the rules) ──
@@ -13432,7 +13477,7 @@ function _assetSdwanTabHTML(a, rules, links, members) {
     html +=
       '<div data-shot-section="sdwanMembers" data-shot-label="SD-WAN Members">' +
       '<section style="margin-bottom:1.25rem">' +
-        '<h4 style="margin:0 0 0.5rem 0">SD-WAN Members</h4>' +
+        _sdwanSectionHeaderHTML(a, "SD-WAN Members", meta.membersAt, meta.membersPollSec, "never collected") +
         '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">WAN members (interfaces + overlays) with per-health-check status. The Health Check Status strip shows recent up/down per scrape; IP / link / bytes come from the latest interface poll.</p>' +
         _sdwanMembersTableHTML(members) +
       '</section>' +
@@ -13509,7 +13554,7 @@ function _assetSdwanTabHTML(a, rules, links, members) {
     html +=
       '<div data-shot-section="sdwanRules" data-shot-label="SD-WAN Rules">' +
       '<section style="margin-bottom:1.25rem">' +
-        '<h4 style="margin:0 0 0.5rem 0">SD-WAN Rules</h4>' +
+        _sdwanSectionHeaderHTML(a, "SD-WAN Rules", meta.rulesAt, meta.rulesPollSec, "never collected") +
         '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">Service rules in FortiGate priority order, with the currently selected member highlighted in <strong>Members</strong>. Zone-preference rules list each preferred zone\'s members grouped by zone. The active member is inferred from health-check state when FortiOS does not report the selected route directly.</p>' +
         '<div class="table-wrapper"><table id="sdwan-rules-table" class="data-table" style="font-size:0.82rem"><thead><tr>' +
           '<th data-col-id="id" style="width:48px">ID</th>' +
@@ -13544,24 +13589,22 @@ function _assetSdwanTabHTML(a, rules, links, members) {
     if (rules.length) {
       html += '<hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--color-border)">';
     }
-    // Provenance badge (polling method · cadence · tier) + freshness stamp, same
-    // as every other chart in the modal. SD-WAN rides the system-info pass, so
-    // the "interfaces" stream resolves the cadence and lastSystemInfoAt is the
-    // freshness. _wireSdwanTab upgrades the badge to authoritative provenance.
-    var perfSlaBadge = _streamSourceBadgeHTML(a, "interfaces");
-    var perfSlaUpdatedAt = a.lastSystemInfoAt
-      ? ('<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(new Date(a.lastSystemInfoAt).toLocaleString()) + '">updated ' + timeAgo(a.lastSystemInfoAt) + '</span>')
-      : '';
+    // Same header builder as the two tables above, so all three sections state
+    // provenance and age the same way. The stamp is the perf-SLA stream's own
+    // newest sample — the very `collectedAt` the members table states, both
+    // reading that one table — falling back to the asset's pass stamp only when
+    // the endpoint returned none. It used to read lastSystemInfoAt
+    // unconditionally, which reports a pass whose SD-WAN leg failed as a
+    // successful SD-WAN scrape. _wireSdwanTab upgrades the badge to
+    // authoritative provenance.
     html +=
       '<section>' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem">' +
-          '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
-            '<h4 style="margin:0">Performance SLA</h4>' +
-            '<select id="sdwan-perfsla-select" class="form-input" style="padding:2px 6px;font-size:0.82rem">' + options + '</select>' +
-            perfSlaBadge + (perfSlaBadge && perfSlaUpdatedAt ? ' ' : '') + perfSlaUpdatedAt +
-          '</div>' +
-          '<div style="display:flex;gap:6px">' + rangeBtns + '</div>' +
-        '</div>' +
+        _sdwanSectionHeaderHTML(
+          a, "Performance SLA",
+          meta.membersAt || a.lastSystemInfoAt || null, meta.membersPollSec, "never collected",
+          '<select id="sdwan-perfsla-select" class="form-input" style="padding:2px 6px;font-size:0.82rem">' + options + '</select>',
+          rangeBtns
+        ) +
         '<div id="sdwan-perfsla-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
         '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Latency (ms)</h5>' +
         '<div id="sdwan-latency-chart" class="sdwan-chart-box"></div>' +

@@ -1051,20 +1051,36 @@ export interface SdwanMemberRow {
  * per scrape over the last ~90 min, `up` = up in every health-check at that time.
  * Reads the `perfSla` (+ `interfaces`) retention entities; current values come
  * from the latest rows, the strip from recent detail samples.
+ *
+ * `collectedAt` is the newest of those latest samples — one stamp for the whole
+ * table, since a scrape writes every member at once. Null means never scraped.
  */
-export async function readSdwanMembers(assetId: string): Promise<{ members: SdwanMemberRow[] }> {
-  // A: latest sample per (member, health-check).
+export async function readSdwanMembers(
+  assetId: string,
+): Promise<{ members: SdwanMemberRow[]; collectedAt: Date | null }> {
+  // A: latest sample per (member, health-check). `timestamp` comes back too:
+  // the newest of these IS the SD-WAN scrape stamp, and the tab's freshness
+  // strip reads it rather than the asset's lastSystemInfoAt — SD-WAN rides the
+  // system-info pass but is one optional leg of it, so a pass whose SD-WAN call
+  // failed advances lastSystemInfoAt while this table stands still. Reading the
+  // pass stamp would report that stale table as current, which is the exact
+  // misreading the strip exists to prevent.
   const latest = await prisma.$queryRawUnsafe<Array<{
     link: string; healthCheck: string; zone: string | null; state: string;
     latencyMs: number | null; jitterMs: number | null; packetLoss: number | null;
+    timestamp: Date;
   }>>(
     `SELECT DISTINCT ON ("link", "healthCheck")
-            "link", "healthCheck", "zone", "state", "latencyMs", "jitterMs", "packetLoss"
+            "link", "healthCheck", "zone", "state", "latencyMs", "jitterMs", "packetLoss", "timestamp"
      FROM "asset_perf_sla_samples" WHERE "assetId" = $1
      ORDER BY "link", "healthCheck", "timestamp" DESC`,
     assetId,
   );
-  if (latest.length === 0) return { members: [] };
+  if (latest.length === 0) return { members: [], collectedAt: null };
+  let collectedAt: Date | null = null;
+  for (const r of latest) {
+    if (r.timestamp && (!collectedAt || r.timestamp > collectedAt)) collectedAt = r.timestamp;
+  }
 
   // B: recent per-(member, scrape) aggregated up/down for the status strip.
   const recentRows = await prisma.$queryRawUnsafe<Array<{ link: string; timestamp: Date; up: boolean }>>(
@@ -1122,5 +1138,5 @@ export async function readSdwanMembers(assetId: string): Promise<{ members: Sdwa
   });
   // Sort: physical/WAN members first (those with an IP), then by name.
   members.sort((a, b) => (a.ip ? 0 : 1) - (b.ip ? 0 : 1) || a.link.localeCompare(b.link));
-  return { members };
+  return { members, collectedAt };
 }

@@ -3341,11 +3341,20 @@ router.get("/:id/perf-sla-links", requirePermission("assets", "read"), async (re
 // GET /assets/:id/sdwan-members — per-WAN-member health summary (status, per
 // health-check latency/jitter/loss, recent status strip, + IP/link/bytes from
 // the latest interface sample). Drives the "SD-WAN Members" table.
+//
+// Carries the same freshness pair the ARP/MAC tabs do — `collectedAt` (the
+// newest perf-SLA sample, i.e. the scrape stamp) and `pollIntervalSec` — so the
+// table can state its own age and turn amber past its own cadence. No discovery
+// fallback: only the system-info pass writes perf-SLA samples, so an unmonitored
+// gate reports null rather than borrowing its integration's 12h sweep.
 router.get("/:id/sdwan-members", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const result = await readSdwanMembers(id);
-    res.json(result);
+    const [result, pollIntervalSec] = await Promise.all([
+      readSdwanMembers(id),
+      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+    ]);
+    res.json({ ...result, pollIntervalSec });
   } catch (err) { next(err); }
 });
 
@@ -3383,16 +3392,30 @@ router.get("/:id/perf-sla-history", requirePermission("assets", "read"), async (
 router.get("/:id/sdwan-rules", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const rows = await prisma.assetSdwanRule.findMany({
+    const rowsP = prisma.assetSdwanRule.findMany({
       where: { assetId: id },
       orderBy: [{ seq: "asc" }, { ruleName: "asc" }],
       select: {
         ruleName: true, ruleId: true, seq: true, enabled: true, mode: true,
         criteria: true, healthChecks: true, dst: true, status: true,
         selectedMember: true, availableMembers: true, priorityZones: true,
+        updatedAt: true,
       },
     });
-    res.json({ rules: rows });
+    const [rows, pollIntervalSec] = await Promise.all([
+      rowsP,
+      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+    ]);
+    // One stamp for the whole table: persistSdwanRules delete-replaces every
+    // rule in one transaction, so the newest updatedAt IS the scrape time.
+    // Null on an empty table — never scraped and scraped-with-no-rules are
+    // indistinguishable from the rows, and the tab says "never collected"
+    // rather than inventing an age.
+    let collectedAt: Date | null = null;
+    for (const r of rows) {
+      if (!collectedAt || r.updatedAt > collectedAt) collectedAt = r.updatedAt;
+    }
+    res.json({ rules: rows, collectedAt, pollIntervalSec });
   } catch (err) { next(err); }
 });
 
