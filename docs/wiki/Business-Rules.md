@@ -574,3 +574,34 @@ looks small, because that is exactly what happened before this rule existed: a
 
 See [Server-Settings](Server-Settings) for the card itself.
 
+### Rule 72
+**A detection script asserts every prerequisite its remediation establishes, and
+a mode that establishes nothing refuses instead of reporting success.** The SSH
+onboarding scripts Polaris generates come in pairs — a detection half that
+answers "is this endpoint ready", and a remediation half that makes it ready —
+and the pairing is what lets a fleet self-heal instead of being configured once
+and drifting. That only holds if the two halves agree about what "ready" means.
+
+So detection checks the account as well as the key: that it exists, that it is
+enabled, and that it is a member of local Administrators on Windows (or has its
+sudoers drop-in on Linux). An endpoint missing any of those cannot have the
+agent installed on it, so reporting it compliant would be reporting success for
+something that does not work.
+
+And when you choose **use an existing account**, the script verifies that
+account and **stops** if it is not there or is not an administrator, instead of
+carrying on to authorize a key for an account that does not exist. It verifies
+without changing anything — choosing an existing account is not asking Polaris
+to create one or to promote it.
+
+The firewall rule is deliberately not checked. If you did not give Polaris a
+server address there is no rule to look for, and a check nothing can satisfy
+would make the pair remediate forever.
+
+One consequence you will see: both scripts now refuse to download until you have
+named the account on the **SSH Deployment** card. Before, the Windows detection
+script would render without one — and could not tell you anything useful when
+it did.
+
+See [Polaris-Agent](Polaris-Agent) for the card and the scripts.
+
