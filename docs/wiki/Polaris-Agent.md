@@ -145,8 +145,13 @@ Section **2** of the card, and the setting most likely to bite:
 
 | Mode | What the script does |
 |---|---|
-| **Use an existing administrator account** | installs the key **only**. It does not create the account or change its group membership — the account must already exist and already be in the local Administrators group |
+| **Use an existing administrator account** | installs the key **only**. It does not create the account or change its group membership — but it does **verify** both, and stops with `error: account … does not exist on this host` rather than installing a key for an account that is not there |
 | **Create a dedicated local account on each endpoint** | creates it with a random password it never reports (key auth only), and adds it to Administrators |
+
+Existing mode verifies without changing anything: choosing an account you
+already have is not asking Polaris to create one, or to promote one to
+administrator. If the check fails, the fix is yours to make — then the next
+remediation pass succeeds on its own.
 
 A created Windows name is capped at **20 characters** — the limit `New-LocalUser`
 enforces — and is refused on save rather than failing later on every endpoint.
@@ -160,12 +165,32 @@ is **machine-wide** — it authorises any member of Administrators — so the ke
 lands correctly even when the account named on the card does not exist, and
 every later login then fails in a way that reads like a key problem.
 
-**Windows detection cannot catch this**: it checks the capability, the service,
-the file and the key, never the account. (Linux detection *does* check its
-account and the sudoers drop-in.) So a clean detection pass plus a failing login
-points at the account. Confirm with `Get-LocalUser` and `Get-LocalGroupMember
--Group Administrators` on the endpoint, against the username the managed
-credential carries.
+**Detection catches this**, on both platforms (business rule 72). It checks the
+account as well as the key, and reports which part is missing:
+
+| Detection output | Meaning |
+|---|---|
+| `remediate: local account <name> missing` | the account is not on the endpoint |
+| `remediate: local account <name> is disabled` | it exists but cannot log in |
+| `remediate: <name> is not a member of Administrators` | it exists but the agent installer cannot use it |
+| `ok: Polaris SSH onboarding present (<name> is a local administrator)` | ready |
+
+A domain account (`DOMAIN\user`) is invisible to `Get-LocalUser`, so for one of
+those only the group membership is checked.
+
+If you want to confirm by hand, run `Get-LocalUser` and `Get-LocalGroupMember
+-Group Administrators` on the endpoint against the username the managed
+credential carries. On an Entra-joined endpoint `Get-LocalGroupMember` may list
+members as raw `S-1-12-1-…` SIDs, or fail outright; the detection script falls
+back to the `WinNT://` provider for exactly that reason, so trust its verdict
+over a bare `Get-LocalGroupMember` that errored.
+
+> Before this check existed, a fleet could report **Detection: Without issues**
+> and **Remediation: Not run** on endpoints where the account had never been
+> created — indistinguishable, in the Intune console, from a healthy one. If you
+> have been running an older generated pair, regenerate both halves from the
+> card: machines in that state will report as needing remediation on their next
+> pass and fix themselves.
 
 The scripts are **delivery-neutral and fleet-generic** — no machine-specific
 values — so the same body runs under Intune, GPO startup, SCCM, Arc, an RMM or a
