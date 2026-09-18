@@ -387,7 +387,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** DHCP reserved-address push/unpush to FortiGate via FMG proxy or direct REST.
 
-**Public API:** normalizeMac, pushReservation, updatePushedReservation, unpushReservation, releaseDhcpLease, plus the transport helpers `buildTransportForIntegration` / `findScopeIdForCidr` / `listReservedAddresses` / `callFortiOs` (+ types `Transport`, `FortiOsReservedAddress`) exported so peer services can reuse the same FMG-proxy / direct-FortiGate dispatcher for read-only single-scope work.
+**Public API:** normalizeMac, pushReservation, updatePushedReservation, unpushReservation, releaseDhcpLease, the description-budget trio `RESERVED_ADDRESS_DESCRIPTION_MAX` / `reservationNotesBudget` / `assertReservationDescriptionFits` (business rule 74 — called by reservationService at create and edit, and mirrored in the browser by `public/js/reservation-notes.js`), plus the transport helpers `buildTransportForIntegration` / `findScopeIdForCidr` / `listReservedAddresses` / `callFortiOs` (+ types `Transport`, `FortiOsReservedAddress`) exported so peer services can reuse the same FMG-proxy / direct-FortiGate dispatcher for read-only single-scope work.
 
 **Cross-service deps:** fortigateService (fgRequest), fortimanagerService (fmgProxyRest, resolveDeviceMgmtIpViaFmg).
 
@@ -399,7 +399,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Direct mode requires fortigateApiToken + mgmtInterface on integration config
 - Scope resolution by matching gateway+netmask or ip-range start-ip
 - Verify-by-readback mandatory; failure throws AppError (triggers reservation rollback)
-- Description format: "Polaris/<user>: <hostname>" or "Polaris: <hostname>"
+- Description format: `Polaris/<user>: <notes> [<hostname>]` when the operator typed notes, `Polaris/<user>: <hostname>` (or `Polaris: <hostname>`) when they did not. `composeDescription` is the single emitter; `subnetRefreshService.extractHostnameFromDescription` is its inverse — keep them paired.
+- FortiOS holds **255 characters** of that description, wrapper included, and `RESERVED_ADDRESS_DESCRIPTION_MAX` is that number (business rule 74). `assertReservationDescriptionFits` REFUSES an over-length composition at save time (400); the `slice` in `buildDescription` is a backstop for rows no save path gates — discovery-authored notes, notes predating the rule, and the retry tick replaying either. The cap was 64 until 2026-09-18, which silently cut the trailing `[hostname]` off a long note and left the extractor recovering the tail of the operator's notes as the hostname.
+- `reservationNotesBudget` derives the wrapper's cost by composing with a one-character note and subtracting it, rather than restating the format — a changed format must not need the arithmetic changed with it
 - Lease release (releaseDhcpLease) uses /api/v2/monitor/system/dhcp/release-lease (best-effort, no rollback)
 
 **When changing this:**
@@ -407,5 +409,6 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Verify MAC normalization handles all separators (colons, dashes, dots, none)
 - Check scope resolution fallbacks (gateway+netmask, then ip-range)
 - Test verify-by-readback on slow devices (echoed id missing, need IP+MAC lookup)
+- Changing the description FORMAT changes the budget: re-check `reservationNotesBudget`, the extractor in subnetRefreshService, and the browser mirror in `public/js/reservation-notes.js` (its `budgetFor` is asserted against this module's in `tests/unit/reservationNotesBudgetDom.test.ts`)
 
 ---

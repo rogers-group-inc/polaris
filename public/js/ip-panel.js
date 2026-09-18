@@ -745,6 +745,58 @@ function _macFieldMarkup(label, hint, valueAttr) {
   '</div>';
 }
 
+// The Reservation notes field and its device-side budget counter. The budget
+// math itself lives in public/js/reservation-notes.js, shared with the mobile
+// sheets; the server (reservationPushService.assertReservationDescriptionFits)
+// is what enforces it on save.
+
+// The signed-in operator's username — what the server stamps as the
+// reservation's `createdBy` and writes into the description prefix. Read
+// defensively: `currentUsername` belongs to app.js and is null until the
+// session fetch resolves, in which case the prefix is the shorter "Polaris: ".
+function _signedInUsername() {
+  return (typeof currentUsername === "string" && currentUsername) || "";
+}
+
+// The notes field, with the budget hint when the network pushes to a FortiGate.
+// `opts`: { pushEligible, value, lock }.
+function _notesFieldMarkup(opts) {
+  var o = opts || {};
+  return '<div class="form-group"><label>Reservation notes</label>' +
+    '<textarea id="f-notes" placeholder="e.g. web-server-01"' + (o.lock || "") + '>' +
+      escapeHtml(o.value || "") +
+    '</textarea>' +
+    (o.pushEligible ? '<p class="hint" id="f-notes-budget"></p>' : '') +
+    '</div>';
+}
+
+// Live counter for the field above. `createdBy` is whose name the description
+// will carry: the signed-in operator on a create, the ORIGINAL creator on an
+// edit (updatePushedReservation re-composes from `reservation.createdBy`, not
+// from whoever is editing). Recomputed on hostname keystrokes too, since the
+// hostname is inside the same 255 characters.
+function _wireNotesBudget(pushEligible, createdBy) {
+  if (!pushEligible) return;
+  var notes = document.getElementById("f-notes");
+  var hint = document.getElementById("f-notes-budget");
+  if (!notes || !hint) return;
+  var hostEl = document.getElementById("f-hostname");
+  function render() {
+    var state = window.PolarisReservationNotes.hintFor(
+      notes.value,
+      hostEl ? hostEl.value : "",
+      createdBy,
+    );
+    hint.textContent = state.text;
+    hint.className = state.over > 0 ? "hint hint-error" : "hint";
+    if (state.over > 0) notes.classList.add("input-error");
+    else notes.classList.remove("input-error");
+  }
+  notes.addEventListener("input", render);
+  if (hostEl) hostEl.addEventListener("input", render);
+  render();
+}
+
 function _wireGenerateMacButton() {
   var btn = document.getElementById("btn-gen-mac");
   var input = document.getElementById("f-macAddress");
@@ -871,12 +923,13 @@ function _openAutoAllocateModal(subnetId) {
     '<div class="form-group"><label>Owner</label><input type="text" id="f-owner" placeholder="e.g. platform-team"></div>' +
     '<div class="form-group"><label>Project Ref</label><input type="text" id="f-projectRef" placeholder="e.g. INFRA-001"></div>' +
     '<div class="form-group"><label>Expires At</label><input type="datetime-local" id="f-expiresAt"><p class="hint">Optional TTL</p></div>' +
-    '<div class="form-group"><label>Reservation notes</label><textarea id="f-notes" placeholder="e.g. web-server-01"></textarea></div>';
+    _notesFieldMarkup({ pushEligible: pushEligible });
 
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
     '<button class="btn btn-primary" id="btn-save">Auto-Allocate</button>';
   openModal("Auto-Allocate Next IP", body, footer);
   _wireGenerateMacButton();
+  _wireNotesBudget(pushEligible, _signedInUsername());
   _wireMacAutoTracking(document.getElementById("f-macAddress"));
 
   // Auto-generate defaults ON only where a MAC is actually required. On a
@@ -1354,11 +1407,12 @@ function _openReserveModal(subnetId, ipAddress, prefill) {
     '<div class="form-group"><label>Owner</label><input type="text" id="f-owner" placeholder="e.g. platform-team"></div>' +
     '<div class="form-group"><label>Project Ref</label><input type="text" id="f-projectRef" placeholder="e.g. INFRA-001"></div>' +
     '<div class="form-group"><label>Expires At</label><input type="datetime-local" id="f-expiresAt"><p class="hint">Optional TTL</p></div>' +
-    '<div class="form-group"><label>Reservation notes</label><textarea id="f-notes" placeholder="e.g. web-server-01"></textarea></div>';
+    _notesFieldMarkup({ pushEligible: pushEligible });
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
     '<button class="btn btn-primary" id="btn-save">Create Reservation</button>';
   openModal("Reserve IP", body, footer);
   _wireGenerateMacButton();
+  _wireNotesBudget(pushEligible, _signedInUsername());
 
   document.getElementById("btn-save").addEventListener("click", async function () {
     var btn = this;
@@ -1443,11 +1497,12 @@ function _openLeaseReserveModal(subnetId, ipAddress, leaseId, prefillMac, prefil
     '<div class="form-group"><label>Owner</label><input type="text" id="f-owner" placeholder="e.g. platform-team"></div>' +
     '<div class="form-group"><label>Project Ref</label><input type="text" id="f-projectRef" placeholder="e.g. INFRA-001"></div>' +
     '<div class="form-group"><label>Expires At</label><input type="datetime-local" id="f-expiresAt"><p class="hint">Optional TTL</p></div>' +
-    '<div class="form-group"><label>Reservation notes</label><textarea id="f-notes" placeholder="e.g. web-server-01"></textarea></div>';
+    _notesFieldMarkup({ pushEligible: pushEligible });
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
     '<button class="btn btn-primary" id="btn-save">Create Reservation</button>';
   openModal("Reserve IP", body, footer);
   _wireGenerateMacButton();
+  _wireNotesBudget(pushEligible, _signedInUsername());
 
   document.getElementById("btn-save").addEventListener("click", async function () {
     var btn = this;
@@ -1567,7 +1622,7 @@ function _openEditReservationModal(reservationId) {
         '<p class="hint">Saved-as-you unless you change this — your username is auto-stamped here on save.</p></div>' +
       '<div class="form-group"><label>Project Ref</label><input type="text" id="f-projectRef" value="' + escapeHtml(r.projectRef) + '"' + lock + '></div>' +
       '<div class="form-group"><label>Expires At</label><input type="datetime-local" id="f-expiresAt" value="' + expiresVal + '"' + lock + '></div>' +
-      '<div class="form-group"><label>Reservation notes</label><textarea id="f-notes" placeholder="e.g. web-server-01"' + lock + '>' + escapeHtml(r.notes || "") + '</textarea></div>';
+      _notesFieldMarkup({ pushEligible: pushEligible && !readOnly, value: r.notes, lock: lock });
     var footer = readOnly
       ? '<button class="btn btn-secondary" onclick="closeModal()">Close</button>'
       : '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
@@ -1580,6 +1635,11 @@ function _openEditReservationModal(reservationId) {
     var originalOwner = r.owner || "";
 
     if (!readOnly) {
+      // The device-side description keeps the ORIGINAL creator's name across
+      // an edit, so the budget is computed against `r.createdBy` rather than
+      // whoever is editing.
+      _wireNotesBudget(pushEligible, r.createdBy);
+
       // Wire the Generate button on the MAC field. Uses a modal-local id
       // (`btn-gen-mac-edit`) so it doesn't collide with the reserve / auto-
       // allocate modals' Generate button id from `_macFieldMarkup`.

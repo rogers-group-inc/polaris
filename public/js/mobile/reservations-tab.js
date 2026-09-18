@@ -350,7 +350,7 @@
       + '  </div>'
       + '  <div class="tf-outlined"><span class="lbl">Notes</span>'
       + '    <input class="field" id="e-notes" maxlength="500" value="' + escapeHtml(row.notes || "") + '">'
-      +     (pushEligible ? '    <div class="support">Saved to the FortiGate reservation comment.</div>' : '')
+      +     (pushEligible ? '    <div class="support" id="e-notes-budget">Saved to the FortiGate reservation comment.</div>' : '')
       + '  </div>'
       + '  <div class="tf-outlined"><span class="lbl">Expires (YYYY-MM-DD)</span>'
       + '    <input class="field mono" id="e-expires" placeholder="" value="' + escapeHtml(formatDate(row.expiresAt) || "") + '">'
@@ -386,6 +386,35 @@
         try { macInput.select(); } catch (_) {}
       });
     }
+    wireNotesBudget(pushEligible, row.createdBy);
+  }
+
+  // Live "N characters left" under Notes on a push-eligible network. The notes
+  // become the FortiGate reservation's description, which the device caps at
+  // 255 characters INCLUDING the "Polaris/<user>: … [<hostname>]" wrapper, so
+  // the budget moves as the hostname is edited. `createdBy` is the ORIGINAL
+  // creator — the device-side description keeps their name across an edit, not
+  // the editor's. Budget math is shared with the desktop IP panel
+  // (public/js/reservation-notes.js); the server refuses an over-length save
+  // either way.
+  function wireNotesBudget(pushEligible, createdBy) {
+    if (!pushEligible || !window.PolarisReservationNotes) return;
+    var notes = document.getElementById("e-notes");
+    var hint = document.getElementById("e-notes-budget");
+    if (!notes || !hint) return;
+    var hostEl = document.getElementById("e-hostname");
+    function render() {
+      var state = window.PolarisReservationNotes.hintFor(
+        notes.value,
+        hostEl ? hostEl.value : "",
+        createdBy,
+      );
+      hint.textContent = state.text;
+      hint.style.color = state.over > 0 ? "var(--md-error, #b3261e)" : "";
+    }
+    notes.addEventListener("input", render);
+    if (hostEl) hostEl.addEventListener("input", render);
+    render();
   }
 
   function submitEdit(row, pushEligible, onSuccess) {

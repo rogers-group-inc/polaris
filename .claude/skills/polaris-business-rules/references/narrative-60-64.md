@@ -1199,3 +1199,91 @@ button that opens an editor whose every save 403s is worse than no button; the r
 control either way. A write made from there must also survive being off the Assets page: the
 editor's post-save refresh calls `loadAssets()`, and `fetchAssetsPage` returns early with no table
 to repaint rather than throwing into a silent unhandled rejection behind a write that succeeded.
+
+
+## Rule 74 — A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the device's
+
+A DHCP reservation in Polaris carries a free-text `notes` column. On a network whose integration
+pushes reservations, that column is not free text at all: it is the body of the FortiOS
+`reserved-address` description, a field the device holds 255 characters of.
+
+Polaris does not write the notes alone into it. It writes
+
+```
+Polaris/<user>: <notes> [<hostname>]
+```
+
+and both halves of the wrapper are load-bearing. The origin prefix is what lets a FortiGate admin
+looking at the device's own DHCP page tell which reserved addresses Polaris owns and who pushed
+them. The bracketed hostname at the END is what
+`subnetRefreshService.extractHostnameFromDescription` reads back — it is the inverse of the
+composer, and the reason a Polaris rebuilt from an empty database can re-derive hostnames from the
+gate rather than losing them.
+
+### The budget is computed, because everything inside the 255 competes
+
+The username, the hostname and the notes all spend from the same 255. A service account called
+`svc-ipam-automation` and a hostname like `sw-01-building-c-idf-3` together cost nearly 60
+characters before the operator has typed anything. So the room left for notes is a function, not a
+number: `reservationNotesBudget` composes the description with a one-character note and subtracts
+that one character. Deriving it that way rather than restating the format means a later change to
+the wrapper does not need the arithmetic changed with it — and cannot silently leave the two
+disagreeing.
+
+### The old cap was wrong twice
+
+Until 2026-09-18 the composed string was capped at 64 characters and anything longer was sliced.
+The number came from FortiOS 6.2, whose description field held 35; 7.x holds 255, and 6.2 has been
+out of support for years.
+
+The first cost is the obvious one: an operator typed a comment, Polaris saved it in full, and the
+FortiGate received a third of it, with nothing said at either end. The Polaris row and the device
+row disagreed about the reservation's own description and neither surface admitted it.
+
+The second cost is worse, and is why this is a rule rather than a constant. A note long enough to
+be cut takes the trailing ` [<hostname>]` with it. `extractHostnameFromDescription` anchors its
+bracket branch to the end of the string, so on the next subnet refresh that branch stopped
+matching — and its legacy branch, `^Polaris(/user)?: (.+)$`, matched instead and returned the
+truncated NOTES as the device's hostname. A long enough comment renamed the thing it described.
+
+### So the cap is the device's, and the refusal is at the keyboard
+
+`RESERVED_ADDRESS_DESCRIPTION_MAX` is 255 — the device's number, not a compromise between device
+versions — and `assertReservationDescriptionFits` throws a 400 naming the budget, what was typed
+and how much to cut. It runs where nothing has happened yet: in `createReservationFlow`'s phase 3,
+beside the MAC and `fortigateDevice` checks and before the row is written, and in
+`updateReservation` before the MAC branch. Neither refusal has contacted a gate.
+
+Refusing rather than truncating is the whole point. A truncation is a decision about the
+operator's words made after they stopped looking; a 400 is the same decision handed back to them
+while they can still act on it.
+
+### Three boundaries, so the rule stays a rule and not a nuisance
+
+**Only push-eligible subnets are judged.** Off one, `notes` is a `@db.Text` column with no device
+field behind it, and a 300-character note is perfectly reasonable.
+
+**An edit is judged only when it touches `hostname` or `notes`**, and then against what the update
+will actually STORE — `undefined` means "not changing that field", so Prisma leaves the stored
+value in place and so does the check. Judging the effective value unconditionally would strand
+every row whose note predates this rule: the operator who came to change an expiry date would get
+a 400 about a field they never touched, on every save, forever. Clearing or shortening such a note
+is explicitly allowed, because the check reads the NEW value.
+
+**The truncating backstop stays.** Several paths write these descriptions without passing through a
+save the operator made: discovery-authored notes, the retry tick replaying a queued row, the
+FortiSwitch/FortiAP auto-reserve pass. Those rows are not refused — they are sliced, exactly as
+before. The `slice` is not dead code; it is what the gate boundary above hands off to.
+
+### The browser counts along, and is checked against the server
+
+`public/js/reservation-notes.js` is the shared budget module — the desktop IP panel's four
+reserve/edit modals and both mobile sheets render a live "N of M characters left" under the notes
+field, recomputed as the hostname is typed, and turn it into the refusal's wording once the note
+goes over. It is advisory: the service is what refuses, and an API client that never loads a page
+is held to exactly the same limit. It exists because the alternative is an operator typing 300
+characters into a field that will take 223 of them and learning so from an error.
+
+`tests/unit/reservationNotesBudgetDom.test.ts` asserts the module's `budgetFor` against the
+server's own `reservationNotesBudget` across four shapes, which is what stops the mirror drifting
+from the thing it mirrors.

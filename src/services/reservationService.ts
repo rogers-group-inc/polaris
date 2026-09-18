@@ -22,6 +22,7 @@ import {
   normalizeMac,
   classifyPushError,
   integrationPushEnabled,
+  assertReservationDescriptionFits,
   type PushReservationResult,
 } from "./reservationPushService.js";
 import { logEvent, buildChanges } from "./eventLogService.js";
@@ -393,6 +394,16 @@ async function createReservationFlow(input: CreateReservationInput) {
         `Subnet ${subnet.cidr} has no fortigateDevice — the integration discovered the subnet without a device name, so push cannot resolve a target FortiGate`,
       );
     }
+    // The device-side `description` is composed from creator + notes +
+    // hostname and FortiOS holds 255 characters of it (business rule 74).
+    // Refuse here, before the row exists, rather than shipping a comment the
+    // gate will truncate.
+    assertReservationDescriptionFits({
+      hostname: input.hostname ?? null,
+      createdBy: input.createdBy ?? null,
+      ip: input.ipAddress!,
+      notes: input.notes ?? null,
+    });
   }
 
   // 4. Create the reservation (+ mark subnet reserved if full-subnet) —
@@ -658,6 +669,29 @@ export async function updateReservation(
     integrationPushEnabled(integration) &&
     !!reservation.subnet.fortigateDevice &&
     !!reservation.ipAddress;
+
+  // Business rule 74.
+  // The notes an edit stores are the device-side description's body — on the
+  // next MAC push, on the retry tick, or on a later re-push — so they are held
+  // to the FortiGate's 255-character budget even when this particular save
+  // contacts no device. Hostname counts too: it rides inside the same 255.
+  //
+  // Judged only when the edit TOUCHES one of those two, and then against what
+  // the update will actually store (`undefined` means "not changing that
+  // field", so Prisma leaves the stored value in place). A row whose note was
+  // written before this rule — or by discovery, which this never gates — must
+  // stay editable: refusing every save on it would strand the row, and the
+  // operator changing its expiry did not author the over-length description.
+  // Those rows keep the truncating backstop in buildDescription.
+  const descriptionTouched = input.hostname !== undefined || input.notes !== undefined;
+  if (pushEligible && descriptionTouched) {
+    assertReservationDescriptionFits({
+      hostname: input.hostname !== undefined ? input.hostname : reservation.hostname,
+      createdBy: reservation.createdBy,
+      ip: reservation.ipAddress!,
+      notes: input.notes !== undefined ? input.notes : reservation.notes,
+    });
+  }
 
   // Updating a push-eligible reservation's MAC must succeed on the device
   // before we touch Polaris — otherwise the two views diverge.

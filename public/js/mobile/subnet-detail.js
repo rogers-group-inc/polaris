@@ -437,7 +437,7 @@
           + '  </div>')
       + '  <div class="tf-outlined"><span class="lbl">Notes</span>'
       + '    <input class="field" id="r-notes" maxlength="500" placeholder="' + (pushEligible ? "Saved to the FortiGate reservation comment" : "") + '" value="' + escapeHtml(pf.notes || "") + '">'
-      + (pushEligible ? '    <div class="support">Saved to the FortiGate reservation comment.</div>' : '')
+      + (pushEligible ? '    <div class="support" id="r-notes-budget">Saved to the FortiGate reservation comment.</div>' : '')
       + '  </div>'
       + '  <details style="margin-bottom:16px;">'
       + '    <summary style="color:var(--md-primary);font-size:14px;font-weight:500;letter-spacing:.1px;cursor:pointer;padding:8px 0;">More fields</summary>'
@@ -474,6 +474,33 @@
         try { macInput.select(); } catch (_) {}
       });
     }
+    wireNotesBudget(pushEligible, "r-notes", "r-notes-budget", "r-hostname", user && user.username);
+  }
+
+  // Live "N characters left" under Notes on a push-eligible network. The notes
+  // become the FortiGate reservation's description, which the device caps at
+  // 255 characters INCLUDING the "Polaris/<user>: … [<hostname>]" wrapper — so
+  // the budget moves as the hostname is typed. Budget math is shared with the
+  // desktop IP panel (public/js/reservation-notes.js); the server refuses an
+  // over-length save either way.
+  function wireNotesBudget(pushEligible, notesId, hintId, hostId, createdBy) {
+    if (!pushEligible || !window.PolarisReservationNotes) return;
+    var notes = document.getElementById(notesId);
+    var hint = document.getElementById(hintId);
+    if (!notes || !hint) return;
+    var hostEl = hostId ? document.getElementById(hostId) : null;
+    function render() {
+      var state = window.PolarisReservationNotes.hintFor(
+        notes.value,
+        hostEl ? hostEl.value : "",
+        createdBy,
+      );
+      hint.textContent = state.text;
+      hint.style.color = state.over > 0 ? "var(--md-error, #b3261e)" : "";
+    }
+    notes.addEventListener("input", render);
+    if (hostEl) hostEl.addEventListener("input", render);
+    render();
   }
 
   // Placeholder MAC for an IP reserved ahead of the device. Delegates to the

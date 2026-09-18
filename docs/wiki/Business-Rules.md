@@ -634,4 +634,39 @@ against yours, so the two agree wherever you are sitting.
 See [Maintenance-Windows](Maintenance-Windows) and
 [Dashboard](Dashboard#the-widget-library).
 
+### Rule 74
 
+**A field Polaris writes onto a device is budgeted where you type it, and the
+budget is the device's.**
+
+A DHCP reservation's **notes** are a plain comment on a network Polaris only
+reads. On a network it pushes to, they are the body of the FortiGate's
+`reserved-address` description, which the device holds 255 characters of — and
+Polaris spends part of that on the wrapper that makes the entry attributable:
+
+```
+Polaris/<user>: <notes> [<hostname>]
+```
+
+The prefix is how a FortiGate admin tells Polaris's entries from hand-made ones.
+The bracketed hostname at the end is how Polaris reads the hostname back off the
+gate if it ever has to rebuild from one.
+
+Everything in those 255 characters competes, so the room left for notes is
+**computed**, not fixed: a long service-account name or a long hostname leaves
+less. The form counts it down for you while you type.
+
+Going over is **refused** — the save fails, naming the budget, what you typed
+and how many characters to cut. Polaris does not truncate. It used to, at a much
+smaller limit, and it cost twice: a comment was cut on the firewall with nothing
+said at either end, and the cut took the trailing `[hostname]` with it, after
+which the next discovery read the tail of the note back as the device's
+hostname.
+
+Two things this does **not** do. It does not apply off a pushing network —
+there is no device field to fit. And it does not block an edit to some other
+field on a reservation whose note was written before the rule existed (or by
+discovery): only a save that actually changes the notes or the hostname is
+judged, so a row can always be shortened rather than being stuck.
+
+See [IPAM](IPAM#pushing-reservations-to-the-gate).

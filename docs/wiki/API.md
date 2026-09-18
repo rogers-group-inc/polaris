@@ -267,6 +267,13 @@ Two behaviours to code against:
   aborts the create entirely.** You never end up with a Polaris row the gate has
   never heard of — so a 5xx here means *nothing was written*, not *partially
   written*.
+- **On a push-enabled network `notes` is length-budgeted, and over-length is a
+  400.** The notes become the FortiGate entry's description, which the device
+  holds 255 characters of — including the `Polaris/<user>: … [<hostname>]`
+  wrapper Polaris writes around them, so the usable length depends on the
+  creator's username and the hostname. The error names the budget and the
+  overage. Nothing is truncated, and nothing is judged on a network with no DHCP
+  Push ([rule 74](Business-Rules#rule-74)).
 
 ### Events
 
