@@ -60,6 +60,11 @@ import {
   hwSensorFilterMatches,
   METRIC_META,
   FIELD_META,
+  // What KIND of component a trigger reports about, and what to call it — the
+  // reset tree's dimension-space test (business rule 32(b)) and the email's
+  // component row.
+  dimensionSpaceOf,
+  dimensionNounOf,
   isTriggerLeaf,
   normalizeRuleToV2,
   normalizeEscalationToV2,
@@ -1294,7 +1299,16 @@ async function unpinnedPoeFaultReadings(
   return out;
 }
 
-async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asset_state" }>, assets: ScopeAssetRow[]): Promise<Reading[]> {
+async function resolveAssetStateReadings(
+  trigger: Extract<Trigger, { type: "asset_state" }>,
+  assets: ScopeAssetRow[],
+  /** Read unpinned PoE ports even though THIS trigger doesn't qualify for rule
+   *  57's carve-out on its own — set only for the reset leaves of an automation
+   *  whose trigger does. The inverted leaf (`!= fault`) can never qualify by
+   *  itself, and without this the tree is silent about the very port the alert
+   *  is about. See resolveResetTruths. */
+  opts?: { coverUnpinnedPoe?: boolean },
+): Promise<Reading[]> {
   const df = trigger.dimensionFilter ?? {};
   assets = applyDeviceFilters(assets, df); // same asset-set narrowing as the metric resolver
   const index = new Map(assets.map((a) => [a.id, a]));
@@ -1377,8 +1391,11 @@ async function resolveAssetStateReadings(trigger: Extract<Trigger, { type: "asse
       }
       // The pinned ports are done. A FAULT rule adds the rest of the PoE ports
       // from the current-state table — see unpinnedPoeFaultReadings for why the
-      // two sources are unioned rather than one replacing the other.
-      if (poeFaultCoversUnpinned(trigger)) {
+      // two sources are unioned rather than one replacing the other. A reset
+      // leaf of such a rule reads them too (`coverUnpinnedPoe`): it has to be
+      // able to say the faulted port recovered, and `!= fault` never qualifies
+      // for the carve-out on its own terms.
+      if (trigger.field === "poeStatus" && (poeFaultCoversUnpinned(trigger) || opts?.coverUnpinnedPoe)) {
         out.push(...await unpinnedPoeFaultReadings(index, ids, df, mk));
       }
       return out;
@@ -1592,6 +1609,10 @@ function readingContextParts(rule: DbRule, reading: Reading, now: Date, composit
   const base = {
     asset: reading.hostname || reading.assetId || "host",
     dimension: reading.dimLabel || "",
+    // What that component IS, so the email can label it rather than leaving the
+    // port name buried mid-sentence: "Interface — port12 (Indoor AP)". Blank on
+    // a whole-device alert, where the row prunes itself away.
+    dimensionNoun: reading.dimLabel ? dimensionNounOf(trigger) : "",
     severity: rule.severity,
     time: now,
     link: notificationsPageUrl(),
@@ -2246,7 +2267,15 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
       : activeAssets.filter((a) => firingAssetIds.has(a.id));
     if (firing.length > 0 && resetAssets.length > 0) {
       const resetLeaves = collectLeafRefs(resetTree);
-      const truthAt = await resolveResetTruths(resetLeaves, resetAssets);
+      // The firing rows' own dimension vocabulary, and whether this automation
+      // reads unpinned PoE ports — both are properties of the TRIGGER, and both
+      // decide what its reset tree is allowed to answer (business rule 32(b)).
+      const truthAt = await resolveResetTruths(
+        resetLeaves,
+        resetAssets,
+        dimensionSpaceOf(trigger),
+        poeFaultCoversUnpinned(trigger),
+      );
       const readingByKey = new Map(readings.map((r) => [`${r.assetId || ""}|${r.dimKey}`, r]));
       for (const st of firing) {
         const assetId = st.assetId ?? "";
@@ -2315,9 +2344,16 @@ interface LeafTruth {
   hasReading: boolean;
 }
 
-async function resolveOneLeafReadings(leaf: CompositeLeaf, assets: ScopeAssetRow[]): Promise<Reading[]> {
+async function resolveOneLeafReadings(
+  leaf: CompositeLeaf,
+  assets: ScopeAssetRow[],
+  /** A RESET leaf inherits the automation's trigger coverage — see
+   *  resolveResetTruths. Absent on a composite trigger's own leaves, which
+   *  qualify for the carve-out (or not) entirely on their own terms. */
+  opts?: { coverUnpinnedPoe?: boolean },
+): Promise<Reading[]> {
   if (leaf.type === "asset_metric") return resolveAssetMetricReadings({ ...leaf, forDurationSec: 0 }, assets);
-  if (leaf.type === "asset_state") return resolveAssetStateReadings({ ...leaf, forDurationSec: 0 }, assets);
+  if (leaf.type === "asset_state") return resolveAssetStateReadings({ ...leaf, forDurationSec: 0 }, assets, opts);
   const r = await resolveHostMetricReading({ ...leaf, forDurationSec: 0 });
   return r ? [r] : [];
 }
@@ -2395,28 +2431,62 @@ function leafTruthByAssetDim(leaf: CompositeLeaf, readings: Reading[]): Map<stri
  * "clear port2 when port2's error rate drops AND the box's CPU is under 70"
  * evaluates each half where that half actually lives.
  *
+ * And the fallback is EXACTLY as wrong for a leaf in the firing row's OWN
+ * dimension space (business rule 32(b)). A leaf that is about interfaces and has
+ * no reading for port2 has not said port2 recovered — it has said nothing
+ * about port2 — and folding in "some other port on this switch is fine"
+ * answered a question nobody asked. That is not hypothetical: a
+ * `poeStatus == fault` automation covers UNPINNED ports (rule 57's carve-out)
+ * while its seeded reset leaf, `poeStatus != fault`, does not qualify for the
+ * carve-out, so the faulted port produced no reset reading at all — and every
+ * healthy port on the switch stood in for it and cleared the alert. Hence
+ * `sameSpace`: in the firing row's own vocabulary the answer is the component's
+ * own reading or nothing, and nothing leaves the alert standing (a reset tree
+ * never fires on absent evidence).
+ *
+ * `coverUnpinnedPoe` is the other half of that fix: a reset leaf inherits the
+ * TRIGGER's port coverage, so the tree that has to end a carve-out alert can
+ * see the same ports the trigger that raised it could. Without it the leaf is
+ * silent about the one port that matters and the alert never clears at all.
+ *
  * One query pass, folded twice — identical leaves still share their resolver.
  */
 async function resolveResetTruths(
   leaves: LeafRef[],
   assets: ScopeAssetRow[],
+  /** The dimension space of the trigger whose alerts this tree clears — what
+   *  "the firing row's own vocabulary" means. Null for a whole-device trigger,
+   *  where every lookup is a device lookup and the fallback is all there is. */
+  triggerSpace: string | null,
+  /** Does the automation's TRIGGER read unpinned PoE ports (rule 57's
+   *  carve-out)? Then so must its reset leaves. */
+  coverUnpinnedPoe: boolean,
 ): Promise<(leafId: string, assetId: string, dimKey: string) => LeafTruth | undefined> {
   const byResolverKey = new Map<string, Promise<Reading[]>>();
   const byAsset = new Map<string, Map<string, LeafTruth>>();
   const byAssetDim = new Map<string, Map<string, LeafTruth>>();
+  /** Leaves that speak the firing row's own dimension vocabulary — no fallback. */
+  const ownSpace = new Set<string>();
   for (const { leafId, leaf } of leaves) {
     const key = JSON.stringify(leaf);
     let p = byResolverKey.get(key);
     if (!p) {
-      p = resolveOneLeafReadings(leaf, assets);
+      p = resolveOneLeafReadings(leaf, assets, { coverUnpinnedPoe });
       byResolverKey.set(key, p);
     }
     const readings = await p;
     byAsset.set(leafId, leafTruthByAsset(leaf, readings));
     byAssetDim.set(leafId, leafTruthByAssetDim(leaf, readings));
+    if (triggerSpace && dimensionSpaceOf(leaf) === triggerSpace) ownSpace.add(leafId);
   }
-  return (leafId, assetId, dimKey) =>
-    byAssetDim.get(leafId)?.get(`${assetId}|${dimKey}`) ?? byAsset.get(leafId)?.get(assetId);
+  return (leafId, assetId, dimKey) => {
+    const own = byAssetDim.get(leafId)?.get(`${assetId}|${dimKey}`);
+    if (own) return own;
+    // Same vocabulary, no reading for THIS component: say nothing rather than
+    // letting a sibling component answer for it.
+    if (dimKey && ownSpace.has(leafId)) return undefined;
+    return byAsset.get(leafId)?.get(assetId);
+  };
 }
 
 /** Where a tree walk gets each leaf's truth. Keyed by tree-path leafId so the

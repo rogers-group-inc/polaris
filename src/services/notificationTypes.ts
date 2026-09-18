@@ -3985,6 +3985,50 @@ export const DIMENSION_NOUNS: Record<string, string> = {
 };
 
 /**
+ * The dimension VOCABULARY a trigger or leaf speaks — its dimension keys,
+ * sorted and joined — or null when it is a whole-device thing (CPU,
+ * monitorStatus, an event).
+ *
+ * It exists to answer one question the reset-tree lookup has to get right:
+ * "does this leaf report about the same KIND of component the firing alert is
+ * about?" Two leaves in the same space (a `poeStatus` trigger and an
+ * `ifOperStatus` reset leaf, both `["ifNamePattern"]`) index their readings by
+ * the same dimension key, so a missing reading for one port is a missing
+ * reading, never a licence to answer from another port. Two leaves in
+ * DIFFERENT spaces (a per-port trigger and a device-wide CPU leaf) cannot
+ * index each other's keys at all, and the device-wide answer is the only one
+ * there is — which is the mixed-tree case resolveResetTruths exists to serve.
+ *
+ * The key SET is the identity on purpose: `sdwanRuleStatus` (`["healthCheck"]`)
+ * and `sdwanMemberState` (`["healthCheck", "link"]`) are both SD-WAN, but their
+ * readings are keyed differently, so a member-state leaf genuinely cannot
+ * answer about a rule-status dimension and the two are correctly separate.
+ */
+export function dimensionSpaceOf(
+  t: { type?: string; metric?: string; field?: string } | null | undefined,
+): string | null {
+  if (!t) return null;
+  const keys = t.type === "asset_metric"
+    ? METRIC_DIMENSIONS[t.metric ?? ""]
+    : t.type === "asset_state" ? STATE_FIELD_DIMENSIONS[t.field ?? ""] : null;
+  return keys && keys.length ? [...keys].sort().join(",") : null;
+}
+
+/** What a per-component alert CALLS its component, for the one line of an email
+ *  or a page that has to label it ("Interface", "Sensor", "IPsec tunnel").
+ *  Empty for a whole-device trigger, which has no component to name. */
+export function dimensionNounOf(
+  t: { type?: string; metric?: string; field?: string } | null | undefined,
+): string {
+  if (!t) return "";
+  const keys = t.type === "asset_metric"
+    ? METRIC_DIMENSIONS[t.metric ?? ""]
+    : t.type === "asset_state" ? STATE_FIELD_DIMENSIONS[t.field ?? ""] : null;
+  const noun = keys?.length ? DIMENSION_NOUNS[keys[0]!] : undefined;
+  return noun ? noun.charAt(0).toUpperCase() + noun.slice(1) : "";
+}
+
+/**
  * The catalog the builder UI reads from GET /notification-rules/schema, so the
  * frontend renders the right inputs per trigger type without hardcoding. The
  * `*Meta` maps add display labels / units / valid values / applicable dimension

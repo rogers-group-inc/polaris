@@ -219,8 +219,13 @@ error; the save refuses a scope excluding the caller.
 ### Rule 32
 **A reset condition answers "what has to become true again", so it starts as the
 trigger inverted — and it resolves where the alert lives.** While firing, the
-tree is the sole recovery authority. Resolution is dimension-first with a
-per-asset fallback. Reset leaves inherit the trigger's window. Event and change
+tree is the sole recovery authority. Resolution is dimension-first: a reset
+condition on the same kind of component clears that component's alert alone,
+and only a condition on something device-wide (CPU, memory, monitor status)
+clears them together — one healthy port never clears another port's alert. A
+reset condition also watches the same components the trigger does, including
+the unpinned PoE ports a fault condition covers (Rule 57). Reset leaves
+inherit the trigger's window. Event and change
 triggers get a **counterpart Event** instead — and a signal Polaris writes under
 one action for both directions is split so it has one (`capacity.severity_recovered`,
 `platform.lifecycle_recovered`), written only on a landing back at healthy, never
