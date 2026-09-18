@@ -2739,6 +2739,12 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   color: var(--color-text-tertiary);
   margin-top: 3px;
 }
+/* A hint that has turned into a refusal — the field's own value is now outside
+   what the server will accept (the reservation-notes budget counter is the
+   first user). Pairs with `.input-error` on the field itself. */
+.form-group .hint.hint-error {
+  color: var(--color-danger, #c44);
+}
 .form-group .form-value {
   padding: 0.45rem 0;
   font-size: 0.85rem;

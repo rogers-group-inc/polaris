@@ -238,6 +238,29 @@ real `reserved-address` entry on the FortiGate at create time.
   reservation the gate has never heard of.
 - Releasing a reservation expires the gate's lease.
 
+### Reservation notes become the entry's description
+
+On a pushing network the **Reservation notes** field is not a private Polaris
+comment — it is the body of the entry's description on the FortiGate, written as
+
+```
+Polaris/<your username>: <your notes> [<hostname>]
+```
+
+so that a FortiGate admin can see which reserved addresses Polaris owns, who
+created them and what device is meant to be there.
+
+FortiOS holds **255 characters** of that field, wrapper included. Your username
+and the hostname are spent out of the same 255, so the room left for notes moves
+with them — the counter under the field tells you how much is left as you type,
+and recounts when you edit the hostname. Go over it and the save is **refused**
+with the number of characters to cut ([rule 74](Business-Rules#rule-74)); Polaris
+does not quietly shorten the note on its way to the gate, because a comment cut
+in half on a production firewall is a comment nobody can trust.
+
+The limit applies only where Polaris actually writes to a device. On a network
+with no DHCP Push, notes are ordinary free text and the counter does not appear.
+
 Two further toggles ride on top of DHCP Push, both **off by default**:
 
 - **Auto-reserve Fortinet infrastructure** — each discovery cycle pins the

@@ -539,3 +539,166 @@ d("device-owned reservations are read-only", () => {
     expect(preview.body.ips).toEqual(["10.69.1.3", "10.69.1.4"]);
   });
 });
+
+// ─── FortiGate description budget ──────────────────────────────────────
+//
+// On a network that pushes reservations, `notes` is the body of the FortiOS
+// `reserved-address` description — 255 characters including the
+// "Polaris/<user>: … [<hostname>]" wrapper. Over-length input is refused at
+// save time rather than truncated on the way to the gate; none of these cases
+// reaches a device, because the check runs before the row is written (create)
+// and before the MAC branch (update).
+
+d("reservation notes are held to the FortiGate's description budget", () => {
+  /** A subnet whose integration pushes reservations to a named FortiGate. */
+  async function pushEligibleSubnet(cidr: string, blockCidr: string) {
+    const integration = await prisma.integration.create({
+      data: {
+        name: `FMG ${cidr}`,
+        type: "fortimanager",
+        config: { host: "fmg.invalid", pushReservations: true },
+      } as any,
+    });
+    const block = await prisma.ipBlock.create({
+      data: { name: "B", cidr: blockCidr, ipVersion: "v4" } as any,
+    });
+    return prisma.subnet.create({
+      data: {
+        blockId: block.id,
+        cidr,
+        name: "pushy",
+        discoveredBy: integration.id,
+        fortigateDevice: "FGT-TEST-01",
+      } as any,
+    });
+  }
+
+  const LONG_NOTE = "n".repeat(300);
+
+  it("refuses an over-length note at create, and writes no row", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const subnet = await pushEligibleSubnet("10.71.1.0/24", "10.71.0.0/16");
+    const resp = await agent
+      .post("/api/v1/reservations")
+      .set("X-CSRF-Token", csrf)
+      .send({
+        subnetId: subnet.id,
+        ipAddress: "10.71.1.10",
+        hostname: "host-a",
+        macAddress: "aa:bb:cc:dd:ee:01",
+        notes: LONG_NOTE,
+      });
+    expect(resp.status).toBe(400);
+    expect(resp.body.error).toContain("too long for the FortiGate");
+    expect(await prisma.reservation.count({ where: { subnetId: subnet.id } })).toBe(0);
+  });
+
+  it("accepts the same note on a network Polaris does not push to", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const { subnet } = await scaffold(agent, csrf, "10.72.0.0/16", "10.72.1.0/24");
+    const resp = await agent
+      .post("/api/v1/reservations")
+      .set("X-CSRF-Token", csrf)
+      .send({ subnetId: subnet.id, ipAddress: "10.72.1.10", hostname: "host-a", notes: LONG_NOTE });
+    expect(resp.status).toBe(201);
+    expect(resp.body.notes).toBe(LONG_NOTE);
+  });
+
+  it("refuses an edit that grows the note past the budget, and stores nothing", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const subnet = await pushEligibleSubnet("10.73.1.0/24", "10.73.0.0/16");
+    const row = await prisma.reservation.create({
+      data: {
+        subnetId: subnet.id,
+        ipAddress: "10.73.1.10",
+        hostname: "host-a",
+        macAddress: "aa:bb:cc:dd:ee:02",
+        notes: "short",
+        status: "active",
+        createdBy: "polaris-integration-tester",
+      } as any,
+    });
+    const resp = await agent
+      .put(`/api/v1/reservations/${row.id}`)
+      .set("X-CSRF-Token", csrf)
+      .send({ notes: LONG_NOTE });
+    expect(resp.status).toBe(400);
+    expect(resp.body.error).toContain("too long for the FortiGate");
+    const after = await prisma.reservation.findUnique({ where: { id: row.id } });
+    expect(after?.notes).toBe("short");
+  });
+
+  it("lets an operator SHORTEN a note that predates the rule", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const subnet = await pushEligibleSubnet("10.74.1.0/24", "10.74.0.0/16");
+    const row = await prisma.reservation.create({
+      data: {
+        subnetId: subnet.id,
+        ipAddress: "10.74.1.10",
+        hostname: "host-a",
+        macAddress: "aa:bb:cc:dd:ee:03",
+        notes: LONG_NOTE,
+        status: "active",
+        createdBy: "polaris-integration-tester",
+      } as any,
+    });
+    const resp = await agent
+      .put(`/api/v1/reservations/${row.id}`)
+      .set("X-CSRF-Token", csrf)
+      .send({ notes: "rack 4 spare" });
+    expect(resp.status).toBe(200);
+    const after = await prisma.reservation.findUnique({ where: { id: row.id } });
+    expect(after?.notes).toBe("rack 4 spare");
+  });
+
+  it("leaves a stored over-length note alone when the edit does not touch it", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const subnet = await pushEligibleSubnet("10.75.1.0/24", "10.75.0.0/16");
+    const row = await prisma.reservation.create({
+      data: {
+        subnetId: subnet.id,
+        ipAddress: "10.75.1.10",
+        hostname: "host-a",
+        macAddress: "aa:bb:cc:dd:ee:04",
+        notes: LONG_NOTE,
+        status: "active",
+        createdBy: "polaris-integration-tester",
+      } as any,
+    });
+    // Editing the owner must not be blocked by a note this edit isn't touching
+    // — the alternative strands the row, since every save would 400. The
+    // description's truncating backstop is what covers a row like this.
+    const resp = await agent
+      .put(`/api/v1/reservations/${row.id}`)
+      .set("X-CSRF-Token", csrf)
+      .send({ owner: "network-team" });
+    expect(resp.status).toBe(200);
+    const after = await prisma.reservation.findUnique({ where: { id: row.id } });
+    expect(after?.owner).toBe("network-team");
+    expect(after?.notes).toBe(LONG_NOTE);
+  });
+
+  it("still judges the hostname — it rides inside the same 255", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const subnet = await pushEligibleSubnet("10.76.1.0/24", "10.76.0.0/16");
+    const row = await prisma.reservation.create({
+      data: {
+        subnetId: subnet.id,
+        ipAddress: "10.76.1.10",
+        hostname: "host-a",
+        macAddress: "aa:bb:cc:dd:ee:05",
+        notes: "n".repeat(200),
+        status: "active",
+        createdBy: "polaris-integration-tester",
+      } as any,
+    });
+    const resp = await agent
+      .put(`/api/v1/reservations/${row.id}`)
+      .set("X-CSRF-Token", csrf)
+      .send({ hostname: "h".repeat(60) });
+    expect(resp.status).toBe(400);
+    expect(resp.body.error).toContain("too long for the FortiGate");
+    const after = await prisma.reservation.findUnique({ where: { id: row.id } });
+    expect(after?.hostname).toBe("host-a");
+  });
+});
