@@ -56,7 +56,7 @@ import {
   updateTierMetSince,
   sustainedSeverity,
   tierMetSinceChanged,
-  // Grouped alerts (business rule 74) — the pure fold layer. Everything that
+  // Grouped alerts (business rule 75) — the pure fold layer. Everything that
   // DECIDES lives there and is unit-tested; this file does the I/O.
   type AlertMember,
   ruleGroupsByAsset,
@@ -209,7 +209,7 @@ interface DbRule {
    *  a repeat-only rule still needs its templateCtx snapshot. */
   repeat: RepeatConfig | null;
   /** Consolidate this rule's per-component alerts into one alert per device
-   *  (business rule 74). Never read directly — go through `ruleGroupsByAsset`,
+   *  (business rule 75). Never read directly — go through `ruleGroupsByAsset`,
    *  which also checks the trigger actually reports per component. */
   groupByAsset: boolean;
   /** The AlertGroup this rule delivers through, or null. Membership implies
@@ -1612,7 +1612,7 @@ function readingContextParts(
   reading: Reading,
   now: Date,
   composite?: CompositeFireInfo,
-  /** The contributions on a GROUPED alert (business rule 74). When present,
+  /** The contributions on a GROUPED alert (business rule 75). When present,
    *  {dimension} names the whole set rather than this one reading's component
    *  — the alert IS about all of them, and a sentence naming one of eight
    *  faulted ports would be the storm's problem in a single message. */
@@ -1907,7 +1907,7 @@ async function clearVanishedStates(
   }
   for (const { st, reason } of vanished) {
     if (st.state === "firing") {
-      // On a GROUPED alert (business rule 74) most departures are not clears:
+      // On a GROUPED alert (business rule 75) most departures are not clears:
       // one port of eight going out of scope leaves the alert standing. Ask
       // before logging, so the audit trail does not say "Cleared" about an
       // alert that is still up — the Event vocabulary is what an operator
@@ -1938,11 +1938,11 @@ async function clearVanishedStates(
 async function evaluateThresholdRule(
   rule: DbRule,
   shadowIndex?: ShadowIndex,
-  /** The TICK's pending sends (business rule 74). Owned by
+  /** The TICK's pending sends (business rule 75). Owned by
    *  evaluateAllNotificationRules and drained once every rule has run, so a
    *  grouped alert sends once however many contributions arrived. */
   pendingSends: PendingSends = new Map(),
-  /** The TICK's live-alert index (business rule 74). Only an AlertGroup member
+  /** The TICK's live-alert index (business rule 75). Only an AlertGroup member
    *  needs it: its alert may have been opened by a different automation. */
   tickIndex: TickAlertIndex | null = null,
 ): Promise<void> {
@@ -2023,7 +2023,7 @@ async function evaluateThresholdRule(
   // dedicated pass after this loop, which is why the firing branches below
   // hand recovery off rather than acting on the trigger's own reading.
   const resetTree = rule.reset.mode === "condition" ? (rule.reset.condition ?? null) : null;
-  // GROUPED ALERTS (business rule 74). When this rule consolidates per device,
+  // GROUPED ALERTS (business rule 75). When this rule consolidates per device,
   // fire() stops writing and starts BUFFERING: the eight ports a failing PSU
   // faults land in one `readings` loop, and a read-modify-write per reading
   // would be eight reads, eight updates and eight sends on precisely the tick
@@ -2201,7 +2201,7 @@ async function evaluateThresholdRule(
     }
   }
 
-  // GROUPED ALERTS (business rule 74). Every contribution that crossed into
+  // GROUPED ALERTS (business rule 75). Every contribution that crossed into
   // firing this tick is in the buffer; turn each asset's into ONE alert.
   //
   // Placed HERE, straight after the readings loop, for one hard reason: the
@@ -2366,7 +2366,7 @@ async function evaluateThresholdRule(
   if (rule.reset.mode === "timed" && rule.reset.afterSec) {
     const afterSec = rule.reset.afterSec;
     if (ruleGroupsByAsset(rule)) {
-      // GROUPED ALERTS (business rule 74): a timed reset times the ALERT, not
+      // GROUPED ALERTS (business rule 75): a timed reset times the ALERT, not
       // each contribution.
       //
       // `firedAt` is per state row and contributions join on different ticks,
@@ -2708,7 +2708,7 @@ async function applySustainedRecovery(
 
 async function evaluateCompositeRule(
   rule: DbRule,
-  /** The TICK's pending sends and live-alert index (business rule 74) — a
+  /** The TICK's pending sends and live-alert index (business rule 75) — a
    *  composite may be a member of an AlertGroup. */
   pendingSends: PendingSends = new Map(),
   tickIndex: TickAlertIndex | null = null,
@@ -2759,7 +2759,7 @@ async function evaluateCompositeRule(
     }
   }
 
-  // GROUPED ALERTS (business rule 74). A composite is the natural whole-device
+  // GROUPED ALERTS (business rule 75). A composite is the natural whole-device
   // contribution to an AlertGroup — it already fires once per asset at
   // dimensionKey "", which is exactly one contribution. It can never group on
   // its OWN (the per-rule checkbox refuses it as redundant), so the buffer is
@@ -2855,7 +2855,7 @@ async function evaluateCompositeRule(
     }
   }
 
-  // GROUPED ALERTS (business rule 74): land this composite's contributions
+  // GROUPED ALERTS (business rule 75): land this composite's contributions
   // before the sweeps below, for the same reason the threshold path does —
   // a state row must never be left `firing` with no notification behind it.
   if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
@@ -3118,7 +3118,7 @@ async function enqueueAlertActions(
   rule: DbRule,
   reading: Reading,
   /** Set when this send UPDATES a grouped alert that gained a contribution
-   *  (business rule 74) rather than opening one. */
+   *  (business rule 75) rather than opening one. */
   growth?: { growth: true; count: number },
 ): Promise<void> {
   await executeActionsSafe(notifId, actions, ctx, {
@@ -3135,7 +3135,7 @@ async function enqueueAlertActions(
   });
 }
 
-// ─── Grouped alerts (business rule 74) ──────────────────────────────────────
+// ─── Grouped alerts (business rule 75) ──────────────────────────────────────
 //
 // One alert may name many parts of one device, and it ends only when the last
 // of them does. A CONTRIBUTION is (automation, component) on an asset.
@@ -3543,7 +3543,7 @@ async function fire(
   if (rule.cooldownSec && existing?.firedAt && now.getTime() - existing.firedAt.getTime() < rule.cooldownSec * 1000) {
     return;
   }
-  // GROUPED (business rule 74): buffer the contribution and let
+  // GROUPED (business rule 75): buffer the contribution and let
   // flushGroupFires do every write once it can see all of this tick's.
   //
   // The cooldown check above stays here deliberately — it is per (rule, asset,
@@ -3646,7 +3646,7 @@ async function applyBandTransition(
   const policy = bandNotifyOf(rule);
   const tier = tierForSeverity(rule, newSeverity);
 
-  // GROUPED ALERTS (business rule 74). A band change belongs to ONE
+  // GROUPED ALERTS (business rule 75). A band change belongs to ONE
   // contribution; the alert carries the worst of all of them. So the member
   // half below always runs, and the alert is only rewritten — and only
   // re-notified, and its escalation clock only restarted — when the GROUP's
@@ -3798,7 +3798,7 @@ async function fireResolved(
 ): Promise<void> {
   const policy = bandNotifyOf(rule);
   if (!policy.onResolved || !st.notificationId) return;
-  // GROUPED ALERTS (business rule 74): the banded twin of recover()'s guard.
+  // GROUPED ALERTS (business rule 75): the banded twin of recover()'s guard.
   // "Resolved" is a statement about the ALERT, and on a grouped one a middle
   // contribution recovering resolves nothing — seven ports are still faulted.
   // Guarded here rather than at the four call sites so no future one can
@@ -3900,7 +3900,7 @@ async function recover(
   // "condition" recovers like "auto": the reset tree (or trigger negation)
   // observed a real recovery, so clear the notification + stamp the event.
   if (rule.reset.mode === "auto" || rule.reset.mode === "condition") {
-    // GROUPED ALERTS (business rule 74). Ask FIRST whether this contribution
+    // GROUPED ALERTS (business rule 75). Ask FIRST whether this contribution
     // was the last one, because everything below is about ending the alert —
     // and on a grouped alert a middle contribution recovering ends nothing.
     //
@@ -4617,7 +4617,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // of which (same trigger signature, higher scope specificity). Built once.
   const shadowIndex = buildShadowIndex(rules);
 
-  // Grouped alerts (business rule 74): the tick's sends, drained once every
+  // Grouped alerts (business rule 75): the tick's sends, drained once every
   // rule has been evaluated rather than inside each rule's flush. A grouped
   // alert therefore sends ONCE per tick with the final member set, whatever
   // order its contributions arrived in.

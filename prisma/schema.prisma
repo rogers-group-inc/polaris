@@ -4808,7 +4808,7 @@ model NotificationRule {
   // email. NULL = never repeats, which is every pre-feature automation.
   repeat       Json?
   // Consolidate this automation's per-component alerts into ONE alert per
-  // device (business rule 74). Valid only on a per-dimension asset trigger —
+  // device (business rule 75). Valid only on a per-dimension asset trigger —
   // `validateGrouping` refuses it anywhere else, because there is nothing to
   // fold. Off by default: turning it on changes what {dimension} renders and
   // what one acknowledge covers, so it is opted into, never discovered.
@@ -4818,7 +4818,7 @@ model NotificationRule {
   // feed the carve-out precedence index, so a grouped rule must keep shadowing
   // its ungrouped sibling (business rule 46).
   groupByAsset Boolean  @default(false)
-  /// The AlertGroup this automation delivers through (business rule 74), or
+  /// The AlertGroup this automation delivers through (business rule 75), or
   /// NULL when it delivers on its own. At most ONE: a fire has to have a single
   /// alert to join. Membership IMPLIES `groupByAsset` — joining a group means
   /// one alert per device, components included — so `ruleGroupsByAsset` is true
@@ -4894,7 +4894,7 @@ model Notification {
   // details, since AssetSdwanRule is delete-replaced and by delivery time holds
   // only where the traffic went.
   //
-  // On a GROUPED alert (business rule 74) this stays a SINGLE key — the
+  // On a GROUPED alert (business rule 75) this stays a SINGLE key — the
   // PRIMARY contribution (worst severity, then natural key sort), not a list.
   // Seven readers treat it as one string: alertChartService,
   // alertInterfaceService, nocDashboardService (incl. its dimension sort),
@@ -4911,7 +4911,7 @@ model Notification {
   // ("sdwanSelectedMember") so its charts resolve.
   metric String?
 
-  // ─── Grouped alerts (business rule 74) ────────────────────────────────────
+  // ─── Grouped alerts (business rule 75) ────────────────────────────────────
   // A CONTRIBUTION is (automation, component) on this device. A grouped alert
   // owns a set of them; an ungrouped one leaves all three columns NULL and
   // reads exactly as it did before the feature.
@@ -4945,7 +4945,7 @@ model Notification {
   // fat JSON blob per row just to render "+7". NULL = not a grouped alert.
   dimensionCount Int?
 
-  /// The AlertGroup that OWNS this alert's delivery (business rule 74), when
+  /// The AlertGroup that OWNS this alert's delivery (business rule 75), when
   /// its contributions came through one. Every delivery-time read of policy —
   /// the acknowledge-note gate, the escalation chains, the reminder cadence,
   /// the reset actions — resolves through `alertOwnerOf`, which answers the
@@ -4981,7 +4981,7 @@ model Notification {
 // on read and preserved on write (notificationChannelService). web_push is a
 // singleton (one server VAPID keypair) — the service enforces a single row.
 /// A named set of automations whose alerts about ONE device fold into a single
-/// alert (business rule 74). "Switch health" over a PoE-fault automation, a
+/// alert (business rule 75). "Switch health" over a PoE-fault automation, a
 /// chassis-temperature one and an interface-down one: whatever they raise about
 /// sw-idf3 is one alert, one message, one acknowledgement.
 ///
@@ -5166,7 +5166,7 @@ model NotificationRuleState {
 
   @@unique([ruleId, assetId, dimensionKey])
   @@index([ruleId])
-  // Grouped alerts (business rule 74): many firing rows share one
+  // Grouped alerts (business rule 75): many firing rows share one
   // Notification, and every recovery asks "is any OTHER row still firing on
   // this notification?" before it is allowed to end the alert. That count is
   // on the recovery transition only, but it is on the hot path's tail — index

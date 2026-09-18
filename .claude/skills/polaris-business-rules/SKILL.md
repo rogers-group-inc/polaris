@@ -11,7 +11,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(75 is the next free number.)
+(76 is the next free number.)
 
 ## How to read
 
@@ -43,7 +43,7 @@ Reference files (all verbatim):
 - [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–43 (the filename is a stable citation key — see the numbering note)
 - [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–59 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — full narrative, rules 60–73 (the filename keeps its original range: it is a stable citation key. Split out 2026-09-15 when the 44–48 file reached the 1500-line ceiling)
-- [references/narrative-74.md](references/narrative-74.md) — full narrative, rules 74+ (split out 2026-09-18 when the 60-64 file reached the 1500-line ceiling; the filename is a stable citation key)
+- [references/narrative-75.md](references/narrative-75.md) — full narrative, rules 75+ (split out 2026-09-18 when the 60-64 file reached the 1500-line ceiling; the filename is a stable citation key)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -128,7 +128,7 @@ before changing anything the invariant constrains.
 | 71 | A figure Polaris reports about itself accounts for itself, and a measurement whose mechanism broke says so instead of reading zero | invariants-30-43 | narrative-60-64 |
 | 72 | A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success | invariants-30-43 | narrative-60-64 |
 | 73 | Planned downtime is reported as planned, and a scoped view of a window still reports the WHOLE window | invariants-30-43 | narrative-60-64 |
-| 74 | An alert may name many problems on one device, and it ends only when the last of them does | invariants-30-43 | narrative-74 |
+| 75 | An alert may name many problems on one device, and it ends only when the last of them does | invariants-30-43 | narrative-75 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

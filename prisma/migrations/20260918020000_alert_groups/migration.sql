@@ -1,4 +1,4 @@
--- Alert groups (business rule 74, second half): a named set of automations
+-- Alert groups (business rule 75, second half): a named set of automations
 -- whose alerts about ONE device fold into a single alert.
 --
 -- A group owns DELIVERY -- one set of notify actions, one escalation chain, one

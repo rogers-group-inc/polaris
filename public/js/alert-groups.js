@@ -2,7 +2,7 @@
 /**
  * public/js/alert-groups.js — the Automations page's "Alert Groups" tab.
  *
- * An AlertGroup (business rule 74) is a named set of automations whose alerts
+ * An AlertGroup (business rule 75) is a named set of automations whose alerts
  * about ONE device fold into a single alert. The group owns DELIVERY — who is
  * told, how it escalates, how often it reminds, whether closing it out needs a
  * note — while its member automations keep owning DETECTION.

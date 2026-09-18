@@ -342,7 +342,7 @@ export async function activeAlertSeverityByAsset(
     select: {
       id: true, assetId: true, severity: true, acknowledged: true,
       rule: { select: { trigger: true } },
-      // A GROUPED alert (business rule 74) may be raised by several
+      // A GROUPED alert (business rule 75) may be raised by several
       // automations, so "is this alert about the thing this widget measures?"
       // is answered by ANY contributing trigger. Without it a switch's grouped
       // alert vanishes from the interfaces pill whenever the primary
@@ -1154,7 +1154,7 @@ export interface AlertRow {
   severity: string;
   raisedAt: Date;
   /** What KIND of problem this is, and the widget's row title: the AlertGroup's
-   *  name when the alert is delivered through one (business rule 74), else the
+   *  name when the alert is delivered through one (business rule 75), else the
    *  automation's. */
   ruleName: string | null;
   /** Set only when an AlertGroup owns the alert — the surfaces that want to say
@@ -1232,7 +1232,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
       id: true, ruleId: true, assetId: true, assetHostname: true, dimension: true, message: true,
       severity: true, triggeredAt: true,
       acknowledged: true, acknowledgedBy: true, rule: { select: { name: true } },
-      // Grouped alerts (business rule 74): the widget's row TITLE is what kind
+      // Grouped alerts (business rule 75): the widget's row TITLE is what kind
       // of problem this is, and for a grouped alert that is the group's name —
       // without it the row renders titleless. `dimensionCount` drives the "+N"
       // affordance beside it.

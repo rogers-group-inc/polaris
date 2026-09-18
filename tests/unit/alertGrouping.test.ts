@@ -1,7 +1,7 @@
 /**
  * tests/unit/alertGrouping.test.ts
  *
- * The pure fold layer behind grouped alerts (business rule 74): one alert may
+ * The pure fold layer behind grouped alerts (business rule 75): one alert may
  * name many parts of one device, and it ends only when the last of them does.
  *
  * Everything here decides; nothing here touches the database. The engine owns

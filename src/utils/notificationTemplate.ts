@@ -153,7 +153,7 @@ export interface TemplateContextParts {
   value?: string;
   threshold?: string;
   dimension?: string;
-  /** GROUPED ALERTS (business rule 74). On an alert that names several
+  /** GROUPED ALERTS (business rule 75). On an alert that names several
    *  components, `{dimension}` is the capped list, so these three are the ways
    *  back to the parts of it a sentence may want on its own. All three are set
    *  on every alert — on an ungrouped one they describe its single component,

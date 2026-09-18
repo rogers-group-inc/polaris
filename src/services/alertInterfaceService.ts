@@ -287,7 +287,7 @@ export async function buildInterfaceLldpBlocks(
   metric: string | null,
   dimension: string | null,
   timeZone: string | null = null,
-  /** Every port a GROUPED alert names (business rule 74), primary first. When
+  /** Every port a GROUPED alert names (business rule 75), primary first. When
    *  given, the block covers all of them instead of just `dimension` — an
    *  alert about eight faulted ports whose email explains one of them is the
    *  storm's problem with extra steps. */

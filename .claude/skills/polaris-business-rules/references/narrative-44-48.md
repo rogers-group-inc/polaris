@@ -1076,7 +1076,7 @@ something" was never a statement about the pin set — but on a fleet of access 
 step change in how many ports one rule watches, and the storm it can raise is correlated: a PSU
 browning out or a stack member rebooting faults many ports at once, and the engine keyed alert
 state per `(rule, asset, dimension)` with no per-asset coalescing, so that was one alert, one
-email and one ack link per port. **That gap is business rule 74's** (2026-09-18): an automation
+email and one ack link per port. **That gap is business rule 75's** (2026-09-18): an automation
 may now consolidate per device, so the eight ports a failing PSU takes down raise one alert
 naming all eight, with one message and one acknowledgement. It is opt-in per automation and does
 not change what THIS rule decides — the carve-out still governs which ports produce a reading;

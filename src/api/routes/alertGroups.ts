@@ -1,7 +1,7 @@
 /**
  * src/api/routes/alertGroups.ts — /api/v1/automations/groups
  *
- * CRUD for AlertGroup (business rule 74): a named set of automations whose
+ * CRUD for AlertGroup (business rule 75): a named set of automations whose
  * alerts about one device fold into a single alert, with the group owning
  * delivery — recipients, escalation, reminders, the acknowledge-note policy.
  *

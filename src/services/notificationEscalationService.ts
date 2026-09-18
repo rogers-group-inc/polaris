@@ -279,7 +279,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     if (allEscalationsOf(rule).length > 0 || allRepeatsOf(rule).length > 0) rules.set(r.id, rule);
   }
 
-  // ALERT GROUPS (business rule 74). A grouped alert's escalation chain and
+  // ALERT GROUPS (business rule 75). A grouped alert's escalation chain and
   // reminder cadence belong to the GROUP, not to whichever member automation
   // happened to raise it — that is the whole point of the split, and it is also
   // what keeps `escalationState`'s `a<i>:t<j>` keys meaningful: one action list
@@ -402,7 +402,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
 
   for (const n of notifs) {
     // Whoever owns this alert's delivery: its AlertGroup when it has one
-    // (business rule 74), else its automation. Everything downstream — the
+    // (business rule 75), else its automation. Everything downstream — the
     // chains, the reminder clock, the composed email, the per-chain stopOn —
     // reads this one object, so the grouped and ungrouped paths stay the same
     // code rather than growing a parallel copy that can drift.
@@ -454,7 +454,7 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
           assetId: n.assetId,
           // PROVENANCE, not policy: which AUTOMATION this alert came from, so a
           // script run and the audit details still name it even when an
-          // AlertGroup supplied the actions (business rule 74).
+          // AlertGroup supplied the actions (business rule 75).
           ruleId: n.ruleId ?? rule.id,
           ruleName: rule.name,
           ruleEmailComposition: rule.emailComposition,

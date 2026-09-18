@@ -1,4 +1,4 @@
-# Business rules 74+ — the narrative
+# Business rules 75+ — the narrative
 
 Split out of `narrative-60-64.md` on 2026-09-18 when that file reached the 1500-line ceiling, the
 same way `narrative-44-48.md` was split from `narrative-36-43.md` and `narrative-60-64.md` from it.
@@ -6,7 +6,7 @@ same way `narrative-44-48.md` was split from `narrative-36-43.md` and `narrative
 holds, because code comments, commits and the other skills link to them. Read the invariant in
 `invariants-30-43.md` first; this is the reasoning behind it.
 
-## Rule 74
+## Rule 75
 
 **An alert may name many problems on one device, and it ends only when the last of them does.**
 

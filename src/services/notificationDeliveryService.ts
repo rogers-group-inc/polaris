@@ -79,7 +79,7 @@ interface DeliveryRow {
      *  rather than read (the alert is about an invented device with no
      *  telemetry — see `utils/sampleAlertDevice`). */
     testRun: boolean;
-    /** The contributions a GROUPED alert names (business rule 74) —
+    /** The contributions a GROUPED alert names (business rule 75) —
      *  AlertMember[], or null on an alert about a single thing. Read here so
      *  the interface block can explain every affected port rather than only
      *  the one the alert leads with. */
@@ -276,7 +276,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
         // stays until those have drained. Absent = the install's zone, which is
         // what the body around it now uses.
         typeof meta.timeZone === "string" ? meta.timeZone : null,
-        // Every port a GROUPED alert names (business rule 74), primary first,
+        // Every port a GROUPED alert names (business rule 75), primary first,
         // so the block explains all of them and not just the one the alert
         // leads with. Null on an ungrouped alert, which keeps the
         // single-port path byte-identical.

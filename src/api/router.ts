@@ -188,7 +188,7 @@ const deprecatedAlias = (successor: string) =>
 // Script registry — MUST mount before /automations so "scripts" is never
 // captured as a rule id. Gated automationScripts (RCE-equivalent key).
 router.use("/automations/scripts", automationScriptsRouter);
-// Alert groups (business rule 74). ABOVE /automations for the same reason
+// Alert groups (business rule 75). ABOVE /automations for the same reason
 // /automations/scripts is: the literal path must not be captured as a rule id.
 router.use("/automations/groups", alertGroupsRouter);
 // Rules CRUD/schema/preview.

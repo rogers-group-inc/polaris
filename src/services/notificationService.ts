@@ -79,7 +79,7 @@ const ACK_POLICY_INCLUDE = {
   // push action) and let them disagree.
   rule: { select: { id: true, name: true, requireAckNote: true, severity: true, severityBands: true } },
   // An alert delivered through an AlertGroup takes its note policy from the
-  // GROUP (business rule 74) — the group owns delivery, and "does closing this
+  // GROUP (business rule 75) — the group owns delivery, and "does closing this
   // out need a note" is a delivery policy. `enabled` rides along because a
   // disabled group owns nothing: its members go back to delivering on their
   // own, and an alert that outlives the switch-off falls back to the rule
@@ -213,7 +213,7 @@ export async function getNotificationForViewer(
       // ruleId is SetNull) has no note policy left to enforce.
       rule: { select: { id: true, name: true, requireAckNote: true, severity: true, severityBands: true } },
       // An alert delivered through an AlertGroup is NAMED by its group
-      // (business rule 74): that is the thing the operator configured, the
+      // (business rule 75): that is the thing the operator configured, the
       // thing one acknowledgement covers, and the thing whose note policy is
       // being enforced on this page.
       alertGroup: { select: { id: true, name: true, enabled: true, requireAckNote: true } },
@@ -261,7 +261,7 @@ function contributingRuleNames(members: unknown): string[] {
 async function runResetActionsForCleared(ids: string[], actor: string): Promise<void> {
   const rows = await prisma.notification.findMany({
     // An alert delivered through an AlertGroup has its OWN reset actions
-    // (business rule 74) and may well carry no automation-level ones, so the
+    // (business rule 75) and may well carry no automation-level ones, so the
     // filter widens from "has a rule" to "has an owner".
     where: { id: { in: ids }, cleared: false, OR: [{ ruleId: { not: null } }, { alertGroupId: { not: null } }] },
     select: {

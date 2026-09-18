@@ -516,7 +516,7 @@ function withV2<T extends { reset: unknown; actions: unknown }>(row: T): T {
   return { ...row, reset: v2.reset, actions: v2.actions };
 }
 
-// The AlertGroup an automation delivers through (business rule 74). Joined on
+// The AlertGroup an automation delivers through (business rule 75). Joined on
 // the read paths the builder uses, so the wizard's actions step can say "this
 // is delivered by <group>" — editing recipients that no longer run, with no
 // way to find that out, is the one failure mode the banner exists to prevent.
@@ -602,7 +602,7 @@ export async function updateRule(id: string, input: RuleInput, actor?: string) {
   await assertActionRefs(input);
   const identityChanged =
     triggerIdentityOf(existing.trigger as unknown as Trigger) !== triggerIdentityOf(input.trigger);
-  // GROUPED ALERTS (business rule 74). Turning the per-device fold on or off
+  // GROUPED ALERTS (business rule 75). Turning the per-device fold on or off
   // changes the SHAPE of this automation's alerts — one per device instead of
   // one per component — and a live alert cannot be reshaped in place: the
   // firing branch is a no-op for a steadily-firing condition, so nothing would

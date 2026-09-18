@@ -1044,7 +1044,7 @@ const api = {
     // down detection at all — the delete/disable confirmation reads it.
     removalImpact: (id) => request("GET", `/automations/${id}/removal-impact`),
   },
-  // Alert groups (business rule 74) — a named set of automations whose alerts
+  // Alert groups (business rule 75) — a named set of automations whose alerts
   // about one device fold into one alert, with the group owning delivery.
   // Mounted ABOVE /automations server-side, like scripts, so the literal path
   // is never captured as a rule id.

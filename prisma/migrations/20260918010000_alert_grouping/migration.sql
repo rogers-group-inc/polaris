@@ -1,4 +1,4 @@
--- Grouped alerts (business rule 74): one alert may name many parts of one
+-- Grouped alerts (business rule 75): one alert may name many parts of one
 -- device, and it ends only when the last of them does.
 --
 -- A CONTRIBUTION is (automation, component) on an asset. The per-(rule, asset,

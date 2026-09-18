@@ -1,7 +1,7 @@
 /**
  * src/services/alertGroupService.ts
  *
- * The AlertGroup registry (business rule 74, second half): a named set of
+ * The AlertGroup registry (business rule 75, second half): a named set of
  * automations whose alerts about ONE device fold into a single alert.
  *
  * ── The split this service exists to hold ────────────────────────────────────

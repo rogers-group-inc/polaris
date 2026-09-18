@@ -4844,7 +4844,7 @@ async function openAutomationWizard(existing, opts) {
     return "reading";
   }
   /**
-   * "Raise one alert per device" (business rule 74).
+   * "Raise one alert per device" (business rule 75).
    *
    * Rendered only when the trigger actually reports per component, because
    * that is the only case where there is anything to fold — and a checkbox
@@ -5711,7 +5711,7 @@ async function openAutomationWizard(existing, opts) {
       ? "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes the alert text — {value} is the source event’s own message; leave blank for the default."
       : "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes what the alert and the audit Event say; leave blank for the default.";
     var html = '<h3 style="margin:0 0 0.25rem">What should happen?</h3>' +
-      // DELIVERED BY A GROUP (business rule 74). While this automation belongs
+      // DELIVERED BY A GROUP (business rule 75). While this automation belongs
       // to an AlertGroup the group does the telling — its recipients, its
       // escalation chain, its reminder cadence. Everything below still SAVES,
       // and is what this automation goes back to if it ever leaves the group,
@@ -5730,7 +5730,7 @@ async function openAutomationWizard(existing, opts) {
         // used to live here. It moved into each severity section — see
         // followUpBlockHtml.
         //
-        // Consolidating per device (business rule 74) stays HERE, and not in
+        // Consolidating per device (business rule 75) stays HERE, and not in
         // followUpBlockHtml beside it, because it is a property of the alert
         // RECORD rather than of a severity: that block is cloned per band, and
         // "how many alerts exist" cannot have a different answer per tier.
@@ -8229,7 +8229,7 @@ async function openAutomationWizard(existing, opts) {
     // every band inherits when it says nothing of its own.
     var baseBlock = followUpBlocks(panel)[0];
     if (baseBlock) draft.requireAckNote = collectFollowUp(baseBlock).requireAckNote;
-    // Consolidating per device (business rule 74). Read from the control when
+    // Consolidating per device (business rule 75). Read from the control when
     // it is on screen; FORCED OFF when it is not, which is the case that
     // matters: an operator who ticked it on a PoE-fault trigger and then
     // switched the trigger to CPU would otherwise post a flag the server

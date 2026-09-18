@@ -2507,7 +2507,7 @@ const ruleInputBaseSchema = z.object({
   // ack link and the push action obey it too.
   requireAckNote: z.boolean().optional(),
   // Consolidate this automation's per-component alerts into ONE alert per
-  // device (business rule 74): eight faulted PoE ports become one alert naming
+  // device (business rule 75): eight faulted PoE ports become one alert naming
   // all eight, one email, one acknowledge. Refused by validateGrouping on any
   // trigger that does not report per component — there would be nothing to
   // fold, and a checkbox that silently does nothing is worse than none.
@@ -2550,7 +2550,7 @@ export interface RuleInput {
   /** Refuse an acknowledgement with no note (enforced server-side). */
   requireAckNote: boolean;
   /** Fold this automation's per-component alerts into one alert per device
-   *  (business rule 74). Per-dimension triggers only. */
+   *  (business rule 75). Per-dimension triggers only. */
   groupByAsset: boolean;
   channels: string[];
   emailComposition: EmailComposition | null;
@@ -4031,7 +4031,7 @@ export const STATE_FIELD_DIMENSIONS: Record<string, string[]> = {
   sdwanMemberState: ["healthCheck", "link"],
 };
 
-// ─── Grouped alerts (business rule 74) ──────────────────────────────────────
+// ─── Grouped alerts (business rule 75) ──────────────────────────────────────
 //
 // A CONTRIBUTION is (automation, component) on a device. A grouped alert owns
 // a set of them. Everything below is PURE — the engine does the I/O, these
@@ -4327,7 +4327,7 @@ export function renderMemberList(
   return `${shown.join(", ")} and ${extra} more`;
 }
 
-// ─── Who owns an alert's delivery (business rule 74, second half) ───────────
+// ─── Who owns an alert's delivery (business rule 75, second half) ───────────
 
 /**
  * The delivery policy behind a live alert: its AlertGroup when it has one, else
@@ -4504,7 +4504,7 @@ export function buildSchemaCatalog() {
     // the device (see the resolveResetTruths note in notificationEngine).
     stateFieldDimensions: STATE_FIELD_DIMENSIONS,
     dimensionNouns: DIMENSION_NOUNS,
-    // Consolidating per device (business rule 74). Published as a capability so
+    // Consolidating per device (business rule 75). Published as a capability so
     // a pre-upgrade client simply renders no checkbox rather than posting a
     // field the server would reject — the same degradation posture every other
     // catalog flag takes. The wizard decides WHEN to show it from

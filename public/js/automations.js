@@ -50,7 +50,7 @@ var _rulesPage = 1;
     if (mb) mb.style.display = canManage ? "" : "none";
     var db = document.getElementById("auto-tab-delivery-btn");
     if (db) db.style.display = canManage ? "" : "none";
-    // Alert groups (business rule 74) ride the automations key: a group
+    // Alert groups (business rule 75) ride the automations key: a group
     // decides who gets paged about every one of its members, so it is at least
     // as sensitive as editing one of them.
     var gb = document.getElementById("auto-tab-groups-btn");

@@ -23,7 +23,7 @@ const INTERVAL_MS = 60 * 1000; // 1 minute
  * a second evaluation in the same process while the first is still writing. Two
  * evaluations racing the same `(rule, asset, dimension)` key can both see it
  * `clear` and both fire it. That has always been possible; grouped alerts
- * (business rule 74) make it VISIBLE, because the artifact is two alerts for one
+ * (business rule 75) make it VISIBLE, because the artifact is two alerts for one
  * device rather than a duplicate that looks like a retry. The partial unique
  * index `notifications_group_key_live` is the backstop either way — this is the
  * cheap half of the fix, and the same pattern jobs/dependencyReconciler.ts and

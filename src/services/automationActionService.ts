@@ -80,7 +80,7 @@ export interface ActionExecContext {
    *  part of the email an operator reads in a full inbox after a silent
    *  night. */
   repeat?: { attempt: number; elapsed?: string; quietResumed?: boolean };
-  /** Set by the engine when a GROUPED alert (business rule 74) gained a
+  /** Set by the engine when a GROUPED alert (business rule 75) gained a
    *  contribution after it was already up: this send updates a live alert
    *  rather than opening one. Mutually exclusive with the two above for the
    *  same reason they are with each other — "another port faulted" is neither
@@ -333,7 +333,7 @@ function composeForNotify(
     }
     return composed;
   }
-  // A grouped alert that gained a contribution (business rule 74). Same shape
+  // A grouped alert that gained a contribution (business rule 75). Same shape
   // and same restraint as the reminder prefix above: only when nobody wrote a
   // subject template. The COUNT is the finding — "another port" is noise, "now
   // 9 ports" is a spreading fault — so it is what the marker carries.

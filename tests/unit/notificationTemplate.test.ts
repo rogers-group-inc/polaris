@@ -28,7 +28,7 @@ const FULL_PARTS: TemplateContextParts = {
   value: "97.5",
   threshold: "90",
   dimension: "port1",
-  // Grouped alerts (business rule 74): the three ways back to the parts of a
+  // Grouped alerts (business rule 75): the three ways back to the parts of a
   // multi-component {dimension}. Set on every alert, so they are set here too.
   dimensionCount: "3",
   dimensionFirst: "port1",
