@@ -344,7 +344,8 @@ export interface ActiveMaintenanceSchedule {
  *
  * `assetIds` is the widget's shared NOC filter (region / asset type /
  * FortiGate), resolved by nocDashboardService.resolveFilteredAssetIds; null =
- * unfiltered. **A schedule matches when ANY of its devices does** — a window
+ * unfiltered. **A schedule matches when ANY of its devices does** (business
+ * rule 72 — a scoped view narrows the LIST, never the window) — a window
  * covering switches, APs and servers is still the thing a switch-scoped
  * dashboard needs to know about, so it is listed WHOLE (every device counted,
  * every type named) with `matchedCount` recording how much of it the filter

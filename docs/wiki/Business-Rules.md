@@ -574,3 +574,32 @@ looks small, because that is exactly what happened before this rule existed: a
 
 See [Server-Settings](Server-Settings) for the card itself.
 
+### Rule 72
+**Planned downtime is reported as planned, and a scoped view of a window still
+reports the whole window.** A device in a maintenance window has its monitor
+status frozen, so it is deliberately left out of every "down", "warning" and
+"stale" surface Polaris has ([rule 16](#rule-16)) — which means a dashboard
+built from those widgets says nothing at all about the devices that are down on
+purpose. **Active Maintenance** is the one surface that does, and two things
+follow from being the only one.
+
+Its count never wears the red that every other widget's count means "these are
+down" in. Nobody should act on planned work, so it is not coloured as though
+somebody should.
+
+And filtering it by region, asset type or FortiGate narrows the **list**, not
+the windows in it. Every other widget's rows are devices, so dropping the ones
+out of scope is right; a maintenance row is a *schedule*, covering whatever mix
+of devices it matched. So a schedule appears whenever **any** of its devices is
+in scope, and is then shown whole — every device counted, every type named —
+with the in-scope share stated beside it ("4 devices (2 in this scope)"). The
+alternative reports a smaller outage than the one actually running, which is
+the number an operator would size the work and the return time against.
+
+Window times are the **Polaris server's** wall clock, the same clock the
+schedule is evaluated against; the countdown beside each one is computed
+against yours, so the two agree wherever you are sitting.
+
+See [Maintenance-Windows](Maintenance-Windows) and
+[Dashboard](Dashboard#the-widget-library).
+
