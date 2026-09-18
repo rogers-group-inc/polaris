@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **69 numbered rules**. Each one records a decision *and* the
+Polaris carries **73 numbered rules**. Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -575,6 +575,37 @@ looks small, because that is exactly what happened before this rule existed: a
 See [Server-Settings](Server-Settings) for the card itself.
 
 ### Rule 72
+**A detection script asserts every prerequisite its remediation establishes, and
+a mode that establishes nothing refuses instead of reporting success.** The SSH
+onboarding scripts Polaris generates come in pairs — a detection half that
+answers "is this endpoint ready", and a remediation half that makes it ready —
+and the pairing is what lets a fleet self-heal instead of being configured once
+and drifting. That only holds if the two halves agree about what "ready" means.
+
+So detection checks the account as well as the key: that it exists, that it is
+enabled, and that it is a member of local Administrators on Windows (or has its
+sudoers drop-in on Linux). An endpoint missing any of those cannot have the
+agent installed on it, so reporting it compliant would be reporting success for
+something that does not work.
+
+And when you choose **use an existing account**, the script verifies that
+account and **stops** if it is not there or is not an administrator, instead of
+carrying on to authorize a key for an account that does not exist. It verifies
+without changing anything — choosing an existing account is not asking Polaris
+to create one or to promote it.
+
+The firewall rule is deliberately not checked. If you did not give Polaris a
+server address there is no rule to look for, and a check nothing can satisfy
+would make the pair remediate forever.
+
+One consequence you will see: both scripts now refuse to download until you have
+named the account on the **SSH Deployment** card. Before, the Windows detection
+script would render without one — and could not tell you anything useful when
+it did.
+
+See [Polaris-Agent](Polaris-Agent) for the card and the scripts.
+
+### Rule 73
 **Planned downtime is reported as planned, and a scoped view of a window still
 reports the whole window.** A device in a maintenance window has its monitor
 status frozen, so it is deliberately left out of every "down", "warning" and
@@ -602,4 +633,5 @@ against yours, so the two agree wherever you are sitting.
 
 See [Maintenance-Windows](Maintenance-Windows) and
 [Dashboard](Dashboard#the-widget-library).
+
 

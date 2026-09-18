@@ -1043,7 +1043,99 @@ silently stops folding, which is exactly how this shipped.
 
 ---
 
-## Rule 72 — Planned downtime is reported as planned, and a scoped view of a window still reports the whole window
+## Rule 72 — A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success
+
+An operator paired the generated Windows SSH onboarding scripts under an Intune Remediation,
+set it to run daily, and came back to a fleet that looked healthy. The detection script said
+`ok: Polaris SSH onboarding present` on every endpoint it reached. The account it was supposed
+to have prepared — `polaris-agent` — was not in the local Administrators group on any of them,
+and was not on the machines at all.
+
+Nothing had failed. Two omissions had lined up.
+
+**The detection script never named the account.** It checked four things: the OpenSSH Server
+capability, the `sshd` service, the existence of `administrators_authorized_keys`, and the
+Polaris key inside it. All four were true. The account the key exists to authorize was outside
+what it asked about, so the pair reported compliant and the remediation half — whose job was to
+create that account — never ran again. In the Intune console this reads as a **Detection status**
+of "Without issues" over a **Remediation status** of "Not run", which is indistinguishable from
+a healthy endpoint.
+
+**And existing-account mode never established anything.** `accountMode` defaults to `"existing"`,
+because a created account has a sensible default name (`polaris-agent`) and an existing one does
+not — the operator must name an account that is really out there. In that mode the emitted block
+was two lines: print `Using existing account <name> (not created by this script)`, and carry on.
+It did not check that the account was there. So the script proceeded to install the capability,
+start sshd, append the Polaris public key to `administrators_authorized_keys`, apply the ACL sshd
+demands, and exit 0 reporting `Polaris SSH onboarding complete` — having authorized a key for an
+account that did not exist. Every later SSH attempt would fail at authentication with nothing on
+either side saying why, which is the failure mode the whole generator exists to prevent.
+
+The Linux half had never had either problem. `buildLinuxOnboardingDetectionScript` has always
+checked the account and the sudoers drop-in as well as the key, and `LINUX_ACCOUNT_EXISTING_SH`
+has always refused outright — `error: account $POLARIS_USER does not exist on this host`, exit 1
+— when the named account is missing. Windows was the outlier, and the comment justifying it
+("neither is observable as wrong without guessing at local policy") had been overtaken by the
+onboarding script's own code, which already resolves Administrators by well-known SID precisely
+because the name cannot be trusted.
+
+### Both halves name the account
+
+Windows detection now verifies, in order, that the account exists, that it is enabled, and that
+it is a member of local Administrators — then the key, as before. Existing mode verifies the same
+facts and **refuses** when they do not hold, rather than authorizing a key for nobody. It
+verifies without mutating: an operator who chose "use my existing account" did not ask Polaris to
+edit group membership, and silently promoting an account to administrator is a different act from
+refusing to proceed.
+
+The membership predicate is emitted into both scripts from a single constant, `POLARIS_PS_HELPERS`
+— the same constant that carries the key-presence predicate, renamed from `POLARIS_KEY_PRESENT_FN`
+when it stopped being about one predicate. This is not tidiness. A pair that answers "is this
+account an administrator" two different ways has exactly two outcomes: it oscillates, remediating
+forever against a condition detection will not accept, or it certifies an endpoint that cannot be
+used. Sharing the text makes disagreement impossible rather than unlikely.
+
+Three details inside that predicate are load-bearing, and each was observed rather than assumed:
+
+- **The group is resolved by SID**, `S-1-5-32-544`, never the literal "Administrators". The name
+  is localized and does not resolve on a German or French install.
+- **`Get-LocalGroupMember` is not trustworthy alone on an Entra-joined endpoint.** Depending on
+  the build it returns members whose SID no longer resolves as raw `S-1-12-1-…` strings, or it
+  throws outright and yields nothing at all. The first is harmless — a SID cannot match an account
+  name — but the second would make every such device fail the check forever, so the `catch` falls
+  back to the WinNT provider, which enumerates the group without resolving every member.
+- **Comparison is on the leaf name.** The same member reads `ROGERSGROUPINC\dmoore` from
+  `Get-LocalGroupMember` and bare `dmoore` from the WinNT provider, and the configured account may
+  itself carry a `DOMAIN\` prefix. The cost is that a local `svc` and a domain `CORP\svc` are
+  indistinguishable here; the alternative is a check that silently answers "no" depending on which
+  path the endpoint took, which is the failure this rule is about.
+
+A domain account is invisible to `Get-LocalUser`, so for one of those the membership test is the
+only observable half and the existence checks are skipped rather than failed.
+
+### What stays out, and why the boundary matters
+
+The firewall rule is still not checked. With no `polarisServerIp` configured there is no rule to
+find, which makes it the one condition remediation could never satisfy — a detection that demanded
+it would loop the pair forever against every install that left the firewall alone. That is the
+same reasoning that keeps an unsupported Windows build at exit 0 with an `unsupported:` marker
+rather than 1.
+
+So the rule has two edges, not one. Assert every prerequisite the install genuinely fails
+without — and assert nothing the remediation cannot go and fix, because a detection that can
+never be satisfied is its own outage.
+
+The downstream consequence is deliberate: because Windows detection now names the account, it can
+no longer be rendered without one. `getOnboardingScript` used to carve Windows detection out of
+its "enter the existing account first" refusal; that carve-out is gone, and both halves on both
+platforms now refuse until the account is named. An operator who had published a detection script
+before naming an account was publishing one that could not tell them anything.
+
+See [Polaris-Agent](Polaris-Agent) for the card and the scripts it generates.
+
+---
+
+## Rule 73 — Planned downtime is reported as planned, and a scoped view of a window still reports the whole window
 
 Maintenance is the one state Polaris deliberately hides from almost every surface it has.
 `NOT_IN_MAINTENANCE` is spread across every down/warning/stale feed in `nocDashboardService`,

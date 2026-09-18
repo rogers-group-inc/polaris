@@ -22,7 +22,7 @@
  *     unconfigured.
  *
  * The "is the Polaris key already installed" predicate is emitted into BOTH
- * scripts from one place (POLARIS_KEY_PRESENT_FN) so detection can never drift
+ * scripts from one place (POLARIS_PS_HELPERS) so detection can never drift
  * from what remediation writes.
  *
  * DELIVERY-NEUTRAL BY DESIGN. Nothing in the emitted PowerShell is
@@ -195,13 +195,15 @@ function psLiteral(value: string): string {
 // ─── Shared PowerShell fragments ──────────────────────────────────────────
 
 /**
- * The single source of truth for "is the Polaris key already in this file".
+ * Helpers emitted into BOTH the remediation and the detection script, so the
+ * pair can never disagree about what "already onboarded" means — the Windows
+ * counterpart of POLARIS_SH_HELPERS.
  *
- * Matches on the key BODY — algorithm + base64 — and deliberately ignores the
- * trailing comment, so re-running after a comment change doesn't append a
- * duplicate line. Emitted into both the remediation and detection scripts.
+ * Test-PolarisKeyPresent matches on the key BODY — algorithm + base64 — and
+ * deliberately ignores the trailing comment, so re-running after a comment
+ * change doesn't append a duplicate line.
  */
-const POLARIS_KEY_PRESENT_FN = `
+const POLARIS_PS_HELPERS = `
 function Test-PolarisKeyPresent {
   param([string[]] $Lines, [string] $Key)
   $wantParts = @($Key.Trim() -split '\\s+')
@@ -221,6 +223,43 @@ function Get-PolarisAuthorizedKeysPath {
 
 function Get-PolarisSshCapability {
   return (Get-WindowsCapability -Online -Name 'OpenSSH.Server*' | Select-Object -First 1)
+}
+
+function Get-PolarisAdminGroupName {
+  # By SID: "Administrators" is localized and does not resolve on a German or
+  # French install.
+  return (Get-LocalGroup -SID __SID_ADMINS__).Name
+}
+
+function Test-PolarisLocalAdmin {
+  param([string] $Account)
+  $groupName = Get-PolarisAdminGroupName
+  $members = @()
+  try {
+    $members = @(Get-LocalGroupMember -Group $groupName -ErrorAction Stop |
+                 ForEach-Object { $_.Name })
+  } catch {
+    # An Entra-joined endpoint routinely holds members whose SID no longer
+    # resolves. Depending on the build, Get-LocalGroupMember either returns
+    # those as raw 'S-1-12-1-...' strings (harmless — they cannot match an
+    # account name) or throws outright and yields nothing. The WinNT provider
+    # enumerates the same group without resolving every member, so one stale
+    # ACE cannot make the whole check unanswerable.
+    $members = @(([ADSI]('WinNT://./' + $groupName + ',group')).psbase.Invoke('Members') |
+                 ForEach-Object { ([ADSI]$_).InvokeGet('Name') })
+  }
+  # Compare on the leaf name: the same member reads as 'DOMAIN\\user' from
+  # Get-LocalGroupMember and bare 'user' from the WinNT provider, and the
+  # configured account may itself carry a domain prefix. The cost is that a
+  # local 'svc' and a domain 'CORP\\svc' are indistinguishable here — accepted,
+  # because the alternative is a check that silently answers "no" for whichever
+  # form the endpoint happens to report. -eq is case-insensitive.
+  $wantLeaf = $Account.Split('\\')[-1]
+  foreach ($m in $members) {
+    if ([string]::IsNullOrWhiteSpace($m)) { continue }
+    if ($m.Split('\\')[-1] -eq $wantLeaf) { return $true }
+  }
+  return $false
 }
 `.trim();
 
@@ -260,7 +299,7 @@ $ErrorActionPreference = 'Stop'
 $PolarisPublicKey = __PUBLIC_KEY__
 $PolarisUser      = __USERNAME__
 
-__KEY_PRESENT_FN__
+__PS_HELPERS__
 
 # --- 1. OpenSSH Server capability --------------------------------------------
 $cap = Get-PolarisSshCapability
@@ -349,14 +388,8 @@ if (-not (Get-LocalUser -Name $PolarisUser -ErrorAction SilentlyContinue)) {
   Write-Host ('Local account ' + $PolarisUser + ' already exists')
 }
 
-# Resolve the Administrators group by SID — the name is localized.
-$adminGroupName = (Get-LocalGroup -SID __SID_ADMINS__).Name
-$isMember = $false
-try {
-  $isMember = @(Get-LocalGroupMember -Group $adminGroupName -ErrorAction Stop |
-                Where-Object { $_.Name -like ('*\\' + $PolarisUser) }).Count -gt 0
-} catch { $isMember = $false }
-if (-not $isMember) {
+$adminGroupName = Get-PolarisAdminGroupName
+if (-not (Test-PolarisLocalAdmin -Account $PolarisUser)) {
   Add-LocalGroupMember -Group $adminGroupName -Member $PolarisUser
   Write-Host ('Added ' + $PolarisUser + ' to ' + $adminGroupName)
 } else {
@@ -364,12 +397,40 @@ if (-not $isMember) {
 }
 `.trim();
 
-/** Emitted only for accountMode="existing". */
+/**
+ * Emitted only for accountMode="existing".
+ *
+ * Refuses rather than continuing when the named account is absent or is not an
+ * administrator — the Linux half has always done this and Windows did not,
+ * which is the whole failure this block exists to stop: the script would print
+ * "Using existing account", authorize the key anyway, exit 0, and leave an
+ * endpoint that reports fully onboarded and can never accept a logon. The
+ * installer writes to %ProgramFiles% and registers a service, and sshd reads
+ * administrators_authorized_keys for administrators only, so neither condition
+ * is optional.
+ */
 const ACCOUNT_EXISTING_PS = `
 # --- 2. Account check ---------------------------------------------------------
-# Using an existing account: this script does not create or modify it. The
-# account must already be a member of the local Administrators group — the
-# Polaris Agent installer writes to %ProgramFiles% and registers a service.
+# Using an existing account: this script does not create or modify it, but it
+# does verify it, because authorizing a key for an account that is not there
+# fails silently at logon time with nothing to diagnose.
+# A domain account is invisible to Get-LocalUser; its Administrators membership
+# is the only half this script can observe.
+if (-not $PolarisUser.Contains('\\')) {
+  $existingUser = Get-LocalUser -Name $PolarisUser -ErrorAction SilentlyContinue
+  if (-not $existingUser) {
+    Write-Host ('error: account ' + $PolarisUser + ' does not exist on this host')
+    exit 1
+  }
+  if (-not $existingUser.Enabled) {
+    Write-Host ('error: account ' + $PolarisUser + ' is disabled on this host')
+    exit 1
+  }
+}
+if (-not (Test-PolarisLocalAdmin -Account $PolarisUser)) {
+  Write-Host ('error: account ' + $PolarisUser + ' is not a member of ' + (Get-PolarisAdminGroupName))
+  exit 1
+}
 Write-Host ('Using existing account ' + $PolarisUser + ' (not created by this script)')
 `.trim();
 
@@ -420,7 +481,7 @@ export function buildWindowsOnboardingScript(opts: WindowsOnboardingScriptOption
   return WINDOWS_ONBOARDING_PS
     .replace(/__PUBLIC_KEY__/g, psLiteral(publicKey))
     .replace(/__USERNAME__/g, psLiteral(username))
-    .replace(/__KEY_PRESENT_FN__/g, POLARIS_KEY_PRESENT_FN)
+    .replace(/__PS_HELPERS__/g, POLARIS_PS_HELPERS)
     .replace(/__ACCOUNT_BLOCK__/g, accountBlock)
     .replace(/__FIREWALL_BLOCK__/g, firewallBlock)
     .replace(/__SID_ADMINS__/g, psLiteral(SID_ADMINISTRATORS))
@@ -462,8 +523,9 @@ const WINDOWS_DETECTION_PS = `
 $ErrorActionPreference = 'Stop'
 
 $PolarisPublicKey = __PUBLIC_KEY__
+$PolarisUser      = __USERNAME__
 
-__KEY_PRESENT_FN__
+__PS_HELPERS__
 
 try {
   $cap = Get-PolarisSshCapability
@@ -486,6 +548,27 @@ try {
     exit 1
   }
 
+  # The account and its Administrators membership are prerequisites the agent
+  # install genuinely fails on, and the key below is only usable by an
+  # administrator — administrators_authorized_keys is read for nobody else.
+  # A domain account is invisible to Get-LocalUser, so for one of those the
+  # group membership below is the only observable half.
+  if (-not $PolarisUser.Contains('\\')) {
+    $localUser = Get-LocalUser -Name $PolarisUser -ErrorAction SilentlyContinue
+    if (-not $localUser) {
+      Write-Host ('remediate: local account ' + $PolarisUser + ' missing')
+      exit 1
+    }
+    if (-not $localUser.Enabled) {
+      Write-Host ('remediate: local account ' + $PolarisUser + ' is disabled')
+      exit 1
+    }
+  }
+  if (-not (Test-PolarisLocalAdmin -Account $PolarisUser)) {
+    Write-Host ('remediate: ' + $PolarisUser + ' is not a member of ' + (Get-PolarisAdminGroupName))
+    exit 1
+  }
+
   $authKeys = Get-PolarisAuthorizedKeysPath
   if (-not (Test-Path -LiteralPath $authKeys)) {
     Write-Host 'remediate: administrators_authorized_keys missing'
@@ -497,7 +580,7 @@ try {
     exit 1
   }
 
-  Write-Host 'ok: Polaris SSH onboarding present'
+  Write-Host ('ok: Polaris SSH onboarding present (' + $PolarisUser + ' is a local administrator)')
   exit 0
 } catch {
   Write-Host ('remediate: detection error - ' + $_.Exception.Message)
@@ -506,16 +589,31 @@ try {
 `.trim();
 
 /**
- * Build the detection half of the pair. Takes only the public key — detection
- * deliberately does NOT check the account or the firewall rule: neither is
- * observable as "wrong" without guessing at local policy, and a false
- * "needs remediation" would re-run the whole script on every cycle forever.
+ * Build the detection half of the pair. Checks the account and its
+ * Administrators membership as well as the key — the same prerequisites the
+ * Linux half checks, for the same reason: the agent install genuinely fails
+ * without them, and sshd reads administrators_authorized_keys for nobody but
+ * an administrator. Omitting them let an endpoint whose account was never
+ * created report "ok" forever while no logon could ever succeed.
+ *
+ * Both modes are checked, because both are satisfiable: create mode provisions
+ * the account, and existing mode now FAILS LOUDLY when the named account is
+ * absent instead of authorizing a key for nobody. What stays out is the
+ * firewall rule — with no server IP configured there is no rule to find, so
+ * checking it would be the one loop the pair cannot break out of.
  */
-export function buildWindowsOnboardingDetectionScript(opts: { publicKey: string }): string {
+export function buildWindowsOnboardingDetectionScript(opts: {
+  publicKey: string;
+  username: string;
+  accountMode: SshOnboardingAccountMode;
+}): string {
   const publicKey = assertValidPublicKey(opts.publicKey);
+  const username = assertValidUsername(opts.username, opts.accountMode);
   return WINDOWS_DETECTION_PS
     .replace(/__PUBLIC_KEY__/g, psLiteral(publicKey))
-    .replace(/__KEY_PRESENT_FN__/g, POLARIS_KEY_PRESENT_FN);
+    .replace(/__USERNAME__/g, psLiteral(username))
+    .replace(/__PS_HELPERS__/g, POLARIS_PS_HELPERS)
+    .replace(/__SID_ADMINS__/g, psLiteral(SID_ADMINISTRATORS));
 }
 
 // ─── Linux ────────────────────────────────────────────────────────────────
@@ -546,7 +644,7 @@ const LINUX_SUDOERS_PATH = "/etc/sudoers.d/polaris-agent";
 /**
  * Shared shell helpers, emitted into BOTH Linux scripts from one place so the
  * detection script cannot disagree with what remediation wrote. Mirrors the
- * PowerShell POLARIS_KEY_PRESENT_FN.
+ * PowerShell POLARIS_PS_HELPERS.
  *
  * Matches on the key BODY (algorithm + base64) and ignores the comment, so a
  * comment change does not append a duplicate line.

@@ -312,14 +312,14 @@ describe("getOnboardingScript", () => {
     await expect(getOnboardingScript("windows", "remediation")).rejects.toThrow(/Generate the deployment keypair/i);
   });
 
-  it("refuses the scripts that name an account until an existing one is entered", async () => {
+  it("refuses every script until an existing account is entered", async () => {
     await generateKeypair("tester");
     await expect(getOnboardingScript("windows", "remediation")).rejects.toThrow(/existing Windows account/i);
     await expect(getOnboardingScript("linux", "remediation")).rejects.toThrow(/existing Linux account/i);
     await expect(getOnboardingScript("linux", "detection")).rejects.toThrow(/existing Linux account/i);
-    // Windows detection checks only the key, so it has nothing to refuse over.
-    const det = await getOnboardingScript("windows", "detection");
-    expect(det.script).toContain((await getOnboardingState()).publicKey!);
+    // Windows detection names the account too now that it checks Administrators
+    // membership, so it can no longer render without one.
+    await expect(getOnboardingScript("windows", "detection")).rejects.toThrow(/existing Windows account/i);
   });
 
   it("returns both variants with distinct filenames once keyed", async () => {

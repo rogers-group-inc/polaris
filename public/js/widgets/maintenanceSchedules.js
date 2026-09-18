@@ -11,7 +11,7 @@
  * question it answers is "when does this come back?".
  *
  * The filter is the shared NOC one (regions / asset types / FortiGates) with
- * one deliberate difference from every other widget (business rule 72): **a
+ * one deliberate difference from every other widget (business rule 73): **a
  * schedule matches when ANY of its devices does, and is then shown WHOLE.** A window covering
  * switches, APs and servers is still the thing a switch-scoped dashboard needs
  * to know about, so the row counts every device in it and names every type —
@@ -172,7 +172,7 @@
       rows: rows,
     });
     var displayed = PolarisWidgets.clip(rows, config && config.rowLimit != null ? config.rowLimit : DEFAULT_ROWS);
-    // Count pill: schedules on screen, deliberately NEUTRAL (business rule 72
+    // Count pill: schedules on screen, deliberately NEUTRAL (business rule 73
     // — planned work is never reported in the vocabulary of an outage).
     // setHeaderCount's
     // fallback is red, which is the generic "these are down" colour — and a red
