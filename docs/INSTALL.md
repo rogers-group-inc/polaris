@@ -1677,7 +1677,7 @@ From the Polaris UI:
 4. Reopen the asset details modal → **System** tab → **Install Agent…**
 5. Confirm the OS + arch picker (defaults from `Asset.os`)
 6. Pick the **Install method** — a curated, OS-locked service-install script (currently one vetted method per OS: systemd on Linux, launchd on macOS, a native Windows Service). The picker only lists methods valid for the selected OS; the choice is re-validated server-side.
-7. On **Windows** assets, pick the transport (WinRM or SSH); on Linux/macOS SSH is the only option
+7. On **Windows** assets, pick the transport (**SSH**, preselected, or **WinRM**); on Linux/macOS SSH is the only option and the row is hidden
 8. Pick a stored credential of the matching type (SSH or WinRM)
 9. Click **Install**
 
