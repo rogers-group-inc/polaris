@@ -301,6 +301,142 @@ export async function listOccurrences(input: {
   return { from: input.from, to: input.to, occurrences, truncated };
 }
 
+// ─── Active-window readout (dashboard widget feed) ───────────────────────────
+
+export interface ActiveMaintenanceSchedule {
+  id: string;
+  name: string;
+  /** Devices this schedule is holding in maintenance right now (open windows). */
+  deviceCount: number;
+  /** Per-assetType breakdown of those devices, largest first. */
+  assetTypes: Array<{ assetType: string; count: number }>;
+  /** True when the widget's asset filter matched only SOME of the devices. */
+  filtered: boolean;
+  /** Devices matching the caller's filter; equals deviceCount when unfiltered. */
+  matchedCount: number;
+  kind: "oneshot" | "recurring";
+  /** Single-asset one-shot with no criteria — the status-pill / edit-modal artifact. */
+  adhoc: boolean;
+  suppressChildren: boolean;
+  /** SERVER-LOCAL wall clock "YYYY-MM-DDTHH:MM" for display — never a UTC instant. */
+  startedAt: string | null;
+  endsAt: string | null;
+  /**
+   * The same window end as a true instant, for a browser-side countdown. The
+   * pair is deliberate: `endsAt` is what the operator must SEE (the recurrence
+   * engine runs on the server's wall clock, so re-rendering it in the viewer's
+   * zone paints the window on the wrong hour), `endsAtUtc` is the only form
+   * "ends in 40m" can be computed from without assuming the two clocks agree.
+   */
+  endsAtUtc: string | null;
+}
+
+/**
+ * Every maintenance schedule currently IN EFFECT, for the Active Maintenance
+ * dashboard widget (`/dashboard/noc-summary?feeds=maintenanceSchedules`).
+ *
+ * "In effect" = enabled AND (holding ≥1 open window OR inside an occurrence
+ * right now). Open windows are the source of truth for which devices are
+ * actually held (see the module header); the isInWindow arm additionally
+ * catches a schedule whose occurrence has just opened but whose devices the
+ * 30s reconcile has not entered yet, so the widget doesn't read empty for
+ * half a minute at the top of every window.
+ *
+ * `assetIds` is the widget's shared NOC filter (region / asset type /
+ * FortiGate), resolved by nocDashboardService.resolveFilteredAssetIds; null =
+ * unfiltered. **A schedule matches when ANY of its devices does** — a window
+ * covering switches, APs and servers is still the thing a switch-scoped
+ * dashboard needs to know about, so it is listed WHOLE (every device counted,
+ * every type named) with `matchedCount` recording how much of it the filter
+ * actually claimed. Filtering it down to the matching devices would report a
+ * smaller outage than the one the operator is looking at.
+ *
+ * Scale: one findMany over the (operator-sized) schedule table plus one
+ * GROUP BY over open window rows — at most (#schedules x #assetTypes) rows
+ * back, flat from 100 to 2000 assets. Nothing here iterates devices.
+ */
+export async function getActiveMaintenanceSchedules(
+  limit: number | null = 50,
+  assetIds: string[] | null = null,
+): Promise<ActiveMaintenanceSchedule[]> {
+  const now = new Date();
+  const schedules = await prisma.maintenanceSchedule.findMany({ where: { enabled: true } });
+  if (schedules.length === 0) return [];
+
+  // Open windows grouped per (schedule, assetType). The filter is a second
+  // aggregate over the same scan rather than a narrowing of it, so a filtered
+  // call still knows each schedule's TRUE device count and type list. The id
+  // set is bound as one array parameter (the nocDashboardService idiom), never
+  // interpolated.
+  const rows = await prisma.$queryRawUnsafe<
+    Array<{ scheduleId: string; assetType: string; total: bigint; matched: bigint }>
+  >(
+    `SELECT w."scheduleId" AS "scheduleId",
+            a."assetType"  AS "assetType",
+            count(*)::bigint AS total,
+            count(*) FILTER (WHERE a."id" = ANY($1::text[]))::bigint AS matched
+     FROM "asset_maintenance_windows" w
+     JOIN "assets" a ON a."id" = w."assetId"
+     WHERE w."endedAt" IS NULL AND w."scheduleId" IS NOT NULL
+     GROUP BY 1, 2`,
+    assetIds ?? [],
+  );
+
+  const bySchedule = new Map<string, { types: Map<string, number>; total: number; matched: number }>();
+  for (const r of rows) {
+    let e = bySchedule.get(r.scheduleId);
+    if (!e) { e = { types: new Map(), total: 0, matched: 0 }; bySchedule.set(r.scheduleId, e); }
+    const n = Number(r.total);
+    e.types.set(r.assetType, (e.types.get(r.assetType) ?? 0) + n);
+    e.total += n;
+    e.matched += Number(r.matched);
+  }
+
+  const out: ActiveMaintenanceSchedule[] = [];
+  for (const s of schedules) {
+    const shape = parseStoredShape(s);
+    if (!shape) continue;
+    const held = bySchedule.get(s.id);
+    const occ = currentWindow(shape, now);
+    // Holding devices, or inside an occurrence the reconcile hasn't acted on
+    // yet. A schedule whose window has ended but whose rows are still open
+    // (the up-to-30s closing lag) stays listed, with no end time to show.
+    if (!held && !occ) continue;
+    // With a filter on, a schedule none of whose devices matched is not this
+    // dashboard's business. Unfiltered, a just-opened window with no devices
+    // yet is still worth showing.
+    if (assetIds !== null && (!held || held.matched === 0)) continue;
+    out.push({
+      id: s.id,
+      name: s.name,
+      deviceCount: held?.total ?? 0,
+      assetTypes: [...(held?.types ?? new Map<string, number>())]
+        .map(([assetType, count]) => ({ assetType, count }))
+        .sort((a, b) => b.count - a.count || a.assetType.localeCompare(b.assetType)),
+      matchedCount: assetIds === null ? (held?.total ?? 0) : (held?.matched ?? 0),
+      filtered: assetIds !== null && !!held && held.matched < held.total,
+      kind: shape.kind,
+      adhoc: isAdhocShape(s, shape),
+      suppressChildren: s.suppressChildren,
+      startedAt: occ ? formatLocalIsoMinute(occ.start) : null,
+      endsAt: occ ? formatLocalIsoMinute(occ.end) : null,
+      endsAtUtc: occ ? occ.end.toISOString() : null,
+    });
+  }
+  // Soonest to end first — the widget's question is "what comes back when?".
+  // A schedule with no readable end (closing lag) sinks rather than sorting as
+  // "ends first", the same posture as the widgets' own missing-value sorts.
+  out.sort((a, b) => {
+    if (a.endsAtUtc !== b.endsAtUtc) {
+      if (!a.endsAtUtc) return 1;
+      if (!b.endsAtUtc) return -1;
+      return a.endsAtUtc < b.endsAtUtc ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+  return limit == null ? out : out.slice(0, limit);
+}
+
 // ─── Schedule CRUD ───────────────────────────────────────────────────────────
 
 export async function listSchedules() {

@@ -188,6 +188,20 @@ GET    /dashboard/filter-options
 These are **filter-don't-403** surfaces: a token whose role cannot read
 something gets a narrower payload, not an error.
 
+`/dashboard/noc-summary` takes `?feeds=` to select the subset a caller renders.
+Each feed is gated on the key that owns its data — `assets:read` for most of
+them, `events:read` for `recentReboots`, `alerts:read` for `activeAlerts`, and
+`maintenanceManagement:read` for `maintenanceSchedules`, the feed behind the
+Active Maintenance widget. A kiosk token therefore reads the maintenance feed
+only if its role was granted that key.
+
+The maintenance rows state their window times in the **Polaris server's** local
+wall clock (`startedAt` / `endsAt`, no offset — the recurrence engine is
+evaluated against that clock) and repeat the end as a true instant
+(`endsAtUtc`) for a countdown. Unlike every other feed, the asset filter does
+not narrow them: a schedule is returned when any of its devices is in scope,
+whole, with `matchedCount` giving the in-scope share.
+
 ### Search
 
 ```

@@ -16,6 +16,9 @@ vi.mock("../../src/db.js", () => ({
     event: { findMany: vi.fn() },
     notification: { findMany: vi.fn() },
     notificationRule: { findMany: vi.fn() },
+    // The maintenanceSchedules feed reaches maintenanceScheduleService, which
+    // reads this table and the open-window GROUP BY through $queryRawUnsafe.
+    maintenanceSchedule: { findMany: vi.fn() },
     $queryRawUnsafe: vi.fn(),
     $queryRaw: vi.fn(),
   },
@@ -40,6 +43,7 @@ const resolve = resolveMonitorSettings as unknown as ReturnType<typeof vi.fn>;
 const notifFindMany = (prisma as unknown as { notification: { findMany: ReturnType<typeof vi.fn> } }).notification.findMany;
 const ruleFindMany = (prisma as unknown as { notificationRule: { findMany: ReturnType<typeof vi.fn> } }).notificationRule.findMany;
 const typeDefFindMany = (prisma as unknown as { assetTypeDef: { findMany: ReturnType<typeof vi.fn> } }).assetTypeDef.findMany;
+const maintFindMany = (prisma as unknown as { maintenanceSchedule: { findMany: ReturnType<typeof vi.fn> } }).maintenanceSchedule.findMany;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -809,10 +813,35 @@ describe("getNocSummaryPayload", () => {
     const r = await noc.getNocSummaryPayload({ feeds: null, ...grantAll() });
     expect(Object.keys(r).sort()).toEqual([
       "activeAlertCount", "activeAlerts", "activeAlertsTotal", "diskUsage", "downInterfaces",
-      "downIpsecTunnels", "downNodes", "downNodesTotal", "packetLoss", "recentReboots",
-      "sitesWithIssues", "slowestResponse", "stalePolls", "statusCounts", "storageForecast",
-      "temperature", "topCpu", "topMemory", "uptimePercent",
+      "downIpsecTunnels", "downNodes", "downNodesTotal", "maintenanceSchedules", "packetLoss",
+      "recentReboots", "sitesWithIssues", "slowestResponse", "stalePolls", "statusCounts",
+      "storageForecast", "temperature", "topCpu", "topMemory", "uptimePercent",
     ]);
+  });
+
+  // The gate union grew a fourth member (maintenanceManagement) and the
+  // `allowed` chain's final arm used to be canEvents, so a feed whose caller
+  // permission nobody threaded served its content under events:read. These two
+  // hold the new feed to its own key in both directions.
+  it("denies the maintenance feed to a caller holding every OTHER read", async () => {
+    const r = await noc.getNocSummaryPayload({
+      feeds: ["maintenanceSchedules"],
+      canAssets: true, canEvents: true, canAlerts: true,
+      assetTypes: null, regionNames: null, capLimit: null,
+    });
+    expect(r.maintenanceSchedules).toEqual([]);
+    expect(maintFindMany).not.toHaveBeenCalled();
+  });
+
+  it("serves the maintenance feed to a caller holding maintenanceManagement:read", async () => {
+    maintFindMany.mockResolvedValue([]); // no enabled schedules → empty, one query
+    const r = await noc.getNocSummaryPayload({
+      feeds: ["maintenanceSchedules"],
+      canAssets: false, canEvents: false, canAlerts: false, canMaintenance: true,
+      assetTypes: null, regionNames: null, capLimit: null,
+    });
+    expect(r.maintenanceSchedules).toEqual([]);
+    expect(maintFindMany).toHaveBeenCalledWith({ where: { enabled: true } });
   });
 
   it("permission-denied feeds return their empty value without touching the DB", async () => {

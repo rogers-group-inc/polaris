@@ -38,6 +38,7 @@ import { computeStorageForecast } from "./storageForecastService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { ALERT_SEVERITY_RANK } from "../utils/alertSeverity.js";
+import { getActiveMaintenanceSchedules } from "./maintenanceScheduleService.js";
 
 // Asset types treated as "infrastructure" for the uptime % gauge — mirrors the
 // SolarWinds Fortinet-only uptime tile. These are the built-in network-gear
@@ -1410,6 +1411,7 @@ export const NOC_FEED_NAMES = [
   "status", "downNodes", "downInterfaces", "downIpsecTunnels",
   "topCpu", "topMemory", "slowestResponse", "packetLoss", "diskUsage", "temperature",
   "storageForecast", "stalePolls", "sitesWithIssues", "recentReboots", "activeAlerts",
+  "maintenanceSchedules",
 ] as const;
 export type NocFeedName = (typeof NOC_FEED_NAMES)[number];
 
@@ -1436,7 +1438,7 @@ const EMPTY_STATUS: StatusSummary = {
  *             shape so existing consumers (and the kiosk token) see no change.
  */
 const NOC_FEEDS: Record<NocFeedName, {
-  gate: "assets" | "events" | "alerts";
+  gate: "assets" | "events" | "alerts" | "maintenance";
   empty: unknown;
   usesSamples?: true;
   usesDepDown?: true;
@@ -1476,6 +1478,16 @@ const NOC_FEEDS: Record<NocFeedName, {
   stalePolls:       { gate: "assets", empty: [], run: (L, ids) => getStalePolls(3, L(50), ids) },
   sitesWithIssues:  { gate: "assets", empty: [], run: (L, ids) => getSitesWithIssues(L(25), ids) },
   recentReboots:    { gate: "events", empty: [], run: (L, ids) => getRecentReboots(72, L(20), ids) },
+  // The one maintenance-sourced feed. Its data is the maintenance SCHEDULE
+  // (names, windows, target counts), which `assets:read` has no claim on, so
+  // it gates on maintenanceManagement — see the `allowed` map below, which is
+  // exhaustive by construction precisely so a new gate can't silently fall
+  // through to another key's permission.
+  maintenanceSchedules: {
+    gate: "maintenance",
+    empty: [],
+    run: (L, ids) => getActiveMaintenanceSchedules(L(50), ids),
+  },
   activeAlerts: {
     gate: "alerts",
     empty: { alerts: [], total: 0 },
@@ -1527,6 +1539,7 @@ export async function getNocSummaryPayload(opts: {
   canAssets: boolean;
   canEvents: boolean;
   canAlerts: boolean;
+  canMaintenance?: boolean;
   assetTypes: string[] | null;
   hideAssetTypes?: string[] | null;
   regionNames: string[] | null;
@@ -1548,10 +1561,19 @@ export async function getNocSummaryPayload(opts: {
   // by 20260721000000) onto EVERY role missing it, the seeded api-* kiosk token
   // roles included. A role an operator has since set to `alerts: none` is
   // deliberately denied here even when it still holds events:read.
-  const allowed = (gate: "assets" | "events" | "alerts") =>
-    gate === "assets" ? opts.canAssets
-      : gate === "alerts" ? opts.canAlerts
-        : opts.canEvents;
+  //
+  // A RECORD, not a ternary chain: the chain's final arm was `canEvents`, so a
+  // feed added under a new gate whose caller-permission nobody threaded served
+  // its content under events:read. A missing key here is a type error instead.
+  // An omitted `canMaintenance` denies (a caller that never resolved the
+  // permission has not granted it).
+  const permitted: Record<"assets" | "events" | "alerts" | "maintenance", boolean> = {
+    assets: opts.canAssets,
+    events: opts.canEvents,
+    alerts: opts.canAlerts,
+    maintenance: opts.canMaintenance === true,
+  };
+  const allowed = (gate: "assets" | "events" | "alerts" | "maintenance") => permitted[gate];
 
   // Resolve the per-widget filter to asset ids once (cached — the id set backs
   // every feed sharing the filter). Skipped when no feed will run.

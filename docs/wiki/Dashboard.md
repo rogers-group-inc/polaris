@@ -66,6 +66,7 @@ NOC wallboard that has no session at all. See
 | **Temperature** | hottest hardware sensors across monitored assets, per sensor |
 | **Packet Loss** | highest recent probe loss. **Fully-down assets (100 %) are excluded** — that is what Down Assets is for |
 | **Stale Polls** | monitored assets overdue for their next response-time probe |
+| **Active Maintenance** | the maintenance schedules in effect right now — what each one holds, and when its window expires. The one widget about the devices the others deliberately leave out |
 | **Recent Reboots** | devices that rebooted recently, detected from SNMP `sysUpTime` drops |
 | **Down Interfaces** | pinned interfaces admin-up but operationally down, plus fully-down IPsec tunnels, grouped by the gate they are on |
 
@@ -121,6 +122,15 @@ them.
 
 **Maintenance is its own state, never an outage.** A device inside a
 maintenance window shows a purple Maintenance pill and is not counted as down.
+That is why **Active Maintenance** exists: since every other widget leaves those
+devices out, it is the only one that says what is down on purpose and when it
+comes back. Its filter also works the other way round from the rest — a
+schedule is listed when **any** of its devices is in scope, and is then shown
+whole, so a window covering switches, APs and servers still appears on a board
+filtered to switches (with the in-scope share noted beside the device count).
+The times it prints are the **Polaris server's** wall clock, the same clock the
+schedule itself is evaluated against; the countdown beside each one is computed
+against your own, so the two agree wherever you are sitting.
 
 **The sort order also decides what the row limit hides.** Every listing widget
 shows its rows in an order you choose (the **⇅** button, while customizing) and
@@ -166,6 +176,21 @@ The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
 
 Both report the **server's** count back, so a no-op says "already cleared"
 rather than showing a success toast over nothing.
+
+The **Active Maintenance** widget is the other one you can act from. Clicking a
+schedule offers:
+
+- **Open schedule…** — opens the Maintenance modal with that schedule loaded,
+  for review or editing. It is the same editor the Assets page opens.
+- **Disable schedule** — confirmed first, because it takes effect immediately:
+  the window's open sessions end, held devices leave maintenance and resume
+  polling, and the schedule stops firing until it is re-enabled.
+
+Both need `maintenanceManagement:fullwrite` — the level the Maintenance modal
+itself needs. A role that can only *read* maintenance still sees the widget;
+its rows simply do nothing. Neither verb is offered on the Dash wallboard,
+which has no session to act with. See
+[Maintenance Windows](Maintenance-Windows).
 
 **A widget with more rows than fit scrolls itself** — a slow creep through the
 list, then back to the top, the way a NOC wall display reads. It never moves
