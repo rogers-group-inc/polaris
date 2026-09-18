@@ -43,6 +43,12 @@ rather than by a person, and which rule.
 The **Conflicts** button opens the resolution queue in a slide-over, with a
 count badge. See [Conflict resolution](Conflict-Resolution).
 
+The panel is **drag-resizable from its left edge** and remembers the width per
+browser, like the other detail panels. The duplicate-IP card is the widest one
+in the queue — six columns, two of them holding the new-address field and the
+merge button — so widen the panel if the card is scrolling sideways. The
+**Alerts** button's panel beside it resizes the same way.
+
 The **Conflict Queue** dashboard widget shows the same thing, **role-scoped** —
 you see only the ones your role can resolve. If it looks empty and you expected
 rows, check that before assuming there are none.

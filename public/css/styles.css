@@ -3394,6 +3394,47 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .conflict-table .conflict-changed td {
   background: rgba(255,214,0,0.05);
 }
+
+/* Duplicate-IP card (renderDuplicateIpConflictCard in events.js): SIX columns,
+   two of which hold controls — a new-address field beside Apply, and Merge
+   into this. The three-column comparison rules above are wrong for it: the
+   nth-child(2)/(3) half-width rule hands Type and Status half the table each
+   and starves the control columns, whose nowrap contents then drew across one
+   another (Merge into this sitting on top of Apply). Widths are declared per
+   column here, and the table keeps a min-width so a panel dragged narrow
+   scrolls the card instead of crushing a column to one letter per line. */
+/* The wrapper scrolls rather than letting a crushed column spill its content
+   over the next one — the panel is drag-resizable and goes narrower than the
+   controls this card carries. Scoped to this variant: `overflow-x: auto` makes
+   the other axis compute to auto as well, and the comparison tables have
+   nothing to gain from a scroll container. */
+.conflict-table-dupip { overflow-x: auto; }
+.conflict-table-dupip table { min-width: 840px; }
+.conflict-table-dupip .conflict-field { width: auto; }    /* Asset — takes the remainder */
+.conflict-table-dupip th:nth-child(2),
+.conflict-table-dupip td:nth-child(2) { width: 100px; }   /* Type */
+.conflict-table-dupip th:nth-child(3),
+.conflict-table-dupip td:nth-child(3) { width: 100px; }   /* Status */
+.conflict-table-dupip th:nth-child(4),
+.conflict-table-dupip td:nth-child(4) { width: 170px; }   /* Address claim */
+.conflict-table-dupip th:nth-child(5),
+.conflict-table-dupip td:nth-child(5) { width: 240px; }   /* New IP address + Apply */
+.conflict-table-dupip th:nth-child(6),
+.conflict-table-dupip td:nth-child(6) { width: 130px; }   /* Same device */
+/* The shared `word-break: break-word` is for the comparison table's two value
+   columns; here it hyphenates "access_point" down the Type column. */
+.conflict-table-dupip td { word-break: normal; }
+.conflict-table .conflict-action-cell { white-space: nowrap; }
+.conflict-inline-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.conflict-inline-controls .form-input {
+  width: 150px;
+  min-width: 120px;
+  display: inline-block;
+}
 .conflict-table .conflict-changed strong {
   color: var(--color-warning);
 }
@@ -3471,7 +3512,8 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 .conflict-card-actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 12px;
   justify-content: flex-end;
   padding: 0.6rem 0.9rem;
   background: var(--color-bg-secondary);
@@ -4275,6 +4317,13 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    throughput charts read on a single line. */
 #iface-panel {
   width: clamp(760px, 60vw, 1500px);
+}
+/* Conflict Review holds the widest card in the app — the duplicate-IP table is
+   six columns, two of them controls — so it opens wider than the default. A
+   stored drag width overrides this (initSlideoverResize sets it inline). */
+#conflict-panel {
+  width: clamp(880px, 62vw, 1500px);
+  max-width: 95vw;
 }
 .slideover-header {
   padding: 1rem 1.25rem 1rem 2.5rem;
