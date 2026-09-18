@@ -45,6 +45,8 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{value}", label: "Value", description: "Observed value at fire time", group: "notification" },
   { token: "{threshold}", label: "Threshold", description: "Configured threshold / comparison value", group: "notification" },
   { token: "{dimension}", label: "Dimension", description: "Sub-asset dimension (interface / mount / sensor / tunnel)", group: "notification" },
+  { token: "{dimension.label}", label: "Dimension label", description: "What that component is called — \"Interface\", \"Sensor\", \"IPsec tunnel\". Blank when the alert is about the whole device", group: "notification" },
+  { token: "{dimension.suffix}", label: "Dimension suffix", description: "The component with its own separator (\" · port12\"), for appending to a subject line — blank when the alert is about the whole device", group: "notification" },
   { token: "{conditions}", label: "Conditions", description: "Multi-condition summary, e.g. \"2 of 3 conditions met\" (composite triggers; empty otherwise)", group: "notification" },
   { token: "{message}", label: "Message", description: "The rendered in-app notification message", group: "notification" },
   { token: "{severity}", label: "Severity", description: "Rule severity (e.g. warning)", group: "notification" },
@@ -150,6 +152,11 @@ export interface TemplateContextParts {
   value?: string;
   threshold?: string;
   dimension?: string;
+  /** What the component IS — "Interface", "Sensor", "IPsec tunnel" — so a
+   *  surface can LABEL `{dimension}` instead of printing a bare port name.
+   *  Blank on a whole-device alert; `{dimension.label}` falls back to the
+   *  generic "Component" whenever there is a dimension but no noun for it. */
+  dimensionNoun?: string;
   /** Composite triggers only — "k of n conditions met". */
   conditions?: string;
   message?: string;
@@ -344,6 +351,15 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     "value": str(parts.value),
     "threshold": str(parts.threshold),
     "dimension": str(parts.dimension),
+    // Both derived from `{dimension}` itself rather than from the parts, so a
+    // caller that renders the dimension differently — a grouped alert naming
+    // every affected component — gets a label and a subject tag that agree with
+    // it for free.
+    "dimension.label": str(parts.dimension) ? (str(parts.dimensionNoun) || "Component") : "",
+    // Carries its own separator so a subject line can append it unconditionally
+    // and read correctly when there is no component. Same shape as
+    // {repeat.quiet}: the token is the whole phrase or nothing at all.
+    "dimension.suffix": str(parts.dimension) ? ` · ${str(parts.dimension)}` : "",
     "conditions": str(parts.conditions),
     "message": str(parts.message),
     "severity": severity,

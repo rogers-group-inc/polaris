@@ -50,7 +50,7 @@ import { drainPendingDeliveries } from "./notificationDeliveryService.js";
 import { buildTemplateContext } from "../utils/notificationTemplate.js";
 import { scopeRegionTagsOf } from "./notificationRecipientService.js";
 import type { AutomationAction, PreviewRuleInput, Severity } from "./notificationTypes.js";
-import { allRuleActionRefs, notifyChannelIds } from "./notificationTypes.js";
+import { allRuleActionRefs, notifyChannelIds, dimensionNounOf } from "./notificationTypes.js";
 import { triggerSummary } from "../utils/triggerSummary.js";
 import { SAMPLE_ALERT_DEVICE, SAMPLE_ALERT_HOSTNAME, sampleDimensionFor } from "../utils/sampleAlertDevice.js";
 
@@ -242,6 +242,10 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
     // of. A made-up number would read as a measurement.
     value: "",
     dimension: dimension ?? "",
+    // What the sample component IS, so a test email labels it the same way a
+    // real one does ("Interface — port12") instead of falling back to the
+    // generic "Component".
+    dimensionNoun: dimension ? dimensionNounOf(rule.trigger as never) : "",
     triggerSummary: triggerSummary({
       trigger: rule.trigger as never,
       value: null,

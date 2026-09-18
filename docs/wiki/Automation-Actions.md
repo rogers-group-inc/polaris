@@ -184,9 +184,17 @@ Available in the message template, the email subject and body, the `api_call`
 body, and a script's args:
 
 **The alert**
-`{asset}` `{metric}` `{value}` `{threshold}` `{dimension}` `{conditions}`
-`{message}` `{severity}` `{severity.upper}` `{severity.color}` `{time}`
-`{time.local}` `{time.zone}` `{link}`
+`{asset}` `{metric}` `{value}` `{threshold}` `{dimension}` `{dimension.label}`
+`{dimension.suffix}` `{conditions}` `{message}` `{severity}` `{severity.upper}`
+`{severity.color}` `{time}` `{time.local}` `{time.zone}` `{link}`
+
+`{dimension}` is the part of the device the alert is about — the port, the
+sensor, the mount, the tunnel. `{dimension.label}` is what that part is CALLED
+("Interface", "Sensor", "IPsec tunnel"), so a template can label it rather than
+printing a bare port name, and `{dimension.suffix}` is the same value carrying
+its own separator (" · port12") for appending to a subject line. All three are
+blank on an alert about a whole device, and the default email prunes the row and
+the subject fragment away when they are.
 
 **The automation**
 `{rule}` `{rule.description}` `{trigger.summary}`

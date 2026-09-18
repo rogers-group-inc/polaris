@@ -1062,6 +1062,18 @@ retired on the first sweep after it fires, by the very mechanism that makes un-p
 The rule that replaces it is worth stating plainly: **un-pinning stops a `== searching` rule
 and does not stop a `== fault` one.**
 
+**And so must its RESET.** The carve-out is a statement about which ports an automation
+WATCHES, and the reset tree is part of that automation: the wizard seeds a custom reset with
+the trigger inverted, `!= fault` is refused by (a) for the reason (a) exists, and a reset leaf
+that reads only the pin set is silent about the one port the alert is about. Both failures
+that follow were reported from production. On a switch with a healthy pinned port, the reset
+tree's per-asset fallback answered from THAT port and cleared an alert about a port still
+faulted — an operator watching a fault clear itself while the AP on the end of it stayed
+dark. On a switch with nothing pinned, the tree had no truth anywhere and the alert could
+never clear at all. So a reset leaf inherits the trigger's coverage (`coverUnpinnedPoe`), and
+the fallback it used to fall into is scoped to leaves in another dimension space — the two
+halves of business rule 32(b), which is where that reasoning lives.
+
 The builder follows the same split. `sourceFor` hands a fault condition the PoE inventory
 (noun "PoE-capable interfaces", `poeStatus IS NOT NULL`, which also drops every pinned port
 with no PSE behind it) and every other condition the pin set, so the ports a rule can fire on

@@ -17,6 +17,7 @@ import {
   pruneEmptyTextLines,
   DEFAULT_ALERT_HTML,
   DEFAULT_ALERT_TEXT,
+  DEFAULT_ALERT_SUBJECT,
 } from "../../src/utils/alertEmailTemplate.js";
 import { substituteChartTokens, chartTokensIn, attachmentsFor, CHART_TOKENS, type RenderedChart, type ChartToken } from "../../src/services/alertChartService.js";
 import { renderNotificationTemplate, buildTemplateContext } from "../../src/utils/notificationTemplate.js";
@@ -311,5 +312,64 @@ describe("substituteChartTokens", () => {
     const body = substituteChartTokens("<div>{chart.cpu}</div>", charts, { html: true });
     const attached = attachmentsFor(charts, body);
     expect(attached.map((a) => a.cid)).toEqual(["polaris-chart-cpu@polaris"]);
+  });
+});
+
+// ── The component the alert is about ────────────────────────────────────────
+
+describe("a per-component alert names its component", () => {
+  // The complaint this answers: a PoE fault email named the switch and the
+  // automation, and the port only in passing inside the headline sentence — so
+  // eight faulted ports produced eight emails an operator could not tell apart
+  // in an inbox, and nothing labelled WHICH port any one of them was about.
+  const port = buildTemplateContext({
+    asset: "SW-CORE-1",
+    severity: "critical",
+    dimension: "port12 (Indoor AP)",
+    dimensionNoun: "Interface",
+    triggerSummary: "PoE status on port12 (Indoor AP) is fault",
+    ruleName: "PoE fault",
+    assetDetail: { id: "a-1", ipAddress: "10.20.30.40" },
+  });
+
+  it("puts the component in the SUBJECT, where an inbox shows it", () => {
+    expect(renderNotificationTemplate(DEFAULT_ALERT_SUBJECT, port))
+      .toBe("[CRITICAL] SW-CORE-1 · port12 (Indoor AP) — PoE fault");
+  });
+
+  it("labels it in the body, in both halves", () => {
+    const html = pruneEmptyRows(renderNotificationTemplate(DEFAULT_ALERT_HTML, port, { html: true, unknown: "blank" }));
+    expect(html).toContain("Interface");
+    expect(html).toContain("port12 (Indoor AP)");
+    const text = pruneEmptyTextLines(renderNotificationTemplate(DEFAULT_ALERT_TEXT, port, { unknown: "blank" }));
+    expect(text).toContain("Interface: port12 (Indoor AP)");
+  });
+
+  it("labels a sensor a sensor and a tunnel a tunnel — one template, not three", () => {
+    const tunnel = buildTemplateContext({ asset: "FW-1", dimension: "AZURE-VPN", dimensionNoun: "IPsec tunnel" });
+    expect(pruneEmptyTextLines(renderNotificationTemplate(DEFAULT_ALERT_TEXT, tunnel, { unknown: "blank" })))
+      .toContain("IPsec tunnel: AZURE-VPN");
+  });
+
+  it("names it generically rather than not at all when the noun is unknown", () => {
+    // A test alert, or a context built by a path that carries no trigger: the
+    // value is still the most specific fact in the email, so it is labelled
+    // rather than dropped.
+    const noNoun = buildTemplateContext({ asset: "SW-1", dimension: "port3" });
+    expect(pruneEmptyTextLines(renderNotificationTemplate(DEFAULT_ALERT_TEXT, noNoun, { unknown: "blank" })))
+      .toContain("Component: port3");
+  });
+
+  it("leaves a whole-device alert exactly as it was", () => {
+    // Every alert about a device rather than a part of one — which is most of
+    // them — must be byte-identical to before this existed.
+    const device = buildTemplateContext({ asset: "HARBOR-61F-1", severity: "serious", ruleName: "Asset down" });
+    expect(renderNotificationTemplate(DEFAULT_ALERT_SUBJECT, device, { unknown: "blank" }))
+      .toBe("[SERIOUS] HARBOR-61F-1 — Asset down");
+    const html = pruneEmptyRows(renderNotificationTemplate(DEFAULT_ALERT_HTML, device, { html: true, unknown: "blank" }));
+    expect(html).not.toContain("Component");
+    // The bare ": " the blank label would otherwise leave behind.
+    const text = pruneEmptyTextLines(renderNotificationTemplate(DEFAULT_ALERT_TEXT, device, { unknown: "blank" }));
+    for (const line of text.split("\n")) expect(line.trim()).not.toBe(":");
   });
 });
