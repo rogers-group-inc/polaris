@@ -609,8 +609,12 @@ with a continuous condition ([rule 32](Business-Rules#rule-32)).
 Four things it does:
 
 - While firing, **the tree is the sole recovery authority**.
-- Resolution is **dimension-first with a per-asset fallback**: a per-port alert
-  clears independently, while a device-wide leaf clears them together.
+- Resolution is **dimension-first**: a reset condition on the same kind of
+  component clears that component's alert alone — one healthy port never
+  clears another port's alert — while a condition on something device-wide
+  (CPU, memory, monitor status) clears them together. A reset condition also
+  watches the same components the trigger does, including the unpinned PoE
+  ports a fault condition covers ([rule 57](Business-Rules#rule-57)).
 - Reset leaves carry **no window control** and inherit the trigger's measurement
   window — a second minutes field beside "must stay true for" is exactly the
   window-vs-hold confusion the formula display exists to remove.

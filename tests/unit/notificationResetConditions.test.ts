@@ -9,9 +9,12 @@
  *   1. While an alert is firing the reset tree is the SOLE recovery authority —
  *      the trigger falling away does not clear it, and the trigger re-meeting
  *      does not cancel the reset's sustain timer.
- *   2. The tree resolves DIMENSION-FIRST with a per-asset fallback. A per-mount
- *      alert whose reset leaf is on the same mount clears independently of its
- *      siblings; a reset leaf on a device-wide metric (CPU) clears them all.
+ *   2. The tree resolves DIMENSION-FIRST, and the per-asset fallback is scoped to
+ *      leaves in ANOTHER dimension space. A per-mount alert whose reset leaf is
+ *      on the same mount clears independently of its siblings; a reset leaf on a
+ *      device-wide metric (CPU) clears them all; a same-space leaf with no
+ *      reading for that mount clears nothing (business rule 32(b) —
+ *      poeFaultResetDimension.test.ts is where that half is pinned).
  *
  * Clones the composite suite's in-memory fake prisma, with a storage tick that
  * can report SEVERAL mounts per asset (the composite harness reports one) so the
