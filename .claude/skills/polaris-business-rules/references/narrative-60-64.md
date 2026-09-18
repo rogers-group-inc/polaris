@@ -1132,3 +1132,70 @@ platforms now refuse until the account is named. An operator who had published a
 before naming an account was publishing one that could not tell them anything.
 
 See [Polaris-Agent](Polaris-Agent) for the card and the scripts it generates.
+
+---
+
+## Rule 73 — Planned downtime is reported as planned, and a scoped view of a window still reports the whole window
+
+Maintenance is the one state Polaris deliberately hides from almost every surface it has.
+`NOT_IN_MAINTENANCE` is spread across every down/warning/stale feed in `nocDashboardService`,
+mirrored as `AND "status" <> 'maintenance'` in the raw-SQL ones and in `/summary`'s
+`monitorAlerts` clause, because an in-window asset has its `monitorStatus` FROZEN — possibly at
+`down` — and a frozen value is not live state (business rule 16). The consequence is that a
+dashboard assembled from those widgets says nothing whatever about the devices that are down on
+purpose: not that they are fine, not that they are working, nothing.
+
+`maintenanceScheduleService.getActiveMaintenanceSchedules` and the Active Maintenance widget are
+the counterpart, and being the only surface that speaks about planned work makes two things
+load-bearing that are merely cosmetic elsewhere.
+
+### It must not borrow the vocabulary of an outage
+
+Every listing widget stamps a count pill on its header, and `setHeaderCount`'s fallback colour is
+red — the generic "these are down" count, the same red the Down Assets and Down Interfaces totals
+wear. Rendered over planned work on a NOC wall, a red 3 is a claim that something needs doing,
+about the one set of devices where nobody should do anything. Maintenance rows carry no alert
+severity either (there is no automation firing about them — they are silenced by definition), so
+there is nothing for the severity palette to agree with. The pill is therefore NEUTRAL, stamped
+through `setHeaderPills` directly rather than through the helper whose default is red. The same
+reasoning already paints the Status Summary's maintenance tile and the Status Map's site dots
+purple instead of red; this states it for a count.
+
+### A narrowed view narrows the LIST, never the window
+
+Every other NOC feed applies the widget's asset filter by dropping rows: a region-scoped Down
+Assets shows the down assets in that region, which is exactly right, because each row IS a device.
+A maintenance row is not a device — it is a SCHEDULE, and a schedule covers whatever mix of
+devices its criteria and its explicit list happen to match. Narrowing it the ordinary way produces
+a true-looking sentence that is false in the only way that matters: a switch-scoped board would
+report "2 devices" about a window that has taken four down, and an operator reading it would size
+the work, the blast radius and the return time against a number Polaris had quietly shrunk for
+them.
+
+So the rule inverts for this feed alone: **a schedule survives the filter when ANY of its devices
+is in scope, and is then reported whole** — every device counted, every asset type named — with
+`matchedCount` / `filtered` recording how much of it the filter actually claimed, which the widget
+renders as "4 devices (2 in this scope)". Membership itself comes from open
+`AssetMaintenanceWindow` rows, so the types named are the types actually held rather than the
+types the criteria could match.
+
+### The clock is the server's, and the countdown is not
+
+A maintenance window is evaluated against the Polaris server's own wall clock, with no offset
+stored anywhere (business rule 16's recurrence contract). A window end is therefore published in
+BOTH forms and neither is redundant: `endsAt` is the server's wall-clock string, the only form
+that may be DISPLAYED, and `endsAtUtc` is the same instant, the only form a "ends in 40m"
+countdown can be computed from without assuming the viewer's clock agrees with the server's. A
+surface that derives one from the other has re-introduced exactly the bug the string form exists
+to prevent — a window painted on the wrong hour for every operator outside the server's zone.
+
+### Acting on planned work is gated where the modal is, not where the widget is
+
+The widget reads at `maintenanceManagement:read`, which is what the feed gates on. Its verbs —
+Open schedule…, Disable schedule, + New schedule — all open or write through the Maintenance
+editor, so they carry that editor's own `maintenanceManagement:fullwrite` gate and are withheld
+entirely below it, on the `/dash` wallboard (no session to act with), and in a library preview. A
+button that opens an editor whose every save 403s is worse than no button; the route stays the
+control either way. A write made from there must also survive being off the Assets page: the
+editor's post-save refresh calls `loadAssets()`, and `fetchAssetsPage` returns early with no table
+to repaint rather than throwing into a silent unhandled rejection behind a write that succeeded.

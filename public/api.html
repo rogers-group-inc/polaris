@@ -601,11 +601,11 @@
 
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /dashboard/noc-summary
-            <span class="gate">per-feed: assets/events/alerts read</span></div>
+            <span class="gate">per-feed: assets/events/alerts/maintenanceManagement read</span></div>
           <p>The NOC feed bundle. <code>?feeds=</code> selects a comma-separated subset of
             <code>status, downNodes, downInterfaces, downIpsecTunnels, topCpu, topMemory,
             slowestResponse, packetLoss, diskUsage, temperature, storageForecast, stalePolls,
-            sitesWithIssues, recentReboots, activeAlerts</code>; absent = all.
+            sitesWithIssues, recentReboots, activeAlerts, maintenanceSchedules</code>; absent = all.
             Filters: <code>hideAssetTypes</code> (CSV of the asset types to EXCLUDE —
             built-in or operator-added; <code>assetTypes</code> is the legacy inverse and
             names the ENABLED built-ins, from which the hidden set is derived as the
@@ -620,8 +620,19 @@
             <code>downNodesTotal</code> (true uncapped count); <code>activeAlerts</code> →
             <code>activeAlerts</code> + <code>activeAlertsTotal</code>. Feed gates:
             <code>recentReboots</code> needs <code>events:read</code>,
-            <code>activeAlerts</code> needs <code>alerts:read</code>, everything else
-            <code>assets:read</code>.</p>
+            <code>activeAlerts</code> needs <code>alerts:read</code>,
+            <code>maintenanceSchedules</code> needs <code>maintenanceManagement:read</code>,
+            everything else <code>assets:read</code>.</p>
+          <p><code>maintenanceSchedules</code> lists the maintenance schedules in effect right
+            now — <code>{id, name, deviceCount, matchedCount, filtered, assetTypes[{assetType,
+            count}], kind, adhoc, suppressChildren, startedAt, endsAt, endsAtUtc}</code>,
+            soonest-ending first. <code>startedAt</code>/<code>endsAt</code> are the Polaris
+            <em>server's</em> local wall clock (<code>YYYY-MM-DDTHH:MM</code>, no offset —
+            the recurrence engine evaluates against that clock), and
+            <code>endsAtUtc</code> is the same window end as a true instant for computing a
+            countdown. Unlike every other feed, an asset filter does not narrow the rows: a
+            schedule is listed when ANY of its devices is in scope and is then reported
+            whole, with <code>matchedCount</code> giving the in-scope share.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
   "<span class="js-base-url">/api/v1</span>/dashboard/noc-summary?feeds=status,downNodes,activeAlerts&amp;limit=50"</code></pre>
         </div>

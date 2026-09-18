@@ -155,6 +155,34 @@ went too.
 
 ---
 
+## Watching what is in maintenance right now
+
+The Maintenance modal's **Schedules** and **Calendar** tabs tell you what is
+planned. To see what is *running*, put the **Active Maintenance** widget on a
+dashboard ([Dashboard](Dashboard#the-widget-library)). One row per schedule in
+effect, showing what it holds — device count and the asset types among them —
+and **when its window expires**, in the server's wall clock with a countdown
+beside it. Rows are ordered soonest-ending first, and the expiry turns amber in
+the last half hour.
+
+It is deliberately the mirror of every other widget: since maintenance is not
+an outage, the down/warning/stale widgets leave these devices out, and this one
+is where they reappear.
+
+Clicking a row offers **Open schedule…** (the same editor the Assets page
+opens, loaded on that schedule) and **Disable schedule** — which ends its open
+windows immediately, returns the held devices to polling, and stops the
+schedule firing until re-enabled. A **+ New schedule** button at the top of the
+widget opens that editor empty, so a window can be scheduled from the dashboard
+without going to Assets first. All three need `maintenanceManagement:fullwrite`,
+like the modal itself.
+
+A row filtered out of a *device*-scoped board does not mean the maintenance is
+narrow: the widget lists a schedule whenever **any** of its devices is in
+scope, and then shows the whole thing, so the count you read is the real one.
+
+---
+
 ## Ad-hoc windows
 
 The monitor pill's popover — on both the table and the slide-over's System tab —

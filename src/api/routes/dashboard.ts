@@ -182,6 +182,12 @@ router.get("/noc-summary", async (req, res, next) => {
     // Every role was seeded that key at read (see the gate note in
     // getNocSummaryPayload), so no existing kiosk token loses the feed.
     const canAlerts = hasPermission(req, "alerts", "read");
+    // The maintenanceSchedules feed reads MaintenanceSchedule + open window
+    // rows — schedule names, windows and target counts, which assets:read has
+    // no claim on. A NOC kiosk token's role only gets it if an operator granted
+    // maintenanceManagement:read; without it the widget renders empty, never
+    // 403 (the filter-don't-403 contract every other feed keeps).
+    const canMaintenance = hasPermission(req, "maintenanceManagement", "read");
 
     // Per-widget filters (optional): ?hideAssetTypes=printer,network_camera
     // (the types the widget's gear grid has switched OFF — the form the grid
@@ -225,6 +231,7 @@ router.get("/noc-summary", async (req, res, next) => {
       canAssets,
       canEvents,
       canAlerts,
+      canMaintenance,
       assetTypes,
       hideAssetTypes,
       regionNames,

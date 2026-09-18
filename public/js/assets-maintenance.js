@@ -207,9 +207,17 @@ function maintScheduleSummary(schedule) {
  *   operator can overwrite it) but nothing is created until Save — unlike the
  *   status-pill ad-hoc flow this is a normal named schedule, one-time or
  *   recurring, and the operator may add filter rules on top of the pins.
+ *
+ * opts.scheduleId — open an EXISTING schedule for review, loaded into the
+ *   editor exactly as clicking it on the Schedules tab does. The Active
+ *   Maintenance dashboard widget's row menu is the caller; it holds nothing
+ *   but the id, so the row is re-read here rather than passed in — the widget
+ *   feed carries a summary of a schedule, never the schedule itself, and an
+ *   editor filled from a summary would save the parts it didn't have away.
  */
 async function openMaintenanceModal(opts) {
   var pinned = (opts && Array.isArray(opts.assetIds)) ? opts.assetIds.slice() : [];
+  var openId = (opts && opts.scheduleId) || null;
   _maintEditingId = null;
   _maintEditingAssetIds = pinned;
   var body = tabbedBodyHTML("maint", [
@@ -226,7 +234,7 @@ async function openMaintenanceModal(opts) {
   wireModalTabs("maint");
   _maintWireEditor();
   _maintWireCalendar();
-  _maintReloadList();
+  var listed = _maintReloadList();
   // Pinned selection: _maintWireEditor() has just reset the editor's one-shot
   // date fields, so prefill AFTER it — and paint the explicit-includes line
   // here rather than in _maintEditorHTML(), which renders before the pins are
@@ -241,6 +249,47 @@ async function openMaintenanceModal(opts) {
     _maintRefreshPreview();
     if (nameEl) { nameEl.focus(); nameEl.select(); }
   }
+  // Review an existing schedule: wait for the list the modal just asked for
+  // rather than issuing a second one, then hand the row to the same loader the
+  // Schedules tab uses. A schedule deleted between the widget's last refresh
+  // and the click leaves the modal open on the list, which is where the
+  // operator can see for themselves that it is gone.
+  if (openId) {
+    try { await listed; } catch (e) { /* the list tab reports its own failure */ }
+    var row = _maintSchedules.find(function (s) { return s.id === openId; });
+    if (row) _maintLoadIntoEditor(row);
+    else showToast("That maintenance schedule no longer exists", "error");
+  }
+}
+
+/**
+ * Enable or disable one schedule. The PUT is a FULL-body update (there is no
+ * partial route), so every stored field has to be passed through or
+ * normalizeInput silently resets it to its default — `suppressChildren` is the
+ * standing example. Both callers go through here for exactly that reason: the
+ * Schedules-tab toggle and the Active Maintenance widget's row menu, which
+ * lives on a page that may not have the schedule cached.
+ *
+ * `row` is the cached schedule when the caller has one; otherwise it is read
+ * back from the list. Throws on failure — callers own the toast.
+ */
+async function maintSetScheduleEnabled(id, enabled, row) {
+  var full = row;
+  if (!full) {
+    var res = await api.maintenanceSchedules.list();
+    full = (res.schedules || []).find(function (s) { return s.id === id; });
+    if (!full) throw new Error("That maintenance schedule no longer exists");
+  }
+  return api.maintenanceSchedules.update(id, {
+    name: full.name,
+    enabled: enabled,
+    criteria: full.criteria || null,
+    assetIds: full.assetIds || [],
+    schedule: full.schedule,
+    // Pass through — normalizeInput defaults a missing value to true, which
+    // would silently flip an opted-out schedule.
+    suppressChildren: full.suppressChildren !== false,
+  });
 }
 
 // ─── Tab 1 — schedule editor ────────────────────────────────────────────────
@@ -854,16 +903,7 @@ async function _maintReloadList() {
       var row = _maintSchedules.find(function (s) { return s.id === cb.getAttribute("data-id"); });
       if (!row) return;
       try {
-        await api.maintenanceSchedules.update(row.id, {
-          name: row.name,
-          enabled: cb.checked,
-          criteria: row.criteria || null,
-          assetIds: row.assetIds || [],
-          schedule: row.schedule,
-          // Pass through — normalizeInput defaults a missing value to true,
-          // which would silently flip an opted-out schedule.
-          suppressChildren: row.suppressChildren !== false,
-        });
+        await maintSetScheduleEnabled(row.id, cb.checked, row);
         showToast(cb.checked ? "Schedule enabled" : "Schedule disabled");
         await _maintReloadList();
         if (typeof loadAssets === "function") loadAssets();
@@ -1181,6 +1221,9 @@ async function maintCreateAdhoc(assetId, hostname, endLocalIso, opts) {
 
 window.openMaintenanceModal = openMaintenanceModal;
 window.maintCreateAdhoc = maintCreateAdhoc;
+// The one enable/disable writer — the Active Maintenance widget's row menu
+// calls it so the full-body PUT's passthrough list lives in one place.
+window.maintSetScheduleEnabled = maintSetScheduleEnabled;
 window.maintScheduleSummary = maintScheduleSummary;
 window.maintLocalIso = _maintLocalIso;
 window.maintValidateAdhocEnd = maintValidateAdhocEnd;
