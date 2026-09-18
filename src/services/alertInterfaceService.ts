@@ -101,6 +101,43 @@ export interface AlertLldpNeighbor {
  * Best-effort like every other delivery-time enrichment: a failed read logs
  * and yields nothing rather than holding up the alert.
  */
+/** The columns both lookups read. One definition, so the single-port and the
+ *  grouped path can never drift into rendering different facts. */
+const LLDP_NEIGHBOR_SELECT = {
+  chassisId: true,
+  portId: true,
+  portDescription: true,
+  systemName: true,
+  systemDescription: true,
+  managementIp: true,
+  capabilities: true,
+  lastSeen: true,
+  matchedAsset: { select: { hostname: true, ipAddress: true, assetType: true } },
+} as const;
+
+/** One stored row → the shape the block renders. Shared for the same reason. */
+function toAlertNeighbor(r: {
+  chassisId: string | null; portId: string | null; portDescription: string | null;
+  systemName: string | null; systemDescription: string | null; managementIp: string | null;
+  capabilities: string[]; lastSeen: Date;
+  matchedAsset: { hostname: string | null; ipAddress: string | null; assetType: string | null } | null;
+}): AlertLldpNeighbor {
+  return {
+    // The matched asset's hostname first: it is the name the operator will
+    // search Polaris for, where systemName is whatever the peer advertises.
+    name: r.matchedAsset?.hostname || r.systemName || r.chassisId || "unidentified neighbor",
+    matchedType: r.matchedAsset?.assetType ?? null,
+    port:
+      r.portDescription && r.portId
+        ? `${r.portId} (${r.portDescription})`
+        : r.portId || r.portDescription || null,
+    managementIp: r.managementIp || r.matchedAsset?.ipAddress || null,
+    capabilities: r.capabilities ?? [],
+    systemDescription: truncateDesc(r.systemDescription),
+    lastSeen: r.lastSeen,
+  };
+}
+
 export async function loadInterfaceLldp(assetId: string, ifName: string): Promise<AlertLldpNeighbor[]> {
   try {
     const rows = await prisma.assetLldpNeighbor.findMany({
@@ -109,32 +146,9 @@ export async function loadInterfaceLldp(assetId: string, ifName: string): Promis
       where: { assetId, localIfName: { in: fortiapInterfaceAliases(ifName) } },
       orderBy: { lastSeen: "desc" },
       take: MAX_NEIGHBORS + 1,
-      select: {
-        chassisId: true,
-        portId: true,
-        portDescription: true,
-        systemName: true,
-        systemDescription: true,
-        managementIp: true,
-        capabilities: true,
-        lastSeen: true,
-        matchedAsset: { select: { hostname: true, ipAddress: true, assetType: true } },
-      },
+      select: LLDP_NEIGHBOR_SELECT,
     });
-    return rows.map((r) => ({
-      // The matched asset's hostname first: it is the name the operator will
-      // search Polaris for, where systemName is whatever the peer advertises.
-      name: r.matchedAsset?.hostname || r.systemName || r.chassisId || "unidentified neighbor",
-      matchedType: r.matchedAsset?.assetType ?? null,
-      port:
-        r.portDescription && r.portId
-          ? `${r.portId} (${r.portDescription})`
-          : r.portId || r.portDescription || null,
-      managementIp: r.managementIp || r.matchedAsset?.ipAddress || null,
-      capabilities: r.capabilities ?? [],
-      systemDescription: truncateDesc(r.systemDescription),
-      lastSeen: r.lastSeen,
-    }));
+    return rows.map(toAlertNeighbor);
   } catch (err) {
     logger.warn({ err: (err as Error)?.message, assetId, ifName }, "alert LLDP lookup failed — sending without it");
     return [];
@@ -273,13 +287,67 @@ export async function buildInterfaceLldpBlocks(
   metric: string | null,
   dimension: string | null,
   timeZone: string | null = null,
+  /** Every port a GROUPED alert names (business rule 74), primary first. When
+   *  given, the block covers all of them instead of just `dimension` — an
+   *  alert about eight faulted ports whose email explains one of them is the
+   *  storm's problem with extra steps. */
+  dimensions?: string[] | null,
 ): Promise<{ html: string; text: string }> {
   const empty = { html: "", text: "" };
-  if (!assetId || !dimension || !isInterfaceDimensionMetric(metric)) return empty;
-  const neighbors = await loadInterfaceLldp(assetId, dimension);
-  if (neighbors.length === 0) return empty;
-  return {
-    html: renderInterfaceLldp(dimension, neighbors, { html: true, timeZone }),
-    text: renderInterfaceLldp(dimension, neighbors, { html: false, timeZone }),
+  if (!assetId || !isInterfaceDimensionMetric(metric)) return empty;
+  const ports = (dimensions?.length ? dimensions : dimension ? [dimension] : [])
+    .filter((p) => !!p)
+    .slice(0, MAX_GROUP_LLDP_PORTS + 1);
+  if (!ports.length) return empty;
+
+  // ONE query for every port, not one per port: the alias sets are unioned and
+  // the rows grouped in memory. An alert on a 48-port switch must not turn the
+  // delivery drain into 48 round trips.
+  const byPort = await loadInterfacesLldp(assetId, ports);
+  const shown = ports.slice(0, MAX_GROUP_LLDP_PORTS).filter((p) => (byPort.get(p) ?? []).length > 0);
+  if (!shown.length) return empty;
+  const extraPorts = ports.length - Math.min(ports.length, MAX_GROUP_LLDP_PORTS);
+
+  const render = (html: boolean) => {
+    const blocks = shown.map((p) => renderInterfaceLldp(p, byPort.get(p) ?? [], { html, timeZone }));
+    if (extraPorts <= 0) return blocks.join("");
+    const more = `and ${extraPorts} more port${extraPorts === 1 ? "" : "s"} on this alert`;
+    return blocks.join("") + (html
+      ? `<tr><td colspan="2" style="padding:0 0 8px;font-size:12px;color:#6b7280">${escapeHtml(more)}</td></tr>`
+      : `  ${more}\n`);
   };
+  return { html: render(true), text: render(false) };
+}
+
+/** How many ports one email explains before it stops being an email. The
+ *  per-port neighbour cap (MAX_NEIGHBORS) is unchanged and applies within each. */
+const MAX_GROUP_LLDP_PORTS = 6;
+
+/** The neighbours of several ports, in one query, grouped by the port asked
+ *  for. Keyed by the REQUESTED name rather than the stored one, because a
+ *  FortiAP's rows may be under either spelling of the same NIC. */
+async function loadInterfacesLldp(assetId: string, ifNames: string[]): Promise<Map<string, AlertLldpNeighbor[]>> {
+  const out = new Map<string, AlertLldpNeighbor[]>();
+  if (ifNames.length === 1) {
+    // Preserve the single-port path EXACTLY as it was: every ungrouped alert
+    // in the fleet renders through it, and it must stay byte-identical.
+    out.set(ifNames[0]!, await loadInterfaceLldp(assetId, ifNames[0]!));
+    return out;
+  }
+  try {
+    const aliasesFor = new Map(ifNames.map((n) => [n, fortiapInterfaceAliases(n)]));
+    const all = [...new Set([...aliasesFor.values()].flat())];
+    const rows = await prisma.assetLldpNeighbor.findMany({
+      where: { assetId, localIfName: { in: all } },
+      orderBy: { lastSeen: "desc" },
+      select: { ...LLDP_NEIGHBOR_SELECT, localIfName: true },
+    });
+    for (const name of ifNames) {
+      const alias = new Set(aliasesFor.get(name) ?? [name]);
+      out.set(name, rows.filter((r) => alias.has(r.localIfName)).slice(0, MAX_NEIGHBORS + 1).map(toAlertNeighbor));
+    }
+  } catch (err: any) {
+    logger.warn({ err: err?.message, assetId }, "alert LLDP lookup failed (non-fatal)");
+  }
+  return out;
 }

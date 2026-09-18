@@ -417,6 +417,9 @@
       cooldownSec: null,
       messageTemplate: src.messageTemplate == null ? null : src.messageTemplate,
       requireAckNote: src.requireAckNote === true,
+      // Carried verbatim: it names nothing install-specific — it is a
+      // statement about the alert record's shape, like requireAckNote above.
+      groupByAsset: src.groupByAsset === true,
       // (A) ALWAYS explicit, and never empty — see withAuditEvent.
       actions: withAuditEvent(portableActions(src.actions, "Action", cat, deps)),
     };

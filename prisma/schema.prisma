@@ -4807,6 +4807,17 @@ model NotificationRule {
   // ticket-creating webhook or a registry script is not symmetric with an extra
   // email. NULL = never repeats, which is every pre-feature automation.
   repeat       Json?
+  // Consolidate this automation's per-component alerts into ONE alert per
+  // device (business rule 74). Valid only on a per-dimension asset trigger —
+  // `validateGrouping` refuses it anywhere else, because there is nothing to
+  // fold. Off by default: turning it on changes what {dimension} renders and
+  // what one acknowledge covers, so it is opted into, never discovered.
+  //
+  // A FIRST-CLASS COLUMN, deliberately not a key inside `trigger`:
+  // triggerIdentityOf() / triggerSignature() are computed from the trigger and
+  // feed the carve-out precedence index, so a grouped rule must keep shadowing
+  // its ungrouped sibling (business rule 46).
+  groupByAsset Boolean  @default(false)
   createdBy    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -4872,6 +4883,14 @@ model Notification {
   // "<ruleName>|<member it left>": that member exists only in the Event's
   // details, since AssetSdwanRule is delete-replaced and by delivery time holds
   // only where the traffic went.
+  //
+  // On a GROUPED alert (business rule 74) this stays a SINGLE key — the
+  // PRIMARY contribution (worst severity, then natural key sort), not a list.
+  // Seven readers treat it as one string: alertChartService,
+  // alertInterfaceService, nocDashboardService (incl. its dimension sort),
+  // alert-ack-view.js, assets.js, mobile/alerts.js and widgets/activeAlerts.js.
+  // Keeping it single is what lets all seven work unchanged; the full set
+  // lives in `members`.
   dimension String?
 
   // The metric that fired ("responseTimeMs", "hwSensorValue", …). Read at
@@ -4881,6 +4900,40 @@ model Notification {
   // failover, which stamps the field that genuinely changed
   // ("sdwanSelectedMember") so its charts resolve.
   metric String?
+
+  // ─── Grouped alerts (business rule 74) ────────────────────────────────────
+  // A CONTRIBUTION is (automation, component) on this device. A grouped alert
+  // owns a set of them; an ungrouped one leaves all three columns NULL and
+  // reads exactly as it did before the feature.
+
+  // The identity of the live group: "rule:<ruleId>|<assetId>" when one
+  // automation folds its own components. Backed by the PARTIAL unique index
+  // `notifications_group_key_live` (groupKey IS NOT NULL AND cleared = false),
+  // which Prisma cannot express — it lives in the migration SQL alone, so do
+  // not "fix the drift" by deleting it. Partial, because a cleared alert must
+  // release the key for the next episode.
+  groupKey String?
+
+  // AlertMember[] — the RENDER snapshot, never the live truth. Membership is
+  // authoritative in NotificationRuleState (state="firing" AND
+  // notificationId = this row), and "was that the last contribution?" is
+  // always asked of those rows with a count. This column exists because the
+  // alert email renders at DELIVERY time and the alert page renders after the
+  // clear, long after the state rows were released.
+  //
+  // Each entry: { key, label, ruleId, ruleName, severity, value?, joinedAt,
+  // leftAt? }. `key` is the engine's dimensionKey ("" for a whole-device
+  // contribution); `label` is what a human reads (interfaceDimLabel, so
+  // "port12 (AP-1)" rather than "port12"). A recovered contribution keeps its
+  // row with `leftAt` stamped — the history of what this alert covered is the
+  // point of the snapshot.
+  members Json?
+
+  // Count of ACTIVE (leftAt-less) contributions. A denormalization on purpose:
+  // the list surfaces (widgets/activeAlerts.js, mobile/alerts.js,
+  // nocDashboardService) narrow with an explicit `select` and must not pull a
+  // fat JSON blob per row just to render "+7". NULL = not a grouped alert.
+  dimensionCount Int?
 
   deliveries NotificationDelivery[]
 
@@ -5030,6 +5083,13 @@ model NotificationRuleState {
 
   @@unique([ruleId, assetId, dimensionKey])
   @@index([ruleId])
+  // Grouped alerts (business rule 74): many firing rows share one
+  // Notification, and every recovery asks "is any OTHER row still firing on
+  // this notification?" before it is allowed to end the alert. That count is
+  // on the recovery transition only, but it is on the hot path's tail — index
+  // it. Note the question carries no ruleId, which is what makes the same
+  // count correct when contributions come from several automations.
+  @@index([notificationId])
   @@map("notification_rule_states")
 }
 

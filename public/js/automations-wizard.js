@@ -1505,7 +1505,7 @@ async function openAutomationWizard(existing, opts) {
       scope: { allAssets: true },
       trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: null, forDurationSec: 0 },
       reset: null, // defaulted per trigger type on Step-4 entry
-      cooldownSec: null, messageTemplate: null, requireAckNote: false, repeat: null,
+      cooldownSec: null, messageTemplate: null, requireAckNote: false, groupByAsset: false, repeat: null,
       // The audit Event is an action now, present by default — a new
       // automation behaves like every existing one until someone removes it.
       actions: [{ type: "event" }], escalation: null,
@@ -4843,6 +4843,39 @@ async function openAutomationWizard(existing, opts) {
     }
     return "reading";
   }
+  /**
+   * "Raise one alert per device" (business rule 74).
+   *
+   * Rendered only when the trigger actually reports per component, because
+   * that is the only case where there is anything to fold — and a checkbox
+   * that saves and then does nothing is worse than no checkbox. The server
+   * refuses it on anything else (validateGrouping), and collectStep5 drops it
+   * from the draft when the trigger changes, so the two can never disagree.
+   *
+   * The noun comes from the schema catalog's dimensionNouns, like every other
+   * per-dimension sentence in this wizard — "interface", "sensor", "storage
+   * mount" — so the copy follows the vocabulary rather than repeating it.
+   */
+  function groupByAssetHtml() {
+    var tr = draft.trigger;
+    if (!isTriggerPerDimension(tr)) return "";
+    var noun = perDimensionNoun(tr);
+    var capability = (s.alertGrouping && s.alertGrouping.supported) ? s.alertGrouping : null;
+    if (!capability) return "";
+    return '<div style="border-top:1px solid var(--color-border);margin-top:0.6rem;padding-top:0.5rem">' +
+      '<label style="display:block;margin:0;font-weight:400">' +
+        '<input type="checkbox" id="aw-group-by-asset"' + (draft.groupByAsset ? " checked" : "") + '> ' +
+        'Raise one alert per device, not one per ' + escapeHtml(noun) +
+      '</label>' +
+      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">' +
+        'Every affected ' + escapeHtml(noun) + ' is named on the one alert, one acknowledgement covers all of them, ' +
+        'and it stays up until the last one recovers. A ' + escapeHtml(noun) + ' that goes wrong later joins the ' +
+        'same alert and sends one more message — which also re-opens it if it had been acknowledged. ' +
+        '<strong>{dimension} then renders the list</strong> rather than a single name.' +
+      '</p>' +
+    '</div>';
+  }
+
   /** The custom-reset tree an untouched draft starts from: the trigger's own
    *  condition, inverted (De Morgan for a composite). Falls back to a blank
    *  condition row only when there is nothing invertible to seed from. */
@@ -5670,6 +5703,12 @@ async function openAutomationWizard(existing, opts) {
         // The follow-up pair ("require a note" / "repeat this notification")
         // used to live here. It moved into each severity section — see
         // followUpBlockHtml.
+        //
+        // Consolidating per device (business rule 74) stays HERE, and not in
+        // followUpBlockHtml beside it, because it is a property of the alert
+        // RECORD rather than of a severity: that block is cloned per band, and
+        // "how many alerts exist" cannot have a different answer per tier.
+        groupByAssetHtml() +
       '</div>';
 
     // Per-severity action sections: with severity bands, each tier CAN get its
@@ -8164,6 +8203,13 @@ async function openAutomationWizard(existing, opts) {
     // every band inherits when it says nothing of its own.
     var baseBlock = followUpBlocks(panel)[0];
     if (baseBlock) draft.requireAckNote = collectFollowUp(baseBlock).requireAckNote;
+    // Consolidating per device (business rule 74). Read from the control when
+    // it is on screen; FORCED OFF when it is not, which is the case that
+    // matters: an operator who ticked it on a PoE-fault trigger and then
+    // switched the trigger to CPU would otherwise post a flag the server
+    // refuses, and get a 400 pointing at a checkbox no longer rendered.
+    var groupEl = panel.querySelector("#aw-group-by-asset");
+    draft.groupByAsset = groupEl ? !!groupEl.checked : false;
     // The BASE severity section's chain is the rule-level escalation (the engine
     // resolves it for an alert sitting at the base severity).
     var baseSecC = panel.querySelector("#aw-actions") && panel.querySelector("#aw-actions").closest(".form-group");
@@ -8845,6 +8891,7 @@ function _awDraftFromRule(r) {
     cooldownSec: null,
     messageTemplate: r.messageTemplate != null ? r.messageTemplate : null,
     requireAckNote: r.requireAckNote === true,
+    groupByAsset: r.groupByAsset === true,
     actions: JSON.parse(JSON.stringify(Array.isArray(r.actions) ? r.actions : [])),
     escalation: esc ? JSON.parse(JSON.stringify(esc)) : null,
     severityBands: Array.isArray(r.severityBands) && r.severityBands.length ? JSON.parse(JSON.stringify(r.severityBands)) : null,
