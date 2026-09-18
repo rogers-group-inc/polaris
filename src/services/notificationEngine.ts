@@ -60,6 +60,7 @@ import {
   // DECIDES lives there and is unit-tested; this file does the I/O.
   type AlertMember,
   ruleGroupsByAsset,
+  alertScopeOf,
   groupKeyOf,
   mergeMembers,
   markMemberLeft,
@@ -211,6 +212,10 @@ interface DbRule {
    *  (business rule 74). Never read directly — go through `ruleGroupsByAsset`,
    *  which also checks the trigger actually reports per component. */
   groupByAsset: boolean;
+  /** The AlertGroup this rule delivers through, or null. Membership implies
+   *  the per-component fold AND folds this rule's alerts together with every
+   *  other member's on the same device. */
+  alertGroupId: string | null;
 }
 
 /** Best-effort action fan-out — never breaks rule evaluation. (executeActions
@@ -1937,6 +1942,9 @@ async function evaluateThresholdRule(
    *  evaluateAllNotificationRules and drained once every rule has run, so a
    *  grouped alert sends once however many contributions arrived. */
   pendingSends: PendingSends = new Map(),
+  /** The TICK's live-alert index (business rule 74). Only an AlertGroup member
+   *  needs it: its alert may have been opened by a different automation. */
+  tickIndex: TickAlertIndex | null = null,
 ): Promise<void> {
   const trigger = rule.trigger;
   let readings: Reading[] = [];
@@ -2025,12 +2033,7 @@ async function evaluateThresholdRule(
   // `liveByAsset` is seeded from the `states` snapshot already loaded above, so
   // finding the alert a contribution should join costs ZERO extra queries.
   const groupBuf: GroupBuffer | null = ruleGroupsByAsset(rule) ? new Map() : null;
-  const liveByAsset = new Map<string, string>();
-  if (groupBuf) {
-    for (const s of states) {
-      if (s.state === "firing" && s.assetId && s.notificationId) liveByAsset.set(s.assetId, s.notificationId);
-    }
-  }
+  const liveByAsset = await liveAlertsByAsset(rule, states, tickIndex);
 
   for (const reading of readings) {
     const key = `${reading.assetId || ""}|${reading.dimKey}`;
@@ -2208,7 +2211,7 @@ async function evaluateThresholdRule(
   // device-down, vanished-state) all read `states`, which is the snapshot —
   // they cannot see these rows and have no business with them: a contribution
   // that only just fired has not gone out of scope or been superseded.
-  if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends);
+  if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
 
   // Suppressed assets produced no readings this tick. Reset their `pending`
   // rows — the debounce restarts from scratch after the window, a dropped
@@ -2703,7 +2706,13 @@ async function applySustainedRecovery(
   // else: recovered but not sustained long enough yet — keep firing.
 }
 
-async function evaluateCompositeRule(rule: DbRule): Promise<void> {
+async function evaluateCompositeRule(
+  rule: DbRule,
+  /** The TICK's pending sends and live-alert index (business rule 74) — a
+   *  composite may be a member of an AlertGroup. */
+  pendingSends: PendingSends = new Map(),
+  tickIndex: TickAlertIndex | null = null,
+): Promise<void> {
   const trigger = rule.trigger as CompositeTrigger;
   const suppressedIds = new Set<string>();
   let scopeAssets: ScopeAssetRow[] = [];
@@ -2750,6 +2759,14 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
     }
   }
 
+  // GROUPED ALERTS (business rule 74). A composite is the natural whole-device
+  // contribution to an AlertGroup — it already fires once per asset at
+  // dimensionKey "", which is exactly one contribution. It can never group on
+  // its OWN (the per-rule checkbox refuses it as redundant), so the buffer is
+  // armed only for a group member.
+  const groupBuf: GroupBuffer | null = rule.alertGroupId && ruleGroupsByAsset(rule) ? new Map() : null;
+  const liveByAsset = await liveAlertsByAsset(rule, states, tickIndex);
+
   // Assets actually evaluated this tick (≥1 leaf reading) — the composite
   // analogue of the per-reading path's `seen` set, for the vanished sweep.
   const evaluatedIds = new Set<string>();
@@ -2794,7 +2811,7 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
     if (outcome.meets) {
       if (!st || st.state === "clear") {
         if (holdPolls > 0) {
-          if (stepped && stepped.run >= holdPolls) await fire(rule, reading, null, now, compositeFireInfo(outcome));
+          if (stepped && stepped.run >= holdPolls) await fire(rule, reading, null, now, compositeFireInfo(outcome), groupBuf ? { group: groupBuf } : undefined);
           else await upsertState(rule.id, reading, "pending", {
             conditionMetSince: now, lastValue: null,
             metRun: stepped?.run ?? 1, clearRun: 0, lastReadingAt: outcome.readingAt ?? now,
@@ -2802,11 +2819,11 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
         } else if (trigger.forDurationSec > 0) {
           await upsertState(rule.id, reading, "pending", { conditionMetSince: now, lastValue: null });
         } else {
-          await fire(rule, reading, null, now, compositeFireInfo(outcome));
+          await fire(rule, reading, null, now, compositeFireInfo(outcome), groupBuf ? { group: groupBuf } : undefined);
         }
       } else if (st.state === "pending") {
         if (holdPolls > 0) {
-          if (stepped && stepped.run >= holdPolls) await fire(rule, reading, null, now, compositeFireInfo(outcome));
+          if (stepped && stepped.run >= holdPolls) await fire(rule, reading, null, now, compositeFireInfo(outcome), groupBuf ? { group: groupBuf } : undefined);
           else if (stepped?.advanced) {
             await prisma.notificationRuleState.update({
               where: { id: st.id },
@@ -2816,7 +2833,7 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
         } else {
           const since = st.conditionMetSince ?? now;
           if (now.getTime() - since.getTime() >= trigger.forDurationSec * 1000) {
-            await fire(rule, reading, null, now, compositeFireInfo(outcome));
+            await fire(rule, reading, null, now, compositeFireInfo(outcome), groupBuf ? { group: groupBuf } : undefined);
           }
           // else keep pending
         }
@@ -2837,6 +2854,11 @@ async function evaluateCompositeRule(rule: DbRule): Promise<void> {
       await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null } });
     }
   }
+
+  // GROUPED ALERTS (business rule 74): land this composite's contributions
+  // before the sweeps below, for the same reason the threshold path does —
+  // a state row must never be left `firing` with no notification behind it.
+  if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
 
   // Vanished states: assets that left the rule's scope (composite state lives
   // at dimensionKey "", so only the scope reason applies here — an evaluated
@@ -3164,6 +3186,69 @@ interface PendingSend {
 }
 type PendingSends = Map<string, PendingSend>;
 
+/**
+ * The TICK's index of live grouped alerts, keyed by `groupKey`.
+ *
+ * Only an AlertGroup needs it. A rule folding its own components can find its
+ * alert in the state rows it has already loaded — a contribution and the alert
+ * it belongs to are always the same automation's — but a GROUP's alert may have
+ * been opened by a different member automation entirely, whose state rows this
+ * rule's pass never sees.
+ *
+ * Built once per tick and mutated as alerts are created, so the cost is one
+ * query bounded by LIVE ALERTS (tens to low thousands) rather than by fleet
+ * size, and a group of five automations pays it once rather than five times.
+ */
+class TickAlertIndex {
+  private loaded = false;
+  private byKey = new Map<string, string>();
+
+  async keysFor(): Promise<Map<string, string>> {
+    if (!this.loaded) {
+      const rows = await prisma.notification.findMany({
+        where: { groupKey: { not: null }, cleared: false },
+        select: { id: true, groupKey: true },
+      });
+      for (const r of rows) if (r.groupKey) this.byKey.set(r.groupKey, r.id);
+      this.loaded = true;
+    }
+    return this.byKey;
+  }
+
+  /** Record an alert this tick just opened, so a later member joins it rather
+   *  than racing the partial unique index for a second one. */
+  remember(groupKey: string, notificationId: string): void {
+    this.byKey.set(groupKey, notificationId);
+  }
+}
+
+/** assetId → the live alert a contribution from this rule should join. */
+async function liveAlertsByAsset(
+  rule: DbRule,
+  states: { state: string; assetId: string | null; notificationId: string | null }[],
+  tickIndex: TickAlertIndex | null,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ruleGroupsByAsset(rule)) return out;
+  if (!rule.alertGroupId) {
+    // Its own alerts: free, off the snapshot the readings loop already loaded.
+    for (const s of states) {
+      if (s.state === "firing" && s.assetId && s.notificationId) out.set(s.assetId, s.notificationId);
+    }
+    return out;
+  }
+  // A group's alert may belong to another member automation, so the answer is
+  // keyed by groupKey rather than by anything this rule can see.
+  if (!tickIndex) return out;
+  const byKey = await tickIndex.keysFor();
+  const scope = alertScopeOf(rule);
+  const prefix = `${scope.scope}:${scope.id}|`;
+  for (const [key, id] of byKey) {
+    if (key.startsWith(prefix)) out.set(key.slice(prefix.length), id);
+  }
+  return out;
+}
+
 /** Turn an engine reading into the contribution stored on the alert. */
 function memberOf(rule: DbRule, f: GroupFire, now: Date): AlertMember {
   const r = f.reading;
@@ -3196,12 +3281,13 @@ async function flushGroupFires(
   liveByAsset: Map<string, string>,
   now: Date,
   pending: PendingSends,
+  tickIndex: TickAlertIndex | null,
 ): Promise<void> {
   for (const [assetId, fires] of buf) {
     if (!fires.length) continue;
     const live = liveByAsset.get(assetId);
     const joined = live ? await joinGroupAlert(rule, live, fires, now, pending) : false;
-    if (!joined) await createGroupAlert(rule, assetId, fires, now, pending, liveByAsset);
+    if (!joined) await createGroupAlert(rule, assetId, fires, now, pending, liveByAsset, tickIndex);
   }
 }
 
@@ -3213,6 +3299,7 @@ async function createGroupAlert(
   now: Date,
   pending: PendingSends,
   liveByAsset: Map<string, string>,
+  tickIndex: TickAlertIndex | null,
 ): Promise<void> {
   const members = mergeMembers([], fires.map((f) => memberOf(rule, f, now)), now);
   const severity = groupSeverity(members, rule.severity);
@@ -3221,7 +3308,11 @@ async function createGroupAlert(
   // the email's charts are about.
   const lead = fires.find((f) => f.reading.dimKey === primary?.key) ?? fires[0]!;
   const ctx = await buildGroupContext(rule, lead, members, severity, now);
-  const groupKey = groupKeyOf("rule", rule.id, assetId);
+  // Where this rule's grouped alerts live: its AlertGroup when it belongs to
+  // one (so every member automation folds into the SAME alert per device), else
+  // itself. The two scopes can never collide in the partial unique index.
+  const scope = alertScopeOf(rule);
+  const groupKey = groupKeyOf(scope.scope, scope.id, assetId);
 
   let notif: { id: string };
   try {
@@ -3238,6 +3329,12 @@ async function createGroupAlert(
           ? rule.trigger.metric
           : rule.trigger.type === "asset_state" ? rule.trigger.field : null,
         groupKey,
+        // The group owns this alert's DELIVERY from here on — its recipients,
+        // escalation chain, reminder cadence and ack-note policy, resolved at
+        // delivery time through alertOwnerOf. `ruleId` above stays set to the
+        // primary contributing rule regardless: a null-ruleId alert cannot
+        // escalate, is invisible to the NOC's relevance pills and has no name.
+        alertGroupId: rule.alertGroupId ?? null,
         members: members as unknown as Prisma.InputJsonValue,
         dimensionCount: activeMembers(members).length,
         ...(ruleWantsContext(rule) ? { templateCtx: ctx as any } : {}),
@@ -3257,6 +3354,9 @@ async function createGroupAlert(
   }
 
   liveByAsset.set(assetId, notif.id);
+  // Remember it TICK-wide too, so a later member automation of the same group
+  // joins this alert instead of racing the unique index for a second one.
+  tickIndex?.remember(groupKey, notif.id);
   await upsertGroupStates(rule, fires, notif.id, now);
   pending.set(notif.id, { kind: "fire", notificationId: notif.id, rule, reading: lead.reading, ctx, actions: lead.actions, severity, count: activeMembers(members).length });
 
@@ -4502,6 +4602,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       // change triggerSignature and stop a grouped rule shadowing its
       // ungrouped sibling in the carve-out index, business rule 46).
       groupByAsset: r.groupByAsset === true,
+      alertGroupId: r.alertGroupId ?? null,
     };
   });
 
@@ -4521,13 +4622,17 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // alert therefore sends ONCE per tick with the final member set, whatever
   // order its contributions arrived in.
   const pendingSends: PendingSends = new Map();
+  // Live grouped alerts, keyed by groupKey. Loaded lazily and only when an
+  // AlertGroup member actually needs it, so an install with no groups never
+  // issues the query.
+  const tickIndex = new TickAlertIndex();
 
   for (const rule of rules) {
     try {
       if (rule.trigger.type === "composite") {
-        await evaluateCompositeRule(rule);
+        await evaluateCompositeRule(rule, pendingSends, tickIndex);
       } else if (rule.trigger.type === "asset_metric" || rule.trigger.type === "asset_state" || rule.trigger.type === "host_metric") {
-        await evaluateThresholdRule(rule, shadowIndex, pendingSends);
+        await evaluateThresholdRule(rule, shadowIndex, pendingSends, tickIndex);
       }
     } catch (err) {
       await logEvent({ action: "notification.engine_error", actor: "system:notification-engine", level: "error", message: `Rule "${rule.name}" evaluation failed`, details: { ruleId: rule.id, err: (err as Error)?.message } }).catch(() => {});
@@ -4791,6 +4896,8 @@ function draftRuleForPreview(input: PreviewRuleInput, trigger: DbRule["trigger"]
     // reading — but the draft still carries the operator's choice so the
     // preview's own grouped roll-up ("47 interfaces → 12 alerts") can count it.
     groupByAsset: input.groupByAsset === true,
+    // A preview writes nothing and joins nothing, so it never resolves a group.
+    alertGroupId: null,
   };
 }
 

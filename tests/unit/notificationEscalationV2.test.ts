@@ -23,6 +23,10 @@ const db = {
 vi.mock("../../src/db.js", () => ({
   prisma: {
     notificationRule: { findMany: vi.fn(async () => db.rules) },
+    // Alert groups (business rule 74): the sweep also loads GROUP-owned
+    // chains. No group in these fixtures, so every alert resolves its owner
+    // to its own automation exactly as before.
+    alertGroup: { findMany: vi.fn(async () => []) },
     notification: {
       findMany: vi.fn(async () => db.notifs),
       update: vi.fn(async (args: any) => {

@@ -516,13 +516,19 @@ function withV2<T extends { reset: unknown; actions: unknown }>(row: T): T {
   return { ...row, reset: v2.reset, actions: v2.actions };
 }
 
+// The AlertGroup an automation delivers through (business rule 74). Joined on
+// the read paths the builder uses, so the wizard's actions step can say "this
+// is delivered by <group>" — editing recipients that no longer run, with no
+// way to find that out, is the one failure mode the banner exists to prevent.
+const ALERT_GROUP_INCLUDE = { alertGroup: { select: { id: true, name: true, enabled: true } } } as const;
+
 export async function listRules() {
-  const rows = await prisma.notificationRule.findMany({ orderBy: { createdAt: "desc" } });
+  const rows = await prisma.notificationRule.findMany({ orderBy: { createdAt: "desc" }, include: ALERT_GROUP_INCLUDE });
   return rows.map(withV2);
 }
 
 export async function getRule(id: string) {
-  const rule = await prisma.notificationRule.findUnique({ where: { id } });
+  const rule = await prisma.notificationRule.findUnique({ where: { id }, include: ALERT_GROUP_INCLUDE });
   if (!rule) throw new AppError(404, "Notification rule not found");
   return withV2(rule);
 }
@@ -596,6 +602,17 @@ export async function updateRule(id: string, input: RuleInput, actor?: string) {
   await assertActionRefs(input);
   const identityChanged =
     triggerIdentityOf(existing.trigger as unknown as Trigger) !== triggerIdentityOf(input.trigger);
+  // GROUPED ALERTS (business rule 74). Turning the per-device fold on or off
+  // changes the SHAPE of this automation's alerts — one per device instead of
+  // one per component — and a live alert cannot be reshaped in place: the
+  // firing branch is a no-op for a steadily-firing condition, so nothing would
+  // change until every component recovered, and an operator who ticked the box
+  // mid-storm would conclude it did not work.
+  //
+  // Deliberately NOT part of triggerIdentityOf: that string also feeds the
+  // carve-out shadow index, and a grouped automation must keep shadowing its
+  // ungrouped sibling (business rule 46).
+  const regrouped = (existing.groupByAsset === true) !== (input.groupByAsset === true);
   const mirror = legacyMirrorOfV2(input.reset, input.actions);
   // Nullable-Json semantics: undefined (field absent) leaves the stored value
   // unchanged; explicit null clears it (Prisma.DbNull).
@@ -636,10 +653,14 @@ export async function updateRule(id: string, input: RuleInput, actor?: string) {
   // otherwise sit uncleared forever (still counted by every widget). Clearing
   // by ruleId (not via state-row notificationIds) also catches stragglers.
   const disabling = existing.enabled && input.enabled === false;
-  if (identityChanged || disabling) {
+  if (identityChanged || disabling || regrouped) {
     await prisma.notification.updateMany({
       where: { ruleId: id, cleared: false },
-      data: { cleared: true, clearedBy: identityChanged ? "system:rule-edited" : "system:rule-disabled", clearedAt: new Date() },
+      data: {
+        cleared: true,
+        clearedBy: identityChanged ? "system:rule-edited" : disabling ? "system:rule-disabled" : "system:rule-regrouped",
+        clearedAt: new Date(),
+      },
     });
     await prisma.notificationRuleState.deleteMany({ where: { ruleId: id } });
   }

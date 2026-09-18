@@ -4114,8 +4114,47 @@ export function triggerIsPerDimension(trigger: Trigger | null | undefined): bool
  *  The single gate the engine branches on — everything grouping-related is
  *  behind it, which is what makes the feature cost exactly nothing for every
  *  rule in an install that has not opted in. */
-export function ruleGroupsByAsset(rule: { groupByAsset?: boolean | null; trigger: Trigger }): boolean {
+export function ruleGroupsByAsset(rule: {
+  groupByAsset?: boolean | null;
+  /** Membership of an AlertGroup IMPLIES the fold: joining a group means one
+   *  alert per device, components included. An operator who put an automation
+   *  in a group and still got eight alerts per switch would reasonably call
+   *  that broken. */
+  alertGroupId?: string | null;
+  trigger: Trigger;
+}): boolean {
+  if (rule.alertGroupId) return triggerCanJoinGroup(rule.trigger);
   return rule.groupByAsset === true && triggerIsPerDimension(rule.trigger);
+}
+
+/**
+ * May this trigger contribute to an AlertGroup?
+ *
+ * Wider than `triggerIsPerDimension` by exactly one case: a COMPOSITE fires
+ * once per device at dimensionKey "" — redundant as a per-rule fold, which is
+ * why the checkbox refuses it, but a perfectly good whole-device contribution
+ * to a group. "Switch health" wanting a composite beside a PoE-fault automation
+ * is the obvious case, not an exotic one.
+ *
+ * Refused: `host_metric` (no device to group by) and `event`/`change` — and
+ * that refusal is structural rather than cautious. The event tail writes no
+ * `NotificationRuleState` row at all, so there would be nothing for the "was
+ * that the last contribution?" count to see, and the alert could never learn
+ * that the event's part in it had ended. Revisit only with a state row for them.
+ */
+export function triggerCanJoinGroup(trigger: Trigger | null | undefined): boolean {
+  if (!trigger) return false;
+  if (trigger.type === "composite") return trigger.kind !== "host";
+  return triggerIsPerDimension(trigger);
+}
+
+/** Where a rule's grouped alerts live: its group when it has one, else itself.
+ *
+ *  The two scopes can never collide in the partial unique index, and a rule
+ *  joining or leaving a group CHANGES its key — which is what stops the old
+ *  episode's alert and the new one fighting over the same row. */
+export function alertScopeOf(rule: { id: string; alertGroupId?: string | null }): { scope: "rule" | "grp"; id: string } {
+  return rule.alertGroupId ? { scope: "grp", id: rule.alertGroupId } : { scope: "rule", id: rule.id };
 }
 
 /** The contributions that have NOT recovered. */
@@ -4286,6 +4325,114 @@ export function renderMemberList(
   const extra = ordered.length - shown.length;
   if (extra <= 0) return shown.join(", ");
   return `${shown.join(", ")} and ${extra} more`;
+}
+
+// ─── Who owns an alert's delivery (business rule 74, second half) ───────────
+
+/**
+ * The delivery policy behind a live alert: its AlertGroup when it has one, else
+ * its automation.
+ *
+ * Deliberately RULE-SHAPED. Every existing resolver —
+ * `effectiveAckNoteForSeverity`, `escalationChainsForSeverity`,
+ * `allEscalationsOf`, `allRepeatsOf`, `effectiveActionsForSeverity` — takes a
+ * rule-ish object, and handing them one keeps the whole grouped path on the
+ * same code as the ungrouped one rather than growing a parallel set that can
+ * drift. `kind` exists for the surfaces that must SAY which it was (the alert
+ * page's "Automation" row, the widget's title), not for branching on policy.
+ *
+ * A group carries no `severityBands`: a grouped alert's severity is the max of
+ * its active contributions, each resolved by its own automation's bands. That
+ * falls out correctly — every band-aware resolver reads an empty ladder and
+ * answers from the base, which is the group's own policy.
+ */
+export interface DeliveryOwner {
+  kind: "rule" | "group";
+  id: string;
+  name: string;
+  severity: string;
+  severityBands: SeverityBand[] | null;
+  requireAckNote: boolean;
+  actions: EscalatableAction[] | null;
+  escalation: EscalationV2Config | EscalationConfig | null;
+  repeat: RepeatConfig | null;
+  emailComposition: EmailComposition | null;
+  resetActions: AutomationAction[] | null;
+  messageTemplate: string | null;
+}
+
+/** The shapes `alertOwnerOf` reads — a notification with its relations joined. */
+export interface AlertOwnerSources {
+  severity?: string | null;
+  rule?: {
+    // id/name are optional because several callers select only the policy
+    // columns — the owner's identity matters to the surfaces that NAME it, not
+    // to the ones that only ask what it requires.
+    // `severity` likewise: it is the rule's BASE severity, which only the
+    // ack-note resolver's "is the alert sitting at the base?" test consults.
+    // A caller selecting only reset actions has no use for it, and falling
+    // back to the alert's own severity makes that test answer yes — which is
+    // the right answer when there are no bands to consult anyway.
+    id?: string; name?: string; severity?: string;
+    severityBands?: unknown; requireAckNote?: boolean | null;
+    actions?: unknown; escalation?: unknown; repeat?: unknown;
+    emailComposition?: unknown; resetActions?: unknown; messageTemplate?: string | null;
+  } | null;
+  alertGroup?: {
+    id: string; name: string; enabled?: boolean;
+    requireAckNote?: boolean | null;
+    actions?: unknown; escalation?: unknown; repeat?: unknown;
+    emailComposition?: unknown; resetActions?: unknown; messageTemplate?: string | null;
+  } | null;
+}
+
+/**
+ * Resolve an alert's delivery owner. Null when there is neither — a test alert
+ * or one whose automation was deleted, which every caller already treats as
+ * "no policy left to enforce".
+ *
+ * A DISABLED group does not own anything: its member automations go back to
+ * delivering on their own, so an alert that outlives the group being switched
+ * off falls back to the rule rather than losing its escalation entirely.
+ */
+export function alertOwnerOf(n: AlertOwnerSources | null | undefined): DeliveryOwner | null {
+  const g = n?.alertGroup;
+  if (g && g.enabled !== false) {
+    return {
+      kind: "group",
+      id: g.id,
+      name: g.name,
+      // The alert's own severity is the max of its contributions; the group has
+      // no base of its own, so it reports what the alert is sitting at. That is
+      // what makes `effectiveAckNoteForSeverity`'s "is this the base?" test
+      // answer yes and fall through to the group's own flag.
+      severity: n?.severity ?? "warning",
+      severityBands: null,
+      requireAckNote: g.requireAckNote === true,
+      actions: (g.actions ?? null) as EscalatableAction[] | null,
+      escalation: (g.escalation ?? null) as EscalationV2Config | EscalationConfig | null,
+      repeat: (g.repeat ?? null) as RepeatConfig | null,
+      emailComposition: (g.emailComposition ?? null) as EmailComposition | null,
+      resetActions: (g.resetActions ?? null) as AutomationAction[] | null,
+      messageTemplate: g.messageTemplate ?? null,
+    };
+  }
+  const r = n?.rule;
+  if (!r) return null;
+  return {
+    kind: "rule",
+    id: r.id ?? "",
+    name: r.name ?? "",
+    severity: r.severity ?? n?.severity ?? "warning",
+    severityBands: (r.severityBands ?? null) as SeverityBand[] | null,
+    requireAckNote: r.requireAckNote === true,
+    actions: (r.actions ?? null) as EscalatableAction[] | null,
+    escalation: (r.escalation ?? null) as EscalationV2Config | EscalationConfig | null,
+    repeat: (r.repeat ?? null) as RepeatConfig | null,
+    emailComposition: (r.emailComposition ?? null) as EmailComposition | null,
+    resetActions: (r.resetActions ?? null) as AutomationAction[] | null,
+    messageTemplate: r.messageTemplate ?? null,
+  };
 }
 
 /** What one dimension of a reading IS, in an operator's words — so a surface can

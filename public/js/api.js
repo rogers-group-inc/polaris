@@ -1044,6 +1044,24 @@ const api = {
     // down detection at all — the delete/disable confirmation reads it.
     removalImpact: (id) => request("GET", `/automations/${id}/removal-impact`),
   },
+  // Alert groups (business rule 74) — a named set of automations whose alerts
+  // about one device fold into one alert, with the group owning delivery.
+  // Mounted ABOVE /automations server-side, like scripts, so the literal path
+  // is never captured as a rule id.
+  alertGroups: {
+    list:     ()      => request("GET", "/automations/groups"),
+    get:      (id)    => request("GET", `/automations/groups/${id}`),
+    /** Every automation, each marked selectable or carrying the reason it
+     *  cannot join — the member picker shows the refusals rather than hiding
+     *  the rows. */
+    joinable: (groupId) => request("GET", "/automations/groups/joinable" + (groupId ? `?groupId=${encodeURIComponent(groupId)}` : "")),
+    create:   (body)  => request("POST", "/automations/groups", body),
+    update:   (id, b) => request("PUT", `/automations/groups/${id}`, b),
+    delete:   (id)    => request("DELETE", `/automations/groups/${id}`),
+    /** What deleting it would change — live alerts, members, and which members
+     *  would go SILENT because the group was doing the telling. */
+    removalImpact: (id) => request("GET", `/automations/groups/${id}/removal-impact`),
+  },
   automationScripts: {
     list:    ()      => request("GET", "/automations/scripts"),
     get:     (id)    => request("GET", `/automations/scripts/${id}`),

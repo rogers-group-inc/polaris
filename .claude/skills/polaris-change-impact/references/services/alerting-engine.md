@@ -37,6 +37,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/alertGroupService.ts
+
+**What it owns:** The `AlertGroup` registry (business rule 74, second half) — a named set of automations whose alerts about ONE device fold into a single alert, with the group owning DELIVERY (notify actions, escalation chain, reminder cadence, acknowledge-note policy, `emailComposition`, `resetActions`) while its members keep owning DETECTION. CRUD, the membership swap, the joinable-rules picker source and the removal-impact preview.
+
+**Public API:** `listGroups`, `getGroup(id)`, `createGroup(input, actor)`, `updateGroup(id, input, actor)`, `deleteGroup(id, actor)`, `groupRemovalImpact(id)`, `listJoinableRules(forGroupId?)`, `AlertGroupInput`.
+
+**Cross-service deps:** `prisma` (AlertGroup, NotificationRule, Notification, NotificationRuleState), `eventLogService.logEvent`, `notificationTypes.triggerCanJoinGroup`.
+
+**Used by:** `src/api/routes/alertGroups.ts` (mounted at `/api/v1/automations/groups`, ABOVE `/automations` so the literal path is never captured as a rule id — the same reason `/automations/scripts` sits there), and `public/js/alert-groups.js` (the Automations page's Alert Groups tab).
+
+**Invariants:**
+- **At most ONE group per automation.** A fire must have a single alert to join; `assertMembership` refuses a rule already in another group, naming it.
+- **Eligible triggers are `asset_metric` / `asset_state` / `composite`** (`triggerCanJoinGroup`, which is WIDER than `triggerIsPerDimension` by exactly the composite: it already fires once per device, so it is redundant as a self-fold but is one good whole-device contribution to a group). `host_metric` has no device; `event` / `change` are refused STRUCTURALLY because the event tail writes no `NotificationRuleState` row, so nothing could ever tell the alert their part in it had ended.
+- **The picker RETURNS the refusals** rather than filtering the rows out (`listJoinableRules` marks each rule `selectable` with a `reason`) — an operator hunting for an automation and not finding it concludes the list is broken, when the real answer is that an event automation keeps no state a shared alert could resolve.
+- **Joining, leaving, disabling and deleting all RETIRE the affected live alerts** and release their state rows (`system:rule-regrouped` / `system:group-disabled` / `system:group-deleted`), so the next tick re-raises them under whoever owns them now. An alert cannot change owner mid-life — its recipients, template and escalation chain would swap under a reader.
+- **Deleting a group does NOT delete its automations** (`alertGroupId` is SetNull on both the rules and the alerts): they go back to delivering on their own. `groupRemovalImpact` names the members that would go SILENT — the ones with no notify action of their own, which were relying on the group to do the telling — because that is the consequence no other surface shows.
+- Every mutation writes an `Event` (`alert_group.created` / `.updated` / `.deleted`).
+
+**When changing this:** a new column on `AlertGroup` is a DELIVERY column by definition — ask first whether it is consumed once at fire and frozen into the Notification row (in which case it belongs on `NotificationRule`, like `messageTemplate` and `bandNotify`) or re-read long after, resolved by id (in which case it belongs here AND in `alertOwnerOf`'s `DeliveryOwner`, or the group will carry a setting nothing reads). Adding a trigger type that may join means `triggerCanJoinGroup` AND an engine path that buffers its fires — `evaluateThresholdRule` and `evaluateCompositeRule` each have one; a type with neither would join, produce contributions and never fold them.
+
+---
+
 ## services/notificationService.ts
 
 **What it owns:** Triggered-notification read + lifecycle (View tab + asset tab): region-scoped listing, batch acknowledge/clear, the per-asset bundle, region-prefix stripping, and the **suppression sweep** (`clearSuppressedAlerts` — retires every active alert whose asset is in a maintenance window or dependency-suppressed, business rule 16).

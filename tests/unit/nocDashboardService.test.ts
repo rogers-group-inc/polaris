@@ -485,6 +485,10 @@ describe("getRecentAlerts", () => {
       id: "n1", assetId: "asset-1", hostname: "fw-1", dimension: null,
       message: "fw-1 is down", severity: "critical", raisedAt: t,
       ruleName: "Asset down", triggerType: null, acknowledged: true, acknowledgedBy: "jsmith",
+      // Grouped alerts (business rule 74): an alert about a single thing
+      // reports both as null, which is what keeps the widget's "+N" affordance
+      // off every ungrouped row.
+      groupName: null, dimensionCount: null,
     });
     // It reads ALERTS, never audit Events — the whole point of the feed.
     expect(eventFindMany).not.toHaveBeenCalled();

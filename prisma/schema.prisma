@@ -4818,6 +4818,16 @@ model NotificationRule {
   // feed the carve-out precedence index, so a grouped rule must keep shadowing
   // its ungrouped sibling (business rule 46).
   groupByAsset Boolean  @default(false)
+  /// The AlertGroup this automation delivers through (business rule 74), or
+  /// NULL when it delivers on its own. At most ONE: a fire has to have a single
+  /// alert to join. Membership IMPLIES `groupByAsset` — joining a group means
+  /// one alert per device, components included — so `ruleGroupsByAsset` is true
+  /// for a member whatever its own checkbox says.
+  ///
+  /// SetNull rather than Cascade: deleting a group must not delete the
+  /// automations, which keep detecting and go back to delivering on their own.
+  alertGroupId String?
+  alertGroup   AlertGroup? @relation(fields: [alertGroupId], references: [id], onDelete: SetNull)
   createdBy    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -4935,6 +4945,20 @@ model Notification {
   // fat JSON blob per row just to render "+7". NULL = not a grouped alert.
   dimensionCount Int?
 
+  /// The AlertGroup that OWNS this alert's delivery (business rule 74), when
+  /// its contributions came through one. Every delivery-time read of policy —
+  /// the acknowledge-note gate, the escalation chains, the reminder cadence,
+  /// the reset actions — resolves through `alertOwnerOf`, which answers the
+  /// group when this is set and the rule otherwise.
+  ///
+  /// `ruleId` stays set to the PRIMARY contributing rule even here. A null
+  /// ruleId alert is un-escalatable (the sweep's `ruleId IN (...)` never
+  /// matches NULL), invisible to the NOC's relevance-filtered severity pills,
+  /// nameless in the Active Alerts widget and permissive on the ack-note gate —
+  /// six regressions to buy nothing.
+  alertGroupId String?
+  alertGroup   AlertGroup? @relation(fields: [alertGroupId], references: [id], onDelete: SetNull)
+
   deliveries NotificationDelivery[]
 
   @@index([assetId])
@@ -4956,6 +4980,65 @@ model Notification {
 // `type` selects the transport + config shape; secrets in `config` are masked
 // on read and preserved on write (notificationChannelService). web_push is a
 // singleton (one server VAPID keypair) — the service enforces a single row.
+/// A named set of automations whose alerts about ONE device fold into a single
+/// alert (business rule 74). "Switch health" over a PoE-fault automation, a
+/// chassis-temperature one and an interface-down one: whatever they raise about
+/// sw-idf3 is one alert, one message, one acknowledgement.
+///
+/// THE SPLIT THIS MODEL EXISTS FOR — a group owns DELIVERY; its member
+/// automations own DETECTION. Member rules keep their trigger, scope, holds,
+/// severity bands and reset, and stop delivering on their own while grouped;
+/// the group carries the one set of notify actions, the one escalation chain,
+/// the one reminder cadence and the one acknowledge-note policy.
+///
+/// It is the only split with a coherent answer. Escalation tiers and reminder
+/// cadence are per-automation today, so an alert raised by three of them has
+/// three answers to "when does this page someone?" and no way to choose. The
+/// alternatives were rejected on that ground: letting whichever automation
+/// fired FIRST own delivery makes the recipients depend on which check noticed
+/// first, and unioning the recipients answers the To line while leaving
+/// escalation and reminders exactly as ambiguous as before.
+///
+/// The columns mirror NotificationRule's delivery half deliberately. The two
+/// that are NOT here are the two consumed once at fire and frozen into the
+/// Notification row — `messageTemplate` (frozen into `message`) and
+/// `bandNotify` — which can stay on whichever member won the fire. Everything
+/// below is re-read LONG after the alert exists, resolved by id, which is
+/// exactly what a group has to own.
+///
+/// There is deliberately no `severity`: a grouped alert's severity is the max
+/// of its active contributions, each carrying the severity its own rule's bands
+/// resolved.
+model AlertGroup {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String? @db.Text
+  /// Disabling a group does NOT disable its automations — they keep detecting
+  /// and go back to delivering on their own.
+  enabled     Boolean @default(true)
+
+  /// The delivery half, lifted from NotificationRule. Seeded from the first
+  /// member on create, so joining a group is not a re-authoring exercise.
+  messageTemplate  String? @db.Text
+  requireAckNote   Boolean @default(false)
+  emailComposition Json?
+  /// escalatableActionSchema[] — notify | api_call | script | event.
+  actions          Json?
+  resetActions     Json?
+  escalation       Json?
+  repeat           Json?
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rules         NotificationRule[]
+  notifications Notification[]
+
+  @@index([enabled])
+  @@map("alert_groups")
+}
+
 model NotificationChannel {
   id        String   @id @default(uuid())
   name      String

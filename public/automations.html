@@ -31,6 +31,7 @@
       <div class="page-tabs" id="auto-tabs">
         <button type="button" class="page-tab active" data-tab="manage" id="auto-tab-manage-btn" style="display:none">Automations</button>
         <button type="button" class="page-tab" data-tab="delivery" id="auto-tab-delivery-btn" style="display:none">Delivery</button>
+        <button type="button" class="page-tab" data-tab="groups" id="auto-tab-groups-btn" style="display:none">Alert Groups</button>
         <button type="button" class="page-tab" data-tab="scripts" id="auto-tab-scripts-btn" style="display:none">Scripts</button>
         <button type="button" class="page-tab" data-tab="contacts" id="auto-tab-contacts-btn" style="display:none">Address Book</button>
       </div>
@@ -103,6 +104,23 @@
         </div>
       </div>
 
+      <!-- ─── Alert Groups tab ──────────────────────────────────────────────
+           AlertGroup registry (business rule 74): a named set of automations
+           whose alerts about ONE device fold into a single alert. The group
+           owns DELIVERY — recipients, escalation, reminders, the ack-note
+           policy — while its members keep owning DETECTION. Gated by
+           automationManagement, like the automations themselves: a group
+           decides who gets paged about every one of its members. -->
+      <div class="page-tab-panel" id="auto-tab-groups">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin:0 0 1rem">
+          <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0;max-width:60ch">
+            A group folds everything its automations raise about one device into a <strong>single alert</strong> — one message, one acknowledgement, up until the last problem clears. The group decides who is told and how it escalates; its automations keep deciding what to watch for.
+          </p>
+          <button type="button" class="btn btn-primary" id="ag-new-btn">New group</button>
+        </div>
+        <div id="ag-list"><p class="empty-state">Loading...</p></div>
+      </div>
+
       <!-- ─── Scripts tab ───────────────────────────────────────────────────
            AutomationScript registry (script actions reference these). Gated by
            the automationScripts RBAC key — scripts are RCE-equivalent, so the
@@ -157,6 +175,9 @@
   <script src="/js/totp-self.js"></script>
   <script src="/js/webauthn.js"></script>
   <script src="/js/passkeys-self.js"></script>
+  <!-- Alert Groups tab (business rule 74). Before automations.js, which wires
+       its tab button and refresh handler to window.PolarisAlertGroups. -->
+  <script src="/js/alert-groups.js"></script>
   <script src="/js/automations.js"></script>
   <script src="/js/condition-builder.js"></script>
   <script src="/js/automations-address-book.js"></script>

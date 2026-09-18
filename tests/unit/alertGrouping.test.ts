@@ -29,6 +29,9 @@ import {
   primaryMember,
   renderMemberList,
   naturalCompare,
+  triggerCanJoinGroup,
+  alertScopeOf,
+  alertOwnerOf,
 } from "../../src/services/notificationTypes.js";
 
 const RULE = "11111111-1111-4111-8111-111111111111";
@@ -373,5 +376,94 @@ describe("validateGrouping (via ruleInputSchema)", () => {
     const cat = buildSchemaCatalog() as Record<string, any>;
     expect(cat.alertGrouping?.supported).toBe(true);
     expect(cat.alertGrouping?.labelCap).toBe(GROUP_LABEL_CAP);
+  });
+});
+
+// ─── Alert groups: folding alerts ACROSS automations ────────────────────────
+
+describe("triggerCanJoinGroup", () => {
+  it("admits a COMPOSITE, which the per-rule checkbox refuses", () => {
+    // Redundant as a self-fold (it already fires once per device), but a
+    // perfectly good whole-device contribution to a group — "Switch health"
+    // wanting one beside a PoE-fault automation is the obvious case.
+    const composite = { type: "composite", kind: "asset", op: "and", children: [] } as never;
+    expect(triggerCanJoinGroup(composite)).toBe(true);
+    expect(triggerIsPerDimension(composite)).toBe(false);
+  });
+
+  it("admits the per-component triggers", () => {
+    expect(triggerCanJoinGroup({ type: "asset_state", field: "poeStatus", operator: "==", value: "fault" } as never)).toBe(true);
+    expect(triggerCanJoinGroup({ type: "asset_metric", metric: "storageUsedPct", operator: ">=", threshold: 90 } as never)).toBe(true);
+  });
+
+  it("refuses what could never contribute", () => {
+    // host_metric: no device. event/change: no state row, so the alert could
+    // never learn their part in it had ended.
+    expect(triggerCanJoinGroup({ type: "host_metric", metric: "cpuPct", operator: ">=", threshold: 90 } as never)).toBe(false);
+    expect(triggerCanJoinGroup({ type: "composite", kind: "host", op: "and", children: [] } as never)).toBe(false);
+    expect(triggerCanJoinGroup({ type: "event", actionPattern: "agent.*" } as never)).toBe(false);
+    expect(triggerCanJoinGroup({ type: "change", changeType: "lldp" } as never)).toBe(false);
+    expect(triggerCanJoinGroup(null)).toBe(false);
+  });
+});
+
+describe("ruleGroupsByAsset with a group", () => {
+  const poe = { type: "asset_state", field: "poeStatus", operator: "==", value: "fault" } as never;
+  const composite = { type: "composite", kind: "asset", op: "and", children: [] } as never;
+
+  it("membership IMPLIES the per-component fold, whatever the checkbox says", () => {
+    expect(ruleGroupsByAsset({ groupByAsset: false, alertGroupId: "g1", trigger: poe })).toBe(true);
+    expect(ruleGroupsByAsset({ alertGroupId: "g1", trigger: composite })).toBe(true);
+  });
+
+  it("still refuses a member whose trigger could never contribute", () => {
+    expect(ruleGroupsByAsset({ alertGroupId: "g1", trigger: { type: "host_metric", metric: "cpuPct", operator: ">=", threshold: 1 } as never })).toBe(false);
+  });
+});
+
+describe("alertScopeOf", () => {
+  it("keys a group member on the GROUP, so every member folds into one alert", () => {
+    expect(alertScopeOf({ id: "r1", alertGroupId: "g1" })).toEqual({ scope: "grp", id: "g1" });
+    expect(alertScopeOf({ id: "r1" })).toEqual({ scope: "rule", id: "r1" });
+  });
+
+  it("changes the key when a rule joins or leaves, so two episodes cannot collide", () => {
+    const solo = alertScopeOf({ id: "r1", alertGroupId: null });
+    const joined = alertScopeOf({ id: "r1", alertGroupId: "g1" });
+    expect(groupKeyOf(solo.scope, solo.id, "a1")).not.toBe(groupKeyOf(joined.scope, joined.id, "a1"));
+  });
+});
+
+describe("alertOwnerOf", () => {
+  const rule = { id: "r1", name: "PoE fault", severity: "warning", requireAckNote: false, actions: [{ type: "notify" }], escalation: { tiers: [] }, repeat: null, emailComposition: null, resetActions: null, messageTemplate: null };
+  const group = { id: "g1", name: "Switch health", enabled: true, requireAckNote: true, actions: [{ type: "notify" }], escalation: null, repeat: { everyMin: 15 }, emailComposition: null, resetActions: null, messageTemplate: null };
+
+  it("hands delivery to the GROUP when there is one", () => {
+    const owner = alertOwnerOf({ severity: "warning", rule, alertGroup: group })!;
+    expect(owner.kind).toBe("group");
+    expect(owner.name).toBe("Switch health");
+    expect(owner.requireAckNote).toBe(true);
+    expect(owner.repeat).toEqual({ everyMin: 15 });
+  });
+
+  it("carries NO severity bands for a group — the alert's severity is its contributions'", () => {
+    expect(alertOwnerOf({ severity: "critical", rule: { ...rule, severityBands: [{ threshold: 1, severity: "critical" }] }, alertGroup: group })!.severityBands).toBeNull();
+  });
+
+  it("falls back to the automation when the group is DISABLED", () => {
+    // A disabled group hands delivery back rather than owning nothing: an
+    // alert outliving the switch-off must not lose its escalation entirely.
+    const owner = alertOwnerOf({ severity: "warning", rule, alertGroup: { ...group, enabled: false } })!;
+    expect(owner.kind).toBe("rule");
+    expect(owner.name).toBe("PoE fault");
+  });
+
+  it("is the automation when there is no group at all", () => {
+    expect(alertOwnerOf({ severity: "warning", rule })!.kind).toBe("rule");
+  });
+
+  it("is null when there is neither — a test alert, or a deleted automation", () => {
+    expect(alertOwnerOf({ severity: "warning" })).toBeNull();
+    expect(alertOwnerOf(null)).toBeNull();
   });
 });

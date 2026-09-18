@@ -16,6 +16,7 @@ import eventsRouter from "./routes/events.js";
 import notificationsRouter from "./routes/notifications.js";
 import notificationRulesRouter from "./routes/notificationRules.js";
 import automationScriptsRouter from "./routes/automationScripts.js";
+import alertGroupsRouter from "./routes/alertGroups.js";
 import maintenanceSchedulesRouter from "./routes/maintenanceSchedules.js";
 import contactsRouter from "./routes/contacts.js";
 import networkScansRouter from "./routes/networkScans.js";
@@ -187,6 +188,9 @@ const deprecatedAlias = (successor: string) =>
 // Script registry — MUST mount before /automations so "scripts" is never
 // captured as a rule id. Gated automationScripts (RCE-equivalent key).
 router.use("/automations/scripts", automationScriptsRouter);
+// Alert groups (business rule 74). ABOVE /automations for the same reason
+// /automations/scripts is: the literal path must not be captured as a rule id.
+router.use("/automations/groups", alertGroupsRouter);
 // Rules CRUD/schema/preview.
 router.use("/automations", notificationRulesRouter);
 router.use("/notification-rules", deprecatedAlias("/api/v1/automations"), notificationRulesRouter);

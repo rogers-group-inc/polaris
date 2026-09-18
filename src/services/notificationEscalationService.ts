@@ -278,7 +278,40 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     // and one that repeats only at its critical band has no rule-level repeat.
     if (allEscalationsOf(rule).length > 0 || allRepeatsOf(rule).length > 0) rules.set(r.id, rule);
   }
-  if (rules.size === 0) return 0;
+
+  // ALERT GROUPS (business rule 74). A grouped alert's escalation chain and
+  // reminder cadence belong to the GROUP, not to whichever member automation
+  // happened to raise it — that is the whole point of the split, and it is also
+  // what keeps `escalationState`'s `a<i>:t<j>` keys meaningful: one action list
+  // per alert, so two members' chains can never collide on `a0:t0`.
+  const dbGroups = await prisma.alertGroup.findMany({
+    where: { enabled: true },
+    select: { id: true, name: true, description: true, emailComposition: true, escalation: true, actions: true, repeat: true },
+  });
+  const groups = new Map<string, EscalationRule>();
+  for (const g of dbGroups) {
+    const group: EscalationRule = {
+      id: g.id,
+      name: g.name,
+      description: g.description,
+      // A group has no scope of its own — its members' scopes decided which
+      // devices it covers, at fire time. Region routing on its actions resolves
+      // from the ALERT's snapshotted regionTags, which is asset-relative
+      // anyway.
+      scope: {} as RuleScope,
+      emailComposition: g.emailComposition as EmailComposition | null,
+      // A grouped alert sits at the max of its contributions' severities, so
+      // the group declares no base of its own; the sweep reads the alert's.
+      severity: "warning",
+      actions: (g.actions ?? []) as EscalationRule["actions"],
+      escalation: normalizeEscalationToV2(g.escalation as never),
+      severityBands: null,
+      repeat: (g.repeat ?? null) as EscalationRule["repeat"],
+    };
+    if (allEscalationsOf(group).length > 0 || allRepeatsOf(group).length > 0) groups.set(g.id, group);
+  }
+
+  if (rules.size === 0 && groups.size === 0) return 0;
 
   // Candidates: uncleared notifications of escalation rules past the earliest
   // tier delay (across tier 0 + every band). Bounded by the active-unhandled
@@ -287,20 +320,28 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
   // Infinity, and `new Date(now - Infinity)` is an Invalid Date that makes the
   // Prisma filter useless — reachable as soon as a repeat-only rule is the only
   // rule, so the empty case is guarded rather than assumed away.
+  const owners = [...rules.values(), ...groups.values()];
   const dueMins = [
-    ...Array.from(rules.values()).flatMap((r) => allEscalationsOf(r).flatMap((e) => e.tiers.map((t) => t.afterMin))),
-    ...Array.from(rules.values()).flatMap((r) => allRepeatsOf(r).map((x) => x.everyMin)),
+    ...owners.flatMap((r) => allEscalationsOf(r).flatMap((e) => e.tiers.map((t) => t.afterMin))),
+    ...owners.flatMap((r) => allRepeatsOf(r).map((x) => x.everyMin)),
   ];
   if (dueMins.length === 0) return 0;
   const minAfterMin = Math.min(...dueMins);
   const notifs = await prisma.notification.findMany({
     where: {
       cleared: false,
-      ruleId: { in: Array.from(rules.keys()) },
+      // An alert qualifies through its automation OR through its group. Note
+      // Prisma's `in` never matches NULL, which is exactly why a grouped alert
+      // still carries its primary `ruleId` — but the group arm is what makes an
+      // alert escalate on the GROUP's chain when its own rule has none.
+      OR: [
+        { ruleId: { in: Array.from(rules.keys()) } },
+        { alertGroupId: { in: Array.from(groups.keys()) } },
+      ],
       triggeredAt: { lte: new Date(now.getTime() - minAfterMin * 60_000) },
     },
     select: {
-      id: true, ruleId: true, assetId: true, assetHostname: true, severity: true, message: true,
+      id: true, ruleId: true, alertGroupId: true, assetId: true, assetHostname: true, severity: true, message: true,
       triggeredAt: true, acknowledged: true, templateCtx: true, escalationState: true,
       // The fire-time asset-region snapshot (already region:-stripped) —
       // recipientDeviceRegion routing; survives asset deletion.
@@ -360,7 +401,12 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
   }[] = [];
 
   for (const n of notifs) {
-    const rule = rules.get(n.ruleId!);
+    // Whoever owns this alert's delivery: its AlertGroup when it has one
+    // (business rule 74), else its automation. Everything downstream — the
+    // chains, the reminder clock, the composed email, the per-chain stopOn —
+    // reads this one object, so the grouped and ungrouped paths stay the same
+    // code rather than growing a parallel copy that can drift.
+    const rule = (n.alertGroupId ? groups.get(n.alertGroupId) : undefined) ?? rules.get(n.ruleId!);
     if (!rule) continue;
     // SUPPRESSION FIRST. It applies to both kinds of follow-up, and the chain
     // check below used to sit above it with an early `continue` — which a
@@ -406,7 +452,10 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
           scopeRegionTags: scopeRegionTagsOf(rule.scope),
           assetRegionTags: n.regionTags,
           assetId: n.assetId,
-          ruleId: rule.id,
+          // PROVENANCE, not policy: which AUTOMATION this alert came from, so a
+          // script run and the audit details still name it even when an
+          // AlertGroup supplied the actions (business rule 74).
+          ruleId: n.ruleId ?? rule.id,
           ruleName: rule.name,
           ruleEmailComposition: rule.emailComposition,
           escalation: { tier: idx + 1, attempt },
@@ -508,7 +557,8 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
         scopeRegionTags: scopeRegionTagsOf(rule.scope),
         assetRegionTags: n.regionTags,
         assetId: n.assetId,
-        ruleId: rule.id,
+        // Provenance stays the automation's — see the note on the tier path.
+        ruleId: n.ruleId ?? rule.id,
         ruleName: rule.name,
         ruleEmailComposition: rule.emailComposition,
         repeat: { attempt, elapsed, ...(resumedFromQuiet ? { quietResumed: true } : {}) },

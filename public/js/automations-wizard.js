@@ -4876,6 +4876,23 @@ async function openAutomationWizard(existing, opts) {
     '</div>';
   }
 
+  /** "Delivered by <group>" — shown on the actions step while this automation
+   *  belongs to an AlertGroup, with a link to the group that actually decides
+   *  who hears about it. Empty for every automation that delivers on its own,
+   *  which is every one until somebody builds a group. */
+  function groupDeliveryBannerHtml() {
+    if (!draft.alertGroupName) return "";
+    return '<div style="border:1px solid var(--color-warning,#b45309);background:var(--color-warning-bg,rgba(180,83,9,0.08));' +
+        'border-radius:6px;padding:0.6rem 0.75rem;margin:0 0 0.75rem">' +
+      '<div style="font-weight:600;font-size:0.9rem">Delivered by the group “' + escapeHtml(draft.alertGroupName) + '”</div>' +
+      '<p style="font-size:0.8rem;color:var(--color-text-secondary);margin:4px 0 0">' +
+        'While this automation is in that group, the group decides who is told, how it escalates and how often it reminds — ' +
+        'and its alerts about one device are folded in with the other members’. The actions below are kept, and are what ' +
+        'this automation would go back to on its own, but they do not run meanwhile.' +
+      '</p>' +
+    '</div>';
+  }
+
   /** The custom-reset tree an untouched draft starts from: the trigger's own
    *  condition, inverted (De Morgan for a composite). Falls back to a blank
    *  condition row only when there is nothing invertible to seed from. */
@@ -5694,6 +5711,15 @@ async function openAutomationWizard(existing, opts) {
       ? "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes the alert text — {value} is the source event’s own message; leave blank for the default."
       : "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes what the alert and the audit Event say; leave blank for the default.";
     var html = '<h3 style="margin:0 0 0.25rem">What should happen?</h3>' +
+      // DELIVERED BY A GROUP (business rule 74). While this automation belongs
+      // to an AlertGroup the group does the telling — its recipients, its
+      // escalation chain, its reminder cadence. Everything below still SAVES,
+      // and is what this automation goes back to if it ever leaves the group,
+      // but none of it runs meanwhile. Saying so is not optional: an operator
+      // editing recipients that cannot fire has no way to discover it, and the
+      // symptom is the worst kind — the right people are configured and nobody
+      // is told.
+      groupDeliveryBannerHtml() +
       '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">Notifications route through Delivery-tab channels; API calls POST to your systems; scripts run on the Polaris server or the triggering asset’s agent.</p>' +
       '<div class="form-group" id="aw-inapp-card" style="border:1px solid var(--color-border);border-radius:6px;padding:0.75rem">' +
         '<label style="font-weight:600;margin:0 0 4px;display:block">' + cardTitle + '</label>' +
@@ -8892,6 +8918,9 @@ function _awDraftFromRule(r) {
     messageTemplate: r.messageTemplate != null ? r.messageTemplate : null,
     requireAckNote: r.requireAckNote === true,
     groupByAsset: r.groupByAsset === true,
+    // Read-only here: membership is managed on the Groups tab, not in the
+    // wizard. Carried so the actions step can say who is really delivering.
+    alertGroupName: (r.alertGroup && r.alertGroup.name) || null,
     actions: JSON.parse(JSON.stringify(Array.isArray(r.actions) ? r.actions : [])),
     escalation: esc ? JSON.parse(JSON.stringify(esc)) : null,
     severityBands: Array.isArray(r.severityBands) && r.severityBands.length ? JSON.parse(JSON.stringify(r.severityBands)) : null,
