@@ -177,8 +177,13 @@ The **Active Alerts** widget is not read-only. Each unacknowledged row carries:
 Both report the **server's** count back, so a no-op says "already cleared"
 rather than showing a success toast over nothing.
 
-The **Active Maintenance** widget is the other one you can act from. Clicking a
-schedule offers:
+The **Active Maintenance** widget is the other one you can act from. A
+**+ New schedule** button at the top of it opens the Maintenance editor to
+create one without leaving the dashboard — it is there over the empty widget
+too, which is usually when you want it. A schedule you create appears in the
+widget a few seconds later, once it is actually holding devices.
+
+Clicking a schedule offers:
 
 - **Open schedule…** — opens the Maintenance modal with that schedule loaded,
   for review or editing. It is the same editor the Assets page opens.

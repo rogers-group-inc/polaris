@@ -191,6 +191,18 @@
     return parts.join("&");
   }
 
+  // Drop every memoized /noc-summary answer, so the next getNocSummary really
+  // goes to the server. For a widget that WRITES something the feed reports —
+  // creating a maintenance schedule from the Active Maintenance widget — the
+  // 15s memo is otherwise between the act and its result, and the operator
+  // watches the thing they just made fail to appear. The route's own 10s TTL
+  // still applies, so this shortens the wait rather than removing it; a widget
+  // that needs the result to STICK regardless holds a local override instead
+  // (activeAlerts' acked/cleared sets).
+  window.PolarisWidgets.invalidateNocSummary = function () {
+    _nocCache = {};
+  };
+
   // feeds: array of feed names the caller renders (e.g. ["topCpu"], or
   // ["downInterfaces","downIpsecTunnels"]). Omit/empty = the full payload.
   window.PolarisWidgets.getNocSummary = function (opts, feeds) {

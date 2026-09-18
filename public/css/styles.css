@@ -4759,6 +4759,24 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   font-size: 0.78rem;
   color: var(--color-text-tertiary);
 }
+/* Active Maintenance widget — the "+ New schedule" bar above the list. Right
+   aligned and sticky to the top of the scrolling body, so the NOC auto-scroll
+   cannot creep it out of frame on a wallboard-sized panel. It sits over the
+   empty state too: an empty widget is exactly when someone wants to schedule
+   something. The background is the widget's own ground, since the rows scroll
+   under it. */
+.maint-widget-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: 8px;
+  /* The CARD's ground (.dashboard-widget), not an elevated one — the bar is
+     part of the card, and --color-bg-elevated would read as a second surface
+     floating on it. */
+  background: var(--color-bg-primary);
+}
 .dash-alert-source { color: var(--color-text-secondary); }
 .dash-alert-expand {
   padding: 8px 4px 4px 24px;

@@ -202,6 +202,52 @@ describe("what a row says", () => {
   });
 });
 
+describe("the + New schedule button", () => {
+  const bar = (el: HTMLElement) => el.querySelector("[data-maint-new]");
+
+  it("sits above the list, and above the EMPTY state too", () => {
+    const withRows = mount([sched({ id: "s1" })]);
+    expect(bar(withRows.el)).not.toBeNull();
+    withRows.teardown();
+
+    // The empty widget is exactly when someone wants to schedule something.
+    const empty = mount([]);
+    expect(bar(empty.el)).not.toBeNull();
+    expect(empty.el.textContent).toContain("No maintenance windows are open");
+    empty.teardown();
+  });
+
+  it("opens the maintenance editor with no schedule loaded — a CREATE", () => {
+    const { el, teardown } = mount([sched({ id: "s1" })]);
+    (bar(el) as any).dispatchEvent(
+      new (win as any).MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }),
+    );
+    expect(openedModal).toEqual([{}]);
+    teardown();
+  });
+
+  it("is withheld below maintenanceManagement:fullwrite", () => {
+    mayManage = false;
+    const { el, teardown } = mount([sched({ id: "s1" })]);
+    expect(bar(el)).toBeNull();
+    teardown();
+  });
+
+  it("is withheld on the /dash wallboard, which cannot open a modal", () => {
+    (win as unknown as Record<string, unknown>).POLARIS_DASH_LOCAL = true;
+    const { el, teardown } = mount([sched({ id: "s1" })]);
+    expect(bar(el)).toBeNull();
+    teardown();
+  });
+
+  it("is withheld where the maintenance modal is not loaded at all", () => {
+    delete (win as unknown as Record<string, unknown>).openMaintenanceModal;
+    const { el, teardown } = mount([sched({ id: "s1" })]);
+    expect(bar(el)).toBeNull();
+    teardown();
+  });
+});
+
 describe("which verbs a row offers", () => {
   it("offers review and disable to a role that may manage maintenance", () => {
     const { el, teardown } = mount([sched({ id: "s1" })]);

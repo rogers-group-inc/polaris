@@ -31,6 +31,10 @@
   var DEFAULT_ROWS = 10;
   // A window inside this much of its end is the one an operator is waiting on.
   var ENDING_SOON_MS = 30 * 60 * 1000;
+  // nocDashboardService.NOC_FEED_CACHE_TTL_MS (10s) plus a second of slack —
+  // how long the server may keep answering with a payload computed before a
+  // write this widget just made. Only the post-create settle refresh uses it.
+  var SERVER_FEED_TTL_MS = 11000;
 
   function endsAtMs(r) {
     if (!r || !r.endsAtUtc) return null;
@@ -93,10 +97,14 @@
     // schedule. Without it a region-scoped board reads "40 devices" about a
     // window that has four of its own.
     var scope = (r.filtered && r.matchedCount > 0)
-      ? '<span style="color:var(--color-text-secondary)"> (' + r.matchedCount + " in this scope)</span>"
+      ? " (" + r.matchedCount + " in this scope)"
       : "";
     var types = typeSummary(r);
-    var meta = devices + scope + (types ? " · " + escapeHtml(types) : "");
+    // ONE flex item, not three: `.recent-item-meta` is `display:flex; gap:12px`,
+    // so every element and text run inside it becomes a flex item and gets 12px
+    // of gap around it — which tore "4 devices (2 in this scope) · Switch 2"
+    // into three drifting fragments. Everything the line says is one span.
+    var meta = "<span>" + escapeHtml(devices + scope + (types ? " · " + types : "")) + "</span>";
     // The recurring/one-time distinction changes what "expires" means — a
     // recurring window comes back tomorrow, a one-time one is over.
     var kind = r.adhoc ? "ad-hoc" : (r.kind === "recurring" ? "recurring" : "one-time");
@@ -116,6 +124,31 @@
         '<div class="recent-item-meta">' + meta + "</div>" +
       "</div>" +
       '<div style="text-align:right;white-space:nowrap">' + timeCell + "</div>" +
+    "</div>";
+  }
+
+  /**
+   * May this viewer create a schedule from here? The same three conditions the
+   * row verbs check: a real dashboard shell (not a library preview), a page
+   * carrying the maintenance modal, and the level that modal's Save needs.
+   * A button that opens an editor whose every save 403s is worse than no
+   * button — the route stays the control either way.
+   */
+  function canCreate(el) {
+    if (window.POLARIS_DASH_LOCAL) return false;
+    if (!el || !el.closest || !el.closest(".dashboard-widget")) return false;
+    if (typeof window.openMaintenanceModal !== "function") return false;
+    return typeof window.canManageMaintenance === "function" && window.canManageMaintenance();
+  }
+
+  // The top bar. Rendered over the list AND over the empty state — an empty
+  // widget is exactly when an operator wants to schedule something, and it is
+  // the only affordance this widget has that does not need a row to click.
+  function topBarHTML(el) {
+    if (!canCreate(el)) return "";
+    return '<div class="maint-widget-bar">' +
+      '<button type="button" class="btn btn-secondary btn-sm" data-maint-new ' +
+      'title="Create a maintenance schedule — opens the Maintenance editor">+ New schedule</button>' +
     "</div>";
   }
 
@@ -139,12 +172,18 @@
       rows: rows,
     });
     var displayed = PolarisWidgets.clip(rows, config && config.rowLimit != null ? config.rowLimit : DEFAULT_ROWS);
-    // Count pill: schedules on screen. These rows carry no alert severity —
-    // maintenance is planned, not a fault — so the pill keeps its own neutral
-    // colour rule rather than the severity split.
-    PolarisWidgets.setHeaderCount(el, displayed.length, null);
+    // Count pill: schedules on screen, deliberately NEUTRAL. setHeaderCount's
+    // fallback is red, which is the generic "these are down" colour — and a red
+    // count over planned work is the one thing this widget must not say. Every
+    // other widget's red count means someone should do something; here nobody
+    // should. The rows carry no alert severity either, so there is nothing for
+    // the severity palette to agree with.
+    PolarisWidgets.setHeaderPills(el, displayed.length
+      ? [{ text: displayed.length, className: "widget-pill-neutral", title: "Maintenance windows open now" }]
+      : []);
+    var bar = topBarHTML(el);
     if (!displayed.length) {
-      el.innerHTML = '<p class="empty-state">No maintenance windows are open</p>';
+      el.innerHTML = bar + '<p class="empty-state">No maintenance windows are open</p>';
       return;
     }
     var note = rows.length > displayed.length
@@ -152,7 +191,7 @@
         escapeHtml("Showing " + displayed.length + " of " + rows.length + " open windows — raise Row limit to see the rest.") +
         "</p>"
       : "";
-    el.innerHTML = displayed.map(rowHTML).join("") + note;
+    el.innerHTML = bar + displayed.map(rowHTML).join("") + note;
   }
 
   function fetchRows(config) {
@@ -196,6 +235,27 @@
     return true;
   }
 
+  /**
+   * Run `fn` once the shared modal overlay closes. `closeModal` fires no event
+   * and `openMaintenanceModal` resolves when the dialog is BUILT, not when the
+   * operator is done with it, so the close is observed rather than awaited.
+   * The observer disconnects itself; a modal that never opened (a page without
+   * the overlay) calls back immediately rather than leaving a watcher behind.
+   */
+  function afterModalClose(fn) {
+    var overlay = document.getElementById("modal-overlay");
+    if (!overlay || typeof window.MutationObserver !== "function") { fn(); return; }
+    var seenOpen = overlay.classList.contains("open");
+    var obs = new window.MutationObserver(function () {
+      var open = overlay.classList.contains("open");
+      if (open) { seenOpen = true; return; }
+      if (!seenOpen) return;
+      obs.disconnect();
+      fn();
+    });
+    obs.observe(overlay, { attributes: true, attributeFilter: ["class"] });
+  }
+
   function disableSchedule(row, onChanged) {
     window.showConfirm(
       'Disable maintenance schedule "' + (row.name || "") + '"? Its open windows end immediately, ' +
@@ -236,6 +296,7 @@
       // row, never invents one.
       var dropped = {};
       var latest = data;
+      var settleTimer = null;
       var visible = function () {
         return (latest || []).filter(function (r) { return !dropped[r.id]; });
       };
@@ -246,6 +307,30 @@
       paint();
       var onClick = function (ev) {
         if (ev.defaultPrevented || ev.button === 1 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+        if (ev.target.closest("[data-maint-new]")) {
+          ev.preventDefault();
+          window.openMaintenanceModal({});
+          // Refresh when the operator closes the editor, not on a timer: a
+          // schedule created in there may already be in its window, and the
+          // widget claiming not to know about it is how a create reads as a
+          // failure. The memo is dropped first or the refetch is served the
+          // answer from before the write.
+          afterModalClose(function () {
+            if (PolarisWidgets.invalidateNocSummary) PolarisWidgets.invalidateNocSummary();
+            refresh();
+            // …and once more past the SERVER's own 10s per-feed cache, which
+            // the client memo drop cannot reach: a schedule created seconds
+            // ago is invisible to a refetch served from a payload computed
+            // before it existed. Without this the new row waits out the 30s
+            // timer, which reads as the create having done nothing.
+            if (settleTimer) clearTimeout(settleTimer);
+            settleTimer = setTimeout(function () {
+              if (PolarisWidgets.invalidateNocSummary) PolarisWidgets.invalidateNocSummary();
+              refresh();
+            }, SERVER_FEED_TTL_MS);
+          });
+          return;
+        }
         var item = ev.target.closest(".recent-item[data-schedule-id]");
         if (!item || !el.contains(item)) return;
         var id = item.getAttribute("data-schedule-id");
@@ -262,7 +347,11 @@
       // `normal`: a window's end is minutes away at the closest, and the
       // countdown is re-derived on every paint from the instant the feed sent.
       var timer = setInterval(refresh, PolarisWidgets.REFRESH.normal);
-      ctx.onUnmount(function () { clearInterval(timer); el.removeEventListener("click", onClick); });
+      ctx.onUnmount(function () {
+        clearInterval(timer);
+        if (settleTimer) clearTimeout(settleTimer);
+        el.removeEventListener("click", onClick);
+      });
     },
 
     renderPreview: function (el) {

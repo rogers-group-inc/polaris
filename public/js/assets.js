@@ -1006,6 +1006,16 @@ function _pushAssetText(params, paramKey, raw) {
 // through loadAssets() instead, which clears the selection first.
 async function fetchAssetsPage() {
   var tbody = document.getElementById("assets-tbody");
+  // This file is loaded by every page that carries the asset slide-over —
+  // index.html, map.html, appmap.html, automations.html — not just the Assets
+  // page, and `loadAssets()` is the post-write refresh every mutating surface
+  // calls. Off the Assets page there is no table to repaint: the fetch was
+  // wasted and the render then threw "Cannot set properties of null" into an
+  // unhandled rejection (silent — the write it followed had already
+  // succeeded). Reachable since the Active Maintenance widget let the
+  // Maintenance modal be opened, and a schedule created or disabled, from the
+  // dashboard.
+  if (!tbody) return;
   try {
     var data = await api.assets.list(_buildAssetsQuery());
     var all = data.assets || [];
