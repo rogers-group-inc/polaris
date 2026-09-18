@@ -458,8 +458,10 @@ export async function getOnboardingScript(
   // An existing account has no default name, so an unnamed one has nothing to
   // put in the script. Say what to do instead of the validator's bare
   // "username is required" — this message also reaches Intune/Arc publishing.
-  // Windows detection never names the account, so it still renders.
-  if (!acct.username && (platform === "linux" || kind === "remediation")) {
+  // Both halves name the account on both platforms now that Windows detection
+  // checks Administrators membership, so there is no longer a kind that
+  // renders without one.
+  if (!acct.username) {
     throw new AppError(
       400,
       `Enter the existing ${platform === "linux" ? "Linux" : "Windows"} account Polaris signs in as on the ` +
@@ -493,7 +495,11 @@ export async function getOnboardingScript(
     ? {
         platform, kind,
         filename: "polaris-ssh-onboarding-detect.ps1",
-        script: buildWindowsOnboardingDetectionScript({ publicKey: state.publicKey }),
+        script: buildWindowsOnboardingDetectionScript({
+          publicKey: state.publicKey,
+          username: acct.username,
+          accountMode: acct.accountMode,
+        }),
       }
     : {
         platform, kind: "remediation",

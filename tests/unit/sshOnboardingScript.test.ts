@@ -202,6 +202,19 @@ describe("buildWindowsOnboardingScript", () => {
       expect(existing).toContain("not created by this script");
     });
 
+    it("refuses mode=existing when the named account is absent or not an admin", () => {
+      // Windows used to print 'Using existing account', authorize the key for
+      // an account that was not there, and exit 0 — a fleet reporting fully
+      // onboarded that could never accept a logon. Linux always refused here.
+      const existing = buildWindowsOnboardingScript({ ...BASE, accountMode: "existing" });
+      expect(existing).toContain("does not exist on this host");
+      expect(existing).toContain("is disabled on this host");
+      expect(existing).toContain("is not a member of");
+      expect(existing).toContain("Test-PolarisLocalAdmin");
+      // Verified, not mutated: the refusal must not become a silent fixup.
+      expect(existing).not.toContain("Add-LocalGroupMember");
+    });
+
     it("never emits a literal password value", () => {
       const created = buildWindowsOnboardingScript({ ...BASE, accountMode: "create" });
       // The password is generated on the endpoint from a CSPRNG and discarded.
@@ -256,10 +269,16 @@ describe("buildWindowsOnboardingScript", () => {
 });
 
 describe("buildWindowsOnboardingDetectionScript", () => {
+  const DETECT = {
+    publicKey: PUBLIC_KEY,
+    username: "polaris-agent",
+    accountMode: "create" as const,
+  };
+
   it("shares the key-presence predicate with the remediation script", () => {
     // Same function text in both — detection cannot drift from what
     // remediation writes.
-    const detect = buildWindowsOnboardingDetectionScript({ publicKey: PUBLIC_KEY });
+    const detect = buildWindowsOnboardingDetectionScript(DETECT);
     const remediate = buildWindowsOnboardingScript(BASE);
     const fn = "function Test-PolarisKeyPresent";
     expect(detect).toContain(fn);
@@ -269,36 +288,94 @@ describe("buildWindowsOnboardingDetectionScript", () => {
     expect(extract(detect)).toBe(extract(remediate));
   });
 
+  it("shares the Administrators-membership predicate with the remediation script", () => {
+    // The pair must agree on "is an administrator" for the same reason it
+    // agrees on "is the key present": a detection that judges it differently
+    // either loops forever or reports an unusable endpoint compliant.
+    const detect = buildWindowsOnboardingDetectionScript(DETECT);
+    const remediate = buildWindowsOnboardingScript(BASE);
+    const fn = "function Test-PolarisLocalAdmin";
+    // Bounded at the function's own closing brace: it is the last helper, so
+    // slicing to end-of-string would compare the two scripts' bodies instead.
+    // Every brace inside the function is indented, so "\n}" is unambiguous.
+    const extract = (s: string) => {
+      const start = s.indexOf(fn);
+      return s.slice(start, s.indexOf("\n}", start) + 2);
+    };
+    expect(detect).toContain(fn);
+    expect(remediate).toContain(fn);
+    expect(extract(detect)).toBe(extract(remediate));
+  });
+
   it("exits 1 for each remediable condition and 0 when satisfied", () => {
-    const script = buildWindowsOnboardingDetectionScript({ publicKey: PUBLIC_KEY });
+    const script = buildWindowsOnboardingDetectionScript(DETECT);
     expect(script).toContain("remediate: OpenSSH Server not installed");
     expect(script).toContain("remediate: sshd not running");
     expect(script).toContain("remediate: Polaris key not authorized");
     expect(script).toContain("ok: Polaris SSH onboarding present");
   });
 
-  it("does not check the account or firewall", () => {
-    // Neither is reliably observable as 'wrong', and a false positive would
-    // re-run the full remediation on every cycle forever.
-    const script = buildWindowsOnboardingDetectionScript({ publicKey: PUBLIC_KEY });
-    expect(script).not.toContain("Get-LocalUser");
+  it("checks the account exists and is a local administrator", () => {
+    // The regression this pair shipped with: an endpoint whose account was
+    // never created reported 'ok' forever while no logon could ever succeed.
+    const script = buildWindowsOnboardingDetectionScript(DETECT);
+    expect(script).toContain("Get-LocalUser");
+    expect(script).toContain("Test-PolarisLocalAdmin");
+    expect(script).toContain("remediate: local account ' + $PolarisUser + ' missing");
+    expect(script).toContain("is not a member of");
+    expect(script).toContain("$PolarisUser      = 'polaris-agent'");
+  });
+
+  it("resolves Administrators by SID, not by its localized name", () => {
+    const script = buildWindowsOnboardingDetectionScript(DETECT);
+    expect(script).toContain("Get-LocalGroup -SID 'S-1-5-32-544'");
+    expect(script).not.toContain("__SID_ADMINS__");
+  });
+
+  it("falls back to the WinNT provider when a member SID will not resolve", () => {
+    // Get-LocalGroupMember throws outright on an Entra-joined endpoint holding
+    // one stale ACE; without the fallback every such device loops forever.
+    const script = buildWindowsOnboardingDetectionScript(DETECT);
+    expect(script).toContain("WinNT://./");
+  });
+
+  it("still does not check the firewall", () => {
+    // With no server IP configured there is no rule to find, so this is the
+    // one condition remediation could never satisfy.
+    const script = buildWindowsOnboardingDetectionScript(DETECT);
     expect(script).not.toContain("Get-NetFirewallRule");
   });
 
   it("treats an unsupported build as exit 0 so the pair doesn't loop", () => {
-    const script = buildWindowsOnboardingDetectionScript({ publicKey: PUBLIC_KEY });
+    const script = buildWindowsOnboardingDetectionScript(DETECT);
     const idx = script.indexOf("unsupported: no OpenSSH Server capability");
     expect(idx).toBeGreaterThan(-1);
     expect(script.slice(idx, idx + 200)).toContain("exit 0");
   });
 
   it("fails closed on an unexpected error rather than reporting compliant", () => {
-    const script = buildWindowsOnboardingDetectionScript({ publicKey: PUBLIC_KEY });
+    const script = buildWindowsOnboardingDetectionScript(DETECT);
     expect(script).toContain("remediate: detection error");
   });
 
-  it("rejects an invalid public key", () => {
-    expect(() => buildWindowsOnboardingDetectionScript({ publicKey: "nope" })).toThrow();
+  it("carries a domain account through and skips Get-LocalUser for it", () => {
+    const script = buildWindowsOnboardingDetectionScript({
+      publicKey: PUBLIC_KEY,
+      username: "CORP\\svc-polaris",
+      accountMode: "existing",
+    });
+    expect(script).toContain("$PolarisUser      = 'CORP\\svc-polaris'");
+    // The Get-LocalUser call is guarded, not removed — a domain account is
+    // invisible to it and only its group membership is observable.
+    expect(script).toContain("if (-not $PolarisUser.Contains('\\'))");
+  });
+
+  it("rejects an invalid public key or username", () => {
+    expect(() => buildWindowsOnboardingDetectionScript({ ...DETECT, publicKey: "nope" })).toThrow();
+    expect(() => buildWindowsOnboardingDetectionScript({ ...DETECT, username: "" })).toThrow();
+    expect(() =>
+      buildWindowsOnboardingDetectionScript({ ...DETECT, username: "CORP\\svc", accountMode: "create" }),
+    ).toThrow();
   });
 });
 
