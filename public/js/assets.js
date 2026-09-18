@@ -3610,11 +3610,10 @@ function assetMonitoringFormHTML(asset, managedAgent) {
   // time so the periodic puller cleanly no-ops; clicking Save on this
   // modal does NOT overwrite them (the form ignores the dropdowns when
   // the polling section is hidden).
-  var sourceSupportsAgent = (assetSourceKind === "manual" ||
-                             assetSourceKind === "activedirectory" ||
-                             assetSourceKind === "entraid" ||
-                             assetSourceKind === "windowsserver" ||
-                             assetSourceKind === "azurearc");
+  // Same set the System tab's agent panel offers from, and the same one the
+  // install service enforces — vCenter guests included (see
+  // _AGENT_INSTALLABLE_SOURCES).
+  var sourceSupportsAgent = _assetSupportsAgentInstall(asset);
   var agentInFlight = managedAgent && (
     managedAgent.installStatus === "pending"      ||
     managedAgent.installStatus === "uploading"    ||
@@ -5835,15 +5834,52 @@ function _agentStatusColor(s) {
   return "var(--color-text-secondary)";
 }
 
+// Asset-source kinds the agent can be installed on — mirrors the "agent"
+// entries in COMPATIBILITY (src/utils/pollingCompatibility.ts), which is what
+// the install service actually enforces (`isPollingMethodCompatible(kind,
+// "agent")`). vCenter is in the set on purpose: a vCenter-discovered VM is an
+// ordinary guest OS and the bulk-deploy path has always accepted one. The two
+// Fortinet sources are not — a FortiGate/FortiSwitch/FortiAP runs FortiOS and
+// has nowhere to put a Go binary.
+var _AGENT_INSTALLABLE_SOURCES = [
+  "manual", "activedirectory", "entraid", "windowsserver", "azurearc", "vcenter",
+];
+
+// True when an install could actually succeed on this asset: compatible
+// source, and not an ESXi host (POST /assets/:id/agent/install 400s on
+// `assetType === "hypervisor"`, and the bulk path skips it).
+function _assetSupportsAgentInstall(a) {
+  if (!a || a.assetType === "hypervisor") return false;
+  var kind = (a.discoveredByIntegration && a.discoveredByIntegration.type) || "manual";
+  // An integration type this build doesn't know reads as "manual" server-side
+  // (assetSourceKindFromIntegrationType's default) — match that rather than
+  // withholding the button on a source we simply can't name.
+  if (!_POLLING_COMPAT[kind]) kind = "manual";
+  return _AGENT_INSTALLABLE_SOURCES.indexOf(kind) >= 0;
+}
+
+// Asset types that are agent targets by nature: an operator looking at a
+// server or a workstation should be able to deploy from the asset itself
+// rather than having to pick "Polaris Agent" in a polling dropdown first, or
+// go find the bulk-deploy path. Every other type (firewall, switch, AP,
+// printer, hypervisor — the install service refuses ESXi outright) still has
+// to opt in through a polling method.
+var _AGENT_OFFERED_ASSET_TYPES = ["server", "workstation"];
+
 // Decide whether the panel should render at all for this asset.
 function _assetHasAgentIntent(a, agent) {
   if (agent) return true;
   if (!a) return false;
-  return a.responseTimePolling === "agent" ||
-         a.cpuMemoryPolling    === "agent" ||
-         a.interfacesPolling   === "agent" ||
-         a.lldpPolling         === "agent" ||
-         a.storagePolling      === "agent";
+  if (a.responseTimePolling === "agent" ||
+      a.cpuMemoryPolling    === "agent" ||
+      a.interfacesPolling   === "agent" ||
+      a.lldpPolling         === "agent" ||
+      a.storagePolling      === "agent") return true;
+  // Deploy-from-here offer. Needs an id (the install service installs onto an
+  // existing row) and a source the agent is compatible with, or the button
+  // would open a modal whose Install can only 400.
+  return !!a.id && _AGENT_OFFERED_ASSET_TYPES.indexOf(a.assetType) >= 0 &&
+         _assetSupportsAgentInstall(a);
 }
 
 function assetAgentSubpanelHTML(a, agent) {
@@ -5866,10 +5902,22 @@ function assetAgentSubpanelHTML(a, agent) {
   if (!agent) {
     // No row yet — operator opted in via a polling-method dropdown but
     // hasn't kicked off the install. Single big CTA.
+    // Two ways to land here, and they need different copy: the operator
+    // picked "Polaris Agent" in a polling dropdown (and is waiting for the
+    // install they implied), or this is simply a server / workstation and we
+    // are offering the deploy where they are already standing.
+    var pickedAgentMethod =
+      a.responseTimePolling === "agent" || a.cpuMemoryPolling  === "agent" ||
+      a.interfacesPolling   === "agent" || a.lldpPolling       === "agent" ||
+      a.storagePolling      === "agent";
     body =
       '<p style="color:var(--color-text-secondary);margin:0 0 0.75rem">' +
-        'You picked "Polaris Agent" as a polling method but no agent is installed yet. ' +
-        'Click below to push the agent to this host via a stored SSH or WinRM credential.' +
+        (pickedAgentMethod
+          ? 'You picked "Polaris Agent" as a polling method but no agent is installed yet. ' +
+            'Click below to push the agent to this host via a stored SSH or WinRM credential.'
+          : 'No agent is installed on this host. The agent pushes CPU, memory, interface, ' +
+            'storage and process data back to Polaris directly — no per-stream credential ' +
+            'polling. Click below to push it via a stored SSH or WinRM credential.') +
       '</p>' +
       // Deploying is `assets=fullwrite` (canDeployAgent) — a notch above the
       // rest of this page. Withhold the button rather than let the click 403.

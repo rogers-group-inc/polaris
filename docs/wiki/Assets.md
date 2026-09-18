@@ -175,6 +175,15 @@ older than 24 hours is not evidence.
 Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
 
+Below the response-time section sits the **Polaris Agent** card: the installed
+agent's version, platform, last heartbeat, WebSocket state and privilege tier,
+with Upgrade / Uninstall. On a **server** or **workstation** with no agent yet
+the card is the deploy surface — an **Install Agent** button that pushes the
+agent over a stored SSH or WinRM credential
+([Polaris Agent](Polaris-Agent#installing)). Deploying needs
+`assets:fullwrite`; at `assets:read` the card still shows what is installed,
+without the buttons.
+
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose
 discovery sweep can decommission it — with the parent FortiGate appended for a

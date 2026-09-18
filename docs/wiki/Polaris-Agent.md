@@ -73,7 +73,7 @@ else's host over a stored credential and leaves a service behind.
 
 | Route | |
 |---|---|
-| **Per asset** | the asset slide-over's Install Polaris Agent button. On a Windows host the modal adds a **Transport** choice — **SSH** (preselected; needs OpenSSH Server running on the host) or **WinRM** — and shows the credential picker for whichever is chosen. Linux and macOS are SSH-only, and the row is hidden |
+| **Per asset** | the asset slide-over's **System** tab carries a Polaris Agent card with an **Install Agent** button on every server and workstation that could take one — no need to pick "Polaris Agent" as a polling method first. Any other device type shows the card once an agent exists or a stream is set to the agent method. The edit modal's Monitoring tab has the same button. Neither appears on a FortiManager- or FortiGate-discovered asset or on an ESXi host: FortiOS and ESXi take no agent. On a Windows host the modal adds a **Transport** choice — **SSH** (preselected; needs OpenSSH Server running on the host) or **WinRM** — and shows the credential picker for whichever is chosen. Linux and macOS are SSH-only, and the row is hidden |
 | **Bulk** | the Assets bulk bar's **Deploy Agent** — one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, and ineligible assets come back as **skips with reasons** |
 | **Auto-deploy** | a per-class toggle on the AD / Entra / Arc integrations, off by default — pushes to newly discovered agent-less devices during discovery, bounded and paced |
 
