@@ -175,6 +175,14 @@ older than 24 hours is not evidence.
 Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
 
+**CPU and Memory are two charts under one range selector** — a percentage and
+a byte scale cannot share an axis, but they are two readings of the same
+sample, so picking a range (or dragging a window on either) moves both. On a
+host running the [Polaris Agent](Polaris-Agent#per-core-cpu-and-the-memory-breakdown)
+the CPU chart draws one coloured line per logical core and the Memory chart
+stacks processes, buffers and cache against the installed total; every other
+transport draws a single line in each.
+
 Below the response-time section sits the **Polaris Agent** card: the installed
 agent's version, platform, last heartbeat, WebSocket state and privilege tier,
 with Upgrade / Uninstall. On a **server** or **workstation** with no agent yet

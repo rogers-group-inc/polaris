@@ -2,6 +2,12 @@
  * tests/unit/assetSystemChartStaleBanner.test.ts — the asset-details System
  * tab's CPU & Memory stale banner in the EMPTY-window state (public/js/assets.js).
  *
+ * The section became TWO charts in 2026-09 (per-core CPU, and a byte-scaled
+ * memory stack, which cannot share an axis). The banner belongs to the CPU
+ * chart, which renders first: it describes the telemetry STREAM, and both
+ * charts read the same rows, so emitting it from each would stack two
+ * identical amber boxes inside one section.
+ *
  * The amber "Last successful update X ago" banner is emitted inside the chart
  * container, so the empty-samples early return used to drop it: a device whose
  * telemetry pull had been failing for hours showed the banner on Response time,
@@ -53,18 +59,18 @@ const FN_NAMES = [
   "_staleBannerInnerHTML",
   "_staleBannerHTML",
   "_isRestApiManagedNetworkDevice",
-  "_renderSystemChart",
+  "_renderCpuChart",
 ];
 const SRC = FN_NAMES.map(fnSrc).join("\n") + "\n" +
   FN_NAMES.map((n) => `globalThis.${n} = ${n};`).join("\n");
 
 const ASSET = { id: "A1", assetType: "firewall", cpuMemoryIntervalSec: 120 };
 
-/** Render the CPU & Memory chart into a fresh container. */
+/** Render the CPU chart (the banner's host) into a fresh container. */
 function render(lastTelemetryAt: string | null, asset: any = ASSET) {
   document.body.innerHTML = '<div id="chart"></div>';
   const el = document.getElementById("chart")!;
-  g._renderSystemChart(el, { samples: [] }, asset, { lastTelemetryAt });
+  g._renderCpuChart(el, { samples: [] }, asset, { lastTelemetryAt });
   return el;
 }
 

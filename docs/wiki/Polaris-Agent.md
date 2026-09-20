@@ -268,6 +268,7 @@ single-pin key, so a downgrade to an older binary keeps working.
 |---|---|
 | responseTime | its own heartbeat |
 | cpuMemory, temperature, interfaces, storage | host telemetry |
+| — *per-core CPU and the memory breakdown* | **agent only** — see below |
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
@@ -276,6 +277,45 @@ The storage and interface collectors run under a 30-second guard, because
 `statfs` and interface ioctls can **block indefinitely** on a hung filesystem or
 an unresponsive NIC — without it the whole push loop freezes while the heartbeat
 keeps running and the agent looks connected.
+
+### Per-core CPU and the memory breakdown
+
+An agent-monitored host is the only kind whose **CPU** chart on the Assets →
+System tab draws **one coloured line per logical core** alongside the
+cross-core average, and whose **Memory** chart is a **stacked area in bytes**
+rather than a single percentage line. No other transport — FortiOS, SNMP,
+WinRM, vCenter, SSH — can report either, so on those assets the two charts
+fall back to a single line each.
+
+On the CPU chart:
+
+- The **Average** line is the one every automation threshold reads. It stays
+  on top and is the only line that dives to the baseline across a missed poll.
+- The legend lists **Average** plus a chip per core. **Click a chip to isolate
+  that core**; click it again, or click **Average**, to bring the rest back.
+  The isolation survives the chart's automatic refresh.
+- Hovering names the six busiest cores at that moment (or just the isolated
+  one). On a host with many cores, isolate before you hover.
+- **Per-core detail is kept for the detail-retention window only** (7 days by
+  default — Server Settings → Retention). Longer ranges are served from
+  hourly/daily rollups, which keep the average alone; the chart says so when
+  that is why the cores are missing.
+
+On the Memory chart the bands stack to what is actually in use, against a
+dashed line at the installed total — the gap between the two is free memory:
+
+| Band | |
+|---|---|
+| **Processes** | resident in running programs |
+| **Buffers** | Linux block-layer buffers (absent on Windows) |
+| **Cache** | page cache (Linux) / system cache (Windows) |
+| **Swap / page file** | a dashed line, *not* a band — it is backing store, not RAM, so it stacks with nothing |
+
+Two figures here are commonly misread elsewhere and are deliberately not:
+Windows **cache** is the standby cache, which the usual API hides inside
+"available" memory, and Windows **page file** is the page file itself rather
+than the commit charge (which counts pages never written to disk and reads far
+higher).
 
 ---
 
