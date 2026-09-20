@@ -62,6 +62,32 @@ For development you can run the binary directly:
 | `/api/v1/agents/config` | GET | bearer; `If-None-Match` short-circuit |
 | `/api/v1/agents/ws` | WS upgrade | bearer in `Sec-WebSocket-Protocol` (Phase 3b) |
 
+### The `telemetry` sample
+
+The host CPU/memory row (`internal/collectors/telemetry.go`) carries more than
+the aggregate pair every other transport can produce. Fields beyond
+`cpuPct` / `memPct` / `memUsedBytes` / `memTotalBytes` are agent-only and null
+on every server-side collector:
+
+| Field | Meaning |
+|---|---|
+| `cpuCorePcts` | Per-logical-core utilisation, array index = core id, one decimal. Capped at 512 cores (the server's Zod schema refuses more). Omitted entirely — not sent as `[]` — when the per-core read fails. Stored on the DETAIL tier only; the hourly/daily rollups carry the aggregate alone. |
+| `memBuffersBytes` / `memCachedBytes` / `memFreeBytes` | The memory bands `memUsedBytes` is not. Reconciled per-OS by `internal/collectors/meminfo.go` so that **used + buffers + cached + free == total, exactly**, on Linux, Windows and macOS alike. Sent as a set or not at all. |
+| `swapUsedBytes` / `swapTotalBytes` | Swap (Linux) / **page file** (Windows). Not part of the four-band sum. |
+
+Two per-OS traps `meminfo.go` exists to absorb, and which any change there has
+to keep absorbing:
+
+- **Windows reports no cache through the API gopsutil uses.**
+  `GlobalMemoryStatusEx` folds free and standby together into `ullAvailPhys`,
+  so `VirtualMemoryStat.Cached` is 0 on every Windows host. The real figure is
+  `PERFORMANCE_INFORMATION.SystemCache` from `GetPerformanceInfo`, **in pages**
+  — multiply by `PageSize` or you report a ~4096× cache.
+- **`mem.SwapMemory()` is the COMMIT CHARGE on Windows**, not the page file.
+  Commit charge counts every private committed page whether or not it was ever
+  written to disk, so a healthy host reads several GB "swapped" against a
+  nearly empty page file. The page file itself comes from `EnumPageFilesW`.
+
 ## Security
 
 - **TLS leaf pinning** — agent does NOT trust system roots; only the SHA-256 baked into `agent.conf` at install time matches. Rotating the pin requires the operator to re-run install with a re-keyed Polaris server.

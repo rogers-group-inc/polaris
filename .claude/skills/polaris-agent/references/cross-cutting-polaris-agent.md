@@ -83,6 +83,37 @@
 - `recordProbeResult` and `record*Result` early-return on agent-mode UNLESS `opts.fromAgent === true` — defends against the synthetic periodic-tick clobbering the agent's real signal.
 - **Interface-snapshot timestamp anchor.** The `GET /assets/:id/system-info` read loads the current interface table by exact-equality `assetInterfaceSample.timestamp == lastSystemInfoAt`. The agent must therefore stamp its interface sample rows AND `lastSystemInfoAt` with the SAME value in the `/samples` interfaces branch (the agent reports a full NIC table per push). The agent sends interfaces and storage in SEPARATE pushes, so the storage branch's own `lastSystemInfoAt` bump can move the anchor ahead of the latest interface rows — the read guards against this by falling back to the newest interface sample timestamp when `lastSystemInfoAt` is ahead of it. (The SNMP/FortiOS path writes interfaces+storage in one pass with one `now`, so it never trips either case.) Regression history: agent interface rows were stamped with the agent clock while `lastSystemInfoAt` got the server clock, so the equality match returned zero rows and the System tab interface table was empty for all agent-monitored assets.
 
+**The `telemetry` sample carries more than the aggregate pair (2026-09).** Beyond
+`cpuPct` / `memPct` / `memUsedBytes` / `memTotalBytes`, which every transport can
+produce, `agent/internal/collectors/telemetry.go` + `meminfo.go` add fields no
+server-side collector can fill — they are null on FortiOS, SNMP, WinRM, vCenter
+and SSH, and the System tab's charts key their fallbacks off exactly that:
+
+- **`cpuCorePcts`** — per-logical-core utilisation, array index = core id, one
+  decimal, capped at `maxReportedCores` (512, mirrored by the Zod schema).
+  **One `cpu.Percent(1s, true)` call produces both this and `cpuPct`**, the
+  aggregate being the mean of the vector: calling `Percent(_, false)` as well
+  would block a second time AND sample a different window, so the aggregate a
+  threshold fires on would not be the mean of the cores drawn beside it. The
+  aggregate is the mean over EVERY core including any past the report cap.
+  Omitted (not `[]`) when the read fails; the server stores `Prisma.DbNull`.
+- **`memBuffersBytes` / `memCachedBytes` / `memFreeBytes`** — the bands
+  `memUsedBytes` is not, reconciled so that **used + buffers + cached + free ==
+  total, exactly**, on every OS. That contract is the agent's job and not the
+  chart's, because the per-OS differences are not cosmetic: **Windows reports
+  no cache at all through `GlobalMemoryStatusEx`** (its `ullAvailPhys` folds
+  free and standby together, so gopsutil's `Cached` is 0 on every Windows
+  host), and the real figure is `PERFORMANCE_INFORMATION.SystemCache` from
+  `GetPerformanceInfo` — **in PAGES**, so multiply by `PageSize` or report a
+  ~4096× cache. Clamping is load-bearing, not defensive noise: the readings
+  come from separate syscalls microseconds apart and can overshoot the total,
+  and an unclamped subtraction underflows uint64 into a ~16-exabyte free band.
+- **`swapUsedBytes` / `swapTotalBytes`** — **`mem.SwapMemory()` is the COMMIT
+  CHARGE on Windows, not the page file.** Commit charge counts every private
+  committed page whether or not it was ever written to disk, so a healthy host
+  reads several GB "swapped" against a nearly empty page file. The page file
+  comes from `EnumPageFilesW` instead. Not part of the four-band sum.
+
 **Agent stream config (Phase 0).** Historically the agent IGNORED the `/config` `streams` map and ran every loop unconditionally. The opt-in **`eventLog`** stream changed that: `main.go` keeps an `atomic.Value` `eventLogRuntimeCfg` updated by `applyServerStreams(resp)`, called on startup + heartbeat-ETag change (`refreshConfig`) + the WS `refresh-config` frame. `eventLogLoop`/`pushEventLogOne` gate on `loadEventLogCfg().enabled` so toggling the stream server-side takes effect live (no reinstall). The eventlog collector (`agent/internal/collectors/eventlog*.go`) reads NEW entries since a per-channel cursor in `eventlog-cursors.json` (next to agent.conf; first run seeds at "now" so no history dump), normalizes severity, dedupes, caps, and ships `transport.EventLogSample` rows on stream `"eventLog"`. Windows reader = `wevtutil` (thin-first; native wevtapi is the later swap), Linux = `journalctl --after-cursor`, darwin/other = nil stub. The server `/samples` eventLog branch does NOT write a sample table — it calls `osEventLogService.ingestOsEventLog` (audit Events).
 
 **When changing this:**

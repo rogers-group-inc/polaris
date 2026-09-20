@@ -133,13 +133,29 @@ type SamplesBody struct {
 // Send one or the other (or both) — the server tolerates either shape.
 // Temperatures is the per-sensor reading list when the OS exposes them
 // (Linux /sys/class/thermal, lm-sensors on macOS, WMI on Windows).
+//
+// CPUCorePcts is the per-logical-core vector behind CPUPct (index = core id).
+// It is agent-only — no other transport can break CPU down this way — and
+// `omitempty` drops it entirely on a host that could not read it, which the
+// server stores as null rather than as an empty core list.
+//
+// MemBuffersBytes / MemCachedBytes / MemFreeBytes are the bands
+// MemUsedBytes is not; the four are reconciled by meminfo.go to sum exactly
+// to MemTotalBytes. Swap is backing store and sums with nothing. All five are
+// sent as a set or not at all.
 type TelemetrySample struct {
-	Timestamp     string                 `json:"timestamp,omitempty"`
-	CPUPct        *float64               `json:"cpuPct,omitempty"`
-	MemPct        *float64               `json:"memPct,omitempty"`
-	MemUsedBytes  *uint64                `json:"memUsedBytes,omitempty"`
-	MemTotalBytes *uint64                `json:"memTotalBytes,omitempty"`
-	Temperatures  []TelemetryTemperature `json:"temperatures,omitempty"`
+	Timestamp       string                 `json:"timestamp,omitempty"`
+	CPUPct          *float64               `json:"cpuPct,omitempty"`
+	CPUCorePcts     []float64              `json:"cpuCorePcts,omitempty"`
+	MemPct          *float64               `json:"memPct,omitempty"`
+	MemUsedBytes    *uint64                `json:"memUsedBytes,omitempty"`
+	MemTotalBytes   *uint64                `json:"memTotalBytes,omitempty"`
+	MemBuffersBytes *uint64                `json:"memBuffersBytes,omitempty"`
+	MemCachedBytes  *uint64                `json:"memCachedBytes,omitempty"`
+	MemFreeBytes    *uint64                `json:"memFreeBytes,omitempty"`
+	SwapUsedBytes   *uint64                `json:"swapUsedBytes,omitempty"`
+	SwapTotalBytes  *uint64                `json:"swapTotalBytes,omitempty"`
+	Temperatures    []TelemetryTemperature `json:"temperatures,omitempty"`
 }
 
 type TelemetryTemperature struct {
