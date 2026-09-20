@@ -1364,6 +1364,35 @@ model AssetTelemetrySample {
   memPct        Float?
   memUsedBytes  BigInt?
   memTotalBytes BigInt?
+  // Per-logical-core CPU utilisation, as a jsonb array of 0-100 numbers whose
+  // INDEX is the logical core id (`[12.5, 3.1, ...]`, one decimal). Only the
+  // Polaris Agent reports it; every other transport leaves it null, which is
+  // why it is nullable jsonb rather than a Float[] — a scalar list cannot
+  // express "this source does not break CPU down by core" distinctly from
+  // "this host has no cores". DETAIL TIER ONLY: the hourly/daily rollups do
+  // not carry it (element-wise averaging of a variable-length array across
+  // every asset in the fleet is the one aggregate that does not pay for
+  // itself), so a range that resolves to a rollup tier charts the aggregate
+  // `cpuPct` alone and the chart says so.
+  cpuCorePcts   Json?
+  // Memory BREAKDOWN (bytes) — the parts `memUsedBytes` is not. Agent-only
+  // today. The four bands are defined to sum EXACTLY to memTotalBytes:
+  //
+  //   memUsedBytes + memBuffersBytes + memCachedBytes + memFreeBytes = total
+  //
+  // with `memUsedBytes` meaning "resident in processes" (Linux
+  // total-free-buffers-cached, Windows total-available). The agent does the
+  // per-OS reconciliation and clamping so the chart can stack the four bands
+  // without knowing which OS produced them — see agent/internal/collectors/
+  // meminfo.go. A source that reports only a total and a used figure leaves
+  // all four null and charts as a single line, exactly as before.
+  memBuffersBytes BigInt?
+  memCachedBytes  BigInt?
+  memFreeBytes    BigInt?
+  // Swap (Linux) / page file (Windows). NOT part of the physical stack above
+  // — it is backing store, so it charts as its own overlaid line.
+  swapUsedBytes   BigInt?
+  swapTotalBytes  BigInt?
   // Active session count (FortiGate only — read from the same
   // /api/v2/monitor/system/resource/usage `session` resource the CPU/mem
   // collector already fetches). Null for every other source.
@@ -2783,6 +2812,13 @@ model AssetTelemetrySampleHourly {
   // last-seen total (memory size is effectively a constant per host;
   // tracking last value rather than avg keeps the chart axis stable).
   lastMemTotalBytes BigInt?
+  // Memory-breakdown bands, bucket averages. Avg only (no min/max): the bands
+  // are read stacked, and a stack of independent minima sums to nothing real.
+  avgMemBuffersBytes BigInt?
+  avgMemCachedBytes  BigInt?
+  avgMemFreeBytes    BigInt?
+  avgSwapUsedBytes   BigInt?
+  lastSwapTotalBytes BigInt?
   avgSessionCount   Float?
   minSessionCount   Float?
   maxSessionCount   Float?
@@ -2807,6 +2843,11 @@ model AssetTelemetrySampleDaily {
   avgMemUsedBytes   BigInt?
   maxMemUsedBytes   BigInt?
   lastMemTotalBytes BigInt?
+  avgMemBuffersBytes BigInt?
+  avgMemCachedBytes  BigInt?
+  avgMemFreeBytes    BigInt?
+  avgSwapUsedBytes   BigInt?
+  lastSwapTotalBytes BigInt?
   avgSessionCount   Float?
   minSessionCount   Float?
   maxSessionCount   Float?

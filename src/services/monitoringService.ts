@@ -9242,6 +9242,17 @@ export async function recordTelemetryResult(assetId: string, result: CollectionR
       memPct:        d.memPct ?? null,
       memUsedBytes:  d.memUsedBytes  != null ? BigInt(Math.round(d.memUsedBytes))  : null,
       memTotalBytes: d.memTotalBytes != null ? BigInt(Math.round(d.memTotalBytes)) : null,
+      // Per-core CPU and the memory breakdown reach Polaris only over the
+      // agent's own push path (routes/agents.ts), which writes this buffer
+      // directly. None of the server-side collectors this function serves —
+      // FortiOS REST, SNMP, WinRM, vCenter, SSH — expose either, so they are
+      // explicitly null here rather than left off the row.
+      cpuCorePcts:     null,
+      memBuffersBytes: null,
+      memCachedBytes:  null,
+      memFreeBytes:    null,
+      swapUsedBytes:   null,
+      swapTotalBytes:  null,
       sessionCount:  d.sessionCount ?? null,
     });
   }
