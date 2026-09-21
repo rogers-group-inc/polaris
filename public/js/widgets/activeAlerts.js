@@ -228,7 +228,7 @@
         escapeHtml(r.dimension) + '</span>'
       : "";
     // Raised for a device that is dependency-down, by a down automation that
-    // opted to speak for it (business rule 76). The same slate badge the Down
+    // opted to speak for it (business rule 78). The same slate badge the Down
     // Nodes widget and the asset pill wear, so the state reads the same on
     // every surface; the tooltip names who silenced it, since a wallboard
     // row has no room for the sentence.

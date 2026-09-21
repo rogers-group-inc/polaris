@@ -505,7 +505,7 @@ describe("makeAutomationSentences", () => {
     expect(out).toBe("When <strong>Monitor status equals down</strong> — <strong>critical</strong>.");
   });
 
-  it("says when a down automation still alerts for a dependency-down device (business rule 76)", () => {
+  it("says when a down automation still alerts for a dependency-down device (business rule 78)", () => {
     const s = make(SCHEMA as never);
     const on = s.triggerSentence({ type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, alertWhenDependencyDown: true });
     expect(on).toContain("still when the device is <strong>dependency-down</strong>, naming the upstream device");

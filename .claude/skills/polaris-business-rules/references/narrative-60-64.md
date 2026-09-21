@@ -1289,9 +1289,9 @@ server's own `reservationNotesBudget` across four shapes, which is what stops th
 from the thing it mirrors.
 
 
-<a id="rule-76"></a>
+<a id="rule-78"></a>
 
-## Rule 76 — An automation may choose to speak for a silenced device, and then it must name who silenced it
+## Rule 78 — An automation may choose to speak for a silenced device, and then it must name who silenced it
 
 Dependency suppression exists to stop a storm. When a FortiGate goes dark, every switch, access
 point, server and camera behind it stops answering too, and without suppression each of them

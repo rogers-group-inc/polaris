@@ -70,7 +70,7 @@ export const SAMPLE_ALERT_DEVICE: AssetTemplateDetail = {
 export const SAMPLE_SENSOR_NAME = "EXAMPLE-TMP1";
 
 /** The upstream device a test of a dependency-down-alerting automation
- *  (business rule 76) blames — the switch the sample device hangs off. */
+ *  (business rule 78) blames — the switch the sample device hangs off. */
 export const SAMPLE_UPSTREAM_HOSTNAME = "EXAMPLE-CORE-01";
 
 /** The health check / WAN member pair a test of an SD-WAN automation charts. */

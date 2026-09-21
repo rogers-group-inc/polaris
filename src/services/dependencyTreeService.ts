@@ -975,7 +975,7 @@ export function evaluateSuppression(
   return result;
 }
 
-// ─── Blame: who silenced this device? (business rule 76) ────────────────────
+// ─── Blame: who silenced this device? (business rule 78) ────────────────────
 //
 // `evaluateSuppression` answers a yes/no per asset and throws away WHICH parent
 // decided it. A down automation that opts to speak for a suppressed device

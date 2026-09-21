@@ -3396,7 +3396,7 @@ describe("trigger filter rows", () => {
       expect(() => ruleInputSchema.parse(p)).not.toThrow();
     });
 
-    // ── Alerting while dependency-down (business rule 76) ────────────────
+    // ── Alerting while dependency-down (business rule 78) ────────────────
     // Rendered in TWO places for now (Trigger step + Actions step's in-app
     // card) so the operator can pick the final home; both bind the same key.
     const depTf = () => doc.querySelector("#tf-dep-down") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void } | null;

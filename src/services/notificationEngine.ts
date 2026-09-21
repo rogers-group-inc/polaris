@@ -95,7 +95,7 @@ import {
   ruleAlertsWhenDependencyDown,
 } from "./notificationTypes.js";
 import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js";
-// Business rule 76 — who silenced a dependency-suppressed device, for the
+// Business rule 78 — who silenced a dependency-suppressed device, for the
 // alert a down automation raises about it anyway.
 import { resolveDependencyBlame, newBlameLoadCache, type BlameLoadCache } from "./dependencyTreeService.js";
 import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils/notificationTemplate.js";
@@ -289,7 +289,7 @@ interface Reading {
    */
   readingAt?: Date | null;
   /**
-   * Business rule 76 — this reading was SYNTHESIZED for a dependency-suppressed
+   * Business rule 78 — this reading was SYNTHESIZED for a dependency-suppressed
    * device on a down automation that opted to speak for it: `value` is "down"
    * because the device's upstream is, not because its own probe said so (that
    * verdict is `ownMonitorStatus`). Everything downstream of the reading — the
@@ -1324,7 +1324,7 @@ async function resolveAssetStateReadings(
    *  is about. See resolveResetTruths. */
   opts?: {
     coverUnpinnedPoe?: boolean;
-    /** Business rule 76: a dependency-suppressed asset reads `down` on the
+    /** Business rule 78: a dependency-suppressed asset reads `down` on the
      *  monitorStatus field, flagged as a dependency reading, instead of its own
      *  probe's verdict. Set only by a down automation that opted in — the gate
      *  loop keeps every other automation's suppressed assets out of `assets`. */
@@ -1343,7 +1343,7 @@ async function resolveAssetStateReadings(
   switch (trigger.field) {
     case "monitorStatus": return assets.map((a) =>
       opts?.dependencyDownReadsDown && a.dependencySuppressed
-        // The upstream's confirmed verdict IS the evidence (rule 76): the
+        // The upstream's confirmed verdict IS the evidence (rule 78): the
         // device turned Dep. Down, and that is the edge the operator asked to
         // hear about — not its own probe reaching the count at half cadence.
         ? { ...mk(a, "", "", "down"), readingAt: probeAt(a), dependencyDown: true, ownMonitorStatus: a.monitorStatus }
@@ -1699,7 +1699,7 @@ function renderMessage(rule: DbRule, reading: Reading, ctx: Record<string, strin
     const count = ctx["conditions"] ? ` (${ctx["conditions"]})` : "";
     return `${rule.name}: ${ctx["asset"]} — ${ctx["metric"]}${count}`;
   }
-  // Business rule 76 — the whole dependency sentence, which already names the
+  // Business rule 78 — the whole dependency sentence, which already names the
   // device and the upstream: "monitorStatus = down (threshold down)" would be
   // the one thing this alert is NOT saying. This is what the in-app card, push
   // and chat bodies show, so it carries the name on every surface.
@@ -1934,7 +1934,7 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
   let readings: Reading[] = [];
   // Assets silenced this tick (maintenance window / dependency-suppressed).
   const suppressedIds = new Set<string>();
-  // Business rule 76: this down automation speaks for its dependency-
+  // Business rule 78: this down automation speaks for its dependency-
   // suppressed devices instead of dropping them.
   const speaksForSuppressed = ruleAlertsWhenDependencyDown(trigger);
   // Assets carved out this tick by a more-specific same-signature automation.
@@ -1980,7 +1980,7 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
     const needsAnswering = triggerNeedsAnsweringDevice(trigger);
     const active: ScopeAssetRow[] = [];
     for (const a of assets) {
-      // Business rule 76: a down automation that opted in keeps its
+      // Business rule 78: a down automation that opted in keeps its
       // dependency-suppressed devices — it is about to speak for them. A
       // MAINTENANCE window still silences (rule 16 wins: announced downtime
       // is not an outage to report), so the carve-out is dependency-only.
@@ -2002,7 +2002,7 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
   const states = await prisma.notificationRuleState.findMany({ where: { ruleId: rule.id } });
   const stateMap = new Map(states.map((s) => [`${s.assetId ?? ""}|${s.dimensionKey}`, s]));
   const now = new Date();
-  // Business rule 76 — which FLAVOUR each live alert of this rule was raised
+  // Business rule 78 — which FLAVOUR each live alert of this rule was raised
   // in (plain Down, or dependency-down), so a firing row can be handed off when
   // the asset's suppression flag no longer agrees with its alert. Read only for
   // an opted-in rule and only for its firing rows: a handful of ids.
@@ -2070,7 +2070,7 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
     const fireOpts = sustainedSev ? { severity: sustainedSev, actions: tierForSeverity(rule, sustainedSev).actions } : undefined;
 
     if (meets) {
-      // Business rule 76 — the alert's flavour follows the asset's suppression
+      // Business rule 78 — the alert's flavour follows the asset's suppression
       // flag. A plain Down alert whose device has since turned Dep. Down (the
       // sweep normally retires it first; this catches a flag that flipped
       // between the sweep and this loop), or a dependency-down alert whose
@@ -3136,7 +3136,7 @@ async function fire(
   // above, not rule.severity, because a band declares its own escalation
   // chain — a critical alert must not advertise the warning tier's.
   applyFollowUpPolicy(parts, rule, severity);
-  // Business rule 76 — a dependency reading names who silenced the device.
+  // Business rule 78 — a dependency reading names who silenced the device.
   // The walk is bounded and memoized per tick; a failed read still lets the
   // alert out, worded without a name, because "your PLC is dependency down"
   // beats silence even when the switch cannot be named.
@@ -3180,7 +3180,7 @@ async function fire(
         // what the email leads with (monitorStatus → the probe history).
         : rule.trigger.type === "asset_state" ? rule.trigger.field : null,
       ...(ruleWantsContext(rule) ? { templateCtx: ctx as any } : {}),
-      // Business rule 76 — the flavour, and who silenced it, on the row itself
+      // Business rule 78 — the flavour, and who silenced it, on the row itself
       // (the sweep, the handoff and the badge all read it; none can read text).
       ...(reading.dependencyDown ? {
         dependencyDown: true,
@@ -3430,7 +3430,7 @@ async function clearActiveNotification(st: { notificationId: string | null }, by
 }
 
 /**
- * Business rule 76 — end a live alert whose flavour no longer matches its
+ * Business rule 78 — end a live alert whose flavour no longer matches its
  * asset's suppression flag, so the caller can raise the other flavour. Same
  * handoff contract as the carve-out and the packet-loss handoffs: soft-clear,
  * release the state row, audit it, run NO reset actions.
@@ -3907,7 +3907,7 @@ type AssetDetailRow = AssetTemplateDetail & {
 };
 
 const _assetDetailCache = new Map<string, AssetDetailRow | null>();
-// Business rule 76 — the blame walk's per-tick cache: every dependency-down
+// Business rule 78 — the blame walk's per-tick cache: every dependency-down
 // fire in one tick shares the switch/gate rows it loads. Renewed with the
 // asset-detail cache; a stale chain would name a device that has since come
 // back.

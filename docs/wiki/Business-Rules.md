@@ -676,7 +676,7 @@ judged, so a row can always be shortened rather than being stuck.
 
 See [IPAM](IPAM#pushing-reservations-to-the-gate).
 
-### Rule 76
+### Rule 78
 
 **An automation may choose to speak for a silenced device, and then it must
 name who silenced it.**

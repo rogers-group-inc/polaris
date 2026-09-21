@@ -1,4 +1,4 @@
--- Business rule 76 — a down automation may opt in to speaking for a
+-- Business rule 78 — a down automation may opt in to speaking for a
 -- dependency-suppressed device (`trigger.alertWhenDependencyDown`, a key in the
 -- trigger JSON like `missedPolls`, so it needs no column of its own).
 --

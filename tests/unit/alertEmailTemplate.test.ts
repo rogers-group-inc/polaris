@@ -40,7 +40,7 @@ const CTX = buildTemplateContext({
   },
 });
 
-describe("a dependency-down alert says so in the subject, the banner and the facts (business rule 76)", () => {
+describe("a dependency-down alert says so in the subject, the banner and the facts (business rule 78)", () => {
   const dep = buildTemplateContext({
     asset: "PLC-7", severity: "critical", ruleName: "PLC down", time: new Date("2026-09-21T10:00:00Z"),
     triggerSummary: "Dependency down — upstream SW-PLANT-3 is down",

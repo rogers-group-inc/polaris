@@ -79,7 +79,7 @@ describe("clearSuppressedAlerts", () => {
     );
   });
 
-  it("never retires an alert RAISED FOR a dependency-suppressed device (business rule 76)", async () => {
+  it("never retires an alert RAISED FOR a dependency-suppressed device (business rule 78)", async () => {
     // A down automation that opted in raises that alert on purpose; the sweep
     // clearing it would re-raise it on the next tick, forever. The exclusion is
     // in the QUERY — such rows never even reach the asset lookup.

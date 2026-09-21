@@ -1,7 +1,7 @@
 /**
  * tests/unit/dependencyBlame.test.ts
  *
- * Business rule 76 — `blameFromGraph`, the pure core of "who silenced this
+ * Business rule 78 — `blameFromGraph`, the pure core of "who silenced this
  * device". Same inputs as `evaluateSuppression` plus the hostname, so the
  * fixtures read like the suppression ones: `upstream` is the device directly
  * above, `rootCause` the one down in its own right, and the walk carries on

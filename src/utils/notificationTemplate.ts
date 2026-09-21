@@ -101,7 +101,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{repeat.quiet}", label: "Quiet period ended", description: "On the first reminder after a quiet period, a sentence saying reminders have resumed and how long the alert has been active. Empty on every other send", group: "escalation" },
   { token: "{repeat.policy}", label: "Reminder policy", description: "Whether this alert will keep reminding, in words — e.g. \"Reminders every 15 minutes until acknowledged.\" Empty (and its row prunes away) when the automation doesn't repeat", group: "escalation" },
   { token: "{escalation.policy}", label: "Escalation policy", description: "Whether this alert goes over the reader's head if they leave it — e.g. \"Escalates in 30 minutes if not acknowledged.\" Empty when the automation has no escalation at the severity it fired at", group: "escalation" },
-  // Business rule 76 — a down automation speaking for a dependency-suppressed
+  // Business rule 78 — a down automation speaking for a dependency-suppressed
   // device. All four are present-but-empty on every other alert, so a body
   // that prints them costs a plain alert nothing.
   { token: "{dependency.summary}", label: "Dependency-down notice", description: "On an alert raised for a device that is dependency-down, the whole sentence: \"DEPENDENCY DOWN — PLC-7 is unreachable because its upstream device SW-PLANT-3 is down\". Empty on every other alert, so its banner prunes away", group: "notification" },
@@ -111,7 +111,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
 ];
 
 /**
- * Business rule 76 — who silenced a dependency-suppressed device, as the
+ * Business rule 78 — who silenced a dependency-suppressed device, as the
  * template sees it. `upstream` is the device directly above; `rootCause` is
  * the device actually down when that is a DIFFERENT device (null when the
  * upstream is the root cause, so the row prunes rather than repeats); `reason`
@@ -248,7 +248,7 @@ export interface TemplateContextParts {
     message?: string | null;
   } | null;
   assetDetail?: AssetTemplateDetail | null;
-  /** Business rule 76 — set only on an alert raised for a dependency-suppressed device. */
+  /** Business rule 78 — set only on an alert raised for a dependency-suppressed device. */
   dependency?: DependencyTemplateParts | null;
   escalationTier?: number;
   escalationElapsed?: string;
@@ -471,7 +471,7 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     // literal braces if the key were absent instead of blank.
     "repeat.policy": str(parts.repeatPolicy),
     "escalation.policy": str(parts.escalationPolicy),
-    // Business rule 76 — present-but-empty on every alert that is not about a
+    // Business rule 78 — present-but-empty on every alert that is not about a
     // dependency-suppressed device, for the reason every pair above is: the
     // default body prints them on every send.
     "dependency.summary": dependencySummarySentence(str(parts.asset), parts.dependency),

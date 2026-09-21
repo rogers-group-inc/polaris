@@ -372,7 +372,7 @@
       actions.push('<button class="btn btn-outlined alert-clear" data-id="' + escapeHtml(n.id) + '">Clear</button>');
     }
 
-    // Raised while the device was dependency-down (business rule 76) — the
+    // Raised while the device was dependency-down (business rule 78) — the
     // same slate badge the desktop surfaces wear, beside the severity.
     var dep = n.dependencyDown
       ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down">Dep. Down</span>'

@@ -134,7 +134,7 @@ it covers ([rule 36](Business-Rules#rule-36)).
   the Actions step's in-app alert card) lets this automation keep alerting about
   a device that is Dep. Down behind a down switch or firewall — the one opt-out
   from the silence every other automation observes ([rule
-  76](Business-Rules#rule-76)). The alert fires the moment the device turns
+  76](Business-Rules#rule-78)). The alert fires the moment the device turns
   Dep. Down, says **DEPENDENCY DOWN**, and names the upstream device that is
   actually down. One notification only: reminders and escalation wait until
   the upstream is back. See [Dependency suppression](Dependency-Suppression).

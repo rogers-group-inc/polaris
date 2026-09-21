@@ -37,7 +37,7 @@
  * reported eight times or eight ports gone.
  */
 // `{dependency.tag}` carries its own separator and is empty on every alert not
-// raised for a dependency-suppressed device (business rule 76), so the subject
+// raised for a dependency-suppressed device (business rule 78), so the subject
 // appends it unconditionally and a plain alert's subject is unchanged.
 export const DEFAULT_ALERT_SUBJECT = "[{severity.upper}] {asset}{dimension.suffix} — {rule}{dependency.tag}";
 
@@ -62,7 +62,7 @@ export const DEFAULT_ALERT_TEXT = [
   // and it renders away — collapsing its blank line with it — on every other
   // send, including every ordinary reminder.
   "{repeat.quiet}",
-  // The dependency-down notice (business rule 76): the device is unreachable
+  // The dependency-down notice (business rule 78): the device is unreachable
   // because of a device above it, named. Above the facts because on that one
   // kind of alert it is the fact. Renders away, blank line and all, on every
   // other alert.
@@ -83,7 +83,7 @@ export const DEFAULT_ALERT_TEXT = [
   "IP:         {asset.ip}",
   "Switch:     {asset.connectedSwitch}",
   "AP:         {asset.connectedAp}",
-  // Who silenced it (business rule 76). Both prune away on every alert that is
+  // Who silenced it (business rule 78). Both prune away on every alert that is
   // not dependency-down; "Root cause" prunes too when the upstream device IS
   // the root cause, since the token is blank in that case.
   "Upstream:   {dependency.upstream}",
@@ -201,7 +201,7 @@ export const DEFAULT_ALERT_HTML = [
   // and its whole band of padding disappear rather than leaving a grey stripe.
   // No token but this one inside it, or the div is never exactly empty.
   '<div style="font-size:13px;font-weight:600;color:#374151;background:#f3f4f6;border-left:3px solid {severity.color};padding:8px 10px;margin-top:10px">{repeat.quiet}</div>',
-  // The dependency-down notice (business rule 76) — the same shape as the
+  // The dependency-down notice (business rule 78) — the same shape as the
   // quiet-period div above and for the same two reasons: it belongs above the
   // facts on the one kind of alert it appears on, and with that token alone
   // inside it `pruneEmptyDivs` removes it, padding and all, on every other
@@ -256,7 +256,7 @@ export const DEFAULT_ALERT_HTML = [
   factRow("IP address", "{asset.ip}"),
   factRow("Connected switch", "{asset.connectedSwitch}"),
   factRow("Connected AP", "{asset.connectedAp}"),
-  // Who silenced it (business rule 76) — the device directly above, and the
+  // Who silenced it (business rule 78) — the device directly above, and the
   // one actually down when that is somebody else. Both prune away on a plain
   // alert; "Root cause" prunes too when the upstream device is the root cause.
   factRow("Upstream device", "{dependency.upstream}"),

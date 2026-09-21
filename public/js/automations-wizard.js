@@ -442,7 +442,7 @@ function makeAutomationSentences(s) {
   function leafDeclaresDownCount(leaf) {
     return isDownDetectionLeaf(leaf) && leaf.missedPolls != null;
   }
-  // ── Dependency-down alerting (business rule 76) ─────────────────────────
+  // ── Dependency-down alerting (business rule 78) ─────────────────────────
   // A down automation may opt to still alert about a device that is
   // dependency-suppressed (Dep. Down), naming the upstream device. The key
   // rides the trigger like `missedPolls`, and its NAME comes from the catalog:
@@ -785,7 +785,7 @@ function makeAutomationSentences(s) {
     if ((tr.type === "asset_metric" || tr.type === "host_metric" || tr.type === "asset_state") && tr.forDurationSec > 0) {
       out += ", sustained for <strong>" + holdPhrase(tr) + "</strong>";
     }
-    // Business rule 76 — the one thing this automation does that a plain down
+    // Business rule 78 — the one thing this automation does that a plain down
     // automation does not, so the sentence has to say it: a reader comparing
     // two down automations in the list is otherwise looking at identical prose.
     if (leafAlertsWhenDependencyDown(tr)) {
@@ -3744,7 +3744,7 @@ async function openAutomationWizard(existing, opts) {
   // source at all and always fell back to "unavailable".
 
   /** Drop every missedPolls — and the dependency-down toggle, which has the
-   *  same bare-trigger-only rule (business rule 76) — in a trigger tree (see
+   *  same bare-trigger-only rule (business rule 78) — in a trigger tree (see
    *  the call site in collectStep3). */
   function stripMissedPolls(node) {
     if (!node) return;
@@ -3755,7 +3755,7 @@ async function openAutomationWizard(existing, opts) {
   }
   /**
    * The "also alert when the device is dependency-down" toggle (business rule
-   * 76). Rendered in TWO places for now — the Trigger step, beside the missed-
+   * 78). Rendered in TWO places for now — the Trigger step, beside the missed-
    * poll count it belongs with, and the Actions step's in-app alert card — so
    * the operator can see both and pick where it lives; `data-dep-down-
    * placement` marks each so the loser is one block to remove. Both bind to
@@ -4201,7 +4201,7 @@ async function openAutomationWizard(existing, opts) {
         ) +
         ratioSustainFieldHtml(tr) +
         ratioCeilingFieldHtml(tr) +
-        // Business rule 76 — beside the missed-poll count, since both are
+        // Business rule 78 — beside the missed-poll count, since both are
         // properties of the down verdict. Device triggers only.
         (cat === "device" ? dependencyDownFieldHtml(tr, "trigger") : "");
       if (cat === "host") {
@@ -4254,7 +4254,7 @@ async function openAutomationWizard(existing, opts) {
     syncDurationRequirement(panel);
     syncDownDetection(panel);
     syncDependencyDown(panel);
-    // The Trigger-step toggle mirrors its Actions-step twin (business rule 76).
+    // The Trigger-step toggle mirrors its Actions-step twin (business rule 78).
     var depTf = box.querySelector("#tf-dep-down");
     if (depTf) depTf.addEventListener("change", function () { mirrorDependencyDown(depTf); });
     // Poll-counted fields: wire the edit→seconds hook once, then paint the
@@ -4302,7 +4302,7 @@ async function openAutomationWizard(existing, opts) {
     // re-syncs the severity mode (single dropdown vs multi tiers + accent).
     panel.addEventListener("input", function () { refreshTriggerSentence(); syncSeverityMode(panel); syncDurationRequirement(panel); syncDownDetection(panel); syncDependencyDown(panel); });
     // A checkbox reports `change`, not `input`, in some browsers — the toggle's
-    // tick has to reach the sentence too (business rule 76).
+    // tick has to reach the sentence too (business rule 78).
     panel.addEventListener("change", function (e) {
       if (e.target && e.target.id === "tf-dep-down") refreshTriggerSentence();
     });
@@ -4448,7 +4448,7 @@ async function openAutomationWizard(existing, opts) {
           else delete draft.trigger.missedPolls;
           draft.trigger.forPolls = 0;
           draft.trigger.forDurationSec = 0;
-          // The second property of the down verdict (business rule 76). Read
+          // The second property of the down verdict (business rule 78). Read
           // from this step's box when it is on screen; a trigger collected
           // while another step is showing keeps whatever the draft holds.
           var depEl = panel.querySelector("#tf-dep-down");
@@ -5769,7 +5769,7 @@ async function openAutomationWizard(existing, opts) {
         // The follow-up pair ("require a note" / "repeat this notification")
         // used to live here. It moved into each severity section — see
         // followUpBlockHtml.
-        // Business rule 76 — the Actions-step copy of the dependency-down
+        // Business rule 78 — the Actions-step copy of the dependency-down
         // toggle (see dependencyDownFieldHtml for why there are two).
         dependencyDownFieldHtml(draft.trigger, "actions") +
       '</div>';
@@ -5977,7 +5977,7 @@ async function openAutomationWizard(existing, opts) {
       var ack = block.querySelector(".aw-require-ack-note");
       if (ack) ack.addEventListener("change", function () { collectStep5(); });
     });
-    // The Actions-step dependency-down toggle (business rule 76): onto the
+    // The Actions-step dependency-down toggle (business rule 78): onto the
     // draft at once, and into the Trigger step's box, which never re-renders.
     var depAw = panel.querySelector("#aw-dep-down");
     if (depAw) depAw.addEventListener("change", function () { collectStep5(); mirrorDependencyDown(depAw); });
@@ -8270,7 +8270,7 @@ async function openAutomationWizard(existing, opts) {
     // every band inherits when it says nothing of its own.
     var baseBlock = followUpBlocks(panel)[0];
     if (baseBlock) draft.requireAckNote = collectFollowUp(baseBlock).requireAckNote;
-    // Business rule 76 — only when its box is on screen: the control renders
+    // Business rule 78 — only when its box is on screen: the control renders
     // for a bare down trigger alone, and a hidden control must never post (or
     // strip) a key the operator did not touch.
     var depEl = panel.querySelector("#aw-dep-down");
@@ -8691,7 +8691,7 @@ async function openAutomationWizard(existing, opts) {
     var ackNoteRow = ackNoteLines.length
       ? '<dt>Acknowledging</dt><dd>' + ackNoteLines.join("<br>") + '</dd>'
       : "";
-    // Business rule 76 — only when ON, like the ack-note row: off is what
+    // Business rule 78 — only when ON, like the ack-note row: off is what
     // every automation authored before the toggle does.
     var depDownRow = leafAlertsWhenDependencyDown(draft.trigger)
       ? '<dt>Dependency down</dt><dd>still alerts, naming the upstream device that is down</dd>'

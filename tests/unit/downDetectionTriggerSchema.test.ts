@@ -92,7 +92,7 @@ describe("ruleInputSchema — where missedPolls may live", () => {
   });
 });
 
-describe("ruleInputSchema — where alertWhenDependencyDown may live (business rule 76)", () => {
+describe("ruleInputSchema — where alertWhenDependencyDown may live (business rule 78)", () => {
   it("accepts the toggle on a down trigger, and the read helper honours it", () => {
     const r = ruleInputSchema.parse({ ...base, trigger: downTrigger({ missedPolls: 3, alertWhenDependencyDown: true }) });
     expect((r.trigger as any).alertWhenDependencyDown).toBe(true);

@@ -746,7 +746,7 @@ const assetStateTrigger = z.object({
    */
   missedPolls: z.number().int().min(1).max(100).optional(),
   /**
-   * SPEAK FOR A SILENCED DEVICE (business rule 76) — valid only on
+   * SPEAK FOR A SILENCED DEVICE (business rule 78) — valid only on
    * `monitorStatus == down`, like `missedPolls`. A device behind a down switch
    * or firewall is dependency-suppressed (Dep. Down) and normally alerts
    * nothing (rules 16 and 37). With this on, THIS automation still raises its
@@ -2428,7 +2428,7 @@ export function isDownDetectionTrigger(trigger: Trigger): boolean {
 
 /**
  * Does this down automation speak for its devices while they are dependency-
- * suppressed (business rule 76)?
+ * suppressed (business rule 78)?
  *
  * The ONE reader of `trigger.alertWhenDependencyDown`. Gated on
  * `isDownDetectionTrigger` rather than on the key alone so a key that survived
@@ -2832,7 +2832,7 @@ function validateMissedPolls(trigger: Trigger | undefined, ctx: z.RefinementCtx)
           'a missed-poll count only applies to a "monitor status is down" automation — it is the definition of down for the devices that automation covers',
       });
     }
-    // Same shape, same reason (business rule 76): the dependency-down toggle
+    // Same shape, same reason (business rule 78): the dependency-down toggle
     // is a property of the down verdict, so it has no meaning anywhere else.
     if (trigger.alertWhenDependencyDown != null && !isDownDetectionTrigger(trigger)) {
       ctx.addIssue({
@@ -4126,7 +4126,7 @@ export function buildSchemaCatalog() {
         "How many polls in a row a device must miss before Polaris calls it down. " +
         "This automation owns that number for every device it covers — the most specific automation wins. " +
         "A device no down automation covers is never called down: it stays Passive, still polled and still charted.",
-      // Business rule 76 — the toggle that lets this automation speak for a
+      // Business rule 78 — the toggle that lets this automation speak for a
       // dependency-suppressed device. Served as data for the same reason as
       // the count: a wizard talking to a pre-upgrade server must not render a
       // control whose key the API would refuse.

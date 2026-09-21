@@ -1083,7 +1083,7 @@ export async function getRecentReboots(sinceHours = 72, limit: number | null = 2
 }
 
 /** The upstream device's name out of a `Notification.dependencyBlame` snapshot
- *  (business rule 76) — the root cause when it is somebody else, else the
+ *  (business rule 78) — the root cause when it is somebody else, else the
  *  device directly above; null when the walk named nobody. */
 export function dependencyUpstreamOf(blame: unknown): string | null {
   if (!blame || typeof blame !== "object") return null;
@@ -1124,7 +1124,7 @@ export interface AlertRow {
   triggerType: string | null;
   acknowledged: boolean;
   acknowledgedBy: string | null;
-  /** Business rule 76 — raised for a dependency-suppressed device by a down
+  /** Business rule 78 — raised for a dependency-suppressed device by a down
    *  automation that opted in; the widget badges it "Dep. Down" and names the
    *  upstream device in the badge's tooltip. */
   dependencyDown: boolean;

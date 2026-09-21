@@ -173,7 +173,7 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
   // operator the very thing they're testing. Made up per metric family, like
   // everything else here.
   const dimension = sampleDimensionFor(metric);
-  // Business rule 76 — a down automation that speaks for dependency-suppressed
+  // Business rule 78 — a down automation that speaks for dependency-suppressed
   // devices is tested as that alert, blaming an invented upstream device.
   const speaksForSuppressed = !!rule.trigger && ruleAlertsWhenDependencyDown(rule.trigger as never);
   const sampleDependency = { upstream: SAMPLE_UPSTREAM_HOSTNAME, rootCause: null, reason: "down" as const };
@@ -252,7 +252,7 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
     // generic "Component".
     dimensionNoun: dimension ? dimensionNounOf(rule.trigger as never) : "",
     // A down automation that speaks for dependency-suppressed devices
-    // (business rule 76) is tested as the alert it will most distinctively
+    // (business rule 78) is tested as the alert it will most distinctively
     // send: the dependency-down notice, naming an invented upstream device, so
     // the operator sees the banner and the rows a real one carries.
     ...(speaksForSuppressed

@@ -1,7 +1,7 @@
 /**
  * tests/unit/notificationDependencyDownAlert.test.ts
  *
- * Business rule 76 — a down automation that opts in (`trigger.alertWhenDependencyDown`)
+ * Business rule 78 — a down automation that opts in (`trigger.alertWhenDependencyDown`)
  * still fires for a dependency-suppressed device, the moment it turns Dep. Down,
  * and the alert names who silenced it. Everything else keeps rule 37: an
  * automation without the toggle drops the asset, and a MAINTENANCE window

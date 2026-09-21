@@ -102,7 +102,7 @@ const noteText = (el: HTMLElement) => {
   return p ? (p as any).textContent : null;
 };
 
-describe("dependency-down badge (business rule 76)", () => {
+describe("dependency-down badge (business rule 78)", () => {
   it("badges an alert raised for a dependency-suppressed device and names the upstream in the tooltip", () => {
     const el = render([
       alert({ id: "dep", severity: "critical", hostname: "PLC-7", dependencyDown: true, dependencyUpstream: "SW-PLANT-3" }),

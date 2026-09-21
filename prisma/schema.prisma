@@ -4923,7 +4923,7 @@ model Notification {
   // ("sdwanSelectedMember") so its charts resolve.
   metric String?
 
-  // Business rule 76 — this alert was raised FOR A DEPENDENCY-SUPPRESSED
+  // Business rule 78 — this alert was raised FOR A DEPENDENCY-SUPPRESSED
   // device by a down automation that opted in (`trigger.alertWhenDependencyDown`).
   // Three readers, none of which could work off the message text: the
   // suppression sweep (clearSuppressedAlerts) skips these rows — a

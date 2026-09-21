@@ -76,7 +76,7 @@ const FULL_PARTS: TemplateContextParts = {
   // time so a reminder describes the same automation the first email did.
   repeatPolicy: "Reminders every 15 minutes until acknowledged.",
   escalationPolicy: "Escalates in 30 minutes if not acknowledged.",
-  // A dependency-down alert (business rule 76) with a two-hop chain, so every
+  // A dependency-down alert (business rule 78) with a two-hop chain, so every
   // {dependency.*} token has a value to render.
   dependency: { upstream: "SW-PLANT-3", rootCause: "FG-PLANT", reason: "down" },
 };
@@ -110,7 +110,7 @@ afterAll(() => {
   else process.env.POLARIS_PUBLIC_URL = PREV_PUBLIC_URL;
 });
 
-describe("dependency-down tokens (business rule 76)", () => {
+describe("dependency-down tokens (business rule 78)", () => {
   const plain = buildTemplateContext({ asset: "PLC-7", severity: "critical", ruleName: "PLC down" });
   const oneHop = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: "SW-PLANT-3", rootCause: null, reason: "down" } });
   const twoHop = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: "SW-PLANT-3", rootCause: "FG-PLANT", reason: "down" } });
