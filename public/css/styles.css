@@ -261,48 +261,14 @@
 }
 /* Non-rotating clip layer. The fade HAS to live here and not on the ring: a
    mask on the ring is in the ring’s own coordinate space and would spin with
-   it.
-
-   NOTHING ON THE PATH FROM HERE TO THE RING MAY CARRY A MASK OR A FILTER.
-   This used to be `mask-image: linear-gradient(...)` on this element, and the
-   dial was INVISIBLE on nightfall in Firefox — reported as "the nightfall
-   wheel image doesn't appear". Firefox paints nothing at all for a masked or
-   filtered layer whose content is rotated (close to) a half-turn, and
-   nightfall is the one selectable theme whose dial angle is 180°. It was
-   never about the theme: noon blanks too if you park it at 180°, and
-   nightfall renders fine at 179° or 181°.
-
-   Everything that reads like a cheaper fix was measured and does not work:
-   `will-change`, `translateZ(0)`, `backface-visibility`, `isolation`, the
-   `rotate:` longhand, and nudging the angle to 180.01° all still blank, and a
-   `filter` anywhere re-triggers it even with this fade redrawn. The only
-   repair is to have no compositing layer over the rotated image at all — so
-   the fade is now PAINTED ON TOP instead of masking the layer.
-
-   The gradient is the fallback; where masks are supported the same fade is a
-   background-COLOUR that is masked instead, because a colour transitions with
-   the theme and a background-image does not — without that, the bottom of the
-   dial snaps to the new palette while the rail behind it is still crossfading.
-   The mask here is safe: this overlay holds no rotated content. Both fade to
-   the rail's own token, which is what the dial sits on. ─────────────────── */
+   it. Standard mask-image first (the only one Firefox reads), webkit copy for
+   older Safari. */
 .theme-wheel-window {
   position: absolute;
   inset: 0;
   overflow: hidden;
-}
-.theme-wheel-window::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(to bottom, transparent 62%, var(--color-bg-tertiary) 100%);
-}
-@supports (mask-image: linear-gradient(#000, #000)) {
-  .theme-wheel-window::after {
-    background: var(--color-bg-tertiary);
-    -webkit-mask-image: linear-gradient(to bottom, transparent 62%, #000 100%);
-    mask-image: linear-gradient(to bottom, transparent 62%, #000 100%);
-  }
+  -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
 }
 .theme-wheel-ring {
   position: absolute;
@@ -314,8 +280,6 @@
   transform-origin: 50% 50%;
   pointer-events: none;
   user-select: none;
-  /* No filter here, ever — see the window's comment. A brightness() on this
-     element blanks the dial at 180° exactly as the old mask did. */
   /* Slow and eased-out: the turn is the whole feedback, so it has to be
      watchable, and the arriving emblem readable as it settles. The duration is
      the SAME as the palette crossfade (THEME_FADE_MS) on purpose — dial and
@@ -346,12 +310,7 @@
   transition: color 0.15s;
 }
 .theme-wheel:hover .theme-wheel-label { color: var(--color-text-primary); }
-/* Hover is the label plus a tint on the button, and deliberately NOT the
-   `filter: brightness(1.12)` on the ring this used to be: that filter is a
-   compositing layer over the rotated image, so on nightfall the whole dial
-   vanished the moment the pointer touched it — the one moment it is being
-   looked at. A background-color costs no layer. */
-.theme-wheel:hover { background: var(--color-bg-elevated); }
+.theme-wheel:hover .theme-wheel-ring { filter: brightness(1.12); }
 .theme-wheel:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) {
   .theme-wheel-ring { transition: none; }

@@ -1783,13 +1783,6 @@ button, .list-item, .chip { touch-action: manipulation; }
   height: 100%;
   display: flex;
   width: max-content;
-  /* No filter on this track, and none on the art inside it. The desktop dial's
-     sibling control was blanked outright in Firefox by a compositing layer over
-     its rotated image (see .theme-wheel-window in styles.css). This strip
-     translates rather than rotates, so it is not the same bug — but a
-     brightness() here was added and reverted once already, on a contrast
-     measurement that turned out to be describing that rendering bug and not the
-     artwork. Do not re-add one without looking at a real phone first. */
   /* Duration MUST equal THEME_FADE_MS — the strip and the palette have to
      arrive together, and a multi-leg turn makes any mismatch obvious. The
      easing is overridden per leg by the data-theme-fading phase rules. */

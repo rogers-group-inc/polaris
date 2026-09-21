@@ -115,16 +115,6 @@ function _wheelRotationFor(id, from) {
   return target;
 }
 
-// The angle a dial being RENDERED starts at: the accumulated rotation once
-// there is one, otherwise the current theme's own hour. Markup that
-// interpolated `_wheelRotation` directly wrote `rotate(nulldeg)` on first
-// paint — an invalid transform the browser drops — so every page load seated
-// the dial at 0° (noon's art under the notch) no matter which theme was
-// showing, and only the first click ever put it right.
-function _wheelSeatDeg() {
-  return _wheelRotation === null ? -(THEME_WHEEL_ANGLE[_getCurrentTheme()] || 0) : _wheelRotation;
-}
-
 // Every dial on the page, not one by id: a second shell or a specimen card can
 // each hold one, and they all read the same clock.
 function _themeWheelRings() { return document.querySelectorAll(".theme-wheel-ring"); }
@@ -1051,7 +1041,7 @@ function renderNav() {
            here as well, or a click advances two steps. -->
       <div style="padding:${(isAdmin() || canManageAssets()) ? '0.25rem' : '0.5rem'} 0.5rem 0.5rem;${(isAdmin() || canManageAssets()) ? '' : 'border-top:1px solid var(--color-border-light);'}">
         <button type="button" id="btn-theme-wheel" class="theme-wheel" aria-label="Time of day: ${_getTheme(_getCurrentTheme()).label}. Turn the dial.">
-          <span class="theme-wheel-window"><img class="theme-wheel-ring" id="theme-wheel-ring" alt="" draggable="false" src="${THEME_WHEEL_ART}" style="transform:rotate(${_wheelSeatDeg()}deg)"></span>
+          <span class="theme-wheel-window"><img class="theme-wheel-ring" id="theme-wheel-ring" alt="" draggable="false" src="${THEME_WHEEL_ART}" style="transform:rotate(${_wheelRotation}deg)"></span>
           <span class="theme-wheel-notch"></span>
           <span class="theme-wheel-label" id="theme-wheel-label">${_getTheme(_getCurrentTheme()).label}</span>
         </button>
