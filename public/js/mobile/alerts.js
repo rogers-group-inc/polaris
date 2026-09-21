@@ -372,8 +372,13 @@
       actions.push('<button class="btn btn-outlined alert-clear" data-id="' + escapeHtml(n.id) + '">Clear</button>');
     }
 
+    // Raised while the device was dependency-down (business rule 76) — the
+    // same slate badge the desktop surfaces wear, beside the severity.
+    var dep = n.dependencyDown
+      ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down">Dep. Down</span>'
+      : "";
     return '<div class="card-filled alert-item" style="--alert-flag-color:' + sevColor(sev) + '">'
-      + '<div class="alert-sev">' + escapeHtml(sev) + '</div>'
+      + '<div class="alert-sev">' + escapeHtml(sev) + dep + '</div>'
       + '<div class="alert-msg">' + escapeHtml(n.message || "") + '</div>'
       + (meta ? '<div class="alert-meta">' + escapeHtml(meta) + '</div>' : "")
       + ackBlock

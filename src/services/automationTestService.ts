@@ -50,9 +50,10 @@ import { drainPendingDeliveries } from "./notificationDeliveryService.js";
 import { buildTemplateContext } from "../utils/notificationTemplate.js";
 import { scopeRegionTagsOf } from "./notificationRecipientService.js";
 import type { AutomationAction, PreviewRuleInput, Severity } from "./notificationTypes.js";
-import { allRuleActionRefs, notifyChannelIds, dimensionNounOf } from "./notificationTypes.js";
+import { allRuleActionRefs, notifyChannelIds, dimensionNounOf, ruleAlertsWhenDependencyDown } from "./notificationTypes.js";
 import { triggerSummary } from "../utils/triggerSummary.js";
-import { SAMPLE_ALERT_DEVICE, SAMPLE_ALERT_HOSTNAME, sampleDimensionFor } from "../utils/sampleAlertDevice.js";
+import { dependencyTriggerSummary } from "../utils/notificationTemplate.js";
+import { SAMPLE_ALERT_DEVICE, SAMPLE_ALERT_HOSTNAME, SAMPLE_UPSTREAM_HOSTNAME, sampleDimensionFor } from "../utils/sampleAlertDevice.js";
 
 export type TestTarget = "delivery" | "event";
 
@@ -172,6 +173,10 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
   // operator the very thing they're testing. Made up per metric family, like
   // everything else here.
   const dimension = sampleDimensionFor(metric);
+  // Business rule 76 — a down automation that speaks for dependency-suppressed
+  // devices is tested as that alert, blaming an invented upstream device.
+  const speaksForSuppressed = !!rule.trigger && ruleAlertsWhenDependencyDown(rule.trigger as never);
+  const sampleDependency = { upstream: SAMPLE_UPSTREAM_HOSTNAME, rootCause: null, reason: "down" as const };
 
   const notif = await prisma.notification.create({
     data: {
@@ -246,12 +251,20 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
     // real one does ("Interface — port12") instead of falling back to the
     // generic "Component".
     dimensionNoun: dimension ? dimensionNounOf(rule.trigger as never) : "",
-    triggerSummary: triggerSummary({
-      trigger: rule.trigger as never,
-      value: null,
-      dimensionLabel: dimension,
-      sensorUnit: null,
-    }),
+    // A down automation that speaks for dependency-suppressed devices
+    // (business rule 76) is tested as the alert it will most distinctively
+    // send: the dependency-down notice, naming an invented upstream device, so
+    // the operator sees the banner and the rows a real one carries.
+    ...(speaksForSuppressed
+      ? { dependency: sampleDependency, triggerSummary: dependencyTriggerSummary(sampleDependency) }
+      : {
+        triggerSummary: triggerSummary({
+          trigger: rule.trigger as never,
+          value: null,
+          dimensionLabel: dimension,
+          sensorUnit: null,
+        }),
+      }),
     assetDetail: asset,
   });
 

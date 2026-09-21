@@ -675,3 +675,40 @@ discovery): only a save that actually changes the notes or the hostname is
 judged, so a row can always be shortened rather than being stuck.
 
 See [IPAM](IPAM#pushing-reservations-to-the-gate).
+
+### Rule 76
+
+**An automation may choose to speak for a silenced device, and then it must
+name who silenced it.**
+
+A device behind a down switch or firewall is **dependency-down** (Dep. Down),
+and every automation stays silent about it — the outage is the parent's, and one
+alert on the parent is the whole story ([rule 37](#rule-37), [rule 16](#rule-16)).
+That is right for the network team and wrong for the people who only watch one
+device: the operators subscribed to a PLC's down automation heard nothing when
+the switch above it died.
+
+So a `monitor status is down` automation — and only that kind — can tick **"Also
+alert when the device is dependency-down"**. With it on, the automation still
+raises its alert **the moment the device turns Dep. Down**; it does not wait for
+the device's own missed-poll count, because the upstream's confirmed outage is
+the evidence. The alert **says DEPENDENCY DOWN** in the subject, the headline
+and the message, and **names the upstream device** — and, when that device is
+itself Dep. Down under something further up, the device that is actually down
+(a suppressed switch's FortiGate). If Polaris cannot work out who, the alert
+still goes out, saying so.
+
+The alert's kind follows the device's state. A plain Down alert on a device that
+then turns Dep. Down is **ended and raised again** as dependency-down, naming
+the switch; a dependency-down alert whose upstream has recovered while the
+device is still down is ended and raised again as the device's own outage.
+Neither sends a "resolved" message — nothing recovered.
+
+Three things the toggle does **not** change. A **maintenance window still
+silences** the device. **Reminders and escalation still wait** while the device
+is dependency-down — you get one notification, and the follow-ups resume when
+the upstream is back. And every automation **without** the toggle behaves
+exactly as before.
+
+See [Dependency suppression](Dependency-Suppression) and
+[Automation triggers](Automation-Triggers#monitorstatus--down-is-the-down-detection-automation).

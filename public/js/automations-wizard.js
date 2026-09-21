@@ -442,6 +442,20 @@ function makeAutomationSentences(s) {
   function leafDeclaresDownCount(leaf) {
     return isDownDetectionLeaf(leaf) && leaf.missedPolls != null;
   }
+  // ── Dependency-down alerting (business rule 76) ─────────────────────────
+  // A down automation may opt to still alert about a device that is
+  // dependency-suppressed (Dep. Down), naming the upstream device. The key
+  // rides the trigger like `missedPolls`, and its NAME comes from the catalog:
+  // a pre-upgrade server (no `dependencyDownKey`) renders no control at all,
+  // rather than one whose key the API would refuse.
+  function dependencyDownMeta() {
+    var dd = downDetectionMeta();
+    return dd && dd.dependencyDownKey ? dd : null;
+  }
+  function leafAlertsWhenDependencyDown(leaf) {
+    var dd = dependencyDownMeta();
+    return !!(dd && isDownDetectionLeaf(leaf) && leaf[dd.dependencyDownKey] === true);
+  }
   // ── State (0/1) metrics ────────────────────────────────────────────────
   // A state metric's reading is a flag, so its threshold is 0 or 1 and the
   // number is meaningless to read back: the automation is about "Alarm", not
@@ -770,6 +784,12 @@ function makeAutomationSentences(s) {
     }
     if ((tr.type === "asset_metric" || tr.type === "host_metric" || tr.type === "asset_state") && tr.forDurationSec > 0) {
       out += ", sustained for <strong>" + holdPhrase(tr) + "</strong>";
+    }
+    // Business rule 76 — the one thing this automation does that a plain down
+    // automation does not, so the sentence has to say it: a reader comparing
+    // two down automations in the list is otherwise looking at identical prose.
+    if (leafAlertsWhenDependencyDown(tr)) {
+      out += " — and still when the device is <strong>dependency-down</strong>, naming the upstream device";
     }
     return out + tail + ".";
   }
@@ -1105,6 +1125,7 @@ function makeAutomationSentences(s) {
     isDownDetectionLeaf: isDownDetectionLeaf, isDownDetectionTrigger: isDownDetectionTrigger,
     missedPollsOf: missedPollsOf, downDetectionMeta: downDetectionMeta,
     leafDeclaresDownCount: leafDeclaresDownCount,
+    dependencyDownMeta: dependencyDownMeta, leafAlertsWhenDependencyDown: leafAlertsWhenDependencyDown,
     tgLeafPhrase: tgLeafPhrase, tgTreePhrase: tgTreePhrase,
     triggerSentence: triggerSentence, severityLadderPhrase: severityLadderPhrase, resetSentence: resetSentence,
     invertedLeaf: invertedLeaf, invertedTree: invertedTree, resetCaveat: resetCaveat,
@@ -1578,6 +1599,7 @@ async function openAutomationWizard(existing, opts) {
       isDownDetectionLeaf = _sent.isDownDetectionLeaf, missedPollsOf = _sent.missedPollsOf,
       isDownDetectionTrigger = _sent.isDownDetectionTrigger,
       downDetectionMeta = _sent.downDetectionMeta,
+      dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
   var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter" };
@@ -3721,11 +3743,70 @@ async function openAutomationWizard(existing, opts) {
   // the spread behind it is. Before that lookup existed this caption had no
   // source at all and always fell back to "unavailable".
 
-  /** Drop every missedPolls in a trigger tree (see the call site in collectStep3). */
+  /** Drop every missedPolls — and the dependency-down toggle, which has the
+   *  same bare-trigger-only rule (business rule 76) — in a trigger tree (see
+   *  the call site in collectStep3). */
   function stripMissedPolls(node) {
     if (!node) return;
     if (node.missedPolls != null) delete node.missedPolls;
+    var dd = dependencyDownMeta();
+    if (dd && node[dd.dependencyDownKey] != null) delete node[dd.dependencyDownKey];
     (node.children || []).forEach(stripMissedPolls);
+  }
+  /**
+   * The "also alert when the device is dependency-down" toggle (business rule
+   * 76). Rendered in TWO places for now — the Trigger step, beside the missed-
+   * poll count it belongs with, and the Actions step's in-app alert card — so
+   * the operator can see both and pick where it lives; `data-dep-down-
+   * placement` marks each so the loser is one block to remove. Both bind to
+   * the same key on `draft.trigger`, and each one's change handler ticks the
+   * other when it is on screen (the Trigger step does not re-render on entry,
+   * so a change made on the Actions step has to reach its box by hand).
+   *
+   * Only a bare `monitor status is down` trigger has the toggle, and only when
+   * the server catalog carries the key. The Trigger step's copy is rendered
+   * whenever a device trigger is, hidden unless the tree is that one condition
+   * (syncDependencyDown), because the tree can become one under the operator's
+   * hands; the Actions step's copy is rendered from the draft on entry.
+   */
+  function dependencyDownFieldHtml(tr, placement) {
+    var dd = dependencyDownMeta();
+    if (!dd) return "";
+    var isTrigger = placement === "trigger";
+    if (!isTrigger && !isDownDetectionLeaf(tr)) return "";
+    var id = isTrigger ? "tf-dep-down" : "aw-dep-down";
+    var hidden = isTrigger && !isDownDetectionLeaf(tr);
+    return '<div class="form-group aw-dep-down" data-dep-down-placement="' + placement + '"' +
+        ' style="margin-top:0.5rem' + (hidden ? ";display:none" : "") + '">' +
+      '<label style="display:block;margin:0;font-weight:400">' +
+        '<input type="checkbox" id="' + id + '"' + (leafAlertsWhenDependencyDown(tr) ? " checked" : "") + '> ' +
+        escapeHtml(dd.dependencyDownLabel || "Also alert when the device is dependency-down") +
+      '</label>' +
+      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">' + escapeHtml(dd.dependencyDownHelp || "") + '</p>' +
+    '</div>';
+  }
+  /** Show the Trigger step's toggle only while the tree is a sole
+   *  `monitor status is down` condition — the same test that makes the
+   *  duration field the missed-poll count. */
+  function syncDependencyDown(panel) {
+    var wrap = panel.querySelector('.aw-dep-down[data-dep-down-placement="trigger"]');
+    if (!wrap) return;
+    var rows = panel.querySelectorAll(".scr-row");
+    var sole = rows.length === 1 && rowIsDownDetection(rows[0]);
+    wrap.style.display = sole ? "" : "none";
+  }
+  /** Read a toggle and write the key onto the (bare down) trigger — absent
+   *  when off, so an untouched automation's payload is byte-identical. */
+  function collectDependencyDown(el) {
+    var dd = dependencyDownMeta();
+    if (!dd || !el || !draft.trigger || !isDownDetectionLeaf(draft.trigger)) return;
+    if (el.checked) draft.trigger[dd.dependencyDownKey] = true;
+    else delete draft.trigger[dd.dependencyDownKey];
+  }
+  /** Tick the OTHER placement's box when it is on screen. */
+  function mirrorDependencyDown(fromEl) {
+    var other = document.querySelector(fromEl.id === "tf-dep-down" ? "#aw-dep-down" : "#tf-dep-down");
+    if (other && other.checked !== fromEl.checked) other.checked = fromEl.checked;
   }
   function syncDownDetection(panel) {
     var rows = panel.querySelectorAll('.scr-row');
@@ -4119,7 +4200,10 @@ async function openAutomationWizard(existing, opts) {
           triggerDurationUnit(tr),
         ) +
         ratioSustainFieldHtml(tr) +
-        ratioCeilingFieldHtml(tr);
+        ratioCeilingFieldHtml(tr) +
+        // Business rule 76 — beside the missed-poll count, since both are
+        // properties of the down verdict. Device triggers only.
+        (cat === "device" ? dependencyDownFieldHtml(tr, "trigger") : "");
       if (cat === "host") {
         html += '<p style="font-size:0.78rem;color:var(--color-text-tertiary)">Polaris-host conditions aren’t tied to assets — the device filter from the previous step is ignored.</p>';
       }
@@ -4169,6 +4253,10 @@ async function openAutomationWizard(existing, opts) {
     refreshDimOptions(panel);
     syncDurationRequirement(panel);
     syncDownDetection(panel);
+    syncDependencyDown(panel);
+    // The Trigger-step toggle mirrors its Actions-step twin (business rule 76).
+    var depTf = box.querySelector("#tf-dep-down");
+    if (depTf) depTf.addEventListener("change", function () { mirrorDependencyDown(depTf); });
     // Poll-counted fields: wire the edit→seconds hook once, then paint the
     // captions from whatever cadence is already cached and go ask for this
     // (metric, scope) if it isn't.
@@ -4206,12 +4294,18 @@ async function openAutomationWizard(existing, opts) {
       // number.
       syncDurationRequirement(panel);
       syncDownDetection(panel);
+      syncDependencyDown(panel);
       refreshTriggerSentence();
     });
     // Delegated: any input/select change re-renders the sentence (the tree's
     // own change handler also calls it — a second render is harmless) and
     // re-syncs the severity mode (single dropdown vs multi tiers + accent).
-    panel.addEventListener("input", function () { refreshTriggerSentence(); syncSeverityMode(panel); syncDurationRequirement(panel); syncDownDetection(panel); });
+    panel.addEventListener("input", function () { refreshTriggerSentence(); syncSeverityMode(panel); syncDurationRequirement(panel); syncDownDetection(panel); syncDependencyDown(panel); });
+    // A checkbox reports `change`, not `input`, in some browsers — the toggle's
+    // tick has to reach the sentence too (business rule 76).
+    panel.addEventListener("change", function (e) {
+      if (e.target && e.target.id === "tf-dep-down") refreshTriggerSentence();
+    });
     // The unit picker on a SELECT: `change` as well as `input`, since the unit
     // switch re-denominates the number in the box and a browser that fires only
     // one of the two would leave the field reading the old unit's value.
@@ -4354,6 +4448,11 @@ async function openAutomationWizard(existing, opts) {
           else delete draft.trigger.missedPolls;
           draft.trigger.forPolls = 0;
           draft.trigger.forDurationSec = 0;
+          // The second property of the down verdict (business rule 76). Read
+          // from this step's box when it is on screen; a trigger collected
+          // while another step is showing keeps whatever the draft holds.
+          var depEl = panel.querySelector("#tf-dep-down");
+          if (depEl) collectDependencyDown(depEl);
         }
       }
     } else if (cat === "event") {
@@ -5670,6 +5769,9 @@ async function openAutomationWizard(existing, opts) {
         // The follow-up pair ("require a note" / "repeat this notification")
         // used to live here. It moved into each severity section — see
         // followUpBlockHtml.
+        // Business rule 76 — the Actions-step copy of the dependency-down
+        // toggle (see dependencyDownFieldHtml for why there are two).
+        dependencyDownFieldHtml(draft.trigger, "actions") +
       '</div>';
 
     // Per-severity action sections: with severity bands, each tier CAN get its
@@ -5875,6 +5977,10 @@ async function openAutomationWizard(existing, opts) {
       var ack = block.querySelector(".aw-require-ack-note");
       if (ack) ack.addEventListener("change", function () { collectStep5(); });
     });
+    // The Actions-step dependency-down toggle (business rule 76): onto the
+    // draft at once, and into the Trigger step's box, which never re-renders.
+    var depAw = panel.querySelector("#aw-dep-down");
+    if (depAw) depAw.addEventListener("change", function () { collectStep5(); mirrorDependencyDown(depAw); });
     var perSevCb = panel.querySelector("#aw-band-actions-multi");
     if (perSevCb) {
       perSevCb.addEventListener("change", function () {
@@ -8164,6 +8270,11 @@ async function openAutomationWizard(existing, opts) {
     // every band inherits when it says nothing of its own.
     var baseBlock = followUpBlocks(panel)[0];
     if (baseBlock) draft.requireAckNote = collectFollowUp(baseBlock).requireAckNote;
+    // Business rule 76 — only when its box is on screen: the control renders
+    // for a bare down trigger alone, and a hidden control must never post (or
+    // strip) a key the operator did not touch.
+    var depEl = panel.querySelector("#aw-dep-down");
+    if (depEl) collectDependencyDown(depEl);
     // The BASE severity section's chain is the rule-level escalation (the engine
     // resolves it for an alert sitting at the base severity).
     var baseSecC = panel.querySelector("#aw-actions") && panel.querySelector("#aw-actions").closest(".form-group");
@@ -8580,6 +8691,11 @@ async function openAutomationWizard(existing, opts) {
     var ackNoteRow = ackNoteLines.length
       ? '<dt>Acknowledging</dt><dd>' + ackNoteLines.join("<br>") + '</dd>'
       : "";
+    // Business rule 76 — only when ON, like the ack-note row: off is what
+    // every automation authored before the toggle does.
+    var depDownRow = leafAlertsWhenDependencyDown(draft.trigger)
+      ? '<dt>Dependency down</dt><dd>still alerts, naming the upstream device that is down</dd>'
+      : "";
     // Reminders are per ACTION now, so the row names the action it belongs to
     // — a reader checking "will this chase me" needs to know which of two
     // notifies does. The quiet time rides the same line rather than a row of
@@ -8636,6 +8752,7 @@ async function openAutomationWizard(existing, opts) {
       '<dt>Reset</dt><dd>' + resetSentence(draft.reset, draft.trigger) + '</dd>' +
       msgRow +
       ackNoteRow +
+      depDownRow +
       repeatRow +
       '<dt>Actions</dt><dd>' + (actionLines.length ? actionLines.join("<br>") : '<span style="color:var(--color-text-tertiary)">in-app alert only</span>') + '</dd>' +
       resetRow +

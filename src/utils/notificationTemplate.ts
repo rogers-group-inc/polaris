@@ -101,7 +101,55 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{repeat.quiet}", label: "Quiet period ended", description: "On the first reminder after a quiet period, a sentence saying reminders have resumed and how long the alert has been active. Empty on every other send", group: "escalation" },
   { token: "{repeat.policy}", label: "Reminder policy", description: "Whether this alert will keep reminding, in words — e.g. \"Reminders every 15 minutes until acknowledged.\" Empty (and its row prunes away) when the automation doesn't repeat", group: "escalation" },
   { token: "{escalation.policy}", label: "Escalation policy", description: "Whether this alert goes over the reader's head if they leave it — e.g. \"Escalates in 30 minutes if not acknowledged.\" Empty when the automation has no escalation at the severity it fired at", group: "escalation" },
+  // Business rule 76 — a down automation speaking for a dependency-suppressed
+  // device. All four are present-but-empty on every other alert, so a body
+  // that prints them costs a plain alert nothing.
+  { token: "{dependency.summary}", label: "Dependency-down notice", description: "On an alert raised for a device that is dependency-down, the whole sentence: \"DEPENDENCY DOWN — PLC-7 is unreachable because its upstream device SW-PLANT-3 is down\". Empty on every other alert, so its banner prunes away", group: "notification" },
+  { token: "{dependency.upstream}", label: "Upstream device", description: "Dependency-down alerts: the device directly above this one that is down (or itself dependency-down). Empty on every other alert", group: "notification" },
+  { token: "{dependency.rootCause}", label: "Root cause", description: "Dependency-down alerts: the device further up that is actually down, when it is not the upstream device itself — the FortiGate above a dependency-down switch. Empty when the upstream device is the root cause, and on every other alert", group: "notification" },
+  { token: "{dependency.tag}", label: "Dependency-down tag", description: "\" · DEPENDENCY DOWN\" on a dependency-down alert, with its own separator so a subject line can append it unconditionally; empty on every other alert", group: "notification" },
 ];
+
+/**
+ * Business rule 76 — who silenced a dependency-suppressed device, as the
+ * template sees it. `upstream` is the device directly above; `rootCause` is
+ * the device actually down when that is a DIFFERENT device (null when the
+ * upstream is the root cause, so the row prunes rather than repeats); `reason`
+ * is why the root cause counts as down. A null `upstream` means the walk could
+ * not name anyone — the alert still says dependency down, just not by whom.
+ */
+export interface DependencyTemplateParts {
+  upstream: string | null;
+  rootCause: string | null;
+  reason: "down" | "maintenance" | "dependency_test" | "suppressed" | null;
+}
+
+function dependencyReasonPhrase(reason: DependencyTemplateParts["reason"]): string {
+  switch (reason) {
+    case "maintenance": return "is in a maintenance window";
+    case "dependency_test": return "is under a Dependency Test";
+    default: return "is down";
+  }
+}
+
+/** The `{dependency.summary}` sentence — the whole notice, or nothing. */
+export function dependencySummarySentence(asset: string, d: DependencyTemplateParts | null | undefined): string {
+  if (!d) return "";
+  const who = asset || "The device";
+  if (!d.upstream) return `DEPENDENCY DOWN — ${who} is unreachable because a device above it is down`;
+  if (!d.rootCause || d.rootCause === d.upstream) {
+    return `DEPENDENCY DOWN — ${who} is unreachable because its upstream device ${d.upstream} ${dependencyReasonPhrase(d.reason)}`;
+  }
+  return `DEPENDENCY DOWN — ${who} is unreachable because its upstream device ${d.upstream} sits behind ${d.rootCause}, which ${dependencyReasonPhrase(d.reason)}`;
+}
+
+/** The `{trigger.summary}` headline of a dependency-down alert — the device's
+ *  own probe did not decide it, so "Monitor status is down" would mislead. */
+export function dependencyTriggerSummary(d: DependencyTemplateParts | null | undefined): string {
+  if (!d || !d.upstream) return "Dependency down — a device above it is down";
+  const root = d.rootCause && d.rootCause !== d.upstream ? ` (root cause ${d.rootCause})` : "";
+  return `Dependency down — upstream ${d.upstream} ${dependencyReasonPhrase(d.reason)}${root}`;
+}
 
 /** Escape a string for safe embedding in HTML text/attribute content. */
 export function escapeHtml(s: string): string {
@@ -200,6 +248,8 @@ export interface TemplateContextParts {
     message?: string | null;
   } | null;
   assetDetail?: AssetTemplateDetail | null;
+  /** Business rule 76 — set only on an alert raised for a dependency-suppressed device. */
+  dependency?: DependencyTemplateParts | null;
   escalationTier?: number;
   escalationElapsed?: string;
   /** Which reminder this is; empty on the initial notification. */
@@ -421,6 +471,14 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     // literal braces if the key were absent instead of blank.
     "repeat.policy": str(parts.repeatPolicy),
     "escalation.policy": str(parts.escalationPolicy),
+    // Business rule 76 — present-but-empty on every alert that is not about a
+    // dependency-suppressed device, for the reason every pair above is: the
+    // default body prints them on every send.
+    "dependency.summary": dependencySummarySentence(str(parts.asset), parts.dependency),
+    "dependency.upstream": str(parts.dependency?.upstream),
+    "dependency.rootCause": parts.dependency && parts.dependency.rootCause && parts.dependency.rootCause !== parts.dependency.upstream
+      ? parts.dependency.rootCause : "",
+    "dependency.tag": parts.dependency ? " · DEPENDENCY DOWN" : "",
   };
 }
 

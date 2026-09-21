@@ -1,6 +1,6 @@
 ---
 name: polaris-business-rules
-description: "The 74 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP/Firewall (upstream placement of a device, including the gate that owns its subnet), monitorStatus (up/down/warning/recovering/passive), the FortiLink / CAPWAP controller-link state of a managed FortiSwitch or FortiAP, dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, which install is allowed to claim a database and what a refusal to start on an active-instance heartbeat means (a container or unit that will not come up after an upgrade, 'another host holds a fresh active-instance heartbeat', two instances on one database), backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, a user changing their own password and what that does to their other sessions, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos, backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, a user changing their own password and what that does to their other sessions, the password complexity policy and forcing a non-conforming password to be changed at login, passkeys / WebAuthn (whether one may sign in on its own or only as a second factor, and what it is bound to), agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."user-invocable: false
+description: "The 76 numbered Polaris business rules — each invariant and the incident that forced it. Load BEFORE changing any behavior around subnets/CIDR overlap, reservations, DHCP leases or bindings, discovery writes to assets, lastSeen, Last Seen Switch/AP/Firewall (upstream placement of a device, including the gate that owns its subnet), monitorStatus (up/down/warning/recovering/passive), the FortiLink / CAPWAP controller-link state of a managed FortiSwitch or FortiAP, dependency suppression, maintenance windows, automations/alerts/notifications/escalation/acknowledge/reset, reminders and their quiet time, packet loss, secrets at rest, which install is allowed to claim a database and what a refusal to start on an active-instance heartbeat means (a container or unit that will not come up after an upgrade, 'another host holds a fresh active-instance heartbeat', two instances on one database), backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, a user changing their own password and what that does to their other sessions, agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos, backups and the database sslmode handed to pg_dump/psql, whether TimescaleDB is required and what its absence costs, retention and compression, SSH host keys, login restriction, a user changing their own password and what that does to their other sessions, the password complexity policy and forcing a non-conforming password to be changed at login, passkeys / WebAuthn (whether one may sign in on its own or only as a second factor, and what it is bound to), agent upgrade credentials, security response headers (CSP, HSTS) and what an unmatched route answers, what a discovery run reports about devices it skipped or could not read, RBAC grant levels, tags/regions, placeholder MACs, Windows OS names, logos; whenever code, a commit or a doc cites 'business rule N' / 'rule N'; and when asked to add or retire a rule."user-invocable: false
 ---
 
 # Polaris business rules
@@ -11,7 +11,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(74 is the next free number.)
+(77 is the next free number. 75 is held by the unmerged `worktree-alert-grouping` branch — grouped alerts — and lands with it.)
 
 ## How to read
 
@@ -19,8 +19,9 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 |---|---|
 | touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11 below; 20a, 23, 26, 41, 42, 69 in the references |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | rules 9–10 below; 12, 16, 36, 37 |
-| touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 67 |
-| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 66, 67 |
+| touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 67, 76 |
+| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 66, 67, 76 |
+| touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 76 (the one opt-out from it) |
 | touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it is the one that forbids splitting a send), then 56 and 60 |
 | touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 55 |
 | touch how a discovery run reports what it did or did not read — skipped/offline/unread devices, run counters, a device whose data looks stale | 53 |
@@ -37,12 +38,12 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 Reference files (all verbatim):
 
 - [references/invariants-12-29.md](references/invariants-12-29.md) — the one-paragraph invariant for rules 12–29
-- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–74 (the filename keeps its original range: the reference is cited from code and the other skills)
+- [references/invariants-30-43.md](references/invariants-30-43.md) — the one-paragraph invariant for rules 30–76 (the filename keeps its original range: the reference is cited from code and the other skills)
 - [references/narrative-12-24.md](references/narrative-12-24.md) — full narrative, rules 12–24
 - [references/narrative-25-35.md](references/narrative-25-35.md) — full narrative, rules 25–35
 - [references/narrative-36-43.md](references/narrative-36-43.md) — full narrative, rules 36–43 (the filename is a stable citation key — see the numbering note)
 - [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–59 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
-- [references/narrative-60-64.md](references/narrative-60-64.md) — full narrative, rules 60–74 (the filename keeps its original range: it is a stable citation key. Split out 2026-09-15 when the 44–48 file reached the 1500-line ceiling)
+- [references/narrative-60-64.md](references/narrative-60-64.md) — full narrative, rules 60–76 (the filename keeps its original range: it is a stable citation key. Split out 2026-09-15 when the 44–48 file reached the 1500-line ceiling)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -128,6 +129,7 @@ before changing anything the invariant constrains.
 | 72 | A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success | invariants-30-43 | narrative-60-64 |
 | 73 | Planned downtime is reported as planned, and a scoped view of a window still reports the WHOLE window | invariants-30-43 | narrative-60-64 |
 | 74 | A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the DEVICE's | invariants-30-43 | narrative-60-64 |
+| 76 | An automation may choose to speak for a silenced device, and then it must name who silenced it | invariants-30-43 | narrative-60-64 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

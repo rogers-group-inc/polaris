@@ -63,7 +63,7 @@ const SCHEMA = {
   },
   sensorClassUnits: { temperature: "°C", fan: "RPM" },
   fieldMeta: { monitorStatus: { label: "Monitor status", kind: "enum", values: ["up", "warning", "recovering", "down", "passive", "unknown"] } },
-  downDetection: { field: "monitorStatus", operator: "==", value: "down", countKey: "missedPolls", min: 1, max: 100, default: 3, passiveStatus: "passive" },
+  downDetection: { field: "monitorStatus", operator: "==", value: "down", countKey: "missedPolls", min: 1, max: 100, default: 3, passiveStatus: "passive", dependencyDownKey: "alertWhenDependencyDown" },
   changeTypeMeta: { new_asset: "a new device" },
 };
 
@@ -503,6 +503,20 @@ describe("makeAutomationSentences", () => {
       { severity: "critical", severityBands: [{ severity: "serious", threshold: 5 }] },
     );
     expect(out).toBe("When <strong>Monitor status equals down</strong> — <strong>critical</strong>.");
+  });
+
+  it("says when a down automation still alerts for a dependency-down device (business rule 76)", () => {
+    const s = make(SCHEMA as never);
+    const on = s.triggerSentence({ type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, alertWhenDependencyDown: true });
+    expect(on).toContain("still when the device is <strong>dependency-down</strong>, naming the upstream device");
+    // Off, or stated on a trigger that is not the down verdict, says nothing.
+    const off = s.triggerSentence({ type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3 });
+    expect(off).not.toContain("dependency-down");
+    const wrong = s.triggerSentence({ type: "asset_state", field: "monitorStatus", operator: "==", value: "warning", alertWhenDependencyDown: true });
+    expect(wrong).not.toContain("dependency-down");
+    // A schema without the key (a pre-upgrade server) renders no such clause.
+    const old = make({ ...SCHEMA, downDetection: { ...SCHEMA.downDetection, dependencyDownKey: undefined } } as never);
+    expect(old.triggerSentence({ type: "asset_state", field: "monitorStatus", operator: "==", value: "down", alertWhenDependencyDown: true })).not.toContain("dependency-down");
   });
 
   it("appends the ladder to a composite trigger too", () => {

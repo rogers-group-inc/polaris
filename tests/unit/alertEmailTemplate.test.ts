@@ -40,6 +40,54 @@ const CTX = buildTemplateContext({
   },
 });
 
+describe("a dependency-down alert says so in the subject, the banner and the facts (business rule 76)", () => {
+  const dep = buildTemplateContext({
+    asset: "PLC-7", severity: "critical", ruleName: "PLC down", time: new Date("2026-09-21T10:00:00Z"),
+    triggerSummary: "Dependency down — upstream SW-PLANT-3 is down",
+    dependency: { upstream: "SW-PLANT-3", rootCause: "FG-PLANT", reason: "down" },
+    assetDetail: { id: "a-7", ipAddress: "10.9.9.7" },
+  });
+
+  it("tags the subject, and a plain alert's subject is unchanged", () => {
+    expect(renderNotificationTemplate(DEFAULT_ALERT_SUBJECT, dep)).toBe("[CRITICAL] PLC-7 — PLC down · DEPENDENCY DOWN");
+    expect(renderNotificationTemplate(DEFAULT_ALERT_SUBJECT, CTX)).toBe("[CRITICAL] PINERUN-222E-4 — Packet loss");
+  });
+
+  it("prints the notice above the facts, and the upstream + root-cause rows", () => {
+    const html = pruneEmptyDivs(pruneEmptyRows(renderNotificationTemplate(DEFAULT_ALERT_HTML, dep, { html: true, unknown: "blank" })));
+    expect(html).toContain("DEPENDENCY DOWN — PLC-7 is unreachable because its upstream device SW-PLANT-3 sits behind FG-PLANT, which is down");
+    expect(html).toContain("Upstream device");
+    expect(html).toContain("Root cause");
+    expect(html).toContain("FG-PLANT");
+    const text = pruneEmptyTextLines(renderNotificationTemplate(DEFAULT_ALERT_TEXT, dep, { unknown: "blank" }));
+    expect(text).toContain("Upstream:   SW-PLANT-3");
+    expect(text).toContain("Root cause: FG-PLANT");
+    expect(text).toContain("DEPENDENCY DOWN");
+  });
+
+  it("prunes the banner and both rows away on every other alert", () => {
+    const html = pruneEmptyDivs(pruneEmptyRows(renderNotificationTemplate(DEFAULT_ALERT_HTML, CTX, { html: true, unknown: "blank" })));
+    expect(html).not.toContain("Upstream device");
+    expect(html).not.toContain("Root cause");
+    expect(html).not.toContain("DEPENDENCY DOWN");
+    // The banner div goes with its padding, not just its text.
+    expect(html).not.toMatch(/border-left:3px solid #5b6b8c[^>]*>\s*<\/div>/);
+    const text = pruneEmptyTextLines(renderNotificationTemplate(DEFAULT_ALERT_TEXT, CTX, { unknown: "blank" }));
+    expect(text).not.toContain("Upstream:");
+    expect(text).not.toContain("Root cause:");
+  });
+
+  it("drops only the root-cause row when the upstream device is the root cause", () => {
+    const one = buildTemplateContext({
+      asset: "PLC-7", severity: "critical", ruleName: "PLC down",
+      dependency: { upstream: "SW-PLANT-3", rootCause: null, reason: "down" },
+    });
+    const html = pruneEmptyRows(renderNotificationTemplate(DEFAULT_ALERT_HTML, one, { html: true, unknown: "blank" }));
+    expect(html).toContain("Upstream device");
+    expect(html).not.toContain("Root cause");
+  });
+});
+
 describe("the default alert email is a template, not string building", () => {
   it("carries the device facts the old two-line email never had", () => {
     const html = renderNotificationTemplate(DEFAULT_ALERT_HTML, CTX, { html: true });

@@ -135,12 +135,43 @@ does not mean the switch under it has.
 | Heavy cadences | **paused** |
 | Response-time probe | still runs, at **2× the interval** — the device may answer over a redundant path |
 | Probe failures | stamped as dependency-explained, rendered **grey** |
-| Alerts | the device is excluded from firing ([rule 37](Business-Rules#rule-37)) |
+| Alerts | the device is excluded from firing ([rule 37](Business-Rules#rule-37)) — unless a down automation opted to speak for it, below |
 | Live alerts | retired |
 
 A suppressed device is **still probed**. That is deliberate: a device with a
 redundant path may well answer, and finding that out is worth one probe at half
 rate.
+
+### One automation may speak for it anyway
+
+Silence is the right default for the NOC, and the wrong one for the people who
+only care about one device. A plant operator subscribed to a PLC's down
+automation hears nothing when the switch above the PLC dies, because the PLC
+is Dep. Down and the switch is somebody else's alert.
+
+A `monitor status is down` automation can opt out of the silence with **"Also
+alert when the device is dependency-down"** on its trigger ([rule
+76](Business-Rules#rule-76)). With it on:
+
+- the automation **still raises its alert the moment the device turns
+  Dep. Down** — the upstream's confirmed verdict is the evidence, so it does
+  not wait for the device's own missed-poll count;
+- the alert **says DEPENDENCY DOWN** in its subject, headline and message, and
+  **names the upstream device that is down** — and, when that device is itself
+  Dep. Down under something further up, the device that is actually down (a
+  suppressed switch's FortiGate);
+- it is **one notification**: reminders and escalation tiers wait, as they do
+  for every suppressed device, until the upstream is back;
+- a live plain Down alert on a device that then turns Dep. Down is **ended and
+  raised again** in the dependency flavour, so the operators hear which device
+  is responsible — and on the way back, a dependency-down alert whose upstream
+  recovered while the device stayed dark is raised again as the device's own
+  outage. Neither handoff sends a "resolved" message; nothing recovered;
+- a **maintenance window still silences** it — announced downtime is not an
+  outage to report.
+
+Every other automation keeps ignoring a suppressed device, and the toggle is
+refused anywhere but on a sole `monitor status is down` condition.
 
 ---
 

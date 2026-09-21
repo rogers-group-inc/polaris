@@ -745,6 +745,20 @@ const assetStateTrigger = z.object({
    * devices, at DEFAULT_MISSED_POLLS.
    */
   missedPolls: z.number().int().min(1).max(100).optional(),
+  /**
+   * SPEAK FOR A SILENCED DEVICE (business rule 76) — valid only on
+   * `monitorStatus == down`, like `missedPolls`. A device behind a down switch
+   * or firewall is dependency-suppressed (Dep. Down) and normally alerts
+   * nothing (rules 16 and 37). With this on, THIS automation still raises its
+   * alert the moment such a device turns Dep. Down, and the alert says so and
+   * names the upstream device that is actually down. Read only through
+   * `ruleAlertsWhenDependencyDown`, never off the raw key.
+   *
+   * Optional, absent on every automation authored before the key existed —
+   * absence is the pre-feature behaviour (silence), and an operator who never
+   * asked to be told about a parent's outage keeps not being told.
+   */
+  alertWhenDependencyDown: z.boolean().optional(),
 });
 
 const hostMetricTrigger = z.object({
@@ -2413,6 +2427,22 @@ export function isDownDetectionTrigger(trigger: Trigger): boolean {
 }
 
 /**
+ * Does this down automation speak for its devices while they are dependency-
+ * suppressed (business rule 76)?
+ *
+ * The ONE reader of `trigger.alertWhenDependencyDown`. Gated on
+ * `isDownDetectionTrigger` rather than on the key alone so a key that survived
+ * on a trigger edited away from "monitor status is down" (a pre-validation
+ * import, a hand-written body) can never turn a CPU automation into one that
+ * fires about silenced devices. The engine's gate (`assetCanTrigger`) is
+ * otherwise unchanged: maintenance still silences, and every other automation
+ * still drops a suppressed asset.
+ */
+export function ruleAlertsWhenDependencyDown(trigger: Trigger): boolean {
+  return isDownDetectionTrigger(trigger) && (trigger as { alertWhenDependencyDown?: boolean }).alertWhenDependencyDown === true;
+}
+
+/**
  * The reset sustain, in seconds, when it is a RECOVERY COUNT and not merely the
  * alert's clock — i.e. an automatic reset that asks the recovery to hold.
  *
@@ -2802,6 +2832,16 @@ function validateMissedPolls(trigger: Trigger | undefined, ctx: z.RefinementCtx)
           'a missed-poll count only applies to a "monitor status is down" automation — it is the definition of down for the devices that automation covers',
       });
     }
+    // Same shape, same reason (business rule 76): the dependency-down toggle
+    // is a property of the down verdict, so it has no meaning anywhere else.
+    if (trigger.alertWhenDependencyDown != null && !isDownDetectionTrigger(trigger)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trigger", "alertWhenDependencyDown"],
+        message:
+          'alerting while dependency-down only applies to a "monitor status is down" automation — it is that verdict the silenced device is being spoken for',
+      });
+    }
     return;
   }
   if (trigger.type === "composite") {
@@ -2814,6 +2854,17 @@ function validateMissedPolls(trigger: Trigger | undefined, ctx: z.RefinementCtx)
         path: ["trigger", "children"],
         message:
           "a missed-poll count cannot sit inside a multi-condition trigger — down detection is decided by the probe loop, which can only see whether the device answered. Put the count on an automation whose only condition is \"monitor status is down\".",
+      });
+    }
+    const depOffender = collectTriggerLeaves(trigger).find(
+      (l) => l.type === "asset_state" && (l as { alertWhenDependencyDown?: boolean }).alertWhenDependencyDown != null,
+    );
+    if (depOffender) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["trigger", "children"],
+        message:
+          "alerting while dependency-down cannot sit inside a multi-condition trigger — a silenced device reports nothing the other conditions could read. Put it on an automation whose only condition is \"monitor status is down\".",
       });
     }
   }
@@ -4075,6 +4126,17 @@ export function buildSchemaCatalog() {
         "How many polls in a row a device must miss before Polaris calls it down. " +
         "This automation owns that number for every device it covers — the most specific automation wins. " +
         "A device no down automation covers is never called down: it stays Passive, still polled and still charted.",
+      // Business rule 76 — the toggle that lets this automation speak for a
+      // dependency-suppressed device. Served as data for the same reason as
+      // the count: a wizard talking to a pre-upgrade server must not render a
+      // control whose key the API would refuse.
+      dependencyDownKey: "alertWhenDependencyDown",
+      dependencyDownLabel: "Also alert when the device is dependency-down",
+      dependencyDownHelp:
+        "A device behind a down switch or firewall is normally silenced (Dep. Down). " +
+        "With this on, this automation still raises its alert the moment the device turns Dep. Down, " +
+        "and the message names the upstream device that is actually down. " +
+        "One notification only — reminders and escalation wait until the upstream device is back.",
     },
     // Per-dimension alerting vocabulary — which state fields report per
     // dimension, and what one dimension is called. The reset step reads both to

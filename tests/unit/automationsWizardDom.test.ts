@@ -3395,6 +3395,124 @@ describe("trigger filter rows", () => {
       (p.trigger.children || []).forEach((c) => expect(c.missedPolls).toBeUndefined());
       expect(() => ruleInputSchema.parse(p)).not.toThrow();
     });
+
+    // ── Alerting while dependency-down (business rule 76) ────────────────
+    // Rendered in TWO places for now (Trigger step + Actions step's in-app
+    // card) so the operator can pick the final home; both bind the same key.
+    const depTf = () => doc.querySelector("#tf-dep-down") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void } | null;
+    const depAw = () => doc.querySelector("#aw-dep-down") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void } | null;
+    const tick = async (el: { checked: boolean; dispatchEvent: (e: unknown) => void }, on: boolean) => {
+      const w = g.window as InstanceType<typeof Window>;
+      el.checked = on;
+      el.dispatchEvent(new w.Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    };
+    const gotoStep = async (n: number) => {
+      (doc.querySelector('.stepper-step[data-step="' + n + '"]') as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    };
+    const save = async () => {
+      (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 30));
+    };
+    type DepPayload = { trigger: { alertWhenDependencyDown?: boolean; type: string; children?: Record<string, unknown>[] } };
+
+    it("offers the dependency-down toggle on the Trigger step AND the Actions step, off by default", async () => {
+      await openOnTrigger(downRule());
+      const tf = depTf();
+      expect(tf).toBeTruthy();
+      expect(tf!.checked).toBe(false);
+      expect((doc.querySelector('.aw-dep-down[data-dep-down-placement="trigger"]') as unknown as { style: { display: string } }).style.display).not.toBe("none");
+      await gotoStep(5);
+      const aw = depAw();
+      expect(aw).toBeTruthy();
+      expect(aw!.checked).toBe(false);
+      expect(doc.querySelector('#aw-inapp-card .aw-dep-down[data-dep-down-placement="actions"]')).toBeTruthy();
+      // Off posts NO key — an untouched automation's payload is byte-identical.
+      await save();
+      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBeUndefined();
+    });
+
+    it("ticking the Trigger-step box saves the key and the sentence says so", async () => {
+      await openOnTrigger(downRule());
+      toastErrors.length = 0; // an earlier case in this block leaves its refusal toast behind
+      await tick(depTf()!, true);
+      expect((doc.querySelector("#aw-trigger-sentence") as unknown as { innerHTML: string } | null)?.innerHTML ?? doc.body.innerHTML)
+        .toContain("dependency-down");
+      await save();
+      expect(toastErrors).toEqual([]);
+      const p = savedPayloads[0] as DepPayload;
+      expect(p.trigger.alertWhenDependencyDown).toBe(true);
+      expect(() => ruleInputSchema.parse(p)).not.toThrow();
+    });
+
+    it("ticking the Actions-step box saves the key and ticks the Trigger-step box, which never re-renders", async () => {
+      await openOnTrigger(downRule());
+      await gotoStep(5);
+      await tick(depAw()!, true);
+      expect(depTf()!.checked).toBe(true);
+      await save();
+      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBe(true);
+    });
+
+    it("un-ticking the Actions-step box on a stored toggle strips the key, and clears the Trigger-step box", async () => {
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, forDurationSec: 0, alertWhenDependencyDown: true },
+      }));
+      await gotoStep(5);
+      expect(depAw()!.checked).toBe(true);
+      await tick(depAw()!, false);
+      expect(depTf()!.checked).toBe(false);
+      await save();
+      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBeUndefined();
+    });
+
+    it("opens a stored toggle checked in both places, and keeps it through a save from step 1", async () => {
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, forDurationSec: 0, alertWhenDependencyDown: true },
+      }));
+      expect(depTf()!.checked).toBe(true);
+      await gotoStep(5);
+      expect(depAw()!.checked).toBe(true);
+      // The review step names it.
+      await gotoStep(6);
+      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("naming the upstream device");
+      await gotoStep(1);
+      await save();
+      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBe(true);
+    });
+
+    it("hides the toggle beside a second condition and strips a stored key from the composite", async () => {
+      await openOnTrigger(downRule({
+        trigger: {
+          type: "composite", kind: "asset", op: "and", forDurationSec: 0,
+          children: [
+            { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", alertWhenDependencyDown: true },
+            { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">", threshold: 90 },
+          ],
+        },
+      }));
+      const wrap = doc.querySelector('.aw-dep-down[data-dep-down-placement="trigger"]') as unknown as { style: { display: string } } | null;
+      expect(wrap).toBeTruthy();
+      expect(wrap!.style.display).toBe("none");
+      await gotoStep(5);
+      expect(depAw()).toBeNull();
+      await save();
+      const p = savedPayloads[0] as DepPayload;
+      expect(p.trigger.type).toBe("composite");
+      (p.trigger.children || []).forEach((c) => expect(c.alertWhenDependencyDown).toBeUndefined());
+      expect(() => ruleInputSchema.parse(p)).not.toThrow();
+    });
+
+    it("renders neither box for an automation that is not about being down", async () => {
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">", threshold: 90 },
+      }));
+      const wrap = doc.querySelector('.aw-dep-down[data-dep-down-placement="trigger"]') as unknown as { style: { display: string } } | null;
+      if (wrap) expect(wrap.style.display).toBe("none");
+      await gotoStep(5);
+      expect(depAw()).toBeNull();
+    });
   });
 });
 

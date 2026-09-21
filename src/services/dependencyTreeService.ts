@@ -975,6 +975,245 @@ export function evaluateSuppression(
   return result;
 }
 
+// ─── Blame: who silenced this device? (business rule 76) ────────────────────
+//
+// `evaluateSuppression` answers a yes/no per asset and throws away WHICH parent
+// decided it. A down automation that opts to speak for a suppressed device
+// (`trigger.alertWhenDependencyDown`) needs the name: "PLC-7 is dependency
+// down" is useless to a plant operator without "because SW-PLANT-3 is down".
+// And the device directly above is not always the one that is down — a PLC's
+// switch may itself be Dep. Down under a dark FortiGate — so the walk carries
+// on up while the blamed node is blamed only for being suppressed, and stops at
+// the first node down in its own right (its probe, a maintenance window, a
+// Dependency Test). That is the ROOT CAUSE; the first hop is the UPSTREAM.
+//
+// Deliberately NOT `resolveConnectionPath` (its parent tie-break prefers an
+// `up` parent, the wrong bias for blame) and NOT the reconciler's Event
+// `parentAssetIds` (the whole parent set, never past layer 1).
+
+/** Why a node counts against the devices below it. */
+export type DependencyBlameReason = "down" | "maintenance" | "dependency_test" | "suppressed";
+
+export interface DependencyBlameNode {
+  id: string;
+  hostname: string | null;
+  reason: DependencyBlameReason;
+}
+
+export interface DependencyBlame {
+  /** The device directly above the asset that is down or itself Dep. Down. */
+  upstream: DependencyBlameNode;
+  /** The device down in its own right — `upstream` itself on a one-hop chain. */
+  rootCause: DependencyBlameNode;
+  /** `upstream` … `rootCause`, inclusive, in walking order. */
+  chain: DependencyBlameNode[];
+  /** `chain.length` — 1 when the upstream device is the root cause. */
+  hops: number;
+  /** The walk hit `BLAME_MAX_HOPS` or a cycle before reaching a node down in its own right. */
+  truncated: boolean;
+}
+
+/** Bound on the upward walk — the `connectionPathService` figure. */
+export const BLAME_MAX_HOPS = 16;
+
+/** `SuppressionAssetState` plus the one field the sentence needs. */
+export interface BlameNodeState extends SuppressionAssetState {
+  hostname: string | null;
+}
+
+/**
+ * The reason a node is blamed, or null when it is fine. Ordered so that a node
+ * that is BOTH suppressed and reading `down` (a switch under a dark gate — its
+ * own probe fails too) is blamed as `suppressed`, which keeps the walk going to
+ * the gate; `down` is reserved for a node that is dark in its own right. A
+ * maintenance window and a Dependency Test come first because both mean
+ * "pretend THIS box went offline" — the operator has already named the cause.
+ */
+function blameReasonOf(s: BlameNodeState, nowMs: number): DependencyBlameReason | null {
+  if (s.dependencyTestUntil && s.dependencyTestUntil.getTime() > nowMs) return "dependency_test";
+  if (s.status === "maintenance" && s.maintenanceSuppressChildren !== false) return "maintenance";
+  if (s.currentlySuppressed) return "suppressed";
+  if (s.monitored && s.monitorStatus === "down") return "down";
+  return null;
+}
+
+/** Definitive reasons sort ahead of `suppressed`; ties break on hostname, then id. */
+const BLAME_REASON_RANK: Record<DependencyBlameReason, number> = { down: 0, maintenance: 0, dependency_test: 0, suppressed: 1 };
+
+/**
+ * Pure core of the blame walk. Same inputs as `evaluateSuppression` (plus the
+ * hostname), so one fixture serves both in the unit tests. Returns null when
+ * nothing above the asset is blamed — the asset was released between the flag
+ * being read and now, or it has no parents at all.
+ */
+export function blameFromGraph(
+  states: BlameNodeState[],
+  parentsByChild: Map<string, string[]>,
+  assetId: string,
+  nowMs: number = Date.now(),
+): DependencyBlame | null {
+  const stateById = new Map<string, BlameNodeState>();
+  for (const s of states) stateById.set(s.id, s);
+  const isIgnoredStandby = (id: string): boolean => {
+    const ps = stateById.get(id);
+    return ps?.isHaStandby === true && !ps.monitored;
+  };
+
+  /** The blamed parents of `id`, walking THROUGH unmonitored parents that are
+   *  not blamed in their own right, exactly as `isParentOk` does. */
+  function blamedParents(id: string, visited: Set<string>): DependencyBlameNode[] {
+    const out: DependencyBlameNode[] = [];
+    for (const pid of (parentsByChild.get(id) ?? []).filter((p) => !isIgnoredStandby(p))) {
+      if (visited.has(pid)) continue;
+      visited.add(pid);
+      const ps = stateById.get(pid);
+      if (!ps) continue; // unknown asset — evaluateSuppression treats it as ok
+      const reason = blameReasonOf(ps, nowMs);
+      if (reason) { out.push({ id: ps.id, hostname: ps.hostname, reason }); continue; }
+      if (!ps.monitored) out.push(...blamedParents(pid, visited)); // transparent
+    }
+    out.sort((a, b) =>
+      BLAME_REASON_RANK[a.reason] - BLAME_REASON_RANK[b.reason]
+      || (a.hostname ?? a.id).localeCompare(b.hostname ?? b.id)
+      || a.id.localeCompare(b.id));
+    return out;
+  }
+
+  const visited = new Set<string>([assetId]);
+  const first = blamedParents(assetId, visited)[0];
+  if (!first) return null;
+  const chain: DependencyBlameNode[] = [first];
+  let current = first;
+  let truncated = false;
+  while (current.reason === "suppressed") {
+    if (chain.length >= BLAME_MAX_HOPS) { truncated = true; break; }
+    // A fresh visited set per hop: the cycle guard is the chain itself.
+    const seen = new Set<string>(chain.map((n) => n.id));
+    seen.add(assetId);
+    const next = blamedParents(current.id, seen)[0];
+    if (!next) {
+      // Nothing blamed above a suppressed node: either a stale flag (name what
+      // we have) or a CYCLE, whose members `seen` just hid from the walk.
+      const raw = parentsByChild.get(current.id) ?? [];
+      if (raw.some((p) => p === assetId || chain.some((n) => n.id === p))) truncated = true;
+      break;
+    }
+    if (chain.some((n) => n.id === next.id)) { truncated = true; break; }
+    chain.push(next);
+    current = next;
+  }
+  return { upstream: first, rootCause: current, chain, hops: chain.length, truncated };
+}
+
+/**
+ * Per-tick cache for `resolveDependencyBlame`: the engine hands one to every
+ * fire in a tick, so 300 PLCs behind one dark switch load the switch and the
+ * gate once between them instead of once each.
+ */
+export interface BlameLoadCache {
+  states: Map<string, BlameNodeState>;
+  parents: Map<string, string[]>;
+  /** Ids whose parent EDGES have been loaded (an id with none is still "loaded"). */
+  edgesLoaded: Set<string>;
+}
+
+export function newBlameLoadCache(): BlameLoadCache {
+  return { states: new Map(), parents: new Map(), edgesLoaded: new Set() };
+}
+
+const BLAME_ASSET_SELECT = {
+  id: true, hostname: true, assetType: true, monitored: true, monitorStatus: true, status: true,
+  dependencyLayer: true, dependencySuppressed: true, dependencyTestUntil: true,
+} as const;
+
+/** Load the parent edges of `ids` (effective set: override rows win per child)
+ *  and the state of every parent they name, into the cache. */
+async function loadBlameLayer(ids: string[], cache: BlameLoadCache): Promise<string[]> {
+  const want = ids.filter((id) => !cache.edgesLoaded.has(id));
+  if (want.length === 0) return [];
+  const rows = await prisma.assetDependencyParent.findMany({
+    where: { assetId: { in: want } },
+    select: { assetId: true, parentAssetId: true, source: true },
+  });
+  const overrides = new Map<string, string[]>();
+  const computed = new Map<string, string[]>();
+  for (const r of rows) {
+    const target = r.source === "override" ? overrides : computed;
+    const cur = target.get(r.assetId);
+    if (cur) cur.push(r.parentAssetId); else target.set(r.assetId, [r.parentAssetId]);
+  }
+  for (const id of want) {
+    cache.edgesLoaded.add(id);
+    cache.parents.set(id, overrides.get(id) ?? computed.get(id) ?? []);
+  }
+  // Every parent named is the next frontier (the next call skips the ones
+  // whose edges are already loaded); only the ones without a cached state
+  // need reading.
+  const parentIds = Array.from(new Set(want.flatMap((id) => cache.parents.get(id) ?? [])));
+  const missing = parentIds.filter((p) => !cache.states.has(p));
+  if (missing.length === 0) return parentIds;
+  const assets = await prisma.asset.findMany({ where: { id: { in: missing } }, select: BLAME_ASSET_SELECT });
+  // Only the in-maintenance parents need their schedules' suppressChildren,
+  // and only the firewalls can be HA standbys — two narrow reads, both usually empty.
+  const maintIds = assets.filter((a) => a.status === "maintenance").map((a) => a.id);
+  const maintenanceSuppress = new Map<string, boolean>();
+  if (maintIds.length > 0) {
+    const windows = await prisma.assetMaintenanceWindow.findMany({
+      where: { assetId: { in: maintIds }, endedAt: null },
+      select: { assetId: true, schedule: { select: { suppressChildren: true } } },
+    });
+    for (const w of windows) {
+      const suppresses = w.schedule?.suppressChildren !== false;
+      maintenanceSuppress.set(w.assetId, (maintenanceSuppress.get(w.assetId) ?? false) || suppresses);
+    }
+  }
+  const standbyIds = new Set<string>();
+  const fwIds = assets.filter((a) => a.assetType === "firewall").map((a) => a.id);
+  if (fwIds.length > 0) {
+    const standby = await prisma.asset.findMany({
+      where: { id: { in: fwIds }, fortinetTopology: { path: ["haRole"], equals: "secondary" } },
+      select: { id: true },
+    });
+    for (const s of standby) standbyIds.add(s.id);
+  }
+  for (const a of assets) {
+    cache.states.set(a.id, {
+      id: a.id,
+      hostname: a.hostname,
+      layer: a.dependencyLayer,
+      monitored: a.monitored,
+      monitorStatus: a.monitorStatus,
+      status: a.status,
+      maintenanceSuppressChildren: maintenanceSuppress.get(a.id) ?? true,
+      currentlySuppressed: a.dependencySuppressed,
+      dependencyTestUntil: a.dependencyTestUntil,
+      isHaStandby: standbyIds.has(a.id),
+    });
+  }
+  return parentIds;
+}
+
+/**
+ * DB-bound blame walk for ONE asset: loads the ancestor closure hop by hop
+ * (bounded by `BLAME_MAX_HOPS`, each hop two small reads, shared through the
+ * cache) and runs the pure core over it. Never throws — an alert must go out
+ * even when the reason cannot be named, so a failed read yields null and the
+ * caller words the alert without a name.
+ */
+export async function resolveDependencyBlame(assetId: string, cache: BlameLoadCache = newBlameLoadCache()): Promise<DependencyBlame | null> {
+  try {
+    let frontier = [assetId];
+    // +1: the asset's own edges are the first layer, then up to MAX hops of parents.
+    for (let hop = 0; hop <= BLAME_MAX_HOPS && frontier.length > 0; hop++) {
+      frontier = await loadBlameLayer(frontier, cache);
+    }
+    return blameFromGraph(Array.from(cache.states.values()), cache.parents, assetId);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message, assetId }, "resolveDependencyBlame failed (alert goes out unnamed)");
+    return null;
+  }
+}
+
 // ─── DB-bound recompute ─────────────────────────────────────────────────────
 
 /**

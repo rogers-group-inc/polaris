@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { ruleInputSchema, isDownDetectionTrigger, DEFAULT_MISSED_POLLS } from "../../src/services/notificationTypes.js";
+import { ruleInputSchema, isDownDetectionTrigger, ruleAlertsWhenDependencyDown, DEFAULT_MISSED_POLLS, buildSchemaCatalog } from "../../src/services/notificationTypes.js";
 import { triggerIdentityOf } from "../../src/services/notificationRuleService.js";
 
 const base = { name: "Asset down", severity: "critical", scope: { allAssets: true }, reset: { mode: "auto" } };
@@ -92,7 +92,73 @@ describe("ruleInputSchema — where missedPolls may live", () => {
   });
 });
 
+describe("ruleInputSchema — where alertWhenDependencyDown may live (business rule 76)", () => {
+  it("accepts the toggle on a down trigger, and the read helper honours it", () => {
+    const r = ruleInputSchema.parse({ ...base, trigger: downTrigger({ missedPolls: 3, alertWhenDependencyDown: true }) });
+    expect((r.trigger as any).alertWhenDependencyDown).toBe(true);
+    expect(ruleAlertsWhenDependencyDown(r.trigger as any)).toBe(true);
+  });
+
+  it("absent = off, which is every automation authored before the key existed", () => {
+    const r = ruleInputSchema.parse({ ...base, trigger: downTrigger() });
+    expect((r.trigger as any).alertWhenDependencyDown).toBeUndefined();
+    expect(ruleAlertsWhenDependencyDown(r.trigger as any)).toBe(false);
+    expect(ruleAlertsWhenDependencyDown(downTrigger({ alertWhenDependencyDown: false }) as any)).toBe(false);
+  });
+
+  it("the read helper ignores the key on anything but a down trigger", () => {
+    expect(ruleAlertsWhenDependencyDown(downTrigger({ value: "warning", alertWhenDependencyDown: true }) as any)).toBe(false);
+    expect(ruleAlertsWhenDependencyDown({ type: "asset_metric", metric: "cpuPct", operator: ">", threshold: 90, alertWhenDependencyDown: true } as any)).toBe(false);
+  });
+
+  it("refuses the toggle on a state field that is not the down verdict", () => {
+    expect(() =>
+      ruleInputSchema.parse({ ...base, trigger: downTrigger({ value: "warning", alertWhenDependencyDown: true }) }),
+    ).toThrow(/dependency-down only applies/);
+    expect(() =>
+      ruleInputSchema.parse({ ...base, trigger: { type: "asset_state", field: "ifOperStatus", operator: "==", value: "down", alertWhenDependencyDown: true } }),
+    ).toThrow(/dependency-down only applies/);
+  });
+
+  it("refuses the toggle inside a MULTI-leaf composite", () => {
+    expect(() =>
+      ruleInputSchema.parse({
+        ...base,
+        trigger: {
+          type: "composite", kind: "asset", op: "and",
+          children: [
+            downTrigger({ alertWhenDependencyDown: true }),
+            { type: "asset_metric", metric: "cpuPct", operator: ">", threshold: 90, aggregation: "avg", windowSec: 300 },
+          ],
+        },
+      }),
+    ).toThrow(/dependency-down cannot sit inside a multi-condition trigger/);
+  });
+
+  it("survives the single-leaf composite collapse the wizard submits", () => {
+    const r = ruleInputSchema.parse({
+      ...base,
+      trigger: { type: "composite", kind: "asset", op: "and", children: [downTrigger({ missedPolls: 7, alertWhenDependencyDown: true })] },
+    });
+    expect(r.trigger.type).toBe("asset_state");
+    expect((r.trigger as any).alertWhenDependencyDown).toBe(true);
+  });
+
+  it("the catalog names the key, so the wizard renders the control only against a server that has it", () => {
+    const dd = buildSchemaCatalog().downDetection as Record<string, unknown>;
+    expect(dd.dependencyDownKey).toBe("alertWhenDependencyDown");
+    expect(String(dd.dependencyDownLabel)).toMatch(/dependency-down/);
+    expect(String(dd.dependencyDownHelp)).toMatch(/upstream device/);
+  });
+});
+
 describe("tuning the count is not an identity change", () => {
+  it("triggerIdentityOf ignores alertWhenDependencyDown too", () => {
+    const a = triggerIdentityOf(downTrigger({ missedPolls: 3 }) as any);
+    const b = triggerIdentityOf(downTrigger({ missedPolls: 3, alertWhenDependencyDown: true }) as any);
+    expect(a).toBe(b);
+  });
+
   it("triggerIdentityOf ignores missedPolls", () => {
     // If this ever changes, updateRule will purge NotificationRuleState on
     // every count edit — clearing active alerts and re-arming every debounce

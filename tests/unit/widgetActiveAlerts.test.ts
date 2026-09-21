@@ -36,6 +36,8 @@ interface AlertRow {
   acknowledgedBy?: string | null;
   raisedAt?: string;
   triggerType?: string | null;
+  dependencyDown?: boolean;
+  dependencyUpstream?: string | null;
 }
 interface Cfg { minSeverity?: string; rowLimit?: number | null; eventAlerts?: string }
 interface WidgetModule {
@@ -99,6 +101,21 @@ const noteText = (el: HTMLElement) => {
   const p = el.querySelector(".widget-overflow-note");
   return p ? (p as any).textContent : null;
 };
+
+describe("dependency-down badge (business rule 76)", () => {
+  it("badges an alert raised for a dependency-suppressed device and names the upstream in the tooltip", () => {
+    const el = render([
+      alert({ id: "dep", severity: "critical", hostname: "PLC-7", dependencyDown: true, dependencyUpstream: "SW-PLANT-3" }),
+      alert({ id: "plain", severity: "critical", hostname: "SRV-1" }),
+    ], 2, { minSeverity: "warning", rowLimit: 100 });
+    const rows = rowsOf(el);
+    const badge = rows[0].querySelector(".badge-monitor-dep-down");
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toBe("Dep. Down");
+    expect(badge.getAttribute("title")).toContain("SW-PLANT-3");
+    expect(rows[1].querySelector(".badge-monitor-dep-down")).toBeNull();
+  });
+});
 
 describe("severity filtering", () => {
   it("keeps every tier at or above the configured minimum", () => {

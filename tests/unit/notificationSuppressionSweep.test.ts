@@ -79,6 +79,17 @@ describe("clearSuppressedAlerts", () => {
     );
   });
 
+  it("never retires an alert RAISED FOR a dependency-suppressed device (business rule 76)", async () => {
+    // A down automation that opted in raises that alert on purpose; the sweep
+    // clearing it would re-raise it on the next tick, forever. The exclusion is
+    // in the QUERY — such rows never even reach the asset lookup.
+    h.prisma.notification.findMany.mockResolvedValue([]);
+    await clearSuppressedAlerts();
+    expect(h.prisma.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ cleared: false, dependencyDown: false }) }),
+    );
+  });
+
   it("maintenance wins when an asset is both — it is the downtime the operator announced", async () => {
     h.prisma.notification.findMany.mockResolvedValue([ALERT("n3", "a3")]);
     h.prisma.asset.findMany.mockResolvedValue([

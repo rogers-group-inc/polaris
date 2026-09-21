@@ -177,6 +177,7 @@
         { header: "Detail", get: function (r) { return r.dimension || ""; } },
         { header: "Automation", get: function (r) { return r.ruleName || ""; } },
         { header: "Message", get: function (r) { return r.message || ""; } },
+        { header: "Dependency Down", get: function (r) { return r.dependencyDown ? (r.dependencyUpstream || "yes") : ""; } },
         { header: "Acknowledged By", get: function (r) { return r.acknowledgedBy || ""; } },
         { header: "Raised At", get: function (r) { return r.raisedAt ? new Date(r.raisedAt).toISOString() : ""; } },
       ],
@@ -226,6 +227,15 @@
       ? '<span class="dash-alert-dim"' + fadeAttr + ' title="' + escapeHtml("Alert detail: " + r.dimension) + '">' +
         escapeHtml(r.dimension) + '</span>'
       : "";
+    // Raised for a device that is dependency-down, by a down automation that
+    // opted to speak for it (business rule 76). The same slate badge the Down
+    // Nodes widget and the asset pill wear, so the state reads the same on
+    // every surface; the tooltip names who silenced it, since a wallboard
+    // row has no room for the sentence.
+    var dep = r.dependencyDown
+      ? '<span class="badge badge-monitor-dep-down" style="margin-left:4px' + fadeTail + '" title="' +
+        escapeHtml("Dependency down" + (r.dependencyUpstream ? " — upstream " + r.dependencyUpstream + " is down" : "")) + '">Dep. Down</span>'
+      : "";
     // An acknowledged alert is still active — hiding it would surprise, so it
     // stays listed and says who has it, and the alert dims to push the
     // unhandled alerts forward on a wallboard.
@@ -261,7 +271,7 @@
     return "<" + tag + ' class="recent-item' + (actionable ? " recent-item-link" : "") + '"' + attrs +
       ' style="border-left:3px solid ' + bar + ';padding-left:8px">' +
       '<div style="min-width:0">' +
-        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + title + who + dim + ack + '</div>' +
+        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + title + who + dim + dep + ack + '</div>' +
         '<div class="recent-item-meta"' + fadeAttr + '>' + escapeHtml(r.message || "") + '</div>' +
       '</div>' +
       '<span class="recent-item-time">' + timeAgo(r.raisedAt) + '</span>' +
