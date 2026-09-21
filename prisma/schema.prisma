@@ -4951,7 +4951,8 @@ model Notification {
   /// the reset actions — resolves through `alertOwnerOf`, which answers the
   /// group when this is set and the rule otherwise.
   ///
-  /// `ruleId` stays set to the PRIMARY contributing rule even here. A null
+  /// `ruleId` stays set to the automation that OPENED this alert (not the worst
+  /// contribution, which `dimension` follows and which may change) even here. A null
   /// ruleId alert is un-escalatable (the sweep's `ruleId IN (...)` never
   /// matches NULL), invisible to the NOC's relevance-filtered severity pills,
   /// nameless in the Active Alerts widget and permissive on the ack-note gate —

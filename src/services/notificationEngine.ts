@@ -3332,7 +3332,9 @@ async function createGroupAlert(
         // The group owns this alert's DELIVERY from here on — its recipients,
         // escalation chain, reminder cadence and ack-note policy, resolved at
         // delivery time through alertOwnerOf. `ruleId` above stays set to the
-        // primary contributing rule regardless: a null-ruleId alert cannot
+        // automation that OPENED it regardless (the worst contribution is what
+        // `dimension` follows; provenance that moved mid-life would be worse):
+        // a null-ruleId alert cannot
         // escalate, is invisible to the NOC's relevance pills and has no name.
         alertGroupId: rule.alertGroupId ?? null,
         members: members as unknown as Prisma.InputJsonValue,

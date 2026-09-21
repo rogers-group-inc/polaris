@@ -252,7 +252,7 @@ It would be tidier for a group-owned alert to carry a null `ruleId`. It would al
 regressions. A null-ruleId alert is un-escalatable (`ruleId: { in: [...] }` never matches NULL in
 Prisma), un-sweepable, invisible to every relevance-filtered NOC severity pill
 (`triggerMatchesRelevance` reads `rule.trigger`), nameless in the Active Alerts widget and on the
-acknowledge page, and permissive on the ack-note gate. So the alert keeps the primary contributing
+acknowledge page, and permissive on the ack-note gate. So the alert keeps the OPENING
 rule in `ruleId` and carries `alertGroupId` beside it — and PROVENANCE stays the automation's
 throughout: `exec.ruleId`, the `POLARIS_RULE` handed to a script, the audit details. Which
 automation raised this is a different question from who is telling people about it, and grouping
