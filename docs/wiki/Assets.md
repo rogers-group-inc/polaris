@@ -170,6 +170,35 @@ honest — another gate's ARP row never counts, two MACs at one address is
 `ambiguous` rather than a pick, a stale address claim is skipped, and evidence
 older than 24 hours is not evidence.
 
+#### Correcting a wrong MAC association
+
+**MAC Address** is the asset's primary MAC; **All MACs** below it is every
+address Polaris has ever seen this device advertise, newest first, each labelled
+with the source that reported it and when. Docks, dongles, randomised Wi-Fi
+addresses and ZTNA-relayed identities all show up here, which is why the list
+occasionally names a MAC that belongs to some *other* device — a shared dock
+moves between laptops, and a merge can bring a neighbour's history with it.
+
+With **Assets** set to *Write* or higher (the built-in **assetsadmin** role, and
+admin) each entry carries a **×**. It removes that MAC from this asset and
+promotes the best surviving address to primary — preferring the device's real
+NICs, as reported by the Polaris Agent, Intune or vCenter, over anything a gate
+merely *saw*. The same **×** is on the MAC column's hover tooltip on the list,
+but the slide-over is the only place it appears for an asset carrying a single
+MAC. Every removal is audited as `asset.mac_removed`.
+
+Removal is a **correction, not a block**. Nothing is suppressed: if the network
+reports that address against this asset again, the next discovery run adds it
+back. When a MAC keeps returning, the association is live rather than historical
+— find what is actually transmitting it (usually a shared dock) instead of
+deleting the row repeatedly.
+
+One entry can cover many addresses. An interface scrape folds a device's
+sequentially-allocated port MACs into a single `AA:…:00 – AA:…:2F` range row, so
+removing it removes the whole block — the confirmation says how many. A range is
+a port block rather than an identity, so it is never promoted to primary; an
+asset whose only remaining entries are ranges correctly shows no primary MAC.
+
 ### System
 
 Live telemetry and history: response time, CPU, memory, temperature,

@@ -1517,12 +1517,37 @@ async function _handleMacDeleteClick(e) {
   var assetId = btn.getAttribute('data-asset-id');
   var mac = btn.getAttribute('data-mac');
   if (!assetId || !mac) return;
-  var ok = await showConfirm('Remove MAC ' + mac + ' from this asset?');
+  // A range row (an interface scrape's folded port block) takes every MAC in
+  // the block with it — say so, rather than asking about the one address the
+  // button happens to sit next to.
+  var macEnd = btn.getAttribute('data-mac-end');
+  var what = macEnd
+    ? macEntryCount({ mac: mac, macEnd: macEnd }) + ' MACs (' + mac + ' – ' + macEnd + ')'
+    : 'MAC ' + mac;
+  // Names the one-shot semantics: the endpoint deletes the row, it does not
+  // suppress the address, so a MAC the network still reports against this
+  // asset comes back on the next discovery run.
+  var ok = await showConfirm(
+    'Remove ' + what + ' from this asset?\n\n' +
+    'If the network reports this address against the asset again, discovery will re-add it.'
+  );
   if (!ok) return;
   btn.disabled = true;
   try {
     await api.assets.removeMac(assetId, mac);
     showToast('MAC removed');
+    // Repaint whichever surface the click came from. The slide-over holds its
+    // own copy of the asset, so refreshing the table behind it would leave the
+    // removed MAC on screen in the panel the operator is still looking at.
+    if (_isCurrentAsset(assetId)) {
+      var activeTab = document.querySelector('#asset-view-tabs .page-tab.active');
+      var activeKey = activeTab ? activeTab.getAttribute('data-tab') : null;
+      await openViewModal(assetId);
+      if (activeKey) {
+        var tabBtn = document.querySelector('#asset-view-tabs .page-tab[data-tab="' + activeKey + '"]');
+        if (tabBtn) tabBtn.click();
+      }
+    }
     loadAssets();
   } catch (err) {
     btn.disabled = false;
@@ -3010,7 +3035,12 @@ function macCellHTML(asset) {
   var displayMac = primary || (macs.length > 0 ? macEntryText(macs[0]) : "-");
   if (macs.length <= 1) return '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(displayMac) + '">' + escapeHtml(displayMac) + '</span>';
 
-  var canDelete = canManageNetworks();
+  // Gated on the SAME grant the endpoint checks (assets:write, i.e. the
+  // assets-admin role), not on subnets:fullwrite as it was: an asset
+  // administrator is exactly who corrects a wrong MAC association, and the
+  // mismatch meant the one role that could call DELETE /assets/:id/macs/:mac
+  // never saw the button that calls it.
+  var canDelete = canManageAssets();
 
   // Multiple MACs — show primary with hover tooltip
   var tooltipRows = macs.map(function (m) {
@@ -5286,7 +5316,7 @@ function _assetGeneralTabHTML(a) {
       // they qualify: "this device answers on 203.0.113.10, via that gate".
       '<div id="asset-vip-mount-' + escapeHtml(a.id) + '" style="display:contents"></div>' +
       viewRow("MAC Address", a.macAddress, true, false, true) +
-      macAddressesViewHTML(a.macAddresses) +
+      macAddressesViewHTML(a.macAddresses, a.id) +
       viewRow("Asset Tag", a.assetTag) +
       viewRow("Serial Number", a.serialNumber, false, false, true) +
       (a.macAddress && !a.manufacturer
@@ -16942,7 +16972,21 @@ function macEntriesTotal(macAddresses) {
 
 var _MAC_VIEW_VISIBLE = 3;
 
-function macAddressesViewHTML(macAddresses) {
+// Render one "remove this MAC" button, or '' when the viewer can't. Shared by
+// the visible rows and the "+N" overflow tooltip below so a MAC is no less
+// removable for having sorted past the fold. The click is caught by the
+// document-level _handleMacDeleteClick, so nothing here needs wiring.
+function macDeleteButtonHTML(assetId, m) {
+  if (!assetId || !canManageAssets()) return '';
+  return '<button type="button" class="mac-tooltip-delete" title="Remove this MAC from the asset" data-asset-id="' +
+    escapeHtml(assetId) + '" data-mac="' + escapeHtml(m.mac) + '"' +
+    (m.macEnd ? ' data-mac-end="' + escapeHtml(m.macEnd) + '"' : '') +
+    '>&times;</button>';
+}
+
+// `assetId` is what makes the rows removable — it is optional so any caller
+// that only wants the read-only list keeps working.
+function macAddressesViewHTML(macAddresses, assetId) {
   if (!macAddresses || macAddresses.length === 0) return '';
   var shown = macAddresses.slice(0, _MAC_VIEW_VISIBLE);
   var hidden = macAddresses.slice(_MAC_VIEW_VISIBLE);
@@ -16961,6 +17005,7 @@ function macAddressesViewHTML(macAddresses) {
         (m.lastSeen ? (sourceLabel ? ' &middot; ' : '') + formatDate(m.lastSeen) : '') +
       '</span>' +
       '<code class="copy-cell" style="font-size:0.82rem;margin-left:auto;flex-shrink:0;white-space:nowrap" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</code>' +
+      macDeleteButtonHTML(assetId, m) +
     '</div>';
   }).join("");
 
@@ -16978,6 +17023,7 @@ function macAddressesViewHTML(macAddresses) {
         '<span class="mac-tooltip-meta">' +
           '<span class="mac-tooltip-source">' + sourceLine + '</span>' +
         '</span>' +
+        macDeleteButtonHTML(assetId, m) +
       '</div>';
     }).join("");
     rows += '<div style="padding:3px 0">' +
