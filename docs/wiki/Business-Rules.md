@@ -707,6 +707,42 @@ the two shapes to expect.
 
 See [Polaris Agent](Polaris-Agent#the-windows-firewall-rule-and-the-one-windows-writes-for-itself).
 
+### Rule 77
+
+**A VIP describes an address; it does not claim it — and the status says every
+fact it has.**
+
+A FortiGate virtual IP states what happens to traffic for an address. That is a
+third fact about the address, beside who holds it and how the gate hands it out
+([rule 23](#rule-23)), and treating it as the single answer caused two problems
+at once.
+
+**You could not reserve one.** A VIP row was refused like an interface address.
+But the addresses behind a VIP — its mapped addresses, a virtual server's
+realserver pool — are ordinary hosts that want a DHCP reservation, and holding
+the external one in the address register is a reasonable thing to want. Those
+are now reservable, and the VIP rides along: the new reservation carries it, the
+address keeps reporting it, and the row reads **VIP / Reserved**. Editing and
+releasing a VIP row are still refused, because that mapping belongs to the
+device. An interface address is still refused outright: it is live on an
+interface.
+
+**And you often could not see the VIP at all.** The Status column showed one
+fact per address, so a VIP on a leased address read "DHCP Lease" and a VIP on a
+conflicted address read "Conflict" — including, at worst, on an address whose
+reservation had just been refused *because* of that VIP. Status now reports the
+VIP first and what is happening to the address second: **VIP / Leased**, **VIP /
+Reserved**, **VIP / Conflict**, or **VS /…** for a load-balance virtual server.
+Labels on addresses with no VIP are unchanged. The exports of the address list
+use the same wording, so a PDF cannot disagree with the table it came from.
+
+The per-network **Discover** button reads the gate's VIP table as part of its
+pass. A VIP table it could not read is reported as not read — never as "there
+are no VIPs" — so nothing already recorded is retired on a failed read
+([rule 53](#rule-53)), and a VIP is only ever retired by the gate that owns it.
+
+See [IPAM](IPAM#addresses-that-carry-a-firewall-vip).
+
 ### Rule 79
 
 **Removing a MAC from an asset is a correction, not a block.**

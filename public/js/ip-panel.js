@@ -185,7 +185,7 @@ function _renderPanelHeader(data) {
         '<button data-fmt="csv">Export as CSV</button>' +
       '</div>' +
     '</div>' +
-    (s.refreshEligible && canReserveIps() ? '<button class="btn btn-sm btn-secondary" id="ip-panel-refresh-btn" title="Query the FortiGate and update Polaris">Refresh</button>' : '') +
+    (s.refreshEligible && canReserveIps() ? '<button class="btn btn-sm btn-secondary" id="ip-panel-refresh-btn" title="Query the FortiGate and update Polaris">Discover</button>' : '') +
     (canReserveIps() && !data.ipv6 ? '<button class="btn btn-sm btn-secondary" id="ip-panel-auto-alloc-btn">Auto-Allocate Next</button>' : '') +
     (canReserveIps() ? '<button class="btn btn-sm btn-primary" id="ip-panel-reserve-btn">+ Reserve IP</button>' : '') +
     '</span>';
@@ -246,6 +246,203 @@ function _isLeaseBackedInfra(r) {
   return r.dhcpBinding === "lease";
 }
 
+/**
+ * What the Status column says about one address, as { dotClass, label, tooltip }.
+ *
+ * Two segments, not one (business rule 77). An address can carry a FortiGate
+ * VIP AND be handed out over DHCP, and the old single-winner ladder could only
+ * report whichever fact it happened to test first — so an address with a VIP
+ * and a lease said "DHCP Lease", an address with a VIP and a pending conflict
+ * said "Conflict", and an operator refused a reservation because of a VIP had
+ * no way to see the VIP anywhere in the table. The VIP is now a PREFIX on the
+ * allocation, giving "VIP / Leased", "VIP / Reserved", "VIP / Conflict".
+ *
+ * The allocation half keeps every label the ladder already produced when it
+ * stands alone, so nothing an operator learned to read has changed; the short
+ * spellings are used only in the composed form, where the column has to fit two
+ * facts. `VS` rather than `VIP` marks a load-balance Virtual Server, matching
+ * the badge beside the hostname.
+ *
+ * The dot answers "is this address spoken for", so a VIP claims it (purple,
+ * device config) whenever one is present — that is what makes VIP addresses
+ * scannable down the column. The two dots that mean "somebody has to do
+ * something" outrank it: a conflict and a permanently failed push stay red
+ * whatever else is true of the address.
+ *
+ * `warn` is those same two states, and it drives the ⚠ beside the label. It is
+ * deliberately NOT "this row has a tooltip": composing the VIP gives an
+ * explanatory tooltip to rows where nothing is wrong ("VIP / Reserved" is a
+ * healthy, deliberate reservation), and the renderer used to hang a red
+ * conflict triangle off anything with a tooltip at all — which would have
+ * turned a page of ordinary VIP addresses into a page of apparent problems.
+ * The explanatory ones keep the help cursor and the hover text (`.status-note`)
+ * and drop the icon; a bare VIP, an interface address, a DNS placeholder and a
+ * lease-backed AP row lose a triangle they should not have had either.
+ *
+ * Pure and top-level so tests/unit/ipPanelStatusDom.test.ts can slice it out;
+ * it reads only its arguments.
+ */
+function _ipStatusPresentation(r, ctx) {
+  ctx = ctx || {};
+  if (ctx.isSpecial) {
+    return {
+      dotClass: "ip-dot-reserved",
+      label: ctx.specialType === "network" ? "Network" : "Broadcast",
+      tooltip: "",
+    };
+  }
+
+  var active = !!(r && r.status === "active");
+  var vip = active && r.vipInfo ? r.vipInfo : null;
+  var vipSeg = vip ? (vip.isVirtualServer ? "VS" : "VIP") : null;
+  var vipTip = vip
+    ? (vip.isVirtualServer ? "Virtual server" : "FortiGate VIP") +
+      ' "' + (vip.name || "") + '"' +
+      (vip.role ? " (" + vip.role + ")" : "") +
+      (vip.device ? " on " + vip.device : "") +
+      (vip.extip ? " — external " + vip.extip : "") + "."
+    : "";
+
+  var alloc = _ipAllocationPresentation(r, active, ctx);
+
+  // A `vip` row with no allocation fact IS the VIP and nothing else.
+  if (vipSeg && !alloc.short) {
+    return {
+      dotClass: alloc.urgent ? alloc.dotClass : "ip-dot-device-config",
+      label: vipSeg,
+      tooltip: (vipTip + " " + alloc.tooltip).trim(),
+      warn: alloc.urgent,
+    };
+  }
+  if (!vipSeg) {
+    return { dotClass: alloc.dotClass, label: alloc.label, tooltip: alloc.tooltip, warn: alloc.urgent };
+  }
+  return {
+    dotClass: alloc.urgent ? alloc.dotClass : "ip-dot-device-config",
+    label: vipSeg + " / " + alloc.short,
+    tooltip: (vipTip + " " + alloc.tooltip).trim(),
+    warn: alloc.urgent,
+  };
+}
+
+/**
+ * The allocation half of the status: who holds the address and how.
+ *
+ * `label` is what the column shows when there is no VIP to compose with;
+ * `short` is the composed spelling, and an empty `short` means "this row states
+ * no allocation at all" — the case a bare VIP row lands in. `urgent` marks the
+ * two states whose dot must survive composition.
+ */
+function _ipAllocationPresentation(r, active, ctx) {
+  var none = { dotClass: "ip-dot-available", label: "Available", short: "", tooltip: "", urgent: false };
+  if (!r) return none;
+
+  if (r.conflictMessage) {
+    return {
+      dotClass: "ip-dot-conflict",
+      label: "Conflict",
+      short: "Conflict",
+      tooltip: r.conflictMessage,
+      urgent: true,
+    };
+  }
+  if (active && r.pushStatus === "pending") {
+    var qAttempts = typeof r.pushAttempts === "number" ? r.pushAttempts : 0;
+    var qSince = r.pushQueuedAt ? _ipPanelTimeAgoVerbose(r.pushQueuedAt) : null;
+    return {
+      dotClass: "ip-dot-active",
+      label: "Queued for push",
+      short: "Queued",
+      tooltip: "Polaris has reserved this IP but hasn't been able to write it to the FortiGate yet."
+        + (qSince ? " Queued " + qSince + "." : "")
+        + (qAttempts > 0 ? " Retry attempts: " + qAttempts + "." : "")
+        + (r.pushError ? " Last error: " + r.pushError : ""),
+      urgent: false,
+    };
+  }
+  if (active && r.pushStatus === "failed_permanent") {
+    return {
+      dotClass: "ip-dot-conflict",
+      label: "Push failed",
+      short: "Push failed",
+      tooltip: r.pushError || "Push hit a permanent error. Release the reservation, fix the underlying issue, or retry manually.",
+      urgent: true,
+    };
+  }
+  if (active && (r.sourceType === "dhcp_reservation" || r.owner === "dhcp-reservation")) {
+    return { dotClass: "ip-dot-dhcp-reservation", label: "DHCP Reservation", short: "Reserved", tooltip: "", urgent: false };
+  }
+  if (active && (r.sourceType === "dhcp_lease" || r.owner === "dhcp-lease")) {
+    return { dotClass: "ip-dot-dhcp-lease", label: "DHCP Lease", short: "Leased", tooltip: "", urgent: false };
+  }
+  if (active && r.sourceType === "vip") {
+    // The VIP row's own DHCP fact, recorded by discovery in the same column
+    // and for the same reason as a managed switch's (business rule 23): the
+    // gate can serve an address it also translates, and before this the row
+    // had nowhere to say so.
+    if (r.dhcpBinding === "reservation") {
+      return {
+        dotClass: "ip-dot-dhcp-reservation", label: "DHCP Reservation", short: "Reserved",
+        tooltip: "The FortiGate also holds a MAC-to-IP reservation for this address.",
+        urgent: false,
+      };
+    }
+    if (r.dhcpBinding === "lease") {
+      return {
+        dotClass: "ip-dot-dhcp-lease", label: "DHCP Lease", short: "Leased",
+        tooltip: "A client is also holding this address on a dynamic DHCP lease from the FortiGate.",
+        urgent: false,
+      };
+    }
+    return {
+      dotClass: "ip-dot-device-config", label: "VIP", short: "",
+      tooltip: "Reserve to claim it in Polaris — the VIP stays on the address either way.",
+      urgent: false,
+    };
+  }
+  if (active && r.sourceType === "interface_ip") {
+    return {
+      dotClass: "ip-dot-device-config",
+      label: "Interface",
+      short: "Interface",
+      tooltip: "This address is configured directly on a device interface. It is owned by the device, so it cannot be reserved, released or edited from Polaris.",
+      urgent: false,
+    };
+  }
+  if (active && r.sourceType === "dns_resolved") {
+    return {
+      dotClass: "ip-dot-dhcp-lease",
+      label: "DNS Resolved",
+      short: "DNS",
+      tooltip: "Auto-discovered from asset inventory; no DHCP record exists yet.",
+      urgent: false,
+    };
+  }
+  if (_isLeaseBackedInfra(r)) {
+    var isAp = r.sourceType === "fortinap";
+    return {
+      dotClass: "ip-dot-dhcp-lease",
+      label: isAp ? "FortiAP (lease)" : "FortiSwitch (lease)",
+      short: isAp ? "AP lease" : "Switch lease",
+      tooltip: "This address is held by a managed " + (isAp ? "FortiAP" : "FortiSwitch")
+        + " via a dynamic DHCP lease — the FortiGate has no MAC-to-IP reservation for it, "
+        + "so it reports the address as \"Not Reserved\". Reserve to claim it in Polaris"
+        + (ctx && ctx.pushEligible ? " and write the reservation to the gate." : "."),
+      urgent: false,
+    };
+  }
+  if (active) {
+    return { dotClass: "ip-dot-active", label: "Active", short: "Reserved", tooltip: "", urgent: false };
+  }
+  if (r.status === "expired") {
+    return { dotClass: "ip-dot-expired", label: "Expired", short: "Expired", tooltip: "", urgent: false };
+  }
+  if (r.status === "released") {
+    return { dotClass: "ip-dot-released", label: "Released", short: "Released", tooltip: "", urgent: false };
+  }
+  return none;
+}
+
 function _renderIpList(data) {
   var body = document.getElementById("ip-panel-body");
 
@@ -280,80 +477,14 @@ function _renderIpList(data) {
     if (r && r.status === "released") r = null;
     var rowClass = isSpecial ? ' class="ip-row-special"' : '';
 
-    var dotClass, statusLabel, statusTooltip = "";
-    if (isSpecial) {
-      dotClass = "ip-dot-reserved";
-      statusLabel = ip.type === "network" ? "Network" : "Broadcast";
-    } else if (r && r.conflictMessage) {
-      dotClass = "ip-dot-conflict";
-      statusLabel = "Conflict";
-      statusTooltip = r.conflictMessage;
-    } else if (r && r.status === "active" && r.pushStatus === "pending") {
-      // Push-queued: the operator claimed this IP, but the FortiGate (or
-      // FortiManager) was unreachable at create time. Retry job pushes when
-      // the gate comes back.
-      dotClass = "ip-dot-active";
-      statusLabel = "Queued for push";
-      var qAttempts = typeof r.pushAttempts === "number" ? r.pushAttempts : 0;
-      var qSince = r.pushQueuedAt ? _ipPanelTimeAgoVerbose(r.pushQueuedAt) : null;
-      statusTooltip = "Polaris has reserved this IP but hasn't been able to write it to the FortiGate yet."
-        + (qSince ? " Queued " + qSince + "." : "")
-        + (qAttempts > 0 ? " Retry attempts: " + qAttempts + "." : "")
-        + (r.pushError ? " Last error: " + r.pushError : "");
-    } else if (r && r.status === "active" && r.pushStatus === "failed_permanent") {
-      // Permanent failure — operator must release, edit, or retry-now after
-      // fixing what's wrong on the device (usually a collision against a
-      // discovered entry, or a verify mismatch).
-      dotClass = "ip-dot-conflict";
-      statusLabel = "Push failed";
-      statusTooltip = (r.pushError || "Push hit a permanent error. Release the reservation, fix the underlying issue, or retry manually.");
-    } else if (r && r.status === "active" && (r.sourceType === "dhcp_reservation" || r.owner === "dhcp-reservation")) {
-      dotClass = "ip-dot-dhcp-reservation";
-      statusLabel = "DHCP Reservation";
-    } else if (r && r.status === "active" && (r.sourceType === "dhcp_lease" || r.owner === "dhcp-lease")) {
-      dotClass = "ip-dot-dhcp-lease";
-      statusLabel = "DHCP Lease";
-    } else if (r && r.status === "active" && r.sourceType === "vip") {
-      // Purple marks an address owned by the DEVICE's own configuration
-      // rather than by anything Polaris can hand out or take back — see the
-      // interface_ip branch below, which shares the colour for the same
-      // reason. Neither row offers Reserve, Release or Edit.
-      dotClass = "ip-dot-device-config";
-      statusLabel = "VIP";
-      statusTooltip = "This address is a FortiGate virtual IP (NAT config). It is owned by the device, so it cannot be reserved, released or edited from Polaris.";
-    } else if (r && r.status === "active" && r.sourceType === "interface_ip") {
-      // A router/firewall interface address — statically configured on the
-      // device itself. Same posture as a VIP: Polaris reports it, and every
-      // way of changing it lives on the device.
-      dotClass = "ip-dot-device-config";
-      statusLabel = "Interface";
-      statusTooltip = "This address is configured directly on a device interface. It is owned by the device, so it cannot be reserved, released or edited from Polaris.";
-    } else if (r && r.status === "active" && r.sourceType === "dns_resolved") {
-      dotClass = "ip-dot-dhcp-lease";
-      statusLabel = "DNS Resolved";
-      statusTooltip = "Auto-discovered from asset inventory; no DHCP record exists yet.";
-    } else if (_isLeaseBackedInfra(r)) {
-      // Same dot as a lease, because that's what the address is.
-      dotClass = "ip-dot-dhcp-lease";
-      statusLabel = r.sourceType === "fortinap" ? "FortiAP (lease)" : "FortiSwitch (lease)";
-      statusTooltip = "This address is held by a managed "
-        + (r.sourceType === "fortinap" ? "FortiAP" : "FortiSwitch")
-        + " via a dynamic DHCP lease — the FortiGate has no MAC-to-IP reservation for it, "
-        + "so it reports the address as \"Not Reserved\". Reserve to claim it in Polaris"
-        + (pushEligible ? " and write the reservation to the gate." : ".");
-    } else if (r && r.status === "active") {
-      dotClass = "ip-dot-active";
-      statusLabel = "Active";
-    } else if (r && r.status === "expired") {
-      dotClass = "ip-dot-expired";
-      statusLabel = "Expired";
-    } else if (r && r.status === "released") {
-      dotClass = "ip-dot-released";
-      statusLabel = "Released";
-    } else {
-      dotClass = "ip-dot-available";
-      statusLabel = "Available";
-    }
+    var _pres = _ipStatusPresentation(r, {
+      isSpecial: isSpecial,
+      specialType: ip.type,
+      pushEligible: pushEligible,
+    });
+    var dotClass = _pres.dotClass;
+    var statusLabel = _pres.label;
+    var statusTooltip = _pres.tooltip;
 
     // Click-to-copy for hostname / MAC: render the value as a .copy-on-click
     // span carrying the raw value in data-copy. The delegated handler at the
@@ -426,15 +557,24 @@ function _renderIpList(data) {
         ? '<button class="btn btn-sm ' + reserveBtnClass + ' ip-lease-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" data-rid="' + escapeHtml(r.id) + '" data-mac="' + escapeHtml(macRaw || "") + '" data-hostname="' + escapeHtml(r.hostname || "") + '" title="' + reserveTitle + '">Reserve</button>'
         : '';
       actions = reserveBtn + freeBtn + assetBtn + editBtn;
-    } else if (r && r.status === "active" && (r.sourceType === "vip" || r.sourceType === "interface_ip")) {
-      // Device-owned addresses: a FortiGate VIP (NAT config) or an interface
-      // address configured on the router/firewall itself. Polaris reports
-      // them and nothing more — no Release (Polaris did not grant it), no
-      // Reserve (it is already spoken for by device config), no Edit (the
-      // metadata would claim ownership Polaris does not have, and discovery
-      // rewrites the row every cycle anyway). "View Asset" stays, because
-      // knowing WHICH device holds the address is the whole question an
-      // operator has when they land on one of these rows.
+    } else if (r && r.status === "active" && r.sourceType === "vip") {
+      // A VIP is device config, so there is still no Release and no Edit here
+      // — Polaris did not grant the address and the metadata would claim an
+      // ownership it does not have. Reserve, though, is offered (business rule
+      // 76): a VIP says what happens to traffic for an address, not that the
+      // address is unavailable, and the mapped / realserver addresses behind a
+      // VIP are ordinary hosts that want a DHCP reservation. The claim carries
+      // the VIP snapshot forward, so the row keeps reporting its VIP.
+      var vipReserveBtn = canReserveIps()
+        ? '<button class="btn btn-sm ' + reserveBtnClass + ' ip-lease-reserve-btn" data-ip="' + escapeHtml(ip.address) + '" data-rid="' + escapeHtml(r.id) + '" data-mac="' + escapeHtml(macRaw || "") + '" data-hostname="' + escapeHtml(r.hostname || "") + '" title="' + reserveTitle + '">Reserve</button>'
+        : '';
+      actions = vipReserveBtn + assetBtn;
+    } else if (r && r.status === "active" && r.sourceType === "interface_ip") {
+      // An address configured on the router/firewall's own interface. Unlike a
+      // VIP this one genuinely cannot be handed to anything else, so Polaris
+      // reports it and nothing more. "View Asset" stays, because knowing WHICH
+      // device holds the address is the whole question an operator has when
+      // they land on one of these rows.
       actions = assetBtn;
     } else if (r && r.status === "active" && r.sourceType === "dns_resolved") {
       // DNS-resolved is a system-created placeholder for assets whose IP falls
@@ -469,8 +609,15 @@ function _renderIpList(data) {
       actions = assetBtn;
     }
 
+    // The warning triangle marks a row whose STATE wants attention, and the
+    // presentation function decides which those are — it is not simply "has a
+    // tooltip". Composing the VIP into the pill gave rows an explanatory
+    // tooltip that never had one ("VIP / Reserved" describes a healthy,
+    // deliberate reservation), and hanging a ⚠ off every one of them would
+    // have turned the feature into a page full of apparent problems.
     var statusHtml = statusTooltip
-      ? '<span class="conflict-label" title="' + escapeHtml(statusTooltip) + '">' + statusLabel + ' <span class="conflict-icon">&#9888;</span></span>'
+      ? '<span class="' + (_pres.warn ? 'conflict-label' : 'status-note') + '" title="' + escapeHtml(statusTooltip) + '">' + statusLabel +
+        (_pres.warn ? ' <span class="conflict-icon">&#9888;</span>' : '') + '</span>'
       : statusLabel;
 
     var leaseExpiry = r && r.expiresAt
@@ -1293,7 +1440,10 @@ function _exportAllocResults(results, shared, s) {
   showToast("Exported " + results.length + " rows to " + filename);
 }
 
-// ─── Refresh ────────────────────────────────────────────────────────────────
+// ─── Discover ───────────────────────────────────────────────────────────────
+// Operator-facing name since 2026-09-21; it was "Refresh" before, and the
+// route, the service and the `subnet.refresh` Event keep that spelling because
+// they are citation keys (an API client and every Event already in the log).
 
 // Verbose "N minutes ago" used in the IP panel header — the more compact
 // `timeAgo()` from app.js reads as "5m ago" which the design here wants
@@ -1335,7 +1485,7 @@ function _openRefreshConfirmModal(s) {
   var lines = [
     "Polaris will query <strong>" + escapeHtml(device) + "</strong> via " +
       escapeHtml(integration) + " and reconcile this network&rsquo;s " +
-      "DHCP reservations and live leases.",
+      "DHCP reservations, live leases and firewall VIPs.",
     "Manual reservations on this network are not touched.",
   ];
   var body = '<div style="font-size:0.88rem;line-height:1.45">' +
@@ -1346,14 +1496,14 @@ function _openRefreshConfirmModal(s) {
     '</p></div>';
   var footer =
     '<button class="btn btn-secondary" id="ip-panel-refresh-cancel">Cancel</button>' +
-    '<button class="btn btn-primary" id="ip-panel-refresh-confirm">Refresh now</button>';
-  openModal("Refresh this network?", body, footer);
+    '<button class="btn btn-primary" id="ip-panel-refresh-confirm">Discover now</button>';
+  openModal("Discover this network?", body, footer);
 
   document.getElementById("ip-panel-refresh-cancel").addEventListener("click", closeModal);
   document.getElementById("ip-panel-refresh-confirm").addEventListener("click", async function () {
     var confirmBtn = this;
     confirmBtn.disabled = true;
-    confirmBtn.textContent = "Refreshing...";
+    confirmBtn.textContent = "Discovering...";
     try {
       var result = await api.subnets.refresh(_ipPanelSubnetId);
       closeModal();
@@ -1369,17 +1519,27 @@ function _openRefreshConfirmModal(s) {
       if (result.created) summaryParts.push(result.created + " added");
       if (result.updated) summaryParts.push(result.updated + " updated");
       if (result.released) summaryParts.push(result.released + " released");
+      if (result.vipsStamped) summaryParts.push(result.vipsStamped + " VIP");
+      if (result.vipsCleared) summaryParts.push(result.vipsCleared + " VIP cleared");
       if (result.skipped) summaryParts.push(result.skipped + " skipped (manual)");
       var summary = summaryParts.length > 0
-        ? "Refreshed — " + summaryParts.join(", ")
-        : "Refreshed — no changes";
-      showToast(summary, "success");
+        ? "Discovered — " + summaryParts.join(", ")
+        : "Discovered — no changes";
+      // A VIP table Polaris could not read is called out rather than folded
+      // into the success line: the DHCP half really did reconcile, but every
+      // VIP on this network is now as stale as it was before the click, and
+      // silence there reads as "there are no VIPs" (business rule 53).
+      if (result.vipError) {
+        showToast(summary + ". Firewall VIPs were not read: " + result.vipError, "warning");
+      } else {
+        showToast(summary, "success");
+      }
       _ipPanelDirty = true;
       _fetchIpPage();
     } catch (err) {
       confirmBtn.disabled = false;
-      confirmBtn.textContent = "Refresh now";
-      showToast(err.message || "Refresh failed", "error");
+      confirmBtn.textContent = "Discover now";
+      showToast(err.message || "Discovery failed", "error");
     }
   });
 }
@@ -1473,20 +1633,37 @@ function _openLeaseReserveModal(subnetId, ipAddress, leaseId, prefillMac, prefil
   // differs, since the latter isn't an anonymous client lease and discovery will
   // re-create its device row on the next cycle.
   var infraRow = null;
+  var vipRow = null;
   if (_ipPanelData && Array.isArray(_ipPanelData.ips)) {
     for (var ii = 0; ii < _ipPanelData.ips.length; ii++) {
       if (_ipPanelData.ips[ii].address === ipAddress) {
-        if (_isLeaseBackedInfra(_ipPanelData.ips[ii].reservation)) infraRow = _ipPanelData.ips[ii].reservation;
+        var here = _ipPanelData.ips[ii].reservation;
+        if (_isLeaseBackedInfra(here)) infraRow = here;
+        if (here && here.status === "active" && here.sourceType === "vip") vipRow = here;
         break;
       }
     }
   }
-  var supersedeHint = infraRow
-    ? 'This address is currently held by a managed '
+  var supersedeHint;
+  if (vipRow) {
+    // Say plainly that the VIP is not being touched. The operator is claiming
+    // an address the FortiGate translates, and the one thing they need to know
+    // is that nothing in the gate's NAT config changes — Polaris keeps
+    // reporting the VIP on the address after the claim.
+    var vipName = (vipRow.vipInfo && vipRow.vipInfo.name) || vipRow.hostname || "";
+    supersedeHint = 'This address carries the FortiGate '
+      + (vipRow.vipInfo && vipRow.vipInfo.isVirtualServer ? 'virtual server' : 'VIP')
+      + (vipName ? ' "' + escapeHtml(vipName) + '"' : '')
+      + '. The VIP itself is not changed and stays on the address; Polaris records your '
+      + 'reservation alongside it, and the status reads "VIP / Reserved".';
+  } else if (infraRow) {
+    supersedeHint = 'This address is currently held by a managed '
       + (infraRow.sourceType === "fortinap" ? "FortiAP" : "FortiSwitch")
       + ' via a dynamic lease. That discovered row will be replaced with your reservation; '
-      + 'the device keeps its current lease either way.'
-    : 'The existing DHCP lease will be released and replaced with a manual reservation.';
+      + 'the device keeps its current lease either way.';
+  } else {
+    supersedeHint = 'The existing DHCP lease will be released and replaced with a manual reservation.';
+  }
 
   var body =
     '<div class="form-group"><label>Network</label><input type="text" value="' + subnetLabel + '" disabled></div>' +
@@ -1799,26 +1976,14 @@ function _generateIpPanelPdf(s, allIps) {
     var isSpecial = ip.type === "network" || ip.type === "broadcast";
     var r = ip.reservation;
     if (r && r.status === "released") r = null;
-    var statusLabel;
-    if (isSpecial) {
-      statusLabel = ip.type === "network" ? "Network" : "Broadcast";
-    } else if (r && r.conflictMessage) {
-      statusLabel = "Conflict: " + r.conflictMessage;
-    } else if (r && r.status === "active" && (r.sourceType === "dhcp_reservation" || r.owner === "dhcp-reservation")) {
-      statusLabel = "DHCP Reservation";
-    } else if (r && r.status === "active" && (r.sourceType === "dhcp_lease" || r.owner === "dhcp-lease")) {
-      statusLabel = "DHCP Lease";
-    } else if (r && r.status === "active" && r.sourceType === "vip") {
-      statusLabel = "VIP";
-    } else if (r && r.status === "active" && r.sourceType === "interface_ip") {
-      statusLabel = "Interface";
-    } else if (r && r.status === "active") {
-      statusLabel = "Active";
-    } else if (r && r.status === "expired") {
-      statusLabel = "Expired";
-    } else {
-      statusLabel = "Available";
-    }
+    // Same sentence the on-screen column shows, so a PDF handed to someone
+    // else cannot disagree with the table it was exported from — an export
+    // that flattened "VIP / Leased" back to "DHCP Lease" would be read as the
+    // authoritative record precisely because it left the screen.
+    var statusPres = _ipStatusPresentation(r, { isSpecial: isSpecial, specialType: ip.type });
+    var statusLabel = r && r.conflictMessage
+      ? statusPres.label + ": " + r.conflictMessage
+      : statusPres.label;
 
     var macMatch = r && r.notes ? r.notes.match(/MAC:\s*([\w:]+)/) : null;
     var mac = macMatch ? macMatch[1] : "-";
@@ -1871,22 +2036,13 @@ function _generateIpPanelCsv(s, allIps) {
     var isSpecial = ip.type === "network" || ip.type === "broadcast";
     var r = ip.reservation;
     if (r && r.status === "released") r = null;
-    var statusLabel;
-    if (isSpecial) {
-      statusLabel = ip.type === "network" ? "Network" : "Broadcast";
-    } else if (r && r.conflictMessage) {
-      statusLabel = "Conflict: " + r.conflictMessage;
-    } else if (r && r.status === "active" && (r.sourceType === "dhcp_reservation" || r.owner === "dhcp-reservation")) {
-      statusLabel = "DHCP Reservation";
-    } else if (r && r.status === "active" && (r.sourceType === "dhcp_lease" || r.owner === "dhcp-lease")) {
-      statusLabel = "DHCP Lease";
-    } else if (r && r.status === "active") {
-      statusLabel = "Active";
-    } else if (r && r.status === "expired") {
-      statusLabel = "Expired";
-    } else {
-      statusLabel = "Available";
-    }
+    // One status vocabulary across the table, the PDF and this CSV — see the
+    // note in _generateIpPanelPdf. This ladder had drifted furthest: it had no
+    // VIP branch at all, so a VIP address exported as "Active".
+    var statusPres = _ipStatusPresentation(r, { isSpecial: isSpecial, specialType: ip.type });
+    var statusLabel = r && r.conflictMessage
+      ? statusPres.label + ": " + r.conflictMessage
+      : statusPres.label;
     var macMatch = r && r.notes ? r.notes.match(/MAC:\s*([\w:]+)/) : null;
     var mac = macMatch ? macMatch[1] : "";
     var owner = r ? (r.owner || "") : "";

@@ -152,18 +152,38 @@ edit.
 Open a network to get the **address panel**: every address in the range, what
 is on it, and what you can do about it.
 
+### Discovering a network on demand
+
+Where the network came from a FortiManager or FortiGate integration, the panel
+header carries a **Discover** button. It queries that one gate for this one
+network — its DHCP scope (reservations and live leases) and its firewall VIP
+table — and reconciles the result, then updates the "Discovered N minutes ago"
+line beside it. Manual reservations are not touched.
+
+It is deliberately narrower than a full integration discovery: it does not
+revisit assets, decommissions or map regions, which reconcile on the next full
+cycle. If the gate answers for DHCP but refuses the firewall VIP table — an API
+token scoped away from the firewall config is the usual reason — the DHCP half
+still completes and the result says the VIPs were not read. That is never
+reported as "there are no VIPs", so nothing already recorded is retired on a
+failed read.
+
 ### What a reservation means
 
-Two separate facts live on every row, and conflating them is the mistake this
-design exists to prevent ([rule 23](Business-Rules#rule-23)):
+Three separate facts live on every row, and conflating them is the mistake this
+design exists to prevent ([rule 23](Business-Rules#rule-23),
+[rule 77](Business-Rules#rule-77)):
 
 - **`sourceType` answers who owns the address.**
 - **`dhcpBinding` answers how the gate hands it out** — `null`, `"lease"` or
   `"reservation"`.
+- **`vipInfo` answers what the firewall translates for it.**
 
 So a managed FortiAP's address can be `sourceType: fortinap` (a managed device
 holds it) with `dhcpBinding: "lease"` (the gate hands it out dynamically). Those
-are both true, and they call for different handling.
+are both true, and they call for different handling. In the same way an address
+can carry a VIP *and* be leased to a client — which is why the Status column
+reports two facts where two exist.
 
 ### Which rows Polaris may overwrite
 
@@ -176,7 +196,8 @@ depending on what is there:
 | `dhcp_lease` | **takeover** — the lease is observed presence, not a claim |
 | `dns_resolved` | takeover — it defers to everything |
 | `fortiswitch` / `fortinap` **with `dhcpBinding: "lease"`** | takeover |
-| `manual`, `dhcp_reservation`, `vip`, `interface_ip` | **409** — authoritative |
+| `vip` | **takeover** — the VIP is kept, see below ([rule 77](Business-Rules#rule-77)) |
+| `manual`, `dhcp_reservation`, `interface_ip` | **409** — authoritative |
 | infra rows not backed by a lease | 409 |
 
 A takeover is a plain **create** gated on your `reservations:write`, not a
@@ -221,7 +242,37 @@ The taken set is **every active reservation regardless of source type** — a VI
 an interface IP, a lease and an infra row are all simply never offered. An
 address something answers on is not free.
 
-VIP rows render read-only in the panel: a VIP is a mapping the device owns.
+---
+
+## Addresses that carry a firewall VIP
+
+A FortiGate virtual IP says what happens to traffic for an address. It does not
+say the address is unavailable, and it is not the same fact as who holds the
+address or how the gate hands it out ([rule 77](Business-Rules#rule-77)).
+
+**You can reserve one.** The external address of a VIP, its mapped addresses and
+a virtual server's realserver pool members are all reservable — the last two are
+ordinary hosts, and a web server behind a DNAT is exactly the kind of thing that
+wants a DHCP reservation. Saving one keeps the VIP: the address goes on
+reporting it, and the Status column reads **VIP / Reserved**. What you still
+cannot do from Polaris is **edit or release** a VIP row itself, because the
+mapping belongs to the device. An **interface address** is different again and
+stays refused: that address is live on an interface right now.
+
+**The Status column reports both facts.** An address that carries a VIP shows
+the VIP first and what is happening to the address second:
+
+| Reads | Means |
+|---|---|
+| `VIP` | a VIP, and nothing is holding the address |
+| `VIP / Leased` | a client is also holding it on a dynamic DHCP lease |
+| `VIP / Reserved` | you reserved it, or the gate has a MAC-to-IP reservation for it |
+| `VIP / Conflict` | a VIP, and a conflict that needs resolving |
+| `VS / …` | the same, where the mapping is a load-balance virtual server |
+
+Hovering the row names the VIP, the role the address plays in it, the gate it
+lives on and its external address. The same wording is used in the PDF and CSV
+exports of the address list.
 
 ---
 
