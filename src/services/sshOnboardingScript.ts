@@ -10,8 +10,10 @@
  *   • buildWindowsOnboardingScript()          — the REMEDIATION script.
  *     Installs the OpenSSH Server capability, starts sshd, optionally creates
  *     the local admin account, writes the Polaris public key into
- *     administrators_authorized_keys with the ACL sshd demands, and optionally
- *     scopes inbound TCP/22 to the Polaris server.
+ *     administrators_authorized_keys with the ACL sshd demands, optionally
+ *     scopes inbound TCP/22 to the Polaris server, and either way settles the
+ *     Private-profile-only rule Windows creates for OpenSSH (disabled when the
+ *     Polaris rule supersedes it, widened to Domain when there is none).
  *
  *   • buildWindowsOnboardingDetectionScript() — the DETECTION script.
  *     Exits 0 when the endpoint is already onboarded, 1 when remediation is
@@ -62,6 +64,21 @@ export interface WindowsOnboardingScriptOptions {
 
 /** Firewall rule DisplayName — also the key for idempotent replacement. */
 const FIREWALL_RULE_NAME = "Polaris SSH (TCP 22)";
+
+/**
+ * The rule WINDOWS creates when the OpenSSH Server capability installs, matched
+ * by Name (not DisplayName — that one is localized). Wildcarded because the
+ * build decides the suffix: `OpenSSH-Server-In-TCP` on most, plus a
+ * `-NoScope` variant on some.
+ *
+ * It is created for the **Private profile only** and allows TCP/22 from ANY
+ * source, which fails in both directions at once: a domain-joined endpoint sits
+ * on the Domain profile and blocks Polaris outright — sshd running, nothing in
+ * the service or the event log to say why nothing connects — while a machine on
+ * a Private network has port 22 open to every host on it. Firewall rules are
+ * additive allows, so no amount of scoping on the Polaris rule narrows that.
+ */
+const OPENSSH_BUILTIN_RULE_NAME = "OpenSSH-Server-In-*";
 
 /**
  * Well-known SIDs rather than names. "Administrators" and "SYSTEM" are
@@ -434,7 +451,17 @@ if (-not (Test-PolarisLocalAdmin -Account $PolarisUser)) {
 Write-Host ('Using existing account ' + $PolarisUser + ' (not created by this script)')
 `.trim();
 
-/** Emitted only when a Polaris server address was supplied. */
+/**
+ * Emitted only when a Polaris server address was supplied.
+ *
+ * Two rules decide whether sshd is reachable and only one of them is ours: the
+ * Polaris rule allows TCP/22 from the Polaris server on EVERY profile, and
+ * Windows' own rule allows it from everywhere on Private alone (see
+ * OPENSSH_BUILTIN_RULE_NAME). Because allows are additive, the built-in rule is
+ * disabled rather than left alongside — otherwise "scoped to the Polaris
+ * server" is a sentence the firewall does not agree with, and the endpoint is
+ * still unreachable the moment it joins a domain network.
+ */
 const FIREWALL_PS = `
 # --- 4. Scope inbound TCP/22 to the Polaris server -----------------------------
 $fwName = __FW_NAME__
@@ -444,15 +471,62 @@ New-NetFirewallRule -DisplayName $fwName \`
                     -Direction Inbound -Protocol TCP -LocalPort 22 \`
                     -RemoteAddress __SERVER_IP__ \`
                     -Action Allow -Profile Any | Out-Null
-Write-Host ('Firewall rule set: TCP/22 inbound from ' + __SERVER_IP__)
+Write-Host ('Firewall rule set: TCP/22 inbound from ' + __SERVER_IP__ + ' on every profile (Domain, Private, Public)')
+
+# Windows' own OpenSSH rule allows TCP/22 from ANY source, and only on Private.
+# Leaving it enabled would keep port 22 open to every host on a Private network
+# no matter how tightly the rule above is scoped, so it goes off and the Polaris
+# rule becomes the only inbound path to sshd.
+$builtInRules = @(Get-NetFirewallRule -Name __BUILTIN_FW_NAME__ -ErrorAction SilentlyContinue)
+if ($builtInRules.Count -eq 0) {
+  Write-Host 'No built-in OpenSSH firewall rule present — the Polaris rule is the only one'
+} else {
+  foreach ($rule in $builtInRules) {
+    if ($rule.Enabled -eq 'True') {
+      Disable-NetFirewallRule -Name $rule.Name
+      Write-Host ('Disabled ' + $rule.Name + ' (it allowed TCP/22 from any source)')
+    } else {
+      Write-Host ('Built-in rule ' + $rule.Name + ' already disabled')
+    }
+  }
+}
 `.trim();
 
+/**
+ * Emitted when no server address was supplied. Still fixes the PROFILE of
+ * Windows' built-in rule — a domain-joined endpoint is unreachable without it —
+ * while leaving the set of permitted sources exactly as Windows wrote it.
+ *
+ * Public is deliberately not added. The reachable-from-Domain problem is the
+ * one being fixed; enabling an any-source rule for TCP/22 on the profile a
+ * laptop picks up in an airport is not part of it.
+ */
 const NO_FIREWALL_PS = `
 # --- 4. Firewall --------------------------------------------------------------
-# No Polaris server address was configured, so this script does not touch the
-# firewall. Restrict inbound TCP/22 separately — leaving it open to every
-# source is a much wider exposure than Polaris needs.
-Write-Host 'Firewall: not modified (no Polaris server address configured)'
+# No Polaris server address was configured, so this script opens nothing and
+# scopes nothing. Restrict inbound TCP/22 separately — the built-in rule below
+# leaves it open to every source, which is a much wider exposure than Polaris
+# needs.
+#
+# What does get fixed is the rule's PROFILE. Windows creates its OpenSSH rule
+# for the Private profile only, so on a domain-joined endpoint — active profile
+# Domain — sshd is unreachable even though it is installed and running, with
+# nothing in the service or the event log to say so. Adding Domain changes which
+# NETWORKS the rule applies on, never which sources may connect.
+$builtInRules = @(Get-NetFirewallRule -Name __BUILTIN_FW_NAME__ -ErrorAction SilentlyContinue)
+if ($builtInRules.Count -eq 0) {
+  Write-Host 'Firewall: not modified (no Polaris server address configured, no built-in OpenSSH rule found)'
+} else {
+  foreach ($rule in $builtInRules) {
+    $ruleProfile = [string]$rule.Profile
+    if ($ruleProfile -eq 'Any' -or $ruleProfile -match 'Domain') {
+      Write-Host ('Built-in rule ' + $rule.Name + ' already covers the Domain profile (' + $ruleProfile + ')')
+    } else {
+      Set-NetFirewallRule -Name $rule.Name -Profile Domain,Private
+      Write-Host ('Widened ' + $rule.Name + ' from profile ' + $ruleProfile + ' to Domain, Private')
+    }
+  }
+}
 `.trim();
 
 /**
@@ -472,11 +546,12 @@ export function buildWindowsOnboardingScript(opts: WindowsOnboardingScriptOption
       ? ACCOUNT_CREATE_PS.replace(/__SID_ADMINS__/g, psLiteral(SID_ADMINISTRATORS))
       : ACCOUNT_EXISTING_PS;
 
-  const firewallBlock = serverIp
+  const firewallBlock = (serverIp
     ? FIREWALL_PS
         .replace(/__FW_NAME__/g, psLiteral(FIREWALL_RULE_NAME))
         .replace(/__SERVER_IP__/g, psLiteral(serverIp))
-    : NO_FIREWALL_PS;
+    : NO_FIREWALL_PS
+  ).replace(/__BUILTIN_FW_NAME__/g, psLiteral(OPENSSH_BUILTIN_RULE_NAME));
 
   return WINDOWS_ONBOARDING_PS
     .replace(/__PUBLIC_KEY__/g, psLiteral(publicKey))
@@ -494,7 +569,9 @@ export function buildWindowsOnboardingScript(opts: WindowsOnboardingScriptOption
     )
     .replace(
       /__FIREWALL_SUMMARY__/g,
-      serverIp ? `scopes inbound TCP/22 to ${serverIp}` : "leaves the firewall alone",
+      serverIp
+        ? `scopes inbound TCP/22 to ${serverIp} on every profile, and disables Windows' own any-source OpenSSH rule`
+        : "opens nothing, but extends Windows' own OpenSSH rule to the Domain profile so a domain-joined endpoint is reachable",
     );
 }
 
@@ -599,8 +676,11 @@ try {
  * Both modes are checked, because both are satisfiable: create mode provisions
  * the account, and existing mode now FAILS LOUDLY when the named account is
  * absent instead of authorizing a key for nobody. What stays out is the
- * firewall rule — with no server IP configured there is no rule to find, so
- * checking it would be the one loop the pair cannot break out of.
+ * firewall — with no server IP configured there is no Polaris rule to find, so
+ * checking it would be the one loop the pair cannot break out of. The same
+ * argument now covers Windows' built-in OpenSSH rule: remediation disables it
+ * when a server IP is set and widens it to Domain when one is not, and this
+ * builder is not told which, so either state would read as drift half the time.
  */
 export function buildWindowsOnboardingDetectionScript(opts: {
   publicKey: string;

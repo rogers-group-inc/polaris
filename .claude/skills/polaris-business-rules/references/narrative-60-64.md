@@ -21,7 +21,9 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 72](#rule-72) — A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success
 - [Rule 73](#rule-73) — Planned downtime is reported as planned, and a scoped view of a window still reports the whole window
 - [Rule 74](#rule-74) — A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the device's
+- [Rule 76](#rule-76) — Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it
 - [Rule 77](#rule-77) — A VIP describes an address; it does not claim it, and the status says every fact it has
+- [Rule 79](#rule-79) — An operator's removal of a MAC is a correction, not a suppression
 
 <a id="rule-60"></a>
 
@@ -1299,6 +1301,57 @@ characters into a field that will take 223 of them and learning so from an error
 server's own `reservationNotesBudget` across four shapes, which is what stops the mirror drifting
 from the thing it mirrors.
 
+## Rule 76 — Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it
+
+The Windows onboarding script ends by putting a firewall rule on the endpoint, and the rule it
+writes has always been right: `Polaris SSH (TCP 22)`, inbound TCP/22, `-RemoteAddress` the
+Polaris server, `-Profile Any`. Every profile. Nothing about it was ever Private-only.
+
+The rule beside it was the problem, and it is not ours. `Add-WindowsCapability -Online -Name
+OpenSSH.Server` makes Windows create `OpenSSH-Server-In-TCP` on its way in, and Windows creates
+it for the **Private profile only**, accepting TCP/22 from **any source**. Both halves of that
+are wrong for a fleet, in opposite directions:
+
+- A **domain-joined** endpoint is on the Domain profile, where that rule does not apply. On a
+  host where no Polaris server address was configured — the script then wrote no rule of its
+  own — sshd was installed, enabled, running and completely unreachable. The service reports
+  healthy. The event log says nothing. This is the same silence business rule 72 was written
+  about, arriving one step further along.
+- On a **Private** network it opens port 22 to every host on that network. Firewall rules are
+  additive allows: a second rule cannot narrow the first. So `-RemoteAddress 10.0.0.42` on the
+  Polaris rule restricted nothing at all while this one was enabled, even though the generated
+  script's own header told the operator it `scopes inbound TCP/22 to 10.0.0.42` — and so did the
+  card in the UI, and so did the wiki.
+
+The fix is to stop leaving Windows' rule unsettled, and what "settled" means follows from
+whether the operator gave Polaris a server address:
+
+| Server address | What the run leaves behind |
+|---|---|
+| set | the scoped Polaris rule on every profile, and `OpenSSH-Server-In-TCP` **disabled** — the Polaris rule is then the only inbound path to sshd, and the scoping claim is true |
+| blank | nothing opened, and `OpenSSH-Server-In-TCP` **widened** from `Private` to `Domain, Private` — a domain-joined endpoint becomes reachable, and which sources may connect is exactly what Windows wrote |
+
+**Public is deliberately never added.** The defect is that a domain-joined endpoint cannot be
+reached; enabling an any-source TCP/22 rule on the profile a laptop picks up in an airport is a
+different thing entirely, and not one an onboarding script should do on the operator's behalf.
+
+Three details carry the weight. The lookup is by **Name**, wildcarded (`OpenSSH-Server-In-*`) —
+the DisplayName is localized and the suffix is build-dependent (`-NoScope` exists on some), and
+a lookup that finds nothing takes the count-0 branch rather than throwing under the script's
+`$ErrorActionPreference = 'Stop'`. Both paths are **idempotent**, because each re-reads the
+rule's own `Enabled` / `Profile` before acting: this script runs on every boot and every
+remediation cycle. And the **detection half still judges no firewall** — it is not told whether
+a server address was configured, so both settled states would read as drift half the time, which
+is the boundary business rule 72 drew and this rule does not cross.
+
+What is NOT in scope here is who may use SSH once it is reachable. The script never writes
+`sshd_config`: stock Windows OpenSSH has no `AllowUsers`/`AllowGroups` and password
+authentication on, so every account the endpoint lets log on can authenticate. The account on
+the card is only the one whose KEY is authorized. The firewall scope above is the whole of what
+limits who can reach the port, which is why leaving a wider rule beside a narrow one mattered.
+
+---
+
 <a id="rule-77"></a>
 
 ## Rule 77 — A VIP describes an address; it does not claim it, and the status says every fact it has
@@ -1316,3 +1369,65 @@ This started as an operator report with two halves that turned out to be one bug
 **The per-subnet discover reads VIPs now, which is what the button was renamed for.** It is one `/api/v2/cmdb/firewall/vip` call on the same transport as the DHCP reads — the FortiManager proxy forwards REST to the device, so both integration types get the device's own encoding, and `parseVipRow` accepts all three encodings the CMDB row is known to arrive in (FortiOS REST, the FortiManager JSON-RPC fields-projected get, and the proxy) rather than one, because parsing only one is how proxy-mode mapped IPs were silently dropped before. The call is *settled* rather than awaited alongside the DHCP reads: an API token scoped away from the firewall CMDB is a normal deployment, and a gate that answers for DHCP must still complete its DHCP reconcile. A VIP table that could not be read skips every VIP decision — never "there are no VIPs" — and says so in both the toast and the `subnet.refresh` Event, which is business rule 53 applied to a single read rather than a whole device. Retirement (clearing a stale snapshot, converting a `vip` row that a DHCP entry has succeeded, releasing one that nothing else claims) is scoped to snapshots naming *this* gate, because RFC1918 space repeats behind different FortiGates and another gate's VIP is not this pass's to judge — the same per-device scoping business rule 17 puts on ARP presence evidence.
 
 **Not addressed here, deliberately:** whether the FortiGate itself will accept a `reserved-address` entry whose IP is a VIP external is the device's business, and its refusal already has a home — the push records `pushStatus` and the gate's own message in `pushError`, which the panel now actually renders. Polaris does not pre-judge it.
+
+---
+
+## Rule 79 — An operator's removal of a MAC is a correction, not a suppression
+
+An asset's MAC list is not a list of the device's NICs. It is every address anything has ever
+seen that device transmit as, which on a modern fleet includes docks and USB adapters (whose
+MAC follows the dock, not the laptop), randomized Wi-Fi addresses, and ZTNA-relayed
+identities — plus whatever a ghost-merge brought across from another record. So the list
+periodically names an address that belongs to some *other* device, and the operator needs a
+way to say so. `DELETE /assets/:id/macs/:mac` is that way.
+
+The question this rule settles is what "remove" means when discovery runs again.
+
+The tempting answer is that it means *never again*: tombstone the row, teach
+`reconcileMacAddresses` to skip it, done. It is tempting because the alternative sounds like
+the feature not working — the operator removes a MAC, a discovery pass runs, the MAC is back,
+and that reads as the button being broken. The design was offered in exactly those terms in
+2026-09 and **declined**, and the reasoning is what this rule records, because the next
+session to see a MAC come back will reach for the tombstone again.
+
+Polaris cannot distinguish a stale association from a live one, and the two want opposite
+treatment:
+
+- A MAC inherited from a bad merge, or from a DHCP lease on a decommissioned device, is
+  **never reported again**. Deleting the row is the whole fix; a tombstone adds nothing.
+- A MAC that comes **straight back** is being transmitted right now. Something on the wire is
+  presenting that address alongside this device — a dock shared between desks, a relayed
+  identity, a mis-cabled port. That is a fact about the network, and the only mechanism that
+  would make it stop appearing is one that makes Polaris lie about what it can see.
+
+A suppression helps in the first case, where nothing needed help, and in the second case
+produces a permanently wrong asset record that *looks* correct — the worst available outcome,
+because it is the one nobody re-examines. Leaving the removal one-shot means a returning MAC
+is a signal: it says the association is live, and points at a physical thing to go and find.
+
+Two obligations fall out of that choice.
+
+**The confirm has to say so.** A control that silently fails to stick is indistinguishable
+from a broken one, and the operator will click it repeatedly. The dialog states that discovery
+will re-add the address if the network reports it again, so a MAC that returns is legible as
+the documented behaviour rather than a defect. The same sentence is in the operator wiki.
+
+**The primary MAC has to be recomputed properly.** Removing the row the `Asset.macAddress`
+scalar pointed at forces a promotion, and that promotion is the same decision
+`selectPrimaryMac` makes everywhere else, so it goes through that helper rather than a local
+sort. A freshest-`lastSeen` sort — which is what the endpoint did until 2026-09-21 — breaks
+both of the helper's rules at once: it lets a dock sighting outrank the device's own
+Intune-reported NIC, and it can promote the start key of an interface-scrape `[mac, macEnd]`
+range, which is a block of switch-port addresses rather than a device identity. The range case
+is self-correcting in the ugliest way: the next discovery reconcile overwrites the scalar
+again, so the asset's primary MAC flickers between two values on a schedule. An asset whose
+only surviving entries are ranges correctly ends with `macAddress = null`.
+
+Finally, the grant. Correcting an inventory record is the assets administrator's act, so the
+route is `assets:write` — and it always was. What was wrong for as long as the endpoint
+existed is the browser: the single control that called it was gated on `canManageNetworks()`,
+i.e. `subnets:fullwrite`, so the built-in `assetsadmin` role could call the endpoint all day
+and never saw the button, while an admin holding every key saw it and never noticed. Too-loose
+gating announces itself with a 403; gating on another page's key is silent, and presents as a
+missing feature rather than a permissions bug. See `polaris-ui-canon` →
+`canon-shared-kit.md` for the general form.
