@@ -221,145 +221,116 @@
   box-shadow: 0 0 0 2px rgba(2,136,209,0.20);
 }
 
-/* ─── Theme wheel ──────────────────────────────────────────────
-   A dial, not a menu. Replaced the row-menu theme picker: a menu made the
-   operator read three words and aim at one, where the wheel shows where they
-   are in the day and moves them along it.
+/* ─── Theme band ────────────────────────────
+   A band, not a menu. Replaced the row-menu theme picker: a menu made the
+   operator read three words and aim at one, where the band shows where they
+   are in the day and moves them along it. It was briefly a rotating DIAL of
+   the same clock; the geometry here is the phone's, so that one artwork and
+   one set of rules now serve both screens.
 
-   The art (/img/brand/time-wheel.png) is a 24-hour clockface: the engraved sun
-   face at the top, the moon face at the bottom, dawn gold on the upper-left
-   flank, the red-rust of late afternoon down the right. Every theme’s palette
-   was drawn from one of those positions, so each theme OWNS its angle on the
-   ring (THEME_WHEEL_ANGLE in app.js) and a click turns the ring to bring that
-   angle under the notch at the crest.
+   The art (/img/brand/time-strip.png) is a 24-hour clockface UNROLLED: the
+   engraved sun face, the red-rust of late afternoon, the moon face, dawn gold,
+   in that order and a quarter of the strip apart. Every theme's palette was
+   drawn from one of those positions, so each theme OWNS its place along the
+   strip (THEME_BAND_POS in app.js) and a click travels the band to bring that
+   place to the centre of the window.
 
-   Only the crest is in the rail: a 260px ring in a 78px window, so ~30% shows
-   and the rest reads as continuing on past the sidebar. The label sits in the
-   ring’s transparent middle, under the arc.
+   Only a slice is in the rail: a ~1450px strip in a ~204px window, so the day
+   reads as continuing on past both edges rather than as a thing with ends.
+   Nothing else is drawn — no caption naming the theme, no centre marker — so
+   the control is the artwork and the slice of it showing IS the answer to
+   “which theme is this”. The name survives only in the button's aria-label,
+   which _setTheme repaints; that is the accessible name, not a nicety.
 
-   Two things not to break:
-   - The dial turns, the notch does not, and it only ever turns ONE way. See
-     _wheelRotationFor() in app.js, which keeps stepping downward so the wrap
-     nightfall round to morning carries forward through the day instead of
+   Four things not to break:
+   - The band travels, the window does not, and it only ever travels ONE way.
+     See _advanceThemeBands() in app.js, which keeps adding forward distance so
+     the wrap nightfall round to morning carries on through the day instead of
      rewinding through the afternoon.
-   - Rotation is written straight to the ring’s style.transform. Never
-     re-render the <img> on a theme change — a replaced node starts its
-     transition over from the new value and the turn is never seen, which is
-     the entire point of the control. ─────────────────────────────────── */
-.theme-wheel {
-  position: relative;
+   - The track holds the art THREE times. It is anchored one strip width left
+     of centre, so copy two sits under the middle of the window and copies one
+     and three cover it either side; with two copies, bare surface shows on the
+     right as the position nears the seam.
+   - The translation is written straight to the track's style.transform, and
+     its position is MEASURED against the rendered art. Never re-render the
+     <img> copies on a theme change — a replaced node starts its transition over
+     from the new value and the travel is never seen, which is the entire point
+     of the control — and never hard-code a width here: the art is a 2x asset
+     sized by height, so what it renders at depends on this band's height and
+     the display's pixel ratio.
+   - The edge fades live on the WINDOW and never on the track. A mask on the
+     track travels with it and would fade a moving slice of the artwork instead
+     of the ends of the window. ──────────────────────────────── */
+.theme-band {
   display: block;
   width: 100%;
-  height: 78px;
   padding: 0;
   border: none;
   background: none;
   border-radius: var(--radius-md);
   cursor: pointer;
-  overflow: hidden;
   -webkit-tap-highlight-color: transparent;
 }
-/* Non-rotating clip layer. The fade HAS to live here and not on the ring: a
-   mask on the ring is in the ring’s own coordinate space and would spin with
-   it.
-
-   NOTHING ON THE PATH FROM HERE TO THE RING MAY CARRY A MASK OR A FILTER.
-   This used to be `mask-image: linear-gradient(...)` on this element, and the
-   dial was INVISIBLE on nightfall in Firefox — reported as "the nightfall
-   wheel image doesn't appear". Firefox paints nothing at all for a masked or
-   filtered layer whose content is rotated (close to) a half-turn, and
-   nightfall is the one selectable theme whose dial angle is 180°. It was
-   never about the theme: noon blanks too if you park it at 180°, and
-   nightfall renders fine at 179° or 181°.
-
-   Everything that reads like a cheaper fix was measured and does not work:
-   `will-change`, `translateZ(0)`, `backface-visibility`, `isolation`, the
-   `rotate:` longhand, and nudging the angle to 180.01° all still blank, and a
-   `filter` anywhere re-triggers it even with this fade redrawn. The only
-   repair is to have no compositing layer over the rotated image at all — so
-   the fade is now PAINTED ON TOP instead of masking the layer.
-
-   The gradient is the fallback; where masks are supported the same fade is a
-   background-COLOUR that is masked instead, because a colour transitions with
-   the theme and a background-image does not — without that, the bottom of the
-   dial snaps to the new palette while the rail behind it is still crossfading.
-   The mask here is safe: this overlay holds no rotated content. Both fade to
-   the rail's own token, which is what the dial sits on. ─────────────────── */
-.theme-wheel-window {
-  position: absolute;
-  inset: 0;
+/* The clip layer, and the only element here with a size of its own — the band
+   carries no caption and no marker, so this height IS the control. It also
+   sets how much of the day is visible, and not the way round you would guess:
+   taller art is wider art, so a taller band shows LESS of the clock, not more.
+   At 48px roughly a sixth of the strip is in the rail. */
+.theme-band-window {
+  position: relative;
+  display: block;
+  height: 48px;
   overflow: hidden;
+  border-radius: var(--radius-sm);
 }
-.theme-wheel-window::after {
+.theme-band-track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  display: flex;
+  width: max-content;
+  /* Duration MUST equal THEME_FADE_MS in app.js — the band and the palette
+     have to arrive together, and a multi-leg sweep makes any mismatch obvious.
+     The easing is overridden per leg by the data-theme-fading phase rules. */
+  transition: transform 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.theme-band-track img {
+  height: 100%;
+  width: auto;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* Both ends fade into the rail's own token, so the strip reads as continuing
+   past the sidebar rather than being cropped by it. Painted ON TOP of the
+   track — see the block comment. */
+.theme-band-window::after {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(to bottom, transparent 62%, var(--color-bg-tertiary) 100%);
+  background: linear-gradient(to right,
+    var(--color-bg-tertiary) 0%, rgba(0,0,0,0) 18%,
+    rgba(0,0,0,0) 82%, var(--color-bg-tertiary) 100%);
 }
-@supports (mask-image: linear-gradient(#000, #000)) {
-  .theme-wheel-window::after {
-    background: var(--color-bg-tertiary);
-    -webkit-mask-image: linear-gradient(to bottom, transparent 62%, #000 100%);
-    mask-image: linear-gradient(to bottom, transparent 62%, #000 100%);
-  }
-}
-.theme-wheel-ring {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  width: 260px;
-  height: 260px;
-  margin-left: -130px;
-  transform-origin: 50% 50%;
-  pointer-events: none;
-  user-select: none;
-  /* No filter here, ever — see the window's comment. A brightness() on this
-     element blanks the dial at 180° exactly as the old mask did. */
-  /* Slow and eased-out: the turn is the whole feedback, so it has to be
-     watchable, and the arriving emblem readable as it settles. The duration is
-     the SAME as the palette crossfade (THEME_FADE_MS) on purpose — dial and
-     light have to arrive together, or a multi-leg turn visibly drifts apart.
-     The easing is overridden per leg below. */
-  transition: transform 800ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-.theme-wheel-notch {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 2px;
-  height: 8px;
-  margin-left: -1px;
-  border-radius: 1px;
-  background: var(--color-accent);
-}
-.theme-wheel-label {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 11px;
-  text-align: center;
-  font-size: 0.8rem;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  color: var(--color-text-secondary);
-  transition: color 0.15s;
-}
-.theme-wheel:hover .theme-wheel-label { color: var(--color-text-primary); }
-/* Hover is the label plus a tint on the button, and deliberately NOT the
-   `filter: brightness(1.12)` on the ring this used to be: that filter is a
-   compositing layer over the rotated image, so on nightfall the whole dial
-   vanished the moment the pointer touched it — the one moment it is being
-   looked at. A background-color costs no layer. */
-.theme-wheel:hover { background: var(--color-bg-elevated); }
-.theme-wheel:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+/* Hover is a tint on the button and nothing else — the same affordance the
+   sidebar's other bottom links carry, and with the caption gone there is no
+   text left to lift. It deliberately leaves the artwork unfiltered: one
+   artwork serves all four palettes, and a brightness lift on it has been
+   proposed before on a contrast measurement that turned out to be describing a
+   slice of artwork that was not being painted at all. Measure what is on
+   screen before filtering this. */
+.theme-band:hover { background: var(--color-bg-elevated); }
+.theme-band:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) {
-  .theme-wheel-ring { transition: none; }
+  .theme-band-track { transition: none; }
 }
 
 /* ─── Theme crossfade ──────────────────────────────────────────
    The palette eases from one time of day to the next instead of cutting, so
-   the room changes light while the dial turns.
+   the room changes light while the band travels.
 
    Only present DURING a change: _setTheme() puts data-theme-fading on <html>,
    swaps data-theme, and drops the attribute when the fade is done. A permanent
@@ -369,13 +340,13 @@
    Two deliberate choices:
    - Color properties only, never the shorthand `all`. `all` would animate
      layout on anything that also changes size with the theme.
-   - .theme-wheel-ring is EXCLUDED. This rule outspecifies the ring’s own
-     `transition: transform`, and replacing it would kill the dial’s rotation —
+   - .theme-band-track is EXCLUDED. This rule outspecifies the track’s own
+     `transition: transform`, and replacing it would kill the band’s travel —
      the one animation that must survive a theme change.
    Keep the duration in step with THEME_FADE_MS in app.js. ───────────────── */
-html[data-theme-fading] *:not(.theme-wheel-ring),
-html[data-theme-fading] *:not(.theme-wheel-ring)::before,
-html[data-theme-fading] *:not(.theme-wheel-ring)::after {
+html[data-theme-fading] *:not(.theme-band-track),
+html[data-theme-fading] *:not(.theme-band-track)::before,
+html[data-theme-fading] *:not(.theme-band-track)::after {
   transition: background-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
               border-color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
               color 800ms cubic-bezier(0.22, 0.61, 0.36, 1),
@@ -385,15 +356,15 @@ html[data-theme-fading] *:not(.theme-wheel-ring)::after {
   transition-delay: 0s;
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-theme-fading] *:not(.theme-wheel-ring),
-  html[data-theme-fading] *:not(.theme-wheel-ring)::before,
-  html[data-theme-fading] *:not(.theme-wheel-ring)::after { transition: none; }
+  html[data-theme-fading] *:not(.theme-band-track),
+  html[data-theme-fading] *:not(.theme-band-track)::before,
+  html[data-theme-fading] *:not(.theme-band-track)::after { transition: none; }
 }
 
 /* ─── Multi-leg turns ──────────────────────────────────────────
    A click from noon to nightfall is two legs — noon→afternoon, afternoon→
    nightfall — run back to back with no gap. Left alone, each leg would ease
-   out and in again, so the dial would visibly slow to a stop at the golden
+   out and in again, so the band would visibly slow to a stop at the golden
    hour and set off again: a pause where the design wants one continuous
    sweep. The phase on data-theme-fading says where in the sweep this leg sits,
    and the easing is split across the legs so acceleration happens once at the
@@ -404,26 +375,26 @@ html[data-theme-fading] *:not(.theme-wheel-ring)::after {
      mid   an interior leg — constant speed throughout
      out   last leg of several — arrive decelerating
 
-   Applies to the palette and the dial alike, so they stay locked together.
+   Applies to the palette and the band alike, so they stay locked together.
 
-   The `:not(.theme-wheel-ring)` below is load-bearing, not copied by habit:
+   The `:not(.theme-band-track)` below is load-bearing, not copied by habit:
    it is what raises these rules to the crossfade block’s specificity. Without
    it the crossfade’s shorthand `transition:` wins and re-asserts the full ease
    on every color property, so the light eases to a stop at the waypoint while
-   the wheel glides past — the exact pause the phase exists to remove. The ring
+   the band glides past — the exact pause the phase exists to remove. The track
    is then matched again by name so it keeps the same curve. ─────────────── */
-html[data-theme-fading="in"] *:not(.theme-wheel-ring),
-html[data-theme-fading="in"] *:not(.theme-wheel-ring)::before,
-html[data-theme-fading="in"] *:not(.theme-wheel-ring)::after,
-html[data-theme-fading="in"] .theme-wheel-ring { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
-html[data-theme-fading="mid"] *:not(.theme-wheel-ring),
-html[data-theme-fading="mid"] *:not(.theme-wheel-ring)::before,
-html[data-theme-fading="mid"] *:not(.theme-wheel-ring)::after,
-html[data-theme-fading="mid"] .theme-wheel-ring { transition-timing-function: linear; }
-html[data-theme-fading="out"] *:not(.theme-wheel-ring),
-html[data-theme-fading="out"] *:not(.theme-wheel-ring)::before,
-html[data-theme-fading="out"] *:not(.theme-wheel-ring)::after,
-html[data-theme-fading="out"] .theme-wheel-ring { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
+html[data-theme-fading="in"] *:not(.theme-band-track),
+html[data-theme-fading="in"] *:not(.theme-band-track)::before,
+html[data-theme-fading="in"] *:not(.theme-band-track)::after,
+html[data-theme-fading="in"] .theme-band-track { transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+html[data-theme-fading="mid"] *:not(.theme-band-track),
+html[data-theme-fading="mid"] *:not(.theme-band-track)::before,
+html[data-theme-fading="mid"] *:not(.theme-band-track)::after,
+html[data-theme-fading="mid"] .theme-band-track { transition-timing-function: linear; }
+html[data-theme-fading="out"] *:not(.theme-band-track),
+html[data-theme-fading="out"] *:not(.theme-band-track)::before,
+html[data-theme-fading="out"] *:not(.theme-band-track)::after,
+html[data-theme-fading="out"] .theme-band-track { transition-timing-function: cubic-bezier(0, 0, 0.36, 1); }
 
 /* ─── Reset ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -456,7 +427,7 @@ code {
 
    The warmth is doing a job, not a mood: morning and noon are the two daylight
    themes and they used to sit a few percent apart, which made half the theme
-   dial’s travel look like nothing happening. Morning now owns the only neutrals
+   band’s travel look like nothing happening. Morning now owns the only neutrals
    in the system carrying real yellow, and noon owns the neutral whites — so the
    pair reads as amber against white at a glance. */
 [data-theme="morning"] {
@@ -518,7 +489,7 @@ code {
 
 /* ─── Afternoon — the clockface’s red-rust flank, an hour before dusk. NOT
    SELECTABLE: no THEMES entry, no picker slot, never persisted. It exists so
-   the dial has somewhere to be between noon and nightfall — a click on noon
+   the band has somewhere to be between noon and nightfall — a click on noon
    fades THROUGH this palette and carries on to nightfall without stopping.
    Daylight family, so it inherits the base above (which is why its selector
    is in the widened :is() list), but the reddest thing in the system: the
@@ -4561,6 +4532,12 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .conflict-label { cursor: help; color: #ef5350; font-weight: 600; }
 .conflict-icon { font-size: 0.85em; }
 :is([data-theme="morning"],[data-theme="noon"],[data-theme="afternoon"]) .conflict-label { color: #d32f2f; }
+
+/* A status cell carrying an EXPLANATORY tooltip rather than a warning — the
+   help cursor without the red or the ⚠. "VIP / Reserved" describes a healthy
+   reservation and has something to say about it; treating that like a conflict
+   would make a normal page look full of problems (business rule 77). */
+.status-note { cursor: help; }
 
 /* Click-to-copy cells in the IP panel (IP / hostname / MAC). Subtle hover
    underline so the affordance is discoverable without screaming for attention;

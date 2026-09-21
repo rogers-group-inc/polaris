@@ -11,6 +11,20 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 62](#rule-62) — An install is identified by something it persists, never by the name the runtime handed the process
 - [Rule 63](#rule-63) — The complexity bar belongs to the operator, and a password that no longer meets it is replaced on the far side of the second factor
 - [Rule 64](#rule-64) — A passkey is bound to the origin that issued its challenge, the install decides what a passkey is for, and it never names an account that does not already exist
+- [Rule 65](#rule-65) — A delivery test is a specimen of the alert, not a rehearsal against live inventory
+- [Rule 66](#rule-66) — A measurement window may be counted in readings, and then the hold counts poll groups
+- [Rule 67](#rule-67) — A missed response-time poll is the timeout it cost, and an outage resets the window
+- [Rule 68](#rule-68) — What Polaris ships and what the operator owns are two different kinds of MIB
+- [Rule 69](#rule-69) — A reservation count is of addresses held, and a release is history
+- [Rule 70](#rule-70) — Absence from a directory decommissions what the directory manages, and only when the read was whole
+- [Rule 71](#rule-71) — A figure Polaris reports about itself accounts for itself, and a broken measurement says so
+- [Rule 72](#rule-72) — A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success
+- [Rule 73](#rule-73) — Planned downtime is reported as planned, and a scoped view of a window still reports the whole window
+- [Rule 74](#rule-74) — A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the device's
+- [Rule 76](#rule-76) — Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it
+- [Rule 77](#rule-77) — A VIP describes an address; it does not claim it, and the status says every fact it has
+- [Rule 78](narrative-78.md#rule-78) — An automation may choose to speak for a silenced device, and then it must name who silenced it (in `narrative-78.md`; this file reached the 1500-line ceiling)
+- [Rule 79](#rule-79) — An operator's removal of a MAC is a correction, not a suppression
 
 <a id="rule-60"></a>
 
@@ -1288,181 +1302,133 @@ characters into a field that will take 223 of them and learning so from an error
 server's own `reservationNotesBudget` across four shapes, which is what stops the mirror drifting
 from the thing it mirrors.
 
+## Rule 76 — Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it
 
-<a id="rule-78"></a>
+The Windows onboarding script ends by putting a firewall rule on the endpoint, and the rule it
+writes has always been right: `Polaris SSH (TCP 22)`, inbound TCP/22, `-RemoteAddress` the
+Polaris server, `-Profile Any`. Every profile. Nothing about it was ever Private-only.
 
-## Rule 78 — An automation may choose to speak for a silenced device, and then it must name who silenced it
+The rule beside it was the problem, and it is not ours. `Add-WindowsCapability -Online -Name
+OpenSSH.Server` makes Windows create `OpenSSH-Server-In-TCP` on its way in, and Windows creates
+it for the **Private profile only**, accepting TCP/22 from **any source**. Both halves of that
+are wrong for a fleet, in opposite directions:
 
-Dependency suppression exists to stop a storm. When a FortiGate goes dark, every switch, access
-point, server and camera behind it stops answering too, and without suppression each of them
-raises its own Down alert about an outage that has exactly one cause. So a device behind a
-confirmed-down parent is marked `dependencySuppressed`, `assetCanTrigger` drops it from every
-automation (rule 37), and any alert already live on it is retired by the 60-second sweep (rule
-16). For the NOC that is the right answer: one alert, on the gate, is the outage.
+- A **domain-joined** endpoint is on the Domain profile, where that rule does not apply. On a
+  host where no Polaris server address was configured — the script then wrote no rule of its
+  own — sshd was installed, enabled, running and completely unreachable. The service reports
+  healthy. The event log says nothing. This is the same silence business rule 72 was written
+  about, arriving one step further along.
+- On a **Private** network it opens port 22 to every host on that network. Firewall rules are
+  additive allows: a second rule cannot narrow the first. So `-RemoteAddress 10.0.0.42` on the
+  Polaris rule restricted nothing at all while this one was enabled, even though the generated
+  script's own header told the operator it `scopes inbound TCP/22 to 10.0.0.42` — and so did the
+  card in the UI, and so did the wiki.
 
-### The plant operator hears nothing
+The fix is to stop leaving Windows' rule unsettled, and what "settled" means follows from
+whether the operator gave Polaris a server address:
 
-It is the wrong answer for the people who care about one device. The request that forced this
-rule (2026-09-20) was a PLC on a plant switch, with the plant operators subscribed to the PLC's
-down automation. When the switch died the PLC went Dep. Down, the automation went silent, and the
-only string anywhere in Polaris naming the switch as the reason was an audit Event
-(`monitor.dependency_suppressed … parent SW-PLANT-3 down`) that nobody on the plant floor reads.
-The switch's own alert went to the network team. The people whose line had stopped were told
-nothing at all.
+| Server address | What the run leaves behind |
+|---|---|
+| set | the scoped Polaris rule on every profile, and `OpenSSH-Server-In-TCP` **disabled** — the Polaris rule is then the only inbound path to sshd, and the scoping claim is true |
+| blank | nothing opened, and `OpenSSH-Server-In-TCP` **widened** from `Private` to `Domain, Private` — a domain-joined endpoint becomes reachable, and which sources may connect is exactly what Windows wrote |
 
-The operator's words: *"if the parent switch actually goes down, then the plant operators will
-still get an email saying the PLC is dependency down and they'll know which switch is
-responsible."* Two demands, both load-bearing: the alert still goes out, and it names the cause.
+**Public is deliberately never added.** The defect is that a domain-joined endpoint cannot be
+reached; enabling an any-source TCP/22 rule on the profile a laptop picks up in an airport is a
+different thing entirely, and not one an onboarding script should do on the operator's behalf.
 
-### The opt-out is the down trigger's own
+Three details carry the weight. The lookup is by **Name**, wildcarded (`OpenSSH-Server-In-*`) —
+the DisplayName is localized and the suffix is build-dependent (`-NoScope` exists on some), and
+a lookup that finds nothing takes the count-0 branch rather than throwing under the script's
+`$ErrorActionPreference = 'Stop'`. Both paths are **idempotent**, because each re-reads the
+rule's own `Enabled` / `Profile` before acting: this script runs on every boot and every
+remediation cycle. And the **detection half still judges no firewall** — it is not told whether
+a server address was configured, so both settled states would read as drift half the time, which
+is the boundary business rule 72 drew and this rule does not cross.
 
-Silence stays the default. What changed is that a `monitor status is down` automation can opt out
-of it, and only that automation: `trigger.alertWhenDependencyDown` rides the trigger JSON beside
-`missedPolls`, for the same reason `missedPolls` does — both are properties of the down verdict,
-not of the rule's delivery. `validateMissedPolls` refuses the key off a down-detection trigger and
-inside a multi-condition trigger (a silenced device reports nothing the other conditions could
-read), and the one reader, `ruleAlertsWhenDependencyDown`, is gated on `isDownDetectionTrigger`
-so a key stranded on a retyped trigger can never turn a CPU automation into one that fires about
-silenced devices. `triggerIdentityOf` ignores it: ticking the box must not purge the rule's state
-rows and re-arm every debounce, the same protection the count has.
+What is NOT in scope here is who may use SSH once it is reachable. The script never writes
+`sshd_config`: stock Windows OpenSSH has no `AllowUsers`/`AllowGroups` and password
+authentication on, so every account the endpoint lets log on can authenticate. The account on
+the card is only the one whose KEY is authorized. The firewall scope above is the whole of what
+limits who can reach the port, which is why leaving a wider rule beside a narrow one mattered.
 
-The wizard's catalog carries the key's name (`downDetection.dependencyDownKey`), so a browser
-talking to a pre-upgrade server renders no control rather than one whose key the API would 400.
+---
 
-### It fires on the edge, not on the count
+<a id="rule-77"></a>
 
-The engine's gate loop keeps an opted-in automation's dependency-suppressed devices in `active`,
-and `resolveAssetStateReadings` hands each of them a SYNTHESIZED reading: `value: "down"`,
-`dependencyDown: true`, the probe's own verdict kept aside as `ownMonitorStatus`. The alert
-therefore fires the moment the reconciler flags the device, not when the device's own probe —
-running at half cadence while suppressed — reaches the missed-poll count.
+## Rule 77 — A VIP describes an address; it does not claim it, and the status says every fact it has
 
-That was a decision, taken with the operator, and the reasoning is worth keeping. The device's own
-count is the definition of down for a device Polaris can reach (rule 36). A device behind a dark
-switch is not one Polaris can reach; its own probe is going to fail whatever the switch does, and
-waiting for it to say so would tell the plant operator, minutes late, what the pill already says.
-The parent's confirmed verdict is the evidence. A device that keeps answering over a redundant
-path is still handled honestly: the synthesized reading holds the alert while the flag holds, and
-the moment the flag clears the real status returns — `up` recovers the alert normally.
+This started as an operator report with two halves that turned out to be one bug: *"I can't push a reservation to a specific IP because there is a VIP configured for that IP, but I don't see VIP in the status field for that IP."* Both halves are the same mistake in different places — treating "this address has a VIP" as the single answer to "what is this address", when business rule 23 had already established that an address carries several facts at once and that collapsing them is how Polaris ends up disagreeing with the FortiGate in front of the operator.
 
-### The alert says what it is, and names who
+**Why the VIP was invisible.** Three reasons stacked, and each one alone was enough. The Status column was a single-winner ladder, and the VIP rung sat sixth — behind Conflict, behind the two push states, behind DHCP Reservation and DHCP Lease. So the moment an address carried a VIP *and* anything else, the VIP stopped being reported: a VIP on a leased address read "DHCP Lease", and a VIP on an address Phase 3c had just raised its own fill-only conflict card about read "Conflict". Underneath that, `getSubnetIps`'s `toReservationDto` — the one DTO behind `GET /subnets/:id/ips`, and therefore behind the whole slide-in — did not ship `vipInfo` at all, so the VIP badge beside the hostname had nothing to render from and had never rendered for anyone. The same omission covered `pushStatus`, `pushQueuedAt`, `pushAttempts` and `pushError`, which is a second dead feature found by the same read: the panel has rungs for "Queued for push" and "Push failed" and a Retry button gated on them, and none of the three could fire, so a reservation queued against an unreachable gate rendered as an ordinary active row with nothing to say it had not landed. And third, on the row the operator was actually looking at, there was nothing to *put* in a second segment even if the column had had one: a `vip` row was the only authoritative row that could sit on an address the gate was also leasing and record nothing about the lease, because Phase 5's VIP branch fills a MAC and raises a fill-only conflict but writes no binding.
 
-Every surface says DEPENDENCY DOWN, because a message reading "monitorStatus = down (threshold
-down)" would be the one thing this alert is not saying. Five template tokens carry it
-(`utils/notificationTemplate.ts`), all present-but-empty on every other alert so the default body
-prints them for free: `{dependency.summary}` is the whole notice — *DEPENDENCY DOWN — PLC-7 is
-unreachable because its upstream device SW-PLANT-3 is down* — and rides a slate banner under the
-headline (the Dep. Down pill's colour) that `pruneEmptyDivs` removes on every other send;
-`{dependency.upstream}` and `{dependency.rootCause}` are fact rows; `{dependency.tag}` appends
-` · DEPENDENCY DOWN` to the default subject; and `{dependency.headline}` is the
-compact form — the state and who, without the device's own name.
+**Why the reservation was refused.** `sourceType: "vip"` is in `DEVICE_OWNED_SOURCE_TYPES` and was not in `isSupersedableByCreate`, so the collision check 409'd. That was right about the verb and wrong about the noun: a VIP is device configuration and Polaris must not pretend to own it, but what a VIP states is *what happens to traffic for an address*, not *that the address is spoken for in the pool*. The mapped and realserver addresses behind a VIP are ordinary hosts — a web server behind a DNAT is exactly the kind of thing an operator wants a DHCP reservation for — and even the external address is one an operator may legitimately want held in IPAM so nothing else is handed it. `interface_ip` is the case that really cannot be claimed, and it stays refused: that address is live on an interface right now. So the two source types that had been travelling together since they were introduced part company here, on the one question where they differ.
 
-That fifth token exists because of a hole a live dev run found, and it is worth
-recording as the general shape of the mistake. The seeded "Asset down"
-automation carries `messageTemplate: "{asset} is down"`, and an operator's own
-template WINS over the generated default — correctly, it is theirs. But push,
-Slack, Teams and Pushbullet send `Notification.message` and nothing else, so on
-the very automation most likely to be covering a PLC, the plant would have been
-paged with the one fact they already knew ("ASHF-FILE-01 is down") and none of
-the reason. The email was fine; the surfaces the operator actually carries were
-not. So the notice is APPENDED to their words rather than replacing them —
-`"ASHF-FILE-01 is down — DEPENDENCY DOWN — upstream ASHF-CORE-SW1 is down (root
-cause ASHF-EDGE-FG1)"` — and skipped when their template already renders the
-notice itself, since it is a catalogued token they may have used. `{trigger.summary}` is replaced by
-`dependencyTriggerSummary` (the device's own probe did not decide this alert, so "Monitor status
-is down" would mislead), and the default in-app message — what push, Slack, Teams and the phone
-show — is the rule name plus the whole sentence.
+**The shape of the fix is business rule 23's, applied one column further.** Ownership is `sourceType`; how the gate serves it is `dhcpBinding`; the VIP is `vipInfo`; and no surface may collapse them. Concretely: the claim releases the VIP row with no device I/O (it has no push pointers and is not a `dhcp_lease`, so neither unpush branch nor the lease-expiry branch fires — the same pure-DB release a lease-backed FortiAP row already gets) and carries the snapshot onto the operator's new row, so the address still reports its VIP and the pill reads "VIP / Reserved". A `vip` row learns a DHCP entry at its own address through `decideVipDhcpBinding`, which is `decideInfraDhcpBinding` with the same three omissions kept verbatim and for the same reasons: `sourceType` is never flipped (only the succession path, which can see the VIP is *gone*, is allowed to decide that), `expiresAt` is never stamped (the row would expire on the gate's lease clock, be re-created next cycle, and churn), and `macAddress` is filled only into a blank and only from the entry, because that is the MAC the gate actually saw requesting the address. And the Status column composes: the VIP is a prefix, the allocation is the rest, and every standalone label is byte-for-byte what it was so nothing an operator learned to read has moved.
 
-Naming who is the harder half, and it is not `evaluateSuppression`'s answer. That function
-returns a boolean per asset and throws away which parent decided it; worse, the device directly
-above is not always the device that is down. A PLC's switch may itself be Dep. Down under a dark
-FortiGate — its own probe reads `down` too, since it is behind the gate — and naming the switch
-would send the plant operator to a box that is a victim, not a cause. So
-`dependencyTreeService.resolveDependencyBlame` walks UP. A parent is blamed as `dependency_test`,
-`maintenance`, `suppressed` or `down`, in that order: the two overlays first because the operator
-has already named the cause ("pretend THIS box went offline"), and `suppressed` BEFORE `down` so a
-switch that is both keeps the walk going to the gate. The first blamed monitored parent is the
-UPSTREAM; the walk continues while the blamed node is blamed only for being suppressed itself,
-and the first node dark in its own right is the ROOT CAUSE. Unmonitored parents are transparent
-and unmonitored HA standbys ignored, as in `isParentOk`; among redundant parents a definitive
-reason outranks `suppressed` and hostname breaks the tie; the walk is bounded at sixteen hops and
-says `truncated` on the cap or a cycle. `{dependency.rootCause}` is BLANK when it is the upstream
-device itself, so the "Root cause" row prunes away instead of repeating the "Upstream device" row.
+**Two details that are easy to get wrong.** The first is the conflict card. Making a VIP address claimable means the next discovery cycle finds a `manual` row sitting on a VIP — which is precisely the condition Phase 3c raises a conflict on. Left alone, the feature's first visible effect would have been one conflict card per claimed VIP, every cycle, forever. This is the same trap `reservationBelongsToInfraDevice` was written for when managed switch and AP addresses became claimable (business rule 23), and it takes the same answer: a manual row whose `vipInfo` already names this same VIP by `name` + `device` is the feature working, so the row is stamped rather than raised. A manual row naming a *different* VIP, or none at all, is an unrelated collision and still gets its card. The second is the dot. It answers "is this address spoken for", and a VIP claims it — purple, device config — because making VIP addresses scannable down the column is the operator need the whole rule exists to serve. The two exceptions are the two states that ask somebody to *act*: a conflict and a permanently failed push keep their red, and only their label carries the VIP.
 
-Two things the walk deliberately is not. It is not `connectionPathService.resolveConnectionPath`,
-whose parent tie-break prefers an `up` parent — exactly the wrong bias when the question is who is
-down. And it is not the reconciler Event's `parentAssetIds`, which is the whole effective parent
-set (healthy redundant parents included) and never reaches past layer 1.
+**The per-subnet discover reads VIPs now, which is what the button was renamed for.** It is one `/api/v2/cmdb/firewall/vip` call on the same transport as the DHCP reads — the FortiManager proxy forwards REST to the device, so both integration types get the device's own encoding, and `parseVipRow` accepts all three encodings the CMDB row is known to arrive in (FortiOS REST, the FortiManager JSON-RPC fields-projected get, and the proxy) rather than one, because parsing only one is how proxy-mode mapped IPs were silently dropped before. The call is *settled* rather than awaited alongside the DHCP reads: an API token scoped away from the firewall CMDB is a normal deployment, and a gate that answers for DHCP must still complete its DHCP reconcile. A VIP table that could not be read skips every VIP decision — never "there are no VIPs" — and says so in both the toast and the `subnet.refresh` Event, which is business rule 53 applied to a single read rather than a whole device. Retirement (clearing a stale snapshot, converting a `vip` row that a DHCP entry has succeeded, releasing one that nothing else claims) is scoped to snapshots naming *this* gate, because RFC1918 space repeats behind different FortiGates and another gate's VIP is not this pass's to judge — the same per-device scoping business rule 17 puts on ARP presence evidence.
 
-The walk loads the ancestor closure hop by hop through a cache the engine renews every tick, so
-three hundred PLCs behind one switch load the switch and the gate once between them. It never
-throws: a failed read yields null and the alert goes out worded without a name — *because a
-device above it is down* — since "your PLC is dependency down" beats silence even when the switch
-cannot be named. The name, the reason and the hop count are snapshotted on
-`Notification.dependencyDown` + `dependencyBlame`, so the row still explains itself after the
-dependency tree is recomputed and the flag is a COLUMN because three readers need it without
-reading text: the sweep, the engine's handoff and the alert surfaces' badge. (`templateCtx` would
-not do — that snapshot is written only when the rule composes or escalates, and the simplest
-in-app-only automation writes none.)
+**Not addressed here, deliberately:** whether the FortiGate itself will accept a `reserved-address` entry whose IP is a VIP external is the device's business, and its refusal already has a home — the push records `pushStatus` and the gate's own message in `pushError`, which the panel now actually renders. Polaris does not pre-judge it.
 
-### The flavour follows the flag
+---
 
-An alert raised while the device was Dep. Down and an alert raised because its own probe failed
-are two different statements, and the operator chose that a change between them be heard. So the
-alert's flavour follows the asset's `dependencySuppressed`: for an opted-in rule the engine tick
-reads each live alert's `dependencyDown`, and a firing row whose reading disagrees with it goes
-through `handoffDependencyFlavour` — soft-clear as `system:dependency-down` or
-`system:dependency-released`, release the state row, audit `notification.superseded`, and fire
-again in the other flavour. No reset actions run either way: nothing recovered, and mailing
-"Resolved" about a PLC that is still dark would be a lie.
+## Rule 79 — An operator's removal of a MAC is a correction, not a suppression
 
-Both directions matter. A PLC alerts as plain Down a minute before the switch above it is
-confirmed down (they miss polls together, and the smaller count wins); when it turns Dep. Down
-the plain alert ends and the dependency-down alert goes out naming the switch — the "which switch
-is responsible" message the operator asked for. On the way back, the switch recovers, the PLC is
-released, and if the PLC is STILL down the dependency-down alert — now claiming a switch that is
-fine — ends and a plain Down alert is raised: *and now it is the PLC itself*. Only a genuinely
-met reading triggers the handoff; a released device reading `recovering` or `warning` is simply
-held until it reads `up`, as every down alert is (rule 36).
+An asset's MAC list is not a list of the device's NICs. It is every address anything has ever
+seen that device transmit as, which on a modern fleet includes docks and USB adapters (whose
+MAC follows the dock, not the laptop), randomized Wi-Fi addresses, and ZTNA-relayed
+identities — plus whatever a ghost-merge brought across from another record. So the list
+periodically names an address that belongs to some *other* device, and the operator needs a
+way to say so. `DELETE /assets/:id/macs/:mac` is that way.
 
-The 60-second sweep normally does the first half a tick early: `clearSuppressedAlerts` still
-retires a plain alert on a suppressed asset, and the next engine tick raises the dependency
-flavour. The in-loop handoff exists for the race where the flag flips between the sweep and the
-loop, and for the reverse direction, which the sweep cannot see.
+The question this rule settles is what "remove" means when discovery runs again.
 
-### Three things the opt-out does not reach
+The tempting answer is that it means *never again*: tombstone the row, teach
+`reconcileMacAddresses` to skip it, done. It is tempting because the alternative sounds like
+the feature not working — the operator removes a MAC, a discovery pass runs, the MAC is back,
+and that reads as the button being broken. The design was offered in exactly those terms in
+2026-09 and **declined**, and the reasoning is what this rule records, because the next
+session to see a MAC come back will reach for the tombstone again.
 
-**Maintenance still silences.** The carve-out in the gate loop is dependency-only: a device in a
-maintenance window stays in `suppressedIds` whatever its automation says. Announced downtime is not
-an outage to report (rule 16 wins), and an opted-in PLC automation must not page the plant every
-time the switch above it is scheduled for a firmware update.
+Polaris cannot distinguish a stale association from a live one, and the two want opposite
+treatment:
 
-**Reminders and escalation still pause.** The operator asked for one notification. The escalation
-sweep already pauses every live alert on a suppressed asset; an alert raised BY this rule is on a
-suppressed asset by construction, so it inherits the pause with no new code and resumes — or ends
-— when the upstream is back. That is the whole of "one notification": the first email goes out,
-and nothing chases it until the picture changes.
+- A MAC inherited from a bad merge, or from a DHCP lease on a decommissioned device, is
+  **never reported again**. Deleting the row is the whole fix; a tombstone adds nothing.
+- A MAC that comes **straight back** is being transmitted right now. Something on the wire is
+  presenting that address alongside this device — a dock shared between desks, a relayed
+  identity, a mis-cabled port. That is a fact about the network, and the only mechanism that
+  would make it stop appearing is one that makes Polaris lie about what it can see.
 
-**The sweep never retires a dependency-down row.** `clearSuppressedAlerts` adds
-`dependencyDown: false` to its query. Without it the sweep would retire the alert the engine just
-raised, the engine would raise it again on the next tick, and a plant operator would receive one
-email a minute until the switch came back. The exclusion is in the query rather than a branch
-because such rows must never even reach the asset lookup: they are the one alert that is SUPPOSED
-to be live on a suppressed asset, and the engine owns their end.
+A suppression helps in the first case, where nothing needed help, and in the second case
+produces a permanently wrong asset record that *looks* correct — the worst available outcome,
+because it is the one nobody re-examines. Leaving the removal one-shot means a returning MAC
+is a signal: it says the association is live, and points at a physical thing to go and find.
 
-### Where it shows
+Two obligations fall out of that choice.
 
-The Active Alerts widget, the asset's Notifications tab and the phone's alert list badge the row
-"Dep. Down" in the same slate the Status pill wears, the widget's tooltip naming the upstream; the
-audit Event carries `dependencyDown`, `upstreamAssetId` and `rootCauseAssetId` for a script or a
-SIEM to follow; and a Test-delivery of an opted-in automation renders the dependency notice
-against an invented upstream (`SAMPLE_UPSTREAM_HOSTNAME`), so the operator sees the banner and
-the rows a real one carries.
+**The confirm has to say so.** A control that silently fails to stick is indistinguishable
+from a broken one, and the operator will click it repeatedly. The dialog states that discovery
+will re-add the address if the network reports it again, so a MAC that returns is legible as
+the documented behaviour rather than a defect. The same sentence is in the operator wiki.
 
-Pinned by `tests/unit/notificationDependencyDownAlert.test.ts` (the engine half, including that an
-automation WITHOUT the key still drops the asset and that maintenance still silences),
-`tests/unit/dependencyBlame.test.ts` (the walk — same fixtures `dependencyTreeService.test.ts`
-builds), `tests/unit/notificationSuppressionSweep.test.ts` (the exclusion), the template and
-email-template suites (the tokens and the pruning), `tests/unit/downDetectionTriggerSchema.test.ts`
-(where the key may live) and the wizard DOM suite (the Actions-step row, the key surviving a
-Trigger-step re-collect, the strip on a composite).
+**The primary MAC has to be recomputed properly.** Removing the row the `Asset.macAddress`
+scalar pointed at forces a promotion, and that promotion is the same decision
+`selectPrimaryMac` makes everywhere else, so it goes through that helper rather than a local
+sort. A freshest-`lastSeen` sort — which is what the endpoint did until 2026-09-21 — breaks
+both of the helper's rules at once: it lets a dock sighting outrank the device's own
+Intune-reported NIC, and it can promote the start key of an interface-scrape `[mac, macEnd]`
+range, which is a block of switch-port addresses rather than a device identity. The range case
+is self-correcting in the ugliest way: the next discovery reconcile overwrites the scalar
+again, so the asset's primary MAC flickers between two values on a schedule. An asset whose
+only surviving entries are ranges correctly ends with `macAddress = null`.
+
+Finally, the grant. Correcting an inventory record is the assets administrator's act, so the
+route is `assets:write` — and it always was. What was wrong for as long as the endpoint
+existed is the browser: the single control that called it was gated on `canManageNetworks()`,
+i.e. `subnets:fullwrite`, so the built-in `assetsadmin` role could call the endpoint all day
+and never saw the button, while an admin holding every key saw it and never noticed. Too-loose
+gating announces itself with a 403; gating on another page's key is silent, and presents as a
+missing feature rather than a permissions bug. See `polaris-ui-canon` →
+`canon-shared-kit.md` for the general form.

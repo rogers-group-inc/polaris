@@ -915,6 +915,20 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
     // merely LEASES — offer Reserve, label it as a lease — from one backed by a
     // real MAC→IP binding, which stays authoritative.
     dhcpBinding: r.dhcpBinding,
+    // The third fact about an address, beside who owns it (sourceType) and how
+    // the gate serves it (dhcpBinding): the FortiGate VIP translating traffic
+    // for it (business rule 77). Without this the panel's VIP badge and the
+    // composed "VIP / Leased" pill have nothing to render from — which is what
+    // let an address be refused for a VIP the table never mentioned.
+    vipInfo: r.vipInfo,
+    // Push state. The panel has always had rungs for "Queued for push" and
+    // "Push failed" and an operator-visible Retry button; none of them could
+    // fire while the DTO withheld the columns they read, so a queued row
+    // rendered as a plain active reservation with no hint it had not landed.
+    pushStatus: r.pushStatus,
+    pushQueuedAt: r.pushQueuedAt,
+    pushAttempts: r.pushAttempts,
+    pushError: r.pushError,
     notes: r.notes,
     expiresAt: r.expiresAt,
     createdBy: r.createdBy,

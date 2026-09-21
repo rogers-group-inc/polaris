@@ -227,7 +227,7 @@ POST   /subnets
 POST   /subnets/next-available     allocate the next free /N
 POST   /subnets/bulk-allocate      anchor-aligned, all-or-nothing
 PUT    /subnets/:id                DELETE /subnets/:id
-POST   /subnets/:id/refresh
+POST   /subnets/:id/refresh        the Discover button: DHCP + firewall VIPs
 POST   /subnets/:id/archive        fullwrite
 GET    /subnets/archived           GET /subnets/archived/:id
 GET    /subnets/exclusions

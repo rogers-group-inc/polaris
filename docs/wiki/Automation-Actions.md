@@ -1,6 +1,14 @@
 # Automation actions and recipients
 
-Step 5 of the wizard. What happens when the automation fires, and who hears
+Step 5 of the wizard, laid out as a stack of cards: the **In-app Alert** every
+fire creates, the two rows that describe that alert (**Require Acknowledgement**
+and, on a down automation, **Dependency-Down Bypass**), then per severity the
+**Trigger Action** list with its **+ Escalation Action** chain, and last the
+**Reset Action** list. The two rows sit above the action list because they are
+facts about the alert being raised rather than about what is sent, and they stay
+visible when a severity's actions are folded away.
+
+What happens when the automation fires, and who hears
 about it.
 
 ---
@@ -287,8 +295,8 @@ What follows from that:
 
 ### Requiring a note
 
-**"Require a note when acknowledging"** lives at the foot of each **severity
-section**, not on the rule ([rule 56](Business-Rules#rule-56)). What closing an
+**"Require Acknowledgement"** is a row at the head of each **severity section**,
+not a setting on the rule ([rule 56](Business-Rules#rule-56)). What closing an
 alert out costs is a property of the alert record, and a `notice` and a
 `critical` do not deserve the same answer.
 

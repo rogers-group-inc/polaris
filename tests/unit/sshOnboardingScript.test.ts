@@ -242,10 +242,40 @@ describe("buildWindowsOnboardingScript", () => {
       expect(script).toContain("Remove-NetFirewallRule");
     });
 
-    it("touches nothing and says so when no address is configured", () => {
+    it("scopes the rule to every profile, not just Private", () => {
+      // Windows' own OpenSSH rule is Private-only: a domain-joined endpoint
+      // sits on the Domain profile and never sees the connection.
+      const script = buildWindowsOnboardingScript({ ...BASE, polarisServerIp: "10.0.0.42" });
+      expect(script).toContain("-Action Allow -Profile Any");
+    });
+
+    it("disables the built-in any-source OpenSSH rule when it scopes TCP/22", () => {
+      // Allows are additive — leaving it enabled keeps port 22 open to every
+      // host on a Private network however tight the Polaris rule is.
+      const script = buildWindowsOnboardingScript({ ...BASE, polarisServerIp: "10.0.0.42" });
+      expect(script).toContain("'OpenSSH-Server-In-*'");
+      expect(script).toContain("Disable-NetFirewallRule");
+      expect(script).not.toContain("Set-NetFirewallRule");
+    });
+
+    it("opens nothing when no address is configured, but adds Domain to the built-in rule", () => {
       const script = buildWindowsOnboardingScript(BASE);
       expect(script).not.toContain("New-NetFirewallRule");
+      expect(script).not.toContain("Disable-NetFirewallRule");
+      expect(script).toContain("Set-NetFirewallRule -Name $rule.Name -Profile Domain,Private");
       expect(script).toContain("not modified");
+    });
+
+    it("leaves Public off the built-in rule", () => {
+      // Reachable-from-Domain is the problem being fixed; an any-source TCP/22
+      // rule on the profile a laptop picks up in an airport is not.
+      const script = buildWindowsOnboardingScript(BASE);
+      expect(script).not.toContain("-Profile Domain,Private,Public");
+    });
+
+    it("re-reads as a no-op on a host already widened", () => {
+      const script = buildWindowsOnboardingScript(BASE);
+      expect(script).toContain("$ruleProfile -eq 'Any' -or $ruleProfile -match 'Domain'");
     });
   });
 
