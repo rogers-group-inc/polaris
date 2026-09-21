@@ -201,6 +201,36 @@ swap are invisible from inside a guest, which is why an agent on the same VM
 cannot show them — and why, on a VM that is being squeezed, the vCenter chart
 is the one that says so.
 
+**Click a legend chip to switch that series off**, on either chart — a memory
+band, the swap line, a CPU core, or the cross-core average. A switched-off
+chip stays in the legend with a line through it; click it again to bring the
+series back. On the CPU chart, **double-click a core to show only that one**,
+and a **Show all** link appears whenever anything is hidden.
+
+The two charts remember your choice differently, on purpose. Memory bands are
+**saved to your account** and follow you between hosts and browsers — the
+bands mean the same thing everywhere, so which of them you want to see is a
+setting. Hidden CPU cores last only as long as the panel is open: core 5 of
+one server has nothing to do with core 5 of another, so carrying the choice
+across would hide a different core each time.
+
+### Cache starts switched off
+
+On an agent host the **Cache** band is hidden until you turn it on, and the
+legend says so.
+
+Page cache is memory the OS has filled with recently-read files because the
+RAM was otherwise idle — it is handed straight back the moment a program
+wants it. Counted in the stack it makes a perfectly healthy machine look
+nearly full, which is the most common way this chart gets misread. With it
+off, the stack answers *how much memory is actually spoken for*, and the gap
+above it is headroom you can rely on.
+
+Turn it on when you want the whole picture. While any band is hidden the
+legend reminds you that the gap above the stack includes it, and the tooltip
+keeps reporting every figure the host actually measured, hidden ones marked —
+so nothing is lost, only undrawn.
+
 Below the response-time section sits the **Polaris Agent** card: the installed
 agent's version, platform, last heartbeat, WebSocket state and privilege tier,
 with Upgrade / Uninstall. On a **server** or **workstation** with no agent yet

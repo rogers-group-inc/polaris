@@ -100,6 +100,70 @@ function _setStorageViewPref(view) {
   } catch (_) {}
 }
 
+// ─── Telemetry chart series visibility (legend toggles) ────────────────────
+//
+// Both CPU & Memory charts let an operator click a legend chip to take a
+// series out of the drawing. The two halves keep their state in different
+// places, on purpose:
+//
+//   memory bands   PERSISTED per user, here. The bands are named and mean
+//                  the same thing on every host, so a way of reading memory
+//                  is an opinion an operator holds, not a per-visit whim.
+//   cpu cores      NOT persisted — see _cpuHiddenCores, which keeps them on
+//                  the container. Core 5 of one host has nothing to do with
+//                  core 5 of another, so carrying the choice between assets
+//                  would hide a different core every time.
+//
+// CACHE SHIPS OFF. Page cache is reclaimable: the OS fills whatever RAM the
+// processes are not using and hands it straight back when they want it. Drawn
+// in the stack it makes a perfectly healthy host look nearly full, which is
+// the single most common misreading of this chart — so the default answers
+// "how much memory is actually spoken for" and the chip is right there,
+// visibly off, for anyone who wants the whole picture.
+var _MEM_BANDS_OFF_BY_DEFAULT = ["cache"];
+
+function _memBandVisible(key) {
+  var fallback = _MEM_BANDS_OFF_BY_DEFAULT.indexOf(key) === -1;
+  if (!currentUsername) return fallback;
+  try {
+    var raw = localStorage.getItem("polaris-prefs-series-" + currentUsername);
+    var p = raw ? JSON.parse(raw) : null;
+    var v = p && p["mem:" + key];
+    // Absent means "never touched this chip", which is the default — not
+    // false. Only an explicit boolean overrides.
+    return typeof v === "boolean" ? v : fallback;
+  } catch (_) { return fallback; }
+}
+
+function _setMemBandVisible(key, on) {
+  if (!currentUsername) return;
+  try {
+    var raw = localStorage.getItem("polaris-prefs-series-" + currentUsername);
+    var p = raw ? (JSON.parse(raw) || {}) : {};
+    p["mem:" + key] = !!on;
+    localStorage.setItem("polaris-prefs-series-" + currentUsername, JSON.stringify(p));
+  } catch (_) {}
+}
+
+// Which cores the operator has hidden on THIS chart, as a Set of core index
+// strings (plus "avg" for the aggregate line). Kept on the container's
+// dataset rather than in a module variable because the resize observer and
+// the 60-second silent refresh both re-render — state held anywhere else is
+// lost on every tick, which makes hiding a core useless for the one job it
+// has, watching the others.
+function _cpuHiddenCores(container) {
+  var raw = (container && container.dataset ? container.dataset.coresOff : "") || "";
+  var out = {};
+  raw.split(",").forEach(function (k) { if (k !== "") out[k] = true; });
+  return out;
+}
+
+function _setCpuHiddenCores(container, hidden) {
+  var keys = Object.keys(hidden).filter(function (k) { return hidden[k]; });
+  if (keys.length === 0) delete container.dataset.coresOff;
+  else container.dataset.coresOff = keys.join(",");
+}
+
 // Per-(asset, mount) forecast-overlay visibility. Default on; only stored
 // when the operator explicitly toggles it off (or back on after toggling
 // off) — absent entry = default on.
@@ -10785,17 +10849,6 @@ function _cpuCoreSeries(samples) {
   return series;
 }
 
-// Which core the operator has isolated, if any. Kept on the container's
-// dataset rather than in a module variable so it survives the re-renders the
-// resize observer and the silent refresh tick fire — losing the isolation
-// every 60 seconds would make it useless for watching one hot core.
-function _cpuFocusedCore(container) {
-  var raw = container && container.dataset ? container.dataset.coreFocus : "";
-  if (raw == null || raw === "") return null;
-  var n = parseInt(raw, 10);
-  return isNaN(n) ? null : n;
-}
-
 // CPU chart — aggregate line plus one line per logical core, 0–100%.
 function _renderCpuChart(container, data, asset, si) {
   var samples = (data && data.samples) || [];
@@ -10839,8 +10892,16 @@ function _renderCpuChart(container, data, asset, si) {
                          .filter(function (e) { return typeof e.v === "number"; });
   var coreSeries = _cpuCoreSeries(samples);
   var coreCount = coreSeries ? coreSeries.length : 0;
-  var focus = _cpuFocusedCore(container);
-  if (focus != null && (focus < 0 || focus >= coreCount)) focus = null;
+  // Which series are switched off. A core index that no longer exists (the
+  // VM was resized down, or the operator moved to a smaller host with the
+  // panel open) is simply not consulted — the hidden set is not pruned,
+  // because growing back to that core count should restore the choice
+  // rather than silently re-showing a core they had put away.
+  var hidden = _cpuHiddenCores(container);
+  var coreVisible = function (c) { return !hidden[String(c)]; };
+  var avgVisible = !hidden.avg;
+  var visibleCores = 0;
+  for (var vc = 0; vc < coreCount; vc++) if (coreVisible(vc)) visibleCores++;
 
   var yMin = 0, yMax = 100;
   var xFor = _chartXScale(padL, innerW, t0, t1);
@@ -10913,30 +10974,27 @@ function _renderCpuChart(container, data, asset, si) {
   // threshold reads — is how much ink the cores behind it use. At 4 cores
   // they can be near-solid; at 64 the same opacity is a wall the aggregate
   // disappears into.
-  var restOpacity = coreCount <= 4 ? 0.85 : coreCount <= 16 ? 0.62 : coreCount <= 48 ? 0.45 : 0.32;
+  // Opacity keys off how many cores are actually DRAWN, not how many the
+  // host has — switching sixty-three of them off should leave the survivor
+  // solid, which is what makes hiding the rest worth doing.
+  var restOpacity = visibleCores <= 4 ? 0.85 : visibleCores <= 16 ? 0.62 : visibleCores <= 48 ? 0.45 : 0.32;
   var coreLinesSvg = "";
   if (coreSeries) {
     for (var c = 0; c < coreCount; c++) {
       var pts = coreSeries[c];
-      if (pts.length === 0) continue;
-      var dimmed = focus != null && focus !== c;
+      if (pts.length === 0 || !coreVisible(c)) continue;
       var d = pts.map(function (e) { return xFor(e.s.timestamp) + "," + yFor(e.v); }).join(" ");
       coreLinesSvg += '<polyline class="cpu-core-line" data-core="' + c + '" points="' + d +
         '" fill="none" stroke="' + _cpuCoreColor(c, coreCount) + '"' +
-        ' stroke-width="' + (focus === c ? 2 : 1) + '"' +
-        ' opacity="' + (dimmed ? 0.1 : (focus === c ? 1 : restOpacity)) + '"/>';
+        ' stroke-width="' + (visibleCores === 1 ? 2 : 1) + '"' +
+        ' opacity="' + restOpacity + '"/>';
     }
   }
-
-  // The aggregate goes ON TOP of the cores and gets the only dots, so it
-  // stays findable in the thicket. When a core is isolated the aggregate
-  // fades rather than disappearing — it is the number thresholds fire on.
-  var avgOpacity = focus != null ? 0.3 : 1;
 
   var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt);
   container.innerHTML =
     chartStaleBanner +
-    _cpuLegendHTML(coreCount, focus, data, asset) +
+    _cpuLegendHTML(coreCount, hidden, data, asset) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + avgLine.defs + '</defs>' +
@@ -10945,9 +11003,15 @@ function _renderCpuChart(container, data, asset, si) {
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
         coreLinesSvg +
-        '<g opacity="' + avgOpacity + '">' + avgLine.segments +
-          cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + _CPU_AVG_COLOR + '"/>'; }).join("") +
-        '</g>' +
+        // The aggregate goes ON TOP of the cores and gets the only dots, so
+        // it stays findable in the thicket. It is also the only failure-aware
+        // line, so hiding it hides the outage markers with it — which is the
+        // operator's call to make, but is why it is not hidden by default.
+        (avgVisible
+          ? '<g>' + avgLine.segments +
+              cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + _CPU_AVG_COLOR + '"/>'; }).join("") +
+            '</g>'
+          : "") +
         failDots +
         // After `hits`, not before: the hit targets are full-height Voronoi
         // lanes and a gap sits inside the neighbouring sample's lane, so the
@@ -10962,37 +11026,40 @@ function _renderCpuChart(container, data, asset, si) {
   container.style.flexDirection = "column";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
 
-  _wireCpuLegend(container, data, asset, si);
+  _wireCpuLegend(container, data, asset, si, coreCount);
 
   _wireChartTooltip(container, function (target) {
     if (target.getAttribute("data-miss") === "1") return _missTooltipHTML(target);
     var ts = target.getAttribute("data-ts");
     var cpuRaw = target.getAttribute("data-cpu");
-    var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>' +
-      '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
+    var off = _cpuHiddenCores(container);
+    var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>';
+    if (!off.avg) {
+      html += '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
+    }
     var coresRaw = target.getAttribute("data-cores");
     if (coresRaw) {
       var vals = coresRaw.split(",").map(Number);
-      var focused = _cpuFocusedCore(container);
-      var rows;
-      if (focused != null && focused < vals.length) {
-        // An isolated core is the one the operator asked about — naming the
-        // six busiest instead would answer a question they did not ask.
-        rows = [{ i: focused, v: vals[focused] }];
-      } else {
-        // Busiest first, capped: a 64-core tooltip taller than the panel is
-        // not a tooltip. The cap is what makes per-core hover usable at all
-        // on a big host.
-        rows = vals.map(function (v, i) { return { i: i, v: v }; })
-                   .sort(function (a, b) { return b.v - a.v; })
-                   .slice(0, 6);
-      }
+      // The tooltip names what is DRAWN. A hidden core listed here would
+      // put a reading on screen with no line to attach it to, which is the
+      // opposite of what switching it off was for.
+      var shown = vals.map(function (v, i) { return { i: i, v: v }; })
+                      .filter(function (r) { return !off[String(r.i)]; });
+      // Busiest first, capped: a 64-core tooltip taller than the panel is
+      // not a tooltip. The cap is what makes per-core hover usable at all
+      // on a big host.
+      var rows = shown.slice().sort(function (a, b) { return b.v - a.v; }).slice(0, 6);
       rows.forEach(function (r) {
         html += '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' +
           _cpuCoreColor(r.i, vals.length) + '"></span>Core ' + r.i + ': ' + r.v.toFixed(1) + '%</div>';
       });
-      if (focused == null && vals.length > rows.length) {
-        html += '<div style="color:var(--color-text-tertiary)">+' + (vals.length - rows.length) + ' more (click a core in the legend)</div>';
+      if (shown.length > rows.length) {
+        html += '<div style="color:var(--color-text-tertiary)">+' + (shown.length - rows.length) + ' more</div>';
+      }
+      var hiddenCount = vals.length - shown.length;
+      if (hiddenCount > 0) {
+        html += '<div style="color:var(--color-text-tertiary)">' + hiddenCount + ' core' +
+          (hiddenCount === 1 ? "" : "s") + ' hidden</div>';
       }
     }
     return html;
@@ -11004,15 +11071,20 @@ function _renderCpuChart(container, data, asset, si) {
 // Legend for the CPU chart. Rendered as HTML above the SVG rather than as
 // <text> inside it because it has to WRAP — 64 core chips on one SVG line
 // run off the edge of the panel — and because the chips are interactive.
-function _cpuLegendHTML(coreCount, focus, data, asset) {
-  var chips = '<span class="cpu-legend-chip" data-core="avg" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px' +
-    (focus == null ? ';font-weight:600' : '') + '">' +
-    '<span style="width:10px;height:10px;border-radius:2px;background:' + _CPU_AVG_COLOR + '"></span>Average</span>';
+function _cpuLegendHTML(coreCount, hidden, data, asset) {
+  var anyHidden = Object.keys(hidden).length > 0;
+  var chips = _seriesChipHTML("avg", "Average", _CPU_AVG_COLOR, !hidden.avg,
+    "Click to hide the cross-core average", "cpu-legend-chip");
   for (var c = 0; c < coreCount; c++) {
-    chips += '<span class="cpu-legend-chip" data-core="' + c + '" title="Click to isolate core ' + c + '"' +
-      ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;opacity:' + (focus == null || focus === c ? 1 : 0.45) +
-      (focus === c ? ';font-weight:600' : '') + '">' +
-      '<span style="width:10px;height:10px;border-radius:2px;background:' + _cpuCoreColor(c, coreCount) + '"></span>' + c + '</span>';
+    chips += _seriesChipHTML(String(c), String(c), _cpuCoreColor(c, coreCount), !hidden[String(c)],
+      "Click to hide core " + c + " · double-click to show only this core", "cpu-legend-chip");
+  }
+  // Only offered once something is off. At 64 cores an isolate is one
+  // double-click and 63 chips of undoing, so the way back has to be one
+  // click too.
+  if (anyHidden) {
+    chips += '<span class="cpu-legend-all" title="Show every series again"' +
+      ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
   }
   // Why a range can show no cores even on a source that reports them:
   // per-core data is kept on the DETAIL tier only, on the agent and on
@@ -11029,18 +11101,64 @@ function _cpuLegendHTML(coreCount, focus, data, asset) {
     chips + '</div>' + note;
 }
 
-// Click a chip to isolate that core (click again, or click Average, to clear).
-// Re-renders from the same payload — no refetch.
-function _wireCpuLegend(container, data, asset, si) {
+// Click a chip to switch that series off or back on; double-click a core to
+// show ONLY that core. One state either way — isolating is just a bulk edit
+// of the hidden set, which is what keeps "hidden" and "focused" from being
+// two overlapping models that can disagree.
+//
+// Re-renders from the same payload — never a refetch.
+function _wireCpuLegend(container, data, asset, si, coreCount) {
+  // A double-click also fires two clicks. Defer the single-click render just
+  // past the double-click window so an isolate does not first toggle the
+  // chip it was aimed at, which would leave the isolated core hidden.
+  var clickTimer = null;
   container.querySelectorAll(".cpu-legend-chip").forEach(function (chip) {
+    var key = chip.getAttribute("data-series");
     chip.addEventListener("click", function () {
-      var raw = chip.getAttribute("data-core");
-      var current = _cpuFocusedCore(container);
-      if (raw === "avg" || String(current) === raw) delete container.dataset.coreFocus;
-      else container.dataset.coreFocus = raw;
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      clickTimer = setTimeout(function () {
+        clickTimer = null;
+        var hidden = _cpuHiddenCores(container);
+        if (hidden[key]) delete hidden[key]; else hidden[key] = true;
+        _setCpuHiddenCores(container, hidden);
+        _renderCpuChart(container, data, asset, si);
+      }, 220);
+    });
+    chip.addEventListener("dblclick", function () {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      if (key === "avg") return; // "only the average" is what hiding the cores is for
+      var hidden = {};
+      for (var c = 0; c < coreCount; c++) if (String(c) !== key) hidden[String(c)] = true;
+      _setCpuHiddenCores(container, hidden);
       _renderCpuChart(container, data, asset, si);
     });
   });
+  var all = container.querySelector(".cpu-legend-all");
+  if (all) {
+    all.addEventListener("click", function () {
+      _setCpuHiddenCores(container, {});
+      _renderCpuChart(container, data, asset, si);
+    });
+  }
+}
+
+// One legend chip, shared by both telemetry charts so a switched-off series
+// reads the same on either.
+//
+// THE STRIKETHROUGH CARRIES THE STATE, NOT THE DIMMING. A chip is a control,
+// and a switched-off one is the ONLY route back to its series — so it has to
+// stay readable. Dimming it to 0.4 measured 1.84:1 on the morning theme
+// (2.01 noon, 2.17 nightfall) against 6-8.5:1 for a live chip, which is
+// under the floor for non-text UI, never mind a click target. The label now
+// keeps most of its ink and the line through it says "off"; only the swatch
+// fades, and that is decoration — the colour is how the operator finds the
+// series again, so it does not fade far either.
+function _seriesChipHTML(key, label, color, on, title, cls) {
+  return '<span class="' + cls + '" data-series="' + escapeHtml(key) + '" title="' + escapeHtml(title) + '"' +
+    ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none' +
+    (on ? '' : ';opacity:0.8;text-decoration:line-through') + '">' +
+    '<span style="width:10px;height:10px;border-radius:2px;flex:0 0 auto;background:' + color +
+    (on ? '' : ';opacity:0.45') + '"></span>' + escapeHtml(label) + '</span>';
 }
 
 // ─── Memory chart (stacked bands, bytes) ───────────────────────────────────
@@ -11234,14 +11352,22 @@ function _renderMemoryChart(container, data, asset, si) {
   // carrying bands the other table has no slot for.
   var isVsphere = rows.some(function (r) { return r.b.kind === "vsphere"; });
   var bandTable = isVsphere ? _MEM_BANDS_VSPHERE : _MEM_BANDS_AGENT;
-  var bands = bandTable.filter(function (b) {
+  // Two lists, and the difference matters everywhere below. `reported` is
+  // what the source measured — the legend offers a chip for each, and the
+  // tooltip names every one of them, because a number the host actually
+  // reported should not vanish just because its band is switched off.
+  // `bands` is what gets PAINTED.
+  var reported = bandTable.filter(function (b) {
     return rows.some(function (r) { return r.b.values[b.key] != null; });
   });
   // A bytes-only source reports the primary band alone; never draw an empty
   // stack if even that is missing.
-  if (bands.length === 0) bands = [bandTable[0]];
-  var anyDetailed = bands.length > 1;
+  if (reported.length === 0) reported = [bandTable[0]];
+  var bands = reported.filter(function (b) { return _memBandVisible(b.key); });
+  var anyDetailed = reported.length > 1;
+  var hiddenBands = reported.filter(function (b) { return !_memBandVisible(b.key); });
   var anySwap = rows.some(function (r) { return r.b.swapTotal != null && r.b.swapTotal > 0; });
+  var swapVisible = _memBandVisible("swap");
 
   // THE CEILING IS THE INSTALLED TOTAL, AND NOTHING ELSE MAY RAISE IT.
   // That is what makes the gap above the stack mean free memory, keeps the
@@ -11307,7 +11433,7 @@ function _renderMemoryChart(container, data, asset, si) {
   });
 
   var swapLine = "";
-  if (anySwap) {
+  if (anySwap && swapVisible) {
     runs.forEach(function (run) {
       var pts = run.filter(function (r) { return r.b.swapUsed != null; });
       if (pts.length < 2) return;
@@ -11323,10 +11449,11 @@ function _renderMemoryChart(container, data, asset, si) {
     var x = xFor(r.ts);
     var leftEdge  = i === 0 ? padL : (xFor(rows[i - 1].ts) + x) / 2;
     var rightEdge = i === rows.length - 1 ? (W - padR) : (xFor(rows[i + 1].ts) + x) / 2;
-    // One attribute per DRAWN band, indexed by its position in `bands`, so
-    // the tooltip walks the same list the stack was built from and neither
-    // vocabulary needs its own hard-coded row set.
-    var bandAttrs = bands.map(function (b, bi2) {
+    // One attribute per REPORTED band, indexed by its position in
+    // `reported`, so the tooltip walks that list and neither vocabulary
+    // needs its own hard-coded row set — and a switched-off band still has
+    // its measured figure available to print.
+    var bandAttrs = reported.map(function (b, bi2) {
       var v = r.b.values[b.key];
       return ' data-b' + bi2 + '="' + (v != null ? v : "") + '"';
     }).join("");
@@ -11361,12 +11488,20 @@ function _renderMemoryChart(container, data, asset, si) {
         : '<span style="width:10px;height:10px;border-radius:2px;background:' + color + '"></span>') +
       escapeHtml(label) + '</span>';
   }
-  var legendParts = bands.map(function (b) { return swatch(b.color, b.label, false); });
+  // Every band the source REPORTED gets a chip, switched off ones included —
+  // a chip that disappeared when you clicked it would be a one-way door.
+  var legendParts = reported.map(function (b) {
+    return _seriesChipHTML(b.key, b.label, b.color, _memBandVisible(b.key),
+      "Click to " + (_memBandVisible(b.key) ? "hide" : "show") + " " + b.label.toLowerCase(), "mem-legend-chip");
+  });
   legendParts.push(swatch(_MEM_TOTAL_COLOR, "Installed total", true));
   // A swap line running along the ceiling is a reading, not a rendering
   // fault — say which, or the flat line at the top reads as a stuck series.
   if (anySwap) {
-    legendParts.push(swatch(_MEM_SWAP_COLOR, "Swap / page file" + (swapOverTop ? " — above installed RAM, clipped" : ""), true));
+    legendParts.push(_seriesChipHTML("swap",
+      "Swap / page file" + (swapVisible && swapOverTop ? " — above installed RAM, clipped" : ""),
+      _MEM_SWAP_COLOR, swapVisible,
+      "Click to " + (swapVisible ? "hide" : "show") + " the swap line", "mem-legend-chip"));
   }
   // A source with no breakdown gets told so, in the legend, rather than
   // being left to look like a host whose cache is permanently zero. The
@@ -11379,6 +11514,15 @@ function _renderMemoryChart(container, data, asset, si) {
       (isVsphere ? "hypervisor breakdown" : "cache/buffer breakdown") + ')</span>';
   } else if (isVsphere) {
     legendNote = '<span style="color:var(--color-text-tertiary)">(as the hypervisor accounts for it — not the guest\'s own view)</span>';
+  }
+  // Switching a band off does not delete the memory. The gap above the stack
+  // stops meaning "free" and starts meaning "free, plus what you hid", and
+  // an operator reading headroom off this chart has to be told which —
+  // especially since Cache ships hidden and nobody chose that.
+  if (hiddenBands.length > 0) {
+    legendNote += '<span style="color:var(--color-text-tertiary)">(' +
+      escapeHtml(hiddenBands.map(function (b) { return b.label.toLowerCase(); }).join(" + ")) +
+      ' hidden — counted in the gap, not in the stack)</span>';
   }
   var legend = '<div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
     legendParts.join("") + legendNote + '</div>';
@@ -11421,7 +11565,13 @@ function _renderMemoryChart(container, data, asset, si) {
       return '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' + color + '"></span>' +
         escapeHtml(label) + ': ' + _fmtBytes(val) + pct + '</div>';
     }
-    bands.forEach(function (b, bi3) { html += row(b.color, b.label, num("data-b" + bi3)); });
+    // Every reported band, drawn or not. The chart answers "what is the
+    // shape of this host's memory"; the tooltip answers "what exactly was
+    // measured here", and dropping a figure because its band is switched
+    // off would make the second question unanswerable from the panel.
+    reported.forEach(function (b, bi3) {
+      html += row(b.color, b.label + (_memBandVisible(b.key) ? "" : " (hidden)"), num("data-b" + bi3));
+    });
     html += row("transparent", isVsphere ? "Untouched" : "Free", free);
     if (used != null) html += '<div style="margin-top:2px"><strong>In use: ' + _fmtBytes(used) + '</strong> of ' + _fmtBytes(total) + '</div>';
     var su = num("data-su"), st = num("data-st");
@@ -11431,8 +11581,31 @@ function _renderMemoryChart(container, data, asset, si) {
     }
     return html;
   });
+  _wireMemLegend(container, data, asset, si);
   _addChartScreenshotButton(container, "Memory", { yAxis: "Memory (bytes)", getStats: _statsSummaryFrom("asset-mem-summary") });
   _observeChartResize(container, function (c) { _renderMemoryChart(c, data, asset, si); });
+}
+
+// Click a band chip to switch that band out of the stack, or the swap chip
+// to drop its line.
+//
+// Unlike the CPU chart's cores, this choice is PERSISTED per user
+// (_setMemBandVisible): the bands are named and mean the same thing on every
+// host, so which of them an operator wants to see is a standing preference
+// rather than a per-visit one. That is also what makes "cache off by
+// default" expressible at all — the default is just the stored value nobody
+// has overridden yet.
+//
+// Re-renders from the same payload; no refetch, and no reflow of the range
+// selector the two charts share.
+function _wireMemLegend(container, data, asset, si) {
+  container.querySelectorAll(".mem-legend-chip").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      var key = chip.getAttribute("data-series");
+      _setMemBandVisible(key, !_memBandVisible(key));
+      _renderMemoryChart(container, data, asset, si);
+    });
+  });
 }
 
 // Percentage-only fallback (FortiOS and anything else that reports memory as

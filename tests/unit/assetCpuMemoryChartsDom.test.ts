@@ -36,7 +36,7 @@
  * @vitest-environment happy-dom
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -60,17 +60,37 @@ function regionSrc(startsWith: string, endsWith: string): string {
 
 const REGION = regionSrc("// ─── CPU & Memory: one chart, or two", "// FortiGate active-session count chart");
 
+// The legend-visibility helpers live up with the other per-user chart prefs
+// rather than in the chart region, so they are sliced in alongside it —
+// eval'd for real rather than stubbed, because "Cache is hidden unless you
+// said otherwise" is a behaviour of theirs and stubbing it would test
+// nothing. They touch localStorage, which happy-dom provides.
+const VIS_REGION = regionSrc(
+  "// ─── Telemetry chart series visibility (legend toggles) ───",
+  "// Per-(asset, mount) forecast-overlay visibility.",
+);
+
 const EXPORTS = [
   "_renderSystemChart",
-  "_cpuCoreColor", "_cpuCoreSeries", "_cpuFocusedCore", "_renderCpuChart",
-  "_cpuLegendHTML", "_memBandsFor", "_memRuns", "_renderMemoryChart",
+  "_cpuCoreColor", "_cpuCoreSeries", "_cpuHiddenCores", "_setCpuHiddenCores", "_renderCpuChart",
+  "_cpuLegendHTML", "_memBandsFor", "_memRuns", "_renderMemoryChart", "_seriesChipHTML",
   "_renderMemoryPctChart", "_MEM_BANDS_AGENT", "_MEM_BANDS_VSPHERE", "_CPU_AVG_COLOR",
   "_CPU_CORE_HUE_START", "_CPU_CORE_HUE_END",
+  "_memBandVisible", "_setMemBandVisible", "_MEM_BANDS_OFF_BY_DEFAULT",
 ];
-const SRC = REGION + "\n" + EXPORTS.map((n) => `globalThis.${n} = ${n};`).join("\n");
+const SRC = VIS_REGION + "\n" + REGION + "\n" + EXPORTS.map((n) => `globalThis.${n} = ${n};`).join("\n");
+
+/** Turn every band on, for the tests that are about the stack rather than the chips. */
+function showAllBands() {
+  for (const b of [...g._MEM_BANDS_AGENT, ...g._MEM_BANDS_VSPHERE]) g._setMemBandVisible(b.key, true);
+  g._setMemBandVisible("swap", true);
+}
 
 /** The app-shell + chart-kit globals the region calls into. */
 function installStubs() {
+  // The prefs helpers key on the signed-in user and no-op without one.
+  g.currentUsername = "tester";
+  try { localStorage.clear(); } catch { /* private mode */ }
   g.escapeHtml = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c: string) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
   g.formatBytes = (n: number) => `${n}B`;
@@ -156,6 +176,32 @@ function payload(samples: any[], extra: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * Click a legend chip and let the deferred single-click handler run.
+ *
+ * The CPU legend waits out the double-click window before acting, so an
+ * isolate does not first toggle the very chip it was aimed at. Tests have to
+ * wait the same 220 ms — with fake timers, so the suite does not.
+ */
+function clickChip(el: HTMLElement, series: string): void {
+  const chip = el.querySelector(`.cpu-legend-chip[data-series="${series}"]`) as HTMLElement;
+  if (!chip) throw new Error(`no cpu legend chip for ${series}`);
+  chip.click();
+  vi.advanceTimersByTime(300);
+}
+
+function dblClickChip(el: HTMLElement, series: string): void {
+  const chip = el.querySelector(`.cpu-legend-chip[data-series="${series}"]`) as HTMLElement;
+  if (!chip) throw new Error(`no cpu legend chip for ${series}`);
+  // A real double-click fires click, click, dblclick — and the pending
+  // single-click timer must be cancelled by the dblclick rather than fire
+  // after it, which is the bug this ordering reproduces.
+  chip.click();
+  chip.click();
+  chip.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  vi.advanceTimersByTime(300);
+}
+
 function container(): HTMLElement {
   const el = document.createElement("div");
   // clientWidth is 0 in happy-dom; the renderers fall back to 600.
@@ -165,11 +211,13 @@ function container(): HTMLElement {
 
 describe("CPU chart — per-core rendering", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     document.body.innerHTML = "";
     installStubs();
     // eslint-disable-next-line no-eval
     (0, eval)(SRC);
   });
+  afterEach(() => { vi.useRealTimers(); });
 
   it("draws one line per logical core plus the aggregate", () => {
     const el = container();
@@ -208,34 +256,102 @@ describe("CPU chart — per-core rendering", () => {
     g._renderCpuChart(el, payload(agentSamples([[1, 2, 3], [4, 5, 6]])), {}, {});
     const chips = el.querySelectorAll(".cpu-legend-chip");
     expect(chips.length).toBe(4); // Average + 3 cores
-    expect(chips[0].getAttribute("data-core")).toBe("avg");
+    expect(chips[0].getAttribute("data-series")).toBe("avg");
     expect(chips[1].textContent).toContain("0");
   });
 
-  it("isolates a core on legend click and clears on a second click", () => {
+  it("hides a core on legend click and brings it back on a second click", () => {
     const el = container();
     const data = payload(agentSamples([[1, 2, 3], [4, 5, 6]]));
     g._renderCpuChart(el, data, {}, {});
+    expect(el.querySelectorAll("polyline.cpu-core-line").length).toBe(3);
 
-    (el.querySelector('.cpu-legend-chip[data-core="1"]') as HTMLElement).click();
-    expect(el.dataset.coreFocus).toBe("1");
-    const lines = Array.from(el.querySelectorAll("polyline.cpu-core-line"));
-    const focused = lines.find((l) => l.getAttribute("data-core") === "1")!;
-    const other   = lines.find((l) => l.getAttribute("data-core") === "0")!;
-    expect(Number(focused.getAttribute("opacity"))).toBeGreaterThan(Number(other.getAttribute("opacity")));
+    clickChip(el, "1");
+    expect(el.querySelectorAll("polyline.cpu-core-line").length).toBe(2);
+    expect(el.querySelector('polyline.cpu-core-line[data-core="1"]')).toBeNull();
 
-    (el.querySelector('.cpu-legend-chip[data-core="1"]') as HTMLElement).click();
-    expect(el.dataset.coreFocus).toBeUndefined();
+    clickChip(el, "1");
+    expect(el.querySelectorAll("polyline.cpu-core-line").length).toBe(3);
   });
 
-  it("keeps the isolated core across a re-render", () => {
+  it("marks a switched-off chip without taking it away or hiding it", () => {
+    // A chip that vanished when clicked would be a one-way door, and one
+    // dimmed past reading is the same door with the handle painted out.
+    // Measured in Chrome at opacity 0.4: 1.84:1 on morning, 2.01 noon, 2.17
+    // nightfall — under the floor for non-text UI, on a click target. The
+    // strikethrough carries the state instead; 0.8 measures 3.93-4.99:1.
+    const el = container();
+    g._renderCpuChart(el, payload(agentSamples([[1, 2], [3, 4]])), {}, {});
+    clickChip(el, "0");
+    const chip = el.querySelector('.cpu-legend-chip[data-series="0"]') as HTMLElement;
+    expect(chip).not.toBeNull();
+    const style = chip.getAttribute("style")!;
+    expect(style).toContain("line-through");
+    const opacity = Number(/opacity:([\d.]+)/.exec(style)?.[1] ?? "1");
+    expect(opacity).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it("keeps hidden cores across a re-render", () => {
     const el = container();
     const data = payload(agentSamples([[1, 2, 3], [4, 5, 6]]));
     g._renderCpuChart(el, data, {}, {});
-    (el.querySelector('.cpu-legend-chip[data-core="2"]') as HTMLElement).click();
+    clickChip(el, "2");
     // What the resize observer and the silent refresh tick both do.
     g._renderCpuChart(el, data, {}, {});
-    expect(g._cpuFocusedCore(el)).toBe(2);
+    expect(g._cpuHiddenCores(el)["2"]).toBe(true);
+    expect(el.querySelector('polyline.cpu-core-line[data-core="2"]')).toBeNull();
+  });
+
+  it("switches the aggregate off from its own chip", () => {
+    const el = container();
+    g._renderCpuChart(el, payload(agentSamples([[1, 2], [3, 4]])), {}, {});
+    expect(el.querySelectorAll("polyline.agg-line").length).toBe(1);
+    clickChip(el, "avg");
+    expect(el.querySelectorAll("polyline.agg-line").length).toBe(0);
+    // The cores are untouched by it.
+    expect(el.querySelectorAll("polyline.cpu-core-line").length).toBe(2);
+  });
+
+  it("isolates one core on double-click, and offers one click back", () => {
+    const el = container();
+    const data = payload(agentSamples([[1, 2, 3, 4], [5, 6, 7, 8]]));
+    g._renderCpuChart(el, data, {}, {});
+    dblClickChip(el, "2");
+    expect(el.querySelectorAll("polyline.cpu-core-line").length).toBe(1);
+    expect(el.querySelector('polyline.cpu-core-line[data-core="2"]')).not.toBeNull();
+    // 63 chips of undoing is not a way back, so there is a Show all.
+    const all = el.querySelector(".cpu-legend-all") as HTMLElement;
+    expect(all).not.toBeNull();
+    all.click();
+    expect(el.querySelectorAll("polyline.cpu-core-line").length).toBe(4);
+  });
+
+  it("gives the last core standing a heavier stroke", () => {
+    // Opacity and weight key off how many cores are DRAWN, not how many the
+    // host has — hiding the rest is pointless if the survivor stays faint.
+    const el = container();
+    g._renderCpuChart(el, payload(agentSamples([[1, 2, 3, 4], [5, 6, 7, 8]])), {}, {});
+    dblClickChip(el, "0");
+    const line = el.querySelector('polyline.cpu-core-line[data-core="0"]')!;
+    expect(line.getAttribute("stroke-width")).toBe("2");
+    expect(Number(line.getAttribute("opacity"))).toBeGreaterThan(0.8);
+  });
+
+  it("does not offer Show all when nothing is hidden", () => {
+    const el = container();
+    g._renderCpuChart(el, payload(agentSamples([[1, 2], [3, 4]])), {}, {});
+    expect(el.querySelector(".cpu-legend-all")).toBeNull();
+  });
+
+  it("does not carry hidden cores from one asset's chart to another's", () => {
+    // Core 5 of one host has nothing to do with core 5 of another, so this
+    // state lives on the container and is deliberately NOT persisted.
+    const a = container();
+    g._renderCpuChart(a, payload(agentSamples([[1, 2], [3, 4]])), {}, {});
+    clickChip(a, "0");
+    const b = container();
+    g._renderCpuChart(b, payload(agentSamples([[1, 2], [3, 4]])), {}, {});
+    expect(b.querySelectorAll("polyline.cpu-core-line").length).toBe(2);
   });
 
   it("falls back to the aggregate alone when no sample carries cores", () => {
@@ -360,6 +476,7 @@ describe("Memory chart — the stack", () => {
 
   it("draws one filled band per component, plus the total and swap lines", () => {
     const el = container();
+    showAllBands();
     g._renderMemoryChart(el, payload(agentSamples([[1], [2], [3]])), {}, {});
     // Processes / Buffers / Cache.
     expect(el.querySelectorAll("polygon").length).toBe(3);
@@ -665,3 +782,127 @@ describe("Memory chart - the axis is the installed total", () => {
 function _fmt(n: number): string {
   return `${n}B`;
 }
+
+describe("Memory chart - switching bands off", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    installStubs();
+    (0, eval)(SRC);
+  });
+
+  function memChip(el: HTMLElement, key: string): HTMLElement {
+    const chip = el.querySelector(`.mem-legend-chip[data-series="${key}"]`) as HTMLElement;
+    if (!chip) throw new Error(`no mem legend chip for ${key}`);
+    return chip;
+  }
+
+  it("ships with Cache switched off", () => {
+    // Page cache is reclaimable: drawn in the stack it makes a healthy host
+    // look nearly full, which is the most common misreading of this chart.
+    expect(g._MEM_BANDS_OFF_BY_DEFAULT).toEqual(["cache"]);
+    expect(g._memBandVisible("cache")).toBe(false);
+    expect(g._memBandVisible("processes")).toBe(true);
+    expect(g._memBandVisible("buffers")).toBe(true);
+
+    const el = container();
+    g._renderMemoryChart(el, payload(agentSamples([[1], [2], [3]])), {}, {});
+    expect(el.querySelectorAll("polygon").length).toBe(2); // processes + buffers
+  });
+
+  it("still offers the chip for a band it is not drawing", () => {
+    const el = container();
+    g._renderMemoryChart(el, payload(agentSamples([[1], [2], [3]])), {}, {});
+    const chip = memChip(el, "cache");
+    expect(chip.getAttribute("style")).toContain("line-through");
+    chip.click();
+    expect(el.querySelectorAll("polygon").length).toBe(3);
+  });
+
+  it("says where the hidden memory went", () => {
+    // The gap above the stack stops meaning "free" the moment a band is
+    // switched off, and an operator reading headroom has to be told.
+    const el = container();
+    g._renderMemoryChart(el, payload(agentSamples([[1], [2], [3]])), {}, {});
+    expect(el.textContent).toContain("cache hidden");
+    expect(el.textContent).toContain("counted in the gap");
+    memChip(el, "cache").click();
+    expect(el.textContent).not.toContain("counted in the gap");
+  });
+
+  it("keeps the axis and the derived free figure honest when a band is off", () => {
+    // Hiding a band changes the PICTURE, never the arithmetic: the ceiling
+    // is still installed RAM and Free is still total minus everything
+    // measured, cache included.
+    const GB = 1024 ** 3;
+    const el = container();
+    g._renderMemoryChart(el, payload(agentSamples([[1], [2]])), {}, {});
+    const ticks = Array.from(el.querySelectorAll("text"))
+      .filter((t) => t.getAttribute("text-anchor") === "end");
+    expect(ticks[ticks.length - 1]?.textContent).toBe(`${32 * GB}B`);
+
+    g.__tooltipFns = [];
+    g._renderMemoryChart(el, payload(agentSamples([[1], [2]])), {}, {});
+    const hit = el.querySelector("rect.chart-hit")!;
+    const html = g.__tooltipFns[g.__tooltipFns.length - 1](hit);
+    // Free is 32 - (8 processes + 1 buffers + 5 cache) = 18 GB, unchanged by
+    // cache being switched off.
+    expect(html).toContain(`${18 * GB}B`);
+  });
+
+  it("names a hidden band in the tooltip rather than dropping its reading", () => {
+    // The chart answers "what shape is this host's memory"; the tooltip
+    // answers "what exactly was measured", and that second answer must not
+    // depend on which chips are lit.
+    const el = container();
+    g.__tooltipFns = [];
+    g._renderMemoryChart(el, payload(agentSamples([[1], [2]])), {}, {});
+    const hit = el.querySelector("rect.chart-hit")!;
+    const html = g.__tooltipFns[g.__tooltipFns.length - 1](hit);
+    expect(html).toContain("Cache (hidden)");
+    expect(html).toContain("Processes");
+    expect(html).not.toContain("Processes (hidden)");
+  });
+
+  it("switches the swap line off from its own chip", () => {
+    const el = container();
+    showAllBands();
+    g._renderMemoryChart(el, payload(agentSamples([[1], [2]])), {}, {});
+    const dashedBefore = Array.from(el.querySelectorAll("polyline"))
+      .filter((l) => l.getAttribute("stroke-dasharray")).length;
+    memChip(el, "swap").click();
+    const dashedAfter = Array.from(el.querySelectorAll("polyline"))
+      .filter((l) => l.getAttribute("stroke-dasharray")).length;
+    // The Installed total line stays; only swap goes.
+    expect(dashedAfter).toBe(dashedBefore - 1);
+    expect(el.textContent).toContain("Installed total");
+  });
+
+  it("persists the choice, unlike the CPU cores", () => {
+    // Band names mean the same thing on every host, so which of them an
+    // operator wants is a standing preference — that is also what makes a
+    // default expressible at all.
+    const el = container();
+    g._renderMemoryChart(el, payload(agentSamples([[1], [2]])), {}, {});
+    memChip(el, "cache").click();
+    expect(g._memBandVisible("cache")).toBe(true);
+
+    const fresh = container();
+    g._renderMemoryChart(fresh, payload(agentSamples([[1], [2]])), {}, {});
+    expect(fresh.querySelectorAll("polygon").length).toBe(3);
+  });
+
+  it("applies the same default to a vSphere stack, which has no cache band", () => {
+    const GB = 1024 ** 3;
+    const el = container();
+    const vm = [0, 1, 2].map((i) => ({
+      timestamp: ts(i), cpuPct: 10,
+      memUsedBytes: 12 * GB, memTotalBytes: 32 * GB,
+      memPrivateBytes: 8 * GB, memSharedBytes: 3 * GB, memBalloonedBytes: 1 * GB,
+      memSwappedBytes: 0.5 * GB, memCompressedBytes: 0.25 * GB,
+    }));
+    g._renderMemoryChart(el, payload(vm), {}, {});
+    // Nothing in the vSphere table is off by default, so all five draw.
+    expect(el.querySelectorAll("polygon").length).toBe(5);
+    expect(el.textContent).not.toContain("counted in the gap");
+  });
+});
