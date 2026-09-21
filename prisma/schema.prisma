@@ -1227,6 +1227,7 @@ model Asset {
   dependencyChildren AssetDependencyParent[]  @relation("AssetDependencyParent")
   managedAgent       ManagedAgent?
   maintenanceWindows AssetMaintenanceWindow[]
+  maintenanceHolds   MaintenanceHold[]
   topologyLayouts    TopologyLayout[]
   processConnections AssetProcessConnection[]
 
@@ -5283,22 +5284,73 @@ model MaintenanceSchedule {
   @@map("maintenance_schedules")
 }
 
-// One realized maintenance window per (asset, schedule): opened when the
-// scheduler puts the asset into maintenance for that schedule, closed
-// (endedAt + endReason) when the window ends for any reason. Open rows
-// (endedAt IS NULL) are the source of truth for "currently in maintenance" —
-// restart-safe by construction. Closed rows power the chart maintenance
-// bands (scheduleName is snapshotted so labels survive schedule deletion).
+// Downtime POLARIS ITSELF is causing, as an intent the reconcile turns into a
+// real window (business rule 80). An agent upgrade / reinstall / uninstall
+// stops the agent service, which drops the WebSocket and writes
+// `agent.disconnected` — an alert about work the operator asked for. A hold
+// puts the asset in maintenance for the duration, which suppresses it the same
+// way a schedule does (assetCanTrigger).
+//
+// Why a table and not just a window row: open windows are the reconcile's
+// OUTPUT, and it closes any it cannot re-derive from a live holder. This is the
+// holder — the "should be in maintenance" input that a window is diffed
+// against, so entry, status parking, the maintenance.entered event and the
+// live-alert sweep all happen through the one path schedules already use.
+//
+// `expiresAt` is not a nicety. A held asset is not monitored, so a hold whose
+// release never runs — the process died mid-upgrade, the host never came back —
+// would silently stop watching a production machine forever. The reconcile
+// closes an expired hold whether or not anything released it; the alert it was
+// suppressing then fires late rather than never.
+//
+// Released by deletion, not by a flag: the AssetMaintenanceWindow row it opened
+// IS the history (with endReason), so a second row here would only be a second
+// place to read the same fact from.
+model MaintenanceHold {
+  id        String   @id @default(uuid())
+  assetId   String
+  // "agent-upgrade" | "agent-reinstall" | "agent-uninstall". Part of the
+  // uniqueness so two different operations on one asset cannot lose each
+  // other's hold, and re-running the same one extends rather than stacks.
+  kind      String
+  // Snapshotted onto the window's scheduleName for the chart band and the
+  // asset's Maintenance tab — "Polaris Agent upgrade", not a kind slug.
+  label     String
+  startedAt DateTime @default(now())
+  expiresAt DateTime
+  createdBy String?
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, kind])
+  @@index([expiresAt])
+  @@map("maintenance_holds")
+}
+
+// One realized maintenance window per (asset, holder), where a holder is a
+// schedule or a MaintenanceHold: opened when the scheduler puts the asset into
+// maintenance for that holder, closed (endedAt + endReason) when the window
+// ends for any reason. Open rows (endedAt IS NULL) are the source of truth for
+// "currently in maintenance" — restart-safe by construction. Closed rows power
+// the chart maintenance bands (scheduleName is snapshotted so labels survive
+// schedule deletion).
 // Plain table — the hypertable no-FK rule does not apply here.
 model AssetMaintenanceWindow {
   id           String    @id @default(uuid())
   assetId      String
   scheduleId   String? // SetNull on schedule delete — history survives
+  // The MaintenanceHold kind holding this window open; null = schedule-driven.
+  // Both are null on a window whose holder is gone, which is what the reconcile
+  // closes as "deleted" — so a hold row MUST carry this or the next 30s tick
+  // tears the hold down as an orphan.
+  holdKind     String?
   scheduleName String // snapshot for chart-band labels after delete
   startedAt    DateTime  @default(now())
   endedAt      DateTime? // null = window currently open
   // "schedule" | "operator" | "disabled" | "deleted" | "criteria" |
-  // "decommissioned" (deleted at its discovery source mid-window)
+  // "decommissioned" (deleted at its discovery source mid-window) |
+  // "released" (a hold's operation finished) | "expired" (a hold outlived its
+  // cap and was closed rather than left holding an unwatched asset)
   endReason    String?
 
   asset    Asset                @relation(fields: [assetId], references: [id], onDelete: Cascade)

@@ -51,6 +51,7 @@ Reference files (all verbatim):
 - [references/narrative-44-48.md](references/narrative-44-48.md) — full narrative, rules 44–59 (split out 2026-09-09 when the 36–43 file passed 100 KB; the filename is a stable citation key)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — full narrative, rules 60–74 (the filename keeps its original range: it is a stable citation key. Split out 2026-09-15 when the 44–48 file reached the 1500-line ceiling)
 - [references/narrative-78.md](references/narrative-78.md) — full narrative, rule 78 (split out 2026-09-21 when the 60-64 file reached the 1500-line ceiling; the filename is a stable citation key)
+- [references/narrative-80.md](references/narrative-80.md) — full narrative, rule 80 (split out for the same reason, same day; the filename is a stable citation key)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -140,6 +141,7 @@ before changing anything the invariant constrains.
 | 77 | A VIP describes an address; it does not claim it — and the status says every fact it has | invariants-30-43 | narrative-60-64 |
 | 78 | An automation may choose to speak for a silenced device, and then it must name who silenced it | invariants-30-43 | narrative-78 |
 | 79 | An operator's removal of a MAC is a correction, not a suppression | invariants-30-43 | narrative-60-64 |
+| 80 | Downtime Polaris itself causes is not an incident — and a silence it grants expires on its own | invariants-30-43 | narrative-80 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

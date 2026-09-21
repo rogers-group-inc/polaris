@@ -44,6 +44,7 @@ import pg from "pg";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
+import { releaseMaintenanceHold } from "./maintenanceScheduleService.js";
 import { getDirectDatabaseUrl } from "../utils/dbConnections.js";
 import { CMD_WAKE_CHANNEL } from "./agentCommandWake.js";
 
@@ -53,6 +54,12 @@ const PROBE_NOW_DEFAULT_TIMEOUT_MS = 10_000;
 interface Session {
   ws:        WebSocket;
   assetId:   string;
+  /**
+   * hostname || ipAddress, resolved once at attach. Held here so `detach` can
+   * NAME the device without a database read on a teardown path that runs when
+   * a socket has already died — and so both events agree on the label.
+   */
+  assetName: string | null;
   attachedAt: number;
   // Pending probe-now requests awaiting a matching response.
   pending:   Map<string, { resolve: (v: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>;
@@ -79,6 +86,7 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
   const session: Session = {
     ws,
     assetId,
+    assetName: null, // filled in below, before either event is written
     attachedAt: Date.now(),
     pending: new Map(),
     pingTimer: null,
@@ -119,14 +127,42 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
     where: { id: managedAgentId },
     data:  { wsConnectedAt: new Date() },
   }).catch(() => { /* best-effort */ });
-  void logEvent({
-    action:       "agent.connected",
-    resourceType: "asset",
-    resourceId:   assetId,
-    level:        "info",
-    message:      "Polaris Agent WebSocket attached",
-    details:      { managedAgentId },
-  });
+
+  void (async () => {
+    // Name the device. An `asset` Event with no resourceName gives the alert no
+    // subject at all (alertSubject.eventSubjectLabel returns "" for one), so
+    // every automation on agent.connected/disconnected rendered a row and an
+    // email that never said WHICH agent — the one fact those alerts exist to
+    // carry.
+    const asset = await prisma.asset
+      .findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } })
+      .catch(() => null);
+    const name = asset?.hostname || asset?.ipAddress || null;
+    // The session may already be gone (a socket that died during this read),
+    // and a stale entry must not be re-stamped — check identity, not presence.
+    if (sessions.get(managedAgentId) === session) session.assetName = name;
+
+    await logEvent({
+      action:       "agent.connected",
+      resourceType: "asset",
+      resourceId:   assetId,
+      resourceName: name ?? undefined,
+      level:        "info",
+      message:      "Polaris Agent WebSocket attached",
+      details:      { managedAgentId },
+    });
+
+    // The agent is back, so whatever Polaris was doing to this host is over as
+    // far as its monitoring is concerned: release the upgrade/reinstall hold
+    // (business rule 80). Release here rather than when the installer returned
+    // — the reattach is the first moment the asset is genuinely being watched
+    // again, and a hold dropped earlier lets the lagging disconnect through.
+    // Not "agent-uninstall": that one ends with the uninstall, and an agent
+    // reattaching during one has not finished being removed.
+    for (const kind of ["agent-upgrade", "agent-reinstall"] as const) {
+      await releaseMaintenanceHold({ assetId, kind }).catch(() => { /* expiry covers it */ });
+    }
+  })();
 }
 
 export function detach(managedAgentId: string, reason: string): void {
@@ -142,8 +178,13 @@ export function detach(managedAgentId: string, reason: string): void {
     action:       "agent.disconnected",
     resourceType: "asset",
     resourceId:   session.assetId,
+    // Without this the alert has no subject: an operator reading "a Polaris
+    // Agent disconnected" on the widget could not tell WHICH host it was.
+    resourceName: session.assetName ?? undefined,
     level:        reason === "replaced" || reason === "revoked" ? "info" : "warning",
-    message:      `Polaris Agent WebSocket detached (${reason})`,
+    message:      session.assetName
+      ? `Polaris Agent WebSocket detached from ${session.assetName} (${reason})`
+      : `Polaris Agent WebSocket detached (${reason})`,
     details:      { managedAgentId, reason },
   });
 }

@@ -419,6 +419,26 @@ an explicit credentialId on the request
 **Upgrade only.** Install, reinstall and uninstall still require a credential on
 file; force-remove is the escape hatch.
 
+### The device goes quiet while it runs
+
+An upgrade stops the agent service, which drops the agent's connection and
+raises `agent.disconnected` — so Polaris puts the asset into a **maintenance
+window** for the duration and the built-in disconnect automation stays quiet
+([rule 80](Business-Rules#rule-80)). The same applies to a reinstall and an
+uninstall. A first install and a retry take no window: there is no agent running
+to disconnect.
+
+The device reads **maintenance** while it runs, and its Maintenance tab names
+the operation. The window ends when the agent reconnects — or immediately if the
+upgrade fails, because an agent that is down for that reason is worth an alert.
+Nothing can leave it open: it expires after 20 minutes (30 for a reinstall)
+whatever happened to the operation, and the suppressed alert then fires late
+rather than never.
+
+It silences the whole device for that minute or two, not just the agent —
+[Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself) has
+the detail.
+
 ---
 
 ## Building agent binaries in-app

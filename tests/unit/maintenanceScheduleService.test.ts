@@ -33,6 +33,7 @@ const h = vi.hoisted(() => {
     id: string;
     assetId: string;
     scheduleId: string | null;
+    holdKind?: string | null;
     scheduleName: string;
     startedAt: Date;
     endedAt: Date | null;
@@ -50,10 +51,21 @@ const h = vi.hoisted(() => {
     updatedAt: Date;
   };
 
+  type FakeHold = {
+    id: string;
+    assetId: string;
+    kind: string;
+    label: string;
+    startedAt: Date;
+    expiresAt: Date;
+    createdBy: string | null;
+  };
+
   const db = {
     assets: [] as FakeAsset[],
     windows: [] as FakeWindow[],
     schedules: [] as FakeSchedule[],
+    holds: [] as FakeHold[],
   };
   let seq = 1;
   const nextId = () => `gen-${seq++}`;
@@ -80,6 +92,16 @@ const h = vi.hoisted(() => {
     if (where.scheduleId?.in && !(w.scheduleId && where.scheduleId.in.includes(w.scheduleId))) return false;
     if (where.endReason && w.endReason !== where.endReason) return false;
     if (where.startedAt?.lte && !(w.startedAt <= where.startedAt.lte)) return false;
+    return true;
+  }
+  function holdMatches(x: FakeHold, where: any): boolean {
+    if (!where) return true;
+    if (where.id?.in && !where.id.in.includes(x.id)) return false;
+    if (typeof where.assetId === "string" && x.assetId !== where.assetId) return false;
+    if (where.assetId?.in && !where.assetId.in.includes(x.assetId)) return false;
+    if (where.kind && x.kind !== where.kind) return false;
+    if (where.expiresAt?.lte && !(x.expiresAt <= where.expiresAt.lte)) return false;
+    if (where.expiresAt?.gt && !(x.expiresAt > where.expiresAt.gt)) return false;
     return true;
   }
   // Simplified OR support for listAssetWindows' overlap query.
@@ -138,6 +160,32 @@ const h = vi.hoisted(() => {
         return { count };
       },
     },
+    maintenanceHold: {
+      findMany: async (args: any = {}) =>
+        db.holds.filter((x) => holdMatches(x, args.where)).map((x) => ({ ...x })),
+      upsert: async (args: any) => {
+        const { assetId, kind } = args.where.assetId_kind;
+        const found = db.holds.find((x) => x.assetId === assetId && x.kind === kind);
+        if (found) {
+          Object.assign(found, args.update);
+          return { ...found };
+        }
+        const row: FakeHold = {
+          id: nextId(),
+          startedAt: new Date(),
+          createdBy: null,
+          ...args.create,
+        };
+        db.holds.push(row);
+        return { ...row };
+      },
+      deleteMany: async (args: any) => {
+        const keep = db.holds.filter((x) => !holdMatches(x, args.where));
+        const count = db.holds.length - keep.length;
+        db.holds = keep;
+        return { count };
+      },
+    },
     maintenanceSchedule: {
       findMany: async (args?: any) => {
         let rows = db.schedules;
@@ -185,7 +233,11 @@ const h = vi.hoisted(() => {
     },
   };
 
-  return { db, prisma, reset: () => { db.assets = []; db.windows = []; db.schedules = []; seq = 1; } };
+  return {
+    db,
+    prisma,
+    reset: () => { db.assets = []; db.windows = []; db.schedules = []; db.holds = []; seq = 1; },
+  };
 });
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
@@ -212,6 +264,8 @@ import {
   releaseAssetsForDecommission,
   previewTargets,
   listOccurrences,
+  openMaintenanceHold,
+  releaseMaintenanceHold,
 } from "../../src/services/maintenanceScheduleService.js";
 import { logEvent, logEventsBatch } from "../../src/services/eventLogService.js";
 import { resolveMatchingAssetIds } from "../../src/services/tagAssignmentService.js";
@@ -850,5 +904,171 @@ describe("removeAssetFromSchedule", () => {
     await expect(removeAssetFromSchedule("s1", "a1")).rejects.toThrow(/does not target/i);
     await expect(removeAssetFromSchedule("nope", "a1")).rejects.toThrow(/not found/i);
     await expect(removeAssetFromSchedule("s1", "ghost")).rejects.toThrow(/not found/i);
+  });
+});
+
+// ─── Maintenance holds (business rule 80) ────────────────────────────────────
+//
+// A hold is downtime POLARIS is causing — an agent upgrade / reinstall /
+// uninstall stops the agent service, which drops the WebSocket and writes
+// agent.disconnected. These assert the two halves that make it safe: the hold
+// enters through the same path a schedule does (so the status parks and the
+// alert sweep runs), and NOTHING can leave an asset held forever.
+
+describe("maintenance holds", () => {
+  it("puts the asset into maintenance and opens a window naming the operation", async () => {
+    h.db.assets.push(asset("a1"));
+
+    const took = await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+
+    expect(took).toBe(true);
+    expect(assetById("a1")).toMatchObject({ status: "maintenance", maintenanceReturnStatus: "active" });
+    expect(openWindows()).toHaveLength(1);
+    expect(openWindows()[0]).toMatchObject({
+      assetId: "a1",
+      scheduleId: null,
+      holdKind: "agent-upgrade",
+      scheduleName: "Polaris Agent upgrade",
+    });
+  });
+
+  it("survives the reconcile tick that closes schedule-less windows", async () => {
+    // The trap this whole design exists to avoid: a window with no live holder
+    // is closed as "deleted", so a hold row that did not announce itself would
+    // be torn down within 30 seconds of being taken.
+    h.db.assets.push(asset("a1"));
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+
+    await reconcileMaintenance();
+    await reconcileMaintenance();
+
+    expect(openWindows()).toHaveLength(1);
+    expect(assetById("a1").status).toBe("maintenance");
+  });
+
+  it("restores the parked status on release", async () => {
+    h.db.assets.push(asset("a1", { status: "active" }));
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+
+    const released = await releaseMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+
+    expect(released).toBe(true);
+    expect(assetById("a1")).toMatchObject({ status: "active", maintenanceReturnStatus: null });
+    expect(openWindows()).toHaveLength(0);
+    expect(h.db.windows[0]).toMatchObject({ endReason: "released" });
+  });
+
+  it("expires on its own when nothing releases it", async () => {
+    // The process died mid-upgrade. A held asset is not being watched, so the
+    // reconcile has to end this without being asked.
+    h.db.assets.push(asset("a1"));
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+    expect(assetById("a1").status).toBe("maintenance");
+
+    vi.setSystemTime(new Date(NOW.getTime() + 21 * 60_000));
+    await reconcileMaintenance();
+
+    expect(h.db.holds).toHaveLength(0);
+    expect(openWindows()).toHaveLength(0);
+    expect(h.db.windows[0]).toMatchObject({ endReason: "expired" });
+    expect(assetById("a1").status).toBe("active");
+  });
+
+  it("extends rather than stacks when the same operation is retried", async () => {
+    h.db.assets.push(asset("a1"));
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+    const firstExpiry = h.db.holds[0].expiresAt;
+    const startedAt = h.db.holds[0].startedAt;
+
+    vi.setSystemTime(new Date(NOW.getTime() + 5 * 60_000));
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+
+    expect(h.db.holds).toHaveLength(1);
+    expect(openWindows()).toHaveLength(1);
+    expect(h.db.holds[0].expiresAt.getTime()).toBeGreaterThan(firstExpiry.getTime());
+    // The window it opened is the same one — re-dating it would shorten the
+    // chart band the operator reads.
+    expect(h.db.holds[0].startedAt).toEqual(startedAt);
+  });
+
+  it("keeps the asset held until the LAST holder lets go", async () => {
+    h.db.assets.push(asset("a1"));
+    h.db.schedules.push(schedule("s1", ACTIVE_ONESHOT, { assetIds: ["a1"] }));
+    await reconcileMaintenance();
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+    expect(openWindows()).toHaveLength(2);
+
+    await releaseMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+
+    expect(openWindows()).toHaveLength(1);
+    expect(assetById("a1").status).toBe("maintenance");
+  });
+
+  it("takes no hold on an unmonitored asset, and says so", async () => {
+    h.db.assets.push(asset("a1", { monitored: false }));
+
+    const took = await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+
+    expect(took).toBe(false);
+    expect(h.db.holds).toHaveLength(0);
+    expect(openWindows()).toHaveLength(0);
+    expect(assetById("a1").status).toBe("active");
+  });
+
+  it("releasing a hold nobody took is a no-op, not a throw", async () => {
+    h.db.assets.push(asset("a1"));
+    await expect(releaseMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" })).resolves.toBe(false);
+  });
+
+  it("an operator release drops the holder too, so the next tick cannot re-enter", async () => {
+    h.db.assets.push(asset("a1"));
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-upgrade" });
+
+    await operatorReleaseAsset("a1", "dmoore");
+    await reconcileMaintenance();
+
+    expect(h.db.holds).toHaveLength(0);
+    // Still closed after the tick: a live hold would have re-opened it and the
+    // operator's release would have visibly undone itself. (Restoring the
+    // status is the assets route's job on this path — it writes the status the
+    // operator chose right after calling this, for a hold exactly as for a
+    // schedule.)
+    expect(openWindows()).toHaveLength(0);
+    expect(h.db.windows[0]).toMatchObject({ endReason: "operator" });
+  });
+
+  it("a decommission drops the holder too", async () => {
+    h.db.assets.push(asset("a1"));
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-uninstall" });
+
+    await releaseAssetsForDecommission(["a1"], { actor: "system:discovery" });
+    await reconcileMaintenance();
+
+    expect(h.db.holds).toHaveLength(0);
+    expect(openWindows()).toHaveLength(0);
+    expect(assetById("a1").status).toBe("decommissioned");
+  });
+
+  it("reports the hold on the asset's Maintenance tab, ending at the cap", async () => {
+    h.db.assets.push(asset("a1"));
+    await openMaintenanceHold({ assetId: "a1", kind: "agent-reinstall" });
+
+    const info = await getAssetMaintenanceInfo("a1");
+
+    expect(info.inMaintenance).toBe(true);
+    expect(info.openWindows).toHaveLength(1);
+    expect(info.openWindows[0]).toMatchObject({
+      scheduleId: null,
+      scheduleName: "Polaris Agent reinstall",
+    });
+    // A hold has no occurrence to end — the cap is the honest answer.
+    expect(info.openWindows[0].until).toEqual(h.db.holds[0].expiresAt);
+  });
+
+  it("refuses a kind it does not know", async () => {
+    h.db.assets.push(asset("a1"));
+    await expect(
+      openMaintenanceHold({ assetId: "a1", kind: "agent-reboot" as never }),
+    ).rejects.toThrow(/hold kind/i);
   });
 });

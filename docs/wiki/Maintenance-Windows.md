@@ -197,6 +197,42 @@ immediately rather than on the next tick.
 
 ---
 
+## Windows Polaris opens for itself
+
+Some of what Polaris does to a device **is** downtime for it. Upgrading,
+reinstalling or uninstalling the [Polaris Agent](Polaris-Agent) stops the agent
+service on the host, which drops its connection — and without this, the
+`agent.disconnected` automation would page you about work you asked for.
+
+So those three operations put the asset in maintenance for their duration
+([rule 80](Business-Rules#rule-80)). You do not create or manage these: they
+open when the operation starts and end when the agent reconnects.
+
+| | |
+|---|---|
+| **Which operations** | agent upgrade, reinstall, uninstall. A first install and a retry take no window — there is no agent running to disconnect, and silencing the host would hide a real problem |
+| **What you see** | the device reads **maintenance** while it runs, and its Maintenance tab names the operation ("Polaris Agent upgrade") and the time it ends by |
+| **When it ends** | when the agent reconnects — not when the installer finishes, because the disconnect can be noticed up to a minute later. An uninstall ends when the uninstall does |
+| **If the operation fails** | it ends immediately. An agent that is down because its upgrade failed is a real problem and you should hear about it |
+| **If nothing ends it** | it expires on its own — 20 minutes for an upgrade or uninstall, 30 for a reinstall. A device in maintenance is not being watched, so this can never be left open by a crash |
+
+They do **not** appear on the Active Maintenance widget, which lists your
+schedules — a fleet-wide agent upgrade would otherwise fill a wallboard with
+one-minute entries. They do appear on the device: its status, its Maintenance
+tab, its `maintenance.entered` / `maintenance.exited` events and its chart bands.
+
+> **It silences the whole device, not just the agent.** For the length of the
+> operation the asset is in maintenance, so a live alert on the way in is
+> retired and a genuine failure that starts during it is not reported until the
+> window ends. That is the same trade every maintenance window makes, for a
+> minute or two per device.
+
+Ending maintenance yourself (setting the status to something else) wins, as
+always — the operation carries on, and you will hear about it if it breaks
+something.
+
+---
+
 ## Who holds the truth
 
 Open `AssetMaintenanceWindow` rows are the **restart-safe** source of truth, and
