@@ -36,6 +36,13 @@ response_time_interval_sec = 60
 heartbeat_interval_sec     = 300
 ```
 
+A cadence set here is the INTERVAL, not the phase. Each loop starts at its
+own offset inside the first minute (`loopPhaseSec` in `main.go`) plus one
+random slide drawn per process, so loops sharing a cadence never fire on the
+same tick and a fleet deployed in one batch does not reach the server in
+lockstep. Adding a loop means adding its phase — `pacing_test.go` fails
+otherwise, on purpose.
+
 ## Running
 
 The install script registers the agent as a system service:
