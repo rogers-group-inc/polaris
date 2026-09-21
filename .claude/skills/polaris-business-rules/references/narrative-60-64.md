@@ -1348,13 +1348,27 @@ the moment the flag clears the real status returns — `up` recovers the alert n
 ### The alert says what it is, and names who
 
 Every surface says DEPENDENCY DOWN, because a message reading "monitorStatus = down (threshold
-down)" would be the one thing this alert is not saying. Four template tokens carry it
+down)" would be the one thing this alert is not saying. Five template tokens carry it
 (`utils/notificationTemplate.ts`), all present-but-empty on every other alert so the default body
 prints them for free: `{dependency.summary}` is the whole notice — *DEPENDENCY DOWN — PLC-7 is
 unreachable because its upstream device SW-PLANT-3 is down* — and rides a slate banner under the
 headline (the Dep. Down pill's colour) that `pruneEmptyDivs` removes on every other send;
 `{dependency.upstream}` and `{dependency.rootCause}` are fact rows; `{dependency.tag}` appends
-` · DEPENDENCY DOWN` to the default subject. `{trigger.summary}` is replaced by
+` · DEPENDENCY DOWN` to the default subject; and `{dependency.headline}` is the
+compact form — the state and who, without the device's own name.
+
+That fifth token exists because of a hole a live dev run found, and it is worth
+recording as the general shape of the mistake. The seeded "Asset down"
+automation carries `messageTemplate: "{asset} is down"`, and an operator's own
+template WINS over the generated default — correctly, it is theirs. But push,
+Slack, Teams and Pushbullet send `Notification.message` and nothing else, so on
+the very automation most likely to be covering a PLC, the plant would have been
+paged with the one fact they already knew ("ASHF-FILE-01 is down") and none of
+the reason. The email was fine; the surfaces the operator actually carries were
+not. So the notice is APPENDED to their words rather than replacing them —
+`"ASHF-FILE-01 is down — DEPENDENCY DOWN — upstream ASHF-CORE-SW1 is down (root
+cause ASHF-EDGE-FG1)"` — and skipped when their template already renders the
+notice itself, since it is a catalogued token they may have used. `{trigger.summary}` is replaced by
 `dependencyTriggerSummary` (the device's own probe did not decide this alert, so "Monitor status
 is down" would mislead), and the default in-app message — what push, Slack, Teams and the phone
 show — is the rule name plus the whole sentence.
@@ -1450,5 +1464,5 @@ automation WITHOUT the key still drops the asset and that maintenance still sile
 `tests/unit/dependencyBlame.test.ts` (the walk — same fixtures `dependencyTreeService.test.ts`
 builds), `tests/unit/notificationSuppressionSweep.test.ts` (the exclusion), the template and
 email-template suites (the tokens and the pruning), `tests/unit/downDetectionTriggerSchema.test.ts`
-(where the key may live) and the wizard DOM suite (both placements, the mirror between them, the
-strip on a composite).
+(where the key may live) and the wizard DOM suite (the Actions-step row, the key surviving a
+Trigger-step re-collect, the strip on a composite).

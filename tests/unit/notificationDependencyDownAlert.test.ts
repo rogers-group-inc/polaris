@@ -157,6 +157,45 @@ describe("an opted-in automation speaks for its silenced devices", () => {
     expect(triggeredEvents()[0].details).toMatchObject({ dependencyDown: true, upstreamAssetId: "sw", rootCauseAssetId: "sw" });
   });
 
+  it("APPENDS the notice to an operator's own message template rather than replacing it", async () => {
+    // The gap a live dev run found: the seeded "Asset down" automation carries
+    // messageTemplate "{asset} is down", and push / Slack / Teams send nothing
+    // but Notification.message — so the plant would have been paged with the
+    // one fact they already knew and none of the reason.
+    h.prisma.notificationRule.findMany.mockResolvedValue([
+      downRule({ messageTemplate: "{asset} is down" }, { alertWhenDependencyDown: true }),
+    ]);
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    await evaluateAllNotificationRules();
+    const msg = created()[0].message as string;
+    expect(msg).toBe("PLC is down — DEPENDENCY DOWN — upstream SW-PLANT-3 is down");
+    // Their words survive, first.
+    expect(msg.startsWith("PLC is down")).toBe(true);
+  });
+
+  it("does not double up when the operator's template already renders the notice", async () => {
+    h.prisma.notificationRule.findMany.mockResolvedValue([
+      downRule({ messageTemplate: "{dependency.summary}" }, { alertWhenDependencyDown: true }),
+    ]);
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    await evaluateAllNotificationRules();
+    const msg = created()[0].message as string;
+    expect(msg.match(/DEPENDENCY DOWN/g)).toHaveLength(1);
+  });
+
+  it("leaves a custom template alone on a plain Down alert", async () => {
+    h.prisma.notificationRule.findMany.mockResolvedValue([
+      downRule({ messageTemplate: "{asset} is down" }, { alertWhenDependencyDown: true }),
+    ]);
+    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
+    await evaluateAllNotificationRules();
+    expect(created()[0].message).toBe("SRV is down");
+  });
+
   it("names the root cause when the upstream device is itself dependency-down", async () => {
     h.blame.mockResolvedValue(TWO_HOPS);
     h.prisma.asset.findMany.mockResolvedValue([

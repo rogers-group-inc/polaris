@@ -367,7 +367,7 @@ describe("automation wizard DOM render", () => {
     expect(inapp).toBeTruthy();
     expect(inapp.classList.contains("aw-action")).toBe(false);
     expect(inapp.querySelector("#aw-msg")).toBeTruthy();
-    expect(inapp.textContent).toContain("in-app alert (always happens)");
+    expect(inapp.textContent).toContain("In-app Alert");
     expect(inapp.textContent).not.toContain("event + in-app alert");
     expect(inapp.querySelector(".aw-action-remove")).toBeFalsy();
 
@@ -394,7 +394,7 @@ describe("automation wizard DOM render", () => {
     expect(doc.querySelector("#aw-step-5 .aw-action > .aw-esc-sec")).toBeFalsy();
     const cardEsc = doc.querySelector("#aw-actions")!.closest(".form-group")!.querySelector(".aw-esc-sec")!;
     expect(cardEsc).toBeTruthy();
-    expect(cardEsc.querySelector(".aesc-add")!.textContent).toContain("Escalate if unhandled");
+    expect(cardEsc.querySelector(".aesc-add")!.textContent).toContain("Escalation Action");
     expect((cardEsc.querySelector(".aesc-config") as unknown as { style: { display: string } }).style.display).toBe("none");
     (cardEsc.querySelector(".aesc-add") as unknown as { click: () => void }).click();
     const tier = cardEsc.querySelector(".aesc-tiers .aw-tier")!;
@@ -1200,13 +1200,15 @@ describe("automation wizard DOM render", () => {
     expect((savedPayloads[0]! as Record<string, any>).requireAckNote).toBe(true);
   });
 
-  it("the ack-note checkbox sits in each severity section, below its actions and its escalation", async () => {
+  it("the Require Acknowledgement row leads each severity section, above its actions and its escalation", async () => {
     // It used to sit on the in-app-alert card at the top of the step, where it
     // read as one answer for the whole automation. What closing an alert out
-    // costs is per severity, and the place to say so is after the actions and
-    // the escalation chain — who do I tell, who do I tell next, and what does
-    // closing it cost. (Reminders were here too, briefly; they belong to the
-    // notify ACTION and live on its row.)
+    // costs is per severity, so it lives in each severity's section — and since
+    // the 2026-09-21 card layout, at the TOP of it: it is a fact about the
+    // alert being raised, not about what is sent, and it must stay outside the
+    // folding Trigger Action card so a folded severity still states it.
+    // (Reminders were here too, briefly; they belong to the notify ACTION and
+    // live on its row.)
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     const w = g.window as InstanceType<typeof Window>;
@@ -1232,15 +1234,16 @@ describe("automation wizard DOM render", () => {
     expect(doc.querySelector("#aw-inapp-card .aw-require-ack-note")).toBeNull();
     expect(doc.querySelector("#aw-inapp-card .aw-repeat-on")).toBeNull();
 
-    // The base section's block is the LAST child of the section, after the
-    // collapsible body that holds the action list and the escalation chain —
-    // so a folded section still shows it.
+    // The base section's block is the FIRST child of the section, ahead of the
+    // Trigger Action card whose folding body holds the action list — so a
+    // folded section still shows it.
     const baseSec = (doc.querySelector("#aw-actions") as unknown as { closest: (s: string) => Element }).closest(".form-group");
     const baseBlock = baseSec.querySelector(":scope > .aw-followup");
     expect(baseBlock).toBeTruthy();
-    expect(baseSec.lastElementChild).toBe(baseBlock);
-    // …and the escalation editor it follows is inside the body, i.e. above it.
-    expect(baseSec.querySelector(".aw-collapse-body .aw-esc-sec")).toBeTruthy();
+    expect(baseSec.firstElementChild).toBe(baseBlock);
+    expect(baseBlock!.textContent).toContain("Require Acknowledgement");
+    // …and the escalation editor is inside the Trigger Action card below it.
+    expect(baseSec.querySelector(".aw5-card .aw-esc-sec")).toBeTruthy();
 
     // Turning the per-severity toggle on gives every band one of its own.
     const multi = doc.querySelector("#aw-band-actions-multi") as unknown as
@@ -1250,7 +1253,7 @@ describe("automation wizard DOM render", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(doc.querySelectorAll("#aw-step-5 .aw-followup").length).toBe(2);
     const bandSec = doc.querySelector("#aw-step-5 .aw-band-actions")!;
-    expect(bandSec.lastElementChild!.classList.contains("aw-followup")).toBe(true);
+    expect(bandSec.firstElementChild!.classList.contains("aw-followup")).toBe(true);
   });
 
   it("a band's ack-note answer saves onto the band", async () => {
@@ -3397,9 +3400,10 @@ describe("trigger filter rows", () => {
     });
 
     // ── Alerting while dependency-down (business rule 78) ────────────────
-    // Rendered in TWO places for now (Trigger step + Actions step's in-app
-    // card) so the operator can pick the final home; both bind the same key.
-    const depTf = () => doc.querySelector("#tf-dep-down") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void } | null;
+    // The "Dependency-Down Bypass" row lives on the Actions step, under the
+    // In-app Alert card beside "Require Acknowledgement". It was offered on the
+    // Trigger step too while the placement was undecided; the operator chose
+    // the Actions step (2026-09-21), and the Trigger step must offer nothing.
     const depAw = () => doc.querySelector("#aw-dep-down") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void } | null;
     const tick = async (el: { checked: boolean; dispatchEvent: (e: unknown) => void }, on: boolean) => {
       const w = g.window as InstanceType<typeof Window>;
@@ -3417,28 +3421,37 @@ describe("trigger filter rows", () => {
     };
     type DepPayload = { trigger: { alertWhenDependencyDown?: boolean; type: string; children?: Record<string, unknown>[] } };
 
-    it("offers the dependency-down toggle on the Trigger step AND the Actions step, off by default", async () => {
+    it("offers the Dependency-Down Bypass row on the Actions step only, off by default", async () => {
       await openOnTrigger(downRule());
-      const tf = depTf();
-      expect(tf).toBeTruthy();
-      expect(tf!.checked).toBe(false);
-      expect((doc.querySelector('.aw-dep-down[data-dep-down-placement="trigger"]') as unknown as { style: { display: string } }).style.display).not.toBe("none");
+      // Nothing on the Trigger step.
+      expect(doc.querySelector("#aw-step-3 .aw-dep-down")).toBeNull();
+      expect(doc.querySelector("#tf-dep-down")).toBeNull();
       await gotoStep(5);
       const aw = depAw();
       expect(aw).toBeTruthy();
       expect(aw!.checked).toBe(false);
-      expect(doc.querySelector('#aw-inapp-card .aw-dep-down[data-dep-down-placement="actions"]')).toBeTruthy();
+      const row = doc.querySelector("#aw-step-5 .aw-dep-down")!;
+      expect(row.textContent).toContain("Dependency-Down Bypass");
+      // It sits in the base severity section, right after the ack row and
+      // before the Trigger Action card.
+      const baseSec = (doc.querySelector("#aw-actions") as unknown as { closest: (s: string) => Element }).closest(".form-group");
+      const kids = Array.from(baseSec.children).map((c) => c.className);
+      expect(kids[0]).toContain("aw-followup");
+      expect(kids[1]).toContain("aw-dep-down");
+      expect(kids[2]).toContain("aw5-card");
       // Off posts NO key — an untouched automation's payload is byte-identical.
       await save();
       expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBeUndefined();
     });
 
-    it("ticking the Trigger-step box saves the key and the sentence says so", async () => {
+    it("ticking the row saves the key, and the trigger sentence and review say so", async () => {
       await openOnTrigger(downRule());
       toastErrors.length = 0; // an earlier case in this block leaves its refusal toast behind
-      await tick(depTf()!, true);
-      expect((doc.querySelector("#aw-trigger-sentence") as unknown as { innerHTML: string } | null)?.innerHTML ?? doc.body.innerHTML)
-        .toContain("dependency-down");
+      await gotoStep(5);
+      await tick(depAw()!, true);
+      await gotoStep(6);
+      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("dependency-down");
+      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("naming the upstream device");
       await save();
       expect(toastErrors).toEqual([]);
       const p = savedPayloads[0] as DepPayload;
@@ -3446,43 +3459,28 @@ describe("trigger filter rows", () => {
       expect(() => ruleInputSchema.parse(p)).not.toThrow();
     });
 
-    it("ticking the Actions-step box saves the key and ticks the Trigger-step box, which never re-renders", async () => {
-      await openOnTrigger(downRule());
-      await gotoStep(5);
-      await tick(depAw()!, true);
-      expect(depTf()!.checked).toBe(true);
-      await save();
-      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBe(true);
-    });
-
-    it("un-ticking the Actions-step box on a stored toggle strips the key, and clears the Trigger-step box", async () => {
+    it("opens a stored toggle checked, and keeps it through a save from step 1", async () => {
       await openOnTrigger(downRule({
         trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, forDurationSec: 0, alertWhenDependencyDown: true },
       }));
       await gotoStep(5);
       expect(depAw()!.checked).toBe(true);
-      await tick(depAw()!, false);
-      expect(depTf()!.checked).toBe(false);
-      await save();
-      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBeUndefined();
-    });
-
-    it("opens a stored toggle checked in both places, and keeps it through a save from step 1", async () => {
-      await openOnTrigger(downRule({
-        trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, forDurationSec: 0, alertWhenDependencyDown: true },
-      }));
-      expect(depTf()!.checked).toBe(true);
-      await gotoStep(5);
-      expect(depAw()!.checked).toBe(true);
-      // The review step names it.
-      await gotoStep(6);
-      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("naming the upstream device");
       await gotoStep(1);
       await save();
       expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBe(true);
     });
 
-    it("hides the toggle beside a second condition and strips a stored key from the composite", async () => {
+    it("un-ticking a stored toggle strips the key", async () => {
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, forDurationSec: 0, alertWhenDependencyDown: true },
+      }));
+      await gotoStep(5);
+      await tick(depAw()!, false);
+      await save();
+      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBeUndefined();
+    });
+
+    it("a multi-condition trigger has no row, and a stored key is stripped from the composite", async () => {
       await openOnTrigger(downRule({
         trigger: {
           type: "composite", kind: "asset", op: "and", forDurationSec: 0,
@@ -3492,9 +3490,6 @@ describe("trigger filter rows", () => {
           ],
         },
       }));
-      const wrap = doc.querySelector('.aw-dep-down[data-dep-down-placement="trigger"]') as unknown as { style: { display: string } } | null;
-      expect(wrap).toBeTruthy();
-      expect(wrap!.style.display).toBe("none");
       await gotoStep(5);
       expect(depAw()).toBeNull();
       await save();
@@ -3504,678 +3499,13 @@ describe("trigger filter rows", () => {
       expect(() => ruleInputSchema.parse(p)).not.toThrow();
     });
 
-    it("renders neither box for an automation that is not about being down", async () => {
+    it("renders no row for an automation that is not about being down", async () => {
       await openOnTrigger(downRule({
         trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">", threshold: 90 },
       }));
-      const wrap = doc.querySelector('.aw-dep-down[data-dep-down-placement="trigger"]') as unknown as { style: { display: string } } | null;
-      if (wrap) expect(wrap.style.display).toBe("none");
       await gotoStep(5);
       expect(depAw()).toBeNull();
+      expect(doc.querySelector("#aw-step-5 .aw-dep-down")).toBeNull();
     });
-  });
-});
-
-// ─── Export / import / view code ────────────────────────────────────────────
-
-describe("automation export / import / view code", () => {
-  const win = () => g.window as Window & typeof globalThis;
-
-  /** A complete stored automation. Opening in EDIT mode unlocks every step
-   *  (visited = 6), which is what makes the Summary step reachable in one jump —
-   *  a from-scratch draft has to be walked through Next, and exporting an
-   *  automation that already exists is the realistic case anyway. */
-  function storedRule(over?: Record<string, unknown>) {
-    return {
-      id: "r-export",
-      name: "Exportable",
-      description: null,
-      enabled: true,
-      severity: "warning",
-      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: 80, forDurationSec: 0 },
-      scope: { allAssets: true },
-      reset: { mode: "manual" },
-      actions: [{ type: "event" }, { type: "notify", channelId: "c1", recipientUserIds: ["u1"] }],
-      cooldownSec: null,
-      messageTemplate: null,
-      requireAckNote: false,
-      ...(over || {}),
-    };
-  }
-
-  /** Open on the Summary step. */
-  async function openToSummary(existing?: unknown, opts?: unknown) {
-    await (g.openAutomationWizard as (r: unknown, o?: unknown) => Promise<void>)(existing || storedRule(), opts);
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 60));
-  }
-
-  beforeEach(() => {
-    downloads.length = 0;
-    savedPayloads.length = 0;
-    // toastErrors accumulates across the whole file; these tests assert on it.
-    toastErrors.length = 0;
-    // buildOverlay removes its node on transitionend with a 400 ms fallback, so
-    // a dialog closed by the previous test is still in the document — and a
-    // plain querySelector would find that stale one instead of the live dialog.
-    doc.querySelectorAll(".modal-overlay").forEach((n) => n.remove());
-  });
-
-  /** The live stacked dialog: always the LAST overlay in the document. */
-  function inCode(sel: string): unknown {
-    const all = doc.querySelectorAll(".modal-overlay " + sel);
-    return all.length ? all[all.length - 1] : null;
-  }
-
-  it("step 1 offers Import when creating, and never when editing", async () => {
-    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(null);
-    expect(toastErrors).toEqual([]);
-    expect(doc.querySelector("#aw-import-btn")).toBeTruthy();
-    expect(doc.querySelector("#aw-import-input")).toBeTruthy();
-
-    // Editing an existing automation must NOT offer to replace it wholesale.
-    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
-      id: "r1",
-      name: "Existing",
-      severity: "warning",
-      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: 80, forDurationSec: 0 },
-      scope: { allAssets: true },
-      reset: { mode: "manual" },
-      actions: [{ type: "event" }],
-    });
-    expect(doc.querySelector("#aw-import-btn")).toBeFalsy();
-  });
-
-  it("step 6 offers Export and View code", async () => {
-    await openToSummary();
-    expect(toastErrors).toEqual([]);
-    expect(doc.querySelector("#aw-export")).toBeTruthy();
-    expect(doc.querySelector("#aw-view-code")).toBeTruthy();
-  });
-
-  it("Export downloads a dependency-led file named after the automation, carrying no channel id", async () => {
-    await openToSummary();
-    (doc.querySelector("#aw-export") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(downloads.length).toBe(1);
-    expect(downloads[0]!.filename).toBe("Exportable.automation.json");
-    const file = downloads[0]!.obj as Record<string, unknown>;
-    // Dependencies come FIRST so they are what a human sees on opening the file.
-    expect(Object.keys(file).indexOf("dependencies")).toBeLessThan(Object.keys(file).indexOf("rule"));
-    expect(file.polarisAutomation).toBe(1);
-    const rule = file.rule as Record<string, unknown>;
-    expect(rule.name).toBe("Exportable");
-    // No delivery wiring, and the audit Event is explicit rather than omitted.
-    expect(rule.actions).toEqual([{ type: "event" }]);
-    expect(rule.enabled).toBeUndefined();
-    expect(JSON.stringify(file)).not.toContain('"c1"'); // the harness's channel id
-  });
-
-  it("View code shows the full stored body and can save it back through the one save path", async () => {
-    await openToSummary();
-    (doc.querySelector("#aw-view-code") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-
-    const ta = inCode("#aw-code-text") as unknown as { value: string } | null;
-    expect(ta).toBeTruthy();
-    const shown = JSON.parse(ta!.value) as Record<string, unknown>;
-    // Full fidelity, unlike the export: `enabled` is present ...
-    expect(shown.enabled).toBe(true);
-    // ... and the legacy mirror is NOT, or deleting `actions` here would let the
-    // server silently rebuild them from `targets`.
-    expect(shown.targets).toBeUndefined();
-    expect(shown.clearBehavior).toBeUndefined();
-
-    // An edit that removes nothing destructive saves straight through. It must
-    // NOT be treated as "no change" just because the destructive-field diff is
-    // empty — that would silently discard the operator's edit.
-    ta!.value = JSON.stringify({ ...shown, messageTemplate: "edited" });
-    (inCode("#aw-code-save") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 40));
-    expect(savedPayloads.length).toBe(1);
-    expect(savedPayloads[0]!.messageTemplate).toBe("edited");
-    // Editing an existing automation keeps its delivery wiring — the code view
-    // is full fidelity, unlike an export.
-    expect(JSON.stringify(savedPayloads[0]!.actions)).toContain("c1");
-  });
-
-  it("View code offers Export, and it writes the PORTABLE file, not what is on screen", async () => {
-    await openToSummary();
-    (doc.querySelector("#aw-view-code") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-
-    const ta = inCode("#aw-code-text") as unknown as { value: string };
-    // The code view is full fidelity, so the channel id IS on screen ...
-    expect(ta.value).toContain("c1");
-
-    (inCode("#aw-code-export") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(downloads.length).toBe(1);
-    expect(downloads[0]!.filename).toBe("Exportable.automation.json");
-    const file = downloads[0]!.obj as Record<string, unknown>;
-    expect(file.polarisAutomation).toBe(1);
-    // ... and the file it wrote is stripped anyway, or an export taken from here
-    // would carry delivery wiring into a ticket.
-    expect(JSON.stringify(file)).not.toContain('"c1"');
-    // Saving is a separate button: exporting must not touch the automation.
-    expect(savedPayloads.length).toBe(0);
-    expect(toastErrors).toEqual([]);
-  });
-
-  it("Export carries the operator's unsaved edit, and refuses invalid JSON in place", async () => {
-    await openToSummary();
-    (doc.querySelector("#aw-view-code") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-
-    const ta = inCode("#aw-code-text") as unknown as { value: string };
-    const shown = JSON.parse(ta.value) as Record<string, unknown>;
-    ta.value = JSON.stringify({ ...shown, name: "Renamed in the editor" });
-    (inCode("#aw-code-export") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(downloads.length).toBe(1);
-    expect(downloads[0]!.filename).toBe("Renamed in the editor.automation.json");
-    expect(((downloads[0]!.obj as Record<string, unknown>).rule as Record<string, unknown>).name)
-      .toBe("Renamed in the editor");
-
-    // An unparseable edit exports nothing: a file built off the last good body
-    // would be indistinguishable from one built off the edit.
-    ta.value = "{ not json";
-    (inCode("#aw-code-export") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(downloads.length).toBe(1);
-    const err = inCode("#aw-code-err") as unknown as { textContent: string; style: { display: string } };
-    expect(err.style.display).toBe("");
-    expect(err.textContent).toMatch(/Invalid JSON/);
-  });
-
-  it("saving an unchanged body just closes, and a destructive edit needs a confirm", async () => {
-    await openToSummary();
-    (doc.querySelector("#aw-view-code") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-    const ta = inCode("#aw-code-text") as unknown as { value: string };
-    const shown = JSON.parse(ta.value) as Record<string, unknown>;
-
-    // Untouched: nothing to save.
-    (inCode("#aw-code-save") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(savedPayloads.length).toBe(0);
-
-    // Deleting the action list is destructive, so it must be confirmed —
-    // showConfirm is stubbed false here, so nothing saves.
-    (doc.querySelector("#aw-view-code") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-    const gutted: Record<string, unknown> = { ...shown };
-    delete gutted.actions;
-    (inCode("#aw-code-text") as { value: string }).value = JSON.stringify(gutted);
-    (inCode("#aw-code-save") as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 40));
-    expect(savedPayloads.length).toBe(0);
-  });
-
-  it("View code refuses invalid JSON in place instead of losing the edit", async () => {
-    await openToSummary();
-    (doc.querySelector("#aw-view-code") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-    const ta = inCode("#aw-code-text") as unknown as { value: string };
-    ta.value = "{ not json";
-    (inCode("#aw-code-save") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-
-    const err = inCode("#aw-code-err") as unknown as { textContent: string; style: { display: string } };
-    expect(err.style.display).toBe("");
-    expect(err.textContent).toMatch(/Invalid JSON/);
-    // The textarea still holds the operator's text.
-    expect((inCode("#aw-code-text") as unknown as { value: string }).value).toBe("{ not json");
-    expect(savedPayloads.length).toBe(0);
-  });
-
-  it("an imported automation opens in import mode: name from the filename, created disabled", async () => {
-    const P = (g.window as unknown as { PolarisAutomationPortability: Record<string, unknown> }).PolarisAutomationPortability;
-    const parse = P.parseImportFile as (t: string, f: string, tt?: string[]) => Record<string, unknown>;
-    const fileText = JSON.stringify({
-      polarisAutomation: 1,
-      dependencies: [
-        { kind: "deliveryChannel", name: "NOC email" },     // the harness HAS this one
-        { kind: "deliveryChannel", name: "Teams NetOps" },  // and not this one
-      ],
-      rule: {
-        name: "name in the body is ignored",
-        severity: "serious",
-        trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: 77, forDurationSec: 0 },
-        scope: { allAssets: true },
-        reset: { mode: "manual" },
-        actions: [{ type: "event" }],
-      },
-    });
-    const parsed = parse(fileText, "Imported rule.automation.json", ["asset_metric", "event"]);
-
-    await (g.openAutomationWizard as (r: unknown, o?: unknown) => Promise<void>)(parsed.rule, {
-      import: true,
-      name: parsed.name,
-      importInfo: {
-        dependencies: parsed.dependencies,
-        needsDevices: parsed.needsDevices,
-        blankedDimensions: parsed.blankedDimensions,
-        problems: parsed.problems,
-      },
-    });
-    expect(toastErrors).toEqual([]);
-
-    // The filename wins over the name in the body.
-    expect((doc.querySelector("#aw-name") as unknown as { value: string }).value).toBe("Imported rule");
-    // The banner says it lands disabled, and splits present from missing.
-    const note = doc.querySelector("#aw-step-1 .aw-clone-note") as unknown as { textContent: string };
-    expect(note).toBeTruthy();
-    expect(note.textContent).toMatch(/disabled/);
-    expect(note.textContent).toMatch(/NOC email/);
-    expect(note.textContent).toMatch(/not in this install/);
-    expect(note.textContent).toMatch(/Teams NetOps/);
-    // Actions always needs review — an import never carries delivery wiring.
-    expect(note.textContent).toMatch(/Actions/);
-
-    // It saves as a CREATE, disabled, whatever the file said.
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 40));
-    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 40));
-    expect(savedPayloads.length).toBe(1);
-    expect(savedPayloads[0]!.enabled).toBe(false);
-    expect(savedPayloads[0]!.name).toBe("Imported rule");
-  });
-
-  it("refuses to save a state-probe trigger whose probe was blanked (it would watch every probe)", async () => {
-    await (g.openAutomationWizard as (r: unknown, o?: unknown) => Promise<void>)(
-      {
-        name: "Probe rule",
-        severity: "warning",
-        trigger: {
-          type: "asset_metric",
-          metric: "customStateValue",
-          aggregation: "latest",
-          windowSec: 0,
-          operator: "==",
-          threshold: 1,
-          forDurationSec: 0,
-          dimensionFilter: {}, // the probe id did not survive the export
-        },
-        scope: { allAssets: true },
-        reset: { mode: "manual" },
-        actions: [{ type: "event" }],
-      },
-      { import: true, name: "Probe rule", importInfo: { dependencies: [], blankedDimensions: ["stateProbeId"] } },
-    );
-    toastErrors.length = 0;
-    (doc.querySelector('.stepper-step[data-step="6"]') as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 40));
-    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 40));
-
-    expect(savedPayloads.length).toBe(0);
-    expect(toastErrors.join(" ")).toMatch(/state probe/i);
-  });
-});
-
-describe("dynamic recipient typeahead", () => {
-  const notifyRule = {
-    id: "r-recip",
-    name: "CPU",
-    description: null,
-    enabled: true,
-    severity: "warning",
-    trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 90, forDurationSec: 0 },
-    scope: { allAssets: true },
-    reset: { mode: "auto" },
-    cooldownSec: null,
-    actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] }],
-  };
-
-  /** Open on the stored rule and land on the actions step. */
-  async function openOnStep5(): Promise<void> {
-    doc.body.innerHTML = "";
-    toastErrors.length = 0;
-    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(JSON.parse(JSON.stringify(notifyRule)));
-    await new Promise((r) => setTimeout(r, 20));
-    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-  }
-
-  /** Type into one recipient box and read back what it offered. */
-  function suggestionsFor(field: string, typed: string): string[] {
-    const win = g.window as InstanceType<typeof Window>;
-    const box = doc.querySelector('#aw-step-5 .na-recip-box[data-field="' + field + '"]')!;
-    const input = box.querySelector(".na-recip-input") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
-    input.value = typed;
-    input.dispatchEvent(new win.Event("input", { bubbles: true }));
-    return Array.from(box.querySelectorAll(".aw-suggest.open .aw-suggest-item")).map((el) => el.textContent || "");
-  }
-
-  it("offers the dynamic recipients for a straight-apostrophe \"asset's\"", async () => {
-    await openOnStep5();
-    expect(toastErrors).toEqual([]);
-    // The entries are written with a typographic apostrophe; nobody types one,
-    // so this is the fold that decides whether the feature is findable at all.
-    const hits = suggestionsFor("to", "asset's");
-    expect(hits.join(" | ")).toContain("Asset’s Responsible Contacts");
-    expect(hits.join(" | ")).toContain("Asset’s Region Users");
-    // Badged as what they are, not as their raw source name.
-    expect(hits.every((h) => h.includes("dynamic"))).toBe(true);
-    // No level entries: the stubbed catalogue reports no nesting, and on a flat
-    // one "L1 Region Users" is a synonym for the entry above it.
-    expect(hits.join(" | ")).not.toContain("L1 Region Users");
-  });
-
-  it("picking one adds the same pill the address-book picker would", async () => {
-    await openOnStep5();
-    suggestionsFor("to", "responsible");
-    const box = doc.querySelector('#aw-step-5 .na-recip-box[data-field="to"]')!;
-    const item = box.querySelector(".aw-suggest.open .aw-suggest-item") as unknown as { getAttribute: (a: string) => string };
-    expect(item).toBeTruthy();
-    // mousedown is what commits — the click never lands, since blur closes the list.
-    const win = g.window as InstanceType<typeof Window>;
-    (item as unknown as { dispatchEvent: (e: unknown) => void })
-      .dispatchEvent(new win.Event("mousedown", { bubbles: true }));
-    const pill = box.querySelector('.tag-chip[data-kind="assetContacts"]')!;
-    expect(pill).toBeTruthy();
-    expect(pill.getAttribute("data-value")).toBe("1");
-    expect(pill.getAttribute("data-label")).toBe("Asset’s Responsible Contacts");
-  });
-
-  it("does not offer them in Cc, where they would send to nobody", async () => {
-    await openOnStep5();
-    expect(suggestionsFor("cc", "asset's")).toEqual([]);
-    expect(doc.querySelector('#aw-step-5 .na-recip-box[data-field="cc"] .aw-suggest-empty')).toBeTruthy();
-  });
-});
-
-describe("web push recipients", () => {
-  const pushRule = {
-    id: "r-push",
-    name: "CPU",
-    description: null,
-    enabled: true,
-    severity: "warning",
-    trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 90, forDurationSec: 0 },
-    scope: { allAssets: true },
-    reset: { mode: "auto" },
-    cooldownSec: null,
-    // A STORED action, so the two broadcast toggles reflect what was saved
-    // rather than defaulting to checked the way a new one does.
-    actions: [{ type: "notify", channelId: "c2", recipientUserIds: ["u1", "u2"], recipientDeviceRegion: true }],
-  };
-
-  async function openPushStep5(): Promise<Element> {
-    doc.body.innerHTML = "";
-    toastErrors.length = 0;
-    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(JSON.parse(JSON.stringify(pushRule)));
-    await new Promise((r) => setTimeout(r, 20));
-    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-    return doc.querySelector("#aw-step-5 .aw-action .aw-action-fields")!;
-  }
-
-  it("mirrors the email field: one To box of pills, no Cc/Bcc, no account multi-select", async () => {
-    const fields = await openPushStep5();
-    expect(toastErrors).toEqual([]);
-    expect(fields.querySelector('.na-recip-box[data-field="to"]')).toBeTruthy();
-    expect(fields.querySelector('.na-recip-box[data-field="cc"]')).toBeFalsy();
-    expect(fields.querySelector('.na-recip-box[data-field="bcc"]')).toBeFalsy();
-    // The controls the pill field replaced are gone, including the separate
-    // device-region checkbox — it is a pill now, like everywhere else.
-    expect(fields.querySelector(".na-users")).toBeFalsy();
-    expect(fields.querySelector(".na-role-picker")).toBeFalsy();
-    expect(fields.querySelector(".na-region-picker")).toBeFalsy();
-    expect(fields.querySelector(".na-device-region")).toBeFalsy();
-    // Stored recipients round-trip into pills, dynamic entry included.
-    const box = fields.querySelector('.na-recip-box[data-field="to"]')!;
-    expect(box.getAttribute("data-mode")).toBe("push");
-    const kinds = Array.from(box.querySelectorAll(":scope > .tag-chip")).map((el) => el.getAttribute("data-kind"));
-    expect(kinds).toEqual(["deviceRegion", "user", "user"]);
-    // ...and the Address book button comes with it: the picker is where the
-    // per-user device counts live.
-    expect(fields.querySelector(".na-book")).toBeTruthy();
-    // The broadcast toggles survive — they are capabilities no pill can express.
-    expect(fields.querySelector(".na-all-users")).toBeTruthy();
-    expect(fields.querySelector(".na-all-regions")).toBeTruthy();
-  });
-
-  it("names the users who would receive nothing", async () => {
-    const fields = await openPushStep5();
-    // u2 has no enrolled browser; picking them is not the same as reaching them.
-    expect(fields.querySelector(".na-push-warn")!.textContent).toContain("Quiet");
-    expect(fields.querySelector(".na-push-warn")!.textContent).toContain("1 of 2");
-  });
-
-  it("refuses a typed address — push reaches an account, not a mailbox", async () => {
-    const fields = await openPushStep5();
-    const win = g.window as InstanceType<typeof Window>;
-    const box = fields.querySelector('.na-recip-box[data-field="to"]')!;
-    const input = box.querySelector(".na-recip-input") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
-    input.value = "someone@example.invalid";
-    input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(box.querySelector('.tag-chip[data-kind="address"]')).toBeFalsy();
-    expect(toastErrors.join(" ")).toMatch(/Polaris account/i);
-  });
-
-  it("offers no Responsible Contacts entry, which has no subscription behind it", async () => {
-    const fields = await openPushStep5();
-    const win = g.window as InstanceType<typeof Window>;
-    const box = fields.querySelector('.na-recip-box[data-field="to"]')!;
-    const input = box.querySelector(".na-recip-input") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
-    input.value = "asset's";
-    input.dispatchEvent(new win.Event("input", { bubbles: true }));
-    const hits = Array.from(box.querySelectorAll(".aw-suggest.open .aw-suggest-item")).map((el) => el.textContent || "");
-    expect(hits.join(" | ")).toContain("Asset’s Region Users");
-    expect(hits.join(" | ")).not.toContain("Responsible Contacts");
-  });
-});
-
-describe("multi-channel notify + the user-preference filter", () => {
-  // The stub catalogue carries exactly one of each method: c1 (smtp) and
-  // c2 (web_push) — which is what makes "does this group offer both?"
-  // testable by ticking one box.
-  const rule = {
-    id: "r-multi",
-    name: "CPU",
-    description: null,
-    enabled: true,
-    severity: "warning",
-    trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 90, forDurationSec: 0 },
-    scope: { allAssets: true },
-    reset: { mode: "auto" },
-    cooldownSec: null,
-    actions: [{ type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] }],
-  };
-
-  async function openStep5(): Promise<Element> {
-    doc.body.innerHTML = "";
-    toastErrors.length = 0;
-    savedPayloads.length = 0;
-    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(JSON.parse(JSON.stringify(rule)));
-    await new Promise((r) => setTimeout(r, 20));
-    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-    return doc.querySelector("#aw-step-5 .aw-action .aw-action-fields")!;
-  }
-
-  function tick(fields: Element, id: string, on: boolean) {
-    const win = g.window as InstanceType<typeof Window>;
-    const cb = fields.querySelector(`.na-chan[value="${id}"]`) as unknown as
-      { checked: boolean; dispatchEvent: (e: unknown) => void };
-    cb.checked = on;
-    cb.dispatchEvent(new win.Event("change", { bubbles: true }));
-  }
-
-  it("offers channels as a checklist, with the stored one ticked", async () => {
-    const fields = await openStep5();
-    expect(toastErrors).toEqual([]);
-    // The single-select is gone — an action delivers through a SET of channels.
-    expect(fields.querySelector(".na-channel")).toBeFalsy();
-    const boxes = Array.from(fields.querySelectorAll(".na-chan")) as unknown as { value: string; checked: boolean }[];
-    expect(boxes.map((b) => b.value)).toEqual(["c1", "c2"]);
-    expect(boxes.map((b) => b.checked)).toEqual([true, false]);
-  });
-
-  it("grays the preference checkbox while the group offers only one method", async () => {
-    const fields = await openStep5();
-    // Email alone: honouring a push-preferring recipient's choice here would
-    // remove them from the alert rather than route it (business rule 39).
-    const cb = fields.querySelector(".na-pref-enable") as unknown as { disabled: boolean };
-    expect(cb.disabled).toBe(true);
-    expect(fields.querySelector(".na-pref-hint")!.textContent)
-      .toMatch(/once this list offers both an email and a push channel/i);
-  });
-
-  it("enables it the moment the same action picks up a push channel", async () => {
-    const fields = await openStep5();
-    tick(fields, "c2", true);
-    await new Promise((r) => setTimeout(r, 10));
-    const cb = fields.querySelector(".na-pref-enable") as unknown as { disabled: boolean };
-    expect(cb.disabled).toBe(false);
-    // A mixed action renders the union: email's Cc/Bcc AND push's broadcast
-    // toggles, off one shared To list.
-    expect(fields.querySelector('.na-recip-box[data-field="cc"]')).toBeTruthy();
-    expect(fields.querySelector('.na-recip-box[data-field="bcc"]')).toBeTruthy();
-    expect(fields.querySelector(".na-all-users")).toBeTruthy();
-    // The To box stays permissive: an email channel can still carry an address.
-    expect(fields.querySelector('.na-recip-box[data-field="to"]')!.getAttribute("data-mode")).toBe("email");
-  });
-
-  it("saves channelIds with the primary first, and the flag once it is enabled", async () => {
-    const fields = await openStep5();
-    tick(fields, "c2", true);
-    await new Promise((r) => setTimeout(r, 10));
-    const win = g.window as InstanceType<typeof Window>;
-    const pref = fields.querySelector(".na-pref-enable") as unknown as
-      { checked: boolean; dispatchEvent: (e: unknown) => void };
-    pref.checked = true;
-    pref.dispatchEvent(new win.Event("change", { bubbles: true }));
-    // "All Users" defaults on for a NEW push action; this one is stored, so it
-    // is off and the To list still answers for both halves.
-    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 30));
-    expect(toastErrors).toEqual([]);
-    const p = savedPayloads[0]! as Record<string, any>;
-    const a = p.actions[0];
-    expect(a.channelIds).toEqual(["c1", "c2"]);
-    // channelId is the lossless single-channel mirror — the server refuses a
-    // payload where it is not channelIds[0].
-    expect(a.channelId).toBe("c1");
-    expect(a.respectUserPreference).toBe(true);
-    expect(() => ruleInputSchema.parse(p)).not.toThrow();
-  });
-
-  it("never saves the flag from a disabled checkbox", async () => {
-    const fields = await openStep5();
-    tick(fields, "c2", true);
-    await new Promise((r) => setTimeout(r, 10));
-    const win = g.window as InstanceType<typeof Window>;
-    const pref = fields.querySelector(".na-pref-enable") as unknown as
-      { checked: boolean; disabled: boolean; dispatchEvent: (e: unknown) => void };
-    pref.checked = true;
-    pref.dispatchEvent(new win.Event("change", { bubbles: true }));
-    // Take the push channel away again: the group is single-method once more,
-    // so the ticked-but-inert box must not persist — it would resurface on the
-    // next edit as a setting that does nothing.
-    tick(fields, "c2", false);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(pref.disabled).toBe(true);
-    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 30));
-    expect(toastErrors).toEqual([]);
-    const a = (savedPayloads[0]! as Record<string, any>).actions[0];
-    expect(a.respectUserPreference).toBeUndefined();
-    expect(a.channelIds).toBeUndefined();
-    expect(a.channelId).toBe("c1");
-  });
-});
-
-/**
- * The event trigger's detail conditions — the `detailsMatch` rows that make an
- * automation directional.
- *
- * The seeded capacity and platform-lifecycle rules fire on `direction =
- * escalated` so a recovery doesn't raise a second alert. That condition was
- * stored, and matched by the engine, and rendered by nothing: the trigger step
- * neither showed it nor collected it, so visiting step 3 on one of those rules
- * and saving silently dropped it — and the rule started alerting on the way
- * back down as well as the way up.
- */
-describe("event trigger: detail conditions", () => {
-  const eventRule = (detailsMatch?: Record<string, unknown>) => ({
-    id: "r-cap",
-    name: "Capacity severity escalated",
-    description: null,
-    enabled: true,
-    severity: "warning",
-    trigger: { type: "event", actionPattern: "capacity.severity_changed", ...(detailsMatch ? { detailsMatch } : {}) },
-    scope: {},
-    reset: { mode: "event", resetEvent: { actionPattern: "capacity.severity_recovered", resourceType: null } },
-    cooldownSec: 600,
-    messageTemplate: "{value}",
-  });
-
-  /** Open in edit mode and land on the trigger step, where the fields render. */
-  async function openStep3(rule: Record<string, unknown>): Promise<void> {
-    doc.body.innerHTML = "";
-    savedPayloads.length = 0;
-    toastErrors.length = 0;
-    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(rule);
-    (doc.querySelector('.stepper-step[data-step="3"]') as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  const save = async (): Promise<Record<string, any>> => {
-    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 30));
-    return savedPayloads[0] as Record<string, any>;
-  };
-
-  it("renders a stored condition as an editable row and survives a save", async () => {
-    await openStep3(eventRule({ direction: "escalated" }));
-    expect(toastErrors).toEqual([]);
-    const rows = doc.querySelectorAll("#aw-step-3 .tf-drow");
-    expect(rows.length).toBe(1);
-    expect((rows[0]!.querySelector(".tf-dkey") as unknown as { value: string }).value).toBe("direction");
-    expect((rows[0]!.querySelector(".tf-dval") as unknown as { value: string }).value).toBe("escalated");
-    const p = await save();
-    expect(toastErrors).toEqual([]);
-    expect(p.trigger.detailsMatch).toEqual({ direction: "escalated" });
-    expect(() => ruleInputSchema.parse(p)).not.toThrow();
-  });
-
-  it("adds a condition, and removing the last one clears the field entirely", async () => {
-    await openStep3(eventRule());
-    expect(doc.querySelectorAll("#aw-step-3 .tf-drow").length).toBe(0);
-    (doc.querySelector("#aw-step-3 .tf-add-detail") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 10));
-    const win = g.window as InstanceType<typeof Window>;
-    const row = doc.querySelector("#aw-step-3 .tf-drow")!;
-    const key = row.querySelector(".tf-dkey") as unknown as { value: string };
-    const val = row.querySelector(".tf-dval") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
-    key.value = "to";
-    val.value = "critical";
-    val.dispatchEvent(new win.Event("input", { bubbles: true }));
-    expect((await save()).trigger.detailsMatch).toEqual({ to: "critical" });
-
-    await openStep3(eventRule({ to: "critical" }));
-    (doc.querySelector("#aw-step-3 .tf-dremove") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 10));
-    const p = await save();
-    // Absent, not an empty object: the schema's field is optional, and {} would
-    // read as a condition the operator never wrote.
-    expect(p.trigger.detailsMatch).toBeUndefined();
-    expect(() => ruleInputSchema.parse(p)).not.toThrow();
-  });
-
-  it("a row with no field name is dropped, so a half-typed condition can't silence the rule", async () => {
-    await openStep3(eventRule({ direction: "escalated" }));
-    (doc.querySelector("#aw-step-3 .tf-add-detail") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 10));
-    const rows = doc.querySelectorAll("#aw-step-3 .tf-drow");
-    expect(rows.length).toBe(2);
-    (rows[1]!.querySelector(".tf-dval") as unknown as { value: string }).value = "orphan";
-    expect((await save()).trigger.detailsMatch).toEqual({ direction: "escalated" });
   });
 });

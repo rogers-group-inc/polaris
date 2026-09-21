@@ -149,9 +149,9 @@ only care about one device. A plant operator subscribed to a PLC's down
 automation hears nothing when the switch above the PLC dies, because the PLC
 is Dep. Down and the switch is somebody else's alert.
 
-A `monitor status is down` automation can opt out of the silence with **"Also
-alert when the device is dependency-down"** on its trigger ([rule
-76](Business-Rules#rule-78)). With it on:
+A `monitor status is down` automation can opt out of the silence with the
+**Dependency-Down Bypass** row on its Actions step, under the In-app Alert card
+([rule 78](Business-Rules#rule-78)). With it on:
 
 - the automation **still raises its alert the moment the device turns
   Dep. Down** — the upstream's confirmed verdict is the evidence, so it does

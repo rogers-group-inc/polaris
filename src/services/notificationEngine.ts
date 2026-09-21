@@ -1691,7 +1691,18 @@ function applyFollowUpPolicy(parts: TemplateContextParts, rule: DbRule, severity
 /** Render the in-app message from a built context (default string when no template). */
 function renderMessage(rule: DbRule, reading: Reading, ctx: Record<string, string>): string {
   if (rule.messageTemplate && rule.messageTemplate.trim()) {
-    return renderNotificationTemplate(rule.messageTemplate, ctx);
+    const own = renderNotificationTemplate(rule.messageTemplate, ctx);
+    // Business rule 78 — a custom template cannot have anticipated this alert,
+    // so the notice is APPENDED rather than replacing the operator's words.
+    // It has to reach the message and not just the email body: push, Slack,
+    // Teams and Pushbullet all send `Notification.message` and nothing else,
+    // so a template like "{asset} is down" would page the plant with the one
+    // fact they already knew and none of the reason. Skipped when their own
+    // template already renders the notice (it is a catalogued token).
+    if (reading.dependencyDown && ctx["dependency.tag"] && !own.includes("DEPENDENCY DOWN")) {
+      return `${own} — ${ctx["dependency.headline"] || "DEPENDENCY DOWN"}`;
+    }
+    return own;
   }
   const dim = reading.dimLabel ? ` [${reading.dimLabel}]` : "";
   if (rule.trigger.type === "composite") {

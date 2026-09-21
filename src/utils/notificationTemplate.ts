@@ -107,6 +107,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{dependency.summary}", label: "Dependency-down notice", description: "On an alert raised for a device that is dependency-down, the whole sentence: \"DEPENDENCY DOWN — PLC-7 is unreachable because its upstream device SW-PLANT-3 is down\". Empty on every other alert, so its banner prunes away", group: "notification" },
   { token: "{dependency.upstream}", label: "Upstream device", description: "Dependency-down alerts: the device directly above this one that is down (or itself dependency-down). Empty on every other alert", group: "notification" },
   { token: "{dependency.rootCause}", label: "Root cause", description: "Dependency-down alerts: the device further up that is actually down, when it is not the upstream device itself — the FortiGate above a dependency-down switch. Empty when the upstream device is the root cause, and on every other alert", group: "notification" },
+  { token: "{dependency.headline}", label: "Dependency-down headline", description: "The compact notice, for a message that already names the device: \"DEPENDENCY DOWN — upstream SW-PLANT-3 is down\". Empty on every other alert", group: "notification" },
   { token: "{dependency.tag}", label: "Dependency-down tag", description: "\" · DEPENDENCY DOWN\" on a dependency-down alert, with its own separator so a subject line can append it unconditionally; empty on every other alert", group: "notification" },
 ];
 
@@ -149,6 +150,22 @@ export function dependencyTriggerSummary(d: DependencyTemplateParts | null | und
   if (!d || !d.upstream) return "Dependency down — a device above it is down";
   const root = d.rootCause && d.rootCause !== d.upstream ? ` (root cause ${d.rootCause})` : "";
   return `Dependency down — upstream ${d.upstream} ${dependencyReasonPhrase(d.reason)}${root}`;
+}
+
+/**
+ * The COMPACT notice (`{dependency.headline}`) — the state in the words the
+ * pill uses, plus who, and deliberately WITHOUT the device's own name.
+ *
+ * It exists for the one place the full sentence does not fit: an operator's own
+ * `messageTemplate`. Such a template has already named the device ("{asset} is
+ * down"), and it could not have anticipated this alert, so the engine appends
+ * this rather than replacing their words — and it must be the MESSAGE that
+ * carries it, because push, Slack, Teams and Pushbullet send nothing else.
+ */
+export function dependencyHeadline(d: DependencyTemplateParts | null | undefined): string {
+  if (!d) return "";
+  const s = dependencyTriggerSummary(d);
+  return "DEPENDENCY DOWN" + s.slice("Dependency down".length);
 }
 
 /** Escape a string for safe embedding in HTML text/attribute content. */
@@ -478,6 +495,7 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     "dependency.upstream": str(parts.dependency?.upstream),
     "dependency.rootCause": parts.dependency && parts.dependency.rootCause && parts.dependency.rootCause !== parts.dependency.upstream
       ? parts.dependency.rootCause : "",
+    "dependency.headline": dependencyHeadline(parts.dependency),
     "dependency.tag": parts.dependency ? " · DEPENDENCY DOWN" : "",
   };
 }

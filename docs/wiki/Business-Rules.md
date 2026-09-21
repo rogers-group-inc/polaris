@@ -688,8 +688,8 @@ That is right for the network team and wrong for the people who only watch one
 device: the operators subscribed to a PLC's down automation heard nothing when
 the switch above it died.
 
-So a `monitor status is down` automation — and only that kind — can tick **"Also
-alert when the device is dependency-down"**. With it on, the automation still
+So a `monitor status is down` automation — and only that kind — can tick
+**Dependency-Down Bypass** on its Actions step. With it on, the automation still
 raises its alert **the moment the device turns Dep. Down**; it does not wait for
 the device's own missed-poll count, because the upstream's confirmed outage is
 the evidence. The alert **says DEPENDENCY DOWN** in the subject, the headline

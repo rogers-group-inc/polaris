@@ -147,6 +147,15 @@ describe("dependency-down tokens (business rule 78)", () => {
     expect(test["dependency.summary"]).toContain("SW-PLANT-3 is under a Dependency Test");
   });
 
+  it("offer a COMPACT headline for a message that already names the device", () => {
+    // Appended to an operator's own messageTemplate by the engine, so it must
+    // not restate the device — "{asset} is down — DEPENDENCY DOWN — upstream …".
+    expect(oneHop["dependency.headline"]).toBe("DEPENDENCY DOWN — upstream SW-PLANT-3 is down");
+    expect(twoHop["dependency.headline"]).toBe("DEPENDENCY DOWN — upstream SW-PLANT-3 is down (root cause FG-PLANT)");
+    expect(plain["dependency.headline"]).toBe("");
+    expect(oneHop["dependency.headline"]).not.toContain("PLC-7");
+  });
+
   it("still say dependency down when nobody could be named", () => {
     const unnamed = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: null, rootCause: null, reason: null } });
     expect(unnamed["dependency.summary"]).toBe("DEPENDENCY DOWN — PLC-7 is unreachable because a device above it is down");
