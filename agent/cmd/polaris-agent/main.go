@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -104,6 +105,156 @@ const (
 	// Restart and expects it to act within seconds, not a minute).
 	defaultCommandPollIntervalSec = 20
 )
+
+// ─── Loop pacing ───────────────────────────────────────────────────────────
+//
+// Every collection loop used to start in the same instant with a bare
+// time.NewTicker, and several of them share a cadence: FOUR at 300 s
+// (heartbeat, systemInfo, processInventory, serviceInventory) and FIVE at
+// 60 s (telemetry, eventLog, processTelemetry, processLog,
+// processConnections). A Go ticker keeps the phase it was created with, so
+// those groups did not merely collide once at boot — they fired on the same
+// tick for the life of the process, forever.
+//
+// That is visible from the other side of the network. On a two-core Windows
+// host the 300 s boundary spawned `powershell -Command "Get-CimInstance
+// Win32_Service"` and `tasklist /svc` at the same moment, which is most of a
+// core-second, while the response-time probe — which times a /heartbeat
+// round trip through this same process — was being measured. Both the CPU
+// chart and the response-time chart grew a five-minute sawtooth that
+// described the agent's own scheduling rather than the host.
+//
+// Two offsets fix it, and they fix different problems:
+//
+//   phase   Deterministic, per loop, from the table below. Spreads the loops
+//           that share a cadence so the expensive ones cannot land together
+//           ON THIS HOST. Deterministic rather than random so a given host
+//           behaves the same across restarts and the spacing is testable.
+//
+//   jitter  Random, drawn ONCE per process and added to every loop equally
+//           (so it slides the whole schedule without disturbing the phase
+//           spacing). Spreads the FLEET, which the phase cannot: a bulk
+//           deploy starts hundreds of agents within seconds of each other,
+//           and with the phase alone every one of them would hit /samples on
+//           the same wall-clock second of every minute, forever.
+//
+// The phases are capped inside one minute on purpose. A phase proportional
+// to the interval would space the 300 s loops further apart, but it would
+// also mean an operator who just installed the agent waits minutes for the
+// first process list. A few seconds of separation is all the collision
+// costs, so spreading the whole set across one minute buys the entire fix
+// and the tab still fills in while they are looking at it.
+//
+// The phases are also what makes the separation PERMANENT. Every staggered
+// cadence is a multiple of 60 s and every phase is inside [0, 60), so two
+// loops stay exactly |phase_a - phase_b| seconds apart for the life of the
+// process — their firing times can never converge. Add a cadence that is
+// not a minute multiple, or give two loops the same phase, and the drift
+// comes back on a period nobody will think to look for. pacing_test.go
+// walks a simulated hour rather than trusting that reasoning.
+
+// loopPhaseSec is the deterministic per-loop offset, in seconds, applied to
+// a loop's first fire and therefore to its ticker phase for the life of the
+// process. Two rules, both pinned by pacing_test.go:
+//
+//   - every value is < 60, so it is shorter than the shortest cadence any
+//     staggered loop runs at, and the agent is fully warmed up inside a
+//     minute of install.
+//   - loops that SHARE a default cadence are spread apart, and the two that
+//     spawn a subprocess (processInventory's `tasklist`, serviceInventory's
+//     PowerShell) are deliberately far from each other and from systemInfo.
+//
+// responseTime owns the zero mark alone. It measures a /heartbeat round
+// trip through this very process, so it is the one thing every other loop
+// has to get out of the way of — anything sharing its tick is being timed.
+var loopPhaseSec = map[string]int{
+	// Laid out across the minute in FIRING ORDER, not grouped by cadence.
+	// Grouping by cadence is what the first attempt did, and it let a 60 s
+	// loop and a 300 s loop two seconds apart slip through: every cadence
+	// here is a multiple of 60, so a pair's spacing is whatever their phases
+	// differ by, forever, regardless of which group they came from.
+	"responseTime":       0,  // owns zero; everything else is measured around it
+	"command":            2,  // 20 s poll, one cheap GET
+	"heartbeat":          4,
+	"telemetry":          8,  // blocks ~1 s sampling CPU
+	"systemInfo":         13, // full host enumeration
+	"interfaces":         18,
+	"storage":            22,
+	"eventLog":           27, // journalctl / Get-WinEvent
+	"processTelemetry":   32,
+	"processLog":         37,
+	"processInventory":   42, // spawns `tasklist /svc` on Windows
+	"serviceInventory":   48, // spawns PowerShell + Get-CimInstance
+	"serviceLog":         53,
+	"processConnections": 57,
+}
+
+// maxLoopJitter bounds the per-process random slide. Twenty seconds is
+// enough to smear a fleet across the server's ingest window without pushing
+// any loop's first sample outside the minute the operator is watching.
+const maxLoopJitter = 20 * time.Second
+
+// loopJitter is drawn once, at package init, and shared by every loop.
+//
+// This leans on the global math/rand source being randomly seeded, which it
+// has been since Go 1.20 — the whole point is that two hosts booting from
+// the same image at the same second do NOT pick the same slide. If this ever
+// runs somewhere that pins the seed (GODEBUG=randautoseed=0, or an older
+// toolchain), every agent in the fleet lands on the same wall-clock second
+// again and the phases below are all that is left. Nothing breaks; the
+// server just sees the herd it used to.
+var loopJitter = time.Duration(rand.Int63n(int64(maxLoopJitter)))
+
+// loopStartDelay is the total wait before a loop's first fire: its phase
+// plus this process's jitter, clamped so it can never reach a full interval
+// (a 20 s command poll must not be delayed by a 45 s phase, and no loop
+// should ever skip a whole cadence just to get in line).
+func loopStartDelay(name string, interval time.Duration) time.Duration {
+	d := time.Duration(loopPhaseSec[name])*time.Second + loopJitter
+	if interval > 0 && d >= interval {
+		d = d % interval
+	}
+	return d
+}
+
+// runLoop is the one shape every collection loop has: wait out this loop's
+// start delay, optionally fire once, then tick forever. Centralised so a
+// loop cannot be added back without a phase — the old bug was not that the
+// offsets were wrong, it was that there were none.
+//
+// fireAtStart is false for the two loops whose startup work already ran
+// inline at boot (heartbeat) or which have none (command).
+func runLoop(ctx context.Context, name string, interval time.Duration, fireAtStart bool, fn func()) {
+	if d := loopStartDelay(name, interval); d > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(d):
+		}
+	}
+	if fireAtStart {
+		fn()
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			fn()
+		}
+	}
+}
+
+// intervalOr resolves a configured cadence in seconds to a Duration,
+// falling back to the compiled default when agent.conf left it unset.
+func intervalOr(configuredSec int, defaultSec int) time.Duration {
+	if configuredSec > 0 {
+		return time.Duration(configuredSec) * time.Second
+	}
+	return time.Duration(defaultSec) * time.Second
+}
 
 // ─── Server-pushed stream config (Phase 0 plumbing) ────────────────────────
 //
@@ -344,24 +495,9 @@ func enroll(cfg *config.Config, client *transport.Client) error {
 }
 
 func responseTimeLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.ResponseTimeIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultResponseTimeIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-
-	// Fire once immediately so the operator sees a sample within seconds
-	// of starting the agent rather than waiting one full interval.
-	pushOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushOne(client)
-		}
-	}
+	runLoop(ctx, "responseTime", intervalOr(cfg.ResponseTimeIntervalSec, defaultResponseTimeIntervalSec), true, func() {
+		pushOne(client)
+	})
 }
 
 func pushOne(client *transport.Client) {
@@ -394,33 +530,28 @@ func pushOne(client *transport.Client) {
 }
 
 func heartbeatLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.HeartbeatIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultHeartbeatIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-
-	_, _ = client.Heartbeat() // immediate one so the UI sees us live on startup
-	// Pull the initial stream config so opt-in streams (eventLog) know their
-	// state before their first tick. Previously the heartbeat ETag was ignored
-	// entirely; now we refresh /config on startup and whenever it changes.
+	// These two are the one thing that must NOT wait for a phase offset.
+	// The immediate heartbeat is how the UI learns the host is alive within
+	// seconds of install, and refreshConfig is what tells the opt-in streams
+	// (eventLog, processes) whether they are enabled — every other loop is
+	// downstream of it, so delaying it would delay the whole agent's first
+	// useful tick rather than spreading anything out.
+	_, _ = client.Heartbeat()
 	refreshConfig(client)
-	for {
-		select {
-		case <-ctx.Done():
+
+	// The recurring half takes its phase like everything else. Sharing the
+	// 300 s cadence with systemInfo, processInventory and serviceInventory is
+	// exactly the pile-up the offsets exist to break up.
+	runLoop(ctx, "heartbeat", intervalOr(cfg.HeartbeatIntervalSec, defaultHeartbeatIntervalSec), false, func() {
+		hb, err := client.Heartbeat()
+		if err != nil {
+			log.Printf("heartbeat: %v", err)
 			return
-		case <-t.C:
-			hb, err := client.Heartbeat()
-			if err != nil {
-				log.Printf("heartbeat: %v", err)
-				continue
-			}
-			if hb != nil && hb.ConfigETag != "" && hb.ConfigETag != loadConfigETag() {
-				refreshConfig(client)
-			}
 		}
-	}
+		if hb != nil && hb.ConfigETag != "" && hb.ConfigETag != loadConfigETag() {
+			refreshConfig(client)
+		}
+	})
 }
 
 // telemetryLoop pushes a CPU+memory+temperatures sample on its own
@@ -429,21 +560,9 @@ func heartbeatLoop(ctx context.Context, cfg *config.Config, client *transport.Cl
 // returned percentage reflects a real delta; running on a separate
 // goroutine keeps it from delaying the response-time loop.
 func telemetryLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.TelemetryIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultTelemetryIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushTelemetryOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushTelemetryOne(client)
-		}
-	}
+	runLoop(ctx, "telemetry", intervalOr(cfg.TelemetryIntervalSec, defaultTelemetryIntervalSec), true, func() {
+		pushTelemetryOne(client)
+	})
 }
 
 func pushTelemetryOne(client *transport.Client) {
@@ -484,21 +603,9 @@ func pushTelemetryOne(client *transport.Client) {
 // Operators wanting sub-minute history on a specific NIC pin it via
 // monitoredInterfaces and the server's fast-cadence path picks it up.
 func interfacesLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.InterfacesIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultInterfacesIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushInterfacesOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushInterfacesOne(client)
-		}
-	}
+	runLoop(ctx, "interfaces", intervalOr(cfg.InterfacesIntervalSec, defaultInterfacesIntervalSec), true, func() {
+		pushInterfacesOne(client)
+	})
 }
 
 // collectionTimeout is the maximum time we allow an OS-level collector
@@ -545,21 +652,9 @@ func pushInterfacesOne(client *transport.Client) {
 // Partitions(false) filters out the network mounts and pseudo-fs that
 // most often cause those stalls.
 func storageLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.StorageIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultStorageIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushStorageOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushStorageOne(client)
-		}
-	}
+	runLoop(ctx, "storage", intervalOr(cfg.StorageIntervalSec, defaultStorageIntervalSec), true, func() {
+		pushStorageOne(client)
+	})
 }
 
 func pushStorageOne(client *transport.Client) {
@@ -599,22 +694,10 @@ func pushStorageOne(client *transport.Client) {
 // refresh, no agent restart needed. Default cadence 60 s; agent.conf can
 // override via event_log_interval_sec.
 func eventLogLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.EventLogIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultEventLogIntervalSec * time.Second
-	}
 	stateDir := filepath.Dir(cfg.Path())
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushEventLogOne(client, stateDir)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushEventLogOne(client, stateDir)
-		}
-	}
+	runLoop(ctx, "eventLog", intervalOr(cfg.EventLogIntervalSec, defaultEventLogIntervalSec), true, func() {
+		pushEventLogOne(client, stateDir)
+	})
 }
 
 func pushEventLogOne(client *transport.Client, stateDir string) {
@@ -665,21 +748,9 @@ func pushEventLogOne(client *transport.Client, stateDir string) {
 // agent.conf overrides). Sends an empty list too, so unpinning the last process
 // and stopping a program clears stale inventory rows server-side.
 func processInventoryLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.ProcessInventoryIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultProcessInventoryIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushProcessInventoryOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushProcessInventoryOne(client)
-		}
-	}
+	runLoop(ctx, "processInventory", intervalOr(cfg.ProcessInventoryIntervalSec, defaultProcessInventoryIntervalSec), true, func() {
+		pushProcessInventoryOne(client)
+	})
 }
 
 func pushProcessInventoryOne(client *transport.Client) {
@@ -716,21 +787,9 @@ func pushProcessInventoryOne(client *transport.Client) {
 // list on a fixed cadence (full-replace server-side). Gated on the services
 // stream being enabled (true whenever a live agent owns the host).
 func serviceInventoryLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.ServiceInventoryIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultServiceInventoryIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushServiceInventoryOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushServiceInventoryOne(client)
-		}
-	}
+	runLoop(ctx, "serviceInventory", intervalOr(cfg.ServiceInventoryIntervalSec, defaultServiceInventoryIntervalSec), true, func() {
+		pushServiceInventoryOne(client)
+	})
 }
 
 func pushServiceInventoryOne(client *transport.Client) {
@@ -776,21 +835,9 @@ func pushServiceInventoryOne(client *transport.Client) {
 // minute (Feature C). Gated on the processes stream resolving to agent AND at
 // least one pinned program; otherwise idle.
 func processTelemetryLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.ProcessTelemetryIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultProcessTelemetryIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushProcessTelemetryOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushProcessTelemetryOne(client)
-		}
-	}
+	runLoop(ctx, "processTelemetry", intervalOr(cfg.ProcessTelemetryIntervalSec, defaultProcessTelemetryIntervalSec), true, func() {
+		pushProcessTelemetryOne(client)
+	})
 }
 
 func pushProcessTelemetryOne(client *transport.Client) {
@@ -833,22 +880,10 @@ func pushProcessTelemetryOne(client *transport.Client) {
 // processLogLoop tails logs for the operator-pinned programs (Feature C).
 // Gated on the processes stream resolving to agent AND >=1 pinned program.
 func processLogLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.ProcessLogIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultProcessLogIntervalSec * time.Second
-	}
 	stateDir := filepath.Dir(cfg.Path())
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushProcessLogOne(client, stateDir)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushProcessLogOne(client, stateDir)
-		}
-	}
+	runLoop(ctx, "processLog", intervalOr(cfg.ProcessLogIntervalSec, defaultProcessLogIntervalSec), true, func() {
+		pushProcessLogOne(client, stateDir)
+	})
 }
 
 func pushProcessLogOne(client *transport.Client, stateDir string) {
@@ -886,22 +921,10 @@ func pushProcessLogOne(client *transport.Client, stateDir string) {
 // service dimension). Gated on the services stream being enabled AND >=1 pinned
 // unit (monitoredServices). Rides the process-log cadence (60s).
 func serviceLogLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.ProcessLogIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultProcessLogIntervalSec * time.Second
-	}
 	stateDir := filepath.Dir(cfg.Path())
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushServiceLogOne(client, stateDir)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushServiceLogOne(client, stateDir)
-		}
-	}
+	runLoop(ctx, "serviceLog", intervalOr(cfg.ProcessLogIntervalSec, defaultProcessLogIntervalSec), true, func() {
+		pushServiceLogOne(client, stateDir)
+	})
 }
 
 func pushServiceLogOne(client *transport.Client, stateDir string) {
@@ -939,18 +962,10 @@ func pushServiceLogOne(client *transport.Client, stateDir string) {
 // the operator-MAPPED programs once a minute (Application Map). Gated on the
 // processes stream resolving to agent AND at least one mapped program.
 func processConnectionsLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(defaultProcessConnectionsIntervalSec) * time.Second
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushProcessConnectionsOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushProcessConnectionsOne(client)
-		}
-	}
+	// No agent.conf knob for this one — it rides the compiled default.
+	runLoop(ctx, "processConnections", intervalOr(0, defaultProcessConnectionsIntervalSec), true, func() {
+		pushProcessConnectionsOne(client)
+	})
 }
 
 func pushProcessConnectionsOne(client *transport.Client) {
@@ -998,20 +1013,9 @@ func pushProcessConnectionsOne(client *transport.Client) {
 // action + target before acting and reports the outcome. No config gate — the
 // poll is cheap and the server returns commands only for this agent.
 func commandLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.CommandPollIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultCommandPollIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pollAndRunCommands(client)
-		}
-	}
+	runLoop(ctx, "command", intervalOr(cfg.CommandPollIntervalSec, defaultCommandPollIntervalSec), false, func() {
+		pollAndRunCommands(client)
+	})
 }
 
 func pollAndRunCommands(client *transport.Client) {
@@ -1078,21 +1082,9 @@ func runScriptCommand(client *transport.Client, c transport.Command) {
 // Cheaper than its own cadence + matches the operator's intuition
 // that "agent is alive AND I know what it is" is one signal.
 func systemInfoLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
-	interval := time.Duration(cfg.HeartbeatIntervalSec) * time.Second
-	if interval == 0 {
-		interval = defaultHeartbeatIntervalSec * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	pushSystemInfoOne(client)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			pushSystemInfoOne(client)
-		}
-	}
+	runLoop(ctx, "systemInfo", intervalOr(cfg.HeartbeatIntervalSec, defaultHeartbeatIntervalSec), true, func() {
+		pushSystemInfoOne(client)
+	})
 }
 
 func pushSystemInfoOne(client *transport.Client) {

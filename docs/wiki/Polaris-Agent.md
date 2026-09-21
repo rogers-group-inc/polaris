@@ -312,6 +312,27 @@ The storage and interface collectors run under a 30-second guard, because
 an unresponsive NIC — without it the whole push loop freezes while the heartbeat
 keeps running and the agent looks connected.
 
+### The collections are spread across the minute
+
+Each collection runs on its own cadence, and each one starts at a different
+offset inside the minute — so they never run at the same instant.
+
+That matters more than it sounds. Several collections share a cadence: four
+of them run every five minutes, and on Windows two of those shell out, one to
+`tasklist` and one to PowerShell. **Before agent 0.19.0 they all fired
+together**, which on a small host was a visible CPU spike every five minutes
+— and because the agent measures its own response time by timing a round trip
+to Polaris, the spike landed on that measurement too. Both charts on the
+System tab grew a five-minute sawtooth that was describing the agent rather
+than the host.
+
+If you are looking at an agent host with that pattern, **check the agent
+version**: an installed agent keeps running its old schedule until it is
+upgraded.
+
+Each agent also picks a small random offset of its own at startup, so a fleet
+deployed in one batch does not arrive at the server in lockstep.
+
 ### Per-core CPU and the memory breakdown
 
 An agent-monitored host is the only kind whose **CPU** chart on the Assets →
