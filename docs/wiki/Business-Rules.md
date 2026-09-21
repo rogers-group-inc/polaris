@@ -706,3 +706,38 @@ and the detection script does not judge the firewall — it cannot know which of
 the two shapes to expect.
 
 See [Polaris Agent](Polaris-Agent#the-windows-firewall-rule-and-the-one-windows-writes-for-itself).
+
+### Rule 77
+
+**Removing a MAC from an asset is a correction, not a block.**
+
+An asset's MAC list is not a list of its network cards. It is every address
+anything has ever seen that device transmit as — which includes docks and USB
+adapters (the address follows the dock, not the laptop), randomised Wi-Fi
+addresses, and identities relayed through ZTNA, plus whatever a merge brought
+across from another record. So the list sometimes names an address belonging to
+a different device, and the **×** beside each entry is how you say so.
+
+What it does not do is blacklist the address. The row is deleted and nothing
+else; if the network reports that MAC against the asset again, the next
+discovery run adds it back. That is deliberate, and it is useful:
+
+- An address inherited from a bad merge, or from a lease on a device that is
+  gone, is never reported again — so deleting it is the whole fix.
+- An address that **comes straight back** is being transmitted right now. Some
+  physical thing is presenting it alongside this device. Suppressing it would
+  leave you with an asset record that is wrong but looks right.
+
+So a MAC that keeps returning is telling you the association is live, not that
+the button failed. Go and find the dock.
+
+Removing the entry that is currently the asset's primary **MAC Address**
+promotes the best survivor: the device's own cards — as reported by the Polaris
+Agent, Intune or vCenter — outrank anything a firewall or switch merely saw. A
+folded port range (`AA:…:00 – AA:…:2F`) is a block of switch ports rather than a
+device identity, so it is never promoted; an asset left holding only ranges
+correctly shows no primary MAC.
+
+Needs **Assets: Write** (the built-in *assetsadmin* role, and admin).
+
+See [Assets](Assets#correcting-a-wrong-mac-association).

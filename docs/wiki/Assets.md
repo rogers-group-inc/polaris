@@ -187,11 +187,11 @@ merely *saw*. The same **×** is on the MAC column's hover tooltip on the list,
 but the slide-over is the only place it appears for an asset carrying a single
 MAC. Every removal is audited as `asset.mac_removed`.
 
-Removal is a **correction, not a block**. Nothing is suppressed: if the network
-reports that address against this asset again, the next discovery run adds it
-back. When a MAC keeps returning, the association is live rather than historical
-— find what is actually transmitting it (usually a shared dock) instead of
-deleting the row repeatedly.
+Removal is a **correction, not a block** ([rule 77](Business-Rules#rule-77)).
+Nothing is suppressed: if the network reports that address against this asset
+again, the next discovery run adds it back. When a MAC keeps returning, the
+association is live rather than historical — find what is actually transmitting
+it (usually a shared dock) instead of deleting the row repeatedly.
 
 One entry can cover many addresses. An interface scrape folds a device's
 sequentially-allocated port MACs into a single `AA:…:00 – AA:…:2F` range row, so

@@ -11,7 +11,9 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(74 is the next free number.)
+(78 is the next free number. 75 is not free — it is claimed by an in-flight worktree that has
+not merged yet, which is exactly the collision the note under "add or retire a rule" warns
+about; re-check `main` before citing a number.)
 
 ## How to read
 
@@ -22,7 +24,7 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 | touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 67 |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 66, 67 |
 | touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it is the one that forbids splitting a send), then 56 and 60 |
-| touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 55 |
+| touch discovery writes (assets, descriptions, locations, ARP, MACs) | 13, 14, 15, 17, 22, 26, 28, 35, 40, 41, 45, 55, 77 |
 | touch how a discovery run reports what it did or did not read — skipped/offline/unread devices, run counters, a device whose data looks stale | 53 |
 | touch secrets, backups, SSH, login gating, permission levels | 20b–c, 21, 31, 33, 34, 43, 47, 51, 63 |
 | touch a user's own credential — changing a password, session rotation, what a credential change does to that user's other sessions | 61, 62 |
@@ -129,6 +131,7 @@ before changing anything the invariant constrains.
 | 73 | Planned downtime is reported as planned, and a scoped view of a window still reports the WHOLE window | invariants-30-43 | narrative-60-64 |
 | 74 | A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the DEVICE's | invariants-30-43 | narrative-60-64 |
 | 76 | Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it | invariants-30-43 | narrative-60-64 |
+| 77 | An operator's removal of a MAC is a correction, not a suppression | invariants-30-43 | narrative-60-64 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

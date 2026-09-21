@@ -1616,7 +1616,17 @@ model AssetAssociatedIp {
 //   - Intune sync (source="intune-ethernet" / "intune-wifi")
 //   - AD computer-object sync (source="ad")
 //   - Conflict ghost-merge (preserved from the deleted ghost asset)
-//   - Manual edits via the asset edit panel (source="manual")
+//   - source="manual" rows: the legacy JSONB backfill and the ghost-merge
+//     carry-over ONLY. There is no manual insert path — the asset edit
+//     modal's MAC box writes the `Asset.macAddress` scalar and never this
+//     table. (This comment claimed an edit-panel writer until 2026-09-21;
+//     it never existed.)
+//
+// The one operator WRITE is a delete: DELETE /assets/:id/macs/:mac
+// (assets:write) drops a single row so a wrong association can be corrected,
+// and re-promotes the primary through selectPrimaryMac. No tombstone is
+// recorded — a removed MAC the network reports again is re-added by the next
+// reconcile, by design (business rule 77).
 //   - System-info scrape + Polaris Agent interfaces push, for EVERY scraped
 //     interface MAC, monitored or not (source="monitor-interface"; contiguous
 //     MACs coalesce into [mac, macEnd] RANGE rows via reconcileInterfaceMacs
