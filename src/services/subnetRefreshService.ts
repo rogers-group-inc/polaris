@@ -1,22 +1,37 @@
 /**
- * src/services/subnetRefreshService.ts — Per-subnet "refresh from device"
- * action invoked by the Refresh button in the IP panel slide-in.
+ * src/services/subnetRefreshService.ts — Per-subnet "discover from device"
+ * action invoked by the Discover button in the IP panel slide-in. (The button
+ * read "Refresh" until 2026-09-21; the route, this service and its Event action
+ * keep the older spelling, which is a stable citation key for API clients and
+ * for every `subnet.refresh` Event already in the log.)
  *
  * Queries the originating FortiGate for ONE DHCP scope (CMDB reservations +
- * live leases), reconciles against Polaris's reservation rows for the same
- * subnet, and stamps subnet.lastDiscoveredAt so the slide-in's "Discovered N
- * minutes ago" line updates. Reuses the same FMG-proxy / direct-FortiGate
- * transport as reservationPushService.
+ * live leases) and for the gate's firewall VIP table, reconciles both against
+ * Polaris's reservation rows for the same subnet, and stamps
+ * subnet.lastDiscoveredAt so the slide-in's "Discovered N minutes ago" line
+ * updates. Reuses the same FMG-proxy / direct-FortiGate transport as
+ * reservationPushService.
  *
  * Intentionally narrower than the full discoverDhcpSubnets pipeline — only
- * touches DHCP rows on this subnet, doesn't recompute asset sightings /
- * decommissions / map regions / etc. Those reconcile on the next full
+ * touches DHCP and VIP facts on this subnet, doesn't recompute asset sightings
+ * / decommissions / map regions / etc. Those reconcile on the next full
  * integration discovery cycle.
  */
 
 import { Netmask } from "netmask";
+import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
+import { ipInCidr } from "../utils/cidr.js";
+import {
+  parseVipRow,
+  vipIpRoles,
+  vipInfoSnapshot,
+  vipInfoDiffers,
+  decideVipDhcpBinding,
+  type ParsedVip,
+  type VipInfoSnapshot,
+} from "../utils/vipAddressFacts.js";
 import { logEvent } from "./eventLogService.js";
 import {
   buildTransportForIntegration,
@@ -121,6 +136,56 @@ async function fetchLiveLeasesForScope(
   });
 }
 
+/**
+ * The gate's whole `firewall/vip` table, read through whichever transport this
+ * integration uses.
+ *
+ * One REST path for both transports on purpose: the FortiManager proxy forwards
+ * a REST call to the device, so the response is the device's own encoding
+ * rather than FortiManager's JSON-RPC flattening — and `parseVipRow` accepts
+ * either, so the two integration types cannot drift here the way the two
+ * full-discovery VIP readers once did.
+ *
+ * The table is device-wide (there is no per-scope VIP query), so it is filtered
+ * to this subnet by the caller. A gate with hundreds of VIPs still returns one
+ * response; this runs on an operator's click, not on a tick.
+ */
+async function fetchVipsForGate(t: Transport, deviceName: string): Promise<ParsedVip[]> {
+  const res = await callFortiOs<unknown>(
+    t,
+    "GET",
+    "/api/v2/cmdb/firewall/vip",
+  );
+  const rows = Array.isArray(res)
+    ? res
+    : Array.isArray((res as Record<string, unknown> | null)?.results)
+      ? ((res as Record<string, unknown>).results as unknown[])
+      : [];
+  const out: ParsedVip[] = [];
+  for (const row of rows) {
+    const parsed = parseVipRow(row, deviceName);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+/**
+ * The owner and notes a discovery-created VIP row carries.
+ *
+ * Spelled the same way discovery Phase 3c spells them, because both the Phase 5
+ * succession path and this service's own retire branch recognise a row as
+ * "still carrying only what discovery wrote" by matching these exact strings.
+ * A row whose owner is anything else was authored somewhere else and survives.
+ */
+function vipCanonicalOwner(snap: VipInfoSnapshot): string {
+  return snap.isVirtualServer ? "fortimanager-vs" : "fortimanager-vip";
+}
+
+function vipCanonicalNotes(snap: VipInfoSnapshot): string {
+  const kind = snap.isVirtualServer ? "Virtual server" : "Firewall VIP";
+  return `${kind} "${snap.name}" (${snap.role}) on ${snap.device} — ext: ${snap.extip}`;
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 export interface RefreshSubnetResult {
@@ -129,6 +194,16 @@ export interface RefreshSubnetResult {
   updated: number;
   released: number;
   skipped: number;
+  /** Addresses whose stored VIP snapshot was created or brought up to date. */
+  vipsStamped: number;
+  /** Addresses that carried a VIP this gate no longer reports. */
+  vipsCleared: number;
+  /**
+   * The gate's VIP table could not be read. Every VIP decision is skipped for
+   * the pass — never "no VIPs" — so an unreadable table can't retire the VIP
+   * facts Polaris already holds (business rule 53). Null on a successful read.
+   */
+  vipError: string | null;
 }
 
 /**
@@ -169,9 +244,21 @@ export async function refreshSubnet(
     subnet.fortigateDevice,
   );
   const { scopeId, serverInterface } = await findScopeIdForCidr(t, subnet.cidr);
-  const [cmdb, leases] = await Promise.all([
+  const [cmdb, leases, vipRead] = await Promise.all([
     listReservedAddresses(t, scopeId),
     fetchLiveLeasesForScope(t, serverInterface, subnet.cidr),
+    // Settled rather than awaited alongside: a gate that answers for DHCP and
+    // refuses `firewall/vip` (an API token scoped away from the firewall CMDB
+    // is the common shape) must still complete the DHCP reconcile. The failure
+    // is carried to the caller instead of being thrown, because "could not
+    // read" and "there are none" mean opposite things here.
+    fetchVipsForGate(t, subnet.fortigateDevice).then(
+      (vips) => ({ ok: true as const, vips }),
+      (err: unknown) => ({
+        ok: false as const,
+        error: (err as { message?: string })?.message || "Unknown error",
+      }),
+    ),
   ]);
 
   // Build the fresh view of this scope, keyed by IP. CMDB reservations are
@@ -235,16 +322,26 @@ export async function refreshSubnet(
       pendingByIp.set(r.ipAddress, r);
     }
   }
-  // Active manual / vip rows on this subnet — we leave these alone and skip
-  // creating a competing dhcp_* row on the same IP. The next full discovery
-  // is where conflict detection (upsertConflict) runs. Pending push-queued
-  // rows are filtered out here so they don't double-count under manualByIp;
-  // they're handled by pendingByIp above.
+  // Active manual rows on this subnet — we leave these alone and skip creating
+  // a competing dhcp_* row on the same IP. The next full discovery is where
+  // conflict detection (upsertConflict) runs. Pending push-queued rows are
+  // filtered out here so they don't double-count under manualByIp; they're
+  // handled by pendingByIp above. VIP rows are filtered out for a different
+  // reason — see vipRowByIp.
   const manualByIp = new Map<string, (typeof subnet.reservations)[number]>();
+  // Active `vip` rows on this subnet, split out of manualByIp because a VIP row
+  // is the one authoritative row that must still LEARN from the DHCP view:
+  // business rule 76 says a VIP describes an address without saying how the
+  // gate hands it out, so a DHCP entry at a VIP address stamps `dhcpBinding`
+  // rather than being discarded as a collision with an untouchable row.
+  const vipRowByIp = new Map<string, (typeof subnet.reservations)[number]>();
   for (const r of subnet.reservations) {
+    if (r.status !== "active" || !r.ipAddress) continue;
+    if (r.sourceType === "vip") {
+      vipRowByIp.set(r.ipAddress, r);
+      continue;
+    }
     if (
-      r.status === "active" &&
-      r.ipAddress &&
       r.sourceType !== "dhcp_reservation" &&
       r.sourceType !== "dhcp_lease" &&
       r.pushStatus !== "pending"
@@ -349,6 +446,25 @@ export async function refreshSubnet(
       skipped++;
       continue;
     }
+    const vipRow = vipRowByIp.get(ip);
+    if (vipRow) {
+      // A VIP address the gate is ALSO serving over DHCP. The VIP keeps the
+      // row (it is the device's own config and Polaris did not grant it), and
+      // the DHCP fact lands in `dhcpBinding` — the same column, for the same
+      // reason, as the managed-switch/AP case of business rule 23. sourceType
+      // is not flipped and no expiry is stamped: the succession that converts
+      // one of these rows belongs to the pass that can see the VIP is GONE,
+      // which is the VIP reconcile below and Phase 5 in a full discovery.
+      const patch = decideVipDhcpBinding(vipRow, {
+        type: f.sourceType === "dhcp_reservation" ? "dhcp-reservation" : "dhcp-lease",
+        macAddress: f.mac,
+      });
+      if (patch) {
+        diffUpdates.push({ id: vipRow.id, data: patch as Record<string, unknown> });
+        updated++;
+      }
+      continue;
+    }
     if (manualByIp.has(ip)) {
       skipped++;
       continue;
@@ -415,6 +531,163 @@ export async function refreshSubnet(
     released = releasedIds.length;
   }
 
+  // ── VIP facts ───────────────────────────────────────────────────────────
+  // Business rule 76. Runs after the DHCP flush, and re-reads the subnet's
+  // active rows rather than reusing the snapshot taken at the top: a row this
+  // pass just created at a VIP address has to be able to receive its VIP
+  // snapshot on the SAME pass, or the badge and the composed status pill would
+  // not appear until the operator clicked Discover a second time.
+  let vipsStamped = 0;
+  let vipsCleared = 0;
+  const vipError = vipRead.ok ? null : vipRead.error;
+  if (vipRead.ok) {
+    const vipByIp = new Map<string, VipInfoSnapshot>();
+    for (const vip of vipRead.vips) {
+      for (const { ip, role } of vipIpRoles(vip)) {
+        if (!ipInCidr(ip, subnet.cidr)) continue;
+        if (!vipByIp.has(ip)) vipByIp.set(ip, vipInfoSnapshot(vip, role));
+      }
+    }
+
+    const liveRows = await prisma.reservation.findMany({
+      where: { subnetId: subnet.id, status: "active" },
+      select: { id: true, ipAddress: true, sourceType: true, owner: true, vipInfo: true },
+    });
+    const rowByIp = new Map<string, (typeof liveRows)[number]>();
+    for (const r of liveRows) if (r.ipAddress) rowByIp.set(r.ipAddress, r);
+
+    // Stamp: the snapshot rides whatever row already holds the address, and a
+    // `vip` row is created only where nothing holds it. Stamping in place is
+    // what lets one address carry both facts — the DHCP row keeps its own
+    // sourceType and simply gains the VIP the gate reports at that address.
+    const vipStamps: Array<{ id: string; data: Record<string, unknown> }> = [];
+    const vipCreates: Array<Record<string, unknown>> = [];
+    for (const [ip, snap] of vipByIp) {
+      const row = rowByIp.get(ip);
+      if (!row) {
+        vipCreates.push({
+          subnetId: subnet.id,
+          ipAddress: ip,
+          hostname: snap.name,
+          owner: vipCanonicalOwner(snap),
+          projectRef: `${snap.isVirtualServer ? "VS" : "VIP"}: ${snap.device}`,
+          notes: vipCanonicalNotes(snap),
+          status: "active",
+          sourceType: "vip",
+          vipInfo: snap as unknown as object,
+        });
+        vipsStamped++;
+        continue;
+      }
+      if (vipInfoDiffers(row.vipInfo, snap)) {
+        vipStamps.push({ id: row.id, data: { vipInfo: snap as unknown as object } });
+        vipsStamped++;
+      }
+    }
+    for (let i = 0; i < vipStamps.length; i += UPDATE_CHUNK) {
+      await prisma.$transaction(
+        vipStamps.slice(i, i + UPDATE_CHUNK).map((u) =>
+          prisma.reservation.update({ where: { id: u.id }, data: u.data }),
+        ),
+      );
+    }
+    if (vipCreates.length > 0) {
+      await prisma.reservation.createMany({
+        data: vipCreates as never,
+        skipDuplicates: true,
+      });
+    }
+
+    // Retire: a stored VIP this gate no longer reports. Scoped to snapshots
+    // naming THIS gate, because RFC1918 space repeats behind different
+    // FortiGates and a VIP stamped by another gate's discovery is not this
+    // pass's to judge — the same per-device scoping business rule 17 applies
+    // to ARP evidence. Only reached when the VIP table actually READ.
+    for (const row of liveRows) {
+      const cur = row.vipInfo as VipInfoSnapshot | null;
+      if (!cur || !row.ipAddress) continue;
+      if (vipByIp.has(row.ipAddress)) continue;
+      if (cur.device !== subnet.fortigateDevice) continue;
+
+      if (row.sourceType !== "vip") {
+        // The row owns the address on its own account; only the VIP fact goes.
+        await prisma.reservation.update({ where: { id: row.id }, data: { vipInfo: Prisma.DbNull } });
+        vipsCleared++;
+        continue;
+      }
+
+      const dhcpAtIp = fresh.get(row.ipAddress);
+      if (dhcpAtIp) {
+        // VIP succession, the narrow form of discovery Phase 5's: the VIP is
+        // gone and a DHCP entry has landed at the same address, so the row
+        // converts in place and keeps its id. Only the canonical VIP-discovery
+        // owner placeholder is overwritten — a `vip` row cannot be edited from
+        // Polaris, so anything else on it came from discovery too.
+        const isCanonicalVipOwner =
+          row.owner === "fortimanager-vip" || row.owner === "fortimanager-vs";
+        await prisma.reservation.update({
+          where: { id: row.id },
+          data: {
+            sourceType: dhcpAtIp.sourceType,
+            vipInfo: Prisma.DbNull,
+            lastSeenLeased: new Date(),
+            ...(isCanonicalVipOwner
+              ? {
+                  owner:
+                    dhcpAtIp.sourceType === "dhcp_reservation"
+                      ? "dhcp-reservation"
+                      : "dhcp-lease",
+                }
+              : {}),
+          },
+        });
+        await logEvent({
+          level: "info",
+          action: "reservation.vip.replaced",
+          resourceType: "reservation",
+          resourceId: row.id,
+          resourceName: row.ipAddress,
+          actor: actor || undefined,
+          message: `VIP "${cur.name}" no longer on ${cur.device} — converted to ${dhcpAtIp.sourceType.replace("_", " ")} at ${row.ipAddress}`,
+          details: {
+            reservationId: row.id,
+            ipAddress: row.ipAddress,
+            priorVipInfo: cur,
+            newSourceType: dhcpAtIp.sourceType,
+            fortigateDevice: subnet.fortigateDevice,
+            via: "subnet-discover",
+          },
+        });
+        vipsCleared++;
+        continue;
+      }
+
+      // The VIP is gone and nothing else claims the address — the row existed
+      // only to report the VIP, so it goes back to Available.
+      await prisma.reservation.update({
+        where: { id: row.id },
+        data: { status: "released", vipInfo: Prisma.DbNull },
+      });
+      await logEvent({
+        level: "info",
+        action: "reservation.vip.released",
+        resourceType: "reservation",
+        resourceId: row.id,
+        resourceName: row.ipAddress,
+        actor: actor || undefined,
+        message: `VIP "${cur.name}" no longer on ${cur.device} — released ${row.ipAddress}`,
+        details: {
+          reservationId: row.id,
+          ipAddress: row.ipAddress,
+          priorVipInfo: cur,
+          fortigateDevice: subnet.fortigateDevice,
+          via: "subnet-discover",
+        },
+      });
+      vipsCleared++;
+    }
+  }
+
   const lastDiscoveredAt = new Date();
   await prisma.subnet.update({
     where: { id: subnet.id },
@@ -428,11 +701,20 @@ export async function refreshSubnet(
     resourceId: subnet.id,
     resourceName: `${subnet.name} (${subnet.cidr})`,
     actor: actor || undefined,
-    message: `Refreshed ${subnet.cidr} from ${integration.name} (${subnet.fortigateDevice})`,
-    details: { created, updated, released, skipped, scopeId, serverInterface },
+    message:
+      `Discovered ${subnet.cidr} from ${integration.name} (${subnet.fortigateDevice})` +
+      (vipError ? " — the firewall VIP table could not be read" : ""),
+    details: {
+      created, updated, released, skipped,
+      vipsStamped, vipsCleared, vipError,
+      scopeId, serverInterface,
+    },
   });
 
-  return { lastDiscoveredAt, created, updated, released, skipped };
+  return {
+    lastDiscoveredAt, created, updated, released, skipped,
+    vipsStamped, vipsCleared, vipError,
+  };
 }
 
 // Reverse of buildDescription() in reservationPushService. Two formats:
