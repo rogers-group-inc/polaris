@@ -846,3 +846,42 @@ its upgrade failed is exactly what you want to hear about.
 
 See [Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)
 and [Polaris Agent](Polaris-Agent#upgrading).
+
+### Rule 81
+
+**A discovery run that read a device is authoritative about that device's
+address — including when the answer is "it has none".**
+
+Most fields discovery projects onto an asset are only ever filled in: a run
+that cannot read a device's model leaves the stored model alone. The IP
+address is the exception. A run that actually reached the device and found no
+address for it clears the stored one.
+
+A stale address is worse than a blank one, because Polaris treats
+`IP Address` as fact everywhere — it probes that address, labels charts by it,
+lists it in the IP panel and files the asset into a subnet by it. A switch
+moved to a new management VLAN, a VM whose NIC was removed, or a renumbered
+firewall would otherwise keep pointing all of that at an address some other
+device has since picked up.
+
+The removal only happens when the device was genuinely read. None of these
+clear an address:
+
+- a FortiGate reported **offline** — its details came from FortiManager's
+  cached copy rather than the firewall;
+- a FortiSwitch or FortiAP the parent gate is **not currently connected to**;
+- an ESXi host vCenter shows as **disconnected**;
+- a VM whose **VMware Tools did not answer** — stopped, outdated or still
+  booting;
+- an Azure Arc integration with **Fetch network profile** off, which is the
+  default: with it off Polaris never asks for an address.
+
+An address you pinned by hand always wins, exactly as it does against any
+other discovery write. Endpoints discovered from DHCP or ARP are unaffected —
+a laptop that was switched off and missed the lease table keeps its address.
+
+Removals appear in the asset's change history, and `IP Source` is cleared
+alongside the address. The asset picks one back up on its own as soon as
+discovery finds an address for it.
+
+See [Discovery](Discovery#when-discovery-removes-an-ip-address).
