@@ -10,7 +10,7 @@
 // ids are not recognized anywhere any more — a browser holding one falls
 // through to DEFAULT_THEME.
 //
-// Adding a theme = one entry here, one angle in THEME_WHEEL_ANGLE, one token
+// Adding a theme = one entry here, one position in THEME_BAND_POS, one token
 // block in styles.css, one id in theme-init.js's KNOWN list. Nothing else.
 var THEMES = [
   { id: "morning",   label: "Morning",   family: "light", icon: _sunriseIcon },
@@ -19,7 +19,7 @@ var THEMES = [
 ];
 
 // Transit palettes: real themes with real token blocks that NOTHING can
-// select. They exist so the dial has somewhere to be between two selectable
+// select. They exist so the band has somewhere to be between two selectable
 // themes — advanceTheme() fades THROUGH each one that lies on the way and
 // carries on without stopping, so noon → nightfall crosses the golden hour
 // instead of cutting from near-white to indigo. Not in THEMES, so no picker,
@@ -28,21 +28,32 @@ var TRANSIT_THEMES = [
   { id: "afternoon", label: "Afternoon", family: "light", icon: _sunIcon, transit: true },
 ];
 
-// Where each palette sits on the sidebar dial (/img/brand/time-wheel.png), in
-// degrees clockwise from the top of the artwork:
+// Where each palette sits along /img/brand/time-strip.png, as a fraction of
+// the strip's width. The engraving is a 24-hour clock unrolled, so six hours
+// is a quarter of it and the two faces land half a strip apart the way noon
+// and midnight should:
 //
-//     0   sun face at the crest              -> noon
-//    90   red-rust late afternoon            -> afternoon  (transit only)
-//   180   moon face at the bottom            -> nightfall
-//   270   dawn gold on the left flank        -> morning
+//   0.056   sun face                -> noon
+//   0.306   red-rust late afternoon -> afternoon  (transit only)
+//   0.556   moon face               -> nightfall
+//   0.806   dawn gold               -> morning
 //
 // These are not decoration: each palette was sampled from its own position on
-// this engraving, so the angle and the tokens have to agree. Clockwise is
-// forward in time, which is why the ids read in day order. An angle with no
-// palette at all has no entry and the dial turns straight past it; a TRANSIT
-// angle is passed through with its palette showing.
-var THEME_WHEEL_ANGLE = { morning: 270, noon: 0, afternoon: 90, nightfall: 180 };
-var THEME_WHEEL_ART = "/img/brand/time-wheel.png";
+// this engraving, so the position and the tokens have to agree. Rightward
+// along the strip is forward in time, which is why the ids read in day order.
+// A position with no palette at all has no entry and the band travels straight
+// past it; a TRANSIT position is passed through with its palette showing.
+//
+// MIRRORS `THEME_STRIP_POS` in public/js/mobile/app.js, which is the phone's
+// half of the same control — the anchor was set by eye on the two FACES there
+// and stepped by exactly a quarter, and the two tables must stay identical or
+// the same theme sits under the marker at two different places on two
+// screens. `tests/unit/themeBandParity.test.ts` reads both files and fails
+// when they disagree. The phone document loads none of this file, which is
+// why there are two tables and not one; changing one means changing both,
+// keeping the quarter spacing and moving the anchor.
+var THEME_BAND_POS = { noon: 0.056, afternoon: 0.306, nightfall: 0.556, morning: 0.806 };
+var THEME_BAND_ART = "/img/brand/time-strip.png";
 
 // The fallback for an unknown or retired saved value. Deliberately NOT
 // THEMES[0]: display order and the default move independently, so reordering
@@ -99,39 +110,116 @@ function isLightTheme(id) {
 }
 window.isLightTheme = isLightTheme;
 
-// Accumulated rotation of the dial, in degrees — not normalised, deliberately.
-// null until the sidebar parks it.
-var _wheelRotation = null;
+// Where the band is now, in strip widths. May exceed 1 between a leg landing
+// and the seam being normalised away. null until first paint.
+var _bandPos = null;
+var _bandSeamTimer = null;
 
-// The rotation that brings `id`'s angle under the notch, always stepping DOWN
-// from where the dial is now so it turns one way only: the wrap from nightfall
-// round to morning has to keep going forward through the day, not rewind
-// through the afternoon. (Rotation is negative because the artwork's own day
-// runs clockwise, so advancing the dial under a fixed notch runs counter to
-// it — same as any physical wheel selector.)
-function _wheelRotationFor(id, from) {
-  var target = -(THEME_WHEEL_ANGLE[id] || 0);
-  while (target >= from) target -= 360;
-  return target;
+// Every band on the page, not one by id: a second shell or a specimen card can
+// each hold one, and they all read the same clock.
+function _themeBandTracks() { return document.querySelectorAll(".theme-band-track"); }
+
+// Writes _bandPos to every band on the page. `animate` false parks it with the
+// transition suppressed — used for the first paint, for the seam jump, and on
+// resize, where a visible slide would be a bug rather than feedback.
+function _paintThemeBands(animate) {
+  var tracks = _themeBandTracks();
+  for (var i = 0; i < tracks.length; i++) {
+    var track = tracks[i];
+    var copy = track.firstElementChild;
+    var win = track.parentElement;
+    if (!copy || !win) continue;
+    // Measured, not assumed: the art is a 2x asset sized by height, so its
+    // rendered width depends on the band's height and the display's pixel
+    // ratio, and the sidebar is hidden outright under the narrow breakpoint.
+    var stripW = copy.getBoundingClientRect().width;
+    // Before the art loads there is no width to measure and nothing to
+    // position against. Seat on load rather than giving up, or the first click
+    // travels from the band's left edge instead of from the theme showing.
+    // A sidebar that is display:none measures zero with the image already
+    // complete — that one is caught by the resize listener below, which
+    // repaints as soon as the rail is back.
+    if (!stripW) {
+      if (!copy.complete) {
+        copy.addEventListener("load", function () { _paintThemeBands(false); }, { once: true });
+      }
+      continue;
+    }
+    // Anchored one strip width left: copy two sits under the marker and copies
+    // one and three cover the window either side, so no position leaves bare
+    // surface beside the art.
+    var x = win.getBoundingClientRect().width / 2 - (_bandPos + 1) * stripW;
+    if (animate) {
+      track.style.transform = "translateX(" + x + "px)";
+    } else {
+      var prev = track.style.transition;
+      track.style.transition = "none";
+      track.style.transform = "translateX(" + x + "px)";
+      void track.offsetWidth;
+      track.style.transition = prev;
+    }
+  }
 }
 
-// Every dial on the page, not one by id: a second shell or a specimen card can
-// each hold one, and they all read the same clock.
-function _themeWheelRings() { return document.querySelectorAll(".theme-wheel-ring"); }
+// Parks every band at the current position (or at the current theme's, when
+// there is none yet) with no animation. For first paint, and for a band added
+// after boot — renderNav rebuilds the whole rail, so the track it painted a
+// moment ago is a different node by the time the operator sees it.
+function _seatThemeBands() {
+  if (_bandPos === null) _bandPos = THEME_BAND_POS[_getCurrentTheme()];
+  if (_bandPos === undefined) _bandPos = THEME_BAND_POS[DEFAULT_THEME];
+  _paintThemeBands(false);
+}
 
-// Parks every dial at `deg` (or at the current theme's angle) with no
-// animation. For first paint, and for a dial added after boot.
-function _seatThemeWheels(deg) {
-  if (deg !== undefined) _wheelRotation = deg;
-  if (_wheelRotation === null) _wheelRotation = -(THEME_WHEEL_ANGLE[_getCurrentTheme()] || 0);
-  var rings = _themeWheelRings();
-  for (var i = 0; i < rings.length; i++) {
-    var el = rings[i], prev = el.style.transition;
-    el.style.transition = "none";
-    el.style.transform = "rotate(" + _wheelRotation + "deg)";
-    void el.offsetWidth;
-    el.style.transition = prev;
+// Travels to `id`'s position, always leftward. Seats itself on `prevId` first
+// if this is the page's first change, so there is a from-value to travel from.
+function _advanceThemeBands(id, prevId) {
+  var target = THEME_BAND_POS[id];
+  if (target === undefined) return;
+  if (_bandSeamTimer) {
+    // A seam normalisation still owed from the previous leg: settle it now,
+    // unanimated, before measuring this one — otherwise this leg would start
+    // from a position a full strip width away from where it looks.
+    clearTimeout(_bandSeamTimer);
+    _bandSeamTimer = null;
+    if (_bandPos !== null && _bandPos >= 1) { _bandPos -= 1; _paintThemeBands(false); }
   }
+  if (_bandPos === null) {
+    var seat = THEME_BAND_POS[prevId];
+    _bandPos = seat === undefined ? target : seat;
+    _paintThemeBands(false);
+    if (seat === undefined) return;
+  }
+  // Forward-only: a target that is "behind" is reached by continuing off the
+  // end of the strip and into the identical copy, never by running backwards.
+  // This is the whole reason the day keeps moving one way.
+  var forward = target - _bandPos;
+  while (forward <= 0) forward += 1;
+  _bandPos += forward;
+  _paintThemeBands(true);
+  if (_bandPos >= 1) {
+    // The seam is what makes a finite strip endless: past the end of one copy
+    // is identical pixels in the next, so exactly ONE strip width can be
+    // subtracted unseen once the leg has landed. It must be a whole width
+    // (anything else lands on different pixels and the jump shows) and it must
+    // never run mid-transition.
+    _bandSeamTimer = setTimeout(function () {
+      _bandSeamTimer = null;
+      _bandPos -= 1;
+      _paintThemeBands(false);
+    }, THEME_FADE_MS);
+  }
+}
+
+// A resized window moves the centre marker, so the band has to be re-seated
+// under it — without animation, because nothing about a resize is a theme
+// change. This is also what paints a band that could not be measured at all
+// while the sidebar was hidden under the narrow breakpoint.
+if (!window.__polarisBandResize) {
+  window.__polarisBandResize = true;
+  window.addEventListener("resize", function () {
+    if (_bandPos !== null) _paintThemeBands(false);
+  });
 }
 
 // Matches the crossfade duration in styles.css (the data-theme-fading block).
@@ -169,25 +257,19 @@ function _setTheme(theme, phase) {
   document.documentElement.setAttribute("data-theme", t.id);
   // Waypoints are never saved: a reload mid-turn must land on a real theme.
   if (!t.transit) { try { localStorage.setItem("polaris-theme", t.id); } catch (e) {} }
-  // The dial is TRANSFORMED, never rebuilt — see the .theme-wheel comment in
-  // styles.css. Writing style.transform on the live node is what lets the user
-  // watch it turn; re-rendering the <img> would snap it.
+  // The band is TRANSFORMED, never rebuilt — see the .theme-band comment in
+  // styles.css. Writing style.transform on the live track is what lets the
+  // user watch it travel; re-rendering the <img> copies would snap it.
+  // _advanceThemeBands seats itself on the OUTGOING theme when this is the
+  // page's first change, so the first click has a from-value to travel from
+  // rather than snapping straight to the destination.
   var i;
-  // First change of the page's life: park the dial on the theme that WAS
-  // showing before animating to the new one. Without this seat the first click
-  // had nothing to turn from and snapped straight to the destination — a bug
-  // you only ever see once per load, which is exactly why it survived. Seating
-  // from the outgoing theme (not the incoming one) is what leaves a from-value
-  // for the transition to run from.
-  if (_wheelRotation === null) _seatThemeWheels(-(THEME_WHEEL_ANGLE[prevId] || 0));
-  _wheelRotation = _wheelRotationFor(t.id, _wheelRotation);
-  var rings = _themeWheelRings();
-  for (i = 0; i < rings.length; i++) rings[i].style.transform = "rotate(" + _wheelRotation + "deg)";
-  var labels = document.querySelectorAll(".theme-wheel-label");
+  _advanceThemeBands(t.id, prevId);
+  var labels = document.querySelectorAll(".theme-band-label");
   for (i = 0; i < labels.length; i++) labels[i].textContent = t.label;
-  var dials = document.querySelectorAll(".theme-wheel");
-  for (i = 0; i < dials.length; i++) {
-    dials[i].setAttribute("aria-label", "Time of day: " + t.label + ". Turn the dial.");
+  var bands = document.querySelectorAll(".theme-band");
+  for (i = 0; i < bands.length; i++) {
+    bands[i].setAttribute("aria-label", "Time of day: " + t.label + ". Move through the day.");
   }
   // Anything that cached colors at render time — canvases, Leaflet layers,
   // Cytoscape stylesheets, hand-rolled SVG charts — listens for this rather
@@ -195,25 +277,26 @@ function _setTheme(theme, phase) {
   document.dispatchEvent(new CustomEvent("themechange", { detail: { theme: t.id, family: t.family } }));
 }
 
-// Forward distance from angle `a` to angle `b` in the dial's own direction of
-// travel, 0–360. Used to work out which waypoints lie on the way.
-function _wheelForwardGap(a, b) { return ((b - a) % 360 + 360) % 360; }
+// Forward distance from position `a` to position `b` in the band's own
+// direction of travel, 0–1. Used to work out which waypoints lie on the way.
+function _bandForwardGap(a, b) { return ((b - a) % 1 + 1) % 1; }
 
-// Where the dial is headed: the destination of a chain still in flight, or
-// simply what is showing. Clicking mid-turn steps on from the DESTINATION, not
-// from the waypoint currently painted — otherwise a click during the golden
-// hour would treat afternoon as the current theme and never reach nightfall.
+// Where the band is headed: the destination of a sweep still in flight, or
+// simply what is showing. Clicking mid-sweep steps on from the DESTINATION,
+// not from the waypoint currently painted — otherwise a click during the
+// golden hour would treat afternoon as the current theme and never reach
+// nightfall.
 var _themeDest = null;
 var _themeChainTimer = null;
 
-// One click, one step — but the step can have waypoints. The dial replaced the
+// One click, one step — but the step can have waypoints. The band replaced the
 // row-menu picker: a menu made the operator read three words and aim at one,
-// where the wheel shows where they are in the day and moves them along it.
+// where the band shows where they are in the day and moves them along it.
 //
-// It lands only on THEMES entries. Any TRANSIT_THEMES angle between here and
-// there is faded through on the way: noon → nightfall passes the red-rust
-// flank at 90°, so the room goes near-white → golden hour → indigo in one
-// gesture and stops at nightfall. The dial turns in the same steps, so the
+// It lands only on THEMES entries. Any TRANSIT_THEMES position between here
+// and there is faded through on the way: noon → nightfall passes the red-rust
+// late afternoon, so the room goes near-white → golden hour → indigo in one
+// gesture and stops at nightfall. The band travels in the same steps, so the
 // palette and the artwork are always showing the same hour.
 function advanceTheme() {
   if (_themeChainTimer) { clearTimeout(_themeChainTimer); _themeChainTimer = null; }
@@ -221,16 +304,16 @@ function advanceTheme() {
   var i = THEMES.indexOf(_getTheme(from));
   var dest = THEMES[(i + 1) % THEMES.length].id;
 
-  var a = THEME_WHEEL_ANGLE[from] || 0;
-  var span = _wheelForwardGap(a, THEME_WHEEL_ANGLE[dest] || 0) || 360;
+  var a = THEME_BAND_POS[from] || 0;
+  var span = _bandForwardGap(a, THEME_BAND_POS[dest] || 0) || 1;
   var stops = TRANSIT_THEMES
     .filter(function (t) {
-      var d = _wheelForwardGap(a, THEME_WHEEL_ANGLE[t.id] || 0);
+      var d = _bandForwardGap(a, THEME_BAND_POS[t.id] || 0);
       return d > 0 && d < span;
     })
     .sort(function (x, y) {
-      return _wheelForwardGap(a, THEME_WHEEL_ANGLE[x.id] || 0) -
-             _wheelForwardGap(a, THEME_WHEEL_ANGLE[y.id] || 0);
+      return _bandForwardGap(a, THEME_BAND_POS[x.id] || 0) -
+             _bandForwardGap(a, THEME_BAND_POS[y.id] || 0);
     })
     .map(function (t) { return t.id; });
 
@@ -252,18 +335,18 @@ function advanceTheme() {
 }
 window.advanceTheme = advanceTheme;
 
-// Aliases for callers that predate the dial. `openThemeMenu` no longer opens
+// Aliases for callers that predate the band. `openThemeMenu` no longer opens
 // anything — there is no theme menu to open.
 function toggleTheme() { advanceTheme(); }
 function openThemeMenu() { advanceTheme(); }
 
-// Delegated, so a dial rendered by anything — renderSidebar, a second shell —
-// turns without being wired up. Never add a direct listener to a .theme-wheel
+// Delegated, so a band rendered by anything — renderNav, a second shell —
+// travels without being wired up. Never add a direct listener to a .theme-band
 // as well, or one click advances two steps.
-if (!document.documentElement.hasAttribute("data-theme-wheel-wired")) {
-  document.documentElement.setAttribute("data-theme-wheel-wired", "");
+if (!document.documentElement.hasAttribute("data-theme-band-wired")) {
+  document.documentElement.setAttribute("data-theme-band-wired", "");
   document.addEventListener("click", function (e) {
-    if (e.target && e.target.closest && e.target.closest(".theme-wheel")) advanceTheme();
+    if (e.target && e.target.closest && e.target.closest(".theme-band")) advanceTheme();
   });
 }
 function _sunIcon() {
@@ -982,10 +1065,6 @@ function renderNav() {
     return true;
   });
 
-  // Seat the dial at its starting angle BEFORE the markup is built, so the
-  // ring renders already rotated and first paint has no transition to play.
-  _wheelRotation = -(THEME_WHEEL_ANGLE[_getCurrentTheme()] || 0);
-
   sidebar.innerHTML = `
     <div class="sidebar-brand">
       <img src="/img/brand/polaris-vert-dark.png" alt="" class="sidebar-logo brand-mark brand-mark-sidebar" style="visibility:hidden">
@@ -1034,22 +1113,47 @@ function renderNav() {
            Settings block above rendered: without it this block owns the
            separator from the nav.
 
-           One click steps to the next theme and the ring turns to bring that
-           theme's hour under the notch; noon → nightfall fades through the
+           One click steps to the next theme and the band travels to bring that
+           theme's hour under the marker; noon → nightfall fades through the
            afternoon waypoint on the way. No menu opens. The click is handled
            by the delegated listener next to advanceTheme() — do NOT wire one
-           here as well, or a click advances two steps. -->
+           here as well, or a click advances two steps.
+
+           The art is repeated THREE times on purpose — the track is anchored
+           one strip width left of the marker, so copies one and three cover
+           the window on either side at every position a leg can reach, and
+           travelling off the end of one copy lands on identical pixels in the
+           next (which is what lets the JS subtract a strip width unseen). Two
+           copies leave bare surface beside the art just before the seam is
+           normalised away. The track carries NO position here: it has to be
+           measured against the rendered art, so _seatThemeBands() below is
+           what places it once this markup is in the document. -->
       <div style="padding:${(isAdmin() || canManageAssets()) ? '0.25rem' : '0.5rem'} 0.5rem 0.5rem;${(isAdmin() || canManageAssets()) ? '' : 'border-top:1px solid var(--color-border-light);'}">
-        <button type="button" id="btn-theme-wheel" class="theme-wheel" aria-label="Time of day: ${_getTheme(_getCurrentTheme()).label}. Turn the dial.">
-          <span class="theme-wheel-window"><img class="theme-wheel-ring" id="theme-wheel-ring" alt="" draggable="false" src="${THEME_WHEEL_ART}" style="transform:rotate(${_wheelRotation}deg)"></span>
-          <span class="theme-wheel-notch"></span>
-          <span class="theme-wheel-label" id="theme-wheel-label">${_getTheme(_getCurrentTheme()).label}</span>
+        <button type="button" id="btn-theme-band" class="theme-band" aria-label="Time of day: ${_getTheme(_getCurrentTheme()).label}. Move through the day.">
+          <span class="theme-band-window">
+            <span class="theme-band-track" id="theme-band-track">
+              <img src="${THEME_BAND_ART}" alt="" draggable="false">
+              <img src="${THEME_BAND_ART}" alt="" draggable="false">
+              <img src="${THEME_BAND_ART}" alt="" draggable="false">
+            </span>
+            <span class="theme-band-marker"></span>
+          </span>
+          <span class="theme-band-label" id="theme-band-label">${_getTheme(_getCurrentTheme()).label}</span>
         </button>
       </div>
       <div id="sidebar-version" style="padding:0 0.75rem 0.75rem;text-align:center;font-size:0.7rem;color:var(--color-text-tertiary);letter-spacing:0.02em"></div>
     </div>
   `;
 
+
+  // The band has to be placed AFTER the markup lands, not interpolated into
+  // it: its position is measured against the rendered width of the artwork,
+  // which depends on the band's height and the display's pixel ratio and is
+  // unknowable while this is still a string. renderNav also rebuilds the whole
+  // rail, so every re-render hands _paintThemeBands a brand-new track that has
+  // never been positioned — an unseated one sits at the strip's left edge and
+  // the next click travels from there instead of from the theme showing.
+  _seatThemeBands();
 
   wireNotificationPrefs();
   wireTotpState();
