@@ -48,8 +48,8 @@ detail, and a device can carry both since an alerting device is often up.
 
 Three selectable themes in two families: **Morning** and **Noon** (light),
 **Nightfall** (dark). The control is a band, not a menu — one click steps to the
-next theme and slides a 24-hour clockface along to bring that theme's hour under
-the centre marker. It is the same control the phone app carries on its **More**
+next theme and slides a 24-hour clockface along to bring that theme's hour to
+the centre of the band. It is the same control the phone app carries on its **More**
 tab, so the two screens read alike.
 
 The band travels one way only — forward through the day, never back — and the

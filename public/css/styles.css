@@ -233,21 +233,24 @@
    in that order and a quarter of the strip apart. Every theme's palette was
    drawn from one of those positions, so each theme OWNS its place along the
    strip (THEME_BAND_POS in app.js) and a click travels the band to bring that
-   place under the fixed marker at the centre.
+   place to the centre of the window.
 
    Only a slice is in the rail: a ~1450px strip in a ~204px window, so the day
    reads as continuing on past both edges rather than as a thing with ends.
-   The label sits under the band, as the phone's caption does.
+   Nothing else is drawn — no caption naming the theme, no centre marker — so
+   the control is the artwork and the slice of it showing IS the answer to
+   “which theme is this”. The name survives only in the button's aria-label,
+   which _setTheme repaints; that is the accessible name, not a nicety.
 
    Four things not to break:
-   - The band travels, the marker does not, and it only ever travels ONE way.
+   - The band travels, the window does not, and it only ever travels ONE way.
      See _advanceThemeBands() in app.js, which keeps adding forward distance so
      the wrap nightfall round to morning carries on through the day instead of
      rewinding through the afternoon.
    - The track holds the art THREE times. It is anchored one strip width left
-     of the marker, so copy two sits under it and copies one and three cover
-     the window either side; with two copies, bare surface shows on the right
-     as the position nears the seam.
+     of centre, so copy two sits under the middle of the window and copies one
+     and three cover it either side; with two copies, bare surface shows on the
+     right as the position nears the seam.
    - The translation is written straight to the track's style.transform, and
      its position is MEASURED against the rendered art. Never re-render the
      <img> copies on a theme change — a replaced node starts its transition over
@@ -268,11 +271,11 @@
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-/* The clip layer, and the only element here with a size of its own. 48px is
-   what keeps the control's footprint in the rail the same as the dial's 78px
-   once the label below is paid for, and it is also what sets how much of the
-   day is visible: taller art is wider art, so a taller band shows LESS of the
-   clock, not more. */
+/* The clip layer, and the only element here with a size of its own — the band
+   carries no caption and no marker, so this height IS the control. It also
+   sets how much of the day is visible, and not the way round you would guess:
+   taller art is wider art, so a taller band shows LESS of the clock, not more.
+   At 48px roughly a sixth of the strip is in the rail. */
 .theme-band-window {
   position: relative;
   display: block;
@@ -300,20 +303,6 @@
   user-select: none;
   -webkit-user-drag: none;
 }
-/* Centre marker: two short ticks top and bottom rather than a full-height
-   line, so the engraving is never cut in half by its own selector. */
-.theme-band-marker {
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  pointer-events: none;
-  background:
-    linear-gradient(var(--color-accent), var(--color-accent)) top / 2px 8px no-repeat,
-    linear-gradient(var(--color-accent), var(--color-accent)) bottom / 2px 8px no-repeat;
-}
 /* Both ends fade into the rail's own token, so the strip reads as continuing
    past the sidebar rather than being cropped by it. Painted ON TOP of the
    track — see the block comment. */
@@ -326,23 +315,13 @@
     var(--color-bg-tertiary) 0%, rgba(0,0,0,0) 18%,
     rgba(0,0,0,0) 82%, var(--color-bg-tertiary) 100%);
 }
-.theme-band-label {
-  display: block;
-  padding-top: 0.35rem;
-  text-align: center;
-  font-size: 0.8rem;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  color: var(--color-text-secondary);
-  transition: color 0.15s;
-}
-/* Hover is the label plus a tint on the button — the same affordance the
-   sidebar's other bottom links carry, and it leaves the artwork unfiltered.
-   One artwork serves all four palettes, and a brightness lift on it has been
+/* Hover is a tint on the button and nothing else — the same affordance the
+   sidebar's other bottom links carry, and with the caption gone there is no
+   text left to lift. It deliberately leaves the artwork unfiltered: one
+   artwork serves all four palettes, and a brightness lift on it has been
    proposed before on a contrast measurement that turned out to be describing a
    slice of artwork that was not being painted at all. Measure what is on
    screen before filtering this. */
-.theme-band:hover .theme-band-label { color: var(--color-text-primary); }
 .theme-band:hover { background: var(--color-bg-elevated); }
 .theme-band:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) {

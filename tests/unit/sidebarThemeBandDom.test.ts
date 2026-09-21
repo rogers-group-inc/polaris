@@ -8,12 +8,19 @@
  * so `tests/unit/mobileThemeStripDom.test.ts` is its opposite number and
  * `tests/unit/themeBandParity.test.ts` is what keeps the two in step.
  *
- * Seven things are worth pinning, each of which has already been got wrong
+ * The band draws NOTHING but the artwork: the caption naming the theme and the
+ * centre marker were both stripped on 2026-09-21, so the slice of the
+ * engraving showing is the whole of the visual answer. That promotes the
+ * button's aria-label from a courtesy to the only place the theme is named,
+ * which is why it is pinned here twice.
+ *
+ * Eight things are worth pinning, each of which has already been got wrong
  * once on one screen or the other:
  *
  *  - its POSITION in the renderNav template, since "below Server Settings,
  *    above the version" is the whole request and a template is easy to
  *    reorder by accident;
+ *  - that it stays BARE, and that the aria-label follows the theme anyway;
  *  - that the click is DELEGATED and the template wires no listener of its
  *    own. Two listeners on one band advance two steps per click;
  *  - the TRACK TRANSFORM, written to the live node by _setTheme. Re-rendering
@@ -109,16 +116,18 @@ function freshApi(): Api {
   return new Function(harness)() as Api;
 }
 
+// Bare on purpose: the band has no caption and no centre marker, so the
+// artwork is the whole control and the aria-label is the only place the theme
+// is named.
 const BAND_HTML =
-  '<button id="btn-theme-band" class="theme-band">' +
+  '<button id="btn-theme-band" class="theme-band" ' +
+  'aria-label="Time of day: Nightfall. Move through the day.">' +
   '<span class="theme-band-window">' +
   '<span class="theme-band-track" id="theme-band-track">' +
   '<img src="/img/brand/time-strip.png"><img src="/img/brand/time-strip.png">' +
   '<img src="/img/brand/time-strip.png">' +
   "</span>" +
-  '<span class="theme-band-marker"></span>' +
   "</span>" +
-  '<span class="theme-band-label" id="theme-band-label">Nightfall</span>' +
   "</button>";
 
 const STRIP_W = 1257; // the art at a 48px band: 3456 x 132 scaled by height
@@ -157,15 +166,35 @@ describe("sidebar theme band placement", () => {
   });
 
   it("ships the strip art the band renders, three copies of it", () => {
-    // The track is anchored one strip width left of the marker, so copies one
-    // and three cover the window either side. With two, bare surface shows on
-    // the right as the position approaches the seam.
+    // The track is anchored one strip width left of centre, so copies one and
+    // three cover the window either side. With two, bare surface shows on the
+    // right as the position approaches the seam.
     expect(APP_JS).toContain('var THEME_BAND_ART = "/img/brand/time-strip.png"');
     const markup = APP_JS.slice(
       APP_JS.indexOf('id="btn-theme-band"'),
-      APP_JS.indexOf("theme-band-marker"),
+      APP_JS.indexOf('<div id="sidebar-version"'),
     );
     expect(markup.match(/\$\{THEME_BAND_ART\}/g)).toHaveLength(3);
+  });
+
+  it("draws nothing but the artwork — no caption, no centre marker", () => {
+    // The slice of the engraving showing IS the answer to "which theme is
+    // this"; the control was deliberately stripped back to it on 2026-09-21.
+    const markup = APP_JS.slice(
+      APP_JS.indexOf('id="btn-theme-band"'),
+      APP_JS.indexOf('<div id="sidebar-version"'),
+    );
+    expect(markup).not.toContain("theme-band-label");
+    expect(markup).not.toContain("theme-band-marker");
+    expect(STYLES_CSS).not.toContain(".theme-band-label");
+    expect(STYLES_CSS).not.toContain(".theme-band-marker");
+  });
+
+  it("keeps the aria-label, which is now the ONLY place the theme is named", () => {
+    // With no caption on screen, dropping this leaves an unlabelled button
+    // that changes every colour on the page.
+    expect(APP_JS).toContain('aria-label="Time of day: ${_getTheme(_getCurrentTheme()).label}');
+    expect(APP_JS).toContain('"Time of day: " + t.label + ". Move through the day."');
   });
 
   it("seats the band AFTER the markup, never by interpolating a position", () => {
@@ -330,13 +359,25 @@ describe("_setTheme", () => {
     expect(localStorage.getItem("polaris-theme")).toBe("noon");
   });
 
-  it("repaints the label to name the CURRENT theme", () => {
+  it("repaints the aria-label to name the CURRENT theme", () => {
+    // The band draws no caption, so this attribute is the whole of the name a
+    // screen reader gets — and it has to follow the theme, not state whichever
+    // one happened to be showing when renderNav ran.
+    const name = () => document.querySelector(".theme-band")!.getAttribute("aria-label");
     api.setTheme("morning");
-    expect(document.querySelector(".theme-band-label")!.textContent).toBe("Morning");
+    expect(name()).toBe("Time of day: Morning. Move through the day.");
     api.setTheme("noon");
-    expect(document.querySelector(".theme-band-label")!.textContent).toBe("Noon");
+    expect(name()).toBe("Time of day: Noon. Move through the day.");
     api.setTheme("nightfall");
-    expect(document.querySelector(".theme-band-label")!.textContent).toBe("Nightfall");
+    expect(name()).toBe("Time of day: Nightfall. Move through the day.");
+  });
+
+  it("names the waypoint too while it is showing", () => {
+    // A sweep sits on afternoon for 800ms; announcing the destination early
+    // would describe a palette that is not on screen yet.
+    api.setTheme("afternoon");
+    expect(document.querySelector(".theme-band")!.getAttribute("aria-label"))
+      .toBe("Time of day: Afternoon. Move through the day.");
   });
 
   it("travels by writing transform on the live track", () => {

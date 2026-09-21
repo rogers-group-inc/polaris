@@ -265,15 +265,18 @@ function _setTheme(theme, phase) {
   // rather than snapping straight to the destination.
   var i;
   _advanceThemeBands(t.id, prevId);
-  var labels = document.querySelectorAll(".theme-band-label");
-  for (i = 0; i < labels.length; i++) labels[i].textContent = t.label;
+  // The aria-label is the ONLY place the theme is named. The band carries no
+  // caption and no marker — the artwork under the centre is the whole of the
+  // visual answer — so this is not a redundant announcement of something a
+  // screen reader could reach another way; drop it and the control becomes an
+  // unlabelled button that changes the page's colours.
   var bands = document.querySelectorAll(".theme-band");
   for (i = 0; i < bands.length; i++) {
     bands[i].setAttribute("aria-label", "Time of day: " + t.label + ". Move through the day.");
   }
   // Anything that cached colors at render time — canvases, Leaflet layers,
   // Cytoscape stylesheets, hand-rolled SVG charts — listens for this rather
-  // than hooking the dial.
+  // than hooking the band.
   document.dispatchEvent(new CustomEvent("themechange", { detail: { theme: t.id, family: t.family } }));
 }
 
@@ -1104,7 +1107,7 @@ function renderNav() {
       ${(isAdmin() || canManageAssets() || permAtLeast("credentials", "write")) ? `<div style="padding:0.5rem 0.5rem 0;border-top:1px solid var(--color-border-light)">
         <a href="/server-settings.html" class="sidebar-bottom-link${current === '/server-settings.html' ? ' active' : ''}">${ICONS.settings}<span>Server Settings</span></a>
       </div>` : ''}
-      <!-- The theme dial sits here, below Server Settings and above the
+      <!-- The theme band sits here, below Server Settings and above the
            version line. Push enrollment and logout stay in the user menu
            behind the page-header badge (renderUserBadge) — push in
            particular must stay reachable for an alerts:read role that cannot
@@ -1114,13 +1117,22 @@ function renderNav() {
            separator from the nav.
 
            One click steps to the next theme and the band travels to bring that
-           theme's hour under the marker; noon → nightfall fades through the
-           afternoon waypoint on the way. No menu opens. The click is handled
-           by the delegated listener next to advanceTheme() — do NOT wire one
-           here as well, or a click advances two steps.
+           theme's hour to the CENTRE of the window; noon → nightfall fades
+           through the afternoon waypoint on the way. No menu opens. The click
+           is handled by the delegated listener next to advanceTheme() — do NOT
+           wire one here as well, or a click advances two steps.
+
+           Deliberately bare: no caption naming the theme and no centre marker.
+           The artwork under the middle of the window is the whole of the
+           visual answer, which is why the aria-label is the only place the
+           theme is named and must stay (and must keep being repainted by
+           _setTheme) — without it this is an unlabelled button that changes
+           every colour on the page. NOTE this comment lives inside a template
+           literal: a backtick anywhere in it ends the string, and the page
+           dies on a SyntaxError with the sidebar never rendering at all.
 
            The art is repeated THREE times on purpose — the track is anchored
-           one strip width left of the marker, so copies one and three cover
+           one strip width left of centre, so copies one and three cover
            the window on either side at every position a leg can reach, and
            travelling off the end of one copy lands on identical pixels in the
            next (which is what lets the JS subtract a strip width unseen). Two
@@ -1136,9 +1148,7 @@ function renderNav() {
               <img src="${THEME_BAND_ART}" alt="" draggable="false">
               <img src="${THEME_BAND_ART}" alt="" draggable="false">
             </span>
-            <span class="theme-band-marker"></span>
           </span>
-          <span class="theme-band-label" id="theme-band-label">${_getTheme(_getCurrentTheme()).label}</span>
         </button>
       </div>
       <div id="sidebar-version" style="padding:0 0.75rem 0.75rem;text-align:center;font-size:0.7rem;color:var(--color-text-tertiary);letter-spacing:0.02em"></div>
