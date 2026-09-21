@@ -16994,18 +16994,36 @@ function macAddressesViewHTML(macAddresses, assetId) {
   var rows = shown.map(function (m) {
     var sourceLabel = formatMacSource(m.source);
     var count = macEntryCount(m);
-    // Source/date first, MAC last and flush right (margin-left:auto): the value
-    // column is right-aligned, so keeping the address as the trailing item lines
-    // every MAC up on the same edge instead of letting a longer description
-    // shove it sideways as the slide-over is resized.
-    return '<div style="display:flex;gap:12px;align-items:center;padding:3px 0">' +
-      '<span style="font-size:0.75rem;color:var(--color-text-tertiary);min-width:0">' +
+    // Address on its own line, provenance in small type beneath it, both flush
+    // right. The original goal stands — "every MAC lines up on the same edge,
+    // and a longer description never shoves the address sideways" — but putting
+    // the two SIDE BY SIDE only met it while both fitted, and in this grid the
+    // value column measures ~200px, which is narrower than a single range
+    // entry's text on its own (~261px for "DD:EE:FF:00:00:00 – DD:EE:FF:00:00:2F").
+    //
+    // Competing for that width was the bug: the label could shrink to nothing
+    // (min-width:0) while the address could not shrink at all (flex-shrink:0),
+    // so the label was crushed to 0px and wrapped ONE CHARACTER PER LINE —
+    // measured at 526px tall for a single entry. Stacking removes the
+    // competition rather than re-balancing it, so neither part can squeeze the
+    // other however narrow the panel gets.
+    //
+    // A range is still allowed to wrap (two addresses and a dash legitimately
+    // need two lines here); a single MAC is not — an address broken across
+    // lines is unreadable and can't be copied by eye.
+    var isRange = !!m.macEnd;
+    return '<div style="padding:4px 0;text-align:right">' +
+      '<div style="display:flex;gap:6px;align-items:center;justify-content:flex-end">' +
+        '<code class="copy-cell" style="font-size:0.82rem;text-align:right;' +
+          (isRange ? 'white-space:normal;overflow-wrap:anywhere' : 'white-space:nowrap') +
+          '" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</code>' +
+        macDeleteButtonHTML(assetId, m) +
+      '</div>' +
+      '<div style="font-size:0.72rem;color:var(--color-text-tertiary);line-height:1.3">' +
         (count > 1 ? count + ' MACs &middot; ' : '') +
         (sourceLabel ? escapeHtml(sourceLabel) : '') +
         (m.lastSeen ? (sourceLabel ? ' &middot; ' : '') + formatDate(m.lastSeen) : '') +
-      '</span>' +
-      '<code class="copy-cell" style="font-size:0.82rem;margin-left:auto;flex-shrink:0;white-space:nowrap" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</code>' +
-      macDeleteButtonHTML(assetId, m) +
+      '</div>' +
     '</div>';
   }).join("");
 
