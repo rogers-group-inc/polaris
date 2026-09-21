@@ -58,9 +58,10 @@ function regionSrc(startsWith: string, endsWith: string): string {
   return assetsLines.slice(start, end).join("\n");
 }
 
-const REGION = regionSrc("// ─── CPU & Memory: two charts", "// FortiGate active-session count chart");
+const REGION = regionSrc("// ─── CPU & Memory: one chart, or two", "// FortiGate active-session count chart");
 
 const EXPORTS = [
+  "_renderSystemChart",
   "_cpuCoreColor", "_cpuCoreSeries", "_cpuFocusedCore", "_renderCpuChart",
   "_cpuLegendHTML", "_memBandsFor", "_memRuns", "_renderMemoryChart",
   "_renderMemoryPctChart", "_MEM_BANDS", "_CPU_AVG_COLOR",
@@ -273,6 +274,13 @@ describe("the chart region is self-contained", () => {
     const el = document.createElement("div");
     document.body.appendChild(el);
     expect(() => g._renderCpuChart(el, payload(agentSamples([[1, 2], [3, 4]])), {}, {})).not.toThrow();
+    // The combined chart shares the region, so it is covered by the same
+    // guarantee: it is the ONLY chart a non-agent asset renders, and a
+    // ReferenceError in it would take the whole section down.
+    const el2 = document.createElement("div");
+    document.body.appendChild(el2);
+    const pct = [0, 1].map((i) => ({ timestamp: ts(i), cpuPct: 10 + i, memPct: 40 + i }));
+    expect(() => g._renderSystemChart(el2, payload(pct), {}, {})).not.toThrow();
   });
 });
 
@@ -411,5 +419,53 @@ describe("_memRuns", () => {
 
   it("ignores an outage that lands outside the sampled span", () => {
     expect(g._memRuns(pts, [{ t: 50 }, { t: 500 }]).length).toBe(1);
+  });
+});
+
+describe("Combined chart - the non-agent shape", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    installStubs();
+    (0, eval)(SRC);
+  });
+
+  // A FortiGate, an SNMP switch or a vCenter VM reports one CPU percentage
+  // and one memory figure per sample. The split section would give it two
+  // single-line charts where one had been, so it keeps the combined chart --
+  // and that chart has to stay working, which is what this block pins.
+  const pctSamples = [0, 1, 2].map((i) => ({ timestamp: ts(i), cpuPct: 10 + i, memPct: 40 + i }));
+
+  it("draws both series on one 0-100% axis", () => {
+    const el = container();
+    g._renderSystemChart(el, payload(pctSamples), {}, {});
+    expect(el.querySelectorAll("polyline.agg-line").length).toBe(2);
+    // No stack: the byte bands are the agent shape's, not this one's.
+    expect(el.querySelectorAll("polygon").length).toBe(0);
+    expect(el.textContent).toContain("CPU");
+    expect(el.textContent).toContain("Memory");
+    // The axis is a percentage, not the memory chart's byte scale.
+    expect(el.textContent).toContain("100%");
+  });
+
+  it("converts a bytes-only source to a percentage rather than dropping it", () => {
+    const el = container();
+    const GB = 1024 ** 3;
+    const samples = [0, 1].map((i) => ({
+      timestamp: ts(i), cpuPct: 5, memUsedBytes: 8 * GB, memTotalBytes: 32 * GB,
+    }));
+    g.__tooltipFns = [];
+    g._renderSystemChart(el, payload(samples), {}, {});
+    expect(el.querySelectorAll("polyline.agg-line").length).toBe(2);
+    const hit = el.querySelector("rect.chart-hit")!;
+    const html = g.__tooltipFns[g.__tooltipFns.length - 1](hit);
+    expect(html).toContain("25.0%");
+  });
+
+  it("renders the stale banner on its empty path, like every other section", () => {
+    const el = container();
+    g._staleBannerHTML = () => '<div class="asset-stale-banner-slot">stale</div>';
+    g._renderSystemChart(el, { samples: [], outages: [], stats: { total: 0 } }, {}, {});
+    expect(el.textContent).toContain("stale");
+    expect(el.textContent).toContain("No telemetry samples");
   });
 });

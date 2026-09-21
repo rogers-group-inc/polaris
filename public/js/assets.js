@@ -5782,9 +5782,12 @@ function _wireAssetChartRangeControls(a) {
       }, fromIso, toIso);
       _loadSystemTabFor(a.id, { from: fromIso, to: toIso }, a, { chartOnly: true });
     };
-    // Both charts drive the SAME window, so a drag on either applies to both.
+    // Split section: both charts drive the SAME window, so a drag on either
+    // applies to both. Combined section: only the one container exists, and
+    // _wireChartDragSelect no-ops on the nulls.
     _wireChartDragSelect(document.getElementById("asset-cpu-chart"), systemDragApply);
     _wireChartDragSelect(document.getElementById("asset-memory-chart"), systemDragApply);
+    _wireChartDragSelect(document.getElementById("asset-system-chart"), systemDragApply);
     _wireChartDragSelect(document.getElementById("asset-system-sessions-chart"), function (fromIso, toIso) {
       _applyCustomRangeSelection({
         btnClass: "asset-sessions-range-btn", customBtnId: "btn-asset-sessions-custom",
@@ -6425,6 +6428,24 @@ function _confirmUninstallAgent(a, force) {
 // monitored — the not-monitored case is handled by the monitoring section
 // above. The early-return below is defensive.
 
+// Whether the CPU & Memory section renders as TWO charts or one.
+//
+// The split is a consequence of what the Polaris Agent reports and nothing
+// else: per-core CPU (as many lines as the host has logical cores) and a
+// memory composition in BYTES, which cannot share a percentage axis. Every
+// other transport — FortiOS REST, SNMP, WinRM, SSH, vCenter — reports one CPU
+// figure and one memory figure per sample, and two of those on two stacked
+// 200px charts is the pre-2026-09 combined chart with twice the height and
+// half the comparability.
+//
+// Resolved, not read off the column: the per-asset `cpuMemoryPolling` is set
+// to "agent" at enrollment (agentTokenService / the agents route), but a class
+// or integration tier can carry the method too, and _resolvedStreamPolling is
+// the same walk the section badge and stale banner use.
+function _telemetryIsAgentSourced(a) {
+  return _resolvedStreamPolling(a, "telemetry") === "agent";
+}
+
 function assetSystemViewHTML(a) {
   if (!a) return '<p class="empty-state">No data.</p>';
   if (!a.monitored) {
@@ -6493,6 +6514,7 @@ function assetSystemViewHTML(a) {
       (rangeBtnsHTML ? ('<div style="display:flex;gap:6px">' + rangeBtnsHTML + '</div>') : '') +
     '</div>';
   }
+  var splitCharts = _telemetryIsAgentSourced(a);
   var sessionsRangeBtns = a.assetType === "firewall"
     ? _chartRangeBtnsHTML("asset-sessions-range-btn", [
         { value: "1h",  label: "1h" },
@@ -6511,25 +6533,41 @@ function assetSystemViewHTML(a) {
       '<label style="display:flex;align-items:center;gap:4px">To <input type="datetime-local" id="asset-system-to" class="form-input" style="padding:2px 6px"></label>' +
       '<button class="btn btn-sm btn-primary" id="btn-asset-system-custom-apply">Apply</button>' +
     '</div>' +
-    // TWO charts under ONE range selector. CPU is a percentage and memory is
-    // a byte stack, so they cannot share an axis; they DO share a window,
-    // because they are two readings of one sample row and putting them on
-    // different ranges would only invite comparing them wrongly. Each chart
-    // owns its own stats line, per the chart canon.
-    '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin-bottom:0.15rem">CPU</div>' +
-    '<div id="asset-cpu-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
-      '<span>Loading…</span>' +
-    '</div>' +
-    '<div id="asset-cpu-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
-      'Loading samples…' +
-    '</div>' +
-    '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin:0.75rem 0 0.15rem">Memory</div>' +
-    '<div id="asset-mem-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
-      '<span>Loading…</span>' +
-    '</div>' +
-    '<div id="asset-memory-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
-      'Loading samples…' +
-    '</div>' +
+    // ONE chart or TWO, decided by _telemetryIsAgentSourced. The split exists
+    // for the two things only the agent sends — per-core CPU and a memory
+    // breakdown in BYTES — and neither survives a source that reports a pair
+    // of percentages. On a FortiGate, an SNMP switch or a vCenter VM the two
+    // charts would be a single line each, stacked, on a tab that is already
+    // long: one shared 0-100% axis says the same thing in half the height.
+    //
+    // Split: CPU is a percentage and memory is a byte stack, so they cannot
+    // share an axis; they DO share a window, because they are two readings of
+    // one sample row and putting them on different ranges would only invite
+    // comparing them wrongly. Each chart owns its own stats line, per the
+    // chart canon.
+    (splitCharts
+      ? '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin-bottom:0.15rem">CPU</div>' +
+        '<div id="asset-cpu-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+          '<span>Loading…</span>' +
+        '</div>' +
+        '<div id="asset-cpu-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+          'Loading samples…' +
+        '</div>' +
+        '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin:0.75rem 0 0.15rem">Memory</div>' +
+        '<div id="asset-mem-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+          '<span>Loading…</span>' +
+        '</div>' +
+        '<div id="asset-memory-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+          'Loading samples…' +
+        '</div>'
+      // Combined: no sub-heading above the chart — the section header already
+      // reads "CPU & Memory" and the SVG carries its own two-key legend.
+      : '<div id="asset-system-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+          '<span>Loading…</span>' +
+        '</div>' +
+        '<div id="asset-system-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+          'Loading samples…' +
+        '</div>') +
     '</div>' +
     // Active Sessions chart — FortiGate firewalls only. Starts hidden;
     // _renderSessionsChart reveals it once the telemetry history carries
@@ -6621,9 +6659,10 @@ function _renderPhysicalEntities(entities) {
 }
 
 function _currentSystemTabRange() {
-  // The CPU container is the canonical carrier of the shared selection —
-  // both it and the memory container are stamped, and either would do.
-  var chart = document.getElementById("asset-cpu-chart");
+  // Split section: the CPU container is the canonical carrier of the shared
+  // selection — both it and the memory container are stamped, and either
+  // would do. Combined section: there is only the one container.
+  var chart = document.getElementById("asset-cpu-chart") || document.getElementById("asset-system-chart");
   if (!chart) return "24h";
   if (chart.dataset.from && chart.dataset.to) {
     return { from: chart.dataset.from, to: chart.dataset.to };
@@ -6684,10 +6723,18 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   // re-fetch + their re-render and reuse the cached si for the chart's
   // stale banner and the latest-reading rows.
   var chartOnly = !!(opts && opts.chartOnly) && _assetSystemSiCache;
-  var chart   = document.getElementById("asset-cpu-chart");
-  var memChart = document.getElementById("asset-memory-chart");
-  var summary = document.getElementById("asset-cpu-summary");
-  var memSummary = document.getElementById("asset-mem-summary");
+  // Two DOM shapes, decided at render time by _telemetryIsAgentSourced: a CPU
+  // container beside a memory one, or the single combined container. The
+  // loader reads whichever is mounted rather than re-deriving the gate — the
+  // markup is the one authority, and an asset whose polling method changes
+  // under an open panel would otherwise render into containers that are gone.
+  var combined = document.getElementById("asset-system-chart");
+  var chart   = combined || document.getElementById("asset-cpu-chart");
+  var memChart = combined ? null : document.getElementById("asset-memory-chart");
+  var summary = combined
+    ? document.getElementById("asset-system-summary")
+    : document.getElementById("asset-cpu-summary");
+  var memSummary = combined ? null : document.getElementById("asset-mem-summary");
   var ifaces  = document.getElementById("asset-system-interfaces");
   var storage = document.getElementById("asset-system-storage");
   var temps   = document.getElementById("asset-system-temps");
@@ -6741,8 +6788,12 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
       _assetSystemSiCache = si;
     }
 
-    _renderCpuChart(chart, tel, asset, si);
-    if (memChart) _renderMemoryChart(memChart, tel, asset, si);
+    if (combined) {
+      _renderSystemChart(chart, tel, asset, si);
+    } else {
+      _renderCpuChart(chart, tel, asset, si);
+      if (memChart) _renderMemoryChart(memChart, tel, asset, si);
+    }
     var sessionsChart = document.getElementById("asset-system-sessions-chart");
     if (sessionsChart) {
       var sessionsSel = _currentSessionsRange();
@@ -6755,8 +6806,12 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
         await _loadSessionsChartFor(assetId, sessionsSel, asset, { tel: sameWindow ? tel : null, silent: silent });
       }
     }
-    _renderCpuSummary(summary, tel);
-    _renderMemorySummary(memSummary, tel);
+    if (combined) {
+      _renderSystemSummary(summary, tel);
+    } else {
+      _renderCpuSummary(summary, tel);
+      _renderMemorySummary(memSummary, tel);
+    }
     if (!chartOnly) {
       _renderInterfacesTable(ifaces, si, asset);
       _renderStorageTable(storage, si, asset);
@@ -6796,6 +6851,31 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   var refAsset = asset || _currentAssetForRefresh;
   var ms = _refreshIntervalMs(refAsset && refAsset.cpuMemoryIntervalSec, settings.cpuMemoryIntervalSeconds, 60);
   _scheduleAssetSystemRefresh(assetId, refAsset, ms);
+}
+
+// Renders the COMBINED chart's window summary — the shape a non-agent asset
+// gets, where CPU and memory are two readings on one chart and so share one
+// stats line. The container below the chart gets the canonical
+// "<count> samples · <Label>: <value> · ..." shape via _renderChartStats.
+// The split section's per-chart counterparts are _renderCpuSummary /
+// _renderMemorySummary below.
+function _renderSystemSummary(container, tel) {
+  if (!container) return;
+  if (!tel || !tel.stats || !tel.stats.total) {
+    container.textContent = "No telemetry samples in this range yet.";
+    delete container.dataset.summary;
+    return;
+  }
+  var s = tel.stats;
+  var telParts = [
+    { label: "CPU avg", value: s.avgCpuPct != null ? s.avgCpuPct.toFixed(1) + "%" : "—" },
+    { label: "CPU max", value: s.maxCpuPct != null ? s.maxCpuPct.toFixed(1) + "%" : "—" },
+    { label: "Mem avg", value: s.avgMemPct != null ? s.avgMemPct.toFixed(1) + "%" : "—" },
+    { label: "Mem max", value: s.maxMemPct != null ? s.maxMemPct.toFixed(1) + "%" : "—" },
+  ];
+  var telTierPart = _tierStatsPart(tel);
+  if (telTierPart) telParts.unshift(telTierPart);
+  _renderChartStats(container, s.total, telParts);
 }
 
 // Window summaries for the two telemetry charts. Each chart owns its own
@@ -10409,23 +10489,240 @@ function _composeInterfaceScreenshot(parts) {
   }, "image/png");
 }
 
-// ─── CPU & Memory: two charts, one range selector ──────────────────────────
+// ─── CPU & Memory: one chart, or two under one range selector ──────────────
 //
-// Split in 2026-09. They used to share one 0–100% axis — a CPU line and a
-// memory line — and two things made that untenable at once:
+// Which shape an asset gets is decided by `_telemetryIsAgentSourced` at
+// render time, and the section is a SPLIT only under the Polaris Agent.
 //
-//   * the Polaris Agent now reports PER-CORE CPU, which turns one line into
-//     as many as there are logical cores. A memory line drawn through that
-//     thicket cannot be followed.
-//   * memory is now a STACK IN BYTES — processes, buffers and cache adding
-//     up to what is actually in use, against the installed total. Bytes do
-//     not share an axis with a percentage.
+// Split in 2026-09, because two things the agent reports could not share the
+// one 0–100% axis the section used to have:
 //
-// They keep ONE range selector, one custom-window panel and one fetch: both
-// read the same telemetry rows, so a second selector would only let an
-// operator put two halves of one reading on two different windows. Both
-// containers are stamped with the selection (`_loadSystemTabFor`), and both
-// are wired to the same drag-select handler.
+//   * PER-CORE CPU, which turns one line into as many as there are logical
+//     cores. A memory line drawn through that thicket cannot be followed.
+//   * memory as a STACK IN BYTES — processes, buffers and cache adding up to
+//     what is actually in use, against the installed total. Bytes do not
+//     share an axis with a percentage.
+//
+// Narrowed to the agent in 2026-09 as well: every other transport (FortiOS
+// REST, SNMP, WinRM, SSH, vCenter) reports ONE CPU percentage and one memory
+// figure per sample, so the split gave those assets two single-line charts
+// where one had been, on a tab that is already long. They keep the combined
+// chart (`_renderSystemChart`) — the same one the section had before the
+// split, unchanged.
+//
+// The two charts keep ONE range selector, one custom-window panel and one
+// fetch: both read the same telemetry rows, so a second selector would only
+// let an operator put two halves of one reading on two different windows.
+// Both containers are stamped with the selection (`_loadSystemTabFor`), and
+// both are wired to the same drag-select handler — as is the combined
+// container, which is the only one mounted in the other shape.
+
+// The NON-AGENT shape: one chart, CPU and memory on a single 0–100% y-axis.
+// Every transport but the agent reports exactly these two percentages per
+// sample, so there is nothing for a second chart to carry — a bytes-only
+// source (SNMP / WinRM / vCenter) is converted here rather than given the
+// byte stack, which needs the agent's band breakdown to say anything the
+// one line does not.
+//
+// CPU stays anchored at 0–100 so spikes remain meaningful; memory plots over
+// the same axis as a percentage (computed from bytes when only bytes were
+// sampled). One hit target per timestamp drives a unified tooltip naming
+// both values.
+function _renderSystemChart(container, data, asset, si) {
+  var samples = (data && data.samples) || [];
+  if (samples.length === 0) {
+    if (_isRestApiManagedNetworkDevice(asset, "telemetry")) {
+      var telPolling = _assetMonitorStreamSource(asset, "telemetry").polling || "REST API";
+      container.innerHTML = _notAvailableViaPollingHTML("Telemetry", telPolling);
+    } else {
+      // An empty window is exactly when the stale banner matters most: the
+      // chart has nothing to say, so "last successful update 7h ago" is the
+      // only thing that explains the gap. The banner is emitted inside this
+      // container on the data path below, so this early return used to swallow
+      // it — CPU & Memory stayed silent while every other section on the tab
+      // flagged the same stalled collection.
+      container.innerHTML =
+        _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt) +
+        '<div style="text-align:center">No telemetry samples in this range yet.</div>';
+      container.style.flexDirection = "column";
+      container.style.alignItems = "stretch";
+      container.style.justifyContent = "center";
+    }
+    return;
+  }
+
+  function memPctFromSample(s) {
+    if (typeof s.memPct === "number") return s.memPct;
+    if (typeof s.memUsedBytes === "number" && typeof s.memTotalBytes === "number" && s.memTotalBytes > 0) {
+      return (s.memUsedBytes / s.memTotalBytes) * 100;
+    }
+    return null;
+  }
+
+  var since = data && data.since;
+  var until = data && data.until;
+  var W = container.clientWidth || 600;
+  var H = 200;
+  var padL = 50, padR = 10, padT = 14, padB = 28;
+  var innerW = W - padL - padR;
+  var innerH = H - padT - padB;
+
+  var bounds = _chartTimeBounds(samples, since, until);
+  var t0 = bounds.t0, t1 = bounds.t1;
+  var spanMs = t1 - t0, oneDayMs = 86400000;
+  var pad2 = _chartPad2;
+  function fmtTick(ts) {
+    var d = new Date(ts);
+    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  }
+
+  var cpuValues = samples.map(function (s) { return { s: s, v: typeof s.cpuPct === "number" ? s.cpuPct : null }; })
+                         .filter(function (e) { return typeof e.v === "number"; });
+  var memValues = samples.map(function (s) { return { s: s, v: memPctFromSample(s) }; })
+                         .filter(function (e) { return typeof e.v === "number"; });
+
+  var yMin = 0, yMax = 100;
+  var xFor = _chartXScale(padL, innerW, t0, t1);
+  var yFor = _chartYScale(padT, innerH, yMin, yMax);
+
+  // Missed polls (the telemetry stream has no per-sample success flag — a
+  // failed poll simply leaves no row) render the same way the response-time
+  // and interface charts render theirs: red dots at the baseline flanking the
+  // outage, with both lines fading into red across it instead of bridging it.
+  // The outage windows come from the response-time probe (payload `outages`,
+  // see _outageMarkers) rather than from the shape of the hole. Both lines
+  // dive together: CPU and memory ride the same telemetry row, so an outage is
+  // an outage for both, while a transport that reports CPU but not memory has
+  // no probe failure behind it and correctly bridges instead.
+  var unionTs = Object.keys(cpuValues.concat(memValues).reduce(function (acc, e) {
+    acc[+new Date(e.s.timestamp)] = true;
+    return acc;
+  }, {})).map(Number).sort(function (a, b) { return a - b; });
+  var gapMarkers = _outageMarkers(data && data.outages, unionTs);
+  var baselineY = padT + innerH;
+  function failAwarePts(list) {
+    if (!list.length) return [];
+    var pts = list.map(function (e) {
+      return { t: +new Date(e.s.timestamp), x: xFor(e.s.timestamp), y: yFor(e.v), ok: true };
+    });
+    _outagePts(gapMarkers, xFor, baselineY).forEach(function (mp) { pts.push(mp); });
+    pts.sort(function (a, b) { return a.t - b.t; });
+    return pts;
+  }
+  var failDots = _outageDotsSVG(gapMarkers, xFor, baselineY);
+  var missHits = _outageHitsSVG(gapMarkers, xFor, padT, innerH);
+
+  // Build one full-height vertical lane per timestamp so the tooltip fires
+  // anywhere in the sample's column — including over a flatlined CPU line at
+  // the bottom of a chart whose memory line dominates the visible space.
+  // Lane width is the Voronoi span (midpoint to each neighbor) so coverage is
+  // continuous across the chart with no dead zones between samples.
+  var byTs = {};
+  cpuValues.forEach(function (e) {
+    var k = String(e.s.timestamp);
+    if (!byTs[k]) byTs[k] = { ts: e.s.timestamp, sample: e.s };
+    byTs[k].cpu = e.v;
+  });
+  memValues.forEach(function (e) {
+    var k = String(e.s.timestamp);
+    if (!byTs[k]) byTs[k] = { ts: e.s.timestamp, sample: e.s };
+    byTs[k].mem = e.v;
+  });
+  var sortedHits = Object.keys(byTs).map(function (k) { return byTs[k]; })
+                         .sort(function (a, b) { return new Date(a.ts).getTime() - new Date(b.ts).getTime(); });
+  var hits = sortedHits.map(function (h, i) {
+    var x = xFor(h.ts);
+    var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].ts) + x) / 2;
+    var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].ts) + x) / 2;
+    var s = h.sample;
+    return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
+      ' data-ts="' + escapeHtml(String(h.ts)) + '"' +
+      ' data-cpu="' + (h.cpu != null ? h.cpu : "") + '"' +
+      ' data-mem="' + (h.mem != null ? h.mem : "") + '"' +
+      ' data-mb="' + (typeof s.memUsedBytes === "number" ? s.memUsedBytes : "") + '"' +
+      ' data-mt="' + (typeof s.memTotalBytes === "number" ? s.memTotalBytes : "") + '"/>';
+  }).join("");
+
+  var ticks = "";
+  for (var i = 0; i <= 4; i++) {
+    var v = yMin + (yMax - yMin) * (i / 4);
+    var y = padT + innerH - (i / 4) * innerH;
+    ticks +=
+      '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
+  }
+  var xTicks = "";
+  for (var j = 0; j <= 5; j++) {
+    var tsTick = t0 + (t1 - t0) * (j / 5);
+    var xPos = padL + (j / 5) * innerW;
+    xTicks +=
+      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
+      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
+  }
+  var cpuColor = "var(--color-accent)";
+  var memColor = "#f4a261";
+  var legend =
+    '<g font-size="10" fill="currentColor">' +
+      '<rect x="' + (padL + 4)  + '" y="2" width="10" height="10" fill="' + cpuColor + '"/>' +
+      '<text x="' + (padL + 18) + '" y="11">CPU</text>' +
+      '<rect x="' + (padL + 60) + '" y="2" width="10" height="10" fill="' + memColor + '"/>' +
+      '<text x="' + (padL + 74) + '" y="11">Memory</text>' +
+    '</g>';
+
+  var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt);
+  var clipId = _chartClipId("system");
+  var cpuLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), cpuColor, clipId + "-cpu");
+  var memLine = _failureAwareSeriesSVG(failAwarePts(memValues), memColor, clipId + "-mem");
+  container.innerHTML =
+    chartStaleBanner +
+    '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
+      _chartClipDefs(clipId, padL, padT, innerW, innerH) +
+      '<defs>' + cpuLine.defs + memLine.defs + '</defs>' +
+      ticks + xTicks +
+      _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
+      _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
+      '<g ' + _chartClipAttr(clipId) + '>' +
+        cpuLine.segments +
+        memLine.segments +
+        cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + cpuColor + '"/>'; }).join("") +
+        memValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + memColor + '"/>'; }).join("") +
+        failDots +
+        // After `hits`, not before: this chart's hit targets are full-height
+        // Voronoi lanes, and a gap sits inside the neighboring sample's lane —
+        // so the narrow missed-poll rect has to paint last to win the hover.
+        hits +
+        missHits +
+      '</g>' +
+      legend +
+    '</svg>' + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  container.style.alignItems = "stretch";
+  container.style.justifyContent = "flex-start";
+  container.style.flexDirection = "column";
+  _stashChartGeometry(container, t0, t1, padL, innerW, W);
+
+  _wireChartTooltip(container, function (target) {
+    var ts = target.getAttribute("data-ts");
+    if (target.getAttribute("data-miss") === "1") {
+      return _missTooltipHTML(target);
+    }
+    var cpuRaw = target.getAttribute("data-cpu");
+    var memRaw = target.getAttribute("data-mem");
+    var mb = target.getAttribute("data-mb");
+    var mt = target.getAttribute("data-mt");
+    var memLine = '<div>Memory: ' + (memRaw !== "" ? Number(memRaw).toFixed(1) + "%" : "—");
+    if (mb !== "" && mt !== "") {
+      memLine += " (" + _fmtBytes(Number(mb)) + " / " + _fmtBytes(Number(mt)) + ")";
+    }
+    memLine += "</div>";
+    return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>' +
+      '<div>CPU: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</div>' +
+      memLine;
+  });
+  _addChartScreenshotButton(container, "CPU & Memory", { yAxis: "Utilization (%)", getStats: _statsSummaryFrom("asset-system-summary") });
+  _observeChartResize(container, function (c) { _renderSystemChart(c, data, asset, si); });
+}
 
 // Per-core hues are spread across an arc that DELIBERATELY EXCLUDES RED.
 // Red is the missed-poll colour on every chart in this app (_CHART_FAIL_COLOR)

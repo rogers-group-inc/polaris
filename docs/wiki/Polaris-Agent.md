@@ -280,12 +280,16 @@ keeps running and the agent looks connected.
 
 ### Per-core CPU and the memory breakdown
 
-An agent-monitored host is the only kind whose **CPU** chart on the Assets →
-System tab draws **one coloured line per logical core** alongside the
-cross-core average, and whose **Memory** chart is a **stacked area in bytes**
-rather than a single percentage line. No other transport — FortiOS, SNMP,
-WinRM, vCenter, SSH — can report either, so on those assets the two charts
-fall back to a single line each.
+An agent-monitored host is the only kind whose Assets → System tab splits
+**CPU & Memory into two charts**: a **CPU** chart drawing **one coloured line
+per logical core** alongside the cross-core average, and a **Memory** chart
+that is a **stacked area in bytes**. No other transport — FortiOS, SNMP,
+WinRM, vCenter, SSH — can report either, so every other asset keeps the single
+combined CPU & Memory chart, both series on one 0–100% axis.
+
+The split follows the **CPU/Memory stream's polling method**, not the presence
+of an agent: a host with the agent installed but that stream still pointed at
+SNMP is collecting one CPU figure per sample, and gets the combined chart.
 
 On the CPU chart:
 
