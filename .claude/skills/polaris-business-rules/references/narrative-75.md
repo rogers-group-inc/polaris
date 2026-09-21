@@ -265,6 +265,61 @@ snapshot, one query for the page. Without it, a switch's grouped alert vanishes 
 interfaces pill whenever its primary contribution happened to be a temperature condition: the
 alert is still about a dead port, and the widget would have said the switch was fine.
 
+
+### Which devices a group governs
+
+A group without a device filter is relying on its members' scopes agreeing about which
+devices matter, and they will not: "PoE fault" is written fleet-wide, "chassis temperature"
+covers every FortiGate, and the operator wanted one alert for the switches at one site. So a
+group carries a `scope` of its own — the automations' OWN schema, built with the same
+condition tree, evaluated by the same `evaluateScopeCondition`.
+
+**It narrows, it does not replace.** Detection stays the automation's (that is the whole
+split this rule is built on); the group's scope says where the FOLD applies. On a device the
+scope selects, a member's alerts join the group's single alert and the group delivers them.
+On a device it does not select, that member keys on ITSELF and delivers alone — exactly as an
+ungrouped automation would, because its own Devices step still said to watch that device.
+
+That per-device test is the point. It is what lets "Switch health — Ashfield" and
+"Switch health — Dock" be two groups over the same automations, paging different people,
+rather than forcing a duplicate set of automations per site.
+
+Two consequences that are easy to get wrong, and were:
+
+- **`alertGroupId` is stamped only where the group governs.** An alert keyed `rule:`
+  because the scope excluded its device must not still carry the group, or it would fold
+  alone and page the group's recipients anyway — the half-applied version of the setting,
+  and the one nobody would predict from the screen. Caught on real hardware: HUB2 fell out
+  of scope, correctly split into two `rule:` alerts, and still read as delivered by
+  "Lab gate health" until the stamp was gated too.
+- **A scope CHANGE retires the group's live alerts** (`system:group-rescoped`), for the
+  same reason joining and leaving do: it moves devices into and out of the group's
+  governance, and an alert whose recipients and escalation chain swapped under a reader is
+  worse than a brief retire-and-raise. Compared as JSON, not by identity — the editor posts
+  a rebuilt tree on every save, so a reference check would retire everything on every save.
+
+**Resolved through `loadScopeAssetIds`, not by matching rows in memory.** That is the
+documented path, and the reason is `interfaceName`: it is relation-backed, resolved in SQL
+by `scopeInterfaceIndex`, and an undecorated row silently reads as "no interfaces". Cached
+per GROUP per tick, so five member automations resolve it once between them.
+
+A FAILED resolve falls back to **governing everything** and records an Event saying so. The
+opposite default would be worse in a way that reads as the feature breaking: one folded
+alert would scatter back into one per component per automation, at exactly the moment
+something is already wrong.
+
+NULL or `{allAssets:true}` means every device its members cover — what a group had before
+the column, so nothing is backfilled and no existing group changes.
+
+**On the client** the tree is the shared `PolarisConditionBuilder`, fed by a new shared
+`PolarisScopeVocabulary` module. That module exists because the Alert Groups editor would
+otherwise have been the SIXTH copy of the `optionsFrom` value-suggestion switch, and every
+copy ends `default: return []` — so a newly added field degrades to a free-text box on
+whichever surfaces were not updated, silently. Alert Groups sits behind
+`automationManagement`, the same gate as the wizard's Devices step, and wants the same
+fields from the same endpoints, so the two now share one vocabulary and the wizard delegates
+to it. The other three consumers deliberately stay separate: each is behind a different
+permission key with its own schema route, which is what those routes exist for.
 ### Membership
 
 At most ONE group per automation, because a fire must have a single alert to join.

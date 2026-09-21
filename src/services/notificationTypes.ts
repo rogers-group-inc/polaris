@@ -4153,8 +4153,21 @@ export function triggerCanJoinGroup(trigger: Trigger | null | undefined): boolea
  *  The two scopes can never collide in the partial unique index, and a rule
  *  joining or leaving a group CHANGES its key — which is what stops the old
  *  episode's alert and the new one fighting over the same row. */
-export function alertScopeOf(rule: { id: string; alertGroupId?: string | null }): { scope: "rule" | "grp"; id: string } {
-  return rule.alertGroupId ? { scope: "grp", id: rule.alertGroupId } : { scope: "rule", id: rule.id };
+export function alertScopeOf(
+  rule: { id: string; alertGroupId?: string | null },
+  /** Whether the group GOVERNS this particular device.
+   *
+   *  A group may carry a scope of its own, which narrows where the fold
+   *  applies without touching what any member watches (detection stays the
+   *  automation's — business rule 75). On a device the group does not govern,
+   *  the member falls back to its OWN key and delivers as an ungrouped
+   *  automation would. Defaults true so every caller that has no group, or a
+   *  group with no scope, behaves exactly as before. */
+  groupGoverns = true,
+): { scope: "rule" | "grp"; id: string } {
+  return rule.alertGroupId && groupGoverns
+    ? { scope: "grp", id: rule.alertGroupId }
+    : { scope: "rule", id: rule.id };
 }
 
 /** The contributions that have NOT recovered. */

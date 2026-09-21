@@ -33,6 +33,7 @@ import {
   escalationV2Schema,
   escalationSchema,
   repeatConfigSchema,
+  scopeSchema,
 } from "../../services/notificationTypes.js";
 
 const alertGroupsRouter = Router();
@@ -45,13 +46,22 @@ const alertGroupsRouter = Router();
  * escalation sweep already know how to run, or a group would be a second
  * dialect of the same vocabulary — which is how the two drift.
  *
- * What is NOT here is as deliberate: no trigger, no scope, no severity bands,
- * no reset mode. Those are DETECTION, and they stay on the member automations.
+ * What is NOT here is as deliberate: no trigger, no severity bands, no reset
+ * mode. Those are DETECTION and stay on the member automations.
+ *
+ * `scope` IS here, and is not an exception to that: it does not say what to
+ * watch, it says which devices this group governs — where the fold applies and
+ * therefore who delivers. A member still watches whatever its own scope says.
  */
 const groupInputSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().max(2000).optional().nullable(),
   enabled: z.boolean().optional(),
+  // WHICH DEVICES this group governs. The automations' OWN scope schema, not a
+  // second dialect: the tree is built by the same condition builder, stored in
+  // the same shape and evaluated by the same `evaluateScopeCondition`, so a
+  // field added to the vocabulary works here with no change at all.
+  scope: scopeSchema.optional().nullable(),
   messageTemplate: z.string().max(2000).optional().nullable(),
   requireAckNote: z.boolean().optional(),
   emailComposition: emailCompositionSchema.optional().nullable(),

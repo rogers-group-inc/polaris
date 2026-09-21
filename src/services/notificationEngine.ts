@@ -3294,6 +3294,52 @@ class TickAlertIndex {
   remember(groupKey: string, notificationId: string): void {
     this.byKey.set(groupKey, notificationId);
   }
+
+  // ── Which devices each AlertGroup GOVERNS ─────────────────────────────────
+  //
+  // A group may carry a scope of its own. It narrows where the FOLD applies —
+  // never what a member watches — so on a device the group does not govern,
+  // that member delivers on its own exactly as an ungrouped automation would.
+  //
+  // Resolved through `loadScopeAssetIds`, the documented server-side resolver,
+  // rather than by matching rows in memory: it is the path that decorates
+  // relation-backed leaves (`interfaceName`) before evaluating them, and an
+  // undecorated row would silently read as "no interfaces". Cached per GROUP
+  // per tick, so five member automations resolve it once between them.
+  //
+  // `null` means "governs everything" — no scope, or an unconstrained one —
+  // which is what every group had before the column existed.
+  private groupScopes = new Map<string, Set<string> | null>();
+
+  async governedAssetIds(alertGroupId: string): Promise<Set<string> | null> {
+    if (this.groupScopes.has(alertGroupId)) return this.groupScopes.get(alertGroupId)!;
+    let governed: Set<string> | null = null;
+    try {
+      const g = await prisma.alertGroup.findUnique({ where: { id: alertGroupId }, select: { scope: true } });
+      const scope = (g?.scope ?? null) as RuleScope | null;
+      if (scope && !scopeIsUnconstrained(scope)) {
+        // NOT monitoredOnly: the trigger gate (business rule 37) has already
+        // decided what may fire. This asks only "does the group cover it".
+        governed = new Set(await loadScopeAssetIds(scope));
+      }
+    } catch (err) {
+      // A failed resolve must not silently un-group a fleet: fall back to
+      // "governs everything" (the pre-scope behaviour) and SAY SO as an Event
+      // rather than a log line. The alternative failure — treating it as
+      // "governs nothing" — would scatter one folded alert back into one per
+      // component and per automation, which reads as the feature breaking.
+      governed = null;
+      await logEvent({
+        action: "notification.engine_error",
+        actor: "system:notification-engine",
+        level: "warning",
+        message: "Alert group device filter could not be resolved — the group covered every device this tick",
+        details: { alertGroupId, err: (err as Error)?.message },
+      }).catch(() => {});
+    }
+    this.groupScopes.set(alertGroupId, governed);
+    return governed;
+  }
 }
 
 /** assetId → the live alert a contribution from this rule should join. */
@@ -3313,14 +3359,38 @@ async function liveAlertsByAsset(
   }
   // A group's alert may belong to another member automation, so the answer is
   // keyed by groupKey rather than by anything this rule can see.
+  //
+  // BOTH prefixes are collected: a member whose group does not govern a given
+  // device keys that device's alert on itself, so the same automation can have
+  // `grp:` alerts on some devices and `rule:` alerts on others at once.
   if (!tickIndex) return out;
   const byKey = await tickIndex.keysFor();
-  const scope = alertScopeOf(rule);
-  const prefix = `${scope.scope}:${scope.id}|`;
+  const prefixes = [alertScopeOf(rule, true), alertScopeOf(rule, false)]
+    .map((s) => `${s.scope}:${s.id}|`);
   for (const [key, id] of byKey) {
-    if (key.startsWith(prefix)) out.set(key.slice(prefix.length), id);
+    for (const prefix of prefixes) {
+      if (key.startsWith(prefix)) { out.set(key.slice(prefix.length), id); break; }
+    }
   }
   return out;
+}
+
+/**
+ * Does this rule's AlertGroup govern THIS device?
+ *
+ * True with no work at all when the rule has no group, or the group has no
+ * scope — which is every group until someone narrows one, so the common path
+ * costs nothing. False only when a scope exists and this device is outside it,
+ * in which case the member delivers on its own.
+ */
+async function groupGovernsAsset(
+  rule: DbRule,
+  assetId: string,
+  tickIndex: TickAlertIndex | null,
+): Promise<boolean> {
+  if (!rule.alertGroupId || !tickIndex) return true;
+  const governed = await tickIndex.governedAssetIds(rule.alertGroupId);
+  return governed === null || governed.has(assetId);
 }
 
 /** Turn an engine reading into the contribution stored on the alert. */
@@ -3383,9 +3453,15 @@ async function createGroupAlert(
   const lead = fires.find((f) => f.reading.dimKey === primary?.key) ?? fires[0]!;
   const ctx = await buildGroupContext(rule, lead, members, severity, now);
   // Where this rule's grouped alerts live: its AlertGroup when it belongs to
-  // one (so every member automation folds into the SAME alert per device), else
-  // itself. The two scopes can never collide in the partial unique index.
-  const scope = alertScopeOf(rule);
+  // one AND that group governs THIS device, else itself. The two scopes can
+  // never collide in the partial unique index.
+  //
+  // The per-device test is what lets one set of automations serve several
+  // groups — "Switch health — Ashfield" and "Switch health — Dock" over the
+  // same checks, routed to different people. On a device no group governs,
+  // the automation still folds its own components; it just does so alone.
+  const governs = await groupGovernsAsset(rule, assetId, tickIndex);
+  const scope = alertScopeOf(rule, governs);
   const groupKey = groupKeyOf(scope.scope, scope.id, assetId);
 
   let notif: { id: string };
@@ -3408,9 +3484,15 @@ async function createGroupAlert(
         // delivery time through alertOwnerOf. `ruleId` above stays set to the
         // automation that OPENED it regardless (the worst contribution is what
         // `dimension` follows; provenance that moved mid-life would be worse):
-        // a null-ruleId alert cannot
-        // escalate, is invisible to the NOC's relevance pills and has no name.
-        alertGroupId: rule.alertGroupId ?? null,
+        // a null-ruleId alert cannot escalate, is invisible to the NOC's
+        // relevance pills and has no name.
+        //
+        // Stamped ONLY when the group governs this device. An alert keyed
+        // `rule:` because the group's scope excluded the device must not then
+        // be DELIVERED by that group — it would fold alone and still page the
+        // group's recipients, which is the half-applied version of the setting
+        // and the one nobody would predict from the screen.
+        alertGroupId: governs ? (rule.alertGroupId ?? null) : null,
         members: members as unknown as Prisma.InputJsonValue,
         dimensionCount: activeMembers(members).length,
         ...(ruleWantsContext(rule) ? { templateCtx: ctx as any } : {}),

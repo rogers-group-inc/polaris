@@ -124,12 +124,26 @@
 
   // ── Editor ─────────────────────────────────────────────────────────────────
 
+  /** Does this stored scope mean "every device"? Null, absent and
+   *  `{allAssets:true}` all do — the three shapes a group has carried. */
+  function scopeIsAll(scope) {
+    if (!scope || typeof scope !== "object") return true;
+    if (scope.allAssets === true) return true;
+    return !scope.condition;
+  }
+
   async function openEditor(id) {
     var group = null;
+    var vocab = null;
     try {
       if (id) group = await api.alertGroups.get(id);
       var jr = await api.alertGroups.joinable(id || undefined);
       joinable = (jr && jr.rules) || [];
+      // The device-filter vocabulary must be IN HAND before the modal body is
+      // assembled — the builder renders its field/operator selects from it —
+      // so this awaits here and bails with a toast rather than opening a
+      // dialog it cannot populate. Same contract every other consumer holds.
+      vocab = await window.PolarisScopeVocabulary.load();
     } catch (err) {
       showToast((err && err.message) || "Failed to open the group", "error");
       return;
@@ -146,12 +160,34 @@
       '<button class="btn btn-primary" id="ag-save" type="button">' + (id ? "Save" : "Create group") + "</button>";
     var ov = buildOverlay(1300, id ? "Edit alert group" : "New alert group", editorHtml(g, selected), footer, null, true);
 
+    // The device filter, through the SHARED builder — same module, same tree
+    // shape and same server-side evaluator as the automation wizard's Devices
+    // step. Nothing here holds a field list of its own.
+    var CB = window.PolarisConditionBuilder;
+    var scopeBuilder = CB.create({ meta: vocab.meta, valueOptions: vocab.valueOptions });
+    var scopeHost = ov.overlay.querySelector("#ag-scope-builder");
+    // `groupHtml` takes the TREE; `seedIfEmpty` takes the rendered CONTAINER
+    // and drops one blank row in if the tree had none — so an operator who
+    // unticks the box gets a row to fill rather than an empty panel.
+    var storedTree = (g.scope && g.scope.condition) || { op: "and", children: [] };
+    scopeHost.innerHTML = scopeBuilder.groupHtml(storedTree, 0);
+    scopeBuilder.seedIfEmpty(scopeHost);
+    scopeBuilder.wire(ov.overlay, "#ag-scope-builder");
+
+    // The all-devices checkbox just hides the tree; it does NOT clear it, so
+    // ticking it by mistake and un-ticking it again does not cost the
+    // operator the filter they had built.
+    var allBox = ov.overlay.querySelector("#ag-all-devices");
+    allBox.addEventListener("change", function () {
+      scopeHost.style.display = allBox.checked ? "none" : "";
+    });
+
     ov.overlay.querySelector("#ag-cancel").addEventListener("click", function () { ov.close(); });
     var saveBtn = ov.overlay.querySelector("#ag-save");
     saveBtn.addEventListener("click", async function () {
       saveBtn.disabled = true;
       try {
-        if (await save(id, ov)) ov.close();
+        if (await save(id, ov, scopeBuilder, allBox)) ov.close();
       } finally {
         saveBtn.disabled = false;
       }
@@ -171,6 +207,17 @@
           "Turning a group off does not turn its automations off — they go back to delivering on their own, and their live alerts are retired so the next check re-raises them that way." +
         "</p>" +
       "</div>" +
+
+      "<hr style=\"border:0;border-top:1px solid var(--color-border);margin:1rem 0\">" +
+      '<h4 style="margin:0 0 0.25rem;font-size:0.95rem">Which devices</h4>' +
+      '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">' +
+        "Where the folding applies. Each automation still watches whatever its own Devices step says — this decides which of those devices get <strong>one</strong> alert from this group. " +
+        "On a device outside this filter, a member automation delivers on its own, exactly as it would ungrouped." +
+      "</p>" +
+      '<label style="display:block;font-weight:400;margin:0 0 0.4rem">' +
+        '<input type="checkbox" id="ag-all-devices"' + (scopeIsAll(g.scope) ? " checked" : "") + "> Every device its automations cover" +
+      "</label>" +
+      '<div id="ag-scope-builder"' + (scopeIsAll(g.scope) ? ' style="display:none"' : "") + "></div>" +
 
       "<hr style=\"border:0;border-top:1px solid var(--color-border);margin:1rem 0\">" +
       '<h4 style="margin:0 0 0.25rem;font-size:0.95rem">Automations in this group</h4>' +
@@ -215,7 +262,7 @@
     "</label>";
   }
 
-  async function save(id, ov) {
+  async function save(id, ov, scopeBuilder, allBox) {
     // Scope every read to THIS overlay: the Automations page has its own
     // form fields, and a document-wide lookup would find whichever matched
     // first. `ov.overlay` is the element buildOverlay returns.
@@ -223,7 +270,30 @@
     var name = (root.querySelector("#ag-name") || {}).value || "";
     if (!name.trim()) { showToast("Give the group a name", "error"); return false; }
     var repeatMin = parseInt((root.querySelector("#ag-repeat") || {}).value, 10);
+
+    // The device filter. An unticked "every device" box with an unbuildable
+    // tree is refused rather than silently stored: `and([])` is true of every
+    // asset, so storing it would quietly widen the group to the whole fleet —
+    // the opposite of what someone unticking the box meant. Same trap the tag
+    // filter documents; the shapes are identical and the meanings are opposite.
+    var scope = { allAssets: true };
+    if (allBox && !allBox.checked) {
+      // collect() takes the ROOT GROUP ELEMENT, not a selector — DOM order is
+      // the tree, so it walks the rendered markup.
+      var groupEl = root.querySelector("#ag-scope-builder > .scg-group");
+      if (!groupEl) { showToast("Build a device filter, or tick every device", "error"); return false; }
+      var tree = scopeBuilder.collect(groupEl);
+      var problem = scopeBuilder.validate(tree);
+      if (problem) { showToast(problem, "error"); return false; }
+      if (!tree || !(tree.children || []).length) {
+        showToast("Add a condition to the device filter, or tick every device", "error");
+        return false;
+      }
+      scope = { condition: tree };
+    }
+
     var body = {
+      scope: scope,
       name: name.trim(),
       description: ((root.querySelector("#ag-desc") || {}).value || "").trim() || null,
       enabled: !!(root.querySelector("#ag-enabled") || {}).checked,

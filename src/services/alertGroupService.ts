@@ -42,6 +42,9 @@ export interface AlertGroupInput {
   name: string;
   description?: string | null;
   enabled?: boolean;
+  /** Which devices this group governs — narrows where the fold applies, never
+   *  what a member watches. Null / allAssets = every device its members cover. */
+  scope?: unknown;
   messageTemplate?: string | null;
   requireAckNote?: boolean;
   emailComposition?: unknown;
@@ -55,7 +58,7 @@ export interface AlertGroupInput {
 }
 
 const GROUP_SELECT = {
-  id: true, name: true, description: true, enabled: true,
+  id: true, name: true, description: true, enabled: true, scope: true,
   messageTemplate: true, requireAckNote: true, emailComposition: true,
   actions: true, resetActions: true, escalation: true, repeat: true,
   createdBy: true, createdAt: true, updatedAt: true,
@@ -121,6 +124,7 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
       name: input.name,
       description: input.description ?? null,
       enabled: input.enabled !== false,
+      scope: (input.scope ?? undefined) as Prisma.InputJsonValue | undefined,
       messageTemplate: input.messageTemplate ?? null,
       requireAckNote: input.requireAckNote === true,
       emailComposition: (input.emailComposition ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -155,6 +159,7 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
       name: input.name,
       description: input.description ?? null,
       enabled: input.enabled !== false,
+      scope: jsonOrClear(input.scope),
       messageTemplate: input.messageTemplate ?? null,
       requireAckNote: input.requireAckNote === true,
       emailComposition: jsonOrClear(input.emailComposition),
@@ -173,6 +178,20 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
   // them now, rather than leaving alerts escalating on a chain nobody can see.
   if (existing.enabled && input.enabled === false) {
     await retireGroupAlerts(id, "system:group-disabled");
+  }
+
+  // A SCOPE change moves devices into or out of the group's governance, which
+  // changes who delivers their alerts — the same change of owner that joining
+  // and leaving are, just expressed as a filter. A live alert cannot be
+  // reshaped in place (its recipients and escalation chain would swap under
+  // whoever is reading it), so retire and let the next tick re-raise each one
+  // under whoever owns it now.
+  //
+  // Compared as JSON rather than by identity: the editor posts a rebuilt tree
+  // on every save, so a reference check would retire every alert on every
+  // save of an unrelated field.
+  if (JSON.stringify(existing.scope ?? null) !== JSON.stringify(input.scope ?? null)) {
+    await retireGroupAlerts(id, "system:group-rescoped");
   }
 
   await logEvent({

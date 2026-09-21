@@ -173,8 +173,11 @@ describe("openAutomationWizard — clone mode", () => {
     g._ruleRecipientUsers = null;
     g._looksLikeDeviceId = () => false;
 
-    // condition-builder.js loads before the wizard on every page carrying it.
+    // condition-builder.js and the shared device-selection vocabulary both
+    // load before the wizard on every page carrying it, and the wizard reads
+    // both while assembling the modal body.
     (0, eval)(readFileSync(resolve(__dirname, "../../public/js/condition-builder.js"), "utf8"));
+    (0, eval)(readFileSync(resolve(__dirname, "../../public/js/scope-vocabulary.js"), "utf8"));
     (0, eval)(readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8"));
 
     await (g.openAutomationWizard as (r: unknown, o?: unknown) => Promise<void>)(

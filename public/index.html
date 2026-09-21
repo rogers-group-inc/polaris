@@ -92,6 +92,9 @@
        automation wizard in place. Standalone — it owns its builder catalogs, so
        automations.js is not needed here. -->
   <script src="/js/condition-builder.js"></script>
+  <!-- The shared device-selection vocabulary. Must precede automations-wizard.js
+       and alert-groups.js, which read it while assembling a modal body. -->
+  <script src="/js/scope-vocabulary.js"></script>
   <script src="/js/automations-address-book.js"></script>
   <script src="/js/automations-wizard.js"></script>
   <script src="/js/automations-portability.js"></script>

@@ -2103,32 +2103,20 @@ async function openAutomationWizard(existing, opts) {
     { value: "event", label: (findType("event") || {}).label || "Audit event match" },
     { value: "change", label: (findType("change") || {}).label || "Change detection" },
   ];
-  var scMeta = s.scopeCondition || {
-    groupOps: ["and", "or", "none", "notAll"],
-    groupOpLabels: {
-      and: "All child conditions must be satisfied (AND)",
-      or: "At least one child condition must be satisfied (OR)",
-      none: "All child conditions must NOT be satisfied",
-      notAll: "At least one child condition must NOT be satisfied",
-    },
-    operatorLabels: { equals: "is equal to", notEquals: "is not equal to", contains: "contains", notContains: "does not contain", startsWith: "starts with", endsWith: "ends with", has: "is applied", notHas: "is not applied", inCidr: "is within", notInCidr: "is not within" },
-    fields: [
-      { field: "assetType", label: "Device type", ops: ["equals", "notEquals"], optionsFrom: "assetTypes" },
-      { field: "manufacturer", label: "Manufacturer", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "manufacturers" },
-      { field: "model", label: "Model", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "models" },
-      { field: "hostname", label: "Hostname", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: null },
-      { field: "os", label: "Operating system", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: null },
-      { field: "tag", label: "Tag", ops: ["has", "notHas"], optionsFrom: "tags" },
-      { field: "subnet", label: "Subnet / IP", ops: ["inCidr", "notInCidr"], optionsFrom: "subnets" },
-      { field: "ipBlock", label: "IP block", ops: ["inCidr", "notInCidr"], optionsFrom: "ipBlocks" },
-      { field: "interfaceName", label: "Device interface", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "interfaceNames" },
-      { field: "ssid", label: "Broadcast SSID", ops: ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"], optionsFrom: "ssids" },
-      { field: "status", label: "Lifecycle status", ops: ["equals", "notEquals"], optionsFrom: null, values: ["active", "maintenance", "decommissioned", "storage", "disabled", "quarantined"] },
-      // Asset ID intentionally omitted — a raw id targets one device with no
-      // precedence meaning; use hostname. Saved rules using it still evaluate.
-    ],
-    maxDepth: 5,
-  };
+  // The Devices-step catalog + value suggestions come from the SHARED
+  // vocabulary module (public/js/scope-vocabulary.js), which the Alert Groups
+  // editor uses too. The fallback catalog and the `optionsFrom` switch used to
+  // live inline here; they moved the moment a second surface behind the same
+  // `automationManagement` gate wanted them, rather than being copied — a
+  // second copy of that switch is how a newly added field silently degrades to
+  // a free-text box on one surface and nobody notices.
+  var _scVocab = window.PolarisScopeVocabulary.make({
+    schema: s,
+    assetTypes: _ruleAssetTypes,
+    tagList: _ruleTagList,
+    scopeOptions: _awScopeOptions,
+  });
+  var scMeta = _scVocab.meta;
 
   // The devices-step tree is built by the shared module (public/js/condition-builder.js),
   // which contacts use too — this wizard only injects the catalog and the value
@@ -2365,24 +2353,9 @@ async function openAutomationWizard(existing, opts) {
   // NOT-ALL), child rules of [field][operator][value], and nested sub-groups.
   // An empty root = all assets. Collect walks the DOM into scope.condition;
   // the backend evaluates the same tree via evaluateScopeCondition.
-  function scFieldMeta(field) {
-    return (scMeta.fields || []).find(function (f) { return f.field === field; }) || scMeta.fields[0];
-  }
-  function scValueOptions(field) {
-    var fm = scFieldMeta(field);
-    if (fm.values) return fm.values.map(function (v) { return { value: v, label: v }; });
-    switch (fm.optionsFrom) {
-      case "assetTypes": return (_ruleAssetTypes || []).map(function (t) { return { value: t.name, label: t.label || t.name }; });
-      case "manufacturers": return (_awScopeOptions.manufacturers || []).map(function (m) { return { value: m, label: m }; });
-      case "models": return (_awScopeOptions.models || []).map(function (m) { return { value: m, label: m }; });
-      case "interfaceNames": return (_awScopeOptions.interfaceNames || []).map(function (n) { return { value: n, label: n }; });
-      case "ssids":         return (_awScopeOptions.ssids || []).map(function (n) { return { value: n, label: n }; });
-      case "tags": return (_ruleTagList || []).map(function (t) { return { value: t, label: t }; });
-      case "subnets": return (_awScopeOptions.subnets || []).map(function (sn) { return { value: sn.cidr, label: sn.name + " — " + sn.cidr }; });
-      case "ipBlocks": return (_awScopeOptions.ipBlocks || []).map(function (b) { return { value: b.cidr, label: b.name + " — " + b.cidr }; });
-      default: return [];
-    }
-  }
+  // Both delegate to the shared vocabulary — see the _scVocab note above.
+  function scFieldMeta(field) { return _scVocab.fieldMeta(field); }
+  function scValueOptions(field) { return _scVocab.valueOptions(field); }
   /** The Devices step's one-line lead, which depends on what the trigger can
    *  actually be filtered BY. This line used to tell an audit-event operator
    *  that the step was ignored — and it was, silently discarding whatever was

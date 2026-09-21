@@ -5069,6 +5069,24 @@ model AlertGroup {
   /// and go back to delivering on their own.
   enabled     Boolean @default(true)
 
+  /// WHICH DEVICES this group governs — the same `scope` shape a
+  /// NotificationRule carries, built with the same condition tree.
+  ///
+  /// It NARROWS rather than replaces. A member automation still decides what
+  /// it watches and where (detection stays its own, business rule 75); this
+  /// says where the FOLD applies. On a device the scope selects, a member's
+  /// alerts join the group's single alert and the group delivers them; on a
+  /// device it does not select, that member delivers on its own exactly as an
+  /// ungrouped automation would.
+  ///
+  /// That is what makes "Switch health — Ashfield" and "Switch health — Dock"
+  /// two groups over the same automations, routed to different people.
+  ///
+  /// NULL or `{allAssets:true}` = every device its members cover, which is
+  /// the behaviour a group had before this column and what every existing row
+  /// keeps.
+  scope Json?
+
   /// The delivery half, lifted from NotificationRule. Seeded from the first
   /// member on create, so joining a group is not a re-authoring exercise.
   messageTemplate  String? @db.Text

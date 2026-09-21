@@ -175,11 +175,15 @@
   <script src="/js/totp-self.js"></script>
   <script src="/js/webauthn.js"></script>
   <script src="/js/passkeys-self.js"></script>
-  <!-- Alert Groups tab (business rule 75). Before automations.js, which wires
-       its tab button and refresh handler to window.PolarisAlertGroups. -->
+  <script src="/js/condition-builder.js"></script>
+  <!-- The shared device-selection vocabulary. Must precede automations-wizard.js
+       and alert-groups.js, which read it while assembling a modal body. -->
+  <script src="/js/scope-vocabulary.js"></script>
+  <!-- Alert Groups tab (business rule 75). After the two modules above, which
+       its editor reads; before automations.js, which wires its tab button and
+       refresh handler to window.PolarisAlertGroups. -->
   <script src="/js/alert-groups.js"></script>
   <script src="/js/automations.js"></script>
-  <script src="/js/condition-builder.js"></script>
   <script src="/js/automations-address-book.js"></script>
   <script src="/js/automations-wizard.js"></script>
   <script src="/js/automations-portability.js"></script>
