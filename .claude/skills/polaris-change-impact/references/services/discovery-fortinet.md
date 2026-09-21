@@ -171,6 +171,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - fgRequest is the low-level bearer-token auth layer; all per-device queries use it.
+- **fgRequest unwraps to `results` by DEFAULT, and the box's own identity is not in `results`.** `serial`, `version` and `build` sit on the FortiOS ENVELOPE; only `hostname` and the model fields are inside `results`. A caller that needs an identity field passes `{ envelope: true }` and reads it through `utils/fortiosEnvelope.ts` (`readSystemStatus` / `readHaPeers`), never by hand. Reading one off the unwrapped payload is not a type error and does not throw — it yields `undefined`, which is why this survived: until 2026-09-21 the standalone path recorded an EMPTY chassis serial and an EMPTY osVersion for every gate on every run, and `fgtChainHa` (whose caller serial falls back to that same empty value) could never satisfy its `if (callerSerial && peers.length)` guard, so a real active-passive pair was stamped `haMode: "standalone"`. The serial is load-bearing: business rule 41 gates subnet identity on it and `fortinetParentKey` resolves a managed switch's or AP's parent by `controllerSerial` FIRST. Proven and fixed against lab hardware (FortiOS 7.6.7); `tests/unit/fortiosEnvelope.test.ts` pins the verbatim device payloads, because a hand-written fixture satisfies the broken and the fixed reader alike.
+- **The FMG path never had this**, and the difference is where identity comes from: FortiManager reads `sn` / `os_ver` off the dvmdb ROSTER rather than from `system/status` through the proxy — which is why production, being FMG-based, always had serials and nothing looked wrong. `fmgProxyRest` performs the same `inner?.results ?? inner` unwrap, so the trap is still live for any future FMG-side caller that wants an envelope field. FMG's direct-mode connection test delegates to this service's `testConnection` and inherits its fix.
 - fgRequest issues its request through `src/utils/tlsDispatcher.ts → tlsFetch()`, never Node's global `fetch`, because `verifySsl:false` attaches an undici dispatcher and a dispatcher is only valid to the undici copy that created it (see the tlsDispatcher entry in `file-map/src-utils-1.md` for the 2026-09-09 `UND_ERR_INVALID_ARG` incident). Tests mock `tlsFetch` rather than the global.
 - discoverDhcpSubnets returns DiscoveryResult identical to FMG's shape so the discoveryEngine.ts syncDhcpSubnets pipeline handles both identically.
 - FortiAP `/api/v2/monitor/wifi/managed_ap` row parsing is centralized in `src/utils/fortiapMonitorRow.ts` (`parseFortiapMonitorRow` + `FORTIAP_MONITOR_FORMAT`) — both transports import the same parser + format string so they can't drift.
@@ -387,7 +389,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** DHCP reserved-address push/unpush to FortiGate via FMG proxy or direct REST.
 
-**Public API:** normalizeMac, pushReservation, updatePushedReservation, unpushReservation, releaseDhcpLease, plus the transport helpers `buildTransportForIntegration` / `findScopeIdForCidr` / `listReservedAddresses` / `callFortiOs` (+ types `Transport`, `FortiOsReservedAddress`) exported so peer services can reuse the same FMG-proxy / direct-FortiGate dispatcher for read-only single-scope work.
+**Public API:** normalizeMac, pushReservation, updatePushedReservation, unpushReservation, releaseDhcpLease, the description-budget trio `RESERVED_ADDRESS_DESCRIPTION_MAX` / `reservationNotesBudget` / `assertReservationDescriptionFits` (business rule 74 — called by reservationService at create and edit, and mirrored in the browser by `public/js/reservation-notes.js`), plus the transport helpers `buildTransportForIntegration` / `findScopeIdForCidr` / `listReservedAddresses` / `callFortiOs` (+ types `Transport`, `FortiOsReservedAddress`) exported so peer services can reuse the same FMG-proxy / direct-FortiGate dispatcher for read-only single-scope work.
 
 **Cross-service deps:** fortigateService (fgRequest), fortimanagerService (fmgProxyRest, resolveDeviceMgmtIpViaFmg).
 
@@ -399,7 +401,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Direct mode requires fortigateApiToken + mgmtInterface on integration config
 - Scope resolution by matching gateway+netmask or ip-range start-ip
 - Verify-by-readback mandatory; failure throws AppError (triggers reservation rollback)
-- Description format: "Polaris/<user>: <hostname>" or "Polaris: <hostname>"
+- Description format: `Polaris/<user>: <notes> [<hostname>]` when the operator typed notes, `Polaris/<user>: <hostname>` (or `Polaris: <hostname>`) when they did not. `composeDescription` is the single emitter; `subnetRefreshService.extractHostnameFromDescription` is its inverse — keep them paired.
+- FortiOS holds **255 characters** of that description, wrapper included, and `RESERVED_ADDRESS_DESCRIPTION_MAX` is that number (business rule 74). `assertReservationDescriptionFits` REFUSES an over-length composition at save time (400); the `slice` in `buildDescription` is a backstop for rows no save path gates — discovery-authored notes, notes predating the rule, and the retry tick replaying either. The cap was 64 until 2026-09-18, which silently cut the trailing `[hostname]` off a long note and left the extractor recovering the tail of the operator's notes as the hostname.
+- `reservationNotesBudget` derives the wrapper's cost by composing with a one-character note and subtracting it, rather than restating the format — a changed format must not need the arithmetic changed with it
 - Lease release (releaseDhcpLease) uses /api/v2/monitor/system/dhcp/release-lease (best-effort, no rollback)
 
 **When changing this:**
@@ -407,5 +411,6 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Verify MAC normalization handles all separators (colons, dashes, dots, none)
 - Check scope resolution fallbacks (gateway+netmask, then ip-range)
 - Test verify-by-readback on slow devices (echoed id missing, need IP+MAC lookup)
+- Changing the description FORMAT changes the budget: re-check `reservationNotesBudget`, the extractor in subnetRefreshService, and the browser mirror in `public/js/reservation-notes.js` (its `budgetFor` is asserted against this module's in `tests/unit/reservationNotesBudgetDom.test.ts`)
 
 ---

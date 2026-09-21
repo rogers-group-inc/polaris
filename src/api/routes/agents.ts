@@ -188,9 +188,23 @@ const ResponseTimeSampleSchema = z.object({
 const TelemetrySampleSchema = z.object({
   timestamp:     z.string().datetime().optional(),
   cpuPct:        z.number().nullable().optional(),
+  // Per-logical-core utilisation, index = core id. Agent-only; every other
+  // transport omits it and the column stays null. Capped at 512 to match the
+  // agent's own `maxReportedCores` — the bound is what keeps a malformed or
+  // hostile push from writing an unbounded jsonb array into a hypertable row.
+  cpuCorePcts:   z.array(z.number()).max(512).nullable().optional(),
   memPct:        z.number().nullable().optional(),
   memUsedBytes:  z.number().int().nullable().optional(),
   memTotalBytes: z.number().int().nullable().optional(),
+  // Memory breakdown. The agent guarantees used+buffers+cached+free ==
+  // total; the server does NOT re-derive or re-clamp that, because a source
+  // that ever sends bands which don't close should show as the anomaly it is
+  // rather than be silently rounded into looking fine.
+  memBuffersBytes: z.number().int().nonnegative().nullable().optional(),
+  memCachedBytes:  z.number().int().nonnegative().nullable().optional(),
+  memFreeBytes:    z.number().int().nonnegative().nullable().optional(),
+  swapUsedBytes:   z.number().int().nonnegative().nullable().optional(),
+  swapTotalBytes:  z.number().int().nonnegative().nullable().optional(),
   temperatures:  z.array(z.object({
     sensorName: z.string().max(128),
     celsius:    z.number().nullable(),
@@ -370,13 +384,25 @@ async function ingestTelemetry(assetId: string, samples: StreamSamples<"telemetr
   let accepted = 0;
   for (const s of samples) {
     const ts = s.timestamp ? new Date(s.timestamp) : now;
+    const bytes = (v: number | null | undefined): bigint | null =>
+      v != null ? BigInt(Math.round(v)) : null;
     enqueueTelemetrySample({
       assetId,
       timestamp:     ts,
       cpuPct:        s.cpuPct ?? null,
+      // An EMPTY array is stored as null, not as `[]`: the agent omits the
+      // field on a host whose per-core read failed, and a zero-length core
+      // list would chart as "this host has no cores" rather than "no
+      // per-core data" — the fallback the CPU chart keys off.
+      cpuCorePcts:   s.cpuCorePcts && s.cpuCorePcts.length > 0 ? s.cpuCorePcts : null,
       memPct:        s.memPct ?? null,
-      memUsedBytes:  s.memUsedBytes  != null ? BigInt(Math.round(s.memUsedBytes))  : null,
-      memTotalBytes: s.memTotalBytes != null ? BigInt(Math.round(s.memTotalBytes)) : null,
+      memUsedBytes:  bytes(s.memUsedBytes),
+      memTotalBytes: bytes(s.memTotalBytes),
+      memBuffersBytes: bytes(s.memBuffersBytes),
+      memCachedBytes:  bytes(s.memCachedBytes),
+      memFreeBytes:    bytes(s.memFreeBytes),
+      swapUsedBytes:   bytes(s.swapUsedBytes),
+      swapTotalBytes:  bytes(s.swapTotalBytes),
       sessionCount:  null, // FortiGate-only metric; agents don't report it
     });
     if (s.temperatures && s.temperatures.length > 0) {

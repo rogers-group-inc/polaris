@@ -22,6 +22,7 @@ import {
   normalizeMac,
   classifyPushError,
   integrationPushEnabled,
+  assertReservationDescriptionFits,
   type PushReservationResult,
 } from "./reservationPushService.js";
 import { logEvent, buildChanges } from "./eventLogService.js";
@@ -196,7 +197,7 @@ async function releaseSupersededDhcpLeaseAt(
   subnetId: string,
   ipAddress: string,
   actor: string | null,
-): Promise<void> {
+): Promise<{ vipInfo: unknown | null }> {
   const row = await prisma.reservation.findFirst({
     where: {
       subnetId,
@@ -204,6 +205,14 @@ async function releaseSupersededDhcpLeaseAt(
       status: "active",
       OR: [
         { sourceType: "dhcp_lease" as any },
+        // A FortiGate VIP, admitted by business rule 77. Like the infra case
+        // below, releasing one reaches no device: it carries no push pointers
+        // and its sourceType isn't dhcp_reservation, so neither unpush branch
+        // fires, and the lease-expiry branch keys on dhcp_lease. What it DOES
+        // do is hand the VIP snapshot back to the caller, which stamps it onto
+        // the operator's new row — the VIP is a fact about the address and
+        // outlives whoever holds it.
+        { sourceType: "vip" as any },
         // Lease-backed managed FortiSwitch/FortiAP rows are superseded the same
         // way. Note what releaseReservation does NOT do for one of these: it has
         // no push pointers and its sourceType isn't dhcp_reservation, so neither
@@ -215,10 +224,11 @@ async function releaseSupersededDhcpLeaseAt(
         { sourceType: { in: ["fortiswitch", "fortinap"] as any }, dhcpBinding: "lease" },
       ],
     },
-    select: { id: true },
+    select: { id: true, vipInfo: true },
   });
-  if (!row) return;
+  if (!row) return { vipInfo: null };
   await releaseReservation(row.id, actor ?? undefined);
+  return { vipInfo: row.vipInfo ?? null };
 }
 
 /**
@@ -237,6 +247,17 @@ async function releaseSupersededDhcpLeaseAt(
  * leasing) still 409s. Guessing "free" from an absence of evidence would hand an
  * operator an address a device is actively using.
  *
+ * `vip` joined the set with business rule 77, and it is the one member that is
+ * not observational: a VIP row is real device config. It is admitted because a
+ * VIP says what happens to traffic for an address, not that the address is
+ * spoken for in the pool — the mapped and realserver rows ARE ordinary hosts
+ * that deserve a DHCP reservation, and an operator who wants the external one
+ * held in IPAM is stating an intent Polaris has no better answer to. The VIP
+ * itself is not lost: `carryVipInfoFrom` moves the snapshot onto the new row,
+ * so the address still reports its VIP and the composed status pill reads
+ * "VIP / Reserved". `interface_ip` is deliberately NOT admitted — an address
+ * configured on a live interface genuinely cannot be handed to anything else.
+ *
  * Single source of truth for both halves of the takeover: this predicate gates
  * the 409, and releaseSupersededDhcpLeaseAt releases whatever it admits.
  */
@@ -245,6 +266,7 @@ function isSupersedableByCreate(row: {
   dhcpBinding?: string | null;
 }): boolean {
   if (row.sourceType === "dns_resolved" || row.sourceType === "dhcp_lease") return true;
+  if (row.sourceType === "vip") return true;
   return isLeaseBackedInfraRow(row);
 }
 
@@ -329,9 +351,18 @@ async function persistReservationRow(
   macClean: string | null,
   resolvedOwner: string | null,
 ) {
+  // A VIP the operator's claim supersedes hands its snapshot forward, so the
+  // address keeps reporting the VIP it still has (business rule 77). Every
+  // other superseded row returns null and nothing is carried.
+  let carriedVipInfo: unknown | null = null;
   if (input.ipAddress) {
     await releaseDnsResolvedAt(input.subnetId, input.ipAddress);
-    await releaseSupersededDhcpLeaseAt(input.subnetId, input.ipAddress, input.createdBy ?? null);
+    const superseded = await releaseSupersededDhcpLeaseAt(
+      input.subnetId,
+      input.ipAddress,
+      input.createdBy ?? null,
+    );
+    carriedVipInfo = superseded.vipInfo;
   }
   return prisma.$transaction(async (tx) => {
     const res = await tx.reservation.create({
@@ -346,6 +377,7 @@ async function persistReservationRow(
         status: "active",
         createdBy: input.createdBy ?? null,
         macAddress: macClean,
+        ...(carriedVipInfo ? { vipInfo: carriedVipInfo } : {}),
       } as any,
     });
 
@@ -393,6 +425,16 @@ async function createReservationFlow(input: CreateReservationInput) {
         `Subnet ${subnet.cidr} has no fortigateDevice — the integration discovered the subnet without a device name, so push cannot resolve a target FortiGate`,
       );
     }
+    // The device-side `description` is composed from creator + notes +
+    // hostname and FortiOS holds 255 characters of it (business rule 74).
+    // Refuse here, before the row exists, rather than shipping a comment the
+    // gate will truncate.
+    assertReservationDescriptionFits({
+      hostname: input.hostname ?? null,
+      createdBy: input.createdBy ?? null,
+      ip: input.ipAddress!,
+      notes: input.notes ?? null,
+    });
   }
 
   // 4. Create the reservation (+ mark subnet reserved if full-subnet) —
@@ -658,6 +700,29 @@ export async function updateReservation(
     integrationPushEnabled(integration) &&
     !!reservation.subnet.fortigateDevice &&
     !!reservation.ipAddress;
+
+  // Business rule 74.
+  // The notes an edit stores are the device-side description's body — on the
+  // next MAC push, on the retry tick, or on a later re-push — so they are held
+  // to the FortiGate's 255-character budget even when this particular save
+  // contacts no device. Hostname counts too: it rides inside the same 255.
+  //
+  // Judged only when the edit TOUCHES one of those two, and then against what
+  // the update will actually store (`undefined` means "not changing that
+  // field", so Prisma leaves the stored value in place). A row whose note was
+  // written before this rule — or by discovery, which this never gates — must
+  // stay editable: refusing every save on it would strand the row, and the
+  // operator changing its expiry did not author the over-length description.
+  // Those rows keep the truncating backstop in buildDescription.
+  const descriptionTouched = input.hostname !== undefined || input.notes !== undefined;
+  if (pushEligible && descriptionTouched) {
+    assertReservationDescriptionFits({
+      hostname: input.hostname !== undefined ? input.hostname : reservation.hostname,
+      createdBy: reservation.createdBy,
+      ip: reservation.ipAddress!,
+      notes: input.notes !== undefined ? input.notes : reservation.notes,
+    });
+  }
 
   // Updating a push-eligible reservation's MAC must succeed on the device
   // before we touch Polaris — otherwise the two views diverge.

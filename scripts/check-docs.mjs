@@ -146,7 +146,7 @@ if (undocFiles.length) {
 // === paths-exist: every concrete repo path in the docs exists ===
 // Templated paths (containing < > or *) are skipped — they're illustrative. Lookbehind
 // `(?<![\w/.])` prevents matching a path-root keyword in the MIDDLE of a longer path.
-const PATH_REF = /(?<![\w/.-])(?:src|public|prisma|scripts|deploy|docs|agent|\.claude\/skills)\/[A-Za-z0-9_./-]+\.(?:ts|js|tsx|jsx|mjs|prisma|sql|sh|ps1|html|css|json|md|go)\b/g;
+const PATH_REF = /(?<![\w/.-])(?:src|public|prisma|scripts|deploy|docs|agent|tests|\.claude\/skills)\/[A-Za-z0-9_./-]+\.(?:ts|js|tsx|jsx|mjs|prisma|sql|sh|ps1|html|css|json|md|go)\b/g;
 const deadPaths = new Set();
 for (const d of DOCS) {
   const docDir = dirname(d);

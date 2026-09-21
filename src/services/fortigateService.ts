@@ -17,6 +17,7 @@ import { tlsFetch } from "../utils/tlsDispatcher.js";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { normalizeMacOrNull, normalizeMacsDistinct } from "../utils/mac.js";
 import { parseRangeFirstIp, isValidIpv4 } from "../utils/cidr.js";
+import { readSystemStatus, readHaPeers } from "../utils/fortiosEnvelope.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { inventorySwitchAttribution, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
 import type {
@@ -71,14 +72,24 @@ export async function testConnection(config: FortiGateConfig): Promise<{
   version?: string;
 }> {
   try {
-    const res = await fgRequest<any>(config, "GET", "/api/v2/monitor/system/status");
-    const version = res?.version ? String(res.version) : undefined;
-    const hostname = res?.hostname ? String(res.hostname) : undefined;
-    const label = hostname && version
-      ? `Connected — ${hostname} (FortiOS ${version})`
-      : version
-        ? `Connected — FortiOS ${version}`
-        : "Connected successfully";
+    // `envelope: true`: the version is an envelope field, so reading it off the
+    // unwrapped payload meant this button could never name it — every healthy
+    // standalone FortiGate answered with the bare "Connected successfully"
+    // while the device was reporting its model, serial and FortiOS version in
+    // the very same response.
+    const body = await fgRequest<unknown>(config, "GET", "/api/v2/monitor/system/status", {
+      envelope: true,
+    });
+    const status = readSystemStatus(body);
+    const { hostname, version, model } = status;
+    const box = hostname && model ? `${hostname} (${model})` : hostname || model;
+    const label = box && version
+      ? `Connected — ${box}, FortiOS ${version}`
+      : box
+        ? `Connected — ${box}`
+        : version
+          ? `Connected — FortiOS ${version}`
+          : "Connected successfully";
     return { ok: true, message: label, version };
   } catch (err: any) {
     if (err.cause?.code === "ECONNREFUSED") {
@@ -156,7 +167,19 @@ export async function fgRequest<T>(
   config: FortiGateConfig,
   method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
-  opts: { query?: Record<string, string>; body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {},
+  opts: {
+    query?: Record<string, string>;
+    body?: unknown;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    /**
+     * Return the whole FortiOS envelope instead of unwrapping to `results`.
+     * Only for callers that need an envelope-level field (`serial`, `version`,
+     * `build`) — read them through `utils/fortiosEnvelope.ts` rather than by
+     * hand, so one module owns which half each field is in.
+     */
+    envelope?: boolean;
+  } = {},
 ): Promise<T> {
   const port = config.port || 443;
   const qs = new URLSearchParams(opts.query || {});
@@ -258,6 +281,14 @@ export async function fgRequest<T>(
       throw new AppError(502, `FortiGate error (${body.error ?? "unknown"}): ${body.message ?? path}`);
     }
 
+    // Unwrapping to `results` is what almost every caller wants, and stays the
+    // default. But the box's own identity — `serial`, `version`, `build` — is
+    // on the ENVELOPE, not in `results`, so a caller that needs it must ask for
+    // the whole body. Reading those fields off the unwrapped payload is exactly
+    // the bug this option exists to close: it silently yielded an empty serial
+    // and an empty osVersion for every standalone-discovered FortiGate, which
+    // in turn made HA undetectable. See utils/fortiosEnvelope.ts.
+    if (opts.envelope) return body as T;
     return (body?.results ?? body) as T;
   } finally {
     clearTimeout(timeout);
@@ -962,20 +993,29 @@ function rosterSerials(devices: DiscoveredDevice[], callerSerial: string): strin
 async function fgtChainHa(ctx: FgtChainCtx): Promise<void> {
   const { config, queryBase, signal, log, deviceHostname, deviceSerial, devices } = ctx;
       try {
-        const haPeer = await fgRequest<any>(config, "GET", "/api/v2/monitor/system/ha-peer", { query: queryBase, signal });
-        // Response envelope varies across FortiOS versions: sometimes
-        // { serial_no, results: [...] }, sometimes a bare array. Normalize.
-        const callerSerial: string = String(haPeer?.serial_no || haPeer?.serial || deviceSerial || "");
-        const rawPeers: any[] = Array.isArray(haPeer?.results)
-          ? haPeer.results
-          : Array.isArray(haPeer)
-            ? haPeer
-            : [];
-        const peerMembers = rawPeers
-          .map((p) => ({
-            serial: String(p.serial_no || p.serial || ""),
-            name: typeof p.hostname === "string" && p.hostname.length > 0 ? p.hostname : undefined,
-            priority: Number.isFinite(p.priority) ? Number(p.priority) : undefined,
+        // `envelope: true` for the same reason as the status read above: the
+        // CALLER's serial is an envelope field. Without it this fell back to
+        // `deviceSerial`, which was itself empty for the same reason, so the
+        // guard below could never pass and a real active-passive pair was
+        // recorded as standalone (proven on lab hardware, 2026-09-21).
+        const haPeerBody = await fgRequest<unknown>(config, "GET", "/api/v2/monitor/system/ha-peer", {
+          query: queryBase,
+          signal,
+          envelope: true,
+        });
+        // Shape varies across FortiOS builds and between the two transports —
+        // full envelope, bare `results` array, or a bare array. readHaPeers
+        // accepts all three and resolves the caller from the envelope, then
+        // from the member the device itself flagged primary (the REST endpoint
+        // is only reachable through the cluster address, which routes to the
+        // active unit), then from the fallback passed here.
+        const { callerSerial, members } = readHaPeers(haPeerBody, deviceSerial);
+        const peerMembers = members
+          .filter((m) => m.serial !== callerSerial)
+          .map((m) => ({
+            serial: m.serial,
+            name: m.hostname,
+            priority: m.priority,
             isPrimary: false as const,
             // ha-peer only lists members currently participating in the
             // cluster — being listed IS the health signal (a dead standby
@@ -983,8 +1023,7 @@ async function fgtChainHa(ctx: FgtChainCtx): Promise<void> {
             // firewall sweep). FMG's ha_slave[].status carries the richer
             // present-but-failed state; FortiOS REST has no equivalent here.
             status: "up" as const,
-          }))
-          .filter((p) => p.serial && p.serial !== callerSerial);
+          }));
         if (callerSerial && peerMembers.length > 0 && devices[0]) {
           devices[0].haMode = "a-p";
           devices[0].haMembers = [
@@ -1029,13 +1068,28 @@ export async function discoverDhcpSubnets(
   let deviceModel = "";
   let deviceOsVersion = "";
   try {
-    const status = await fgRequest<any>(config, "GET", "/api/v2/monitor/system/status", { signal });
-    deviceName = String(status?.hostname || status?.serial || config.host);
-    deviceHostname = String(status?.hostname || deviceName);
-    deviceSerial = String(status?.serial || "");
-    deviceModel = String(status?.model_name || status?.model || "FortiGate");
-    deviceOsVersion = String(status?.version || "");
-    log("discover.devices", "info", `Connected to ${deviceHostname} — FortiOS ${deviceOsVersion}`, deviceHostname);
+    // `envelope: true` because the chassis SERIAL and the FortiOS VERSION are
+    // envelope-level fields; the unwrapped `results` carries only hostname and
+    // the model. Reading them off the unwrapped payload recorded an empty
+    // serial and an empty osVersion for every gate this integration discovered
+    // — see utils/fortiosEnvelope.ts for what that cost.
+    const statusBody = await fgRequest<unknown>(config, "GET", "/api/v2/monitor/system/status", {
+      signal,
+      envelope: true,
+    });
+    const status = readSystemStatus(statusBody);
+    deviceName = String(status.hostname || status.serial || config.host);
+    deviceHostname = String(status.hostname || deviceName);
+    deviceSerial = status.serial ?? "";
+    deviceModel = String(status.modelName || status.model || "FortiGate");
+    deviceOsVersion = status.version ?? "";
+    log(
+      "discover.devices",
+      "info",
+      `Connected to ${deviceHostname} — FortiOS ${deviceOsVersion || "(version not reported)"}` +
+        (deviceSerial ? ` (${deviceSerial})` : ""),
+      deviceHostname,
+    );
   } catch (err: any) {
     log("discover.devices", "error", `Failed to query FortiGate status: ${err.message || "Unknown error"}`);
     throw err;

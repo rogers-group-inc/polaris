@@ -1,0 +1,50 @@
+{
+  "_comment": [
+    "Example lab FortiGate inventory for prisma/seed-lab-fortigates.ts.",
+    "",
+    "COPY THIS OUTSIDE THE CHECKOUT before filling it in — the real file holds",
+    "live API tokens and this repository is public. The default location is",
+    "~/.polaris/lab-devices.json; override it with POLARIS_LAB_DEVICES=<file>.",
+    "Git cannot stage a path outside its own tree, which is the point: there is",
+    "no ignore rule to forget and no `git add -A` that can reach it.",
+    "",
+    "Create the token on each gate as a REST API administrator with the",
+    "narrowest profile that still covers what you are testing. Read-only is",
+    "enough for discovery, monitoring, VIP and DHCP reads; the push, quarantine",
+    "and description-sync pathways additionally need device-config write.",
+    "",
+    "Every value in 'defaults' can be overridden per device.",
+    "",
+    "verifySsl defaults to false here because lab gates usually present",
+    "self-signed certificates. Production integrations default to verify-ON.",
+    "",
+    "The four write toggles are off. Turn one on for the run that tests it —",
+    "these are real devices, and a discovery cycle acts on them."
+  ],
+  "defaults": {
+    "port": 443,
+    "apiUser": "polaris_api",
+    "vdom": "root",
+    "verifySsl": false,
+    "pushReservations": false,
+    "autoReserveFortinetInfra": false,
+    "adoptDiscoveredMac": false,
+    "syncDescriptions": false,
+    "pullSdwan": false
+  },
+  "devices": [
+    {
+      "name": "edge",
+      "host": "192.0.2.10",
+      "apiToken": "REPLACE-WITH-THE-REST-API-TOKEN",
+      "role": "Internet edge"
+    },
+    {
+      "name": "branch1",
+      "host": "192.0.2.11",
+      "apiToken": "REPLACE-WITH-THE-REST-API-TOKEN",
+      "role": "Branch gate",
+      "pullSdwan": true
+    }
+  ]
+}

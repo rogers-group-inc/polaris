@@ -3131,9 +3131,11 @@ describe("trigger filter rows", () => {
 
     it("says whether a reset condition clears one alert or the whole device's", async () => {
       // A per-mount automation raises one alert per mount, and the reset tree
-      // resolves dimension-first with a per-asset fallback — so which one an
-      // operator gets depends on what they put in the tree. Said out loud,
-      // because nothing on the step shows it.
+      // resolves dimension-first — a condition on the same kind of component
+      // clears that component's alert alone, one on anything device-wide clears
+      // them together — so which an operator gets depends on what they put in
+      // the tree. Said out loud, because nothing on the step shows it. This note
+      // is also the promise business rule 32(b) had to make true in the engine.
       await openOnStep4(metricRule({
         trigger: { type: "asset_metric", metric: "storageUsedPct", aggregation: "latest", windowSec: 0, operator: ">=", threshold: 80, forDurationSec: 0 },
       }));

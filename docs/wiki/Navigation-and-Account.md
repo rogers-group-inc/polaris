@@ -24,7 +24,7 @@ search box and your user badge on the right, and the page's own content below.
 the server-side page gate are kept in lockstep, so a typed URL for a page your
 role lacks bounces rather than loading an empty list.
 
-Below Server Settings sits the **theme dial** and the version line.
+Below Server Settings sits the **theme band** and the version line.
 
 ### Global search
 
@@ -44,17 +44,19 @@ An asset hit carries a **coloured dot** when it has a live alert, before the
 monitor pill — the alert is the reason to look, the monitor state is the
 detail, and a device can carry both since an alerting device is often up.
 
-### The theme dial
+### The theme band
 
 Three selectable themes in two families: **Morning** and **Noon** (light),
-**Nightfall** (dark). The control is a dial, not a menu — one click steps to the
-next theme and turns a 24-hour clockface to bring that theme's hour under the
-notch.
+**Nightfall** (dark). The control is a band, not a menu — one click steps to the
+next theme and slides a 24-hour clockface along to bring that theme's hour to
+the centre of the band. It is the same control the phone app carries on its **More**
+tab, so the two screens read alike.
 
-The dial turns one way only, and the palette **crossfades through a fourth,
-unselectable waypoint**: Noon → Nightfall passes through *Afternoon* at 90°, so
-the room goes near-white → golden hour → indigo in one gesture. The transit
-palette is applied but never saved, so a reload mid-sweep lands on a real theme.
+The band travels one way only — forward through the day, never back — and the
+palette **crossfades through a fourth, unselectable waypoint**: Noon → Nightfall
+passes through *Afternoon*, so the room goes near-white → golden hour → indigo in
+one gesture. The transit palette is applied but never saved, so a reload
+mid-sweep lands on a real theme.
 
 `prefers-reduced-motion` is honoured throughout the app: the alert strobe drops
 to a steady rendering, and the title text always carries the whole message —

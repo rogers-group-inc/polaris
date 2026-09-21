@@ -114,6 +114,7 @@ rather than an opaque browser error ([rule 64](Business-Rules#rule-64)):
 | Samples stopped, heartbeat continues | A hung filesystem or NIC in a collector — bounded by a 30-second guard on current builds |
 | An upgrade silently skipped a host | Look for `agent.upgrade_skipped`. On older builds this was completely silent |
 | `agent.disconnected` alerts never clear | Use the **counterpart Event** reset — `agent.connected`, scoped to the same subject |
+| Onboarding ran clean, but SSH to a **domain-joined** endpoint times out | The firewall **profile**. Windows creates its OpenSSH rule for Private only, so a Domain-profile machine runs sshd nothing can reach. Re-run a current onboarding script — it settles that rule ([rule 76](Business-Rules#rule-76)). Check with `Get-NetFirewallRule -Name OpenSSH-Server-In-* \| Select Name,Enabled,Profile` |
 
 ---
 

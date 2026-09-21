@@ -74,13 +74,26 @@ port is enough, and is quicker than the compose stack:
 
 ```
 podman run -d --name polaris-<slug>-db -e POSTGRES_USER=polaris -e POSTGRES_PASSWORD=polaris \
-  -e POSTGRES_DB=polaris -p 127.0.0.1:<free-port>:5432 timescale/timescaledb:latest-pg17
-DATABASE_URL="postgresql://polaris:polaris@127.0.0.1:<free-port>/polaris" npx prisma migrate deploy
-DATABASE_URL="postgresql://polaris:polaris@127.0.0.1:<free-port>/polaris" npx vitest run tests/integration/<file> --no-file-parallelism
+  -e POSTGRES_DB=polaris -p <free-port>:5432 timescale/timescaledb:latest-pg17
+HOSTIP=$(podman machine ssh "ip -4 addr show eth0" | awk '/inet /{print $2}' | cut -d/ -f1)
+DATABASE_URL="postgresql://polaris:polaris@$HOSTIP:<free-port>/polaris" npx prisma migrate deploy
+DATABASE_URL="postgresql://polaris:polaris@$HOSTIP:<free-port>/polaris" npx vitest run tests/integration/<file> --no-file-parallelism
 ```
+
+**Publish on all interfaces and dial the podman machine's IP, not `127.0.0.1`.** On the WSL
+backend `-p 127.0.0.1:<port>:5432` binds inside the VM, so the port answers there and is
+unreachable from Windows — `prisma migrate deploy` fails `P1001: Can't reach database server`
+against a container that `podman ps` shows healthy and listening, which reads as a broken
+container rather than a binding that is doing exactly what it was told. The machine IP moves
+when WSL restarts, so read it each time instead of pasting the last one.
 
 Pick the port by looking at `podman ps` first — other sessions' stacks are usually up, and
 they are not yours to stop. Write a `DEVLOCK` while it runs, and `podman rm -f` it when done.
+
+`tests/integration/subnetSupersedeDeprecated.test.ts` times out on this hardware — all 6
+cases, `Test timed out in 5000ms`, and they pass in CI. It is the container's latency, not a
+regression: re-run that file alone with `--testTimeout=30000` before believing it. Confirmed
+again 2026-09-18 on a full serial run.
 And having watched a new test pass, make it FAIL once (comment out the guard it covers) before
 trusting it — a route-level assertion that never saw red has proven nothing.
 

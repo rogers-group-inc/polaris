@@ -16,7 +16,7 @@ Companion pages: [Polling methods](Polling-Methods) ·
 | Stream | Collects |
 |---|---|
 | **responseTime** | is it answering, and how fast — the liveness probe |
-| **cpuMemory** | CPU and memory utilisation |
+| **cpuMemory** | CPU and memory utilisation. On a host running the [Polaris Agent](Polaris-Agent) this also carries **per-logical-core CPU** and a **memory breakdown** (processes / buffers / cache / free, plus swap or page file); no other transport can report either |
 | **temperature** | hardware sensors and their alarm bits |
 | **interfaces** | per-port state, counters, PoE, IP, LLDP-adjacent data |
 | **lldp** | LLDP neighbours |

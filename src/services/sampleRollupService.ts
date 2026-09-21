@@ -347,6 +347,8 @@ function sqlTelemetryHourly(): string {
       "avgCpuPct", "minCpuPct", "maxCpuPct",
       "avgMemPct", "minMemPct", "maxMemPct",
       "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
+      "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
+      "avgSwapUsedBytes", "lastSwapTotalBytes",
       "avgSessionCount", "minSessionCount", "maxSessionCount"
     )
     SELECT
@@ -358,6 +360,17 @@ function sqlTelemetryHourly(): string {
       AVG("memPct"), MIN("memPct"), MAX("memPct"),
       AVG("memUsedBytes")::bigint, MAX("memUsedBytes"),
       (ARRAY_AGG("memTotalBytes" ORDER BY "timestamp" DESC) FILTER (WHERE "memTotalBytes" IS NOT NULL))[1],
+      -- Memory bands: AVG only. The chart stacks them, and a stack of
+      -- independent minima or maxima sums to a total no sample ever had.
+      -- AVG ignores NULLs, so a bucket mixing agent rows with rows from a
+      -- source that reports no breakdown averages the bands over the rows
+      -- that HAVE them, while "sampleCount" still counts every row — the
+      -- bands can therefore under-sum the total in a mixed bucket, which is
+      -- correct: an asset only ever has one telemetry source at a time, so
+      -- a mixed bucket means the source changed mid-hour.
+      AVG("memBuffersBytes")::bigint, AVG("memCachedBytes")::bigint, AVG("memFreeBytes")::bigint,
+      AVG("swapUsedBytes")::bigint,
+      (ARRAY_AGG("swapTotalBytes" ORDER BY "timestamp" DESC) FILTER (WHERE "swapTotalBytes" IS NOT NULL))[1],
       AVG("sessionCount"), MIN("sessionCount"), MAX("sessionCount")
     FROM "asset_telemetry_samples"
     WHERE "timestamp" >= $1
@@ -373,6 +386,11 @@ function sqlTelemetryHourly(): string {
       "avgMemUsedBytes"   = EXCLUDED."avgMemUsedBytes",
       "maxMemUsedBytes"   = EXCLUDED."maxMemUsedBytes",
       "lastMemTotalBytes" = EXCLUDED."lastMemTotalBytes",
+      "avgMemBuffersBytes" = EXCLUDED."avgMemBuffersBytes",
+      "avgMemCachedBytes"  = EXCLUDED."avgMemCachedBytes",
+      "avgMemFreeBytes"    = EXCLUDED."avgMemFreeBytes",
+      "avgSwapUsedBytes"   = EXCLUDED."avgSwapUsedBytes",
+      "lastSwapTotalBytes" = EXCLUDED."lastSwapTotalBytes",
       "avgSessionCount"   = EXCLUDED."avgSessionCount",
       "minSessionCount"   = EXCLUDED."minSessionCount",
       "maxSessionCount"   = EXCLUDED."maxSessionCount"
@@ -387,6 +405,8 @@ function sqlTelemetryDaily(): string {
       "avgCpuPct", "minCpuPct", "maxCpuPct",
       "avgMemPct", "minMemPct", "maxMemPct",
       "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
+      "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
+      "avgSwapUsedBytes", "lastSwapTotalBytes",
       "avgSessionCount", "minSessionCount", "maxSessionCount"
     )
     SELECT
@@ -403,6 +423,16 @@ function sqlTelemetryDaily(): string {
       (SUM("avgMemUsedBytes" * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
       MAX("maxMemUsedBytes"),
       (ARRAY_AGG("lastMemTotalBytes" ORDER BY "bucketStart" DESC) FILTER (WHERE "lastMemTotalBytes" IS NOT NULL))[1],
+      -- Weighted like every other average here, but weighted by the count of
+      -- rows in the hour, not by how many of them carried a band. An hour
+      -- with no breakdown contributes NULL, which SUM ignores while
+      -- SUM("sampleCount") still counts it — the same mixed-source caveat as
+      -- the hourly roll, and the same reason it is acceptable.
+      (SUM("avgMemBuffersBytes" * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemCachedBytes"  * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemFreeBytes"    * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgSwapUsedBytes"   * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (ARRAY_AGG("lastSwapTotalBytes" ORDER BY "bucketStart" DESC) FILTER (WHERE "lastSwapTotalBytes" IS NOT NULL))[1],
       SUM("avgSessionCount" * "sampleCount") / NULLIF(SUM("sampleCount"), 0),
       MIN("minSessionCount"),
       MAX("maxSessionCount")
@@ -420,6 +450,11 @@ function sqlTelemetryDaily(): string {
       "avgMemUsedBytes"   = EXCLUDED."avgMemUsedBytes",
       "maxMemUsedBytes"   = EXCLUDED."maxMemUsedBytes",
       "lastMemTotalBytes" = EXCLUDED."lastMemTotalBytes",
+      "avgMemBuffersBytes" = EXCLUDED."avgMemBuffersBytes",
+      "avgMemCachedBytes"  = EXCLUDED."avgMemCachedBytes",
+      "avgMemFreeBytes"    = EXCLUDED."avgMemFreeBytes",
+      "avgSwapUsedBytes"   = EXCLUDED."avgSwapUsedBytes",
+      "lastSwapTotalBytes" = EXCLUDED."lastSwapTotalBytes",
       "avgSessionCount"   = EXCLUDED."avgSessionCount",
       "minSessionCount"   = EXCLUDED."minSessionCount",
       "maxSessionCount"   = EXCLUDED."maxSessionCount"

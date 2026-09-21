@@ -4585,7 +4585,30 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         const existingRes = activeResMap.get(key);
         if (existingRes) {
           if (existingRes.sourceType === "manual") {
-            await upsertConflict(existingRes.id, integrationId, { hostname: proposedHostname, owner: proposedOwner, projectRef: proposedProjectRef, notes: proposedNotes, sourceType: "vip" }, existingRes);
+            // An operator who reserved a VIP address gets the row STAMPED, not
+            // a conflict card. Business rule 77 makes a VIP address claimable
+            // and carries its snapshot onto the claim, so a manual row already
+            // naming this same VIP is this feature working — raising a card
+            // would mean one per claimed VIP per cycle, which is exactly what
+            // `reservationBelongsToInfraDevice` exists to prevent on the
+            // managed-switch/AP side of the same problem. A manual row naming
+            // a DIFFERENT VIP, or none, is an unrelated collision and still
+            // raises its card.
+            const carried = existingRes.vipInfo as any;
+            const claimsThisVip =
+              !!carried && carried.name === vip.name && carried.device === vip.device;
+            if (claimsThisVip) {
+              const newVipInfo = { name: vip.name, device: vip.device, extip: vip.extip, role, isVirtualServer: vip.isVirtualServer };
+              if (carried.role !== role || carried.extip !== vip.extip || !!carried.isVirtualServer !== vip.isVirtualServer) {
+                await prisma.reservation.update({
+                  where: { id: existingRes.id },
+                  data: { vipInfo: newVipInfo },
+                });
+                existingRes.vipInfo = newVipInfo;
+              }
+            } else {
+              await upsertConflict(existingRes.id, integrationId, { hostname: proposedHostname, owner: proposedOwner, projectRef: proposedProjectRef, notes: proposedNotes, sourceType: "vip" }, existingRes);
+            }
           } else if (existingRes.sourceType === "vip") {
             // VIP rename (or first vipInfo snapshot) — refresh canonical VIP
             // metadata only. hostname / owner / notes / projectRef are

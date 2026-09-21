@@ -73,7 +73,7 @@ else's host over a stored credential and leaves a service behind.
 
 | Route | |
 |---|---|
-| **Per asset** | the asset slide-over's Install Polaris Agent button |
+| **Per asset** | the asset slide-over's **System** tab carries a Polaris Agent card with an **Install Agent** button on every server and workstation that could take one — no need to pick "Polaris Agent" as a polling method first. Any other device type shows the card once an agent exists or a stream is set to the agent method. The edit modal's Monitoring tab has the same button. Neither appears on a FortiManager- or FortiGate-discovered asset or on an ESXi host: FortiOS and ESXi take no agent. On a Windows host the modal adds a **Transport** choice — **SSH** (preselected; needs OpenSSH Server running on the host) or **WinRM** — and shows the credential picker for whichever is chosen. Linux and macOS are SSH-only, and the row is hidden |
 | **Bulk** | the Assets bulk bar's **Deploy Agent** — one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, and ineligible assets come back as **skips with reasons** |
 | **Auto-deploy** | a per-class toggle on the AD / Entra / Arc integrations, off by default — pushes to newly discovered agent-less devices during discovery, bounded and paced |
 
@@ -121,7 +121,7 @@ meaningless on Linux.
 
 | Script | Does |
 |---|---|
-| **Remediation** | installs and starts the SSH server, optionally creates the local admin account, installs the public key with the right ACL/ownership, optionally scopes inbound TCP/22 |
+| **Remediation** | installs and starts the SSH server, optionally creates the local admin account, installs the public key with the right ACL/ownership, optionally scopes inbound TCP/22, and on Windows settles the firewall profile (below) |
 | **Detection** | exit 0 = onboarded, 1 = remediate |
 
 **Pairing them under an Intune Remediation or an SCCM Configuration Baseline is
@@ -138,6 +138,40 @@ Platform differences that matter:
   since a bad one locks sudo out for everyone. The agent installer runs
   `sudo -n`, so key auth alone cannot install an agent. It deliberately does
   **not** install `openssh-server`.
+
+#### The Windows firewall rule, and the one Windows writes for itself
+
+Installing the OpenSSH Server capability makes Windows create its own rule,
+`OpenSSH-Server-In-TCP`, and that rule is **Private profile only** and accepts
+**any source**. Both halves of that are wrong for a fleet:
+
+- On a **domain-joined** endpoint the active profile is Domain, so the rule
+  never applies. sshd is installed, running and unreachable, with nothing in the
+  service or the event log to say why.
+- On a Private network it leaves port 22 open to **every host on it**. Firewall
+  rules are additive allows, so a tightly scoped Polaris rule alongside it
+  narrows nothing.
+
+What the remediation script does about it depends on **Polaris server address**:
+
+| Server address | Windows firewall after the run |
+|---|---|
+| **set** | `Polaris SSH (TCP 22)` allows TCP/22 from that address on **every** profile, and `OpenSSH-Server-In-TCP` is **disabled** — the Polaris rule is the only inbound path to sshd |
+| **blank** | nothing is opened; `OpenSSH-Server-In-TCP` is widened from Private to **Domain, Private** so a domain-joined endpoint is reachable. Which sources may connect is unchanged, so restrict port 22 some other way |
+
+**Public is deliberately never added.** Reachable-from-Domain is the problem
+being solved; an any-source TCP/22 rule on the profile a laptop picks up in an
+airport is not. Both paths are idempotent, and the detection script does not
+judge the firewall — it is not told which of the two shapes to expect.
+
+> **The script does not decide who may use SSH.** It never writes `sshd_config`,
+> so stock Windows OpenSSH rules apply: no `AllowUsers`/`AllowGroups`, and
+> password authentication on. Every account the endpoint lets log on can
+> authenticate once sshd is running — the account on the card is only the one
+> whose **key** is authorized. The firewall scope above is what limits who can
+> reach the port. On an endpoint that already ran sshd, the script leaves its
+> config alone: it starts the service only if stopped, **appends** the key, and
+> sets the service to start Automatically.
 
 ### The account Polaris signs in as
 
@@ -268,6 +302,7 @@ single-pin key, so a downgrade to an older binary keeps working.
 |---|---|
 | responseTime | its own heartbeat |
 | cpuMemory, temperature, interfaces, storage | host telemetry |
+| — *per-core CPU and the memory breakdown* | **agent only** — see below |
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
@@ -276,6 +311,45 @@ The storage and interface collectors run under a 30-second guard, because
 `statfs` and interface ioctls can **block indefinitely** on a hung filesystem or
 an unresponsive NIC — without it the whole push loop freezes while the heartbeat
 keeps running and the agent looks connected.
+
+### Per-core CPU and the memory breakdown
+
+An agent-monitored host is the only kind whose **CPU** chart on the Assets →
+System tab draws **one coloured line per logical core** alongside the
+cross-core average, and whose **Memory** chart is a **stacked area in bytes**
+rather than a single percentage line. No other transport — FortiOS, SNMP,
+WinRM, vCenter, SSH — can report either, so on those assets the two charts
+fall back to a single line each.
+
+On the CPU chart:
+
+- The **Average** line is the one every automation threshold reads. It stays
+  on top and is the only line that dives to the baseline across a missed poll.
+- The legend lists **Average** plus a chip per core. **Click a chip to isolate
+  that core**; click it again, or click **Average**, to bring the rest back.
+  The isolation survives the chart's automatic refresh.
+- Hovering names the six busiest cores at that moment (or just the isolated
+  one). On a host with many cores, isolate before you hover.
+- **Per-core detail is kept for the detail-retention window only** (7 days by
+  default — Server Settings → Retention). Longer ranges are served from
+  hourly/daily rollups, which keep the average alone; the chart says so when
+  that is why the cores are missing.
+
+On the Memory chart the bands stack to what is actually in use, against a
+dashed line at the installed total — the gap between the two is free memory:
+
+| Band | |
+|---|---|
+| **Processes** | resident in running programs |
+| **Buffers** | Linux block-layer buffers (absent on Windows) |
+| **Cache** | page cache (Linux) / system cache (Windows) |
+| **Swap / page file** | a dashed line, *not* a band — it is backing store, not RAM, so it stacks with nothing |
+
+Two figures here are commonly misread elsewhere and are deliberately not:
+Windows **cache** is the standby cache, which the usual API hides inside
+"available" memory, and Windows **page file** is the page file itself rather
+than the commit charge (which counts pages never written to disk and reads far
+higher).
 
 ---
 

@@ -49,6 +49,27 @@ function bn(v: bigint | null | undefined): number | null {
 }
 
 /**
+ * Narrow `AssetTelemetrySample.cpuCorePcts` (jsonb, therefore `JsonValue` to
+ * Prisma) to the number vector the chart wants.
+ *
+ * jsonb is schemaless from the database's point of view, so this is the
+ * boundary where the shape is actually checked rather than asserted — an
+ * older agent, a hand-written row or a future shape change reaches here as
+ * whatever it is, and anything that is not a finite-number array becomes
+ * null (charted as "no per-core data") instead of reaching the browser as a
+ * ragged array that renders as NaN coordinates in an SVG path.
+ */
+function coreVector(v: unknown): number[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  const out: number[] = [];
+  for (const x of v) {
+    if (typeof x !== "number" || !Number.isFinite(x)) return null;
+    out.push(x);
+  }
+  return out;
+}
+
+/**
  * Counter-rate helper. `first` and `last` are cumulative counter values at
  * the boundaries of a bucket; `bucketStart` and `lastBucketSampleAt` give
  * the time delta. Returns null on missing endpoints or counter resets
@@ -223,9 +244,22 @@ export async function readLastMonitorSuccessAt(assetId: string, since: Date): Pr
 export interface TelemetryHistoryRow {
   timestamp:        Date;
   cpuPct:           number | null;
+  // Per-logical-core utilisation, index = core id. DETAIL TIER ONLY — the
+  // rollups do not carry it, so this is undefined on hourly/daily and the
+  // CPU chart falls back to the aggregate line and says why. null (rather
+  // than undefined) means the tier COULD carry it and this source did not.
+  cpuCorePcts?:     number[] | null;
   memPct:           number | null;
   memUsedBytes:     number | null;
   memTotalBytes:    number | null;
+  // Memory breakdown bands (bytes). Present on every tier; null when the
+  // source reports no breakdown. The four sum to memTotalBytes when they
+  // are present at all — see the agent's meminfo.go.
+  memBuffersBytes?: number | null;
+  memCachedBytes?:  number | null;
+  memFreeBytes?:    number | null;
+  swapUsedBytes?:   number | null;
+  swapTotalBytes?:  number | null;
   // FortiGate active session count (null for other sources). On detail tier
   // this is the raw value; on rollup tiers it's the bucket average, with
   // min/max alongside.
@@ -263,14 +297,26 @@ export async function readTelemetryHistory(
     const samples = await prisma.assetTelemetrySample.findMany({
       where: { assetId, timestamp: { gte: queryFrom, lte: until } },
       orderBy: { timestamp: "asc" },
-      select: { timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, memTotalBytes: true, sessionCount: true },
+      select: {
+        timestamp: true, cpuPct: true, cpuCorePcts: true,
+        memPct: true, memUsedBytes: true, memTotalBytes: true,
+        memBuffersBytes: true, memCachedBytes: true, memFreeBytes: true,
+        swapUsedBytes: true, swapTotalBytes: true,
+        sessionCount: true,
+      },
     });
     const rows: TelemetryHistoryRow[] = samples.map((s) => ({
       timestamp:     s.timestamp,
       cpuPct:        s.cpuPct,
+      cpuCorePcts:   coreVector(s.cpuCorePcts),
       memPct:        s.memPct,
       memUsedBytes:  bn(s.memUsedBytes),
       memTotalBytes: bn(s.memTotalBytes),
+      memBuffersBytes: bn(s.memBuffersBytes),
+      memCachedBytes:  bn(s.memCachedBytes),
+      memFreeBytes:    bn(s.memFreeBytes),
+      swapUsedBytes:   bn(s.swapUsedBytes),
+      swapTotalBytes:  bn(s.swapTotalBytes),
       sessionCount:  s.sessionCount,
     }));
     const visible = rows.filter((r) => r.timestamp.getTime() >= sinceMs);
@@ -298,12 +344,19 @@ export async function readTelemetryHistory(
     avgMemUsedBytes: bigint | null;
     maxMemUsedBytes: bigint | null;
     lastMemTotalBytes: bigint | null;
+    avgMemBuffersBytes: bigint | null;
+    avgMemCachedBytes: bigint | null;
+    avgMemFreeBytes: bigint | null;
+    avgSwapUsedBytes: bigint | null;
+    lastSwapTotalBytes: bigint | null;
     avgSessionCount: number | null; minSessionCount: number | null; maxSessionCount: number | null;
   }>>(
     `SELECT "bucketStart", "sampleCount",
             "avgCpuPct", "minCpuPct", "maxCpuPct",
             "avgMemPct", "minMemPct", "maxMemPct",
             "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
+            "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
+            "avgSwapUsedBytes", "lastSwapTotalBytes",
             "avgSessionCount", "minSessionCount", "maxSessionCount"
      FROM "${table}"
      WHERE "assetId" = $1 AND "bucketStart" >= $2 AND "bucketStart" <= $3
@@ -328,6 +381,15 @@ export async function readTelemetryHistory(
       memPct:        r.avgMemPct,
       memUsedBytes:  bn(r.avgMemUsedBytes),
       memTotalBytes: bn(r.lastMemTotalBytes),
+      // cpuCorePcts is deliberately ABSENT on the rollup tiers (not null):
+      // the chart distinguishes "this tier cannot carry per-core" from
+      // "this source does not report per-core" and words its note
+      // differently for each.
+      memBuffersBytes: bn(r.avgMemBuffersBytes),
+      memCachedBytes:  bn(r.avgMemCachedBytes),
+      memFreeBytes:    bn(r.avgMemFreeBytes),
+      swapUsedBytes:   bn(r.avgSwapUsedBytes),
+      swapTotalBytes:  bn(r.lastSwapTotalBytes),
       sessionCount:  r.avgSessionCount,
       sampleCount:   r.sampleCount,
       minCpuPct:     r.minCpuPct,
@@ -1051,20 +1113,36 @@ export interface SdwanMemberRow {
  * per scrape over the last ~90 min, `up` = up in every health-check at that time.
  * Reads the `perfSla` (+ `interfaces`) retention entities; current values come
  * from the latest rows, the strip from recent detail samples.
+ *
+ * `collectedAt` is the newest of those latest samples — one stamp for the whole
+ * table, since a scrape writes every member at once. Null means never scraped.
  */
-export async function readSdwanMembers(assetId: string): Promise<{ members: SdwanMemberRow[] }> {
-  // A: latest sample per (member, health-check).
+export async function readSdwanMembers(
+  assetId: string,
+): Promise<{ members: SdwanMemberRow[]; collectedAt: Date | null }> {
+  // A: latest sample per (member, health-check). `timestamp` comes back too:
+  // the newest of these IS the SD-WAN scrape stamp, and the tab's freshness
+  // strip reads it rather than the asset's lastSystemInfoAt — SD-WAN rides the
+  // system-info pass but is one optional leg of it, so a pass whose SD-WAN call
+  // failed advances lastSystemInfoAt while this table stands still. Reading the
+  // pass stamp would report that stale table as current, which is the exact
+  // misreading the strip exists to prevent.
   const latest = await prisma.$queryRawUnsafe<Array<{
     link: string; healthCheck: string; zone: string | null; state: string;
     latencyMs: number | null; jitterMs: number | null; packetLoss: number | null;
+    timestamp: Date;
   }>>(
     `SELECT DISTINCT ON ("link", "healthCheck")
-            "link", "healthCheck", "zone", "state", "latencyMs", "jitterMs", "packetLoss"
+            "link", "healthCheck", "zone", "state", "latencyMs", "jitterMs", "packetLoss", "timestamp"
      FROM "asset_perf_sla_samples" WHERE "assetId" = $1
      ORDER BY "link", "healthCheck", "timestamp" DESC`,
     assetId,
   );
-  if (latest.length === 0) return { members: [] };
+  if (latest.length === 0) return { members: [], collectedAt: null };
+  let collectedAt: Date | null = null;
+  for (const r of latest) {
+    if (r.timestamp && (!collectedAt || r.timestamp > collectedAt)) collectedAt = r.timestamp;
+  }
 
   // B: recent per-(member, scrape) aggregated up/down for the status strip.
   const recentRows = await prisma.$queryRawUnsafe<Array<{ link: string; timestamp: Date; up: boolean }>>(
@@ -1122,5 +1200,5 @@ export async function readSdwanMembers(assetId: string): Promise<{ members: Sdwa
   });
   // Sort: physical/WAN members first (those with an IP), then by name.
   members.sort((a, b) => (a.ip ? 0 : 1) - (b.ip ? 0 : 1) || a.link.localeCompare(b.link));
-  return { members };
+  return { members, collectedAt };
 }

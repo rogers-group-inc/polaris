@@ -907,6 +907,14 @@
             in place. Device-owned rows (<code>vip</code>, <code>interface_ip</code>) and
             authoritative types always <code>409</code>. A deprecated subnet refuses new
             reservations.</p>
+          <p>On a network whose integration pushes DHCP reservations,
+            <code>notes</code> becomes the FortiGate entry's description, which FortiOS holds
+            255 characters of &mdash; including the <code>Polaris/&lt;user&gt;: &hellip;
+            [&lt;hostname&gt;]</code> wrapper Polaris writes around it. An over-length
+            <code>notes</code> (or <code>hostname</code>) is a <code>400</code> naming the
+            budget and the overage; nothing is truncated. The same applies to
+            <code>PUT /reservations/:id</code> when it changes either field. Networks Polaris
+            does not push to have no such limit.</p>
           <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"subnetId":"'$SUBNET_ID'","ipAddress":"10.20.30.40","hostname":"printer-3"}' \

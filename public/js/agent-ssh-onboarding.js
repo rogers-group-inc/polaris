@@ -568,7 +568,9 @@
         '<div class="form-group">' +
           '<label>Polaris server address <span style="font-weight:normal;color:var(--color-text-tertiary)">(optional)</span></label>' +
           '<input type="text" id="wssh-serverip" value="' + escapeHtml((s && s.polarisServerIp) || "") + '" placeholder="10.0.0.42 or 10.0.0.0/24">' +
-          '<p class="hint">When set, the script scopes inbound TCP/22 to this address. Left blank it does not touch the firewall — restrict port 22 some other way, or every host on the network can reach sshd.</p>' +
+          (isLinux
+            ? '<p class="hint">When set, the script scopes inbound TCP/22 to this address. Left blank it does not touch the firewall — restrict port 22 some other way, or every host on the network can reach sshd.</p>'
+            : '<p class="hint">When set, the script scopes inbound TCP/22 to this address on <em>every</em> firewall profile, and disables the OpenSSH rule Windows creates for itself — that one allows any source, so leaving it enabled would undo the scoping. Left blank the script opens nothing — restrict port 22 some other way — but it still adds the Domain profile to Windows\' rule, which is created for Private only: a domain-joined machine runs sshd that nothing can reach until it does.</p>') +
         '</div>' +
         (isLinux
           ? '<p class="hint" style="color:var(--color-warning,#d98c00)">The sudoers drop-in grants this account passwordless root on every host it is applied to. That is what the agent installer requires; scope the account accordingly and have someone review the script before it goes into your config management.</p>'

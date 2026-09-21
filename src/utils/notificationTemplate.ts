@@ -45,6 +45,8 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{value}", label: "Value", description: "Observed value at fire time", group: "notification" },
   { token: "{threshold}", label: "Threshold", description: "Configured threshold / comparison value", group: "notification" },
   { token: "{dimension}", label: "Dimension", description: "Sub-asset dimension (interface / mount / sensor / tunnel). On an automation that consolidates per device, every affected one — \"port12 (AP-1), port14 and 5 more\"", group: "notification" },
+  { token: "{dimension.label}", label: "Dimension label", description: "What that component is called — \"Interface\", \"Sensor\", \"IPsec tunnel\". Blank when the alert is about the whole device", group: "notification" },
+  { token: "{dimension.suffix}", label: "Dimension suffix", description: "The component with its own separator (\" · port12\"), for appending to a subject line — blank when the alert is about the whole device", group: "notification" },
   { token: "{dimension.count}", label: "Dimension count", description: "How many components this alert names (1 when it is about a single one)", group: "notification" },
   { token: "{dimension.first}", label: "Leading dimension", description: "The one component the alert leads with — the worst, and the one its charts are about", group: "notification" },
   { token: "{dimension.list}", label: "Dimension list", description: "Every affected component, uncapped — for a body rather than a subject line", group: "notification" },
@@ -164,6 +166,11 @@ export interface TemplateContextParts {
   dimensionFirst?: string;
   /** Every affected component, uncapped. For a body, not a subject line. */
   dimensionList?: string;
+  /** What the component IS — "Interface", "Sensor", "IPsec tunnel" — so a
+   *  surface can LABEL `{dimension}` instead of printing a bare port name.
+   *  Blank on a whole-device alert; `{dimension.label}` falls back to the
+   *  generic "Component" whenever there is a dimension but no noun for it. */
+  dimensionNoun?: string;
   /** Composite triggers only — "k of n conditions met". */
   conditions?: string;
   message?: string;
@@ -361,6 +368,15 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     "dimension.count": str(parts.dimensionCount),
     "dimension.first": str(parts.dimensionFirst),
     "dimension.list": str(parts.dimensionList),
+    // Both derived from `{dimension}` itself rather than from the parts, so a
+    // caller that renders the dimension differently — a grouped alert naming
+    // every affected component — gets a label and a subject tag that agree with
+    // it for free.
+    "dimension.label": str(parts.dimension) ? (str(parts.dimensionNoun) || "Component") : "",
+    // Carries its own separator so a subject line can append it unconditionally
+    // and read correctly when there is no component. Same shape as
+    // {repeat.quiet}: the token is the whole phrase or nothing at all.
+    "dimension.suffix": str(parts.dimension) ? ` · ${str(parts.dimension)}` : "",
     "conditions": str(parts.conditions),
     "message": str(parts.message),
     "severity": severity,

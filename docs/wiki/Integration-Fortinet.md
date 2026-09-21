@@ -244,7 +244,9 @@ installs.
 
 FortiManager already exposes the HA mode and member list on every device
 record, so Polaris reads them at **zero extra call cost**. The standalone path
-calls the HA-peer monitor endpoint.
+calls the HA-peer monitor endpoint, which reports the cluster only to a token
+whose profile can read it — a gate answering everything else while showing no
+cluster is worth checking there first.
 
 Key behaviours:
 

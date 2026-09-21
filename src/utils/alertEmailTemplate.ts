@@ -26,7 +26,17 @@
  * of blank cells.
  */
 
-export const DEFAULT_ALERT_SUBJECT = "[{severity.upper}] {asset} — {rule}";
+/**
+ * `{dimension.suffix}` is the component with its own separator, or nothing —
+ * so the subject reads "[CRITICAL] SW-CORE-1 · port12 (Indoor AP) — PoE fault"
+ * on a per-component alert and is unchanged on every device-level one.
+ *
+ * It is in the SUBJECT, not only the body, because the subject is all an
+ * operator sees of eight alerts about eight faulted ports on one switch: eight
+ * identical lines in an inbox, and no way to tell whether that is one fault
+ * reported eight times or eight ports gone.
+ */
+export const DEFAULT_ALERT_SUBJECT = "[{severity.upper}] {asset}{dimension.suffix} — {rule}";
 
 /**
  * Plain-text alternative. Not a stripped copy of the HTML: it is the version
@@ -56,6 +66,11 @@ export const DEFAULT_ALERT_TEXT = [
   // about a monitored device, and labelling the Polaris server as a "Device"
   // is what made those emails read like they were about somebody's switch.
   "Subject:    {asset}",
+  // The component, above the device facts for the same reason the HTML row is
+  // first. `{dimension.label}` renders blank on a whole-device alert, leaving a
+  // bare ": " that `pruneEmptyTextLines` drops (its label is optional for
+  // exactly this line).
+  "{dimension.label}: {dimension}",
   "IP:         {asset.ip}",
   "Switch:     {asset.connectedSwitch}",
   "AP:         {asset.connectedAp}",
@@ -210,6 +225,13 @@ export const DEFAULT_ALERT_HTML = [
   // Facts
   '<tr><td style="padding:10px 22px 0">',
   '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;color:#374151;border-collapse:collapse">',
+  // WHICH PART of the device — first, because on a per-component alert it is
+  // the most specific fact there is, and because an operator paged about a PoE
+  // fault has exactly one question ("which port?") that the headline sentence
+  // was answering only in passing. The label is a token so the row reads
+  // "Interface", "Sensor" or "IPsec tunnel" without three templates; both
+  // render blank on a whole-device alert and `pruneEmptyRows` drops the row.
+  factRow("{dimension.label}", "{dimension}"),
   factRow("IP address", "{asset.ip}"),
   factRow("Connected switch", "{asset.connectedSwitch}"),
   factRow("Connected AP", "{asset.connectedAp}"),
@@ -418,7 +440,11 @@ export function pruneEmptyTextLines(text: string): string {
   return text
     .split("\n")
     .filter((line) => {
-      const m = /^([A-Za-z][\w .]*):\s*(.*)$/.exec(line);
+      // The label is OPTIONAL so a line whose label is itself a token — the
+      // component row, whose "{dimension.label}" renders blank on a whole-device
+      // alert — is dropped as the empty row it is rather than surviving as a
+      // stray ": ". A line with no colon at all still never matches.
+      const m = /^([A-Za-z][\w .]*)?:\s*(.*)$/.exec(line);
       if (!m) return true;
       return m[2]!.trim().length > 0;
     })

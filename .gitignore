@@ -7,6 +7,15 @@ src/generated/
 # Environment files with real credentials — never commit these
 .env
 
+# Lab device inventories (prisma/seed-lab-fortigates.ts). The real file is meant
+# to live OUTSIDE this checkout — ~/.polaris/lab-devices.json, or wherever
+# POLARIS_LAB_DEVICES points — precisely so no ignore rule has to hold. These
+# patterns are the backstop for a copy that lands in the tree anyway; the
+# committed template is lab-devices.example.json, which they deliberately miss.
+lab-devices.json
+*.lab.json
+.polaris/
+
 # Build artifacts
 *.js.map
 

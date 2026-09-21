@@ -179,23 +179,47 @@ export function integrationPushEnabled(
 // this module's Transport surface.
 export const normalizeMac = normalizeMacLowerColon;
 
-function buildDescription(
+/**
+ * FortiOS `system.dhcp/server/<id>/reserved-address` holds a `description` of
+ * at most **255 characters**. That is the whole budget for the composed string
+ * below — origin prefix, operator notes and the bracketed hostname together,
+ * not the notes alone.
+ *
+ * Polaris used to cap the composed value at 64 to stay inside FortiOS 6.2's
+ * 35-char field, but 6.2 has been out of support for years and the cap cost
+ * more than it bought: a long note silently lost its ` [hostname]` suffix on
+ * the device, and `subnetRefreshService.extractHostnameFromDescription` — which
+ * anchors the bracket to the END of the string — then fell through to its
+ * legacy branch and recovered the truncated NOTES as the hostname.
+ *
+ * So the cap is the device's own, and over-length input is refused at save
+ * time (business rule 74 — `assertReservationDescriptionFits`, called from
+ * createReservation / updateReservation on push-eligible subnets) rather than
+ * trimmed behind the operator's back. The `slice` here stays as a backstop for the rows no save
+ * path gates: discovery-authored notes, an operator-typed note that predates
+ * this rule, and the retry tick replaying either.
+ */
+export const RESERVED_ADDRESS_DESCRIPTION_MAX = 255;
+
+/**
+ * The composed FortiOS description, uncapped. Format:
+ *   notes present:  "Polaris/<user>: <notes> [<hostname>]"
+ *   notes empty:    "Polaris/<user>: <hostname>"
+ *
+ * Origin first so a FortiGate admin looking at the device immediately sees
+ * this entry was written by Polaris and who pushed it. Notes-first when set
+ * because the operator typed them as the FortiGate-side reservation comment;
+ * hostname is appended in brackets so the discovery side (subnetRefreshService
+ * .extractHostnameFromDescription) can still recover it after Polaris-loss
+ * recoveries. Falls back to "Polaris: …" when no authenticated user is in
+ * scope.
+ */
+function composeDescription(
   hostname: string | null | undefined,
   createdBy: string | null | undefined,
   fallback: string,
   notes?: string | null,
 ): string {
-  // Format:
-  //   notes present:  "Polaris/<user>: <notes> [<hostname>]"
-  //   notes empty:    "Polaris/<user>: <hostname>"
-  //
-  // Origin first so a FortiGate admin looking at the device immediately sees
-  // this entry was written by Polaris and who pushed it. Notes-first when set
-  // because the operator typed them as the FortiGate-side reservation comment;
-  // hostname is appended in brackets so the discovery side (subnetRefreshService
-  // .extractHostnameFromDescription) can still recover it after Polaris-loss
-  // recoveries. Falls back to "Polaris: …" when no authenticated user is in
-  // scope.
   const trimmedNotes = (notes ?? "").trim();
   const trimmedHost = (hostname ?? "").trim();
   const fallbackBody = trimmedHost || fallback || "(unnamed)";
@@ -207,11 +231,78 @@ function buildDescription(
   const prefix = createdBy && createdBy.trim()
     ? `Polaris/${createdBy.trim()}: `
     : `Polaris: `;
-  const candidate = prefix + body;
-  // FortiOS 7.x accepts up to ~255 chars for reserved-address description,
-  // but 6.2 and older capped at 35. Cap at 64 to keep the field readable
-  // across versions while still fitting prefix + a typical hostname.
-  return candidate.length > 64 ? candidate.slice(0, 64) : candidate;
+  return prefix + body;
+}
+
+function buildDescription(
+  hostname: string | null | undefined,
+  createdBy: string | null | undefined,
+  fallback: string,
+  notes?: string | null,
+): string {
+  const candidate = composeDescription(hostname, createdBy, fallback, notes);
+  return candidate.length > RESERVED_ADDRESS_DESCRIPTION_MAX
+    ? candidate.slice(0, RESERVED_ADDRESS_DESCRIPTION_MAX)
+    : candidate;
+}
+
+export interface ReservationDescriptionParams {
+  hostname?: string | null;
+  createdBy?: string | null;
+  /** The IP, used as the description body when there is no hostname. */
+  ip: string;
+  notes?: string | null;
+}
+
+/**
+ * How many characters of NOTES fit alongside everything Polaris wraps around
+ * them for this reservation. Derived by composing with a one-character note
+ * and subtracting it, so the answer tracks the format above instead of
+ * restating it — notes appear in the body verbatim, so the overhead is exact.
+ *
+ * Zero is a legitimate answer: a 240-character hostname leaves no room, and
+ * the caller (the IP panel's counter, the 400 below) should say so rather
+ * than pretend there is space.
+ */
+export function reservationNotesBudget(
+  params: Omit<ReservationDescriptionParams, "notes">,
+): number {
+  const overhead =
+    composeDescription(params.hostname, params.createdBy, params.ip, "x").length - 1;
+  return Math.max(0, RESERVED_ADDRESS_DESCRIPTION_MAX - overhead);
+}
+
+/**
+ * Refuse a reservation whose composed description would not survive the trip
+ * to the device. Called BEFORE the Polaris row is written (create) or updated
+ * (edit) on push-eligible subnets, so the operator is told at the keyboard
+ * instead of finding a truncated comment on the FortiGate — or, worse, a
+ * rediscovered hostname made out of the tail of their own notes.
+ *
+ * Off push-eligible subnets nothing calls this: `Reservation.notes` is
+ * `@db.Text` and a network Polaris never writes to has no device-side field
+ * to fit.
+ */
+export function assertReservationDescriptionFits(
+  params: ReservationDescriptionParams,
+): void {
+  const composed = composeDescription(
+    params.hostname,
+    params.createdBy,
+    params.ip,
+    params.notes,
+  );
+  if (composed.length <= RESERVED_ADDRESS_DESCRIPTION_MAX) return;
+  const budget = reservationNotesBudget(params);
+  const typed = (params.notes ?? "").trim().length;
+  throw new AppError(
+    400,
+    `Reservation notes are too long for the FortiGate. The device-side ` +
+      `description field holds ${RESERVED_ADDRESS_DESCRIPTION_MAX} characters, and Polaris writes it as ` +
+      `"Polaris/<user>: <notes> [<hostname>]" so the entry names its origin. ` +
+      `That leaves ${budget} character${budget === 1 ? "" : "s"} for notes on this reservation; ` +
+      `you typed ${typed}. Shorten the notes by ${typed - budget}.`,
+  );
 }
 
 export async function findScopeIdForCidr(

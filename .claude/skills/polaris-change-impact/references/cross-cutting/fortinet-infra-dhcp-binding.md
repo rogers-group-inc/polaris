@@ -57,3 +57,48 @@
 - [ ] Widening the takeover set? Change `isSupersedableByCreate` only, then mirror it in both client predicates.
 
 ---
+
+---
+
+### The VIP case (business rule 77)
+
+`dhcpBinding` gained a second kind of row in 2026-09. A `vip` reservation is the other
+authoritative row that can sit on an address the gate is ALSO serving over DHCP, and it had
+nowhere to say so: Phase 5's VIP branch fills a MAC and raises a fill-only conflict but writes
+no binding, so the IP panel said "VIP" and an operator could not learn a client was holding
+the address too. `vipInfo` is the third column in the same split — `sourceType` says who owns
+the address, `dhcpBinding` says how the gate hands it out, `vipInfo` says what the gate
+translates for it — and no surface may collapse them.
+
+**Writers:**
+- `src/utils/vipAddressFacts.ts` — the pure decisions: `parseVipRow` (one reader for all three
+  `firewall/vip` encodings), `vipIpRoles`, `vipInfoSnapshot` / `vipInfoDiffers` (the only
+  comparison allowed to trigger a write), `decideVipDhcpBinding` (patch-or-null, and
+  `decideInfraDhcpBinding`'s three omissions kept verbatim). No Prisma, no device I/O; tested
+  in `tests/unit/vipAddressFacts.test.ts`, which also pins its Virtual Server classification
+  against `fortimanagerService.parseVipServerInfo`.
+- `src/services/subnetRefreshService.ts` — the per-subnet Discover pass: stamps `dhcpBinding`
+  onto a `vip` row from the DHCP view, stamps/creates `vipInfo` from the gate's VIP table, and
+  clears / converts / releases a VIP the gate no longer reports (scoped to snapshots naming
+  THIS gate). The VIP read is settled, never awaited alongside the DHCP reads.
+- `src/services/reservationService.ts` — `isSupersedableByCreate` admits `vip`;
+  `releaseSupersededDhcpLeaseAt` releases it with no device I/O and returns its `vipInfo`;
+  `persistReservationRow` stamps that onto the operator's new row.
+- `src/services/discovery/discoveryEngine.ts` (Phase 3c `manual` branch) — stamps rather than
+  raises a conflict when the row already names this same VIP, the `reservationBelongsToInfraDevice`
+  pattern applied to VIPs.
+
+**Readers:**
+- `src/services/subnetService.ts` (`toReservationDto`) — surfaces `vipInfo` (and the four push
+  columns, which it had also been withholding) on the IP-panel payload.
+- `public/js/ip-panel.js` (`_ipStatusPresentation` / `_ipAllocationPresentation`) — the composed
+  "VIP / Leased" pill, the VIP badge beside the hostname, the Reserve button on a `vip` row and
+  the supersede wording in `_openLeaseReserveModal`. The PDF and CSV exports call the same
+  function, so a record that leaves the screen cannot disagree with the table it left.
+
+**Invariants:**
+- A `vip` row's `sourceType` is flipped ONLY by a succession path — one that has seen the gate
+  stop reporting the VIP. `decideVipDhcpBinding` never flips it, and neither does the DHCP loop.
+- A VIP table that could not be READ skips every VIP decision. "Could not read" and "there are
+  none" are opposite facts, and collapsing them retires every VIP on the subnet.
+- `interface_ip` is NOT claimable and never joins this set. Only `vip` parts company with it.

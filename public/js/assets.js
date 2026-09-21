@@ -1517,12 +1517,37 @@ async function _handleMacDeleteClick(e) {
   var assetId = btn.getAttribute('data-asset-id');
   var mac = btn.getAttribute('data-mac');
   if (!assetId || !mac) return;
-  var ok = await showConfirm('Remove MAC ' + mac + ' from this asset?');
+  // A range row (an interface scrape's folded port block) takes every MAC in
+  // the block with it — say so, rather than asking about the one address the
+  // button happens to sit next to.
+  var macEnd = btn.getAttribute('data-mac-end');
+  var what = macEnd
+    ? macEntryCount({ mac: mac, macEnd: macEnd }) + ' MACs (' + mac + ' – ' + macEnd + ')'
+    : 'MAC ' + mac;
+  // Names the one-shot semantics: the endpoint deletes the row, it does not
+  // suppress the address, so a MAC the network still reports against this
+  // asset comes back on the next discovery run.
+  var ok = await showConfirm(
+    'Remove ' + what + ' from this asset?\n\n' +
+    'If the network reports this address against the asset again, discovery will re-add it.'
+  );
   if (!ok) return;
   btn.disabled = true;
   try {
     await api.assets.removeMac(assetId, mac);
     showToast('MAC removed');
+    // Repaint whichever surface the click came from. The slide-over holds its
+    // own copy of the asset, so refreshing the table behind it would leave the
+    // removed MAC on screen in the panel the operator is still looking at.
+    if (_isCurrentAsset(assetId)) {
+      var activeTab = document.querySelector('#asset-view-tabs .page-tab.active');
+      var activeKey = activeTab ? activeTab.getAttribute('data-tab') : null;
+      await openViewModal(assetId);
+      if (activeKey) {
+        var tabBtn = document.querySelector('#asset-view-tabs .page-tab[data-tab="' + activeKey + '"]');
+        if (tabBtn) tabBtn.click();
+      }
+    }
     loadAssets();
   } catch (err) {
     btn.disabled = false;
@@ -3010,7 +3035,12 @@ function macCellHTML(asset) {
   var displayMac = primary || (macs.length > 0 ? macEntryText(macs[0]) : "-");
   if (macs.length <= 1) return '<span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(displayMac) + '">' + escapeHtml(displayMac) + '</span>';
 
-  var canDelete = canManageNetworks();
+  // Gated on the SAME grant the endpoint checks (assets:write, i.e. the
+  // assets-admin role), not on subnets:fullwrite as it was: an asset
+  // administrator is exactly who corrects a wrong MAC association, and the
+  // mismatch meant the one role that could call DELETE /assets/:id/macs/:mac
+  // never saw the button that calls it.
+  var canDelete = canManageAssets();
 
   // Multiple MACs — show primary with hover tooltip
   var tooltipRows = macs.map(function (m) {
@@ -3610,11 +3640,10 @@ function assetMonitoringFormHTML(asset, managedAgent) {
   // time so the periodic puller cleanly no-ops; clicking Save on this
   // modal does NOT overwrite them (the form ignores the dropdowns when
   // the polling section is hidden).
-  var sourceSupportsAgent = (assetSourceKind === "manual" ||
-                             assetSourceKind === "activedirectory" ||
-                             assetSourceKind === "entraid" ||
-                             assetSourceKind === "windowsserver" ||
-                             assetSourceKind === "azurearc");
+  // Same set the System tab's agent panel offers from, and the same one the
+  // install service enforces — vCenter guests included (see
+  // _AGENT_INSTALLABLE_SOURCES).
+  var sourceSupportsAgent = _assetSupportsAgentInstall(asset);
   var agentInFlight = managedAgent && (
     managedAgent.installStatus === "pending"      ||
     managedAgent.installStatus === "uploading"    ||
@@ -4964,7 +4993,7 @@ async function openViewModal(id, opts) {
     var sdwanP = assetP.then(function (asset) {
       var sk = (asset.discoveredByIntegration && asset.discoveredByIntegration.type) || "manual";
       if (!(asset.monitored && asset.assetType === "firewall" && (sk === "fortimanager" || sk === "fortigate"))) {
-        return { rules: [], links: [], members: [] };
+        return { rules: [], links: [], members: [], meta: {} };
       }
       return Promise.all([
         api.assets.sdwanRules(asset.id).catch(function (err) { console.warn("Failed to load SD-WAN rules", err); return { rules: [] }; }),
@@ -4975,6 +5004,16 @@ async function openViewModal(id, opts) {
           rules:   (r[0] && r[0].rules)   || [],
           links:   (r[1] && r[1].links)   || [],
           members: (r[2] && r[2].members) || [],
+          // Per-table scrape stamp + cadence, for the section freshness strips.
+          // Each table states its OWN age: the rules table and the perf-SLA
+          // stream are separate writes on the same pass, and one can land
+          // without the other.
+          meta: {
+            rulesAt:      (r[0] && r[0].collectedAt) || null,
+            rulesPollSec: (r[0] && r[0].pollIntervalSec) || null,
+            membersAt:      (r[2] && r[2].collectedAt) || null,
+            membersPollSec: (r[2] && r[2].pollIntervalSec) || null,
+          },
         };
       });
     });
@@ -5023,6 +5062,7 @@ async function openViewModal(id, opts) {
     var sdwanRules   = wave[11].rules;
     var sdwanLinks   = wave[11].links;
     var sdwanMembers = wave[11].members;
+    var sdwanMeta    = wave[11].meta || {};
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -5059,7 +5099,7 @@ async function openViewModal(id, opts) {
     // (rules or health-check links exist); the trio was prefetched in the wave
     // above so the tab is present + pre-populated on first paint.
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) {
-      tabs.push({ key: "sdwan", label: "SD-WAN", html: _assetSdwanTabHTML(a, sdwanRules, sdwanLinks, sdwanMembers) });
+      tabs.push({ key: "sdwan", label: "SD-WAN", html: _assetSdwanTabHTML(a, sdwanRules, sdwanLinks, sdwanMembers, sdwanMeta) });
     }
     // MAC Table tab — the switch's layer-2 forwarding database. Switch-class
     // only, mirroring where the collector spends the walk; lazy-loaded on
@@ -5276,7 +5316,7 @@ function _assetGeneralTabHTML(a) {
       // they qualify: "this device answers on 203.0.113.10, via that gate".
       '<div id="asset-vip-mount-' + escapeHtml(a.id) + '" style="display:contents"></div>' +
       viewRow("MAC Address", a.macAddress, true, false, true) +
-      macAddressesViewHTML(a.macAddresses) +
+      macAddressesViewHTML(a.macAddresses, a.id) +
       viewRow("Asset Tag", a.assetTag) +
       viewRow("Serial Number", a.serialNumber, false, false, true) +
       (a.macAddress && !a.manufacturer
@@ -5772,7 +5812,9 @@ function _wireAssetChartRangeControls(a) {
       }, fromIso, toIso);
       _loadSystemTabFor(a.id, { from: fromIso, to: toIso }, a, { chartOnly: true });
     };
-    _wireChartDragSelect(document.getElementById("asset-system-chart"), systemDragApply);
+    // Both charts drive the SAME window, so a drag on either applies to both.
+    _wireChartDragSelect(document.getElementById("asset-cpu-chart"), systemDragApply);
+    _wireChartDragSelect(document.getElementById("asset-memory-chart"), systemDragApply);
     _wireChartDragSelect(document.getElementById("asset-system-sessions-chart"), function (fromIso, toIso) {
       _applyCustomRangeSelection({
         btnClass: "asset-sessions-range-btn", customBtnId: "btn-asset-sessions-custom",
@@ -5824,15 +5866,52 @@ function _agentStatusColor(s) {
   return "var(--color-text-secondary)";
 }
 
+// Asset-source kinds the agent can be installed on — mirrors the "agent"
+// entries in COMPATIBILITY (src/utils/pollingCompatibility.ts), which is what
+// the install service actually enforces (`isPollingMethodCompatible(kind,
+// "agent")`). vCenter is in the set on purpose: a vCenter-discovered VM is an
+// ordinary guest OS and the bulk-deploy path has always accepted one. The two
+// Fortinet sources are not — a FortiGate/FortiSwitch/FortiAP runs FortiOS and
+// has nowhere to put a Go binary.
+var _AGENT_INSTALLABLE_SOURCES = [
+  "manual", "activedirectory", "entraid", "windowsserver", "azurearc", "vcenter",
+];
+
+// True when an install could actually succeed on this asset: compatible
+// source, and not an ESXi host (POST /assets/:id/agent/install 400s on
+// `assetType === "hypervisor"`, and the bulk path skips it).
+function _assetSupportsAgentInstall(a) {
+  if (!a || a.assetType === "hypervisor") return false;
+  var kind = (a.discoveredByIntegration && a.discoveredByIntegration.type) || "manual";
+  // An integration type this build doesn't know reads as "manual" server-side
+  // (assetSourceKindFromIntegrationType's default) — match that rather than
+  // withholding the button on a source we simply can't name.
+  if (!_POLLING_COMPAT[kind]) kind = "manual";
+  return _AGENT_INSTALLABLE_SOURCES.indexOf(kind) >= 0;
+}
+
+// Asset types that are agent targets by nature: an operator looking at a
+// server or a workstation should be able to deploy from the asset itself
+// rather than having to pick "Polaris Agent" in a polling dropdown first, or
+// go find the bulk-deploy path. Every other type (firewall, switch, AP,
+// printer, hypervisor — the install service refuses ESXi outright) still has
+// to opt in through a polling method.
+var _AGENT_OFFERED_ASSET_TYPES = ["server", "workstation"];
+
 // Decide whether the panel should render at all for this asset.
 function _assetHasAgentIntent(a, agent) {
   if (agent) return true;
   if (!a) return false;
-  return a.responseTimePolling === "agent" ||
-         a.cpuMemoryPolling    === "agent" ||
-         a.interfacesPolling   === "agent" ||
-         a.lldpPolling         === "agent" ||
-         a.storagePolling      === "agent";
+  if (a.responseTimePolling === "agent" ||
+      a.cpuMemoryPolling    === "agent" ||
+      a.interfacesPolling   === "agent" ||
+      a.lldpPolling         === "agent" ||
+      a.storagePolling      === "agent") return true;
+  // Deploy-from-here offer. Needs an id (the install service installs onto an
+  // existing row) and a source the agent is compatible with, or the button
+  // would open a modal whose Install can only 400.
+  return !!a.id && _AGENT_OFFERED_ASSET_TYPES.indexOf(a.assetType) >= 0 &&
+         _assetSupportsAgentInstall(a);
 }
 
 function assetAgentSubpanelHTML(a, agent) {
@@ -5855,10 +5934,22 @@ function assetAgentSubpanelHTML(a, agent) {
   if (!agent) {
     // No row yet — operator opted in via a polling-method dropdown but
     // hasn't kicked off the install. Single big CTA.
+    // Two ways to land here, and they need different copy: the operator
+    // picked "Polaris Agent" in a polling dropdown (and is waiting for the
+    // install they implied), or this is simply a server / workstation and we
+    // are offering the deploy where they are already standing.
+    var pickedAgentMethod =
+      a.responseTimePolling === "agent" || a.cpuMemoryPolling  === "agent" ||
+      a.interfacesPolling   === "agent" || a.lldpPolling       === "agent" ||
+      a.storagePolling      === "agent";
     body =
       '<p style="color:var(--color-text-secondary);margin:0 0 0.75rem">' +
-        'You picked "Polaris Agent" as a polling method but no agent is installed yet. ' +
-        'Click below to push the agent to this host via a stored SSH or WinRM credential.' +
+        (pickedAgentMethod
+          ? 'You picked "Polaris Agent" as a polling method but no agent is installed yet. ' +
+            'Click below to push the agent to this host via a stored SSH or WinRM credential.'
+          : 'No agent is installed on this host. The agent pushes CPU, memory, interface, ' +
+            'storage and process data back to Polaris directly — no per-stream credential ' +
+            'polling. Click below to push it via a stored SSH or WinRM credential.') +
       '</p>' +
       // Deploying is `assets=fullwrite` (canDeployAgent) — a notch above the
       // rest of this page. Withhold the button rather than let the click 403.
@@ -6178,13 +6269,13 @@ function _openInstallAgentModal(a) {
         '<label>Transport</label>' +
         '<div style="display:flex;gap:1rem;align-items:center;padding:0.25rem 0">' +
           '<label style="display:flex;align-items:center;gap:0.35rem;font-weight:normal;cursor:pointer">' +
-            '<input type="radio" name="agent-install-transport" value="winrm" checked> WinRM' +
+            '<input type="radio" name="agent-install-transport" value="ssh" checked> SSH' +
           '</label>' +
           '<label style="display:flex;align-items:center;gap:0.35rem;font-weight:normal;cursor:pointer">' +
-            '<input type="radio" name="agent-install-transport" value="ssh"> SSH' +
+            '<input type="radio" name="agent-install-transport" value="winrm"> WinRM' +
           '</label>' +
         '</div>' +
-        '<p class="hint" id="agent-install-transport-hint">WinRM must be enabled and reachable on port 5986 (HTTPS) or 5985 (HTTP).</p>' +
+        '<p class="hint" id="agent-install-transport-hint">SSH requires OpenSSH Server enabled on the Windows host. The credential needs admin rights to register the polaris-agent Windows Service.</p>' +
       '</div>' +
       '<div class="form-group" id="agent-install-cred-ssh-wrap">' +
         '<label for="agent-install-cred-ssh">SSH credential</label>' +
@@ -6214,7 +6305,7 @@ function _openInstallAgentModal(a) {
     // hidden and SSH is the only choice.
     function selectedTransport() {
       var checked = document.querySelector('input[name="agent-install-transport"]:checked');
-      return checked ? checked.value : "winrm";
+      return checked ? checked.value : "ssh";
     }
     // Keep the install-method picker + its description in sync with the OS.
     function refreshScriptRow() {
@@ -6450,10 +6541,23 @@ function assetSystemViewHTML(a) {
       '<label style="display:flex;align-items:center;gap:4px">To <input type="datetime-local" id="asset-system-to" class="form-input" style="padding:2px 6px"></label>' +
       '<button class="btn btn-sm btn-primary" id="btn-asset-system-custom-apply">Apply</button>' +
     '</div>' +
-    '<div id="asset-system-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+    // TWO charts under ONE range selector. CPU is a percentage and memory is
+    // a byte stack, so they cannot share an axis; they DO share a window,
+    // because they are two readings of one sample row and putting them on
+    // different ranges would only invite comparing them wrongly. Each chart
+    // owns its own stats line, per the chart canon.
+    '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin-bottom:0.15rem">CPU</div>' +
+    '<div id="asset-cpu-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
       '<span>Loading…</span>' +
     '</div>' +
-    '<div id="asset-system-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+    '<div id="asset-cpu-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
+      'Loading samples…' +
+    '</div>' +
+    '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin:0.75rem 0 0.15rem">Memory</div>' +
+    '<div id="asset-mem-summary" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">' +
+      '<span>Loading…</span>' +
+    '</div>' +
+    '<div id="asset-memory-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
       'Loading samples…' +
     '</div>' +
     '</div>' +
@@ -6547,7 +6651,9 @@ function _renderPhysicalEntities(entities) {
 }
 
 function _currentSystemTabRange() {
-  var chart = document.getElementById("asset-system-chart");
+  // The CPU container is the canonical carrier of the shared selection —
+  // both it and the memory container are stamped, and either would do.
+  var chart = document.getElementById("asset-cpu-chart");
   if (!chart) return "24h";
   if (chart.dataset.from && chart.dataset.to) {
     return { from: chart.dataset.from, to: chart.dataset.to };
@@ -6608,8 +6714,10 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   // re-fetch + their re-render and reuse the cached si for the chart's
   // stale banner and the latest-reading rows.
   var chartOnly = !!(opts && opts.chartOnly) && _assetSystemSiCache;
-  var chart   = document.getElementById("asset-system-chart");
-  var summary = document.getElementById("asset-system-summary");
+  var chart   = document.getElementById("asset-cpu-chart");
+  var memChart = document.getElementById("asset-memory-chart");
+  var summary = document.getElementById("asset-cpu-summary");
+  var memSummary = document.getElementById("asset-mem-summary");
   var ifaces  = document.getElementById("asset-system-interfaces");
   var storage = document.getElementById("asset-system-storage");
   var temps   = document.getElementById("asset-system-temps");
@@ -6620,19 +6728,24 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   var telOpts = (typeof range === "string" || !range) ? { range: range || "24h" } : range;
   // The sessions chart keeps its OWN selection (stamped by
   // _loadSessionsChartFor) — only the CPU & Memory container is stamped here.
-  if (telOpts.from && telOpts.to) {
-    chart.dataset.from = telOpts.from;
-    chart.dataset.to = telOpts.to;
-    delete chart.dataset.range;
-  } else {
-    chart.dataset.range = telOpts.range || "24h";
-    delete chart.dataset.from;
-    delete chart.dataset.to;
-  }
+  [chart, memChart].forEach(function (el) {
+    if (!el) return;
+    if (telOpts.from && telOpts.to) {
+      el.dataset.from = telOpts.from;
+      el.dataset.to = telOpts.to;
+      delete el.dataset.range;
+    } else {
+      el.dataset.range = telOpts.range || "24h";
+      delete el.dataset.from;
+      delete el.dataset.to;
+    }
+  });
   if (!silent) {
     chart.textContent = "Loading samples…";
+    if (memChart) memChart.textContent = "Loading samples…";
     if (!chartOnly) {
       if (summary) summary.innerHTML = "<span>Loading…</span>";
+      if (memSummary) memSummary.innerHTML = "<span>Loading…</span>";
       if (ifaces)  ifaces.innerHTML  = '<span class="empty-state">Loading…</span>';
       if (storage) storage.innerHTML = '<span class="empty-state">Loading…</span>';
       if (temps)   temps.innerHTML   = '<span class="empty-state">Loading…</span>';
@@ -6658,7 +6771,8 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
       _assetSystemSiCache = si;
     }
 
-    _renderSystemChart(chart, tel, asset, si);
+    _renderCpuChart(chart, tel, asset, si);
+    if (memChart) _renderMemoryChart(memChart, tel, asset, si);
     var sessionsChart = document.getElementById("asset-system-sessions-chart");
     if (sessionsChart) {
       var sessionsSel = _currentSessionsRange();
@@ -6671,7 +6785,8 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
         await _loadSessionsChartFor(assetId, sessionsSel, asset, { tel: sameWindow ? tel : null, silent: silent });
       }
     }
-    _renderSystemSummary(summary, tel, si);
+    _renderCpuSummary(summary, tel);
+    _renderMemorySummary(memSummary, tel);
     if (!chartOnly) {
       _renderInterfacesTable(ifaces, si, asset);
       _renderStorageTable(storage, si, asset);
@@ -6683,8 +6798,10 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   } catch (err) {
     if (!silent) {
       chart.textContent = "Error: " + (err.message || "failed to load");
+      if (memChart) memChart.textContent = "Error: " + (err.message || "failed to load");
       if (!chartOnly) {
         if (summary) summary.innerHTML = "";
+        if (memSummary) memSummary.innerHTML = "";
         if (ifaces)  ifaces.innerHTML  = '<p class="empty-state">' + escapeHtml(err.message || "failed to load") + '</p>';
         if (storage) storage.innerHTML = '<p class="empty-state">' + escapeHtml(err.message || "failed to load") + '</p>';
         if (temps)   temps.innerHTML   = '<p class="empty-state">' + escapeHtml(err.message || "failed to load") + '</p>';
@@ -6711,10 +6828,13 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   _scheduleAssetSystemRefresh(assetId, refAsset, ms);
 }
 
-// Renders the CPU & Memory window summary. The stats container below the
-// chart gets the canonical "<count> samples · <Label>: <value> · ..."
-// shape via _renderChartStats.
-function _renderSystemSummary(container, tel, si) {
+// Window summaries for the two telemetry charts. Each chart owns its own
+// stats line (chart canon) — they used to share one, which since the split
+// would have parked CPU's figures under the memory chart.
+//
+// The tier part rides the CPU line only: it describes the PAYLOAD, not
+// either metric, and printing it twice reads as two different tiers.
+function _renderCpuSummary(container, tel) {
   if (!container) return;
   if (!tel || !tel.stats || !tel.stats.total) {
     container.textContent = "No telemetry samples in this range yet.";
@@ -6722,15 +6842,48 @@ function _renderSystemSummary(container, tel, si) {
     return;
   }
   var s = tel.stats;
-  var telParts = [
+  var parts = [
     { label: "CPU avg", value: s.avgCpuPct != null ? s.avgCpuPct.toFixed(1) + "%" : "—" },
     { label: "CPU max", value: s.maxCpuPct != null ? s.maxCpuPct.toFixed(1) + "%" : "—" },
+  ];
+  var cores = _telemetryCoreCount(tel);
+  if (cores) parts.push({ label: "Cores", value: String(cores) });
+  var tierPart = _tierStatsPart(tel);
+  if (tierPart) parts.unshift(tierPart);
+  _renderChartStats(container, s.total, parts);
+}
+
+function _renderMemorySummary(container, tel) {
+  if (!container) return;
+  if (!tel || !tel.stats || !tel.stats.total) {
+    container.textContent = "No telemetry samples in this range yet.";
+    delete container.dataset.summary;
+    return;
+  }
+  var s = tel.stats;
+  var parts = [
     { label: "Mem avg", value: s.avgMemPct != null ? s.avgMemPct.toFixed(1) + "%" : "—" },
     { label: "Mem max", value: s.maxMemPct != null ? s.maxMemPct.toFixed(1) + "%" : "—" },
   ];
-  var telTierPart = _tierStatsPart(tel);
-  if (telTierPart) telParts.unshift(telTierPart);
-  _renderChartStats(container, s.total, telParts);
+  // Installed size, from the newest sample that carries one. A figure worth
+  // having next to a byte-scaled chart, and the axis ceiling's provenance.
+  var samples = (tel && tel.samples) || [];
+  for (var i = samples.length - 1; i >= 0; i--) {
+    if (typeof samples[i].memTotalBytes === "number") {
+      parts.push({ label: "Installed", value: _fmtBytes(samples[i].memTotalBytes) });
+      break;
+    }
+  }
+  _renderChartStats(container, s.total, parts);
+}
+
+// Widest per-core vector in the window (0 when the source reports none).
+function _telemetryCoreCount(tel) {
+  var n = 0;
+  ((tel && tel.samples) || []).forEach(function (s) {
+    if (Array.isArray(s.cpuCorePcts) && s.cpuCorePcts.length > n) n = s.cpuCorePcts.length;
+  });
+  return n;
 }
 
 // Returns true when the asset is a managed FortiSwitch or FortiAP whose
@@ -10286,11 +10439,87 @@ function _composeInterfaceScreenshot(parts) {
   }, "image/png");
 }
 
-// Combined CPU + Memory chart on a single 0–100% y-axis. CPU stays anchored
-// at 0–100 so spikes remain meaningful; memory plots over the same axis as
-// a percentage (computed from bytes when only bytes were sampled). One hit
-// target per timestamp drives a unified tooltip naming both values.
-function _renderSystemChart(container, data, asset, si) {
+// ─── CPU & Memory: two charts, one range selector ──────────────────────────
+//
+// Split in 2026-09. They used to share one 0–100% axis — a CPU line and a
+// memory line — and two things made that untenable at once:
+//
+//   * the Polaris Agent now reports PER-CORE CPU, which turns one line into
+//     as many as there are logical cores. A memory line drawn through that
+//     thicket cannot be followed.
+//   * memory is now a STACK IN BYTES — processes, buffers and cache adding
+//     up to what is actually in use, against the installed total. Bytes do
+//     not share an axis with a percentage.
+//
+// They keep ONE range selector, one custom-window panel and one fetch: both
+// read the same telemetry rows, so a second selector would only let an
+// operator put two halves of one reading on two different windows. Both
+// containers are stamped with the selection (`_loadSystemTabFor`), and both
+// are wired to the same drag-select handler.
+
+// Per-core hues are spread across an arc that DELIBERATELY EXCLUDES RED.
+// Red is the missed-poll colour on every chart in this app (_CHART_FAIL_COLOR)
+// and grey is the dependency-down colour — a core line in either would read
+// as an outage marker. The arc runs orange → yellow → green → cyan → blue →
+// violet and stops short of wrapping back into red.
+// The aggregate line — the series every threshold, automation and metric
+// actually reads, so it keeps the app accent and stays visually primary over
+// however many core lines sit behind it.
+var _CPU_AVG_COLOR = "var(--color-accent)";
+
+var _CPU_CORE_HUE_START = 35;
+var _CPU_CORE_HUE_END   = 320;
+
+function _cpuCoreColor(i, n) {
+  if (!n || n < 2) return "hsl(205,68%,50%)";
+  // i/n rather than i/(n-1): dividing by n-1 puts the last core on the end
+  // of the arc, which on a big core count is a near-neighbour of the first.
+  var h = Math.round(_CPU_CORE_HUE_START + (i / n) * (_CPU_CORE_HUE_END - _CPU_CORE_HUE_START));
+  // Alternating lightness is what keeps ADJACENT cores apart once the arc is
+  // crowded — a 64-core host gets under 5° of hue each, which is invisible;
+  // a 16-point lightness step is not.
+  return "hsl(" + h + ",68%," + (i % 2 === 0 ? 46 : 63) + "%)";
+}
+
+// Transposes the per-sample core vectors into one series per core.
+// Returns null when NO sample in the window carries per-core data, which is
+// the signal every caller uses to fall back to the aggregate-only chart.
+//
+// Tolerates a core count that changes mid-window (a VM resized, or a sample
+// truncated at the agent's report cap): the matrix is as wide as the widest
+// sample, and a core missing from a given sample simply has no point there
+// rather than a zero — a zero would draw an idle core that did not exist.
+function _cpuCoreSeries(samples) {
+  var maxCores = 0;
+  samples.forEach(function (s) {
+    if (Array.isArray(s.cpuCorePcts) && s.cpuCorePcts.length > maxCores) maxCores = s.cpuCorePcts.length;
+  });
+  if (maxCores === 0) return null;
+  var series = [];
+  for (var c = 0; c < maxCores; c++) series.push([]);
+  samples.forEach(function (s) {
+    if (!Array.isArray(s.cpuCorePcts)) return;
+    for (var c = 0; c < s.cpuCorePcts.length && c < maxCores; c++) {
+      var v = s.cpuCorePcts[c];
+      if (typeof v === "number" && isFinite(v)) series[c].push({ s: s, v: v });
+    }
+  });
+  return series;
+}
+
+// Which core the operator has isolated, if any. Kept on the container's
+// dataset rather than in a module variable so it survives the re-renders the
+// resize observer and the silent refresh tick fire — losing the isolation
+// every 60 seconds would make it useless for watching one hot core.
+function _cpuFocusedCore(container) {
+  var raw = container && container.dataset ? container.dataset.coreFocus : "";
+  if (raw == null || raw === "") return null;
+  var n = parseInt(raw, 10);
+  return isNaN(n) ? null : n;
+}
+
+// CPU chart — aggregate line plus one line per logical core, 0–100%.
+function _renderCpuChart(container, data, asset, si) {
   var samples = (data && data.samples) || [];
   if (samples.length === 0) {
     if (_isRestApiManagedNetworkDevice(asset, "telemetry")) {
@@ -10299,10 +10528,7 @@ function _renderSystemChart(container, data, asset, si) {
     } else {
       // An empty window is exactly when the stale banner matters most: the
       // chart has nothing to say, so "last successful update 7h ago" is the
-      // only thing that explains the gap. The banner is emitted inside this
-      // container on the data path below, so this early return used to swallow
-      // it — CPU & Memory stayed silent while every other section on the tab
-      // flagged the same stalled collection.
+      // only thing that explains the gap.
       container.innerHTML =
         _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt) +
         '<div style="text-align:center">No telemetry samples in this range yet.</div>';
@@ -10311,14 +10537,6 @@ function _renderSystemChart(container, data, asset, si) {
       container.style.justifyContent = "center";
     }
     return;
-  }
-
-  function memPctFromSample(s) {
-    if (typeof s.memPct === "number") return s.memPct;
-    if (typeof s.memUsedBytes === "number" && typeof s.memTotalBytes === "number" && s.memTotalBytes > 0) {
-      return (s.memUsedBytes / s.memTotalBytes) * 100;
-    }
-    return null;
   }
 
   var since = data && data.since;
@@ -10341,26 +10559,21 @@ function _renderSystemChart(container, data, asset, si) {
 
   var cpuValues = samples.map(function (s) { return { s: s, v: typeof s.cpuPct === "number" ? s.cpuPct : null }; })
                          .filter(function (e) { return typeof e.v === "number"; });
-  var memValues = samples.map(function (s) { return { s: s, v: memPctFromSample(s) }; })
-                         .filter(function (e) { return typeof e.v === "number"; });
+  var coreSeries = _cpuCoreSeries(samples);
+  var coreCount = coreSeries ? coreSeries.length : 0;
+  var focus = _cpuFocusedCore(container);
+  if (focus != null && (focus < 0 || focus >= coreCount)) focus = null;
 
   var yMin = 0, yMax = 100;
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, yMin, yMax);
 
-  // Missed polls (the telemetry stream has no per-sample success flag — a
-  // failed poll simply leaves no row) render the same way the response-time
-  // and interface charts render theirs: red dots at the baseline flanking the
-  // outage, with both lines fading into red across it instead of bridging it.
-  // The outage windows come from the response-time probe (payload `outages`,
-  // see _outageMarkers) rather than from the shape of the hole. Both lines
-  // dive together: CPU and memory ride the same telemetry row, so an outage is
-  // an outage for both, while a transport that reports CPU but not memory has
-  // no probe failure behind it and correctly bridges instead.
-  var unionTs = Object.keys(cpuValues.concat(memValues).reduce(function (acc, e) {
-    acc[+new Date(e.s.timestamp)] = true;
-    return acc;
-  }, {})).map(Number).sort(function (a, b) { return a - b; });
+  // Missed polls come from the response-time probe's own record, never from
+  // the shape of a hole (see _outageMarkers). The union feeding the collision
+  // guard is the aggregate series alone: the cores ride the same rows, so
+  // they can add no timestamp the aggregate does not already have.
+  var unionTs = cpuValues.map(function (e) { return +new Date(e.s.timestamp); })
+                         .sort(function (a, b) { return a - b; });
   var gapMarkers = _outageMarkers(data && data.outages, unionTs);
   var baselineY = padT + innerH;
   function failAwarePts(list) {
@@ -10375,35 +10588,21 @@ function _renderSystemChart(container, data, asset, si) {
   var failDots = _outageDotsSVG(gapMarkers, xFor, baselineY);
   var missHits = _outageHitsSVG(gapMarkers, xFor, padT, innerH);
 
-  // Build one full-height vertical lane per timestamp so the tooltip fires
-  // anywhere in the sample's column — including over a flatlined CPU line at
-  // the bottom of a chart whose memory line dominates the visible space.
-  // Lane width is the Voronoi span (midpoint to each neighbor) so coverage is
-  // continuous across the chart with no dead zones between samples.
-  var byTs = {};
-  cpuValues.forEach(function (e) {
-    var k = String(e.s.timestamp);
-    if (!byTs[k]) byTs[k] = { ts: e.s.timestamp, sample: e.s };
-    byTs[k].cpu = e.v;
+  // One full-height vertical lane per timestamp so the tooltip fires anywhere
+  // in the sample's column, including over a flatlined line at the bottom.
+  // Lane width is the Voronoi span so coverage is continuous.
+  var sortedHits = cpuValues.slice().sort(function (a, b) {
+    return new Date(a.s.timestamp).getTime() - new Date(b.s.timestamp).getTime();
   });
-  memValues.forEach(function (e) {
-    var k = String(e.s.timestamp);
-    if (!byTs[k]) byTs[k] = { ts: e.s.timestamp, sample: e.s };
-    byTs[k].mem = e.v;
-  });
-  var sortedHits = Object.keys(byTs).map(function (k) { return byTs[k]; })
-                         .sort(function (a, b) { return new Date(a.ts).getTime() - new Date(b.ts).getTime(); });
   var hits = sortedHits.map(function (h, i) {
-    var x = xFor(h.ts);
-    var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].ts) + x) / 2;
-    var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].ts) + x) / 2;
-    var s = h.sample;
+    var x = xFor(h.s.timestamp);
+    var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].s.timestamp) + x) / 2;
+    var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].s.timestamp) + x) / 2;
+    var cores = Array.isArray(h.s.cpuCorePcts) ? h.s.cpuCorePcts.join(",") : "";
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
-      ' data-ts="' + escapeHtml(String(h.ts)) + '"' +
-      ' data-cpu="' + (h.cpu != null ? h.cpu : "") + '"' +
-      ' data-mem="' + (h.mem != null ? h.mem : "") + '"' +
-      ' data-mb="' + (typeof s.memUsedBytes === "number" ? s.memUsedBytes : "") + '"' +
-      ' data-mt="' + (typeof s.memTotalBytes === "number" ? s.memTotalBytes : "") + '"/>';
+      ' data-ts="' + escapeHtml(String(h.s.timestamp)) + '"' +
+      ' data-cpu="' + (h.v != null ? h.v : "") + '"' +
+      ' data-cores="' + escapeHtml(cores) + '"/>';
   }).join("");
 
   var ticks = "";
@@ -10422,41 +10621,401 @@ function _renderSystemChart(container, data, asset, si) {
       '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
       '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
   }
-  var cpuColor = "var(--color-accent)";
-  var memColor = "#f4a261";
-  var legend =
-    '<g font-size="10" fill="currentColor">' +
-      '<rect x="' + (padL + 4)  + '" y="2" width="10" height="10" fill="' + cpuColor + '"/>' +
-      '<text x="' + (padL + 18) + '" y="11">CPU</text>' +
-      '<rect x="' + (padL + 60) + '" y="2" width="10" height="10" fill="' + memColor + '"/>' +
-      '<text x="' + (padL + 74) + '" y="11">Memory</text>' +
-    '</g>';
+
+  var clipId = _chartClipId("cpu");
+  var avgLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), _CPU_AVG_COLOR, clipId + "-avg");
+
+  // Core lines are plain polylines, NOT failure-aware: the aggregate already
+  // dives to the baseline across every outage and carries the red dots, and
+  // 64 lines all diving together would bury the marker they are supposed to
+  // make legible.
+  // Core lines thin out as the count rises. The aggregate is drawn at a fixed
+  // 1.5px by the shared `_failureAwareSeriesSVG`, so the only lever for
+  // keeping it visually primary — which it has to be, being the series every
+  // threshold reads — is how much ink the cores behind it use. At 4 cores
+  // they can be near-solid; at 64 the same opacity is a wall the aggregate
+  // disappears into.
+  var restOpacity = coreCount <= 4 ? 0.85 : coreCount <= 16 ? 0.62 : coreCount <= 48 ? 0.45 : 0.32;
+  var coreLinesSvg = "";
+  if (coreSeries) {
+    for (var c = 0; c < coreCount; c++) {
+      var pts = coreSeries[c];
+      if (pts.length === 0) continue;
+      var dimmed = focus != null && focus !== c;
+      var d = pts.map(function (e) { return xFor(e.s.timestamp) + "," + yFor(e.v); }).join(" ");
+      coreLinesSvg += '<polyline class="cpu-core-line" data-core="' + c + '" points="' + d +
+        '" fill="none" stroke="' + _cpuCoreColor(c, coreCount) + '"' +
+        ' stroke-width="' + (focus === c ? 2 : 1) + '"' +
+        ' opacity="' + (dimmed ? 0.1 : (focus === c ? 1 : restOpacity)) + '"/>';
+    }
+  }
+
+  // The aggregate goes ON TOP of the cores and gets the only dots, so it
+  // stays findable in the thicket. When a core is isolated the aggregate
+  // fades rather than disappearing — it is the number thresholds fire on.
+  var avgOpacity = focus != null ? 0.3 : 1;
 
   var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt);
-  var clipId = _chartClipId("system");
-  var cpuLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), cpuColor, clipId + "-cpu");
-  var memLine = _failureAwareSeriesSVG(failAwarePts(memValues), memColor, clipId + "-mem");
   container.innerHTML =
     chartStaleBanner +
+    _cpuLegendHTML(coreCount, focus, data, asset) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
-      '<defs>' + cpuLine.defs + memLine.defs + '</defs>' +
+      '<defs>' + avgLine.defs + '</defs>' +
       ticks + xTicks +
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
-        cpuLine.segments +
-        memLine.segments +
-        cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + cpuColor + '"/>'; }).join("") +
-        memValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + memColor + '"/>'; }).join("") +
+        coreLinesSvg +
+        '<g opacity="' + avgOpacity + '">' + avgLine.segments +
+          cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + _CPU_AVG_COLOR + '"/>'; }).join("") +
+        '</g>' +
         failDots +
-        // After `hits`, not before: this chart's hit targets are full-height
-        // Voronoi lanes, and a gap sits inside the neighboring sample's lane —
-        // so the narrow missed-poll rect has to paint last to win the hover.
+        // After `hits`, not before: the hit targets are full-height Voronoi
+        // lanes and a gap sits inside the neighbouring sample's lane, so the
+        // narrow missed-poll rect has to paint last to win the hover.
         hits +
         missHits +
       '</g>' +
-      legend +
+    '</svg>' + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  container.style.alignItems = "stretch";
+  container.style.justifyContent = "flex-start";
+  container.style.flexDirection = "column";
+  _stashChartGeometry(container, t0, t1, padL, innerW, W);
+
+  _wireCpuLegend(container, data, asset, si);
+
+  _wireChartTooltip(container, function (target) {
+    if (target.getAttribute("data-miss") === "1") return _missTooltipHTML(target);
+    var ts = target.getAttribute("data-ts");
+    var cpuRaw = target.getAttribute("data-cpu");
+    var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>' +
+      '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
+    var coresRaw = target.getAttribute("data-cores");
+    if (coresRaw) {
+      var vals = coresRaw.split(",").map(Number);
+      var focused = _cpuFocusedCore(container);
+      var rows;
+      if (focused != null && focused < vals.length) {
+        // An isolated core is the one the operator asked about — naming the
+        // six busiest instead would answer a question they did not ask.
+        rows = [{ i: focused, v: vals[focused] }];
+      } else {
+        // Busiest first, capped: a 64-core tooltip taller than the panel is
+        // not a tooltip. The cap is what makes per-core hover usable at all
+        // on a big host.
+        rows = vals.map(function (v, i) { return { i: i, v: v }; })
+                   .sort(function (a, b) { return b.v - a.v; })
+                   .slice(0, 6);
+      }
+      rows.forEach(function (r) {
+        html += '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' +
+          _cpuCoreColor(r.i, vals.length) + '"></span>Core ' + r.i + ': ' + r.v.toFixed(1) + '%</div>';
+      });
+      if (focused == null && vals.length > rows.length) {
+        html += '<div style="color:var(--color-text-tertiary)">+' + (vals.length - rows.length) + ' more (click a core in the legend)</div>';
+      }
+    }
+    return html;
+  });
+  _addChartScreenshotButton(container, "CPU", { yAxis: "Utilization (%)", getStats: _statsSummaryFrom("asset-cpu-summary") });
+  _observeChartResize(container, function (c) { _renderCpuChart(c, data, asset, si); });
+}
+
+// Legend for the CPU chart. Rendered as HTML above the SVG rather than as
+// <text> inside it because it has to WRAP — 64 core chips on one SVG line
+// run off the edge of the panel — and because the chips are interactive.
+function _cpuLegendHTML(coreCount, focus, data, asset) {
+  var chips = '<span class="cpu-legend-chip" data-core="avg" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px' +
+    (focus == null ? ';font-weight:600' : '') + '">' +
+    '<span style="width:10px;height:10px;border-radius:2px;background:' + _CPU_AVG_COLOR + '"></span>Average</span>';
+  for (var c = 0; c < coreCount; c++) {
+    chips += '<span class="cpu-legend-chip" data-core="' + c + '" title="Click to isolate core ' + c + '"' +
+      ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;opacity:' + (focus == null || focus === c ? 1 : 0.45) +
+      (focus === c ? ';font-weight:600' : '') + '">' +
+      '<span style="width:10px;height:10px;border-radius:2px;background:' + _cpuCoreColor(c, coreCount) + '"></span>' + c + '</span>';
+  }
+  // Why a range can show no cores even on an agent host: per-core data is
+  // kept on the DETAIL tier only. Saying so beats letting the operator
+  // conclude the agent stopped reporting them.
+  var note = "";
+  if (coreCount === 0 && data && data.tier && data.tier !== "detail" && _resolvedStreamPolling(asset, "telemetry") === "agent") {
+    note = '<div style="font-size:0.72rem;color:var(--color-text-tertiary);margin-top:2px">' +
+      'Per-core detail is not kept in ' + escapeHtml(data.tier) + ' buckets — showing the cross-core average. Pick a shorter range to see individual cores.' +
+      '</div>';
+  }
+  return '<div class="cpu-legend" style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
+    chips + '</div>' + note;
+}
+
+// Click a chip to isolate that core (click again, or click Average, to clear).
+// Re-renders from the same payload — no refetch.
+function _wireCpuLegend(container, data, asset, si) {
+  container.querySelectorAll(".cpu-legend-chip").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      var raw = chip.getAttribute("data-core");
+      var current = _cpuFocusedCore(container);
+      if (raw === "avg" || String(current) === raw) delete container.dataset.coreFocus;
+      else container.dataset.coreFocus = raw;
+      _renderCpuChart(container, data, asset, si);
+    });
+  });
+}
+
+// ─── Memory chart (stacked bands, bytes) ───────────────────────────────────
+//
+// The bands stack bottom-up in the order an operator reads them: what
+// processes hold, then what the kernel holds on their behalf (buffers, then
+// page cache). The stack's TOP is memory in use; the gap between it and the
+// axis ceiling is free memory, and the ceiling is the installed total. Swap
+// is not part of the stack — it is a different device, so it rides as its
+// own dashed line on the same byte axis.
+//
+// None of these colours may be red (missed poll) or grey (dependency down).
+var _MEM_BANDS = [
+  { key: "processes", label: "Processes", color: "#f4a261" }, // the memory colour this chart has always used
+  { key: "buffers",   label: "Buffers",   color: "#8ab17d" },
+  { key: "cache",     label: "Cache",     color: "#2a9d8f" },
+];
+var _MEM_SWAP_COLOR  = "#9c6ade";
+var _MEM_TOTAL_COLOR = "rgba(127,127,127,0.55)";
+
+// Shapes one sample into the band values the chart stacks.
+// Returns null when the sample carries no usable memory reading at all.
+//
+// Three shapes reach here, and the chart degrades through them rather than
+// demanding the richest one:
+//   full     — agent: every band present, guaranteed to close on the total.
+//   bytes    — SNMP / WinRM / vCenter: used + total, no breakdown. One band.
+//   pctOnly  — FortiOS: a percentage and nothing else. Handled by the caller,
+//              which switches the whole chart to a 0–100% axis.
+function _memBandsFor(s) {
+  var total = typeof s.memTotalBytes === "number" ? s.memTotalBytes : null;
+  var used  = typeof s.memUsedBytes === "number" ? s.memUsedBytes : null;
+  if (total == null || used == null) return null;
+  var buffers = typeof s.memBuffersBytes === "number" ? s.memBuffersBytes : null;
+  var cache   = typeof s.memCachedBytes === "number" ? s.memCachedBytes : null;
+  var free    = typeof s.memFreeBytes === "number" ? s.memFreeBytes : null;
+  var detailed = buffers != null || cache != null || free != null;
+  return {
+    total:     total,
+    processes: used,
+    buffers:   buffers || 0,
+    cache:     cache || 0,
+    // Free is DERIVED from the total rather than trusted from the row: it is
+    // the one band the chart does not draw (it is the gap above the stack),
+    // so a free figure that disagreed with total-minus-the-rest would show
+    // up in the tooltip contradicting the picture beside it.
+    free:      Math.max(0, total - used - (buffers || 0) - (cache || 0)),
+    detailed:  detailed,
+    swapUsed:  typeof s.swapUsedBytes === "number" ? s.swapUsedBytes : null,
+    swapTotal: typeof s.swapTotalBytes === "number" ? s.swapTotalBytes : null,
+  };
+}
+
+// Splits a run of points wherever an outage falls between two consecutive
+// samples, so a stacked band does not paint straight across a window in
+// which nothing was collected. Same evidence the lines use (the probe's own
+// failure record), never the size of the gap.
+function _memRuns(points, gapMarkers) {
+  if (!points.length) return [];
+  var cuts = (gapMarkers || []).map(function (m) { return m.t; }).sort(function (a, b) { return a - b; });
+  if (!cuts.length) return [points];
+  var runs = [], cur = [points[0]];
+  for (var i = 1; i < points.length; i++) {
+    var a = points[i - 1].t, b = points[i].t;
+    var broken = cuts.some(function (c) { return c > a && c < b; });
+    if (broken) { runs.push(cur); cur = []; }
+    cur.push(points[i]);
+  }
+  runs.push(cur);
+  return runs.filter(function (r) { return r.length > 0; });
+}
+
+function _renderMemoryChart(container, data, asset, si) {
+  var samples = (data && data.samples) || [];
+  if (samples.length === 0) {
+    if (_isRestApiManagedNetworkDevice(asset, "telemetry")) {
+      var telPolling = _assetMonitorStreamSource(asset, "telemetry").polling || "REST API";
+      container.innerHTML = _notAvailableViaPollingHTML("Telemetry", telPolling);
+    } else {
+      // NO stale banner here, deliberately. The banner describes the
+      // telemetry STREAM, and the CPU chart directly above renders one off
+      // the same `lastTelemetryAt` — two identical amber boxes inside one
+      // section read as two separate problems.
+      container.innerHTML = '<div style="text-align:center">No telemetry samples in this range yet.</div>';
+      container.style.flexDirection = "column";
+      container.style.alignItems = "stretch";
+      container.style.justifyContent = "center";
+    }
+    return;
+  }
+
+  var since = data && data.since;
+  var until = data && data.until;
+  var W = container.clientWidth || 600;
+  var H = 200;
+  // Wider gutter than the CPU chart: the ticks are byte figures ("12.5 GB"),
+  // not two-digit percentages.
+  var padL = 58, padR = 10, padT = 14, padB = 28;
+  var innerW = W - padL - padR;
+  var innerH = H - padT - padB;
+
+  var bounds = _chartTimeBounds(samples, since, until);
+  var t0 = bounds.t0, t1 = bounds.t1;
+  var spanMs = t1 - t0, oneDayMs = 86400000;
+  var pad2 = _chartPad2;
+  function fmtTick(ts) {
+    var d = new Date(ts);
+    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  }
+
+  var rows = samples.map(function (s) {
+    var b = _memBandsFor(s);
+    return b ? { t: +new Date(s.timestamp), ts: s.timestamp, b: b } : null;
+  }).filter(Boolean);
+
+  // Percentage-only sources (FortiOS) never produce a byte row. Fall back to
+  // the single 0–100% line this chart drew before the stack existed — the
+  // alternative is an empty panel on every firewall in the fleet.
+  if (rows.length === 0) {
+    _renderMemoryPctChart(container, data, asset, si);
+    return;
+  }
+
+  var anyDetailed = rows.some(function (r) { return r.b.detailed; });
+  var bands = anyDetailed ? _MEM_BANDS : [_MEM_BANDS[0]];
+  var anySwap = rows.some(function (r) { return r.b.swapTotal != null && r.b.swapTotal > 0; });
+
+  // Ceiling is the installed total, so the gap above the stack IS free
+  // memory and the axis does not rescale as usage moves. A window in which
+  // the total itself changed (a VM resized) takes the largest.
+  var maxTotal = 0;
+  rows.forEach(function (r) { if (r.b.total > maxTotal) maxTotal = r.b.total; });
+  // Swap can exceed installed RAM; the line must stay on the canvas.
+  rows.forEach(function (r) { if (r.b.swapUsed != null && r.b.swapUsed > maxTotal) maxTotal = r.b.swapUsed; });
+  var yMax = maxTotal > 0 ? maxTotal : 1;
+
+  var xFor = _chartXScale(padL, innerW, t0, t1);
+  var yFor = _chartYScale(padT, innerH, 0, yMax);
+
+  var unionTs = rows.map(function (r) { return r.t; }).sort(function (a, b) { return a - b; });
+  var gapMarkers = _outageMarkers(data && data.outages, unionTs);
+  var baselineY = padT + innerH;
+
+  // Build the stack. Each band's polygon runs left-to-right along its own
+  // cumulative top, then right-to-left back along the band below it.
+  var runs = _memRuns(rows, gapMarkers);
+  var areas = "";
+  bands.forEach(function (band, bi) {
+    runs.forEach(function (run) {
+      if (run.length === 0) return;
+      var topPts = [], botPts = [];
+      run.forEach(function (r) {
+        var below = 0;
+        for (var k = 0; k < bi; k++) below += r.b[bands[k].key] || 0;
+        var top = below + (r.b[band.key] || 0);
+        var x = xFor(r.ts);
+        botPts.push(x + "," + yFor(below));
+        topPts.push(x + "," + yFor(top));
+      });
+      botPts.reverse();
+      // A single-sample run has no width to fill; drop it rather than emit a
+      // degenerate polygon that paints as a 1px spike.
+      if (run.length < 2) return;
+      areas += '<polygon points="' + topPts.join(" ") + " " + botPts.join(" ") +
+        '" fill="' + band.color + '" fill-opacity="0.78" stroke="none"/>';
+    });
+  });
+
+  // Installed total, as a reference line at the ceiling. Without it the
+  // stack's headroom is just empty space and the operator has no anchor for
+  // how much of the machine is actually spoken for.
+  var totalLine = "";
+  runs.forEach(function (run) {
+    if (run.length < 2) return;
+    totalLine += '<polyline points="' + run.map(function (r) { return xFor(r.ts) + "," + yFor(r.b.total); }).join(" ") +
+      '" fill="none" stroke="' + _MEM_TOTAL_COLOR + '" stroke-width="1" stroke-dasharray="4 3"/>';
+  });
+
+  var swapLine = "";
+  if (anySwap) {
+    runs.forEach(function (run) {
+      var pts = run.filter(function (r) { return r.b.swapUsed != null; });
+      if (pts.length < 2) return;
+      swapLine += '<polyline points="' + pts.map(function (r) { return xFor(r.ts) + "," + yFor(r.b.swapUsed); }).join(" ") +
+        '" fill="none" stroke="' + _MEM_SWAP_COLOR + '" stroke-width="1.5" stroke-dasharray="2 2"/>';
+    });
+  }
+
+  var failDots = _outageDotsSVG(gapMarkers, xFor, baselineY);
+  var missHits = _outageHitsSVG(gapMarkers, xFor, padT, innerH);
+
+  var hits = rows.map(function (r, i) {
+    var x = xFor(r.ts);
+    var leftEdge  = i === 0 ? padL : (xFor(rows[i - 1].ts) + x) / 2;
+    var rightEdge = i === rows.length - 1 ? (W - padR) : (xFor(rows[i + 1].ts) + x) / 2;
+    return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
+      ' data-ts="' + escapeHtml(String(r.ts)) + '"' +
+      ' data-pr="' + r.b.processes + '" data-bu="' + r.b.buffers + '" data-ca="' + r.b.cache + '"' +
+      ' data-fr="' + r.b.free + '" data-to="' + r.b.total + '"' +
+      ' data-su="' + (r.b.swapUsed != null ? r.b.swapUsed : "") + '"' +
+      ' data-st="' + (r.b.swapTotal != null ? r.b.swapTotal : "") + '"' +
+      ' data-dt="' + (r.b.detailed ? "1" : "") + '"/>';
+  }).join("");
+
+  var ticks = "";
+  for (var i = 0; i <= 4; i++) {
+    var v = yMax * (i / 4);
+    var y = padT + innerH - (i / 4) * innerH;
+    ticks +=
+      '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBytes(v) + '</text>';
+  }
+  var xTicks = "";
+  for (var j = 0; j <= 5; j++) {
+    var tsTick = t0 + (t1 - t0) * (j / 5);
+    var xPos = padL + (j / 5) * innerW;
+    xTicks +=
+      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
+      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
+  }
+
+  function swatch(color, label, dashed) {
+    return '<span style="display:inline-flex;align-items:center;gap:4px">' +
+      (dashed
+        ? '<span style="width:12px;height:0;border-top:2px dashed ' + color + '"></span>'
+        : '<span style="width:10px;height:10px;border-radius:2px;background:' + color + '"></span>') +
+      escapeHtml(label) + '</span>';
+  }
+  var legendParts = bands.map(function (b) { return swatch(b.color, b.label, false); });
+  legendParts.push(swatch(_MEM_TOTAL_COLOR, "Installed total", true));
+  if (anySwap) legendParts.push(swatch(_MEM_SWAP_COLOR, "Swap / page file", true));
+  // A source with no breakdown gets told so, in the legend, rather than
+  // being left to look like a host whose cache is permanently zero.
+  var legendNote = anyDetailed ? "" :
+    '<span style="color:var(--color-text-tertiary)">(this source reports a total only — no cache/buffer breakdown)</span>';
+  var legend = '<div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
+    legendParts.join("") + legendNote + '</div>';
+
+  var clipId = _chartClipId("memory");
+  container.innerHTML =
+    legend +
+    '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
+      _chartClipDefs(clipId, padL, padT, innerW, innerH) +
+      ticks + xTicks +
+      _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
+      _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
+      '<g ' + _chartClipAttr(clipId) + '>' +
+        areas +
+        totalLine +
+        swapLine +
+        failDots +
+        hits +
+        missHits +
+      '</g>' +
     '</svg>' + CHART_TOOLTIP_HTML;
   container.style.position = "relative";
   container.style.alignItems = "stretch";
@@ -10465,25 +11024,140 @@ function _renderSystemChart(container, data, asset, si) {
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
 
   _wireChartTooltip(container, function (target) {
-    var ts = target.getAttribute("data-ts");
-    if (target.getAttribute("data-miss") === "1") {
-      return _missTooltipHTML(target);
+    if (target.getAttribute("data-miss") === "1") return _missTooltipHTML(target);
+    function num(attr) {
+      var raw = target.getAttribute(attr);
+      return raw === "" || raw == null ? null : Number(raw);
     }
-    var cpuRaw = target.getAttribute("data-cpu");
-    var memRaw = target.getAttribute("data-mem");
-    var mb = target.getAttribute("data-mb");
-    var mt = target.getAttribute("data-mt");
-    var memLine = '<div>Memory: ' + (memRaw !== "" ? Number(memRaw).toFixed(1) + "%" : "—");
-    if (mb !== "" && mt !== "") {
-      memLine += " (" + _fmtBytes(Number(mb)) + " / " + _fmtBytes(Number(mt)) + ")";
+    var total = num("data-to"), free = num("data-fr");
+    var detailed = target.getAttribute("data-dt") === "1";
+    var used = total != null && free != null ? total - free : null;
+    var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>';
+    function row(color, label, val) {
+      if (val == null) return "";
+      var pct = total ? " (" + ((val / total) * 100).toFixed(1) + "%)" : "";
+      return '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' + color + '"></span>' +
+        escapeHtml(label) + ': ' + _fmtBytes(val) + pct + '</div>';
     }
-    memLine += "</div>";
-    return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>' +
-      '<div>CPU: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</div>' +
-      memLine;
+    html += row(_MEM_BANDS[0].color, "Processes", num("data-pr"));
+    if (detailed) {
+      html += row(_MEM_BANDS[1].color, "Buffers", num("data-bu"));
+      html += row(_MEM_BANDS[2].color, "Cache", num("data-ca"));
+    }
+    html += row("transparent", "Free", free);
+    if (used != null) html += '<div style="margin-top:2px"><strong>In use: ' + _fmtBytes(used) + '</strong> of ' + _fmtBytes(total) + '</div>';
+    var su = num("data-su"), st = num("data-st");
+    if (su != null && st) {
+      html += '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' + _MEM_SWAP_COLOR + '"></span>' +
+        'Swap: ' + _fmtBytes(su) + ' / ' + _fmtBytes(st) + '</div>';
+    }
+    return html;
   });
-  _addChartScreenshotButton(container, "CPU & Memory", { yAxis: "Utilization (%)", getStats: _statsSummaryFrom("asset-system-summary") });
-  _observeChartResize(container, function (c) { _renderSystemChart(c, data, asset, si); });
+  _addChartScreenshotButton(container, "Memory", { yAxis: "Memory (bytes)", getStats: _statsSummaryFrom("asset-mem-summary") });
+  _observeChartResize(container, function (c) { _renderMemoryChart(c, data, asset, si); });
+}
+
+// Percentage-only fallback (FortiOS and anything else that reports memory as
+// a bare percentage). One line on a 0–100% axis — the pre-2026-09 behaviour,
+// kept because a stack cannot be built out of a single percentage.
+function _renderMemoryPctChart(container, data, asset, si) {
+  var samples = (data && data.samples) || [];
+  var vals = samples.map(function (s) { return { s: s, v: typeof s.memPct === "number" ? s.memPct : null }; })
+                    .filter(function (e) { return typeof e.v === "number"; });
+  if (vals.length === 0) {
+    container.innerHTML = '<div style="text-align:center">No memory samples in this range yet.</div>';
+    container.style.flexDirection = "column";
+    container.style.alignItems = "stretch";
+    container.style.justifyContent = "center";
+    return;
+  }
+
+  var since = data && data.since, until = data && data.until;
+  var W = container.clientWidth || 600;
+  var H = 200;
+  var padL = 50, padR = 10, padT = 14, padB = 28;
+  var innerW = W - padL - padR, innerH = H - padT - padB;
+  var bounds = _chartTimeBounds(samples, since, until);
+  var t0 = bounds.t0, t1 = bounds.t1;
+  var spanMs = t1 - t0, oneDayMs = 86400000;
+  var pad2 = _chartPad2;
+  function fmtTick(ts) {
+    var d = new Date(ts);
+    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  }
+  var xFor = _chartXScale(padL, innerW, t0, t1);
+  var yFor = _chartYScale(padT, innerH, 0, 100);
+  var baselineY = padT + innerH;
+  var unionTs = vals.map(function (e) { return +new Date(e.s.timestamp); }).sort(function (a, b) { return a - b; });
+  var gapMarkers = _outageMarkers(data && data.outages, unionTs);
+  var pts = vals.map(function (e) {
+    return { t: +new Date(e.s.timestamp), x: xFor(e.s.timestamp), y: yFor(e.v), ok: true };
+  });
+  _outagePts(gapMarkers, xFor, baselineY).forEach(function (mp) { pts.push(mp); });
+  pts.sort(function (a, b) { return a.t - b.t; });
+
+  var memColor = _MEM_BANDS[0].color;
+  var line = _failureAwareSeriesSVG(pts, memColor, _chartClipId("mempct") + "-l");
+
+  var ticks = "";
+  for (var i = 0; i <= 4; i++) {
+    var v = 100 * (i / 4);
+    var y = padT + innerH - (i / 4) * innerH;
+    ticks +=
+      '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
+  }
+  var xTicks = "";
+  for (var j = 0; j <= 5; j++) {
+    var tsTick = t0 + (t1 - t0) * (j / 5);
+    var xPos = padL + (j / 5) * innerW;
+    xTicks +=
+      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
+      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
+  }
+  var sorted = vals.slice().sort(function (a, b) { return new Date(a.s.timestamp).getTime() - new Date(b.s.timestamp).getTime(); });
+  var hits = sorted.map(function (h, i) {
+    var x = xFor(h.s.timestamp);
+    var leftEdge  = i === 0 ? padL : (xFor(sorted[i - 1].s.timestamp) + x) / 2;
+    var rightEdge = i === sorted.length - 1 ? (W - padR) : (xFor(sorted[i + 1].s.timestamp) + x) / 2;
+    return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
+      ' data-ts="' + escapeHtml(String(h.s.timestamp)) + '" data-mem="' + h.v + '"/>';
+  }).join("");
+
+  var clipId = _chartClipId("mempctc");
+  container.innerHTML =
+    '<div style="display:flex;gap:12px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
+      '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:' + memColor + '"></span>Memory used</span>' +
+      '<span style="color:var(--color-text-tertiary)">(this source reports a percentage only — no byte breakdown)</span>' +
+    '</div>' +
+    '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
+      _chartClipDefs(clipId, padL, padT, innerW, innerH) +
+      '<defs>' + line.defs + '</defs>' +
+      ticks + xTicks +
+      _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
+      _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
+      '<g ' + _chartClipAttr(clipId) + '>' +
+        line.segments +
+        vals.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + memColor + '"/>'; }).join("") +
+        _outageDotsSVG(gapMarkers, xFor, baselineY) +
+        hits +
+        _outageHitsSVG(gapMarkers, xFor, padT, innerH) +
+      '</g>' +
+    '</svg>' + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  container.style.alignItems = "stretch";
+  container.style.justifyContent = "flex-start";
+  container.style.flexDirection = "column";
+  _stashChartGeometry(container, t0, t1, padL, innerW, W);
+  _wireChartTooltip(container, function (target) {
+    if (target.getAttribute("data-miss") === "1") return _missTooltipHTML(target);
+    var raw = target.getAttribute("data-mem");
+    return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
+      '<div>Memory: ' + (raw !== "" ? Number(raw).toFixed(1) + "%" : "—") + '</div>';
+  });
+  _addChartScreenshotButton(container, "Memory", { yAxis: "Utilization (%)", getStats: _statsSummaryFrom("asset-mem-summary") });
+  _observeChartResize(container, function (c) { _renderMemoryChart(c, data, asset, si); });
 }
 
 // FortiGate active-session count chart. Reuses the telemetry-history payload
@@ -13431,10 +14105,44 @@ function _sdwanMembersTableHTML(members) {
     '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
-function _assetSdwanTabHTML(a, rules, links, members) {
+// Provenance + freshness strip carried by all three SD-WAN sections.
+//
+// Every section on this tab is a SNAPSHOT of what the gate last answered, and
+// each is a separate write on the system-info pass: a rules scrape can land
+// while the perf-SLA one fails, and vice versa. So each states its OWN stamp
+// rather than the asset's lastSystemInfoAt — otherwise an empty members table
+// reads "this gate has no WAN members" when it means "not answered since
+// yesterday". `lastAt`/`cadenceSec` come from the endpoint that served the
+// section (collectedAt / pollIntervalSec), so the number an operator reads is
+// the number the amber threshold compares against.
+//
+// The badge is the full stream badge, not a bare cadence chip: SD-WAN is
+// REST-only, and which transport and credential answered is the next question
+// after "is this current". `_wireSdwanTab` upgrades it to authoritative
+// provenance once /effective-monitor-settings lands.
+//
+// `extraHTML` sits between the heading and the badge (Performance SLA's
+// health-check selector); `rightHTML` is pushed to the far end of the row (its
+// range buttons). Both empty for the two tables, which then render as a plain
+// left-aligned strip.
+function _sdwanSectionHeaderHTML(a, title, lastAt, cadenceSec, neverText, extraHTML, rightHTML) {
+  var badge = _streamSourceBadgeHTML(a, "interfaces");
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin:0 0 0.5rem">' +
+      '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
+        '<h4 style="margin:0">' + escapeHtml(title) + '</h4>' +
+        (extraHTML || "") +
+        badge +
+        _freshnessStampHTML(lastAt, cadenceSec, neverText) +
+      '</div>' +
+      (rightHTML ? '<div style="display:flex;gap:6px">' + rightHTML + '</div>' : '') +
+    '</div>';
+}
+
+function _assetSdwanTabHTML(a, rules, links, members, meta) {
   rules = rules || [];
   links = links || [];
   members = members || [];
+  meta = meta || {};
   var html = '<div style="padding:0.25rem 0">';
 
   // ── SD-WAN Members table (above the rules) ──
@@ -13442,7 +14150,7 @@ function _assetSdwanTabHTML(a, rules, links, members) {
     html +=
       '<div data-shot-section="sdwanMembers" data-shot-label="SD-WAN Members">' +
       '<section style="margin-bottom:1.25rem">' +
-        '<h4 style="margin:0 0 0.5rem 0">SD-WAN Members</h4>' +
+        _sdwanSectionHeaderHTML(a, "SD-WAN Members", meta.membersAt, meta.membersPollSec, "never collected") +
         '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">WAN members (interfaces + overlays) with per-health-check status. The Health Check Status strip shows recent up/down per scrape; IP / link / bytes come from the latest interface poll.</p>' +
         _sdwanMembersTableHTML(members) +
       '</section>' +
@@ -13519,7 +14227,7 @@ function _assetSdwanTabHTML(a, rules, links, members) {
     html +=
       '<div data-shot-section="sdwanRules" data-shot-label="SD-WAN Rules">' +
       '<section style="margin-bottom:1.25rem">' +
-        '<h4 style="margin:0 0 0.5rem 0">SD-WAN Rules</h4>' +
+        _sdwanSectionHeaderHTML(a, "SD-WAN Rules", meta.rulesAt, meta.rulesPollSec, "never collected") +
         '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">Service rules in FortiGate priority order, with the currently selected member highlighted in <strong>Members</strong>. Zone-preference rules list each preferred zone\'s members grouped by zone. The active member is inferred from health-check state when FortiOS does not report the selected route directly.</p>' +
         '<div class="table-wrapper"><table id="sdwan-rules-table" class="data-table" style="font-size:0.82rem"><thead><tr>' +
           '<th data-col-id="id" style="width:48px">ID</th>' +
@@ -13554,24 +14262,22 @@ function _assetSdwanTabHTML(a, rules, links, members) {
     if (rules.length) {
       html += '<hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--color-border)">';
     }
-    // Provenance badge (polling method · cadence · tier) + freshness stamp, same
-    // as every other chart in the modal. SD-WAN rides the system-info pass, so
-    // the "interfaces" stream resolves the cadence and lastSystemInfoAt is the
-    // freshness. _wireSdwanTab upgrades the badge to authoritative provenance.
-    var perfSlaBadge = _streamSourceBadgeHTML(a, "interfaces");
-    var perfSlaUpdatedAt = a.lastSystemInfoAt
-      ? ('<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(new Date(a.lastSystemInfoAt).toLocaleString()) + '">updated ' + timeAgo(a.lastSystemInfoAt) + '</span>')
-      : '';
+    // Same header builder as the two tables above, so all three sections state
+    // provenance and age the same way. The stamp is the perf-SLA stream's own
+    // newest sample — the very `collectedAt` the members table states, both
+    // reading that one table — falling back to the asset's pass stamp only when
+    // the endpoint returned none. It used to read lastSystemInfoAt
+    // unconditionally, which reports a pass whose SD-WAN leg failed as a
+    // successful SD-WAN scrape. _wireSdwanTab upgrades the badge to
+    // authoritative provenance.
     html +=
       '<section>' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem">' +
-          '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
-            '<h4 style="margin:0">Performance SLA</h4>' +
-            '<select id="sdwan-perfsla-select" class="form-input" style="padding:2px 6px;font-size:0.82rem">' + options + '</select>' +
-            perfSlaBadge + (perfSlaBadge && perfSlaUpdatedAt ? ' ' : '') + perfSlaUpdatedAt +
-          '</div>' +
-          '<div style="display:flex;gap:6px">' + rangeBtns + '</div>' +
-        '</div>' +
+        _sdwanSectionHeaderHTML(
+          a, "Performance SLA",
+          meta.membersAt || a.lastSystemInfoAt || null, meta.membersPollSec, "never collected",
+          '<select id="sdwan-perfsla-select" class="form-input" style="padding:2px 6px;font-size:0.82rem">' + options + '</select>',
+          rangeBtns
+        ) +
         '<div id="sdwan-perfsla-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
         '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Latency (ms)</h5>' +
         '<div id="sdwan-latency-chart" class="sdwan-chart-box"></div>' +
@@ -16266,7 +16972,21 @@ function macEntriesTotal(macAddresses) {
 
 var _MAC_VIEW_VISIBLE = 3;
 
-function macAddressesViewHTML(macAddresses) {
+// Render one "remove this MAC" button, or '' when the viewer can't. Shared by
+// the visible rows and the "+N" overflow tooltip below so a MAC is no less
+// removable for having sorted past the fold. The click is caught by the
+// document-level _handleMacDeleteClick, so nothing here needs wiring.
+function macDeleteButtonHTML(assetId, m) {
+  if (!assetId || !canManageAssets()) return '';
+  return '<button type="button" class="mac-tooltip-delete" title="Remove this MAC from the asset" data-asset-id="' +
+    escapeHtml(assetId) + '" data-mac="' + escapeHtml(m.mac) + '"' +
+    (m.macEnd ? ' data-mac-end="' + escapeHtml(m.macEnd) + '"' : '') +
+    '>&times;</button>';
+}
+
+// `assetId` is what makes the rows removable — it is optional so any caller
+// that only wants the read-only list keeps working.
+function macAddressesViewHTML(macAddresses, assetId) {
   if (!macAddresses || macAddresses.length === 0) return '';
   var shown = macAddresses.slice(0, _MAC_VIEW_VISIBLE);
   var hidden = macAddresses.slice(_MAC_VIEW_VISIBLE);
@@ -16274,17 +16994,36 @@ function macAddressesViewHTML(macAddresses) {
   var rows = shown.map(function (m) {
     var sourceLabel = formatMacSource(m.source);
     var count = macEntryCount(m);
-    // Source/date first, MAC last and flush right (margin-left:auto): the value
-    // column is right-aligned, so keeping the address as the trailing item lines
-    // every MAC up on the same edge instead of letting a longer description
-    // shove it sideways as the slide-over is resized.
-    return '<div style="display:flex;gap:12px;align-items:center;padding:3px 0">' +
-      '<span style="font-size:0.75rem;color:var(--color-text-tertiary);min-width:0">' +
+    // Address on its own line, provenance in small type beneath it, both flush
+    // right. The original goal stands — "every MAC lines up on the same edge,
+    // and a longer description never shoves the address sideways" — but putting
+    // the two SIDE BY SIDE only met it while both fitted, and in this grid the
+    // value column measures ~200px, which is narrower than a single range
+    // entry's text on its own (~261px for "DD:EE:FF:00:00:00 – DD:EE:FF:00:00:2F").
+    //
+    // Competing for that width was the bug: the label could shrink to nothing
+    // (min-width:0) while the address could not shrink at all (flex-shrink:0),
+    // so the label was crushed to 0px and wrapped ONE CHARACTER PER LINE —
+    // measured at 526px tall for a single entry. Stacking removes the
+    // competition rather than re-balancing it, so neither part can squeeze the
+    // other however narrow the panel gets.
+    //
+    // A range is still allowed to wrap (two addresses and a dash legitimately
+    // need two lines here); a single MAC is not — an address broken across
+    // lines is unreadable and can't be copied by eye.
+    var isRange = !!m.macEnd;
+    return '<div style="padding:4px 0;text-align:right">' +
+      '<div style="display:flex;gap:6px;align-items:center;justify-content:flex-end">' +
+        '<code class="copy-cell" style="font-size:0.82rem;text-align:right;' +
+          (isRange ? 'white-space:normal;overflow-wrap:anywhere' : 'white-space:nowrap') +
+          '" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</code>' +
+        macDeleteButtonHTML(assetId, m) +
+      '</div>' +
+      '<div style="font-size:0.72rem;color:var(--color-text-tertiary);line-height:1.3">' +
         (count > 1 ? count + ' MACs &middot; ' : '') +
         (sourceLabel ? escapeHtml(sourceLabel) : '') +
         (m.lastSeen ? (sourceLabel ? ' &middot; ' : '') + formatDate(m.lastSeen) : '') +
-      '</span>' +
-      '<code class="copy-cell" style="font-size:0.82rem;margin-left:auto;flex-shrink:0;white-space:nowrap" title="Click to copy" data-copy="' + escapeHtml(macEntryText(m)) + '">' + escapeHtml(macEntryText(m)) + '</code>' +
+      '</div>' +
     '</div>';
   }).join("");
 
@@ -16302,6 +17041,7 @@ function macAddressesViewHTML(macAddresses) {
         '<span class="mac-tooltip-meta">' +
           '<span class="mac-tooltip-source">' + sourceLine + '</span>' +
         '</span>' +
+        macDeleteButtonHTML(assetId, m) +
       '</div>';
     }).join("");
     rows += '<div style="padding:3px 0">' +

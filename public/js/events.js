@@ -731,6 +731,14 @@ function getAlertsFormData() {
   overlay.addEventListener("click", function (e) { if (e.target === overlay) closePanel(); });
   filterSel.addEventListener("change", loadConflicts);
 
+  // Drag-resizable like every other slide-over (the panel markup carries the
+  // handle in events.html); width persists per user under its own key. The
+  // duplicate-IP card is the widest thing in here — six columns, two of them
+  // holding controls — so a fixed-width panel is what made it unreadable.
+  if (typeof initSlideoverResize === "function") {
+    initSlideoverResize(panel, "polaris.panel.width.conflicts");
+  }
+
   async function loadConflicts(silent) {
     if (!silent) body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';
     try {
@@ -1258,19 +1266,21 @@ function getAlertsFormData() {
         : '<span style="color:var(--color-text-tertiary);font-style:italic">unknown</span>';
       var newIpCell = isResolved
         ? '<td></td>'
-        : '<td style="white-space:nowrap">' +
-            '<input type="text" class="form-input" style="width:150px;display:inline-block" ' +
-              'placeholder="new IP address" data-dupip-input="' + escapeHtml(m.assetId || "") + '">' +
-            ' <button class="btn btn-primary btn-sm" data-dupip-apply data-conflict-id="' + c.id + '" ' +
-              'data-asset-id="' + escapeHtml(m.assetId || "") + '" ' +
-              'title="Assign this address to ' + escapeHtml(name) + ' and pin it">Apply</button>' +
+        : '<td class="conflict-action-cell">' +
+            '<div class="conflict-inline-controls">' +
+              '<input type="text" class="form-input" ' +
+                'placeholder="new IP address" data-dupip-input="' + escapeHtml(m.assetId || "") + '">' +
+              '<button class="btn btn-primary btn-sm" data-dupip-apply data-conflict-id="' + c.id + '" ' +
+                'data-asset-id="' + escapeHtml(m.assetId || "") + '" ' +
+                'title="Assign this address to ' + escapeHtml(name) + ' and pin it">Apply</button>' +
+            '</div>' +
           '</td>';
       // The other cause of a shared address: one device recorded twice. Keeping
       // THIS row absorbs the others through the same merge engine the asset
       // page's Merge modal uses.
       var mergeCell = isResolved
         ? '<td></td>'
-        : '<td style="white-space:nowrap">' +
+        : '<td class="conflict-action-cell">' +
             '<button class="btn btn-secondary btn-sm" data-dupip-merge data-conflict-id="' + c.id + '" ' +
               'data-asset-id="' + escapeHtml(m.assetId || "") + '" ' +
               'title="These records are the same device — keep ' + escapeHtml(name) + ' and absorb the other' +
@@ -1342,7 +1352,7 @@ function getAlertsFormData() {
         '<span class="conflict-card-subnet" style="font-size:0.78rem">' + members.length + ' assets</span>' +
       '</div>' +
       '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
-      '<div class="conflict-table" style="padding:0">' +
+      '<div class="conflict-table conflict-table-dupip" style="padding:0">' +
         '<table><thead><tr>' +
           '<th class="conflict-field">Asset</th>' +
           '<th>Type</th>' +
@@ -1570,6 +1580,11 @@ function getAlertsFormData() {
   closeBtn.addEventListener("click", closePanel);
   overlay.addEventListener("click", function (e) { if (e.target === overlay) closePanel(); });
   if (filterSel) filterSel.addEventListener("change", loadAlerts);
+
+  // Same resize contract as the Conflict Review panel beside it.
+  if (typeof initSlideoverResize === "function") {
+    initSlideoverResize(panel, "polaris.panel.width.reservationalerts");
+  }
 
   async function loadAlerts() {
     body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';

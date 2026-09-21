@@ -128,6 +128,9 @@ Read the pair together. An empty client list beside "updated 30s ago" means
 nobody is connected; the same empty list beside an amber "updated 2 days ago"
 means nobody has asked.
 
+The [SD-WAN](#sd-wan-fortigate-firewalls) tab's sections carry the same source
+and age pair, without a Refresh button.
+
 Refresh dials the device and re-reads its current state. It does **not** run a
 response-time probe, so it cannot mark an asset up or down, and it will not
 disturb an in-progress outage count. If it reports *nothing to refresh*, this
@@ -167,10 +170,56 @@ honest — another gate's ARP row never counts, two MACs at one address is
 `ambiguous` rather than a pick, a stale address claim is skipped, and evidence
 older than 24 hours is not evidence.
 
+#### Correcting a wrong MAC association
+
+**MAC Address** is the asset's primary MAC; **All MACs** below it is every
+address Polaris has ever seen this device advertise, newest first, each labelled
+with the source that reported it and when. Docks, dongles, randomised Wi-Fi
+addresses and ZTNA-relayed identities all show up here, which is why the list
+occasionally names a MAC that belongs to some *other* device — a shared dock
+moves between laptops, and a merge can bring a neighbour's history with it.
+
+With **Assets** set to *Write* or higher (the built-in **assetsadmin** role, and
+admin) each entry carries a **×**. It removes that MAC from this asset and
+promotes the best surviving address to primary — preferring the device's real
+NICs, as reported by the Polaris Agent, Intune or vCenter, over anything a gate
+merely *saw*. The same **×** is on the MAC column's hover tooltip on the list,
+but the slide-over is the only place it appears for an asset carrying a single
+MAC. Every removal is audited as `asset.mac_removed`.
+
+Removal is a **correction, not a block** ([rule 79](Business-Rules#rule-79)).
+Nothing is suppressed: if the network reports that address against this asset
+again, the next discovery run adds it back. When a MAC keeps returning, the
+association is live rather than historical — find what is actually transmitting
+it (usually a shared dock) instead of deleting the row repeatedly.
+
+One entry can cover many addresses. An interface scrape folds a device's
+sequentially-allocated port MACs into a single `AA:…:00 – AA:…:2F` range row, so
+removing it removes the whole block — the confirmation says how many. A range is
+a port block rather than an identity, so it is never promoted to primary; an
+asset whose only remaining entries are ranges correctly shows no primary MAC.
+
 ### System
 
 Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
+
+**CPU and Memory are two charts under one range selector** — a percentage and
+a byte scale cannot share an axis, but they are two readings of the same
+sample, so picking a range (or dragging a window on either) moves both. On a
+host running the [Polaris Agent](Polaris-Agent#per-core-cpu-and-the-memory-breakdown)
+the CPU chart draws one coloured line per logical core and the Memory chart
+stacks processes, buffers and cache against the installed total; every other
+transport draws a single line in each.
+
+Below the response-time section sits the **Polaris Agent** card: the installed
+agent's version, platform, last heartbeat, WebSocket state and privilege tier,
+with Upgrade / Uninstall. On a **server** or **workstation** with no agent yet
+the card is the deploy surface — an **Install Agent** button that pushes the
+agent over a stored SSH or WinRM credential
+([Polaris Agent](Polaris-Agent#installing)). Deploying needs
+`assets:fullwrite`; at `assets:read` the card still shows what is installed,
+without the buttons.
 
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose
@@ -313,6 +362,26 @@ gets. The stated figure is always the one that actually applies to this device.
 
 A historical range adds a *Last seen* column; Current omits it because every row
 shares one instant.
+
+### SD-WAN (FortiGate firewalls)
+
+Shown on a monitored FortiGate that reported SD-WAN data, with the **SD-WAN**
+toggle on its integration. Three sections: **SD-WAN Members** (the WAN members
+and overlays, grouped by zone, with per-health-check state), **SD-WAN Rules**
+(the service rules in the gate's own priority order, selected member
+highlighted) and **Performance SLA** (latency, jitter and packet-loss charts per
+health check).
+
+Each section states **where its data came from and how old it is** — the polling
+method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the
+reading is older than one cadence, exactly as on the snapshot tabs above. Each
+states its **own** age rather than the device's last poll: the rules table and
+the health-check metrics are separate reads on the same pass, and one can land
+while the other fails. A section that has never been collected says so instead
+of showing nothing.
+
+There is no Refresh button here — SD-WAN is read on the system-info pass, and
+the tab is showing you what that pass last brought back.
 
 ### Sources
 

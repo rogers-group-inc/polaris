@@ -1,4 +1,4 @@
-// telemetry.go — CPU% + memory bytes per sample.
+// telemetry.go — CPU% (aggregate AND per-core) + memory bytes per sample.
 //
 // Cross-platform via gopsutil: works the same on Linux (/proc/stat +
 // /proc/meminfo), macOS (host_statistics + sysctl), and Windows
@@ -6,10 +6,20 @@
 // instantaneous reading; the server stores them in a time-series and
 // the System tab renders the chart.
 //
-// CPU% is the cross-core average over a ~1s sampling interval —
-// gopsutil.cpu.Percent(interval, false) returns one float64 per call.
-// Anything finer (per-core, kernel/user split) would inflate the
-// payload without much operator value at this stage.
+// CPU% is sampled over a ~1s window and reported TWICE: the cross-core
+// average (cpuPct, which every other transport also reports and which every
+// threshold and automation reads) and the per-logical-core vector
+// (cpuCorePcts, agent-only). One gopsutil call produces both — Percent(d,
+// true) returns the per-core slice, and the aggregate is its mean, which is
+// exactly what Percent(d, false) computes internally. Calling both would
+// block two seconds instead of one and, worse, sample two different windows,
+// so the aggregate a threshold fires on would not be the mean of the cores
+// drawn beside it.
+//
+// Memory: the plain used/total pair every source sends, PLUS the four-band
+// breakdown (process / buffers / cache / free) and swap. The per-OS
+// reconciliation lives in meminfo.go — see the header there for why it is
+// the agent's job and not the chart's.
 //
 // Temperatures: gopsutil.host.SensorsTemperatures works on Linux
 // (thermal_zone* + hwmon), macOS (smc, when accessible), and is a
@@ -19,6 +29,7 @@
 package collectors
 
 import (
+	"math"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -27,6 +38,23 @@ import (
 
 	"github.com/polaris/agent/internal/transport"
 )
+
+// maxReportedCores caps the per-core vector. The server's Zod schema refuses
+// anything longer, and a host with more logical CPUs than this is far past
+// the point where 512 coloured lines say anything a chart can be read for —
+// the aggregate is still reported in full, so nothing is lost but the
+// per-core detail that was already unreadable.
+const maxReportedCores = 512
+
+// round1 keeps one decimal. A CPU percentage carries no meaningful precision
+// past that, and at 64 cores a minute the difference between 1 and 14
+// significant digits is most of the row's stored size.
+func round1(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return math.Round(v*10) / 10
+}
 
 // TelemetryOnce takes one CPU+memory snapshot plus available
 // temperatures and shapes it for the server. Returns a single sample
@@ -39,22 +67,57 @@ func TelemetryOnce() *transport.TelemetrySample {
 	// CPU% — 1-second sampling window for a meaningful number. Two
 	// consecutive Percent(0, ...) calls would give 0 most of the time
 	// (no time elapsed between samples). gopsutil's Percent(interval,
-	// false) blocks `interval` and returns the delta over that span.
-	if pct, err := cpu.Percent(1*time.Second, false); err == nil && len(pct) > 0 {
-		v := pct[0]
-		sample.CPUPct = &v
+	// true) blocks `interval` and returns one delta per logical core
+	// over that span.
+	if per, err := cpu.Percent(1*time.Second, true); err == nil && len(per) > 0 {
+		sum := 0.0
+		cores := make([]float64, 0, len(per))
+		for i, v := range per {
+			sum += v
+			if i < maxReportedCores {
+				cores = append(cores, round1(v))
+			}
+		}
+		// The aggregate is the mean over EVERY core, including any past the
+		// report cap — it has to keep meaning "this host's CPU" no matter
+		// how the vector was truncated.
+		avg := round1(sum / float64(len(per)))
+		sample.CPUPct = &avg
+		sample.CPUCorePcts = cores
 	}
 
 	// Memory bytes. We send both pct AND used/total — the server
 	// schema accepts either form, and the System tab chart prefers
 	// pct when both are present.
 	if vm, err := mem.VirtualMemory(); err == nil {
-		p := vm.UsedPercent
+		p := round1(vm.UsedPercent)
 		sample.MemPct = &p
 		used := vm.Used
 		total := vm.Total
 		sample.MemUsedBytes = &used
 		sample.MemTotalBytes = &total
+	}
+
+	// Memory breakdown + swap. Independent of the block above: a platform
+	// that can report used/total but not the bands sends the pair alone and
+	// the chart draws one line, exactly as it did before this existed.
+	if b := MemBreakdownOnce(); b.Ok {
+		// Re-send used/total from the breakdown so the four bands the chart
+		// stacks are guaranteed to close on the total it scales the axis to.
+		// Taking them from the VirtualMemory() call above instead would mix
+		// two readings and leave a visible sliver of unaccounted memory.
+		used, total := b.Used, b.Total
+		buffers, cached, free := b.Buffers, b.Cached, b.Free
+		sample.MemUsedBytes = &used
+		sample.MemTotalBytes = &total
+		sample.MemBuffersBytes = &buffers
+		sample.MemCachedBytes = &cached
+		sample.MemFreeBytes = &free
+		if b.SwapOk {
+			su, st := b.SwapUsed, b.SwapTotal
+			sample.SwapUsedBytes = &su
+			sample.SwapTotalBytes = &st
+		}
 	}
 
 	// Temperatures. Best-effort — many hosts don't expose sensors

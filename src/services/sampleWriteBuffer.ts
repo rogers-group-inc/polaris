@@ -42,6 +42,7 @@
  */
 
 import { prisma } from "../db.js";
+import { Prisma } from "../generated/prisma/client.js";
 import { logger } from "../utils/logger.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
 import { startSampleWriteTimer, setSampleBufferDepth } from "../metrics.js";
@@ -118,9 +119,19 @@ export interface TelemetrySampleRow {
   assetId: string;
   timestamp: Date;
   cpuPct: number | null;
+  // Per-logical-core utilisation (jsonb), agent-only. null = this source
+  // does not break CPU down by core; never `[]`, which would read as a host
+  // with no cores. Detail tier only — deliberately not rolled up.
+  cpuCorePcts: number[] | null;
   memPct: number | null;
   memUsedBytes: bigint | null;
   memTotalBytes: bigint | null;
+  // Memory breakdown bands (agent-only). Sent as a set or all null.
+  memBuffersBytes: bigint | null;
+  memCachedBytes: bigint | null;
+  memFreeBytes: bigint | null;
+  swapUsedBytes: bigint | null;
+  swapTotalBytes: bigint | null;
   sessionCount: number | null;
 }
 
@@ -411,7 +422,18 @@ async function writeBatch(key: BufferKey, batch: unknown[]): Promise<void> {
       await prisma.assetMonitorSample.createMany({ data: batch as MonitorSampleRow[] });
       return;
     case "telemetry":
-      await prisma.assetTelemetrySample.createMany({ data: batch as TelemetrySampleRow[] });
+      // `cpuCorePcts` is a NULLABLE jsonb column, and Prisma will not take a
+      // bare `null` for one — that spelling is reserved for "leave the field
+      // alone", so the only way to write a SQL NULL is the `Prisma.DbNull`
+      // sentinel. Translating here rather than in TelemetrySampleRow keeps
+      // every enqueue site (the agent push path, the server-side collectors)
+      // writing plain `null` and out of the ORM's null vocabulary.
+      await prisma.assetTelemetrySample.createMany({
+        data: (batch as TelemetrySampleRow[]).map((r) => ({
+          ...r,
+          cpuCorePcts: r.cpuCorePcts ?? Prisma.DbNull,
+        })),
+      });
       return;
     case "hardware":
       await prisma.assetHardwareSensorSample.createMany({ data: batch as HardwareSensorSampleRow[] });

@@ -105,6 +105,46 @@ beforeEach(async () => {
   ).id;
 });
 
+/**
+ * Backdate the endpoint's `AssetIpHistory` row — after proving it is there.
+ *
+ * `db.ts`'s asset extension fires `recordIpHistory()` **fire-and-forget** on
+ * every write staging `ipAddress`, so the upsert for the `beforeEach` create is
+ * still in flight when `prisma.asset.create` resolves. A bare `updateMany` can
+ * WIN that race: it ages nothing (or ages a row the upsert then re-bumps), the
+ * upsert lands with `lastSeen = now`, and the claim this test needs STALE reads
+ * as current — the endpoint gets parented after all. That is exactly the
+ * CI-only flake this helper exists to close; see `dropIpHistory` in
+ * ipUpstreamChain.test.ts, which is the same trap with a delete instead of an
+ * update. Do not replace either with the bare call.
+ *
+ * Waiting for the row to appear proves the single in-flight upsert has landed,
+ * so the update after it is final. The appearance is ASSERTED rather than
+ * allowed to fall through: a timed-out loop followed by `updateMany` updates
+ * nothing, the test goes green, and the flake comes back with no evidence
+ * pointing here. The `count` is asserted for the same reason.
+ */
+async function ageIpHistory(assetId: string, ip: string, when: Date): Promise<void> {
+  let appeared = false;
+  for (let i = 0; i < 150; i++) {
+    if ((await prisma.assetIpHistory.count({ where: { assetId, ip } })) > 0) {
+      appeared = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  expect(
+    appeared,
+    "db.ts recordIpHistory() never wrote an asset_ip_history row within 3s — " +
+      "aging now would race the in-flight upsert instead of following it",
+  ).toBe(true);
+  const { count } = await prisma.assetIpHistory.updateMany({
+    where: { assetId, ip },
+    data: { lastSeen: when },
+  });
+  expect(count).toBeGreaterThan(0);
+}
+
 d("Last Seen Firewall — the IPAM fallback", () => {
   it("names the gate that owns the containing network when nothing has sighted the device", async () => {
     const r = await resolveAssetUpstream(endpoint);
@@ -191,11 +231,10 @@ d("Endpoint dependency parent — the IPAM tier", () => {
     // The AssetIpHistory row is what claimIsFresh consults FIRST (the db.ts
     // extension bumps it on every write staging ipAddress, so it tracks
     // discovery cadence rather than change). Age it too, or the claim is
-    // current no matter how old Asset.lastSeen is.
-    await prisma.assetIpHistory.updateMany({
-      where: { assetId: endpoint },
-      data: { lastSeen: old },
-    });
+    // current no matter how old Asset.lastSeen is — and age it through
+    // ageIpHistory(), which follows the fire-and-forget upsert instead of
+    // racing it.
+    await ageIpHistory(endpoint, IP, old);
 
     await syncEndpoints();
     const rows = await prisma.assetDependencyParent.findMany({ where: { assetId: endpoint } });

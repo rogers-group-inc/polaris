@@ -11,6 +11,19 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 62](#rule-62) — An install is identified by something it persists, never by the name the runtime handed the process
 - [Rule 63](#rule-63) — The complexity bar belongs to the operator, and a password that no longer meets it is replaced on the far side of the second factor
 - [Rule 64](#rule-64) — A passkey is bound to the origin that issued its challenge, the install decides what a passkey is for, and it never names an account that does not already exist
+- [Rule 65](#rule-65) — A delivery test is a specimen of the alert, not a rehearsal against live inventory
+- [Rule 66](#rule-66) — A measurement window may be counted in readings, and then the hold counts poll groups
+- [Rule 67](#rule-67) — A missed response-time poll is the timeout it cost, and an outage resets the window
+- [Rule 68](#rule-68) — What Polaris ships and what the operator owns are two different kinds of MIB
+- [Rule 69](#rule-69) — A reservation count is of addresses held, and a release is history
+- [Rule 70](#rule-70) — Absence from a directory decommissions what the directory manages, and only when the read was whole
+- [Rule 71](#rule-71) — A figure Polaris reports about itself accounts for itself, and a broken measurement says so
+- [Rule 72](#rule-72) — A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success
+- [Rule 73](#rule-73) — Planned downtime is reported as planned, and a scoped view of a window still reports the whole window
+- [Rule 74](#rule-74) — A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the device's
+- [Rule 76](#rule-76) — Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it
+- [Rule 77](#rule-77) — A VIP describes an address; it does not claim it, and the status says every fact it has
+- [Rule 79](#rule-79) — An operator's removal of a MAC is a correction, not a suppression
 
 <a id="rule-60"></a>
 
@@ -1200,3 +1213,221 @@ control either way. A write made from there must also survive being off the Asse
 editor's post-save refresh calls `loadAssets()`, and `fetchAssetsPage` returns early with no table
 to repaint rather than throwing into a silent unhandled rejection behind a write that succeeded.
 
+
+## Rule 74 — A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the device's
+
+A DHCP reservation in Polaris carries a free-text `notes` column. On a network whose integration
+pushes reservations, that column is not free text at all: it is the body of the FortiOS
+`reserved-address` description, a field the device holds 255 characters of.
+
+Polaris does not write the notes alone into it. It writes
+
+```
+Polaris/<user>: <notes> [<hostname>]
+```
+
+and both halves of the wrapper are load-bearing. The origin prefix is what lets a FortiGate admin
+looking at the device's own DHCP page tell which reserved addresses Polaris owns and who pushed
+them. The bracketed hostname at the END is what
+`subnetRefreshService.extractHostnameFromDescription` reads back — it is the inverse of the
+composer, and the reason a Polaris rebuilt from an empty database can re-derive hostnames from the
+gate rather than losing them.
+
+### The budget is computed, because everything inside the 255 competes
+
+The username, the hostname and the notes all spend from the same 255. A service account called
+`svc-ipam-automation` and a hostname like `sw-01-building-c-idf-3` together cost nearly 60
+characters before the operator has typed anything. So the room left for notes is a function, not a
+number: `reservationNotesBudget` composes the description with a one-character note and subtracts
+that one character. Deriving it that way rather than restating the format means a later change to
+the wrapper does not need the arithmetic changed with it — and cannot silently leave the two
+disagreeing.
+
+### The old cap was wrong twice
+
+Until 2026-09-18 the composed string was capped at 64 characters and anything longer was sliced.
+The number came from FortiOS 6.2, whose description field held 35; 7.x holds 255, and 6.2 has been
+out of support for years.
+
+The first cost is the obvious one: an operator typed a comment, Polaris saved it in full, and the
+FortiGate received a third of it, with nothing said at either end. The Polaris row and the device
+row disagreed about the reservation's own description and neither surface admitted it.
+
+The second cost is worse, and is why this is a rule rather than a constant. A note long enough to
+be cut takes the trailing ` [<hostname>]` with it. `extractHostnameFromDescription` anchors its
+bracket branch to the end of the string, so on the next subnet refresh that branch stopped
+matching — and its legacy branch, `^Polaris(/user)?: (.+)$`, matched instead and returned the
+truncated NOTES as the device's hostname. A long enough comment renamed the thing it described.
+
+### So the cap is the device's, and the refusal is at the keyboard
+
+`RESERVED_ADDRESS_DESCRIPTION_MAX` is 255 — the device's number, not a compromise between device
+versions — and `assertReservationDescriptionFits` throws a 400 naming the budget, what was typed
+and how much to cut. It runs where nothing has happened yet: in `createReservationFlow`'s phase 3,
+beside the MAC and `fortigateDevice` checks and before the row is written, and in
+`updateReservation` before the MAC branch. Neither refusal has contacted a gate.
+
+Refusing rather than truncating is the whole point. A truncation is a decision about the
+operator's words made after they stopped looking; a 400 is the same decision handed back to them
+while they can still act on it.
+
+### Three boundaries, so the rule stays a rule and not a nuisance
+
+**Only push-eligible subnets are judged.** Off one, `notes` is a `@db.Text` column with no device
+field behind it, and a 300-character note is perfectly reasonable.
+
+**An edit is judged only when it touches `hostname` or `notes`**, and then against what the update
+will actually STORE — `undefined` means "not changing that field", so Prisma leaves the stored
+value in place and so does the check. Judging the effective value unconditionally would strand
+every row whose note predates this rule: the operator who came to change an expiry date would get
+a 400 about a field they never touched, on every save, forever. Clearing or shortening such a note
+is explicitly allowed, because the check reads the NEW value.
+
+**The truncating backstop stays.** Several paths write these descriptions without passing through a
+save the operator made: discovery-authored notes, the retry tick replaying a queued row, the
+FortiSwitch/FortiAP auto-reserve pass. Those rows are not refused — they are sliced, exactly as
+before. The `slice` is not dead code; it is what the gate boundary above hands off to.
+
+### The browser counts along, and is checked against the server
+
+`public/js/reservation-notes.js` is the shared budget module — the desktop IP panel's four
+reserve/edit modals and both mobile sheets render a live "N of M characters left" under the notes
+field, recomputed as the hostname is typed, and turn it into the refusal's wording once the note
+goes over. It is advisory: the service is what refuses, and an API client that never loads a page
+is held to exactly the same limit. It exists because the alternative is an operator typing 300
+characters into a field that will take 223 of them and learning so from an error.
+
+`tests/unit/reservationNotesBudgetDom.test.ts` asserts the module's `budgetFor` against the
+server's own `reservationNotesBudget` across four shapes, which is what stops the mirror drifting
+from the thing it mirrors.
+
+## Rule 76 — Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it
+
+The Windows onboarding script ends by putting a firewall rule on the endpoint, and the rule it
+writes has always been right: `Polaris SSH (TCP 22)`, inbound TCP/22, `-RemoteAddress` the
+Polaris server, `-Profile Any`. Every profile. Nothing about it was ever Private-only.
+
+The rule beside it was the problem, and it is not ours. `Add-WindowsCapability -Online -Name
+OpenSSH.Server` makes Windows create `OpenSSH-Server-In-TCP` on its way in, and Windows creates
+it for the **Private profile only**, accepting TCP/22 from **any source**. Both halves of that
+are wrong for a fleet, in opposite directions:
+
+- A **domain-joined** endpoint is on the Domain profile, where that rule does not apply. On a
+  host where no Polaris server address was configured — the script then wrote no rule of its
+  own — sshd was installed, enabled, running and completely unreachable. The service reports
+  healthy. The event log says nothing. This is the same silence business rule 72 was written
+  about, arriving one step further along.
+- On a **Private** network it opens port 22 to every host on that network. Firewall rules are
+  additive allows: a second rule cannot narrow the first. So `-RemoteAddress 10.0.0.42` on the
+  Polaris rule restricted nothing at all while this one was enabled, even though the generated
+  script's own header told the operator it `scopes inbound TCP/22 to 10.0.0.42` — and so did the
+  card in the UI, and so did the wiki.
+
+The fix is to stop leaving Windows' rule unsettled, and what "settled" means follows from
+whether the operator gave Polaris a server address:
+
+| Server address | What the run leaves behind |
+|---|---|
+| set | the scoped Polaris rule on every profile, and `OpenSSH-Server-In-TCP` **disabled** — the Polaris rule is then the only inbound path to sshd, and the scoping claim is true |
+| blank | nothing opened, and `OpenSSH-Server-In-TCP` **widened** from `Private` to `Domain, Private` — a domain-joined endpoint becomes reachable, and which sources may connect is exactly what Windows wrote |
+
+**Public is deliberately never added.** The defect is that a domain-joined endpoint cannot be
+reached; enabling an any-source TCP/22 rule on the profile a laptop picks up in an airport is a
+different thing entirely, and not one an onboarding script should do on the operator's behalf.
+
+Three details carry the weight. The lookup is by **Name**, wildcarded (`OpenSSH-Server-In-*`) —
+the DisplayName is localized and the suffix is build-dependent (`-NoScope` exists on some), and
+a lookup that finds nothing takes the count-0 branch rather than throwing under the script's
+`$ErrorActionPreference = 'Stop'`. Both paths are **idempotent**, because each re-reads the
+rule's own `Enabled` / `Profile` before acting: this script runs on every boot and every
+remediation cycle. And the **detection half still judges no firewall** — it is not told whether
+a server address was configured, so both settled states would read as drift half the time, which
+is the boundary business rule 72 drew and this rule does not cross.
+
+What is NOT in scope here is who may use SSH once it is reachable. The script never writes
+`sshd_config`: stock Windows OpenSSH has no `AllowUsers`/`AllowGroups` and password
+authentication on, so every account the endpoint lets log on can authenticate. The account on
+the card is only the one whose KEY is authorized. The firewall scope above is the whole of what
+limits who can reach the port, which is why leaving a wider rule beside a narrow one mattered.
+
+---
+
+<a id="rule-77"></a>
+
+## Rule 77 — A VIP describes an address; it does not claim it, and the status says every fact it has
+
+This started as an operator report with two halves that turned out to be one bug: *"I can't push a reservation to a specific IP because there is a VIP configured for that IP, but I don't see VIP in the status field for that IP."* Both halves are the same mistake in different places — treating "this address has a VIP" as the single answer to "what is this address", when business rule 23 had already established that an address carries several facts at once and that collapsing them is how Polaris ends up disagreeing with the FortiGate in front of the operator.
+
+**Why the VIP was invisible.** Three reasons stacked, and each one alone was enough. The Status column was a single-winner ladder, and the VIP rung sat sixth — behind Conflict, behind the two push states, behind DHCP Reservation and DHCP Lease. So the moment an address carried a VIP *and* anything else, the VIP stopped being reported: a VIP on a leased address read "DHCP Lease", and a VIP on an address Phase 3c had just raised its own fill-only conflict card about read "Conflict". Underneath that, `getSubnetIps`'s `toReservationDto` — the one DTO behind `GET /subnets/:id/ips`, and therefore behind the whole slide-in — did not ship `vipInfo` at all, so the VIP badge beside the hostname had nothing to render from and had never rendered for anyone. The same omission covered `pushStatus`, `pushQueuedAt`, `pushAttempts` and `pushError`, which is a second dead feature found by the same read: the panel has rungs for "Queued for push" and "Push failed" and a Retry button gated on them, and none of the three could fire, so a reservation queued against an unreachable gate rendered as an ordinary active row with nothing to say it had not landed. And third, on the row the operator was actually looking at, there was nothing to *put* in a second segment even if the column had had one: a `vip` row was the only authoritative row that could sit on an address the gate was also leasing and record nothing about the lease, because Phase 5's VIP branch fills a MAC and raises a fill-only conflict but writes no binding.
+
+**Why the reservation was refused.** `sourceType: "vip"` is in `DEVICE_OWNED_SOURCE_TYPES` and was not in `isSupersedableByCreate`, so the collision check 409'd. That was right about the verb and wrong about the noun: a VIP is device configuration and Polaris must not pretend to own it, but what a VIP states is *what happens to traffic for an address*, not *that the address is spoken for in the pool*. The mapped and realserver addresses behind a VIP are ordinary hosts — a web server behind a DNAT is exactly the kind of thing an operator wants a DHCP reservation for — and even the external address is one an operator may legitimately want held in IPAM so nothing else is handed it. `interface_ip` is the case that really cannot be claimed, and it stays refused: that address is live on an interface right now. So the two source types that had been travelling together since they were introduced part company here, on the one question where they differ.
+
+**The shape of the fix is business rule 23's, applied one column further.** Ownership is `sourceType`; how the gate serves it is `dhcpBinding`; the VIP is `vipInfo`; and no surface may collapse them. Concretely: the claim releases the VIP row with no device I/O (it has no push pointers and is not a `dhcp_lease`, so neither unpush branch nor the lease-expiry branch fires — the same pure-DB release a lease-backed FortiAP row already gets) and carries the snapshot onto the operator's new row, so the address still reports its VIP and the pill reads "VIP / Reserved". A `vip` row learns a DHCP entry at its own address through `decideVipDhcpBinding`, which is `decideInfraDhcpBinding` with the same three omissions kept verbatim and for the same reasons: `sourceType` is never flipped (only the succession path, which can see the VIP is *gone*, is allowed to decide that), `expiresAt` is never stamped (the row would expire on the gate's lease clock, be re-created next cycle, and churn), and `macAddress` is filled only into a blank and only from the entry, because that is the MAC the gate actually saw requesting the address. And the Status column composes: the VIP is a prefix, the allocation is the rest, and every standalone label is byte-for-byte what it was so nothing an operator learned to read has moved.
+
+**Two details that are easy to get wrong.** The first is the conflict card. Making a VIP address claimable means the next discovery cycle finds a `manual` row sitting on a VIP — which is precisely the condition Phase 3c raises a conflict on. Left alone, the feature's first visible effect would have been one conflict card per claimed VIP, every cycle, forever. This is the same trap `reservationBelongsToInfraDevice` was written for when managed switch and AP addresses became claimable (business rule 23), and it takes the same answer: a manual row whose `vipInfo` already names this same VIP by `name` + `device` is the feature working, so the row is stamped rather than raised. A manual row naming a *different* VIP, or none at all, is an unrelated collision and still gets its card. The second is the dot. It answers "is this address spoken for", and a VIP claims it — purple, device config — because making VIP addresses scannable down the column is the operator need the whole rule exists to serve. The two exceptions are the two states that ask somebody to *act*: a conflict and a permanently failed push keep their red, and only their label carries the VIP.
+
+**The per-subnet discover reads VIPs now, which is what the button was renamed for.** It is one `/api/v2/cmdb/firewall/vip` call on the same transport as the DHCP reads — the FortiManager proxy forwards REST to the device, so both integration types get the device's own encoding, and `parseVipRow` accepts all three encodings the CMDB row is known to arrive in (FortiOS REST, the FortiManager JSON-RPC fields-projected get, and the proxy) rather than one, because parsing only one is how proxy-mode mapped IPs were silently dropped before. The call is *settled* rather than awaited alongside the DHCP reads: an API token scoped away from the firewall CMDB is a normal deployment, and a gate that answers for DHCP must still complete its DHCP reconcile. A VIP table that could not be read skips every VIP decision — never "there are no VIPs" — and says so in both the toast and the `subnet.refresh` Event, which is business rule 53 applied to a single read rather than a whole device. Retirement (clearing a stale snapshot, converting a `vip` row that a DHCP entry has succeeded, releasing one that nothing else claims) is scoped to snapshots naming *this* gate, because RFC1918 space repeats behind different FortiGates and another gate's VIP is not this pass's to judge — the same per-device scoping business rule 17 puts on ARP presence evidence.
+
+**Not addressed here, deliberately:** whether the FortiGate itself will accept a `reserved-address` entry whose IP is a VIP external is the device's business, and its refusal already has a home — the push records `pushStatus` and the gate's own message in `pushError`, which the panel now actually renders. Polaris does not pre-judge it.
+
+---
+
+## Rule 79 — An operator's removal of a MAC is a correction, not a suppression
+
+An asset's MAC list is not a list of the device's NICs. It is every address anything has ever
+seen that device transmit as, which on a modern fleet includes docks and USB adapters (whose
+MAC follows the dock, not the laptop), randomized Wi-Fi addresses, and ZTNA-relayed
+identities — plus whatever a ghost-merge brought across from another record. So the list
+periodically names an address that belongs to some *other* device, and the operator needs a
+way to say so. `DELETE /assets/:id/macs/:mac` is that way.
+
+The question this rule settles is what "remove" means when discovery runs again.
+
+The tempting answer is that it means *never again*: tombstone the row, teach
+`reconcileMacAddresses` to skip it, done. It is tempting because the alternative sounds like
+the feature not working — the operator removes a MAC, a discovery pass runs, the MAC is back,
+and that reads as the button being broken. The design was offered in exactly those terms in
+2026-09 and **declined**, and the reasoning is what this rule records, because the next
+session to see a MAC come back will reach for the tombstone again.
+
+Polaris cannot distinguish a stale association from a live one, and the two want opposite
+treatment:
+
+- A MAC inherited from a bad merge, or from a DHCP lease on a decommissioned device, is
+  **never reported again**. Deleting the row is the whole fix; a tombstone adds nothing.
+- A MAC that comes **straight back** is being transmitted right now. Something on the wire is
+  presenting that address alongside this device — a dock shared between desks, a relayed
+  identity, a mis-cabled port. That is a fact about the network, and the only mechanism that
+  would make it stop appearing is one that makes Polaris lie about what it can see.
+
+A suppression helps in the first case, where nothing needed help, and in the second case
+produces a permanently wrong asset record that *looks* correct — the worst available outcome,
+because it is the one nobody re-examines. Leaving the removal one-shot means a returning MAC
+is a signal: it says the association is live, and points at a physical thing to go and find.
+
+Two obligations fall out of that choice.
+
+**The confirm has to say so.** A control that silently fails to stick is indistinguishable
+from a broken one, and the operator will click it repeatedly. The dialog states that discovery
+will re-add the address if the network reports it again, so a MAC that returns is legible as
+the documented behaviour rather than a defect. The same sentence is in the operator wiki.
+
+**The primary MAC has to be recomputed properly.** Removing the row the `Asset.macAddress`
+scalar pointed at forces a promotion, and that promotion is the same decision
+`selectPrimaryMac` makes everywhere else, so it goes through that helper rather than a local
+sort. A freshest-`lastSeen` sort — which is what the endpoint did until 2026-09-21 — breaks
+both of the helper's rules at once: it lets a dock sighting outrank the device's own
+Intune-reported NIC, and it can promote the start key of an interface-scrape `[mac, macEnd]`
+range, which is a block of switch-port addresses rather than a device identity. The range case
+is self-correcting in the ugliest way: the next discovery reconcile overwrites the scalar
+again, so the asset's primary MAC flickers between two values on a schedule. An asset whose
+only surviving entries are ranges correctly ends with `macAddress = null`.
+
+Finally, the grant. Correcting an inventory record is the assets administrator's act, so the
+route is `assets:write` — and it always was. What was wrong for as long as the endpoint
+existed is the browser: the single control that called it was gated on `canManageNetworks()`,
+i.e. `subnets:fullwrite`, so the built-in `assetsadmin` role could call the endpoint all day
+and never saw the button, while an admin holding every key saw it and never noticed. Too-loose
+gating announces itself with a 403; gating on another page's key is silent, and presents as a
+missing feature rather than a permissions bug. See `polaris-ui-canon` →
+`canon-shared-kit.md` for the general form.

@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **73 numbered rules**. Each one records a decision *and* the
+Polaris carries **74 numbered rules**. Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -219,8 +219,13 @@ error; the save refuses a scope excluding the caller.
 ### Rule 32
 **A reset condition answers "what has to become true again", so it starts as the
 trigger inverted — and it resolves where the alert lives.** While firing, the
-tree is the sole recovery authority. Resolution is dimension-first with a
-per-asset fallback. Reset leaves inherit the trigger's window. Event and change
+tree is the sole recovery authority. Resolution is dimension-first: a reset
+condition on the same kind of component clears that component's alert alone,
+and only a condition on something device-wide (CPU, memory, monitor status)
+clears them together — one healthy port never clears another port's alert. A
+reset condition also watches the same components the trigger does, including
+the unpinned PoE ports a fault condition covers (Rule 57). Reset leaves
+inherit the trigger's window. Event and change
 triggers get a **counterpart Event** instead — and a signal Polaris writes under
 one action for both directions is split so it has one (`capacity.severity_recovered`,
 `platform.lifecycle_recovered`), written only on a landing back at healthy, never
@@ -634,4 +639,141 @@ against yours, so the two agree wherever you are sitting.
 See [Maintenance-Windows](Maintenance-Windows) and
 [Dashboard](Dashboard#the-widget-library).
 
+### Rule 74
 
+**A field Polaris writes onto a device is budgeted where you type it, and the
+budget is the device's.**
+
+A DHCP reservation's **notes** are a plain comment on a network Polaris only
+reads. On a network it pushes to, they are the body of the FortiGate's
+`reserved-address` description, which the device holds 255 characters of — and
+Polaris spends part of that on the wrapper that makes the entry attributable:
+
+```
+Polaris/<user>: <notes> [<hostname>]
+```
+
+The prefix is how a FortiGate admin tells Polaris's entries from hand-made ones.
+The bracketed hostname at the end is how Polaris reads the hostname back off the
+gate if it ever has to rebuild from one.
+
+Everything in those 255 characters competes, so the room left for notes is
+**computed**, not fixed: a long service-account name or a long hostname leaves
+less. The form counts it down for you while you type.
+
+Going over is **refused** — the save fails, naming the budget, what you typed
+and how many characters to cut. Polaris does not truncate. It used to, at a much
+smaller limit, and it cost twice: a comment was cut on the firewall with nothing
+said at either end, and the cut took the trailing `[hostname]` with it, after
+which the next discovery read the tail of the note back as the device's
+hostname.
+
+Two things this does **not** do. It does not apply off a pushing network —
+there is no device field to fit. And it does not block an edit to some other
+field on a reservation whose note was written before the rule existed (or by
+discovery): only a save that actually changes the notes or the hostname is
+judged, so a row can always be shortened rather than being stuck.
+
+See [IPAM](IPAM#pushing-reservations-to-the-gate).
+
+### Rule 76
+
+**Access is granted on the network profile the endpoint is actually on, and
+scoping it counts for nothing while a wider rule stands beside it.**
+
+Installing the OpenSSH Server capability makes Windows create a firewall rule of
+its own, `OpenSSH-Server-In-TCP`. That rule accepts TCP/22 from **any source**,
+and it applies to the **Private profile only**. Both halves matter:
+
+- A **domain-joined** endpoint is on the Domain profile, so the rule never
+  applies to it. sshd is installed, running, and unreachable — the service looks
+  healthy and the event log says nothing.
+- On a Private network it opens port 22 to **every host on it**. Firewall rules
+  are additive allows, so a tightly scoped rule beside it narrows nothing.
+
+The Windows onboarding script settles it, and what "settled" means depends on
+whether you filled in **Polaris server address**:
+
+| Server address | Windows firewall after the run |
+|---|---|
+| set | `Polaris SSH (TCP 22)` allows TCP/22 from that address on **every** profile, and `OpenSSH-Server-In-TCP` is **disabled** — the Polaris rule is the only way in |
+| blank | nothing is opened, and `OpenSSH-Server-In-TCP` is widened from Private to **Domain, Private** so a domain-joined endpoint is reachable. Which sources may connect is unchanged, so restrict port 22 some other way |
+
+**Public is never added**, on either path: being unreachable on your own domain
+network is the problem being solved, and an any-source rule on the profile a
+laptop picks up in an airport is not part of it. Both paths are safe to re-run,
+and the detection script does not judge the firewall — it cannot know which of
+the two shapes to expect.
+
+See [Polaris Agent](Polaris-Agent#the-windows-firewall-rule-and-the-one-windows-writes-for-itself).
+
+### Rule 77
+
+**A VIP describes an address; it does not claim it — and the status says every
+fact it has.**
+
+A FortiGate virtual IP states what happens to traffic for an address. That is a
+third fact about the address, beside who holds it and how the gate hands it out
+([rule 23](#rule-23)), and treating it as the single answer caused two problems
+at once.
+
+**You could not reserve one.** A VIP row was refused like an interface address.
+But the addresses behind a VIP — its mapped addresses, a virtual server's
+realserver pool — are ordinary hosts that want a DHCP reservation, and holding
+the external one in the address register is a reasonable thing to want. Those
+are now reservable, and the VIP rides along: the new reservation carries it, the
+address keeps reporting it, and the row reads **VIP / Reserved**. Editing and
+releasing a VIP row are still refused, because that mapping belongs to the
+device. An interface address is still refused outright: it is live on an
+interface.
+
+**And you often could not see the VIP at all.** The Status column showed one
+fact per address, so a VIP on a leased address read "DHCP Lease" and a VIP on a
+conflicted address read "Conflict" — including, at worst, on an address whose
+reservation had just been refused *because* of that VIP. Status now reports the
+VIP first and what is happening to the address second: **VIP / Leased**, **VIP /
+Reserved**, **VIP / Conflict**, or **VS /…** for a load-balance virtual server.
+Labels on addresses with no VIP are unchanged. The exports of the address list
+use the same wording, so a PDF cannot disagree with the table it came from.
+
+The per-network **Discover** button reads the gate's VIP table as part of its
+pass. A VIP table it could not read is reported as not read — never as "there
+are no VIPs" — so nothing already recorded is retired on a failed read
+([rule 53](#rule-53)), and a VIP is only ever retired by the gate that owns it.
+
+See [IPAM](IPAM#addresses-that-carry-a-firewall-vip).
+
+### Rule 79
+
+**Removing a MAC from an asset is a correction, not a block.**
+
+An asset's MAC list is not a list of its network cards. It is every address
+anything has ever seen that device transmit as — which includes docks and USB
+adapters (the address follows the dock, not the laptop), randomised Wi-Fi
+addresses, and identities relayed through ZTNA, plus whatever a merge brought
+across from another record. So the list sometimes names an address belonging to
+a different device, and the **×** beside each entry is how you say so.
+
+What it does not do is blacklist the address. The row is deleted and nothing
+else; if the network reports that MAC against the asset again, the next
+discovery run adds it back. That is deliberate, and it is useful:
+
+- An address inherited from a bad merge, or from a lease on a device that is
+  gone, is never reported again — so deleting it is the whole fix.
+- An address that **comes straight back** is being transmitted right now. Some
+  physical thing is presenting it alongside this device. Suppressing it would
+  leave you with an asset record that is wrong but looks right.
+
+So a MAC that keeps returning is telling you the association is live, not that
+the button failed. Go and find the dock.
+
+Removing the entry that is currently the asset's primary **MAC Address**
+promotes the best survivor: the device's own cards — as reported by the Polaris
+Agent, Intune or vCenter — outrank anything a firewall or switch merely saw. A
+folded port range (`AA:…:00 – AA:…:2F`) is a block of switch ports rather than a
+device identity, so it is never promoted; an asset left holding only ranges
+correctly shows no primary MAC.
+
+Needs **Assets: Write** (the built-in *assetsadmin* role, and admin).
+
+See [Assets](Assets#correcting-a-wrong-mac-association).
