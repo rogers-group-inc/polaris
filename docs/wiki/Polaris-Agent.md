@@ -121,7 +121,7 @@ meaningless on Linux.
 
 | Script | Does |
 |---|---|
-| **Remediation** | installs and starts the SSH server, optionally creates the local admin account, installs the public key with the right ACL/ownership, optionally scopes inbound TCP/22 |
+| **Remediation** | installs and starts the SSH server, optionally creates the local admin account, installs the public key with the right ACL/ownership, optionally scopes inbound TCP/22, and on Windows settles the firewall profile (below) |
 | **Detection** | exit 0 = onboarded, 1 = remediate |
 
 **Pairing them under an Intune Remediation or an SCCM Configuration Baseline is
@@ -138,6 +138,40 @@ Platform differences that matter:
   since a bad one locks sudo out for everyone. The agent installer runs
   `sudo -n`, so key auth alone cannot install an agent. It deliberately does
   **not** install `openssh-server`.
+
+#### The Windows firewall rule, and the one Windows writes for itself
+
+Installing the OpenSSH Server capability makes Windows create its own rule,
+`OpenSSH-Server-In-TCP`, and that rule is **Private profile only** and accepts
+**any source**. Both halves of that are wrong for a fleet:
+
+- On a **domain-joined** endpoint the active profile is Domain, so the rule
+  never applies. sshd is installed, running and unreachable, with nothing in the
+  service or the event log to say why.
+- On a Private network it leaves port 22 open to **every host on it**. Firewall
+  rules are additive allows, so a tightly scoped Polaris rule alongside it
+  narrows nothing.
+
+What the remediation script does about it depends on **Polaris server address**:
+
+| Server address | Windows firewall after the run |
+|---|---|
+| **set** | `Polaris SSH (TCP 22)` allows TCP/22 from that address on **every** profile, and `OpenSSH-Server-In-TCP` is **disabled** — the Polaris rule is the only inbound path to sshd |
+| **blank** | nothing is opened; `OpenSSH-Server-In-TCP` is widened from Private to **Domain, Private** so a domain-joined endpoint is reachable. Which sources may connect is unchanged, so restrict port 22 some other way |
+
+**Public is deliberately never added.** Reachable-from-Domain is the problem
+being solved; an any-source TCP/22 rule on the profile a laptop picks up in an
+airport is not. Both paths are idempotent, and the detection script does not
+judge the firewall — it is not told which of the two shapes to expect.
+
+> **The script does not decide who may use SSH.** It never writes `sshd_config`,
+> so stock Windows OpenSSH rules apply: no `AllowUsers`/`AllowGroups`, and
+> password authentication on. Every account the endpoint lets log on can
+> authenticate once sshd is running — the account on the card is only the one
+> whose **key** is authorized. The firewall scope above is what limits who can
+> reach the port. On an endpoint that already ran sshd, the script leaves its
+> config alone: it starts the service only if stopped, **appends** the key, and
+> sets the service to start Automatically.
 
 ### The account Polaris signs in as
 
