@@ -44,7 +44,7 @@ import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
 import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
-import { shapeMacRows, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
+import { shapeMacRows, selectPrimaryMac, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter, TEXT_FILTER_OPS } from "../../utils/prismaTextFilter.js";
 import {
@@ -4750,7 +4750,13 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
   }
 });
 
-// DELETE /api/v1/assets/:id/macs/:mac — remove a MAC from an asset's history (network admin)
+// DELETE /api/v1/assets/:id/macs/:mac — remove a MAC from an asset's history
+// (assets admin). This is the operator's correction for a wrong association —
+// a dock or ZTNA-relayed sighting that got attached to the wrong device. It is
+// deliberately a ONE-SHOT removal, not a suppression: if the network reports
+// the same MAC against this asset again, the next discovery reconcile re-adds
+// it. `:mac` names the row's START key, so removing an interface-scrape RANGE
+// row removes the whole [mac, macEnd] block.
 router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
@@ -4768,15 +4774,22 @@ router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req
       throw new AppError(404, "MAC address not found on this asset");
     }
 
-    // Compute the new primary `Asset.macAddress` scalar after removal:
-    // most-recently-seen surviving MAC, or null if the deleted MAC was the
-    // last one. Side-table delete + scalar-column update run as a single
-    // transaction so the asset never points at a MAC that no longer exists.
+    // Compute the new primary `Asset.macAddress` scalar after removal, or null
+    // if nothing usable survives. Side-table delete + scalar-column update run
+    // as a single transaction so the asset never points at a MAC that no longer
+    // exists.
+    //
+    // This goes through `selectPrimaryMac` rather than a local freshest-wins
+    // sort so the promotion obeys the same two rules every other writer does:
+    // hardware-truth sources (agent / Intune / vCenter vNIC) outrank network
+    // sightings, and a RANGE row is never primary — it is a port block, not a
+    // device identity. The hand-rolled sort this replaced honoured neither, so
+    // removing an asset's primary MAC could promote the start of an
+    // interface-scrape range into `Asset.macAddress`, which the next discovery
+    // reconcile would then overwrite again.
     let primary = existing.macAddress;
     if (primary && primary.toUpperCase().replace(/-/g, ":") === normalized) {
-      const survivors = allRows.filter((m) => m.mac !== target.mac);
-      survivors.sort((a, b) => b.lastSeen.getTime() - a.lastSeen.getTime());
-      primary = survivors[0]?.mac ?? null;
+      primary = selectPrimaryMac(shapeMacRows(allRows.filter((m) => m.mac !== target.mac)));
     }
 
     const [, updated] = await prisma.$transaction([
@@ -4789,13 +4802,17 @@ router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req
       }),
     ]);
 
+    // Name the RANGE when the removed row was one — "removed MAC AA:…:00" for a
+    // row that took 48 port MACs with it reads as a far smaller act than it was.
+    const removedLabel = target.macEnd ? `MAC range ${target.mac} – ${target.macEnd}` : `MAC ${normalized}`;
     logEvent({
       action: "asset.mac_removed",
       resourceType: "asset",
       resourceId: id,
       resourceName: updated.hostname || updated.ipAddress || undefined,
       actor: requestActor(req),
-      message: `Removed MAC ${normalized} from asset "${updated.hostname || updated.ipAddress || "unknown"}"`,
+      message: `Removed ${removedLabel} from asset "${updated.hostname || updated.ipAddress || "unknown"}"`,
+      details: { mac: target.mac, macEnd: target.macEnd, source: target.source, primaryAfter: primary },
     });
 
     res.json(updated);
