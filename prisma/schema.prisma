@@ -1626,7 +1626,7 @@ model AssetAssociatedIp {
 // (assets:write) drops a single row so a wrong association can be corrected,
 // and re-promotes the primary through selectPrimaryMac. No tombstone is
 // recorded — a removed MAC the network reports again is re-added by the next
-// reconcile, by design (business rule 77).
+// reconcile, by design (business rule 79).
 //   - System-info scrape + Polaris Agent interfaces push, for EVERY scraped
 //     interface MAC, monitored or not (source="monitor-interface"; contiguous
 //     MACs coalesce into [mac, macEnd] RANGE rows via reconcileInterfaceMacs

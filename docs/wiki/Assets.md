@@ -187,7 +187,7 @@ merely *saw*. The same **×** is on the MAC column's hover tooltip on the list,
 but the slide-over is the only place it appears for an asset carrying a single
 MAC. Every removal is audited as `asset.mac_removed`.
 
-Removal is a **correction, not a block** ([rule 77](Business-Rules#rule-77)).
+Removal is a **correction, not a block** ([rule 79](Business-Rules#rule-79)).
 Nothing is suppressed: if the network reports that address against this asset
 again, the next discovery run adds it back. When a MAC keeps returning, the
 association is live rather than historical — find what is actually transmitting

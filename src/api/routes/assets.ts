@@ -4755,7 +4755,7 @@ router.post("/import-pdf", requirePermission("assets", "write"), async (req, res
 // a dock or ZTNA-relayed sighting that got attached to the wrong device. It is
 // deliberately a ONE-SHOT removal, not a suppression: if the network reports
 // the same MAC against this asset again, the next discovery reconcile re-adds
-// it. **Business rule 77** — do not add a tombstone here; the returning MAC is
+// it. **Business rule 79** — do not add a tombstone here; the returning MAC is
 // the signal that the association is live, and suppressing it would leave a
 // permanently wrong asset record that looks correct. `:mac` names the row's
 // START key, so removing an interface-scrape RANGE row removes the whole
@@ -4783,7 +4783,7 @@ router.delete("/:id/macs/:mac", requirePermission("assets", "write"), async (req
     // exists.
     //
     // This goes through `selectPrimaryMac` rather than a local freshest-wins
-    // sort (business rule 77) so the promotion obeys the same two rules every other writer does:
+    // sort (business rule 79) so the promotion obeys the same two rules every other writer does:
     // hardware-truth sources (agent / Intune / vCenter vNIC) outrank network
     // sightings, and a RANGE row is never primary — it is a port block, not a
     // device identity. The hand-rolled sort this replaced honoured neither, so

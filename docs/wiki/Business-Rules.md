@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **73 numbered rules**. Each one records a decision *and* the
+Polaris carries **74 numbered rules**. Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -707,7 +707,7 @@ the two shapes to expect.
 
 See [Polaris Agent](Polaris-Agent#the-windows-firewall-rule-and-the-one-windows-writes-for-itself).
 
-### Rule 77
+### Rule 79
 
 **Removing a MAC from an asset is a correction, not a block.**
 

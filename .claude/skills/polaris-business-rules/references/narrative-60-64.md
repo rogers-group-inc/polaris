@@ -1339,7 +1339,7 @@ limits who can reach the port, which is why leaving a wider rule beside a narrow
 
 ---
 
-## Rule 77 — An operator's removal of a MAC is a correction, not a suppression
+## Rule 79 — An operator's removal of a MAC is a correction, not a suppression
 
 An asset's MAC list is not a list of the device's NICs. It is every address anything has ever
 seen that device transmit as, which on a modern fleet includes docks and USB adapters (whose
