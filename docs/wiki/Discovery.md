@@ -69,6 +69,39 @@ duplicate-hostname ghost merge.
 conflict per asset** — accept adopts the discovered IP and releases the pin;
 reject keeps it and suppresses re-raise for that same IP.
 
+### When discovery removes an IP address
+
+Most projected fields are only ever filled in, never emptied: a run that cannot
+read a device's model leaves the stored model alone. **The IP address is the one
+exception.** A run that actually reached the device and found no address for it
+clears the stored one.
+
+This exists because a stale address is worse than a blank one. Polaris probes
+`IP Address`, labels charts by it, lists it in the IP panel and files the asset
+into a subnet by it — so a switch moved to a new management VLAN, a VM whose NIC
+was removed, or a renumbered firewall would otherwise keep pointing all of that
+at an address another device has since picked up.
+
+The removal is careful about what "found no address" means. It only happens when
+the device was genuinely read this run, so none of these clear an address:
+
+- a FortiGate reported **offline** — its details came from FortiManager's cached
+  copy, not the firewall;
+- a FortiSwitch or FortiAP the parent gate is **not currently connected to**;
+- an ESXi host vCenter shows as **disconnected**;
+- a VM whose **VMware Tools did not answer** (stopped, outdated, still booting);
+- an Azure Arc integration with **Fetch network profile** turned off — that
+  option is off by default, and with it off Polaris never asks for an address.
+
+Two more things stay put. An address you pinned by hand always wins, exactly as
+it does against any other discovery write. And endpoints discovered from DHCP or
+ARP are unaffected — a laptop that was switched off and missed the lease table
+keeps its address.
+
+When an address is removed you will see it in the asset's change history, and
+the asset's `IP Source` is cleared alongside it. The asset picks an address back
+up on its own as soon as discovery finds one for it.
+
 ### How a device is re-found across runs
 
 In order:

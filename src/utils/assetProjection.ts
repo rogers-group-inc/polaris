@@ -771,3 +771,77 @@ export function projectAssetFromSources(
 
   return { projected, provenance };
 }
+
+/**
+ * Stage a discovery run's verdict about an asset's address — including the
+ * verdict "it does not have one any more". Business rule 81.
+ *
+ * Every discovery update path used to blank-fill this field:
+ *
+ *     if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
+ *
+ * which can only ever ADD or CHANGE an address, never remove one. That made a
+ * stale address permanent. A switch re-addressed into a new management VLAN,
+ * a VM whose NIC was removed, a firewall whose mgmt interface was renumbered:
+ * discovery reads the device, finds no address for it, and the asset keeps
+ * displaying the old one indefinitely — which is worse than showing nothing,
+ * because everything downstream treats `Asset.ipAddress` as fact. Polaris
+ * probes it, charts it, hands it to the IP panel, and matches it into a
+ * subnet, all against an address that now belongs to whatever picked it up
+ * next.
+ *
+ * WHAT MAKES A NULL MEAN "GONE" RATHER THAN "WE DID NOT LOOK"
+ * This is the whole risk in the change, and it is why `readThisRun` is a
+ * required argument rather than a default. `projected.ipAddress === null` is
+ * produced by two very different situations:
+ *
+ *   • the run READ the device and neither it nor any other source of this
+ *     asset supplies an address — the device genuinely has none. Strip.
+ *   • the run did NOT read the device: an offline gate whose config came out
+ *     of FortiManager's cache, a disconnected ESXi host, a powered-off VM.
+ *     The absence is ours, not the device's. Leave the address alone.
+ *
+ * Treating the second as the first is how a single upstream hiccup empties
+ * the address off an entire fleet in one pass and takes monitoring down with
+ * it — every probe then failing with "Asset has no IP address". Each caller
+ * already holds the signal that separates them (`!memberDevice.offline`,
+ * `connected`, `poweredOn`, the AP's online flag), so it passes it rather
+ * than this function guessing.
+ *
+ * Note the projection is over ALL of the asset's sources, not just the one
+ * this run refreshed, so a null here already means "no source of any kind
+ * has an address for this device" — a stronger statement than "this
+ * integration did not report one", and the reason a multi-source asset does
+ * not lose its address because one of its sources went quiet.
+ *
+ * An operator IP pin (`Asset.ipOverride`) is NOT special-cased here: the
+ * Prisma extension in `src/db.ts` re-asserts a pin over any write staging
+ * `ipAddress`, and a staged null is re-asserted silently with no conflict.
+ * The pin wins, as it should — an operator who typed an address in has
+ * already overruled discovery about this exact field.
+ */
+export function applyProjectedIp(
+  updateData: Record<string, unknown>,
+  projectedIp: string | null,
+  opts: {
+    /**
+     * Did this run actually reach the device? False for a cached / offline /
+     * disconnected read, which must never strip. See the header.
+     */
+    readThisRun: boolean;
+    /** Provenance label for a non-null address; ignored on a strip. */
+    ipSource?: string | null;
+  },
+): void {
+  if (projectedIp !== null) {
+    updateData.ipAddress = projectedIp;
+    if (opts.ipSource !== undefined) updateData.ipSource = opts.ipSource;
+    return;
+  }
+  if (!opts.readThisRun) return;
+  // The device was read and has no address. `ipSource` goes with it — a
+  // provenance left behind on a null address claims a source for a value
+  // that is not there, and the Sources tab renders it.
+  updateData.ipAddress = null;
+  updateData.ipSource = null;
+}

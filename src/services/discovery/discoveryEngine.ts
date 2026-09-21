@@ -31,7 +31,7 @@ import {
 import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
 import { ENTRA_ASSET_TAG_PREFIX, AD_ASSET_TAG_PREFIX, AD_GUID_TAG_PREFIX, SID_TAG_PREFIX } from "../../utils/assetSourceTags.js";
 import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanagerService.js";
-import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
+import { projectAssetFromSources, applyProjectedIp, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { scoreDhcpClaim, claimBeats, type DhcpClaimScore } from "../../utils/dhcpClaimFreshness.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
@@ -3517,9 +3517,17 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         if (haMembers && !member.isPrimary) {
           updateData.ipAddress = null;
           updateData.ipSource = null;
-        } else if (fwProjected.ipAddress !== null) {
-          updateData.ipAddress = fwProjected.ipAddress;
-          updateData.ipSource = memberDevice.hostname || fgHostname || integrationType;
+        } else {
+          // `readThisRun` is the OFFLINE flag inverted, and it is the whole
+          // safety of the strip (business rule 81): an offline gate's payload
+          // came out of FortiManager's cached CMDB rather than the device, so
+          // a missing mgmt address there is FMG's gap and not the gate's. The
+          // same flag already governs `bumpLastSeen` a few lines up, for the
+          // identical reason.
+          applyProjectedIp(updateData, fwProjected.ipAddress, {
+            readThisRun: !memberDevice.offline,
+            ipSource: memberDevice.hostname || fgHostname || integrationType,
+          });
         }
         // Operator-typed coordinates (coordSource="manual", set via the asset
         // edit form) outrank the projected device-side coords — skip the
@@ -4085,10 +4093,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         if (swProjected.manufacturer !== null) updateData.manufacturer = swProjected.manufacturer;
         if (swProjected.serialNumber !== null) updateData.serialNumber = swProjected.serialNumber;
         if (swProjected.learnedLocation !== null) updateData.learnedLocation = swProjected.learnedLocation;
-        if (swProjected.ipAddress !== null) {
-          updateData.ipAddress = swProjected.ipAddress;
-          updateData.ipSource = sw.device || integrationType;
-        }
+        // A DISCONNECTED managed switch is reported from the parent gate's
+        // stored roster, not read from the switch — so its missing address is
+        // the roster's silence, not the switch giving one up. Only a switch
+        // the gate currently holds a FortiLink session to may have its
+        // address stripped (business rule 81).
+        applyProjectedIp(updateData, swProjected.ipAddress, {
+          readThisRun: !!sw.connected,
+          ipSource: sw.device || integrationType,
+        });
         // Backfill macAddress + AssetMacAddress when we know the switch's
         // management MAC from this discovery and the existing asset doesn't
         // carry it yet. Mirrors the merge pattern Phase 7 uses for endpoints
@@ -4382,10 +4395,13 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         if (apProjected.manufacturer !== null) updateData.manufacturer = apProjected.manufacturer;
         if (apProjected.serialNumber !== null) updateData.serialNumber = apProjected.serialNumber;
         if (apProjected.learnedLocation !== null) updateData.learnedLocation = apProjected.learnedLocation;
-        if (apProjected.ipAddress !== null) {
-          updateData.ipAddress = apProjected.ipAddress;
-          updateData.ipSource = ap.device || integrationType;
-        }
+        // Same reasoning as the switch: an offline AP is a row in the
+        // controller's table, not a device that answered. `apOnline` is the
+        // flag that already gates `bumpLastSeen` above (business rule 81).
+        applyProjectedIp(updateData, apProjected.ipAddress, {
+          readThisRun: apOnline,
+          ipSource: ap.device || integrationType,
+        });
         clampAcquiredToLastSeen(updateData, existingAsset);
         await prisma.asset.update({ where: { id: existingAsset.id }, data: updateData });
         logDiscoveryAssetUpdated(apBefore, updateData, existingAsset.id, ap.name || ap.serial, {
@@ -7928,7 +7944,13 @@ async function syncArcDevices(
       if (projected.manufacturer !== null) updateData.manufacturer = projected.manufacturer;
       if (projected.model !== null) updateData.model = projected.model;
       if (projected.learnedLocation !== null) updateData.learnedLocation = projected.learnedLocation;
-      if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
+      // Arc only carries addresses when `fetchNetworkProfile` is on — it is
+      // OFF by default because it costs one extra GET per machine. With it
+      // off this run never asked for an address, so a null says nothing and
+      // must not strip (business rule 81).
+      applyProjectedIp(updateData, projected.ipAddress, {
+        readThisRun: integrationConfig?.fetchNetworkProfile === true,
+      });
 
       // NOTE: this sync deliberately never writes `status`. Unlike Entra's
       // accountEnabled (a lifecycle fact that maps to `decommissioned`), an
@@ -9965,7 +9987,10 @@ export async function syncVcenterDevices(
       };
       if (projected.hostname !== null) updateData.hostname = projected.hostname;
       if (projected.os !== null) updateData.os = projected.os;
-      if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
+      // A DISCONNECTED ESXi host is one vCenter is reporting from its own
+      // records; its `resolvedIp` comes from resolving the host's vCenter
+      // name in DNS, so a failure there is ours (business rule 81).
+      applyProjectedIp(updateData, projected.ipAddress, { readThisRun: connected });
       // Layer stamp only on vcenter-typed assets — never clobber a Fortinet-
       // computed layer on some exotic merge target.
       if (existing.assetType === "hypervisor") updateData.dependencyLayer = 1;
@@ -10126,7 +10151,12 @@ export async function syncVcenterDevices(
         if (projected.osVersion !== null) updateData.osVersion = projected.osVersion;
         if (projected.manufacturer !== null) updateData.manufacturer = projected.manufacturer;
         if (projected.model !== null) updateData.model = projected.model;
-        if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
+        // A VM's address comes from VMware Tools, which needs the guest
+        // running AND the guest-identity call to answer — `guestIdentityRead`
+        // is set only when it did. Gating on `poweredOn` alone would strip the
+        // address off every VM whose Tools are stopped or out of date, which
+        // is a large fraction of a real estate (business rule 81).
+        applyProjectedIp(updateData, projected.ipAddress, { readThisRun: vm.guestIdentityRead });
         // Type flip only from the "other" default — a directory-typed
         // workstation/server keeps its class (and thus its monitoring
         // class-block); the Virtualization section marks it as a VM anyway.
