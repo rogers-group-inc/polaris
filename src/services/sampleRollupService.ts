@@ -349,6 +349,8 @@ function sqlTelemetryHourly(): string {
       "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
       "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
       "avgSwapUsedBytes", "lastSwapTotalBytes",
+      "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
+      "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
       "avgSessionCount", "minSessionCount", "maxSessionCount"
     )
     SELECT
@@ -371,6 +373,12 @@ function sqlTelemetryHourly(): string {
       AVG("memBuffersBytes")::bigint, AVG("memCachedBytes")::bigint, AVG("memFreeBytes")::bigint,
       AVG("swapUsedBytes")::bigint,
       (ARRAY_AGG("swapTotalBytes" ORDER BY "timestamp" DESC) FILTER (WHERE "swapTotalBytes" IS NOT NULL))[1],
+      -- The vCenter bands, averaged the same way. They cannot appear in the
+      -- same bucket as the agent bands above unless the asset's telemetry
+      -- source changed mid-hour, which is the one case both sets go non-null
+      -- and is already the documented caveat for a mixed bucket.
+      AVG("memPrivateBytes")::bigint, AVG("memSharedBytes")::bigint, AVG("memBalloonedBytes")::bigint,
+      AVG("memSwappedBytes")::bigint, AVG("memCompressedBytes")::bigint, AVG("memConsumedBytes")::bigint,
       AVG("sessionCount"), MIN("sessionCount"), MAX("sessionCount")
     FROM "asset_telemetry_samples"
     WHERE "timestamp" >= $1
@@ -391,6 +399,12 @@ function sqlTelemetryHourly(): string {
       "avgMemFreeBytes"    = EXCLUDED."avgMemFreeBytes",
       "avgSwapUsedBytes"   = EXCLUDED."avgSwapUsedBytes",
       "lastSwapTotalBytes" = EXCLUDED."lastSwapTotalBytes",
+      "avgMemPrivateBytes"    = EXCLUDED."avgMemPrivateBytes",
+      "avgMemSharedBytes"     = EXCLUDED."avgMemSharedBytes",
+      "avgMemBalloonedBytes"  = EXCLUDED."avgMemBalloonedBytes",
+      "avgMemSwappedBytes"    = EXCLUDED."avgMemSwappedBytes",
+      "avgMemCompressedBytes" = EXCLUDED."avgMemCompressedBytes",
+      "avgMemConsumedBytes"   = EXCLUDED."avgMemConsumedBytes",
       "avgSessionCount"   = EXCLUDED."avgSessionCount",
       "minSessionCount"   = EXCLUDED."minSessionCount",
       "maxSessionCount"   = EXCLUDED."maxSessionCount"
@@ -407,6 +421,8 @@ function sqlTelemetryDaily(): string {
       "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
       "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
       "avgSwapUsedBytes", "lastSwapTotalBytes",
+      "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
+      "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
       "avgSessionCount", "minSessionCount", "maxSessionCount"
     )
     SELECT
@@ -433,6 +449,12 @@ function sqlTelemetryDaily(): string {
       (SUM("avgMemFreeBytes"    * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
       (SUM("avgSwapUsedBytes"   * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
       (ARRAY_AGG("lastSwapTotalBytes" ORDER BY "bucketStart" DESC) FILTER (WHERE "lastSwapTotalBytes" IS NOT NULL))[1],
+      (SUM("avgMemPrivateBytes"    * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemSharedBytes"     * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemBalloonedBytes"  * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemSwappedBytes"    * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemCompressedBytes" * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
+      (SUM("avgMemConsumedBytes"   * "sampleCount") / NULLIF(SUM("sampleCount"), 0))::bigint,
       SUM("avgSessionCount" * "sampleCount") / NULLIF(SUM("sampleCount"), 0),
       MIN("minSessionCount"),
       MAX("maxSessionCount")
@@ -455,6 +477,12 @@ function sqlTelemetryDaily(): string {
       "avgMemFreeBytes"    = EXCLUDED."avgMemFreeBytes",
       "avgSwapUsedBytes"   = EXCLUDED."avgSwapUsedBytes",
       "lastSwapTotalBytes" = EXCLUDED."lastSwapTotalBytes",
+      "avgMemPrivateBytes"    = EXCLUDED."avgMemPrivateBytes",
+      "avgMemSharedBytes"     = EXCLUDED."avgMemSharedBytes",
+      "avgMemBalloonedBytes"  = EXCLUDED."avgMemBalloonedBytes",
+      "avgMemSwappedBytes"    = EXCLUDED."avgMemSwappedBytes",
+      "avgMemCompressedBytes" = EXCLUDED."avgMemCompressedBytes",
+      "avgMemConsumedBytes"   = EXCLUDED."avgMemConsumedBytes",
       "avgSessionCount"   = EXCLUDED."avgSessionCount",
       "minSessionCount"   = EXCLUDED."minSessionCount",
       "maxSessionCount"   = EXCLUDED."maxSessionCount"

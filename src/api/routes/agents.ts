@@ -403,6 +403,16 @@ async function ingestTelemetry(assetId: string, samples: StreamSamples<"telemetr
       memFreeBytes:    bytes(s.memFreeBytes),
       swapUsedBytes:   bytes(s.swapUsedBytes),
       swapTotalBytes:  bytes(s.swapTotalBytes),
+      // The vCenter band set. An agent reports the guest's OWN view of its
+      // memory; ballooning and host swap are things done TO that guest from
+      // outside it, which the guest cannot see and the agent must never
+      // claim to have measured. A row carries one band set or the other.
+      memPrivateBytes:    null,
+      memSharedBytes:     null,
+      memBalloonedBytes:  null,
+      memSwappedBytes:    null,
+      memCompressedBytes: null,
+      memConsumedBytes:   null,
       sessionCount:  null, // FortiGate-only metric; agents don't report it
     });
     if (s.temperatures && s.temperatures.length > 0) {

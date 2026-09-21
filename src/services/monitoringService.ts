@@ -2721,7 +2721,14 @@ async function fetchVcenterQuickStatsCached(
   const fetchPromise = (async (): Promise<VcenterQuickStatsCacheEntry> => {
     const fetchStartedAt = performance.now();
     try {
-      const rows = await fetchVcenterQuickStats(integration.config as unknown as import("./vcenterService.js").VcenterConfig);
+      const rows = await fetchVcenterQuickStats(
+        integration.config as unknown as import("./vcenterService.js").VcenterConfig,
+        undefined,
+        // The monitoring cache is the one caller that wants per-core CPU;
+        // discovery reads none of those columns and must not pay for a
+        // QueryPerf over the whole vCenter to fill them.
+        { withPerCoreCpu: true },
+      );
       const stats = new Map<string, import("./vcenterService.js").VcenterVmQuickStats>();
       for (const row of rows) {
         if (row.instanceUuid) stats.set(row.instanceUuid, row);
@@ -2756,7 +2763,11 @@ async function fetchVcenterHostSnapshotCached(
   const fetchPromise = (async (): Promise<VcenterHostCacheEntry> => {
     const fetchStartedAt = performance.now();
     try {
-      const snap = await fetchVcenterHostSnapshot(integration.config as unknown as import("./vcenterService.js").VcenterConfig);
+      const snap = await fetchVcenterHostSnapshot(
+        integration.config as unknown as import("./vcenterService.js").VcenterConfig,
+        undefined,
+        { withPerCoreCpu: true },
+      );
       // The snapshot reports its two halves separately (discovery needs the
       // datastore half even when host properties are refused). For monitoring
       // the host half IS the reading, so a failure there has to THROW rather
@@ -2954,6 +2965,15 @@ async function collectTelemetryVcenter(assetId: string): Promise<CollectionResul
         // Absolute bytes — the UI prefers bytes and derives mem% downstream.
         memUsedBytes:  row.guestMemUsageMB !== null ? row.guestMemUsageMB * MIB : null,
         memTotalBytes: row.memTotalMB      !== null ? row.memTotalMB * MIB      : null,
+        cpuCorePcts: row.cpuCorePcts,
+        // The guest's configured RAM as the hypervisor is backing it. A VM
+        // sets no `memConsumedBytes` — that band is the host's, and a row
+        // carrying both would stack the same memory under two names.
+        memPrivateBytes:    row.memPrivateBytes,
+        memSharedBytes:     row.memSharedBytes,
+        memBalloonedBytes:  row.memBalloonedBytes,
+        memSwappedBytes:    row.memSwappedBytes,
+        memCompressedBytes: row.memCompressedBytes,
       },
     };
   }
@@ -2971,6 +2991,15 @@ async function collectTelemetryVcenter(assetId: string): Promise<CollectionResul
       cpuPct,
       memUsedBytes:  host.memUsageBytes,
       memTotalBytes: host.memTotalBytes,
+      cpuCorePcts: host.cpuCorePcts,
+      // Installed RAM as ESXi is spending it. `consumed` mirrors
+      // memUsedBytes deliberately: memUsedBytes is the aggregate every
+      // threshold and automation reads, and the band is the same quantity
+      // taking its place in a stack. Private/shared/compressed are a VM's
+      // bands and stay null here.
+      memConsumedBytes:  host.memUsageBytes,
+      memBalloonedBytes: host.memBalloonedBytes,
+      memSwappedBytes:   host.memSwappedBytes,
     },
   };
 }
@@ -4363,6 +4392,25 @@ export interface TelemetrySample {
   memPct?:        number | null;
   memUsedBytes?:  number | null;
   memTotalBytes?: number | null;
+  /**
+   * Per-core utilisation, index = core id. The `vcenter` collector is the
+   * only server-side one that fills it (a VM's vCPUs, an ESXi host's
+   * physical cores); the agent's copy never passes through here, arriving on
+   * its own push path instead. Null, never `[]` — see the column comment.
+   */
+  cpuCorePcts?:   number[] | null;
+  /**
+   * The vCenter memory bands, in bytes. Disjoint from the agent's
+   * buffers/cache/free set and never mixed with it in one row — a VM fills
+   * private/shared/ballooned/swapped/compressed, an ESXi host fills
+   * consumed/ballooned/swapped. Every other collector leaves them null.
+   */
+  memPrivateBytes?:    number | null;
+  memSharedBytes?:     number | null;
+  memBalloonedBytes?:  number | null;
+  memSwappedBytes?:    number | null;
+  memCompressedBytes?: number | null;
+  memConsumedBytes?:   number | null;
   /** Active session count (FortiGate only). Null for every other source. */
   sessionCount?:  number | null;
 }
@@ -9230,6 +9278,11 @@ function parseLldpCapabilities(raw: unknown): string[] {
 
 // ─── Persisting telemetry / system info ─────────────────────────────────────
 
+/** Byte figure → BigInt, keeping null as null (a band nobody measured). */
+function bytesOrNull(v: number | null | undefined): bigint | null {
+  return v != null && Number.isFinite(v) ? BigInt(Math.max(0, Math.round(v))) : null;
+}
+
 export async function recordTelemetryResult(assetId: string, result: CollectionResult<TelemetrySample>): Promise<void> {
   if (!result.supported) return;
   const now = new Date();
@@ -9242,17 +9295,28 @@ export async function recordTelemetryResult(assetId: string, result: CollectionR
       memPct:        d.memPct ?? null,
       memUsedBytes:  d.memUsedBytes  != null ? BigInt(Math.round(d.memUsedBytes))  : null,
       memTotalBytes: d.memTotalBytes != null ? BigInt(Math.round(d.memTotalBytes)) : null,
-      // Per-core CPU and the memory breakdown reach Polaris only over the
-      // agent's own push path (routes/agents.ts), which writes this buffer
-      // directly. None of the server-side collectors this function serves —
-      // FortiOS REST, SNMP, WinRM, vCenter, SSH — expose either, so they are
-      // explicitly null here rather than left off the row.
-      cpuCorePcts:     null,
+      // Per-core CPU reaches this function from the vCenter collector only;
+      // the agent's copy arrives on its own push path (routes/agents.ts),
+      // which writes this buffer directly. FortiOS REST, SNMP, WinRM and SSH
+      // expose no per-core figure at all and leave it null.
+      cpuCorePcts:     d.cpuCorePcts ?? null,
+      // The agent's band set. No server-side collector fills it — the
+      // per-OS reconciliation that makes the four bands sum to the total is
+      // the agent's own work — so these stay explicitly null rather than
+      // being left off the row.
       memBuffersBytes: null,
       memCachedBytes:  null,
       memFreeBytes:    null,
       swapUsedBytes:   null,
       swapTotalBytes:  null,
+      // The vCenter band set, disjoint from the one above. Null everywhere
+      // else, and the two are never populated on the same row.
+      memPrivateBytes:    bytesOrNull(d.memPrivateBytes),
+      memSharedBytes:     bytesOrNull(d.memSharedBytes),
+      memBalloonedBytes:  bytesOrNull(d.memBalloonedBytes),
+      memSwappedBytes:    bytesOrNull(d.memSwappedBytes),
+      memCompressedBytes: bytesOrNull(d.memCompressedBytes),
+      memConsumedBytes:   bytesOrNull(d.memConsumedBytes),
       sessionCount:  d.sessionCount ?? null,
     });
   }

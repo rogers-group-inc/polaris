@@ -16,7 +16,7 @@ Companion pages: [Polling methods](Polling-Methods) ·
 | Stream | Collects |
 |---|---|
 | **responseTime** | is it answering, and how fast — the liveness probe |
-| **cpuMemory** | CPU and memory utilisation. On a host running the [Polaris Agent](Polaris-Agent) this also carries **per-logical-core CPU** and a **memory breakdown** (processes / buffers / cache / free, plus swap or page file); no other transport can report either |
+| **cpuMemory** | CPU and memory utilisation. Two transports also carry **per-core CPU** and a **memory breakdown**, and the System tab splits CPU & Memory into two charts on those: the [Polaris Agent](Polaris-Agent) (per logical core; processes / buffers / cache / free, plus swap or page file, as the guest OS accounts for it) and [vCenter](Integration-vCenter) (per vCPU or physical core; the hypervisor's own bands — ballooned and host-swapped among them). FortiOS, SNMP, WinRM and SSH report one CPU figure and one memory figure and keep the combined chart |
 | **temperature** | hardware sensors and their alarm bits |
 | **interfaces** | per-port state, counters, PoE, IP, LLDP-adjacent data |
 | **lldp** | LLDP neighbours |

@@ -6430,20 +6430,30 @@ function _confirmUninstallAgent(a, force) {
 
 // Whether the CPU & Memory section renders as TWO charts or one.
 //
-// The split is a consequence of what the Polaris Agent reports and nothing
-// else: per-core CPU (as many lines as the host has logical cores) and a
-// memory composition in BYTES, which cannot share a percentage axis. Every
-// other transport — FortiOS REST, SNMP, WinRM, SSH, vCenter — reports one CPU
-// figure and one memory figure per sample, and two of those on two stacked
-// 200px charts is the pre-2026-09 combined chart with twice the height and
-// half the comparability.
+// The split is a consequence of what the SOURCE reports, never of what the
+// asset is. Two transports carry the two things that cannot share one
+// 0-100% axis — per-core CPU (as many lines as the entity has cores) and a
+// memory COMPOSITION in bytes:
 //
-// Resolved, not read off the column: the per-asset `cpuMemoryPolling` is set
-// to "agent" at enrollment (agentTokenService / the agents route), but a class
-// or integration tier can carry the method too, and _resolvedStreamPolling is
-// the same walk the section badge and stale banner use.
-function _telemetryIsAgentSourced(a) {
-  return _resolvedStreamPolling(a, "telemetry") === "agent";
+//   agent   — the host's own logical cores, and buffers / cache / free as
+//             the OS accounts for them.
+//   vcenter — a VM's vCPUs or an ESXi host's physical cores from the
+//             PerformanceManager, and vSphere's own memory bands.
+//
+// FortiOS REST, SNMP, WinRM and SSH report one CPU figure and one memory
+// figure per sample, and two of those on two stacked 200px charts is the
+// pre-2026-09 combined chart with twice the height and half the
+// comparability. They keep the combined chart.
+//
+// Resolved, not read off the column: `cpuMemoryPolling` is stamped "agent"
+// at enrollment (agentTokenService / the agents route) and defaults to
+// "vcenter" on a vCenter-discovered asset, but a class or integration tier
+// can carry either method too, and _resolvedStreamPolling is the same walk
+// the section badge and the stale banner use.
+var _SPLIT_CHART_METHODS = ["agent", "vcenter"];
+
+function _telemetrySplitsCpuMemory(a) {
+  return _SPLIT_CHART_METHODS.indexOf(_resolvedStreamPolling(a, "telemetry")) >= 0;
 }
 
 function assetSystemViewHTML(a) {
@@ -6514,7 +6524,7 @@ function assetSystemViewHTML(a) {
       (rangeBtnsHTML ? ('<div style="display:flex;gap:6px">' + rangeBtnsHTML + '</div>') : '') +
     '</div>';
   }
-  var splitCharts = _telemetryIsAgentSourced(a);
+  var splitCharts = _telemetrySplitsCpuMemory(a);
   var sessionsRangeBtns = a.assetType === "firewall"
     ? _chartRangeBtnsHTML("asset-sessions-range-btn", [
         { value: "1h",  label: "1h" },
@@ -6533,12 +6543,13 @@ function assetSystemViewHTML(a) {
       '<label style="display:flex;align-items:center;gap:4px">To <input type="datetime-local" id="asset-system-to" class="form-input" style="padding:2px 6px"></label>' +
       '<button class="btn btn-sm btn-primary" id="btn-asset-system-custom-apply">Apply</button>' +
     '</div>' +
-    // ONE chart or TWO, decided by _telemetryIsAgentSourced. The split exists
-    // for the two things only the agent sends — per-core CPU and a memory
-    // breakdown in BYTES — and neither survives a source that reports a pair
-    // of percentages. On a FortiGate, an SNMP switch or a vCenter VM the two
-    // charts would be a single line each, stacked, on a tab that is already
-    // long: one shared 0-100% axis says the same thing in half the height.
+    // ONE chart or TWO, decided by _telemetrySplitsCpuMemory. The split
+    // exists for the two things only the agent and vCenter send — per-core
+    // CPU and a memory breakdown in BYTES — and neither survives a source
+    // that reports a pair of percentages. On a FortiGate or an SNMP switch
+    // the two charts would be a single line each, stacked, on a tab that is
+    // already long: one shared 0-100% axis says the same thing in half the
+    // height.
     //
     // Split: CPU is a percentage and memory is a byte stack, so they cannot
     // share an axis; they DO share a window, because they are two readings of
@@ -6723,8 +6734,8 @@ async function _loadSystemTabFor(assetId, range, asset, opts) {
   // re-fetch + their re-render and reuse the cached si for the chart's
   // stale banner and the latest-reading rows.
   var chartOnly = !!(opts && opts.chartOnly) && _assetSystemSiCache;
-  // Two DOM shapes, decided at render time by _telemetryIsAgentSourced: a CPU
-  // container beside a memory one, or the single combined container. The
+  // Two DOM shapes, decided at render time by _telemetrySplitsCpuMemory: a
+  // CPU container beside a memory one, or the single combined container. The
   // loader reads whichever is mounted rather than re-deriving the gate — the
   // markup is the one authority, and an asset whose polling method changes
   // under an open panel would otherwise render into containers that are gone.
@@ -11003,11 +11014,13 @@ function _cpuLegendHTML(coreCount, focus, data, asset) {
       (focus === c ? ';font-weight:600' : '') + '">' +
       '<span style="width:10px;height:10px;border-radius:2px;background:' + _cpuCoreColor(c, coreCount) + '"></span>' + c + '</span>';
   }
-  // Why a range can show no cores even on an agent host: per-core data is
-  // kept on the DETAIL tier only. Saying so beats letting the operator
-  // conclude the agent stopped reporting them.
+  // Why a range can show no cores even on a source that reports them:
+  // per-core data is kept on the DETAIL tier only, on the agent and on
+  // vCenter alike. Saying so beats letting the operator conclude the source
+  // stopped reporting them. A source that never reports cores gets no note
+  // — "pick a shorter range" would send a FortiGate operator nowhere.
   var note = "";
-  if (coreCount === 0 && data && data.tier && data.tier !== "detail" && _resolvedStreamPolling(asset, "telemetry") === "agent") {
+  if (coreCount === 0 && data && data.tier && data.tier !== "detail" && _telemetrySplitsCpuMemory(asset)) {
     note = '<div style="font-size:0.72rem;color:var(--color-text-tertiary);margin-top:2px">' +
       'Per-core detail is not kept in ' + escapeHtml(data.tier) + ' buckets — showing the cross-core average. Pick a shorter range to see individual cores.' +
       '</div>';
@@ -11040,44 +11053,107 @@ function _wireCpuLegend(container, data, asset, si) {
 // own dashed line on the same byte axis.
 //
 // None of these colours may be red (missed poll) or grey (dependency down).
-var _MEM_BANDS = [
-  { key: "processes", label: "Processes", color: "#f4a261" }, // the memory colour this chart has always used
+// Two band vocabularies, one chart. They are NOT translations of each other
+// and must never appear in one stack: the agent reports how the OS is
+// spending the machine's RAM, vSphere reports how the HYPERVISOR is backing
+// a guest's RAM. `_memBandsFor` picks the table from the columns the row
+// actually carries, and the source guarantees only one set is ever filled.
+//
+// The primary band takes the same orange in both tables — it is the memory
+// colour this chart has always used, and the two tables never co-occur, so
+// "the big one at the bottom" reads the same on any asset. No band may be
+// red (missed poll) or grey (dependency down).
+var _MEM_BANDS_AGENT = [
+  { key: "processes", label: "Processes", color: "#f4a261" },
   { key: "buffers",   label: "Buffers",   color: "#8ab17d" },
   { key: "cache",     label: "Cache",     color: "#2a9d8f" },
+];
+
+// vSphere. A VM fills private / shared / ballooned / swapped / compressed
+// against its CONFIGURED RAM; an ESXi host fills consumed / ballooned /
+// swapped against INSTALLED RAM. One table serves both because the two sets
+// are disjoint — a host publishes no private/shared/compressed and a VM
+// publishes no consumed — so the bands nobody reported simply drop out.
+//
+// Ballooned, swapped and compressed are the reason this vocabulary exists.
+// They are the hypervisor taking memory back from a guest under pressure,
+// and they are invisible to anything running inside that guest — an agent on
+// the same VM cannot see them and must not be made to guess.
+var _MEM_BANDS_VSPHERE = [
+  { key: "consumed",   label: "Consumed",   color: "#f4a261" },
+  { key: "private",    label: "Private",    color: "#f4a261" },
+  { key: "shared",     label: "Shared",     color: "#2a9d8f" },
+  { key: "ballooned",  label: "Ballooned",  color: "#e9c46a" },
+  { key: "swapped",    label: "Host-swapped", color: "#9c6ade" },
+  { key: "compressed", label: "Compressed", color: "#4d96d9" },
 ];
 var _MEM_SWAP_COLOR  = "#9c6ade";
 var _MEM_TOTAL_COLOR = "rgba(127,127,127,0.55)";
 
-// Shapes one sample into the band values the chart stacks.
-// Returns null when the sample carries no usable memory reading at all.
+function _numOrNull(v) {
+  return typeof v === "number" && isFinite(v) ? v : null;
+}
+
+// Shapes one sample into the band values the chart stacks, and says which
+// VOCABULARY those values are in.
 //
-// Three shapes reach here, and the chart degrades through them rather than
+// Four shapes reach here, and the chart degrades through them rather than
 // demanding the richest one:
-//   full     — agent: every band present, guaranteed to close on the total.
-//   bytes    — SNMP / WinRM / vCenter: used + total, no breakdown. One band.
+//   agent    — every OS band present, guaranteed to close on the total.
+//   vsphere  — the hypervisor's bands for a VM or an ESXi host.
+//   bytes    — SNMP / WinRM: used + total, no breakdown. One band.
 //   pctOnly  — FortiOS: a percentage and nothing else. Handled by the caller,
 //              which switches the whole chart to a 0–100% axis.
+//
+// `values` carries null for a band this source did not report, distinctly
+// from 0 for one it reported as empty — the renderer drops a band no row in
+// the window reported at all, which is what collapses a bytes-only source
+// to the single band it can honestly draw.
 function _memBandsFor(s) {
-  var total = typeof s.memTotalBytes === "number" ? s.memTotalBytes : null;
-  var used  = typeof s.memUsedBytes === "number" ? s.memUsedBytes : null;
-  if (total == null || used == null) return null;
-  var buffers = typeof s.memBuffersBytes === "number" ? s.memBuffersBytes : null;
-  var cache   = typeof s.memCachedBytes === "number" ? s.memCachedBytes : null;
-  var free    = typeof s.memFreeBytes === "number" ? s.memFreeBytes : null;
-  var detailed = buffers != null || cache != null || free != null;
+  var total = _numOrNull(s.memTotalBytes);
+  if (total == null) return null;
+
+  var vs = {
+    consumed:   _numOrNull(s.memConsumedBytes),
+    private:    _numOrNull(s.memPrivateBytes),
+    shared:     _numOrNull(s.memSharedBytes),
+    ballooned:  _numOrNull(s.memBalloonedBytes),
+    swapped:    _numOrNull(s.memSwappedBytes),
+    compressed: _numOrNull(s.memCompressedBytes),
+  };
+  var isVsphere = Object.keys(vs).some(function (k) { return vs[k] != null; });
+
+  var values, table;
+  if (isVsphere) {
+    values = vs;
+    table = _MEM_BANDS_VSPHERE;
+  } else {
+    var used = _numOrNull(s.memUsedBytes);
+    if (used == null) return null;
+    values = {
+      processes: used,
+      buffers:   _numOrNull(s.memBuffersBytes),
+      cache:     _numOrNull(s.memCachedBytes),
+    };
+    table = _MEM_BANDS_AGENT;
+  }
+
+  var sum = 0;
+  table.forEach(function (b) { sum += values[b.key] || 0; });
   return {
-    total:     total,
-    processes: used,
-    buffers:   buffers || 0,
-    cache:     cache || 0,
+    kind:   isVsphere ? "vsphere" : "agent",
+    table:  table,
+    values: values,
+    total:  total,
     // Free is DERIVED from the total rather than trusted from the row: it is
     // the one band the chart does not draw (it is the gap above the stack),
     // so a free figure that disagreed with total-minus-the-rest would show
-    // up in the tooltip contradicting the picture beside it.
-    free:      Math.max(0, total - used - (buffers || 0) - (cache || 0)),
-    detailed:  detailed,
-    swapUsed:  typeof s.swapUsedBytes === "number" ? s.swapUsedBytes : null,
-    swapTotal: typeof s.swapTotalBytes === "number" ? s.swapTotalBytes : null,
+    // up in the tooltip contradicting the picture beside it. The agent's own
+    // memFreeBytes and vSphere's untouched remainder are both this number.
+    free:      Math.max(0, total - sum),
+    inUse:     Math.min(total, sum),
+    swapUsed:  _numOrNull(s.swapUsedBytes),
+    swapTotal: _numOrNull(s.swapTotalBytes),
   };
 }
 
@@ -11152,8 +11228,19 @@ function _renderMemoryChart(container, data, asset, si) {
     return;
   }
 
-  var anyDetailed = rows.some(function (r) { return r.b.detailed; });
-  var bands = anyDetailed ? _MEM_BANDS : [_MEM_BANDS[0]];
+  // The window's vocabulary, then the bands within it that some row actually
+  // reported. A source that changed mid-window (the only way two vocabularies
+  // land in one range) resolves to vSphere's, since its rows are the ones
+  // carrying bands the other table has no slot for.
+  var isVsphere = rows.some(function (r) { return r.b.kind === "vsphere"; });
+  var bandTable = isVsphere ? _MEM_BANDS_VSPHERE : _MEM_BANDS_AGENT;
+  var bands = bandTable.filter(function (b) {
+    return rows.some(function (r) { return r.b.values[b.key] != null; });
+  });
+  // A bytes-only source reports the primary band alone; never draw an empty
+  // stack if even that is missing.
+  if (bands.length === 0) bands = [bandTable[0]];
+  var anyDetailed = bands.length > 1;
   var anySwap = rows.some(function (r) { return r.b.swapTotal != null && r.b.swapTotal > 0; });
 
   // Ceiling is the installed total, so the gap above the stack IS free
@@ -11182,8 +11269,8 @@ function _renderMemoryChart(container, data, asset, si) {
       var topPts = [], botPts = [];
       run.forEach(function (r) {
         var below = 0;
-        for (var k = 0; k < bi; k++) below += r.b[bands[k].key] || 0;
-        var top = below + (r.b[band.key] || 0);
+        for (var k = 0; k < bi; k++) below += r.b.values[bands[k].key] || 0;
+        var top = below + (r.b.values[band.key] || 0);
         var x = xFor(r.ts);
         botPts.push(x + "," + yFor(below));
         topPts.push(x + "," + yFor(top));
@@ -11224,13 +11311,18 @@ function _renderMemoryChart(container, data, asset, si) {
     var x = xFor(r.ts);
     var leftEdge  = i === 0 ? padL : (xFor(rows[i - 1].ts) + x) / 2;
     var rightEdge = i === rows.length - 1 ? (W - padR) : (xFor(rows[i + 1].ts) + x) / 2;
+    // One attribute per DRAWN band, indexed by its position in `bands`, so
+    // the tooltip walks the same list the stack was built from and neither
+    // vocabulary needs its own hard-coded row set.
+    var bandAttrs = bands.map(function (b, bi2) {
+      var v = r.b.values[b.key];
+      return ' data-b' + bi2 + '="' + (v != null ? v : "") + '"';
+    }).join("");
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
-      ' data-ts="' + escapeHtml(String(r.ts)) + '"' +
-      ' data-pr="' + r.b.processes + '" data-bu="' + r.b.buffers + '" data-ca="' + r.b.cache + '"' +
+      ' data-ts="' + escapeHtml(String(r.ts)) + '"' + bandAttrs +
       ' data-fr="' + r.b.free + '" data-to="' + r.b.total + '"' +
       ' data-su="' + (r.b.swapUsed != null ? r.b.swapUsed : "") + '"' +
-      ' data-st="' + (r.b.swapTotal != null ? r.b.swapTotal : "") + '"' +
-      ' data-dt="' + (r.b.detailed ? "1" : "") + '"/>';
+      ' data-st="' + (r.b.swapTotal != null ? r.b.swapTotal : "") + '"/>';
   }).join("");
 
   var ticks = "";
@@ -11261,9 +11353,17 @@ function _renderMemoryChart(container, data, asset, si) {
   legendParts.push(swatch(_MEM_TOTAL_COLOR, "Installed total", true));
   if (anySwap) legendParts.push(swatch(_MEM_SWAP_COLOR, "Swap / page file", true));
   // A source with no breakdown gets told so, in the legend, rather than
-  // being left to look like a host whose cache is permanently zero.
-  var legendNote = anyDetailed ? "" :
-    '<span style="color:var(--color-text-tertiary)">(this source reports a total only — no cache/buffer breakdown)</span>';
+  // being left to look like a host whose cache is permanently zero. The
+  // vSphere stack gets a note of its own instead: its bands are measured
+  // OUTSIDE the guest, and an operator comparing them against what the guest
+  // itself reports needs to know that before, not after.
+  var legendNote = "";
+  if (!anyDetailed) {
+    legendNote = '<span style="color:var(--color-text-tertiary)">(this source reports a total only — no ' +
+      (isVsphere ? "hypervisor breakdown" : "cache/buffer breakdown") + ')</span>';
+  } else if (isVsphere) {
+    legendNote = '<span style="color:var(--color-text-tertiary)">(as the hypervisor accounts for it — not the guest\'s own view)</span>';
+  }
   var legend = '<div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
     legendParts.join("") + legendNote + '</div>';
 
@@ -11297,7 +11397,6 @@ function _renderMemoryChart(container, data, asset, si) {
       return raw === "" || raw == null ? null : Number(raw);
     }
     var total = num("data-to"), free = num("data-fr");
-    var detailed = target.getAttribute("data-dt") === "1";
     var used = total != null && free != null ? total - free : null;
     var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>';
     function row(color, label, val) {
@@ -11306,12 +11405,8 @@ function _renderMemoryChart(container, data, asset, si) {
       return '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' + color + '"></span>' +
         escapeHtml(label) + ': ' + _fmtBytes(val) + pct + '</div>';
     }
-    html += row(_MEM_BANDS[0].color, "Processes", num("data-pr"));
-    if (detailed) {
-      html += row(_MEM_BANDS[1].color, "Buffers", num("data-bu"));
-      html += row(_MEM_BANDS[2].color, "Cache", num("data-ca"));
-    }
-    html += row("transparent", "Free", free);
+    bands.forEach(function (b, bi3) { html += row(b.color, b.label, num("data-b" + bi3)); });
+    html += row("transparent", isVsphere ? "Untouched" : "Free", free);
     if (used != null) html += '<div style="margin-top:2px"><strong>In use: ' + _fmtBytes(used) + '</strong> of ' + _fmtBytes(total) + '</div>';
     var su = num("data-su"), st = num("data-st");
     if (su != null && st) {
@@ -11364,7 +11459,7 @@ function _renderMemoryPctChart(container, data, asset, si) {
   _outagePts(gapMarkers, xFor, baselineY).forEach(function (mp) { pts.push(mp); });
   pts.sort(function (a, b) { return a.t - b.t; });
 
-  var memColor = _MEM_BANDS[0].color;
+  var memColor = _MEM_BANDS_AGENT[0].color;
   var line = _failureAwareSeriesSVG(pts, memColor, _chartClipId("mempct") + "-l");
 
   var ticks = "";

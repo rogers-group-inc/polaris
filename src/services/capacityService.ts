@@ -593,14 +593,17 @@ const DEFAULT_ROWS_PER_ASSET_PER_DAY: Record<string, (c: WorkloadModelInputs) =>
 const DEFAULT_BYTES_PER_ROW: Record<string, number> = {
   asset_monitor_samples:       310,
   // The one table whose row size depends on WHO is monitoring the asset.
-  // A Polaris Agent fills five memory-band columns and the `cpuCorePcts`
-  // jsonb vector (~10-12 bytes per logical core, so ~100 bytes at 8 cores and
-  // ~700 at 64); every other transport leaves all six null and the row stays
-  // the pre-2026-09 size. This figure is therefore a mixed-fleet guess and is
-  // only ever used while the table is EMPTY — the moment it has rows the
-  // measured `bytes / total` above replaces it, which is what makes an
-  // agent-heavy or a core-dense fleet self-correct rather than needing a
-  // constant nobody would remember to update.
+  // Two transports fill the wide columns: a Polaris Agent writes five memory
+  // bands, and vCenter writes its own five or six — and both write the
+  // `cpuCorePcts` jsonb vector (~10-12 bytes per core, so ~100 bytes at 8
+  // cores and ~700 at 64, and an ESXi host is routinely at the top of that
+  // range). FortiOS, SNMP, WinRM and SSH leave every one of them null and
+  // the row stays the pre-2026-09 size. This figure is therefore a
+  // mixed-fleet guess and is only ever used while the table is EMPTY — the
+  // moment it has rows the measured `bytes / total` above replaces it, which
+  // is what makes an agent-heavy, vCenter-heavy or core-dense fleet
+  // self-correct rather than needing a constant nobody would remember to
+  // update.
   asset_telemetry_samples:     400,
   asset_hardware_sensor_samples: 330,
   asset_interface_samples:     395,

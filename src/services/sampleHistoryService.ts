@@ -260,6 +260,17 @@ export interface TelemetryHistoryRow {
   memFreeBytes?:    number | null;
   swapUsedBytes?:   number | null;
   swapTotalBytes?:  number | null;
+  // The vCenter band set, also on every tier. Disjoint from the agent's
+  // above: a VM partitions its configured RAM into private / shared /
+  // ballooned / swapped / compressed, an ESXi host partitions installed RAM
+  // into consumed / ballooned / swapped. A row carries one set or neither,
+  // and the chart picks its band table from whichever arrived.
+  memPrivateBytes?:    number | null;
+  memSharedBytes?:     number | null;
+  memBalloonedBytes?:  number | null;
+  memSwappedBytes?:    number | null;
+  memCompressedBytes?: number | null;
+  memConsumedBytes?:   number | null;
   // FortiGate active session count (null for other sources). On detail tier
   // this is the raw value; on rollup tiers it's the bucket average, with
   // min/max alongside.
@@ -302,6 +313,8 @@ export async function readTelemetryHistory(
         memPct: true, memUsedBytes: true, memTotalBytes: true,
         memBuffersBytes: true, memCachedBytes: true, memFreeBytes: true,
         swapUsedBytes: true, swapTotalBytes: true,
+        memPrivateBytes: true, memSharedBytes: true, memBalloonedBytes: true,
+        memSwappedBytes: true, memCompressedBytes: true, memConsumedBytes: true,
         sessionCount: true,
       },
     });
@@ -317,6 +330,12 @@ export async function readTelemetryHistory(
       memFreeBytes:    bn(s.memFreeBytes),
       swapUsedBytes:   bn(s.swapUsedBytes),
       swapTotalBytes:  bn(s.swapTotalBytes),
+      memPrivateBytes:    bn(s.memPrivateBytes),
+      memSharedBytes:     bn(s.memSharedBytes),
+      memBalloonedBytes:  bn(s.memBalloonedBytes),
+      memSwappedBytes:    bn(s.memSwappedBytes),
+      memCompressedBytes: bn(s.memCompressedBytes),
+      memConsumedBytes:   bn(s.memConsumedBytes),
       sessionCount:  s.sessionCount,
     }));
     const visible = rows.filter((r) => r.timestamp.getTime() >= sinceMs);
@@ -349,6 +368,12 @@ export async function readTelemetryHistory(
     avgMemFreeBytes: bigint | null;
     avgSwapUsedBytes: bigint | null;
     lastSwapTotalBytes: bigint | null;
+    avgMemPrivateBytes: bigint | null;
+    avgMemSharedBytes: bigint | null;
+    avgMemBalloonedBytes: bigint | null;
+    avgMemSwappedBytes: bigint | null;
+    avgMemCompressedBytes: bigint | null;
+    avgMemConsumedBytes: bigint | null;
     avgSessionCount: number | null; minSessionCount: number | null; maxSessionCount: number | null;
   }>>(
     `SELECT "bucketStart", "sampleCount",
@@ -357,6 +382,8 @@ export async function readTelemetryHistory(
             "avgMemUsedBytes", "maxMemUsedBytes", "lastMemTotalBytes",
             "avgMemBuffersBytes", "avgMemCachedBytes", "avgMemFreeBytes",
             "avgSwapUsedBytes", "lastSwapTotalBytes",
+            "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
+            "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
             "avgSessionCount", "minSessionCount", "maxSessionCount"
      FROM "${table}"
      WHERE "assetId" = $1 AND "bucketStart" >= $2 AND "bucketStart" <= $3
@@ -390,6 +417,12 @@ export async function readTelemetryHistory(
       memFreeBytes:    bn(r.avgMemFreeBytes),
       swapUsedBytes:   bn(r.avgSwapUsedBytes),
       swapTotalBytes:  bn(r.lastSwapTotalBytes),
+      memPrivateBytes:    bn(r.avgMemPrivateBytes),
+      memSharedBytes:     bn(r.avgMemSharedBytes),
+      memBalloonedBytes:  bn(r.avgMemBalloonedBytes),
+      memSwappedBytes:    bn(r.avgMemSwappedBytes),
+      memCompressedBytes: bn(r.avgMemCompressedBytes),
+      memConsumedBytes:   bn(r.avgMemConsumedBytes),
       sessionCount:  r.avgSessionCount,
       sampleCount:   r.sampleCount,
       minCpuPct:     r.minCpuPct,

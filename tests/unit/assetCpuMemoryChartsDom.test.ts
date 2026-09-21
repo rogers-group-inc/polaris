@@ -64,7 +64,7 @@ const EXPORTS = [
   "_renderSystemChart",
   "_cpuCoreColor", "_cpuCoreSeries", "_cpuFocusedCore", "_renderCpuChart",
   "_cpuLegendHTML", "_memBandsFor", "_memRuns", "_renderMemoryChart",
-  "_renderMemoryPctChart", "_MEM_BANDS", "_CPU_AVG_COLOR",
+  "_renderMemoryPctChart", "_MEM_BANDS_AGENT", "_MEM_BANDS_VSPHERE", "_CPU_AVG_COLOR",
   "_CPU_CORE_HUE_START", "_CPU_CORE_HUE_END",
 ];
 const SRC = REGION + "\n" + EXPORTS.map((n) => `globalThis.${n} = ${n};`).join("\n");
@@ -83,6 +83,10 @@ function installStubs() {
   g._notAvailableViaPollingHTML = (what: string, how: string) => `<div>NA:${what}:${how}</div>`;
   g._staleBannerHTML = () => "";
   g._resolvedStreamPolling = () => "agent";
+  // Lives next to assetSystemViewHTML, outside this region — the gate
+  // deciding whether the section splits at all, which the CPU legend
+  // consults to word its "no cores in this tier" note.
+  g._telemetrySplitsCpuMemory = () => true;
 
   g._chartTimeBounds = (samples: any[], since?: string, until?: string) => ({
     t0: since ? +new Date(since) : +new Date(samples[0].timestamp),
@@ -253,6 +257,7 @@ describe("CPU chart — per-core rendering", () => {
     // A FortiGate on a rollup tier never had per-core data to lose; telling
     // the operator to pick a shorter range would send them nowhere.
     g._resolvedStreamPolling = () => "rest_api";
+    g._telemetrySplitsCpuMemory = () => false;
     const el = container();
     const samples = agentSamples([[1, 2], [3, 4]]).map((s) => { delete s.cpuCorePcts; return s; });
     g._renderCpuChart(el, payload(samples, { tier: "hourly" }), {}, {});
@@ -328,9 +333,9 @@ describe("Memory chart — the stack", () => {
       // it, or the tooltip would contradict the picture beside it.
       memFreeBytes: 999 * GB,
     });
-    expect(b.processes + b.buffers + b.cache + b.free).toBe(b.total);
+    expect(b.values.processes + b.values.buffers + b.values.cache + b.free).toBe(b.total);
     expect(b.free).toBe(18 * GB);
-    expect(b.detailed).toBe(true);
+    expect(b.kind).toBe("agent");
   });
 
   it("never returns a negative band when the readings overshoot the total", () => {
@@ -341,6 +346,16 @@ describe("Memory chart — the stack", () => {
   it("returns null when there is no byte reading to stack", () => {
     expect(g._memBandsFor({ memPct: 50 })).toBeNull();
     expect(g._memBandsFor({ memUsedBytes: 5 })).toBeNull();
+  });
+
+  it("distinguishes a band reported as zero from one never reported", () => {
+    // The renderer drops a band no row reported and KEEPS one every row
+    // reported as 0 — a host genuinely using no swap is a reading, and
+    // collapsing it would be the same mistake as charting an unreported
+    // cache as an empty one.
+    const b = g._memBandsFor({ memTotalBytes: 100, memUsedBytes: 40, memCachedBytes: 0 });
+    expect(b.values.cache).toBe(0);
+    expect(b.values.buffers).toBeNull();
   });
 
   it("draws one filled band per component, plus the total and swap lines", () => {
@@ -361,7 +376,7 @@ describe("Memory chart — the stack", () => {
   it("names every band in the legend", () => {
     const el = container();
     g._renderMemoryChart(el, payload(agentSamples([[1], [2]])), {}, {});
-    for (const band of g._MEM_BANDS) expect(el.textContent).toContain(band.label);
+    for (const band of g._MEM_BANDS_AGENT) expect(el.textContent).toContain(band.label);
   });
 
   it("collapses to one band, and says so, for a source with no breakdown", () => {
@@ -467,5 +482,105 @@ describe("Combined chart - the non-agent shape", () => {
     g._renderSystemChart(el, { samples: [], outages: [], stats: { total: 0 } }, {}, {});
     expect(el.textContent).toContain("stale");
     expect(el.textContent).toContain("No telemetry samples");
+  });
+});
+
+describe("Memory chart - the vSphere vocabulary", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    installStubs();
+    (0, eval)(SRC);
+  });
+
+  const GB = 1024 ** 3;
+
+  /** A vCenter VM: the hypervisor's view of how it is backing 32 GB of guest RAM. */
+  function vmSamples(n: number): any[] {
+    return Array.from({ length: n }, (_, i) => ({
+      timestamp: ts(i),
+      cpuPct: 20,
+      cpuCorePcts: [18, 22, 19, 21],
+      memUsedBytes: 12 * GB,
+      memTotalBytes: 32 * GB,
+      memPrivateBytes: 8 * GB,
+      memSharedBytes: 3 * GB,
+      memBalloonedBytes: 1 * GB,
+      memSwappedBytes: 0.5 * GB,
+      memCompressedBytes: 0.25 * GB,
+    }));
+  }
+
+  /** An ESXi host: consumed / ballooned / swapped against installed RAM. */
+  function hostSamples(n: number): any[] {
+    return Array.from({ length: n }, (_, i) => ({
+      timestamp: ts(i),
+      cpuPct: 44,
+      memUsedBytes: 300 * GB,
+      memTotalBytes: 512 * GB,
+      memConsumedBytes: 300 * GB,
+      memBalloonedBytes: 4 * GB,
+      memSwappedBytes: 2 * GB,
+    }));
+  }
+
+  it("picks the vSphere table off the hypervisor columns, not the asset", () => {
+    const b = g._memBandsFor(vmSamples(1)[0]);
+    expect(b.kind).toBe("vsphere");
+    expect(b.table).toBe(g._MEM_BANDS_VSPHERE);
+    // Untouched guest RAM is derived, exactly as free is on the agent stack.
+    expect(b.free).toBe(32 * GB - (8 + 3 + 1 + 0.5 + 0.25) * GB);
+  });
+
+  it("never mixes the two vocabularies in one row", () => {
+    // A VM publishes no `consumed` and a host no `private` — that disjointness
+    // is what stops either stack counting the same memory twice.
+    expect(g._memBandsFor(vmSamples(1)[0]).values.consumed).toBeNull();
+    expect(g._memBandsFor(hostSamples(1)[0]).values.private).toBeNull();
+    // And an agent row reaches the agent table even though both carry bytes.
+    expect(g._memBandsFor(agentSamples([[1]])[0]).kind).toBe("agent");
+  });
+
+  it("draws a band per reported hypervisor component and names it", () => {
+    const el = container();
+    g._renderMemoryChart(el, payload(vmSamples(3)), {}, {});
+    expect(el.querySelectorAll("polygon").length).toBe(5);
+    for (const label of ["Private", "Shared", "Ballooned", "Host-swapped", "Compressed"]) {
+      expect(el.textContent).toContain(label);
+    }
+    // "Consumed" is the host's band and must not appear on a VM.
+    expect(el.textContent).not.toContain("Consumed");
+    // The bands are measured outside the guest; the legend has to say so.
+    expect(el.textContent).toContain("not the guest");
+  });
+
+  it("drops the bands an ESXi host does not publish", () => {
+    const el = container();
+    g._renderMemoryChart(el, payload(hostSamples(3)), {}, {});
+    expect(el.querySelectorAll("polygon").length).toBe(3);
+    expect(el.textContent).toContain("Consumed");
+    expect(el.textContent).not.toContain("Private");
+    expect(el.textContent).not.toContain("Compressed");
+  });
+
+  it("tooltips the bands it actually drew, in stack order", () => {
+    const el = container();
+    g.__tooltipFns = [];
+    g._renderMemoryChart(el, payload(vmSamples(3)), {}, {});
+    const hit = el.querySelector("rect.chart-hit")!;
+    const html = g.__tooltipFns[g.__tooltipFns.length - 1](hit);
+    expect(html).toContain("Ballooned");
+    expect(html).toContain("Host-swapped");
+    // The remainder is guest RAM the host never had to touch, which is not
+    // the same claim as the OS-level "Free" on the agent stack.
+    expect(html).toContain("Untouched");
+    expect(html).not.toContain("Free");
+  });
+
+  it("charts a vCenter VM's vCPUs on the CPU chart", () => {
+    const el = container();
+    g._renderCpuChart(el, payload(vmSamples(2)), {}, {});
+    // Four vCPUs plus the aggregate, which carries a chip of its own.
+    expect(el.querySelectorAll("polyline").length).toBeGreaterThanOrEqual(4);
+    expect(el.querySelectorAll(".cpu-legend-chip").length).toBe(5);
   });
 });

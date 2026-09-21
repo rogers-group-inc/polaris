@@ -35,6 +35,8 @@ import {
   parseVmDetail,
   vcenterSweepBlockedReason,
   partitionStaleVcenterSources,
+  parsePerfCounterIds,
+  parsePerfResponse,
 } from "../../src/services/vcenterService.js";
 
 const INTG = "11111111-2222-3333-4444-555555555555";
@@ -631,5 +633,131 @@ describe("partitionStaleVcenterSources", () => {
     const { retained, gone } = partitionStaleVcenterSources([kept, deleted, host], new Set(["vm-1"]));
     expect(retained).toEqual([kept]);
     expect(gone).toEqual([deleted, host]);
+  });
+});
+
+// ─── PerformanceManager ─────────────────────────────────────────────────────
+//
+// Per-core CPU and a host's balloon/swap come from QueryPerf, not quickStats.
+// Two things are worth pinning: the counter ids are resolved by NAME (they
+// are not stable across vCenter builds, so a hard-coded id would read the
+// wrong metric on someone else's appliance), and the scaling — cpu.usage is
+// in HUNDREDTHS of a percent and the memory counters are in KB.
+
+const PERF_COUNTERS_XML =
+  `<returnval><key>2</key>` +
+  `<nameInfo><label>Usage</label><key>usage</key></nameInfo>` +
+  `<groupInfo><label>CPU</label><key>cpu</key></groupInfo>` +
+  `<rollupType>none</rollupType><level>4</level></returnval>` +
+  // The one we want: same group+name, rollupType average.
+  `<returnval><key>6</key>` +
+  `<nameInfo><label>Usage</label><key>usage</key></nameInfo>` +
+  `<groupInfo><label>CPU</label><key>cpu</key></groupInfo>` +
+  `<rollupType>average</rollupType><level>1</level></returnval>` +
+  `<returnval><key>90</key>` +
+  `<nameInfo><label>Balloon</label><key>vmmemctl</key></nameInfo>` +
+  `<groupInfo><label>Memory</label><key>mem</key></groupInfo>` +
+  `<rollupType>average</rollupType><level>1</level></returnval>` +
+  `<returnval><key>98</key>` +
+  `<nameInfo><label>Swap used</label><key>swapused</key></nameInfo>` +
+  `<groupInfo><label>Memory</label><key>mem</key></groupInfo>` +
+  `<rollupType>average</rollupType><level>2</level></returnval>`;
+
+describe("SOAP PerformanceManager parsing", () => {
+  it("resolves counter ids by group+name+rollup, never by position", () => {
+    const ids = parsePerfCounterIds(PERF_COUNTERS_XML);
+    // key 2 is the same cpu.usage metric at a different rollup and must lose.
+    expect(ids).toEqual({ cpuUsage: 6, memBalloon: 90, memSwapUsed: 98 });
+  });
+
+  it("reports a counter this vCenter does not publish as null", () => {
+    const ids = parsePerfCounterIds("<returnval><key>1</key><rollupType>latest</rollupType></returnval>");
+    expect(ids).toEqual({ cpuUsage: null, memBalloon: null, memSwapUsed: null });
+  });
+
+  const IDS = { cpuUsage: 6, memBalloon: 90, memSwapUsed: 98 };
+
+  it("transposes per-instance series into a core vector and scales to percent", () => {
+    const xml =
+      `<returnval xsi:type="PerfEntityMetric"><entity type="VirtualMachine">vm-42</entity>` +
+      `<value xsi:type="PerfMetricIntSeries"><id><counterId>6</counterId><instance>0</instance></id><value>2534</value></value>` +
+      `<value xsi:type="PerfMetricIntSeries"><id><counterId>6</counterId><instance>1</instance></id><value>1000</value></value>` +
+      `</returnval>`;
+    const out = parsePerfResponse(xml, IDS);
+    expect(out.get("vm-42")!.corePcts).toEqual([25.3, 10]);
+  });
+
+  it("discards the aggregate series", () => {
+    // The caller has a better aggregate from quickStats, computed against the
+    // entity's real clock rate. Two aggregates a rounding step apart would
+    // read as the average line having lost its own cores.
+    const xml =
+      `<returnval><entity type="VirtualMachine">vm-42</entity>` +
+      `<value><id><counterId>6</counterId><instance></instance></id><value>9900</value></value>` +
+      `<value><id><counterId>6</counterId><instance>0</instance></id><value>1200</value></value>` +
+      `</returnval>`;
+    expect(parsePerfResponse(xml, IDS).get("vm-42")!.corePcts).toEqual([12]);
+  });
+
+  it("converts the memory counters from KB to bytes", () => {
+    const xml =
+      `<returnval><entity type="HostSystem">host-9</entity>` +
+      `<value><id><counterId>90</counterId><instance></instance></id><value>4096</value></value>` +
+      `<value><id><counterId>98</counterId><instance></instance></id><value>1024</value></value>` +
+      `</returnval>`;
+    const s = parsePerfResponse(xml, IDS).get("host-9")!;
+    expect(s.balloonedBytes).toBe(4096 * 1024);
+    expect(s.swappedBytes).toBe(1024 * 1024);
+    // No cpu series in this response — null, never an empty array, which the
+    // chart would read as "this host has no cores".
+    expect(s.corePcts).toBeNull();
+  });
+
+  it("gives an entity that reported nothing a null vector rather than []", () => {
+    const xml = `<returnval><entity type="VirtualMachine">vm-off</entity></returnval>`;
+    expect(parsePerfResponse(xml, IDS).get("vm-off")!.corePcts).toBeNull();
+  });
+
+  it("ignores a counter the caller did not ask about", () => {
+    const xml =
+      `<returnval><entity type="HostSystem">host-9</entity>` +
+      `<value><id><counterId>4242</counterId><instance>0</instance></id><value>5000</value></value>` +
+      `</returnval>`;
+    const s = parsePerfResponse(xml, IDS).get("host-9")!;
+    expect(s.corePcts).toBeNull();
+    expect(s.balloonedBytes).toBeNull();
+  });
+});
+
+describe("quickStats memory breakdown", () => {
+  const VM_BANDS_XML =
+    `<returnval><objects>` +
+    `<obj type="VirtualMachine">vm-77</obj>` +
+    `<propSet><name>config.hardware.memoryMB</name><val xsi:type="xsd:int">8192</val></propSet>` +
+    `<propSet><name>summary.quickStats.privateMemory</name><val xsi:type="xsd:int">2048</val></propSet>` +
+    `<propSet><name>summary.quickStats.sharedMemory</name><val xsi:type="xsd:int">512</val></propSet>` +
+    `<propSet><name>summary.quickStats.balloonedMemory</name><val xsi:type="xsd:int">256</val></propSet>` +
+    `<propSet><name>summary.quickStats.swappedMemory</name><val xsi:type="xsd:int">64</val></propSet>` +
+    `<propSet><name>summary.quickStats.compressedMemory</name><val xsi:type="xsd:long">2048</val></propSet>` +
+    `</objects></returnval>`;
+
+  it("reads the bands in bytes, and knows compressedMemory is KB not MB", () => {
+    const b = parseQuickStatsBlock(extractObjectBlocks(VM_BANDS_XML)[0])!;
+    expect(b.memPrivateBytes).toBe(2048 * 1024 * 1024);
+    expect(b.memSharedBytes).toBe(512 * 1024 * 1024);
+    expect(b.memBalloonedBytes).toBe(256 * 1024 * 1024);
+    expect(b.memSwappedBytes).toBe(64 * 1024 * 1024);
+    // 2048 KB, not 2048 MB — the one field VMware documents differently, and
+    // reading it as MB would draw a 2 GB compressed band on an idle VM.
+    expect(b.memCompressedBytes).toBe(2048 * 1024);
+  });
+
+  it("leaves the bands null on a source that published none", () => {
+    const b = parseQuickStatsBlock(extractObjectBlocks(QUICKSTATS_XML)[1])!;
+    expect(b.memPrivateBytes).toBeNull();
+    expect(b.memBalloonedBytes).toBeNull();
+    // And per-core stays null until the perf pass fills it — a property-only
+    // fetch (discovery) must never claim to have measured cores.
+    expect(b.cpuCorePcts).toBeNull();
   });
 });
