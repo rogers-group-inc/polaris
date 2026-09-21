@@ -11243,14 +11243,26 @@ function _renderMemoryChart(container, data, asset, si) {
   var anyDetailed = bands.length > 1;
   var anySwap = rows.some(function (r) { return r.b.swapTotal != null && r.b.swapTotal > 0; });
 
-  // Ceiling is the installed total, so the gap above the stack IS free
-  // memory and the axis does not rescale as usage moves. A window in which
-  // the total itself changed (a VM resized) takes the largest.
+  // THE CEILING IS THE INSTALLED TOTAL, AND NOTHING ELSE MAY RAISE IT.
+  // That is what makes the gap above the stack mean free memory, keeps the
+  // axis still while usage moves, and lets two hosts be compared by eye. A
+  // window in which the total itself changed (a VM resized) takes the
+  // largest.
+  //
+  // Swap used to be allowed to push it up, so the line would "stay on the
+  // canvas". That was the wrong trade: swap is backing store and can exceed
+  // installed RAM (trivially so on Windows, where the page file is routinely
+  // larger than RAM and a commit-charge-shaped reading is larger still), and
+  // when it did, the whole physical stack squashed into the bottom of the
+  // chart while the dashed Installed total line floated somewhere in the
+  // middle — an axis in units of nothing in particular. The bands are the
+  // subject; swap is an overlay. It is drawn inside the clip group, so the
+  // part above the ceiling clips at the top edge instead of rescaling
+  // everything else, and the legend says so when that happens.
   var maxTotal = 0;
   rows.forEach(function (r) { if (r.b.total > maxTotal) maxTotal = r.b.total; });
-  // Swap can exceed installed RAM; the line must stay on the canvas.
-  rows.forEach(function (r) { if (r.b.swapUsed != null && r.b.swapUsed > maxTotal) maxTotal = r.b.swapUsed; });
   var yMax = maxTotal > 0 ? maxTotal : 1;
+  var swapOverTop = rows.some(function (r) { return r.b.swapUsed != null && r.b.swapUsed > yMax; });
 
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, 0, yMax);
@@ -11351,7 +11363,11 @@ function _renderMemoryChart(container, data, asset, si) {
   }
   var legendParts = bands.map(function (b) { return swatch(b.color, b.label, false); });
   legendParts.push(swatch(_MEM_TOTAL_COLOR, "Installed total", true));
-  if (anySwap) legendParts.push(swatch(_MEM_SWAP_COLOR, "Swap / page file", true));
+  // A swap line running along the ceiling is a reading, not a rendering
+  // fault — say which, or the flat line at the top reads as a stuck series.
+  if (anySwap) {
+    legendParts.push(swatch(_MEM_SWAP_COLOR, "Swap / page file" + (swapOverTop ? " — above installed RAM, clipped" : ""), true));
+  }
   // A source with no breakdown gets told so, in the legend, rather than
   // being left to look like a host whose cache is permanently zero. The
   // vSphere stack gets a note of its own instead: its bands are measured

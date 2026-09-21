@@ -584,3 +584,84 @@ describe("Memory chart - the vSphere vocabulary", () => {
     expect(el.querySelectorAll(".cpu-legend-chip").length).toBe(5);
   });
 });
+
+describe("Memory chart - the axis is the installed total", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    installStubs();
+    (0, eval)(SRC);
+  });
+
+  const GB = 1024 ** 3;
+
+  /** 32 GB installed, 8 GB in use, and a page file bigger than RAM. */
+  function bigSwapSamples(swapUsedGb: number): any[] {
+    return [0, 1, 2].map((i) => ({
+      timestamp: ts(i),
+      cpuPct: 5,
+      memUsedBytes: 8 * GB,
+      memTotalBytes: 32 * GB,
+      memBuffersBytes: 1 * GB,
+      memCachedBytes: 4 * GB,
+      memFreeBytes: 19 * GB,
+      swapUsedBytes: swapUsedGb * GB,
+      swapTotalBytes: 64 * GB,
+    }));
+  }
+
+  /** Top y-axis tick, which is the ceiling the stack is drawn against. */
+  function topTick(el: HTMLElement): string {
+    const texts = Array.from(el.querySelectorAll("text"))
+      .filter((t) => t.getAttribute("text-anchor") === "end");
+    return texts[texts.length - 1]?.textContent ?? "";
+  }
+
+  it("tops at installed RAM, not at the largest value in the window", () => {
+    const el = container();
+    // 48 GB of page file in use on a 32 GB box. The old axis grew to fit it,
+    // which squashed the whole physical stack into the bottom of the chart
+    // and left the Installed total line floating in the middle.
+    g._renderMemoryChart(el, payload(bigSwapSamples(48)), {}, {});
+    expect(topTick(el)).toBe(_fmt(32 * GB));
+  });
+
+  it("is the same ceiling whether swap is large or absent", () => {
+    const withSwap = container();
+    g._renderMemoryChart(withSwap, payload(bigSwapSamples(48)), {}, {});
+    const noSwap = container();
+    const samples = bigSwapSamples(48).map((s) => {
+      const c = { ...s };
+      delete c.swapUsedBytes;
+      delete c.swapTotalBytes;
+      return c;
+    });
+    g._renderMemoryChart(noSwap, payload(samples), {}, {});
+    expect(topTick(withSwap)).toBe(topTick(noSwap));
+  });
+
+  it("says so when the swap line is running above the ceiling", () => {
+    // A flat line pinned to the top of the chart is a reading, not a stuck
+    // series — the legend has to distinguish them.
+    const over = container();
+    g._renderMemoryChart(over, payload(bigSwapSamples(48)), {}, {});
+    expect(over.textContent).toContain("above installed RAM, clipped");
+
+    const under = container();
+    g._renderMemoryChart(under, payload(bigSwapSamples(2)), {}, {});
+    expect(under.textContent).toContain("Swap / page file");
+    expect(under.textContent).not.toContain("clipped");
+  });
+
+  it("takes the largest total when the machine was resized mid-window", () => {
+    const el = container();
+    const samples = bigSwapSamples(2);
+    samples[2].memTotalBytes = 64 * GB;
+    g._renderMemoryChart(el, payload(samples), {}, {});
+    expect(topTick(el)).toBe(_fmt(64 * GB));
+  });
+});
+
+/** Mirrors the _fmtBytes stub the harness installs. */
+function _fmt(n: number): string {
+  return `${n}B`;
+}
