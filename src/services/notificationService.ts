@@ -389,6 +389,12 @@ export async function clearSuppressedAlerts(assetIds?: string[]): Promise<number
       // A system-scoped alert (capacity, backups) has no asset and can't be
       // suppressed by one.
       assetId: assetIds ? { in: assetIds } : { not: null },
+      // Business rule 78 — an alert RAISED FOR a dependency-suppressed device
+      // (by a down automation that opted in) is the one alert that is supposed
+      // to be live on a suppressed asset. Retiring it here would re-raise it on
+      // the next engine tick, forever. The engine owns its end: the device
+      // recovers, or the flavour is handed off when the upstream comes back.
+      dependencyDown: false,
     },
     select: { id: true, assetId: true, rule: { select: { name: true } } },
     take: SUPPRESSION_SWEEP_CAP,

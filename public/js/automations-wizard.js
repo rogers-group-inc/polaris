@@ -442,6 +442,20 @@ function makeAutomationSentences(s) {
   function leafDeclaresDownCount(leaf) {
     return isDownDetectionLeaf(leaf) && leaf.missedPolls != null;
   }
+  // ── Dependency-down alerting (business rule 78) ─────────────────────────
+  // A down automation may opt to still alert about a device that is
+  // dependency-suppressed (Dep. Down), naming the upstream device. The key
+  // rides the trigger like `missedPolls`, and its NAME comes from the catalog:
+  // a pre-upgrade server (no `dependencyDownKey`) renders no control at all,
+  // rather than one whose key the API would refuse.
+  function dependencyDownMeta() {
+    var dd = downDetectionMeta();
+    return dd && dd.dependencyDownKey ? dd : null;
+  }
+  function leafAlertsWhenDependencyDown(leaf) {
+    var dd = dependencyDownMeta();
+    return !!(dd && isDownDetectionLeaf(leaf) && leaf[dd.dependencyDownKey] === true);
+  }
   // ── State (0/1) metrics ────────────────────────────────────────────────
   // A state metric's reading is a flag, so its threshold is 0 or 1 and the
   // number is meaningless to read back: the automation is about "Alarm", not
@@ -770,6 +784,12 @@ function makeAutomationSentences(s) {
     }
     if ((tr.type === "asset_metric" || tr.type === "host_metric" || tr.type === "asset_state") && tr.forDurationSec > 0) {
       out += ", sustained for <strong>" + holdPhrase(tr) + "</strong>";
+    }
+    // Business rule 78 — the one thing this automation does that a plain down
+    // automation does not, so the sentence has to say it: a reader comparing
+    // two down automations in the list is otherwise looking at identical prose.
+    if (leafAlertsWhenDependencyDown(tr)) {
+      out += " — and still when the device is <strong>dependency-down</strong>, naming the upstream device";
     }
     return out + tail + ".";
   }
@@ -1105,6 +1125,7 @@ function makeAutomationSentences(s) {
     isDownDetectionLeaf: isDownDetectionLeaf, isDownDetectionTrigger: isDownDetectionTrigger,
     missedPollsOf: missedPollsOf, downDetectionMeta: downDetectionMeta,
     leafDeclaresDownCount: leafDeclaresDownCount,
+    dependencyDownMeta: dependencyDownMeta, leafAlertsWhenDependencyDown: leafAlertsWhenDependencyDown,
     tgLeafPhrase: tgLeafPhrase, tgTreePhrase: tgTreePhrase,
     triggerSentence: triggerSentence, severityLadderPhrase: severityLadderPhrase, resetSentence: resetSentence,
     invertedLeaf: invertedLeaf, invertedTree: invertedTree, resetCaveat: resetCaveat,
@@ -1578,6 +1599,7 @@ async function openAutomationWizard(existing, opts) {
       isDownDetectionLeaf = _sent.isDownDetectionLeaf, missedPollsOf = _sent.missedPollsOf,
       isDownDetectionTrigger = _sent.isDownDetectionTrigger,
       downDetectionMeta = _sent.downDetectionMeta,
+      dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
   var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter" };
@@ -3721,11 +3743,45 @@ async function openAutomationWizard(existing, opts) {
   // the spread behind it is. Before that lookup existed this caption had no
   // source at all and always fell back to "unavailable".
 
-  /** Drop every missedPolls in a trigger tree (see the call site in collectStep3). */
+  /** Drop every missedPolls — and the dependency-down toggle, which has the
+   *  same bare-trigger-only rule (business rule 78) — in a trigger tree (see
+   *  the call site in collectStep3). */
   function stripMissedPolls(node) {
     if (!node) return;
     if (node.missedPolls != null) delete node.missedPolls;
+    var dd = dependencyDownMeta();
+    if (dd && node[dd.dependencyDownKey] != null) delete node[dd.dependencyDownKey];
     (node.children || []).forEach(stripMissedPolls);
+  }
+  /**
+   * "Dependency-Down Bypass" (business rule 78) — the Actions step's row under
+   * the In-app Alert card, beside "Require Acknowledgement". It was rendered on
+   * the Trigger step as well while the placement was undecided (2026-09-21);
+   * the operator chose the Actions step, so this is the ONE copy, bound to
+   * `draft.trigger.alertWhenDependencyDown`. Only a bare `monitor status is
+   * down` trigger has the row, and only when the server catalog carries the
+   * key — a pre-upgrade server renders no control rather than one whose key
+   * the API would refuse. The step re-renders from the draft on entry, so a
+   * trigger edited away from "down" simply stops offering it.
+   */
+  function dependencyDownRowHtml(tr) {
+    var dd = dependencyDownMeta();
+    if (!dd || !isDownDetectionLeaf(tr)) return "";
+    return '<div class="aw5-row aw-dep-down">' +
+      '<label class="aw5-row-title">' +
+        '<input type="checkbox" id="aw-dep-down"' + (leafAlertsWhenDependencyDown(tr) ? " checked" : "") + '> ' +
+        'Dependency-Down Bypass' +
+      '</label>' +
+      '<p class="aw5-row-help">' + escapeHtml(dd.dependencyDownHelp || "") + '</p>' +
+    '</div>';
+  }
+  /** Read the row and write the key onto the (bare down) trigger — absent
+   *  when off, so an untouched automation's payload is byte-identical. */
+  function collectDependencyDown(el) {
+    var dd = dependencyDownMeta();
+    if (!dd || !el || !draft.trigger || !isDownDetectionLeaf(draft.trigger)) return;
+    if (el.checked) draft.trigger[dd.dependencyDownKey] = true;
+    else delete draft.trigger[dd.dependencyDownKey];
   }
   function syncDownDetection(panel) {
     var rows = panel.querySelectorAll('.scr-row');
@@ -4330,6 +4386,12 @@ async function openAutomationWizard(existing, opts) {
         // aggregate has no hold at all — its period is the measurement window —
         // while a ratio and a count window each leave the hold axis free.
         var holdPolls = aggregated ? (secondField ? pollFieldCount(sEl) : 0) : pollFieldCount(dEl);
+        // The dependency-down toggle (business rule 78) has NO editor on this
+        // step — it lives on the Actions step — so the rebuilt trigger below
+        // would drop a stored key every time this step is collected (the
+        // wizard-step-collector-strips trap). Carry it across by hand.
+        var ddMeta = dependencyDownMeta();
+        var prevDepDown = !!(ddMeta && draft.trigger && draft.trigger[ddMeta.dependencyDownKey] === true);
         draft.trigger = tgCollapse({
           type: "composite", kind: kind, op: tree.op, children: tree.children,
           forDurationSec: aggregated ? (secondField ? sustainSec : 0) : holdSec,
@@ -4354,6 +4416,8 @@ async function openAutomationWizard(existing, opts) {
           else delete draft.trigger.missedPolls;
           draft.trigger.forPolls = 0;
           draft.trigger.forDurationSec = 0;
+          // Still a bare down trigger: the Actions-step answer stands.
+          if (prevDepDown && ddMeta) draft.trigger[ddMeta.dependencyDownKey] = true;
         }
       }
     } else if (cat === "event") {
@@ -5269,7 +5333,7 @@ async function openAutomationWizard(existing, opts) {
    * duplicated id would silently wire every section's checkbox to the first
    * section's state.
    */
-  function followUpBlockHtml(cfg, live) {
+  function followUpBlockHtml(cfg, live, sevLabel) {
     cfg = cfg || {};
     // `live` marks a block whose contents are the SECTION's own answer rather
     // than a seed of the rule's — see the collect note in collectStep5. It has
@@ -5277,16 +5341,42 @@ async function openAutomationWizard(existing, opts) {
     // known: a band section rendered while the per-severity toggle was off
     // shows the base's values, and reads back as the band's only if nothing
     // remembers where they came from.
-    return '<div class="aw-followup"' + (live ? ' data-fu-live="1"' : "") +
-        ' style="border-top:1px solid var(--color-border);margin-top:0.6rem;padding-top:0.5rem">' +
-      // A property of the ALERT record — who may close it out and on what
-      // terms — enforced on every acknowledge path (the Alerts tab, the phone,
-      // the emailed link, the push button), not just the ones that send email.
-      '<label style="display:block;margin:0;font-weight:400">' +
+    // A property of the ALERT record — who may close it out and on what terms —
+    // enforced on every acknowledge path (the Alerts tab, the phone, the emailed
+    // link, the push button), not just the ones that send email. Rendered as a
+    // checkbox ROW (the 2026-09-21 mockup) above the severity's action list:
+    // it describes the alert being raised, not what is sent about it.
+    return '<div class="aw-followup aw5-row"' + (live ? ' data-fu-live="1"' : "") + '>' +
+      '<label class="aw5-row-title">' +
         '<input type="checkbox" class="aw-require-ack-note"' + (cfg.requireAckNote ? " checked" : "") + '> ' +
-        'Require a note when acknowledging' +
+        'Require Acknowledgement' +
+        (sevLabel ? ' <span class="aw-tier-qual">at <span style="color:' + sevColor(sevLabel) + '">' + escapeHtml(sevLabel) + '</span></span>' : "") +
       '</label>' +
-      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">Acknowledging asks what the problem was and what the fix was, and won’t go through empty. Escalation still stops on acknowledge.</p>' +
+      '<p class="aw5-row-help">Acknowledging asks what the problem was and what the fix was, and won’t go through empty. Escalation still stops on acknowledge.</p>' +
+    '</div>';
+  }
+  /**
+   * One card on the Actions step (the 2026-09-21 mockup): a header line —
+   * title, the tier's condition, and the summary a folded card shows — over a
+   * body.
+   *
+   * A `key` makes the card COLLAPSIBLE: the card is then the collapse
+   * container (so applyCollapsed finds its body as a direct child), it carries
+   * the fold glyph, and `closed` seeds the state once through wireCollapsibles.
+   * A null key renders the same card with no glyph and an always-open body,
+   * which is what a single-severity automation gets — there is nothing to
+   * choose between, so a chevron would be an affordance for nothing.
+   */
+  function actionCardHtml(key, closed, titleHtml, condText, summaryText, bodyHtml) {
+    return '<div class="aw5-card"' + (key ? ' data-collapse-key="' + escapeHtml(key) + '"' : "") +
+        (key && closed ? ' data-collapse-default="closed"' : "") + '>' +
+      '<div class="' + (key ? "aw-collapse-head " : "") + 'aw5-head">' +
+        (key ? collapseBtnHtml(key) : "") +
+        '<label class="aw-tier-label aw5-head-title">' + titleHtml + '</label>' +
+        (condText ? '<span class="aw-tier-cond">' + escapeHtml(condText) + '</span>' : "") +
+        (key && summaryText ? '<span class="aw-collapse-summary" style="margin:0;display:none">' + escapeHtml(summaryText) + '</span>' : "") +
+      '</div>' +
+      '<div class="' + (key ? "aw-collapse-body" : "aw5-body") + '">' + bodyHtml + '</div>' +
     '</div>';
   }
 
@@ -5656,20 +5746,24 @@ async function openAutomationWizard(existing, opts) {
     // it: every delivery row hangs off the Notification id, as do the
     // escalation sweep, acknowledge/clear and the rule state machine. The Event
     // moved out to a removable "Create an Event" action in the list below.
-    var cardTitle = "Create an in-app alert (always happens)";
+    var cardTitle = "In-app Alert";
     var cardHelp = isEC
       ? "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes the alert text — {value} is the source event’s own message; leave blank for the default."
       : "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes what the alert and the audit Event say; leave blank for the default.";
+    // The step is a stack of CARDS (the 2026-09-21 mockup): the alert record
+    // first — In-app Alert, then the two rows that describe it (Require
+    // Acknowledgement, Dependency-Down Bypass) — then, per severity, the Trigger
+    // Action list and its Escalation Action chain, and last the Reset Action
+    // list. The two rows sit ABOVE the action list because they are facts about
+    // the alert being raised rather than about what is sent, and outside every
+    // collapse body so a folded severity still states them.
     var html = '<h3 style="margin:0 0 0.25rem">What should happen?</h3>' +
       '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">Notifications route through Delivery-tab channels; API calls POST to your systems; scripts run on the Polaris server or the triggering asset’s agent.</p>' +
-      '<div class="form-group" id="aw-inapp-card" style="border:1px solid var(--color-border);border-radius:6px;padding:0.75rem">' +
-        '<label style="font-weight:600;margin:0 0 4px;display:block">' + cardTitle + '</label>' +
-        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0 0 6px">' + cardHelp + '</p>' +
+      '<div class="form-group aw5-card" id="aw-inapp-card">' +
+        '<label class="aw5-card-title">' + cardTitle + '</label>' +
+        '<p class="aw5-help">' + cardHelp + '</p>' +
         tokenPaletteHtml("aw-token-palette") +
         '<input type="text" id="aw-msg" class="tpl-field" value="' + escapeHtml(draft.messageTemplate || "") + '" placeholder="' + (isEC ? "{rule}: {value}" : "{asset} {metric} = {value} (threshold {threshold})") + '" style="width:100%;margin-top:4px">' +
-        // The follow-up pair ("require a note" / "repeat this notification")
-        // used to live here. It moved into each severity section — see
-        // followUpBlockHtml.
       '</div>';
 
     // Per-severity action sections: with severity bands, each tier CAN get its
@@ -5685,43 +5779,34 @@ async function openAutomationWizard(existing, opts) {
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">Leave this off to run the same actions whenever the alert changes severity.</p></div>';
     }
     // Same shape the trigger step's tiers use: heading, then the tier's own
-    // condition in the shared summary style. The base tier showed no condition at
-    // all here, which made it read as a different kind of block from the ones
-    // below it — the exact mismatch the trigger step already fixed.
+    // condition in the shared summary style.
     var basePhrase = tierConditionPhrase(
       draft.trigger && draft.trigger.operator,
       draft.trigger && draft.trigger.threshold,
       baseHoldPhrase(draft.trigger),
     );
     var baseLabel = perSev
-      ? 'Actions at <span style="color:' + sevColor(draft.severity) + '">' + escapeHtml(draft.severity) + '</span> <span class="aw-tier-qual">(base severity)</span>'
-      : "Actions when this fires";
-    // Folded on arrival: with a severity ladder this step is three or four action
-    // lists, and the summary line on each header says enough to choose between
-    // them. Step 3's tiers stay OPEN by contrast — their content is the condition
-    // being edited, not a list to skim.
-    html += '<div class="form-group"' + (perSev ? ' data-collapse-key="t5:base" data-collapse-default="closed"' : "") + ' style="' + (perSev ? "border-left:3px solid " + sevColor(draft.severity) + ";padding-left:0.6rem" : "") + '">' +
-      '<div class="aw-collapse-head" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-        (perSev ? collapseBtnHtml("t5:base") : "") +
-        '<label class="aw-tier-label" style="margin:0">' + baseLabel + '</label>' +
-        (perSev && basePhrase ? '<span class="aw-tier-cond">' + escapeHtml(basePhrase) + '</span>' : "") +
-      '</div>' +
-      '<div class="aw-collapse-body">' +
-      (perSev ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 6px">These actions also run at higher severities that don’t define their own.</p>'
-        : bands.length ? '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 6px">These run at every severity level — each time the alert climbs or eases into a new one.</p>' : "") +
-      '<div id="aw-actions"></div>' +
-      '<button type="button" class="btn btn-sm btn-secondary" id="aw-add-action" style="margin-top:6px">+ Add action</button>' +
-      // Escalation belongs to the SEVERITY, not to one action inside it: "if
-      // this alert stays unhandled, do more" is a fact about the alert at this
-      // severity, and hanging it off a single Notify row made it read as "if
-      // this email goes unanswered" while the same chain fired for the whole
-      // tier. The base section's chain IS the rule-level `escalation` — which is
-      // what the engine resolves for an alert sitting at the base severity.
-      escSectionHtml() +
-      '</div>' +
-      // Outside the collapsible body: folded, a section still has to say
-      // whether it repeats and whether closing it out needs a note.
-      followUpBlockHtml({ requireAckNote: draft.requireAckNote, repeat: draft.repeat }, true) +
+      ? 'Trigger Action at <span style="color:' + sevColor(draft.severity) + '">' + escapeHtml(draft.severity) + '</span> <span class="aw-tier-qual">(base severity)</span>'
+      : "Trigger Action";
+    // Folded on arrival only with a severity ladder: then this step is three or
+    // four action lists, and the summary line on each header says enough to
+    // choose between them. A single list opens.
+    html += '<div class="form-group aw5-sev" id="aw-base-sec" style="' + (perSev ? "border-left:3px solid " + sevColor(draft.severity) + ";padding-left:0.6rem" : "") + '">' +
+      followUpBlockHtml({ requireAckNote: draft.requireAckNote }, true, perSev ? draft.severity : null) +
+      // Business rule 78 — the one place the dependency-down toggle lives.
+      dependencyDownRowHtml(draft.trigger) +
+      actionCardHtml(perSev ? "t5:base" : null, perSev, baseLabel, perSev && basePhrase ? basePhrase : "", "",
+        (perSev ? '<p class="aw5-help">These actions also run at higher severities that don’t define their own.</p>'
+          : bands.length ? '<p class="aw5-help">These run at every severity level — each time the alert climbs or eases into a new one.</p>' : "") +
+        '<div id="aw-actions"></div>' +
+        '<button type="button" class="btn btn-sm btn-secondary" id="aw-add-action" style="margin-top:6px">+ Add action</button>' +
+        // Escalation belongs to the SEVERITY, not to one action inside it: "if
+        // this alert stays unhandled, do more" is a fact about the alert at this
+        // severity, and hanging it off a single Notify row made it read as "if
+        // this email goes unanswered" while the same chain fired for the whole
+        // tier. The base card's chain IS the rule-level `escalation` — which is
+        // what the engine resolves for an alert sitting at the base severity.
+        escSectionHtml()) +
     '</div>';
     bands.forEach(function (b, i) {
       // A tier may override the comparison and the hold; both belong in the
@@ -5736,54 +5821,47 @@ async function openAutomationWizard(existing, opts) {
         bandHoldPhrase(draft.trigger, b),
       );
       var bandCount = ((b.actions || []).length);
-      html += '<div class="form-group aw-band-actions" data-band-idx="' + i + '" data-collapse-key="t5:' + escapeHtml(b.severity) + '" data-collapse-default="closed" style="border-left:3px solid ' + sevColor(b.severity) + ';padding-left:0.6rem' + (perSev ? "" : ";display:none") + '">' +
-        '<div class="aw-collapse-head" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-          collapseBtnHtml("t5:" + b.severity) +
-          '<label class="aw-tier-label" style="margin:0">Actions at <span style="color:' + sevColor(b.severity) + '">' + escapeHtml(b.severity) + '</span></label>' +
-          '<span class="aw-tier-cond">' + escapeHtml(bandPhrase) + '</span>' +
-          // A folded section still says how much is inside it, so "no actions
+      html += '<div class="form-group aw5-sev aw-band-actions" data-band-idx="' + i + '" style="border-left:3px solid ' + sevColor(b.severity) + ';padding-left:0.6rem' + (perSev ? "" : ";display:none") + '">' +
+        followUpBlockHtml(bandFollowUpOf(b), perSev, b.severity) +
+        actionCardHtml("t5:" + b.severity, true,
+          'Trigger Action at <span style="color:' + sevColor(b.severity) + '">' + escapeHtml(b.severity) + '</span>',
+          bandPhrase,
+          // A folded card still says how much is inside it, so "no actions
           // here" (which falls back to the base) is visible without unfolding.
-          '<span class="aw-collapse-summary" style="margin:0;display:none">' +
-            (bandCount ? bandCount + " action" + (bandCount === 1 ? "" : "s") : "no actions of its own") +
-          '</span>' +
-        '</div>' +
-        '<div class="aw-collapse-body">' +
-        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 6px">' + escapeHtml((s.bandMeta && s.bandMeta.emptyBandNote) || "Leave empty to run the base actions at this severity.") + '</p>' +
-        '<div class="ba-actions"></div>' +
-        '<button type="button" class="btn btn-sm btn-secondary ba-add" style="margin-top:6px">+ Add action</button>' +
-        // The band's own chain (severityBands[i].escalation) — the one the sweep
-        // resolves while the alert sits in THIS band.
-        escSectionHtml() +
-        '</div>' +
-        followUpBlockHtml(bandFollowUpOf(b), perSev) +
+          bandCount ? bandCount + " action" + (bandCount === 1 ? "" : "s") : "no actions of its own",
+          '<p class="aw5-help">' + escapeHtml((s.bandMeta && s.bandMeta.emptyBandNote) || "Leave empty to run the base actions at this severity.") + '</p>' +
+          '<div class="ba-actions"></div>' +
+          '<button type="button" class="btn btn-sm btn-secondary ba-add" style="margin-top:6px">+ Add action</button>' +
+          // The band's own chain (severityBands[i].escalation) — the one the
+          // sweep resolves while the alert sits in THIS band.
+          escSectionHtml()) +
       '</div>';
     });
-    // ── When this resets ────────────────────────────────────────────────
+    // ── Reset Action ──────────────────────────────────────────────────────
     // Every clear path today writes cleared/clearedBy and nothing else, so
     // "tell the NOC it came back" wasn't expressible. The list starts mirroring
     // the trigger's Notify actions (see mirroredResetActions) so the recovery
     // reaches the same people without configuring them twice.
-    // The toggle is its OWN state, not "is the list non-empty": a re-render
-    // between an operator ticking it and adding a row would otherwise silently
-    // untick it. On a new automation it starts on (the list seeds from the
-    // trigger's notify actions); a stored rule reflects what it saved.
-    if (draft.resetOn === undefined) {
-      draft.resetOn = draft.resetActions === undefined
-        ? true
-        : !!(draft.resetActions && draft.resetActions.length);
-    }
-    var resetOn = draft.resetOn;
-    html += '<div class="form-group" id="aw-reset-card" style="border:1px solid var(--color-border);border-radius:6px;padding:0.75rem;margin-top:0.5rem">' +
-      '<label style="font-weight:600;margin:0 0 4px;display:block">' +
-        '<input type="checkbox" id="aw-reset-actions-on"' + (resetOn ? " checked" : "") + '> When this resets' +
-      '</label>' +
-      '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:0 0 6px">' +
-        'Runs when the alert ends — it recovered, its timer ran out, or someone cleared it. ' +
-        '<span id="aw-reset-mirror-note"></span></p>' +
-      '<div id="aw-reset-wrap"' + (resetOn ? "" : ' style="display:none"') + '>' +
-        '<div id="aw-reset-actions"></div>' +
-        '<button type="button" class="btn btn-sm btn-secondary" id="aw-reset-add" style="margin-top:6px">+ Add action</button>' +
-      '</div>' +
+    // A header and an Add action button (2026-09-21) — no enable checkbox.
+    // The box gated the list behind a control that had to be reasoned about
+    // ("is it ticked AND is there a row?"), and it could disagree with the
+    // list: a ticked box over an empty list saves as null and comes back
+    // unticked. THE LIST IS THE STATE now. An empty list is "no reset
+    // behaviour", which is exactly what collectStep5 stores (null), so there
+    // is nothing left for a second control to say. `draft.resetOn` went with
+    // it; the seed still distinguishes a NEW automation (mirror the trigger's
+    // notify actions) from a stored one (show what it saved) through
+    // `draft.resetActions === undefined`, which is where that fact always lived.
+    html += '<div class="form-group aw5-card" id="aw-reset-card">' +
+      '<label class="aw5-head-title">Reset Action</label>' +
+      // The mirror note IS the card's help: it says what the list does with
+      // nothing in it ("Nothing here yet — add an action, or add a Notify above
+      // and it will appear here") and how it is tracking the trigger's notify
+      // actions once there is. A static sentence above it only repeated the
+      // header.
+      '<p class="aw5-help"><span id="aw-reset-mirror-note"></span></p>' +
+      '<div id="aw-reset-actions"></div>' +
+      '<button type="button" class="btn btn-sm btn-secondary" id="aw-reset-add" style="margin-top:6px">+ Add action</button>' +
     '</div>';
 
     panel.innerHTML = html;
@@ -5792,10 +5870,10 @@ async function openAutomationWizard(existing, opts) {
     // One chain per severity section: the base section carries the rule-level
     // chain, each band section its own.
     var baseSec = panel.querySelector("#aw-actions") && panel.querySelector("#aw-actions").closest(".form-group");
-    if (baseSec) wireEscSection(baseSec.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"), esc);
+    if (baseSec) wireEscSection(baseSec.querySelector(".aw-esc-sec"), esc);
     panel.querySelectorAll(".aw-band-actions").forEach(function (sec, i) {
       var band = (draft.severityBands || [])[i] || {};
-      wireEscSection(sec.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"), band.escalation || null);
+      wireEscSection(sec.querySelector(".aw-esc-sec"), band.escalation || null);
     });
 
     var host = panel.querySelector("#aw-actions");
@@ -5837,32 +5915,13 @@ async function openAutomationWizard(existing, opts) {
       foldActionRow(addActionRow(resetHost, null), false);
       refreshMirrorNote(panel);
     });
-    // Removing the LAST reset action IS "no reset behavior", so say it on the
-    // toggle instead of leaving a ticked box over an empty list — collectStep5
-    // saves an empty list as null anyway, so the box would come back unticked
-    // on the next open. Delegated (rows come and go with the mirror); the
-    // timeout lets the row's own remove handler detach it first.
+    // Removing the LAST reset action IS "no reset behaviour", and the empty
+    // list says so on its own now — all that is left is to re-word the note.
+    // Delegated (rows come and go with the mirror); the timeout lets the row's
+    // own remove handler detach it first.
     resetHost.addEventListener("click", function (e) {
       if (!(e.target && e.target.classList && e.target.classList.contains("aw-action-remove"))) return;
-      setTimeout(function () {
-        if (resetHost.querySelector(".aw-action")) return;
-        var cb = panel.querySelector("#aw-reset-actions-on");
-        if (cb) cb.checked = false;
-        draft.resetOn = false;
-        var wrap = panel.querySelector("#aw-reset-wrap");
-        if (wrap) wrap.style.display = "none";
-        refreshMirrorNote(panel);
-      }, 0);
-    });
-    panel.querySelector("#aw-reset-actions-on").addEventListener("change", function () {
-      draft.resetOn = this.checked;
-      panel.querySelector("#aw-reset-wrap").style.display = this.checked ? "" : "none";
-      // Turning it back on re-seeds from the trigger rather than leaving the
-      // operator with an empty list they have to rebuild by hand.
-      if (this.checked && !resetHost.querySelector(".aw-action")) {
-        renderResetRows(panel, mirroredResetActions(collectActionsFrom(host), [{ type: "event" }]));
-      }
-      refreshMirrorNote(panel);
+      setTimeout(function () { refreshMirrorNote(panel); }, 0);
     });
 
     // One follow-up block per severity section — just the ack-note checkbox
@@ -5875,6 +5934,10 @@ async function openAutomationWizard(existing, opts) {
       var ack = block.querySelector(".aw-require-ack-note");
       if (ack) ack.addEventListener("change", function () { collectStep5(); });
     });
+    // The Dependency-Down Bypass row (business rule 78): onto the draft at
+    // once, like the ack-note box above it.
+    var depAw = panel.querySelector("#aw-dep-down");
+    if (depAw) depAw.addEventListener("change", function () { collectStep5(); });
     var perSevCb = panel.querySelector("#aw-band-actions-multi");
     if (perSevCb) {
       perSevCb.addEventListener("change", function () {
@@ -5912,7 +5975,7 @@ async function openAutomationWizard(existing, opts) {
       '<div class="aesc-config" style="display:none;margin-bottom:4px"><label style="font-size:0.78rem">Stop escalating when</label> ' +
         '<select class="aesc-stopon" style="width:auto"><option value="acknowledge">Acknowledged (or cleared)</option><option value="clear">Cleared only — acknowledging does not stop it</option></select></div>' +
       '<div class="aesc-tiers"></div>' +
-      '<button type="button" class="btn btn-sm btn-secondary aesc-add" style="margin-top:4px">+ Escalate if unhandled…</button>' +
+      '<button type="button" class="btn btn-sm btn-secondary aesc-add" style="margin-top:4px">+ Escalation Action</button>' +
     '</div>';
   }
   function wireEscSection(sec, esc) {
@@ -6073,9 +6136,6 @@ async function openAutomationWizard(existing, opts) {
       : mirroredResetActions(draft.actions, []);
     if (!adopted.length) return;
     draft.resetActions = adopted;
-    // The toggle carries its OWN state (see the Actions step) — set it too, or a
-    // re-render would untick it out from under the rows it just adopted.
-    draft.resetOn = true;
   }
   // Severity colors (mirror styles.css .sev-select palette) for the accent.
   var SEV_COLORS = { notice: "var(--color-sev-notice)", informational: "var(--color-accent)", warning: "var(--color-warning)", serious: "var(--color-sev-serious)", critical: "var(--color-danger)" };
@@ -8164,11 +8224,16 @@ async function openAutomationWizard(existing, opts) {
     // every band inherits when it says nothing of its own.
     var baseBlock = followUpBlocks(panel)[0];
     if (baseBlock) draft.requireAckNote = collectFollowUp(baseBlock).requireAckNote;
+    // Business rule 78 — only when its box is on screen: the control renders
+    // for a bare down trigger alone, and a hidden control must never post (or
+    // strip) a key the operator did not touch.
+    var depEl = panel.querySelector("#aw-dep-down");
+    if (depEl) collectDependencyDown(depEl);
     // The BASE severity section's chain is the rule-level escalation (the engine
     // resolves it for an alert sitting at the base severity).
     var baseSecC = panel.querySelector("#aw-actions") && panel.querySelector("#aw-actions").closest(".form-group");
     draft.escalation = baseSecC
-      ? collectEscSection(baseSecC.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"))
+      ? collectEscSection(baseSecC.querySelector(".aw-esc-sec"))
       : null;
     draft.actions = collectActionsFrom(host);
     // MIGRATE-ON-EDIT. Every notify row on this step has just written its own
@@ -8191,7 +8256,7 @@ async function openAutomationWizard(existing, opts) {
       var band = (draft.severityBands || [])[i];
       if (!band) return;
       band.actions = collectActionsFrom(sec.querySelector(".ba-actions"));
-      var bandEsc = collectEscSection(sec.querySelector(":scope > .aw-collapse-body > .aw-esc-sec, :scope > .aw-esc-sec"));
+      var bandEsc = collectEscSection(sec.querySelector(".aw-esc-sec"));
       if (bandEsc) band.escalation = bandEsc; else delete band.escalation;
       // The band's own follow-up pair — written whenever it matches what a band
       // says, including when that equals the rule's, because "same as the base"
@@ -8219,10 +8284,10 @@ async function openAutomationWizard(existing, opts) {
     });
     var resetHost = panel.querySelector("#aw-reset-actions");
     if (resetHost) {
-      var resetToggle = panel.querySelector("#aw-reset-actions-on");
-      if (resetToggle) draft.resetOn = resetToggle.checked;
-      draft.resetActions = draft.resetOn === false ? null : collectActionsFrom(resetHost);
-      if (draft.resetActions && draft.resetActions.length === 0) draft.resetActions = null;
+      // An empty list is "no reset behaviour" — the one state the retired
+      // enable checkbox used to express.
+      var resetRows = collectActionsFrom(resetHost);
+      draft.resetActions = resetRows.length ? resetRows : null;
     }
   }
 
@@ -8266,8 +8331,7 @@ async function openAutomationWizard(existing, opts) {
   /** Re-mirror after the TRIGGER action list changes (add / remove / channel). */
   function syncResetMirror(panel) {
     var host = panel.querySelector("#aw-reset-actions");
-    var on = panel.querySelector("#aw-reset-actions-on");
-    if (!host || !on || !on.checked) return;
+    if (!host) return;
     var current = collectActionsFrom(host);
     // Rows the operator has touched are kept verbatim; the rest re-derive.
     renderResetRows(panel, mirroredResetActions(collectActionsFrom(panel.querySelector("#aw-actions")), current));
@@ -8580,6 +8644,11 @@ async function openAutomationWizard(existing, opts) {
     var ackNoteRow = ackNoteLines.length
       ? '<dt>Acknowledging</dt><dd>' + ackNoteLines.join("<br>") + '</dd>'
       : "";
+    // Business rule 78 — only when ON, like the ack-note row: off is what
+    // every automation authored before the toggle does.
+    var depDownRow = leafAlertsWhenDependencyDown(draft.trigger)
+      ? '<dt>Dependency down</dt><dd>still alerts, naming the upstream device that is down</dd>'
+      : "";
     // Reminders are per ACTION now, so the row names the action it belongs to
     // — a reader checking "will this chase me" needs to know which of two
     // notifies does. The quiet time rides the same line rather than a row of
@@ -8636,6 +8705,7 @@ async function openAutomationWizard(existing, opts) {
       '<dt>Reset</dt><dd>' + resetSentence(draft.reset, draft.trigger) + '</dd>' +
       msgRow +
       ackNoteRow +
+      depDownRow +
       repeatRow +
       '<dt>Actions</dt><dd>' + (actionLines.length ? actionLines.join("<br>") : '<span style="color:var(--color-text-tertiary)">in-app alert only</span>') + '</dd>' +
       resetRow +

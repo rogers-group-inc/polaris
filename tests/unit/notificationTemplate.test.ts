@@ -76,6 +76,9 @@ const FULL_PARTS: TemplateContextParts = {
   // time so a reminder describes the same automation the first email did.
   repeatPolicy: "Reminders every 15 minutes until acknowledged.",
   escalationPolicy: "Escalates in 30 minutes if not acknowledged.",
+  // A dependency-down alert (business rule 78) with a two-hop chain, so every
+  // {dependency.*} token has a value to render.
+  dependency: { upstream: "SW-PLANT-3", rootCause: "FG-PLANT", reason: "down" },
 };
 
 /**
@@ -105,6 +108,60 @@ beforeAll(() => { process.env.POLARIS_PUBLIC_URL = "https://polaris.example.com"
 afterAll(() => {
   if (PREV_PUBLIC_URL === undefined) delete process.env.POLARIS_PUBLIC_URL;
   else process.env.POLARIS_PUBLIC_URL = PREV_PUBLIC_URL;
+});
+
+describe("dependency-down tokens (business rule 78)", () => {
+  const plain = buildTemplateContext({ asset: "PLC-7", severity: "critical", ruleName: "PLC down" });
+  const oneHop = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: "SW-PLANT-3", rootCause: null, reason: "down" } });
+  const twoHop = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: "SW-PLANT-3", rootCause: "FG-PLANT", reason: "down" } });
+
+  it("are present-but-empty on every alert not about a dependency-suppressed device", () => {
+    for (const k of ["dependency.summary", "dependency.upstream", "dependency.rootCause", "dependency.tag"]) {
+      expect(plain).toHaveProperty([k], "");
+    }
+    // Present, so the default body's tokens render blank rather than literal.
+    expect(renderNotificationTemplate("{dependency.tag}", plain)).toBe("");
+  });
+
+  it("say the state outright and name the upstream device", () => {
+    expect(oneHop["dependency.summary"]).toBe("DEPENDENCY DOWN — PLC-7 is unreachable because its upstream device SW-PLANT-3 is down");
+    expect(oneHop["dependency.upstream"]).toBe("SW-PLANT-3");
+    expect(oneHop["dependency.tag"]).toBe(" · DEPENDENCY DOWN");
+  });
+
+  it("leave the root cause blank when it IS the upstream device, so its row prunes instead of repeating", () => {
+    expect(oneHop["dependency.rootCause"]).toBe("");
+    const same = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: "SW-PLANT-3", rootCause: "SW-PLANT-3", reason: "down" } });
+    expect(same["dependency.rootCause"]).toBe("");
+  });
+
+  it("name the device actually down when the upstream is itself dependency-down", () => {
+    expect(twoHop["dependency.rootCause"]).toBe("FG-PLANT");
+    expect(twoHop["dependency.summary"]).toBe("DEPENDENCY DOWN — PLC-7 is unreachable because its upstream device SW-PLANT-3 sits behind FG-PLANT, which is down");
+  });
+
+  it("word a maintenance window and a Dependency Test as what they are", () => {
+    const maint = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: "SW-PLANT-3", rootCause: null, reason: "maintenance" } });
+    expect(maint["dependency.summary"]).toContain("SW-PLANT-3 is in a maintenance window");
+    const test = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: "SW-PLANT-3", rootCause: null, reason: "dependency_test" } });
+    expect(test["dependency.summary"]).toContain("SW-PLANT-3 is under a Dependency Test");
+  });
+
+  it("offer a COMPACT headline for a message that already names the device", () => {
+    // Appended to an operator's own messageTemplate by the engine, so it must
+    // not restate the device — "{asset} is down — DEPENDENCY DOWN — upstream …".
+    expect(oneHop["dependency.headline"]).toBe("DEPENDENCY DOWN — upstream SW-PLANT-3 is down");
+    expect(twoHop["dependency.headline"]).toBe("DEPENDENCY DOWN — upstream SW-PLANT-3 is down (root cause FG-PLANT)");
+    expect(plain["dependency.headline"]).toBe("");
+    expect(oneHop["dependency.headline"]).not.toContain("PLC-7");
+  });
+
+  it("still say dependency down when nobody could be named", () => {
+    const unnamed = buildTemplateContext({ asset: "PLC-7", dependency: { upstream: null, rootCause: null, reason: null } });
+    expect(unnamed["dependency.summary"]).toBe("DEPENDENCY DOWN — PLC-7 is unreachable because a device above it is down");
+    expect(unnamed["dependency.tag"]).toBe(" · DEPENDENCY DOWN");
+    expect(unnamed["dependency.upstream"]).toBe("");
+  });
 });
 
 describe("buildTemplateContext", () => {

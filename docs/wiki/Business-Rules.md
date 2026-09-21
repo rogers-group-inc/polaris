@@ -1,6 +1,6 @@
 # Business rules
 
-Polaris carries **74 numbered rules**. Each one records a decision *and* the
+Polaris carries **78 numbered rules**. Each one records a decision *and* the
 incident or constraint that forced it. The reasoning is the point — a great deal
 of Polaris's behaviour is a considered rule rather than an accident, and this is
 where the reasons live.
@@ -742,6 +742,43 @@ are no VIPs" — so nothing already recorded is retired on a failed read
 ([rule 53](#rule-53)), and a VIP is only ever retired by the gate that owns it.
 
 See [IPAM](IPAM#addresses-that-carry-a-firewall-vip).
+
+### Rule 78
+
+**An automation may choose to speak for a silenced device, and then it must
+name who silenced it.**
+
+A device behind a down switch or firewall is **dependency-down** (Dep. Down),
+and every automation stays silent about it — the outage is the parent's, and one
+alert on the parent is the whole story ([rule 37](#rule-37), [rule 16](#rule-16)).
+That is right for the network team and wrong for the people who only watch one
+device: the operators subscribed to a PLC's down automation heard nothing when
+the switch above it died.
+
+So a `monitor status is down` automation — and only that kind — can tick
+**Dependency-Down Bypass** on its Actions step. With it on, the automation still
+raises its alert **the moment the device turns Dep. Down**; it does not wait for
+the device's own missed-poll count, because the upstream's confirmed outage is
+the evidence. The alert **says DEPENDENCY DOWN** in the subject, the headline
+and the message, and **names the upstream device** — and, when that device is
+itself Dep. Down under something further up, the device that is actually down
+(a suppressed switch's FortiGate). If Polaris cannot work out who, the alert
+still goes out, saying so.
+
+The alert's kind follows the device's state. A plain Down alert on a device that
+then turns Dep. Down is **ended and raised again** as dependency-down, naming
+the switch; a dependency-down alert whose upstream has recovered while the
+device is still down is ended and raised again as the device's own outage.
+Neither sends a "resolved" message — nothing recovered.
+
+Three things the toggle does **not** change. A **maintenance window still
+silences** the device. **Reminders and escalation still wait** while the device
+is dependency-down — you get one notification, and the follow-ups resume when
+the upstream is back. And every automation **without** the toggle behaves
+exactly as before.
+
+See [Dependency suppression](Dependency-Suppression) and
+[Automation triggers](Automation-Triggers#monitorstatus--down-is-the-down-detection-automation).
 
 ### Rule 79
 

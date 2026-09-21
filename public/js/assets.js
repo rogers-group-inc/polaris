@@ -20184,9 +20184,15 @@ function _loadAssetNotificationsTab(assetId) {
         // "TMP1") could be several things — and they are the fallback for a
         // custom messageTemplate that renders no label at all.
         var alertTitle = [n.metric, n.dimension].filter(Boolean).join(" · ");
+        // Raised for this device while it was dependency-down (business rule
+        // 78): the same slate badge the Status pill wears, beside the
+        // severity, so the row reads as that state at a glance.
+        var depBadge = n.dependencyDown
+          ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down — the message names the upstream device">Dep. Down</span>'
+          : "";
         return '<tr>' + sel +
           '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ts) + '</td>' +
-          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span></td>' +
+          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + '</td>' +
           '<td' + (alertTitle ? ' title="' + escapeHtml(alertTitle) + '"' : "") + '>' + escapeHtml(n.message || "") + '</td>' +
           '<td>' + ackCell + '</td>' +
           '<td><div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap">' + parts.join("") + '</div></td></tr>';

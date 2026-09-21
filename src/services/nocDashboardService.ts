@@ -1082,6 +1082,18 @@ export async function getRecentReboots(sinceHours = 72, limit: number | null = 2
   return severityFirst(await attachAlertSeverity(out, (r) => r.id || null, eventRel("device.reboot")));
 }
 
+/** The upstream device's name out of a `Notification.dependencyBlame` snapshot
+ *  (business rule 78) — the root cause when it is somebody else, else the
+ *  device directly above; null when the walk named nobody. */
+export function dependencyUpstreamOf(blame: unknown): string | null {
+  if (!blame || typeof blame !== "object") return null;
+  const b = blame as { upstream?: { hostname?: string | null; id?: string } | null; rootCause?: { hostname?: string | null; id?: string } | null };
+  const up = b.upstream?.hostname ?? b.upstream?.id ?? null;
+  const root = b.rootCause?.hostname ?? b.rootCause?.id ?? null;
+  if (up && root && root !== up) return `${up} → ${root}`;
+  return up ?? root ?? null;
+}
+
 export interface AlertRow {
   id: string;
   /** The alerting asset, for the widget's click-through to its details
@@ -1112,6 +1124,11 @@ export interface AlertRow {
   triggerType: string | null;
   acknowledged: boolean;
   acknowledgedBy: string | null;
+  /** Business rule 78 — raised for a dependency-suppressed device by a down
+   *  automation that opted in; the widget badges it "Dep. Down" and names the
+   *  upstream device in the badge's tooltip. */
+  dependencyDown: boolean;
+  dependencyUpstream: string | null;
 }
 
 export interface ActiveAlerts {
@@ -1168,6 +1185,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
       id: true, ruleId: true, assetId: true, assetHostname: true, dimension: true, message: true,
       severity: true, triggeredAt: true,
       acknowledged: true, acknowledgedBy: true, rule: { select: { name: true } },
+      dependencyDown: true, dependencyBlame: true,
     },
     orderBy: { triggeredAt: "desc" },
   });
@@ -1184,6 +1202,8 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     triggerType: (n.ruleId && triggerTypeByRule.get(n.ruleId)) || null,
     acknowledged: n.acknowledged,
     acknowledgedBy: n.acknowledgedBy ?? null,
+    dependencyDown: n.dependencyDown === true,
+    dependencyUpstream: dependencyUpstreamOf(n.dependencyBlame),
   }));
   out.sort((a, b) => {
     const d = (ALERT_SEVERITY_RANK[b.severity] ?? 0) - (ALERT_SEVERITY_RANK[a.severity] ?? 0);

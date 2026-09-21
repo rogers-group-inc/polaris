@@ -6125,6 +6125,74 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   color: var(--color-text-secondary);
   flex: 0 0 auto;
 }
+
+/* Automation wizard, Actions step — the card stack of the 2026-09-21 mockup.
+   `.aw5-card` is a bordered card (In-app Alert, Trigger Action, Escalation
+   Action, Reset Action); `.aw5-row` is a checkbox row whose bold title carries
+   the box and whose help text hangs under it (Require Acknowledgement,
+   Dependency-Down Bypass — business rule 78). Tokens only, so the three themes
+   need nothing of their own. */
+.aw5-card {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+}
+/* A card's name is a SECTION HEADER, not a field label. Both selectors are
+   doubled with .form-group to outrank `.form-group label` (0.8rem / 500 /
+   secondary colour), which is what these titles were silently inheriting —
+   "In-app Alert" rendered at 11.2px beside a 16.4px step heading and read as
+   the caption of the input under it. 1rem/600 in the primary ink sits clearly
+   under the step heading and clearly above the help text. */
+.aw5-card-title,
+.aw5-head-title,
+.form-group .aw5-card-title,
+.form-group .aw5-head-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 6px;
+  display: block;
+}
+.aw5-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.aw5-head .aw5-head-title { margin: 0; }
+.aw5-help {
+  font-size: 0.78rem;
+  color: var(--color-text-tertiary);
+  margin: 0 0 6px;
+}
+.aw5-row {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+/* Doubled with .form-group for the same reason the card titles are: the rows
+   live inside the severity section, which IS a .form-group, so `.form-group
+   label` (0.8rem / 500 / secondary) outranks a bare `.aw5-row-title` and the
+   weight declared here never applied. Size is deliberately left alone — these
+   are rows, not section headers — but they carry the primary ink and the bold
+   the card titles do, so a row reads as a statement about the alert rather than
+   as the caption of a field. */
+.aw5-row-title,
+.form-group .aw5-row-title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.aw5-row-help {
+  font-size: 0.78rem;
+  color: var(--color-text-tertiary);
+  margin: 2px 0 0 1.6rem;
+}
+/* A non-collapsible card's body (single-severity automations) — the collapse
+   machinery never touches it, so it only needs to exist as a hook. */
+.aw5-body { display: block; }
+.aw5-sev { margin-bottom: 0; }
 .aw-collapse:hover,
 .aw-collapse:focus-visible { color: var(--color-text-primary); }
 .aw-drop-before { box-shadow: inset 0 3px 0 0 var(--color-accent); }

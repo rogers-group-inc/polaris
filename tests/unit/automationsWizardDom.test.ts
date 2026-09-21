@@ -367,7 +367,7 @@ describe("automation wizard DOM render", () => {
     expect(inapp).toBeTruthy();
     expect(inapp.classList.contains("aw-action")).toBe(false);
     expect(inapp.querySelector("#aw-msg")).toBeTruthy();
-    expect(inapp.textContent).toContain("in-app alert (always happens)");
+    expect(inapp.textContent).toContain("In-app Alert");
     expect(inapp.textContent).not.toContain("event + in-app alert");
     expect(inapp.querySelector(".aw-action-remove")).toBeFalsy();
 
@@ -394,7 +394,7 @@ describe("automation wizard DOM render", () => {
     expect(doc.querySelector("#aw-step-5 .aw-action > .aw-esc-sec")).toBeFalsy();
     const cardEsc = doc.querySelector("#aw-actions")!.closest(".form-group")!.querySelector(".aw-esc-sec")!;
     expect(cardEsc).toBeTruthy();
-    expect(cardEsc.querySelector(".aesc-add")!.textContent).toContain("Escalate if unhandled");
+    expect(cardEsc.querySelector(".aesc-add")!.textContent).toContain("Escalation Action");
     expect((cardEsc.querySelector(".aesc-config") as unknown as { style: { display: string } }).style.display).toBe("none");
     (cardEsc.querySelector(".aesc-add") as unknown as { click: () => void }).click();
     const tier = cardEsc.querySelector(".aesc-tiers .aw-tier")!;
@@ -456,7 +456,12 @@ describe("automation wizard DOM render", () => {
     // people it came back costs nothing.
     const resetCard = doc.querySelector("#aw-step-5 #aw-reset-card")!;
     expect(resetCard).toBeTruthy();
-    expect((doc.querySelector("#aw-reset-actions-on") as unknown as { checked: boolean }).checked).toBe(true);
+    // A header and an Add action button, with the list always visible — the
+    // enable checkbox was retired (2026-09-21) because the list already IS the
+    // state: empty means no reset behaviour, which is what saves as null.
+    expect(resetCard.querySelector(".aw5-head-title")!.textContent).toContain("Reset Action");
+    expect(resetCard.querySelector("#aw-reset-actions-on")).toBeNull();
+    expect(resetCard.querySelector("#aw-reset-add")).toBeTruthy();
     (doc.querySelector("#aw-add-action") as unknown as { click: () => void }).click();
     const newNotify = Array.from(doc.querySelectorAll("#aw-actions .aw-action")).pop()!;
     // A channel is a CHECKBOX now — an action may deliver through several.
@@ -912,12 +917,13 @@ describe("automation wizard DOM render", () => {
     expect(p.bandNotify.onResolved).toBe(false);
   });
 
-  it("a new automation seeds an audit Event on BOTH halves, and emptying the reset list unticks it", async () => {
+  it("a new automation seeds an audit Event on BOTH halves, and emptying the reset list saves as null", async () => {
     // The fire actions have carried a default "Create an Event" row since the
     // Event became an action; the reset list now does too, so a recovery is
-    // recorded the way the firing is. And a ticked "When this resets" over an
-    // empty list is a lie — collectStep5 saves an empty list as null, so the box
-    // would come back unticked on the next open anyway.
+    // recorded the way the firing is. Emptying the list IS "no reset
+    // behaviour": it saves as null, with no second control to contradict it —
+    // the enable checkbox that could sit ticked over an empty list was retired
+    // for exactly that reason.
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     toastErrors = [];
@@ -935,19 +941,18 @@ describe("automation wizard DOM render", () => {
     const typeOf = (row: Element) => (row.querySelector(".aw-action-type") as HTMLSelectElement | null)?.value;
     // Fires: the default Event row.
     expect(Array.from(doc.querySelectorAll("#aw-actions > .aw-action")).map(typeOf)).toEqual(["event"]);
-    // Resets: the same default, and the toggle on to match.
-    expect((doc.querySelector("#aw-reset-actions-on") as unknown as { checked: boolean }).checked).toBe(true);
+    // Resets: the same default.
     const resetRows = Array.from(doc.querySelectorAll("#aw-reset-actions > .aw-action"));
     expect(resetRows.map(typeOf)).toEqual(["event"]);
     // It was never mirrorable, so the note must not read as "edited".
     expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Add a Notify above");
 
-    // Removing the last row unticks the toggle and folds the list away.
+    // Removing the last row empties the list, and the note says so — there is
+    // no box left to untick.
     (resetRows[0]!.querySelector(".aw-action-remove") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
     expect(doc.querySelector("#aw-reset-actions > .aw-action")).toBeFalsy();
-    expect((doc.querySelector("#aw-reset-actions-on") as unknown as { checked: boolean }).checked).toBe(false);
-    expect((doc.querySelector("#aw-reset-wrap") as unknown as { style: { display: string } }).style.display).toBe("none");
+    expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Nothing here yet");
 
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
@@ -1200,13 +1205,15 @@ describe("automation wizard DOM render", () => {
     expect((savedPayloads[0]! as Record<string, any>).requireAckNote).toBe(true);
   });
 
-  it("the ack-note checkbox sits in each severity section, below its actions and its escalation", async () => {
+  it("the Require Acknowledgement row leads each severity section, above its actions and its escalation", async () => {
     // It used to sit on the in-app-alert card at the top of the step, where it
     // read as one answer for the whole automation. What closing an alert out
-    // costs is per severity, and the place to say so is after the actions and
-    // the escalation chain — who do I tell, who do I tell next, and what does
-    // closing it cost. (Reminders were here too, briefly; they belong to the
-    // notify ACTION and live on its row.)
+    // costs is per severity, so it lives in each severity's section — and since
+    // the 2026-09-21 card layout, at the TOP of it: it is a fact about the
+    // alert being raised, not about what is sent, and it must stay outside the
+    // folding Trigger Action card so a folded severity still states it.
+    // (Reminders were here too, briefly; they belong to the notify ACTION and
+    // live on its row.)
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     const w = g.window as InstanceType<typeof Window>;
@@ -1232,15 +1239,16 @@ describe("automation wizard DOM render", () => {
     expect(doc.querySelector("#aw-inapp-card .aw-require-ack-note")).toBeNull();
     expect(doc.querySelector("#aw-inapp-card .aw-repeat-on")).toBeNull();
 
-    // The base section's block is the LAST child of the section, after the
-    // collapsible body that holds the action list and the escalation chain —
-    // so a folded section still shows it.
+    // The base section's block is the FIRST child of the section, ahead of the
+    // Trigger Action card whose folding body holds the action list — so a
+    // folded section still shows it.
     const baseSec = (doc.querySelector("#aw-actions") as unknown as { closest: (s: string) => Element }).closest(".form-group");
     const baseBlock = baseSec.querySelector(":scope > .aw-followup");
     expect(baseBlock).toBeTruthy();
-    expect(baseSec.lastElementChild).toBe(baseBlock);
-    // …and the escalation editor it follows is inside the body, i.e. above it.
-    expect(baseSec.querySelector(".aw-collapse-body .aw-esc-sec")).toBeTruthy();
+    expect(baseSec.firstElementChild).toBe(baseBlock);
+    expect(baseBlock!.textContent).toContain("Require Acknowledgement");
+    // …and the escalation editor is inside the Trigger Action card below it.
+    expect(baseSec.querySelector(".aw5-card .aw-esc-sec")).toBeTruthy();
 
     // Turning the per-severity toggle on gives every band one of its own.
     const multi = doc.querySelector("#aw-band-actions-multi") as unknown as
@@ -1250,7 +1258,7 @@ describe("automation wizard DOM render", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(doc.querySelectorAll("#aw-step-5 .aw-followup").length).toBe(2);
     const bandSec = doc.querySelector("#aw-step-5 .aw-band-actions")!;
-    expect(bandSec.lastElementChild!.classList.contains("aw-followup")).toBe(true);
+    expect(bandSec.firstElementChild!.classList.contains("aw-followup")).toBe(true);
   });
 
   it("a band's ack-note answer saves onto the band", async () => {
@@ -3395,8 +3403,118 @@ describe("trigger filter rows", () => {
       (p.trigger.children || []).forEach((c) => expect(c.missedPolls).toBeUndefined());
       expect(() => ruleInputSchema.parse(p)).not.toThrow();
     });
+
+    // ── Alerting while dependency-down (business rule 78) ────────────────
+    // The "Dependency-Down Bypass" row lives on the Actions step, under the
+    // In-app Alert card beside "Require Acknowledgement". It was offered on the
+    // Trigger step too while the placement was undecided; the operator chose
+    // the Actions step (2026-09-21), and the Trigger step must offer nothing.
+    const depAw = () => doc.querySelector("#aw-dep-down") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void } | null;
+    const tick = async (el: { checked: boolean; dispatchEvent: (e: unknown) => void }, on: boolean) => {
+      const w = g.window as InstanceType<typeof Window>;
+      el.checked = on;
+      el.dispatchEvent(new w.Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 20));
+    };
+    const gotoStep = async (n: number) => {
+      (doc.querySelector('.stepper-step[data-step="' + n + '"]') as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    };
+    const save = async () => {
+      (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 30));
+    };
+    type DepPayload = { trigger: { alertWhenDependencyDown?: boolean; type: string; children?: Record<string, unknown>[] } };
+
+    it("offers the Dependency-Down Bypass row on the Actions step only, off by default", async () => {
+      await openOnTrigger(downRule());
+      // Nothing on the Trigger step.
+      expect(doc.querySelector("#aw-step-3 .aw-dep-down")).toBeNull();
+      expect(doc.querySelector("#tf-dep-down")).toBeNull();
+      await gotoStep(5);
+      const aw = depAw();
+      expect(aw).toBeTruthy();
+      expect(aw!.checked).toBe(false);
+      const row = doc.querySelector("#aw-step-5 .aw-dep-down")!;
+      expect(row.textContent).toContain("Dependency-Down Bypass");
+      // It sits in the base severity section, right after the ack row and
+      // before the Trigger Action card.
+      const baseSec = (doc.querySelector("#aw-actions") as unknown as { closest: (s: string) => Element }).closest(".form-group");
+      const kids = Array.from(baseSec.children).map((c) => c.className);
+      expect(kids[0]).toContain("aw-followup");
+      expect(kids[1]).toContain("aw-dep-down");
+      expect(kids[2]).toContain("aw5-card");
+      // Off posts NO key — an untouched automation's payload is byte-identical.
+      await save();
+      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBeUndefined();
+    });
+
+    it("ticking the row saves the key, and the trigger sentence and review say so", async () => {
+      await openOnTrigger(downRule());
+      toastErrors.length = 0; // an earlier case in this block leaves its refusal toast behind
+      await gotoStep(5);
+      await tick(depAw()!, true);
+      await gotoStep(6);
+      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("dependency-down");
+      expect(doc.querySelector("#aw-step-6")!.innerHTML).toContain("naming the upstream device");
+      await save();
+      expect(toastErrors).toEqual([]);
+      const p = savedPayloads[0] as DepPayload;
+      expect(p.trigger.alertWhenDependencyDown).toBe(true);
+      expect(() => ruleInputSchema.parse(p)).not.toThrow();
+    });
+
+    it("opens a stored toggle checked, and keeps it through a save from step 1", async () => {
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, forDurationSec: 0, alertWhenDependencyDown: true },
+      }));
+      await gotoStep(5);
+      expect(depAw()!.checked).toBe(true);
+      await gotoStep(1);
+      await save();
+      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBe(true);
+    });
+
+    it("un-ticking a stored toggle strips the key", async () => {
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", missedPolls: 3, forDurationSec: 0, alertWhenDependencyDown: true },
+      }));
+      await gotoStep(5);
+      await tick(depAw()!, false);
+      await save();
+      expect((savedPayloads[0] as DepPayload).trigger.alertWhenDependencyDown).toBeUndefined();
+    });
+
+    it("a multi-condition trigger has no row, and a stored key is stripped from the composite", async () => {
+      await openOnTrigger(downRule({
+        trigger: {
+          type: "composite", kind: "asset", op: "and", forDurationSec: 0,
+          children: [
+            { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", alertWhenDependencyDown: true },
+            { type: "asset_metric", metric: "cpuPct", aggregation: "latest", windowSec: 0, operator: ">", threshold: 90 },
+          ],
+        },
+      }));
+      await gotoStep(5);
+      expect(depAw()).toBeNull();
+      await save();
+      const p = savedPayloads[0] as DepPayload;
+      expect(p.trigger.type).toBe("composite");
+      (p.trigger.children || []).forEach((c) => expect(c.alertWhenDependencyDown).toBeUndefined());
+      expect(() => ruleInputSchema.parse(p)).not.toThrow();
+    });
+
+    it("renders no row for an automation that is not about being down", async () => {
+      await openOnTrigger(downRule({
+        trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">", threshold: 90 },
+      }));
+      await gotoStep(5);
+      expect(depAw()).toBeNull();
+      expect(doc.querySelector("#aw-step-5 .aw-dep-down")).toBeNull();
+    });
   });
 });
+
 
 // ─── Export / import / view code ────────────────────────────────────────────
 

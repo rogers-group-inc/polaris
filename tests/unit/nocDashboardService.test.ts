@@ -485,6 +485,8 @@ describe("getRecentAlerts", () => {
       id: "n1", assetId: "asset-1", hostname: "fw-1", dimension: null,
       message: "fw-1 is down", severity: "critical", raisedAt: t,
       ruleName: "Asset down", triggerType: null, acknowledged: true, acknowledgedBy: "jsmith",
+      // Business rule 78 — a plain alert reads neither.
+      dependencyDown: false, dependencyUpstream: null,
     });
     // It reads ALERTS, never audit Events — the whole point of the feed.
     expect(eventFindMany).not.toHaveBeenCalled();

@@ -4933,6 +4933,27 @@ model Notification {
   // ("sdwanSelectedMember") so its charts resolve.
   metric String?
 
+  // Business rule 78 — this alert was raised FOR A DEPENDENCY-SUPPRESSED
+  // device by a down automation that opted in (`trigger.alertWhenDependencyDown`).
+  // Three readers, none of which could work off the message text: the
+  // suppression sweep (clearSuppressedAlerts) skips these rows — a
+  // dependency-flavoured alert on a suppressed asset is the one alert that is
+  // supposed to be there; the engine compares it with the asset's live flag
+  // and, on a mismatch, ENDS the alert and raises a new one in the other
+  // flavour (a plain Down that turned Dep. Down, or a Dep. Down whose upstream
+  // came back while the device stayed down); and the alert surfaces badge it.
+  // A column rather than a key in `templateCtx` because that snapshot is
+  // written only when the rule composes or escalates — a plain in-app
+  // automation would carry nothing to read.
+  dependencyDown Boolean @default(false)
+  // Who silenced it, snapshotted at fire so the row still explains itself
+  // after the topology changes: { upstream: {id, hostname}, rootCause: {id,
+  // hostname, reason: "down"|"maintenance"|"dependency_test"}, hops, ownStatus }.
+  // `upstream` is the device directly above; `rootCause` the one actually down
+  // — the same device on a one-hop chain, the FortiGate above a suppressed
+  // switch on a two-hop one. NULL unless dependencyDown.
+  dependencyBlame Json?
+
   deliveries NotificationDelivery[]
 
   @@index([assetId])

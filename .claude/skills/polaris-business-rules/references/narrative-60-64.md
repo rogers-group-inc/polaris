@@ -23,6 +23,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 74](#rule-74) — A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the device's
 - [Rule 76](#rule-76) — Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it
 - [Rule 77](#rule-77) — A VIP describes an address; it does not claim it, and the status says every fact it has
+- [Rule 78](narrative-78.md#rule-78) — An automation may choose to speak for a silenced device, and then it must name who silenced it (in `narrative-78.md`; this file reached the 1500-line ceiling)
 - [Rule 79](#rule-79) — An operator's removal of a MAC is a correction, not a suppression
 
 <a id="rule-60"></a>

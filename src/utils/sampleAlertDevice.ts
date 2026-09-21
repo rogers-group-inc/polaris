@@ -69,6 +69,10 @@ export const SAMPLE_ALERT_DEVICE: AssetTemplateDetail = {
 /** The sensor a test of a hardware-sensor automation is "about". */
 export const SAMPLE_SENSOR_NAME = "EXAMPLE-TMP1";
 
+/** The upstream device a test of a dependency-down-alerting automation
+ *  (business rule 78) blames — the switch the sample device hangs off. */
+export const SAMPLE_UPSTREAM_HOSTNAME = "EXAMPLE-CORE-01";
+
 /** The health check / WAN member pair a test of an SD-WAN automation charts. */
 export const SAMPLE_SDWAN_HEALTH_CHECK = "Example-SLA";
 export const SAMPLE_SDWAN_LINK = "wan1";
