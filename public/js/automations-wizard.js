@@ -5842,27 +5842,26 @@ async function openAutomationWizard(existing, opts) {
     // "tell the NOC it came back" wasn't expressible. The list starts mirroring
     // the trigger's Notify actions (see mirroredResetActions) so the recovery
     // reaches the same people without configuring them twice.
-    // The toggle is its OWN state, not "is the list non-empty": a re-render
-    // between an operator ticking it and adding a row would otherwise silently
-    // untick it. On a new automation it starts on (the list seeds from the
-    // trigger's notify actions); a stored rule reflects what it saved.
-    if (draft.resetOn === undefined) {
-      draft.resetOn = draft.resetActions === undefined
-        ? true
-        : !!(draft.resetActions && draft.resetActions.length);
-    }
-    var resetOn = draft.resetOn;
+    // A header and an Add action button (2026-09-21) — no enable checkbox.
+    // The box gated the list behind a control that had to be reasoned about
+    // ("is it ticked AND is there a row?"), and it could disagree with the
+    // list: a ticked box over an empty list saves as null and comes back
+    // unticked. THE LIST IS THE STATE now. An empty list is "no reset
+    // behaviour", which is exactly what collectStep5 stores (null), so there
+    // is nothing left for a second control to say. `draft.resetOn` went with
+    // it; the seed still distinguishes a NEW automation (mirror the trigger's
+    // notify actions) from a stored one (show what it saved) through
+    // `draft.resetActions === undefined`, which is where that fact always lived.
     html += '<div class="form-group aw5-card" id="aw-reset-card">' +
-      '<label class="aw5-head-title">' +
-        '<input type="checkbox" id="aw-reset-actions-on"' + (resetOn ? " checked" : "") + '> Reset Action' +
-      '</label>' +
-      '<p class="aw5-help">' +
-        'Runs when the alert ends — it recovered, its timer ran out, or someone cleared it. ' +
-        '<span id="aw-reset-mirror-note"></span></p>' +
-      '<div id="aw-reset-wrap"' + (resetOn ? "" : ' style="display:none"') + '>' +
-        '<div id="aw-reset-actions"></div>' +
-        '<button type="button" class="btn btn-sm btn-secondary" id="aw-reset-add" style="margin-top:6px">+ Add action</button>' +
-      '</div>' +
+      '<label class="aw5-head-title">Reset Action</label>' +
+      // The mirror note IS the card's help: it says what the list does with
+      // nothing in it ("Nothing here yet — add an action, or add a Notify above
+      // and it will appear here") and how it is tracking the trigger's notify
+      // actions once there is. A static sentence above it only repeated the
+      // header.
+      '<p class="aw5-help"><span id="aw-reset-mirror-note"></span></p>' +
+      '<div id="aw-reset-actions"></div>' +
+      '<button type="button" class="btn btn-sm btn-secondary" id="aw-reset-add" style="margin-top:6px">+ Add action</button>' +
     '</div>';
 
     panel.innerHTML = html;
@@ -5916,32 +5915,13 @@ async function openAutomationWizard(existing, opts) {
       foldActionRow(addActionRow(resetHost, null), false);
       refreshMirrorNote(panel);
     });
-    // Removing the LAST reset action IS "no reset behavior", so say it on the
-    // toggle instead of leaving a ticked box over an empty list — collectStep5
-    // saves an empty list as null anyway, so the box would come back unticked
-    // on the next open. Delegated (rows come and go with the mirror); the
-    // timeout lets the row's own remove handler detach it first.
+    // Removing the LAST reset action IS "no reset behaviour", and the empty
+    // list says so on its own now — all that is left is to re-word the note.
+    // Delegated (rows come and go with the mirror); the timeout lets the row's
+    // own remove handler detach it first.
     resetHost.addEventListener("click", function (e) {
       if (!(e.target && e.target.classList && e.target.classList.contains("aw-action-remove"))) return;
-      setTimeout(function () {
-        if (resetHost.querySelector(".aw-action")) return;
-        var cb = panel.querySelector("#aw-reset-actions-on");
-        if (cb) cb.checked = false;
-        draft.resetOn = false;
-        var wrap = panel.querySelector("#aw-reset-wrap");
-        if (wrap) wrap.style.display = "none";
-        refreshMirrorNote(panel);
-      }, 0);
-    });
-    panel.querySelector("#aw-reset-actions-on").addEventListener("change", function () {
-      draft.resetOn = this.checked;
-      panel.querySelector("#aw-reset-wrap").style.display = this.checked ? "" : "none";
-      // Turning it back on re-seeds from the trigger rather than leaving the
-      // operator with an empty list they have to rebuild by hand.
-      if (this.checked && !resetHost.querySelector(".aw-action")) {
-        renderResetRows(panel, mirroredResetActions(collectActionsFrom(host), [{ type: "event" }]));
-      }
-      refreshMirrorNote(panel);
+      setTimeout(function () { refreshMirrorNote(panel); }, 0);
     });
 
     // One follow-up block per severity section — just the ack-note checkbox
@@ -6156,9 +6136,6 @@ async function openAutomationWizard(existing, opts) {
       : mirroredResetActions(draft.actions, []);
     if (!adopted.length) return;
     draft.resetActions = adopted;
-    // The toggle carries its OWN state (see the Actions step) — set it too, or a
-    // re-render would untick it out from under the rows it just adopted.
-    draft.resetOn = true;
   }
   // Severity colors (mirror styles.css .sev-select palette) for the accent.
   var SEV_COLORS = { notice: "var(--color-sev-notice)", informational: "var(--color-accent)", warning: "var(--color-warning)", serious: "var(--color-sev-serious)", critical: "var(--color-danger)" };
@@ -8307,10 +8284,10 @@ async function openAutomationWizard(existing, opts) {
     });
     var resetHost = panel.querySelector("#aw-reset-actions");
     if (resetHost) {
-      var resetToggle = panel.querySelector("#aw-reset-actions-on");
-      if (resetToggle) draft.resetOn = resetToggle.checked;
-      draft.resetActions = draft.resetOn === false ? null : collectActionsFrom(resetHost);
-      if (draft.resetActions && draft.resetActions.length === 0) draft.resetActions = null;
+      // An empty list is "no reset behaviour" — the one state the retired
+      // enable checkbox used to express.
+      var resetRows = collectActionsFrom(resetHost);
+      draft.resetActions = resetRows.length ? resetRows : null;
     }
   }
 
@@ -8354,8 +8331,7 @@ async function openAutomationWizard(existing, opts) {
   /** Re-mirror after the TRIGGER action list changes (add / remove / channel). */
   function syncResetMirror(panel) {
     var host = panel.querySelector("#aw-reset-actions");
-    var on = panel.querySelector("#aw-reset-actions-on");
-    if (!host || !on || !on.checked) return;
+    if (!host) return;
     var current = collectActionsFrom(host);
     // Rows the operator has touched are kept verbatim; the rest re-derive.
     renderResetRows(panel, mirroredResetActions(collectActionsFrom(panel.querySelector("#aw-actions")), current));

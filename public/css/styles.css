@@ -6161,10 +6161,20 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   padding: 0.75rem;
   margin-top: 0.5rem;
 }
+/* A card's name is a SECTION HEADER, not a field label. Both selectors are
+   doubled with .form-group to outrank `.form-group label` (0.8rem / 500 /
+   secondary colour), which is what these titles were silently inheriting —
+   "In-app Alert" rendered at 11.2px beside a 16.4px step heading and read as
+   the caption of the input under it. 1rem/600 in the primary ink sits clearly
+   under the step heading and clearly above the help text. */
 .aw5-card-title,
-.aw5-head-title {
+.aw5-head-title,
+.form-group .aw5-card-title,
+.form-group .aw5-head-title {
+  font-size: 1rem;
   font-weight: 600;
-  margin: 0 0 4px;
+  color: var(--color-text-primary);
+  margin: 0 0 6px;
   display: block;
 }
 .aw5-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -6181,8 +6191,17 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   background: var(--color-surface);
   border: 1px solid var(--color-border);
 }
-.aw5-row-title {
+/* Doubled with .form-group for the same reason the card titles are: the rows
+   live inside the severity section, which IS a .form-group, so `.form-group
+   label` (0.8rem / 500 / secondary) outranks a bare `.aw5-row-title` and the
+   weight declared here never applied. Size is deliberately left alone — these
+   are rows, not section headers — but they carry the primary ink and the bold
+   the card titles do, so a row reads as a statement about the alert rather than
+   as the caption of a field. */
+.aw5-row-title,
+.form-group .aw5-row-title {
   font-weight: 600;
+  color: var(--color-text-primary);
   margin: 0;
   display: flex;
   align-items: center;

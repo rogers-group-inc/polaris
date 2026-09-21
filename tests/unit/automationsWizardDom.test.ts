@@ -456,7 +456,12 @@ describe("automation wizard DOM render", () => {
     // people it came back costs nothing.
     const resetCard = doc.querySelector("#aw-step-5 #aw-reset-card")!;
     expect(resetCard).toBeTruthy();
-    expect((doc.querySelector("#aw-reset-actions-on") as unknown as { checked: boolean }).checked).toBe(true);
+    // A header and an Add action button, with the list always visible — the
+    // enable checkbox was retired (2026-09-21) because the list already IS the
+    // state: empty means no reset behaviour, which is what saves as null.
+    expect(resetCard.querySelector(".aw5-head-title")!.textContent).toContain("Reset Action");
+    expect(resetCard.querySelector("#aw-reset-actions-on")).toBeNull();
+    expect(resetCard.querySelector("#aw-reset-add")).toBeTruthy();
     (doc.querySelector("#aw-add-action") as unknown as { click: () => void }).click();
     const newNotify = Array.from(doc.querySelectorAll("#aw-actions .aw-action")).pop()!;
     // A channel is a CHECKBOX now — an action may deliver through several.
@@ -912,12 +917,13 @@ describe("automation wizard DOM render", () => {
     expect(p.bandNotify.onResolved).toBe(false);
   });
 
-  it("a new automation seeds an audit Event on BOTH halves, and emptying the reset list unticks it", async () => {
+  it("a new automation seeds an audit Event on BOTH halves, and emptying the reset list saves as null", async () => {
     // The fire actions have carried a default "Create an Event" row since the
     // Event became an action; the reset list now does too, so a recovery is
-    // recorded the way the firing is. And a ticked "When this resets" over an
-    // empty list is a lie — collectStep5 saves an empty list as null, so the box
-    // would come back unticked on the next open anyway.
+    // recorded the way the firing is. Emptying the list IS "no reset
+    // behaviour": it saves as null, with no second control to contradict it —
+    // the enable checkbox that could sit ticked over an empty list was retired
+    // for exactly that reason.
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     toastErrors = [];
@@ -935,19 +941,18 @@ describe("automation wizard DOM render", () => {
     const typeOf = (row: Element) => (row.querySelector(".aw-action-type") as HTMLSelectElement | null)?.value;
     // Fires: the default Event row.
     expect(Array.from(doc.querySelectorAll("#aw-actions > .aw-action")).map(typeOf)).toEqual(["event"]);
-    // Resets: the same default, and the toggle on to match.
-    expect((doc.querySelector("#aw-reset-actions-on") as unknown as { checked: boolean }).checked).toBe(true);
+    // Resets: the same default.
     const resetRows = Array.from(doc.querySelectorAll("#aw-reset-actions > .aw-action"));
     expect(resetRows.map(typeOf)).toEqual(["event"]);
     // It was never mirrorable, so the note must not read as "edited".
     expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Add a Notify above");
 
-    // Removing the last row unticks the toggle and folds the list away.
+    // Removing the last row empties the list, and the note says so — there is
+    // no box left to untick.
     (resetRows[0]!.querySelector(".aw-action-remove") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
     expect(doc.querySelector("#aw-reset-actions > .aw-action")).toBeFalsy();
-    expect((doc.querySelector("#aw-reset-actions-on") as unknown as { checked: boolean }).checked).toBe(false);
-    expect((doc.querySelector("#aw-reset-wrap") as unknown as { style: { display: string } }).style.display).toBe("none");
+    expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Nothing here yet");
 
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
