@@ -205,7 +205,7 @@ async function releaseSupersededDhcpLeaseAt(
       status: "active",
       OR: [
         { sourceType: "dhcp_lease" as any },
-        // A FortiGate VIP, admitted by business rule 76. Like the infra case
+        // A FortiGate VIP, admitted by business rule 77. Like the infra case
         // below, releasing one reaches no device: it carries no push pointers
         // and its sourceType isn't dhcp_reservation, so neither unpush branch
         // fires, and the lease-expiry branch keys on dhcp_lease. What it DOES
@@ -247,7 +247,7 @@ async function releaseSupersededDhcpLeaseAt(
  * leasing) still 409s. Guessing "free" from an absence of evidence would hand an
  * operator an address a device is actively using.
  *
- * `vip` joined the set with business rule 76, and it is the one member that is
+ * `vip` joined the set with business rule 77, and it is the one member that is
  * not observational: a VIP row is real device config. It is admitted because a
  * VIP says what happens to traffic for an address, not that the address is
  * spoken for in the pool — the mapped and realserver rows ARE ordinary hosts
@@ -352,7 +352,7 @@ async function persistReservationRow(
   resolvedOwner: string | null,
 ) {
   // A VIP the operator's claim supersedes hands its snapshot forward, so the
-  // address keeps reporting the VIP it still has (business rule 76). Every
+  // address keeps reporting the VIP it still has (business rule 77). Every
   // other superseded row returns null and nothing is carried.
   let carriedVipInfo: unknown | null = null;
   if (input.ipAddress) {

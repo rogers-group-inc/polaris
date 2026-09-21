@@ -1,5 +1,5 @@
 /**
- * tests/unit/vipAddressFacts.test.ts — the pure half of business rule 76.
+ * tests/unit/vipAddressFacts.test.ts — the pure half of business rule 77.
  *
  * Four things here break silently in production and cannot be seen from a
  * passing page:

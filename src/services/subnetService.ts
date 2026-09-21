@@ -917,7 +917,7 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
     dhcpBinding: r.dhcpBinding,
     // The third fact about an address, beside who owns it (sourceType) and how
     // the gate serves it (dhcpBinding): the FortiGate VIP translating traffic
-    // for it (business rule 76). Without this the panel's VIP badge and the
+    // for it (business rule 77). Without this the panel's VIP badge and the
     // composed "VIP / Leased" pill have nothing to render from — which is what
     // let an address be refused for a VIP the table never mentioned.
     vipInfo: r.vipInfo,

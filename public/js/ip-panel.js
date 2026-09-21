@@ -249,7 +249,7 @@ function _isLeaseBackedInfra(r) {
 /**
  * What the Status column says about one address, as { dotClass, label, tooltip }.
  *
- * Two segments, not one (business rule 76). An address can carry a FortiGate
+ * Two segments, not one (business rule 77). An address can carry a FortiGate
  * VIP AND be handed out over DHCP, and the old single-winner ladder could only
  * report whichever fact it happened to test first — so an address with a VIP
  * and a lease said "DHCP Lease", an address with a VIP and a pending conflict

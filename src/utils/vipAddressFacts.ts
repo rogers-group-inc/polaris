@@ -1,7 +1,7 @@
 /**
  * src/utils/vipAddressFacts.ts
  *
- * The VIP half of business rule 76, kept pure so it unit-tests without a
+ * The VIP half of business rule 77, kept pure so it unit-tests without a
  * database or a FortiGate.
  *
  * A FortiGate virtual IP is a fact ABOUT an address — "traffic to this address
@@ -226,7 +226,7 @@ function normalizeMacForCompare(mac: string | null | undefined): string | null {
  * `macAddress` is filled from the DHCP entry only, and only into a blank, since
  * that is the MAC the gate actually saw requesting the address.
  *
- * What it adds is why business rule 76 exists: before this, a VIP row was the
+ * What it adds is why business rule 77 exists: before this, a VIP row was the
  * one row that could sit on a leased address and say nothing about the lease,
  * so the IP panel showed "VIP" and an operator had no way to learn a client was
  * holding the address too.

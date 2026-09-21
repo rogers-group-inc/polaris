@@ -2,7 +2,7 @@
  * tests/unit/ipPanelStatusDom.test.ts — the IP panel's Status column
  * (`_ipStatusPresentation` in public/js/ip-panel.js).
  *
- * This column is the whole reason business rule 76 exists. It used to be a
+ * This column is the whole reason business rule 77 exists. It used to be a
  * single-winner ladder, so an address that carried more than one fact reported
  * whichever the ladder tested first: an address with a FortiGate VIP and a DHCP
  * lease read "DHCP Lease", an address with a VIP and a pending conflict read

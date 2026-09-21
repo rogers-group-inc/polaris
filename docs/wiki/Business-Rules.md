@@ -676,7 +676,7 @@ judged, so a row can always be shortened rather than being stuck.
 
 See [IPAM](IPAM#pushing-reservations-to-the-gate).
 
-### Rule 76
+### Rule 77
 
 **A VIP describes an address; it does not claim it — and the status says every
 fact it has.**

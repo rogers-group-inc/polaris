@@ -21,7 +21,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 72](#rule-72) — A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success
 - [Rule 73](#rule-73) — Planned downtime is reported as planned, and a scoped view of a window still reports the whole window
 - [Rule 74](#rule-74) — A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the device's
-- [Rule 76](#rule-76) — A VIP describes an address; it does not claim it, and the status says every fact it has
+- [Rule 77](#rule-77) — A VIP describes an address; it does not claim it, and the status says every fact it has
 
 <a id="rule-60"></a>
 
@@ -1299,9 +1299,9 @@ characters into a field that will take 223 of them and learning so from an error
 server's own `reservationNotesBudget` across four shapes, which is what stops the mirror drifting
 from the thing it mirrors.
 
-<a id="rule-76"></a>
+<a id="rule-77"></a>
 
-## Rule 76 — A VIP describes an address; it does not claim it, and the status says every fact it has
+## Rule 77 — A VIP describes an address; it does not claim it, and the status says every fact it has
 
 This started as an operator report with two halves that turned out to be one bug: *"I can't push a reservation to a specific IP because there is a VIP configured for that IP, but I don't see VIP in the status field for that IP."* Both halves are the same mistake in different places — treating "this address has a VIP" as the single answer to "what is this address", when business rule 23 had already established that an address carries several facts at once and that collapsing them is how Polaris ends up disagreeing with the FortiGate in front of the operator.
 

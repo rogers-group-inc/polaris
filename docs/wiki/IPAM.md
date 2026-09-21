@@ -172,7 +172,7 @@ failed read.
 
 Three separate facts live on every row, and conflating them is the mistake this
 design exists to prevent ([rule 23](Business-Rules#rule-23),
-[rule 76](Business-Rules#rule-76)):
+[rule 77](Business-Rules#rule-77)):
 
 - **`sourceType` answers who owns the address.**
 - **`dhcpBinding` answers how the gate hands it out** — `null`, `"lease"` or
@@ -196,7 +196,7 @@ depending on what is there:
 | `dhcp_lease` | **takeover** — the lease is observed presence, not a claim |
 | `dns_resolved` | takeover — it defers to everything |
 | `fortiswitch` / `fortinap` **with `dhcpBinding: "lease"`** | takeover |
-| `vip` | **takeover** — the VIP is kept, see below ([rule 76](Business-Rules#rule-76)) |
+| `vip` | **takeover** — the VIP is kept, see below ([rule 77](Business-Rules#rule-77)) |
 | `manual`, `dhcp_reservation`, `interface_ip` | **409** — authoritative |
 | infra rows not backed by a lease | 409 |
 
@@ -248,7 +248,7 @@ address something answers on is not free.
 
 A FortiGate virtual IP says what happens to traffic for an address. It does not
 say the address is unavailable, and it is not the same fact as who holds the
-address or how the gate hands it out ([rule 76](Business-Rules#rule-76)).
+address or how the gate hands it out ([rule 77](Business-Rules#rule-77)).
 
 **You can reserve one.** The external address of a VIP, its mapped addresses and
 a virtual server's realserver pool members are all reservable — the last two are

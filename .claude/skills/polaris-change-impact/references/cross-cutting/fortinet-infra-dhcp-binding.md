@@ -60,7 +60,7 @@
 
 ---
 
-### The VIP case (business rule 76)
+### The VIP case (business rule 77)
 
 `dhcpBinding` gained a second kind of row in 2026-09. A `vip` reservation is the other
 authoritative row that can sit on an address the gate is ALSO serving over DHCP, and it had

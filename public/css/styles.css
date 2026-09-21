@@ -4565,7 +4565,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 /* A status cell carrying an EXPLANATORY tooltip rather than a warning — the
    help cursor without the red or the ⚠. "VIP / Reserved" describes a healthy
    reservation and has something to say about it; treating that like a conflict
-   would make a normal page look full of problems (business rule 76). */
+   would make a normal page look full of problems (business rule 77). */
 .status-note { cursor: help; }
 
 /* Click-to-copy cells in the IP panel (IP / hostname / MAC). Subtle hover

@@ -331,7 +331,7 @@ export async function refreshSubnet(
   const manualByIp = new Map<string, (typeof subnet.reservations)[number]>();
   // Active `vip` rows on this subnet, split out of manualByIp because a VIP row
   // is the one authoritative row that must still LEARN from the DHCP view:
-  // business rule 76 says a VIP describes an address without saying how the
+  // business rule 77 says a VIP describes an address without saying how the
   // gate hands it out, so a DHCP entry at a VIP address stamps `dhcpBinding`
   // rather than being discarded as a collision with an untouchable row.
   const vipRowByIp = new Map<string, (typeof subnet.reservations)[number]>();
@@ -532,7 +532,7 @@ export async function refreshSubnet(
   }
 
   // ── VIP facts ───────────────────────────────────────────────────────────
-  // Business rule 76. Runs after the DHCP flush, and re-reads the subnet's
+  // Business rule 77. Runs after the DHCP flush, and re-reads the subnet's
   // active rows rather than reusing the snapshot taken at the top: a row this
   // pass just created at a VIP address has to be able to receive its VIP
   // snapshot on the SAME pass, or the badge and the composed status pill would

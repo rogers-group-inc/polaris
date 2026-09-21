@@ -4586,7 +4586,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
         if (existingRes) {
           if (existingRes.sourceType === "manual") {
             // An operator who reserved a VIP address gets the row STAMPED, not
-            // a conflict card. Business rule 76 makes a VIP address claimable
+            // a conflict card. Business rule 77 makes a VIP address claimable
             // and carries its snapshot onto the claim, so a manual row already
             // naming this same VIP is this feature working — raising a card
             // would mean one per claimed VIP per cycle, which is exactly what
