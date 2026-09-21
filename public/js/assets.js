@@ -14584,10 +14584,11 @@ function _sdwanMemberColor(name, members) {
 
 // Compact green/red "Health Check Status" strip — one segment per recent scrape.
 //
-// The strip is pure color: its segments carry no text at all, which is invisible
-// to the table-screenshot renderer (a canvas re-draw of cell TEXT), so the
-// column came out blank in every image. data-shot-text/-color hand it the
-// summary the segments add up to instead.
+// The strip is pure color: its segments carry no text at all. The table
+// screenshot rasterizes the live DOM, so the strip reaches the image as it
+// looks here — but its FALLBACK composer (_screenshotTableElText) re-draws cell
+// TEXT, and there the column came out blank. data-shot-text/-color hand that
+// path the summary the segments add up to instead.
 function _sdwanStatusStripHTML(recent) {
   if (!recent || !recent.length) return '<span style="color:var(--color-text-tertiary)">—</span>';
   var up = 0;
@@ -16668,11 +16669,175 @@ function _shotVisible(el, view) {
   return !cs || (cs.display !== 'none' && cs.visibility !== 'hidden');
 }
 
+// Data rows the operator has hidden (the children of a collapsed parent).
+// They're left out of the image, but their count is noted under it so the
+// screenshot can't be mistaken for the full set — reveal them, then re-shoot.
+// Control rows don't count: a toggle-button row, or a full-width section /
+// grouping header that spans every column via colspan.
+function _shotHiddenRowCount(tableEl, view) {
+  var n = 0;
+  tableEl.querySelectorAll('tbody > tr').forEach(function (tr) {
+    if (_shotVisible(tr, view)) return;
+    if (tr.id && /toggle/i.test(tr.id)) return;
+    var tds = tr.querySelectorAll(':scope > td');
+    if (tds.length === 0) return;
+    if (tds.length === 1 && tds[0].hasAttribute('colspan')) return;
+    n++;
+  });
+  return n;
+}
+// Is a computed background color one that paints nothing? `transparent` and any
+// zero-alpha rgba() are see-through; everything else (including a keyword a
+// browser hands back unresolved) counts as painted.
+function _shotTransparentBg(bg) {
+  if (!bg || bg === 'transparent') return true;
+  var m = /^rgba?\(([^)]*)\)$/.exec(bg);
+  if (!m) return false;
+  var parts = m[1].split(/[\s,\/]+/).filter(function (p) { return p !== ''; });
+  return parts.length > 3 && parseFloat(parts[3]) === 0;
+}
+// The color to lay behind a captured table. A table declares no background of
+// its own — its rows are transparent over whatever card they sit in — so
+// composing on --color-bg-primary would put the wrong ground under the zebra
+// striping in every theme whose cards aren't the page color. Walk up to the
+// first ancestor that actually paints.
+function _shotBackdropColor(el, view, fallback) {
+  for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+    var bg = view.getComputedStyle(n).backgroundColor;
+    if (!_shotTransparentBg(bg)) return bg;
+  }
+  return fallback;
+}
+
 // Per-table screenshot (the camera button injected to the left of a table's
-// column-chooser gear by setupColumnLayout). Captures only that table — visible
-// columns + headers — titled with the table label and the current asset name,
-// then copies the PNG to the clipboard. Column widths auto-fit the content.
+// column-chooser gear by setupColumnLayout). Captures only that table, as it is
+// actually rendered — the operator's visible columns in their dragged order and
+// widths, the zebra striping, status dots, pills, and the green/red per-scrape
+// health-check strips — titled with the table label and the current asset name,
+// then copies the PNG to the clipboard.
+//
+// This is a DOM rasterization: html-to-image, the same library and the same
+// deep-clone → inlined computed styles → SVG <foreignObject> path
+// _runScreenshotCapture uses for a whole tab. It replaced a synthetic canvas
+// re-draw, which could only paint each cell's FLATTENED TEXT in one resolved
+// color — so everything a table says with shape or color reached the image as a
+// stand-in glyph at best and as nothing at all at worst: the SD-WAN Members
+// Health Check Status column arrived as the words "▼ 36/37 up" in place of 37
+// colored segments, its status dots as ▲/▼, and a health-check chip's colored
+// bullet as a bare triangle. That composer survives as _screenshotTableElText,
+// the fallback for a browser where the capture library didn't load or the
+// rasterization failed — it needs nothing but the DOM, and the data-shot-text /
+// data-shot-color stand-ins exist for it alone.
+//
+// The table is captured at its CURRENT rendered width, deliberately unlike the
+// tab capture's canonical 1100px: applyTableLayout stamps per-column pixel
+// widths under `table-layout: fixed`, so forcing the container wider would
+// leave every column where it is and only add dead space to the right.
 function _screenshotTableEl(tableEl, label, opts) {
+  if (!tableEl) { showToast("Nothing to screenshot", "error"); return; }
+  opts = opts || {};
+  if (typeof htmlToImage === "undefined") { _screenshotTableElText(tableEl, label, opts); return; }
+  var view = (tableEl.ownerDocument && tableEl.ownerDocument.defaultView) || window;
+  var hiddenNoun = opts.hiddenNoun || "row";
+
+  var bodyRows = Array.prototype.slice.call(tableEl.querySelectorAll('tbody > tr'));
+  var anyVisible = bodyRows.some(function (tr) { return _shotVisible(tr, view); });
+  if (!anyVisible) { showToast("Nothing to screenshot", "error"); return; }
+
+  var hiddenCount = _shotHiddenRowCount(tableEl, view);
+  var hiddenNote = hiddenCount > 0
+    ? "+ " + hiddenCount + " hidden " + hiddenNoun + (hiddenCount === 1 ? "" : "s") +
+      " not shown — reveal them before screenshotting to include"
+    : "";
+
+  var a = _currentAssetForRefresh;
+  var assetName = a ? (a.hostname || a.dnsName || a.ipAddress || a.id || "") : "";
+
+  var cs = getComputedStyle(document.documentElement);
+  var bgPrimary = cs.getPropertyValue("--color-bg-primary").trim() || "#ffffff";
+  var clrText   = cs.getPropertyValue("--color-text-primary").trim() || "#111";
+  var clrMuted  = cs.getPropertyValue("--color-text-tertiary").trim() || "#888";
+  var fontSans  = cs.getPropertyValue("--font-sans").trim() || "system-ui,-apple-system,sans-serif";
+  var backdrop  = _shotBackdropColor(tableEl, view, bgPrimary);
+
+  // Hide the scroll wrapper's scrollbar chrome for the duration: the class sets
+  // `scrollbar-width: none` on the LIVE nodes, and it's those computed styles
+  // html-to-image freezes into the clone. The wrapper is never the capture
+  // target — it's a bounded-height scroll container, so capturing it would clip
+  // every row below the fold (and every column right of the horizontal scroll);
+  // the table element itself is content-sized in both axes.
+  var wrap = tableEl.closest('.table-wrapper-sticky') || tableEl.parentElement;
+  if (wrap) wrap.classList.add('screenshot-hide-scrollbars');
+  function release() { if (wrap) wrap.classList.remove('screenshot-hide-scrollbars'); }
+
+  var scale = 2;
+  // Double-rAF clears the relayout hiding the scrollbars kicks off — on
+  // classic-scrollbar platforms it widens the scroll container by the bar width.
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      htmlToImage.toCanvas(tableEl, { pixelRatio: scale, backgroundColor: backdrop })
+        .then(function (capture) {
+          release();
+          var pad = 20;
+          var titleH = assetName ? 48 : 32;
+          var w = capture.width / scale;
+          var h = capture.height / scale;
+          var noteH = hiddenNote ? 24 : 0;
+          // The note can be wider than the table — widen the canvas for it.
+          var measure = document.createElement("canvas").getContext("2d");
+          measure.font = "italic 12px " + fontSans;
+          var noteW = hiddenNote ? measure.measureText(hiddenNote).width : 0;
+          var cw = Math.max(w, Math.ceil(noteW)) + pad * 2;
+          var ch = titleH + h + noteH + pad;
+          var canvas = document.createElement("canvas");
+          canvas.width = cw * scale;
+          canvas.height = ch * scale;
+          var ctx = canvas.getContext("2d");
+          ctx.scale(scale, scale);
+          ctx.fillStyle = bgPrimary;
+          ctx.fillRect(0, 0, cw, ch);
+          ctx.textBaseline = "alphabetic";
+          ctx.fillStyle = clrText;
+          ctx.font = "bold 15px " + fontSans;
+          ctx.fillText(label || "Table", pad, 22);
+          if (assetName) {
+            ctx.fillStyle = clrMuted;
+            ctx.font = "12px " + fontSans;
+            ctx.fillText(assetName, pad, 40);
+          }
+          // 1:1 device-pixel blit (w×h CSS px under the 2x transform), so the
+          // captured table is never resampled.
+          ctx.drawImage(capture, pad, titleH, w, h);
+          if (hiddenNote) {
+            ctx.fillStyle = clrMuted;
+            ctx.font = "italic 12px " + fontSans;
+            ctx.fillText(hiddenNote, pad, titleH + h + 16);
+          }
+          canvas.toBlob(function (blob) {
+            if (!blob) { showToast("Screenshot failed", "error"); return; }
+            copyPngToClipboard(blob).then(function (ok) {
+              showToast(ok ? (label || "Table") + " copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
+            });
+          }, "image/png");
+        })
+        .catch(function () {
+          release();
+          // A rasterization that fell over (a tainted canvas, a webfont fetch
+          // wedging the clone) still has a readable answer to give.
+          _screenshotTableElText(tableEl, label, opts);
+        });
+    });
+  });
+}
+
+// Fallback table screenshot: a synthetic canvas re-draw of each visible cell's
+// flattened text (_shotCellText) in one resolved color (_shotCellColor), with
+// auto-fit column widths. Used when html-to-image is unavailable or its
+// rasterization failed — see _screenshotTableEl for why it is no longer the
+// primary path, and polaris-ui-canon → canon-tables-lists.md for the
+// data-shot-text / data-shot-color contract that keeps a color-only cell from
+// coming out blank HERE.
+function _screenshotTableElText(tableEl, label, opts) {
   if (!tableEl) { showToast("Nothing to screenshot", "error"); return; }
   opts = opts || {};
   var hiddenNoun = opts.hiddenNoun || "row";
@@ -16687,20 +16852,9 @@ function _screenshotTableEl(tableEl, label, opts) {
   });
   var rows = [];
   var rowColors = [];   // parallel to rows: the per-cell color to draw with
-  // Count data rows the operator has hidden (the children of a collapsed
-  // parent). They're left out of the image but we note their count so
-  // the screenshot can't be mistaken for the full set — reveal them, then re-shoot.
-  var hiddenCount = 0;
+  var hiddenCount = _shotHiddenRowCount(tableEl, view);
   tableEl.querySelectorAll('tbody > tr').forEach(function (tr) {
-    if (!visible(tr)) {
-      // Skip control rows (toggle / section headers span all columns via colspan).
-      if (tr.id && /toggle/i.test(tr.id)) return;
-      var tds = tr.querySelectorAll(':scope > td');
-      if (tds.length === 0) return;
-      if (tds.length === 1 && tds[0].hasAttribute('colspan')) return;
-      hiddenCount++;
-      return;
-    }
+    if (!visible(tr)) return;
     var row = [];
     var colors = [];
     tr.querySelectorAll(':scope > td').forEach(function (td, i) {

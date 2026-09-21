@@ -107,6 +107,39 @@ Two tabs are conditional:
 Three are device-type specific: **Wireless** on a monitored access point, **MAC
 Table** on a switch, **ARP Table** on a firewall.
 
+### Copy and Screenshot
+
+The slide-over header carries **Copy** and **Screenshot**, and both act on the
+tab you are reading — not on the whole asset.
+
+**Copy** writes the tab out as plain text: labelled values, tables as rows,
+headings kept. It is the form to paste into a ticket, a change record or a
+chat.
+
+**Screenshot** opens a picker first. Every section of the tab gets an include
+checkbox (your choices are remembered per tab), chart sections get a time-range
+choice that starts on whatever range the chart is currently showing, and the
+Interfaces section can be told to include the interfaces it is hiding. On
+**Capture**, Polaris renders the tab at a fixed width — so the image looks the
+same whether your window is wide or narrow, or the panel has been dragged to a
+new size — and copies it to the clipboard as a PNG. Charts, badges, colours and
+your theme all come across as they appear on screen. On the **Events** tab the
+button gives way to an **Export** dropdown instead (CSV or PDF, this page or
+every event for the asset).
+
+Individual tables and charts have their own camera buttons: for a table, beside
+its column-chooser gear, and for a chart, in its corner. A table's camera
+captures just that table exactly as it is drawn for you — the columns you have
+visible, in the order and widths you have set, with the status dots, health-check
+chips and green/red per-scrape strips intact — titled with the table name and
+the device. Rows hidden underneath a collapsed parent are left out, and the
+image says how many, so it cannot be mistaken for the full list: expand them
+first if you want them in.
+
+Copying to the clipboard needs a browser clipboard permission, and on most
+browsers an **HTTPS** page (or `localhost`). On a plain-HTTP install the
+capture still runs but the copy is refused, and the toast says so.
+
 ### Snapshot tabs: Wireless, MAC Table, ARP Table
 
 These three are not charts. Each is a picture of what the device answered the

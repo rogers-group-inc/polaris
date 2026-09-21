@@ -2,12 +2,15 @@
  * tests/unit/sdwanMembersShotDom.test.ts — the SD-WAN Members table's up/down
  * signals have to survive the table screenshot (public/js/assets.js).
  *
- * The per-table camera button is a CANVAS RE-DRAW of each cell's flattened text
- * (_shotCellText) painted in one resolved color (_shotCellColor) — not a DOM
- * rasterization. So a cell whose entire meaning is a color with no text in it
- * comes out BLANK in the image while looking correct on screen, which is exactly
- * what happened here: the member status dot and the whole Health Check Status
- * strip vanished from every screenshot of this table.
+ * The per-table camera button rasterizes the live table now
+ * (tests/unit/tableShotCaptureDom.test.ts), but it still falls back to a CANVAS
+ * RE-DRAW of each cell's flattened text (_shotCellText) painted in one resolved
+ * color (_shotCellColor) when html-to-image didn't load or its rasterization
+ * failed. In that composer a cell whose entire meaning is a color with no text
+ * in it comes out BLANK while looking correct on screen, which is exactly what
+ * happened here: the member status dot and the whole Health Check Status strip
+ * vanished from every screenshot of this table. This file pins the stand-ins
+ * that keep the fallback honest.
  *
  * What's pinned:
  *  - every column that means "up or down" flattens to a glyph, so the state
