@@ -5726,6 +5726,15 @@ export interface FortiCmdbInterfaceEntry {
   alias: string | null;
   description: string | null;
   addressingMode: string | null;
+  /** The CMDB's `status` — "up" | "down" — which is the ADMIN status, i.e.
+   *  whether the interface is configured up at all.
+   *
+   *  It has to come from here because the MONITOR endpoint does not carry it:
+   *  `/api/v2/monitor/system/interface` reports `link` (the oper status) and
+   *  nothing else status-shaped. Confirmed on FortiOS 7.6.7 against the lab
+   *  gates — the monitor payload's `status` is `undefined` on every entry,
+   *  while the CMDB's is "up"/"down" on all of them. */
+  adminStatus: string | null;
 }
 
 /**
@@ -5768,6 +5777,10 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
     // UI; anything else (or absent) leaves addressingMode null.
     const rawMode = typeof c.mode === "string" ? c.mode.trim().toLowerCase() : "";
     const addressingMode = (rawMode === "static" || rawMode === "dhcp" || rawMode === "pppoe") ? rawMode : null;
+    // Only the two values FortiOS actually uses; anything else is treated as
+    // unknown rather than passed through, for the same reason `mode` is.
+    const rawStatus = typeof c.status === "string" ? c.status.trim().toLowerCase() : "";
+    const adminStatus = rawStatus === "up" || rawStatus === "down" ? rawStatus : null;
     cmdbByName.set(c.name, {
       type:    t,
       parent:  t === "vlan" && typeof c.interface === "string" ? c.interface : null,
@@ -5776,6 +5789,7 @@ export function parseFortiCmdbInterfaceTable(cmdbRes: unknown): Map<string, Fort
       alias,
       description,
       addressingMode,
+      adminStatus,
     });
   }
   return cmdbByName;
@@ -5812,7 +5826,20 @@ export function buildFortiInterfaceSamples(
     const rawVlanId = cmdbEntry?.vlanId ?? (i.type === "vlan" && typeof i.vlanid === "number" ? i.vlanid : null);
     interfaces.push({
       ifName:      name,
-      adminStatus: i.status === "down" ? "down" : i.status === "up" ? "up" : (i.status ?? null),
+      // CMDB FIRST, exactly like type/parent/vlanId above. The monitor payload
+      // has no `status` field at all on FortiOS 7.6.7 — it carries `link` and
+      // nothing else status-shaped — so reading it from `i` alone left
+      // adminStatus null on every interface of every standalone FortiGate.
+      //
+      // That was not a cosmetic gap: business rule 57 skips an `ifOperStatus`
+      // reading whose adminStatus is not "up" (an admin-downed port is
+      // deliberately down, not an outage), so a null silently disabled EVERY
+      // interface-down automation on a standalone-discovered gate. The
+      // automation saved, looked correct on the Devices step, and never fired.
+      // Found against the lab gates 2026-09-21; the monitor fallback stays for
+      // any firmware that does populate it.
+      adminStatus: cmdbEntry?.adminStatus
+        ?? (i.status === "down" ? "down" : i.status === "up" ? "up" : (i.status ?? null)),
       operStatus:  i.link === false ? "down" : i.link === true ? "up" : null,
       speedBps:    speedMbps != null ? Math.round(speedMbps * 1_000_000) : null,
       ipAddress:   ip,

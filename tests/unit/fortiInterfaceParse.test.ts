@@ -48,6 +48,42 @@ describe("parseFortiCmdbInterfaceTable", () => {
     expect(parseFortiCmdbInterfaceTable({ results: "nope" }).size).toBe(0);
     expect(parseFortiCmdbInterfaceTable([{ noName: true }]).size).toBe(0);
   });
+
+  /**
+   * The CMDB is the ONLY place a standalone FortiGate reports admin status:
+   * `/api/v2/monitor/system/interface` carries `link` and nothing
+   * status-shaped (confirmed on FortiOS 7.6.7). Dropping it left adminStatus
+   * null on every interface, which silently disabled every `ifOperStatus`
+   * automation on those gates — business rule 57 skips a reading whose
+   * adminStatus is not "up", so the automation saved, looked right and never
+   * fired. Found against real lab hardware 2026-09-21.
+   */
+  it("keeps the CMDB `status` as adminStatus — the only source a gate has for it", () => {
+    const map = parseFortiCmdbInterfaceTable({
+      results: [
+        { name: "dmz", status: "down", type: "physical" },
+        { name: "wan1", status: "up", type: "physical" },
+        { name: "MIXED", status: "UP", type: "physical" },
+      ],
+    });
+    expect(map.get("dmz")?.adminStatus).toBe("down");
+    expect(map.get("wan1")?.adminStatus).toBe("up");
+    // Case-folded, like `mode` beside it.
+    expect(map.get("MIXED")?.adminStatus).toBe("up");
+  });
+
+  it("treats an absent or unrecognised status as UNKNOWN, never as a value", () => {
+    // Null must not be coerced to "up": that would make an admin-downed port
+    // look like a real outage on every firmware that omits the field.
+    const map = parseFortiCmdbInterfaceTable({
+      results: [
+        { name: "noStatus", type: "physical" },
+        { name: "weird", status: "flapping", type: "physical" },
+      ],
+    });
+    expect(map.get("noStatus")?.adminStatus).toBeNull();
+    expect(map.get("weird")?.adminStatus).toBeNull();
+  });
 });
 
 describe("buildFortiInterfaceSamples", () => {
