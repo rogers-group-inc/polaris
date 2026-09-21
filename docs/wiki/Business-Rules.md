@@ -814,3 +814,35 @@ correctly shows no primary MAC.
 Needs **Assets: Write** (the built-in *assetsadmin* role, and admin).
 
 See [Assets](Assets#correcting-a-wrong-mac-association).
+
+### Rule 80
+
+**Downtime Polaris itself causes is not an incident, and a silence it grants
+expires on its own.**
+
+Upgrading, reinstalling or uninstalling the [Polaris Agent](Polaris-Agent) stops
+the agent service on the host. That drops the agent's connection, which raises
+`agent.disconnected` — and the built-in automation on that event would page you
+about work you asked for.
+
+So each of those three operations puts the asset into a
+[maintenance window](Maintenance-Windows#windows-polaris-opens-for-itself) for
+its duration. A first install and a retry do not: there is no agent running to
+disconnect, and silencing a host mid-install would hide a real failure.
+
+Two parts of this are deliberate and worth knowing:
+
+- **It ends when the agent comes back**, not when the installer finishes. The
+  disconnect can take up to a minute to be noticed, so ending the window early
+  would let the alert through anyway.
+- **It expires on its own** — 20 minutes for an upgrade or uninstall, 30 for a
+  reinstall — whatever happened to the operation that opened it. A device in
+  maintenance is not being monitored, so a window that could be left open by a
+  crashed upgrade would quietly stop watching a production machine. If that cap
+  is ever reached, the alert that was suppressed fires late rather than never.
+
+A failed operation ends its window immediately: an agent that is down because
+its upgrade failed is exactly what you want to hear about.
+
+See [Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)
+and [Polaris Agent](Polaris-Agent#upgrading).

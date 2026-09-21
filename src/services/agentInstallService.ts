@@ -59,6 +59,70 @@ import {
   getOnboardingState,
   type SshOnboardingPlatform,
 } from "./windowsSshOnboardingService.js";
+import {
+  openMaintenanceHold,
+  releaseMaintenanceHold,
+  type MaintenanceHoldKind,
+} from "./maintenanceScheduleService.js";
+
+// ─── Maintenance holds ────────────────────────────────────────────────
+//
+// Every operation here stops the agent service on the host, which drops the
+// WebSocket and writes `agent.disconnected` at warning level — an alert about
+// downtime the operator asked for, and the seeded baseline automation watches
+// exactly that (business rule 80). The asset is held in maintenance for the
+// duration instead, which suppresses it the same way a maintenance schedule
+// does, because the event path honours `assetCanTrigger` like every other
+// trigger.
+//
+// Failures release immediately: an agent that is down because its upgrade
+// failed is a real problem, and the alert about it is the point. The success
+// paths do NOT release — the agent reattaching does (agentChannelService), or
+// the hold's own expiry, because the WS teardown can lag the service stop by a
+// heartbeat interval and releasing on "the script returned" lets the disconnect
+// through by seconds.
+
+/**
+ * Best-effort: resolve the agent's asset and hold it. A hold failure is logged
+ * and swallowed — it must never be the reason an upgrade does not run.
+ */
+async function takeAgentHold(managedAgentId: string, kind: MaintenanceHoldKind): Promise<void> {
+  try {
+    const row = await prisma.managedAgent.findUnique({
+      where:  { id: managedAgentId },
+      select: { assetId: true },
+    });
+    if (!row) return;
+    await openMaintenanceHold({ assetId: row.assetId, kind, actor: "system:agent" });
+  } catch (err) {
+    logger.warn({ err, managedAgentId, kind }, "Could not hold the asset in maintenance for an agent operation");
+  }
+}
+
+/**
+ * hostname || ipAddress, for an Event's `resourceName`.
+ *
+ * An `asset` Event that names no resource gives any automation watching it an
+ * empty subject (`alertSubject.eventSubjectLabel`), so the alert row, the
+ * widget entry and the email all come out unable to say WHICH device the agent
+ * belongs to. The runners hold the asset already and pass it straight through;
+ * this is for the failure helpers, which are handed an id and nothing else.
+ */
+async function assetLabel(assetId: string): Promise<string | undefined> {
+  const asset = await prisma.asset
+    .findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } })
+    .catch(() => null);
+  return asset?.hostname || asset?.ipAddress || undefined;
+}
+
+/** The mirror of takeAgentHold, by assetId — the caller already has the row. */
+async function dropAgentHold(assetId: string, kind: MaintenanceHoldKind): Promise<void> {
+  try {
+    await releaseMaintenanceHold({ assetId, kind });
+  } catch (err) {
+    logger.warn({ err, assetId, kind }, "Could not release the agent maintenance hold (it will expire on its own)");
+  }
+}
 
 // ─── Public entry points ──────────────────────────────────────────────
 
@@ -66,6 +130,14 @@ export interface StartInstallInput {
   managedAgentId: string;
   credentialId:   string;
   hostOverride?:  string; // optional — defaults to Asset.ipAddress / dnsName / hostname
+  /**
+   * Set by the REINSTALL route only (business rule 80). A reinstall stops an
+   * agent that is currently running and connected, so the asset is held in
+   * maintenance until it comes back; a first install and a retry of a failed
+   * one have no agent to disconnect and take no hold — suppressing alerts
+   * there would silence a host that is still telling the truth.
+   */
+  holdKind?:      MaintenanceHoldKind;
   /** Path-resolution hooks for tests; pass nothing in production. */
   testOverrides?: TestOverrides;
 }
@@ -97,6 +169,11 @@ interface TestOverrides {
  * loop. Failures land in installStatus="failed" with installError set.
  */
 export async function startInstall(input: StartInstallInput): Promise<void> {
+  // Awaited, not fire-and-forget: the hold has to be in place before the
+  // installer stops the running agent, and the reconcile it triggers is what
+  // parks the status. Never fatal — a hold that could not be taken is a noisier
+  // upgrade, not a reason to refuse one.
+  if (input.holdKind) await takeAgentHold(input.managedAgentId, input.holdKind);
   setImmediate(() => runInstall(input).catch((err) => {
     // Defensive — runInstall already captures errors into installError,
     // but anything escaping that path lands here.
@@ -110,6 +187,7 @@ export async function startInstall(input: StartInstallInput): Promise<void> {
  * the remote cleanup.
  */
 export async function startUninstall(input: StartUninstallInput): Promise<void> {
+  await takeAgentHold(input.managedAgentId, "agent-uninstall");
   setImmediate(() => runUninstall(input).catch((err) => {
     logger.error({ err, managedAgentId: input.managedAgentId }, "Agent uninstall crashed unexpectedly");
   }));
@@ -308,6 +386,7 @@ export async function startUpgrade(input: StartUpgradeInput): Promise<{ fromVers
     action:       "agent.upgrade_kickoff",
     resourceType: "asset",
     resourceId:   row.assetId,
+    resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
     actor:        input.actor,
     level:        "info",
     message:      resolved.adopted
@@ -324,6 +403,8 @@ export async function startUpgrade(input: StartUpgradeInput): Promise<{ fromVers
       binaryFilename: binaryName,
     },
   });
+
+  await takeAgentHold(row.id, "agent-upgrade");
 
   setImmediate(() =>
     runUpgrade({
@@ -384,7 +465,12 @@ export async function upgradeAllOutdated(actor: string): Promise<UpgradeAllResul
       installStatus: { in: [...UPGRADEABLE_INSTALL_STATUSES] },
       NOT: { agentVersion: currentVersion },
     },
-    select: { id: true, assetId: true, agentVersion: true },
+    // The asset's name rides along so a skip Event can say WHICH host it
+    // skipped — a fan-out that reports N nameless failures is not a report.
+    select: {
+      id: true, assetId: true, agentVersion: true,
+      asset: { select: { hostname: true, ipAddress: true } },
+    },
   });
   const perAsset: UpgradeAllResult["perAsset"] = [];
   const POOL_SIZE = 4;
@@ -405,6 +491,7 @@ export async function upgradeAllOutdated(actor: string): Promise<UpgradeAllResul
         action:       "agent.upgrade_skipped",
         resourceType: "asset",
         resourceId:   e.assetId,
+        resourceName: e.asset?.hostname || e.asset?.ipAddress || undefined,
         actor,
         level:        "warning",
         message:      `Polaris Agent upgrade skipped (still on ${e.agentVersion ?? "an unknown version"}): ${error}`,
@@ -739,6 +826,7 @@ async function runInstall(input: StartInstallInput): Promise<void> {
     action:       "agent.installed",
     resourceType: "asset",
     resourceId:   row.assetId,
+    resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
     level:        "info",
     message:      "Polaris Agent installer completed on host — awaiting agent enrollment",
     details:      { managedAgentId },
@@ -747,6 +835,8 @@ async function runInstall(input: StartInstallInput): Promise<void> {
 }
 
 async function failInstall(managedAgentId: string, assetId: string, reason: string): Promise<void> {
+  // Only a reinstall ever took one; releasing an absent hold is a no-op.
+  await dropAgentHold(assetId, "agent-reinstall");
   await prisma.managedAgent.update({
     where: { id: managedAgentId },
     data: { installStatus: "failed", installError: reason },
@@ -755,6 +845,7 @@ async function failInstall(managedAgentId: string, assetId: string, reason: stri
     action:       "agent.install_failed",
     resourceType: "asset",
     resourceId:   assetId,
+    resourceName: await assetLabel(assetId),
     level:        "error",
     message:      `Agent install failed: ${reason}`,
     details:      { managedAgentId },
@@ -861,10 +952,15 @@ async function runUninstall(input: StartUninstallInput): Promise<void> {
     }),
     prisma.assetProcessConnection.deleteMany({ where: { assetId: row.assetId } }),
   ]);
+  // Unlike upgrade/reinstall, nothing is coming back to reattach and release
+  // this one — the agent is gone by design, so the uninstall completing IS the
+  // end of the hold. The disconnect it caused already landed inside the window.
+  await dropAgentHold(row.assetId, "agent-uninstall");
   await logEvent({
     action:       "agent.uninstalled",
     resourceType: "asset",
     resourceId:   row.assetId,
+    resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
     level:        "info",
     message:      "Polaris Agent uninstalled cleanly",
     details:      { managedAgentId, osPlatform: row.osPlatform },
@@ -872,6 +968,7 @@ async function runUninstall(input: StartUninstallInput): Promise<void> {
 }
 
 async function failUninstall(managedAgentId: string, assetId: string, reason: string): Promise<void> {
+  await dropAgentHold(assetId, "agent-uninstall");
   await prisma.managedAgent.update({
     where: { id: managedAgentId },
     data: { installStatus: "uninstall_failed", installError: reason },
@@ -880,6 +977,7 @@ async function failUninstall(managedAgentId: string, assetId: string, reason: st
     action:       "agent.uninstall_failed",
     resourceType: "asset",
     resourceId:   assetId,
+    resourceName: await assetLabel(assetId),
     level:        "warning",
     message:      `Agent uninstall failed: ${reason}`,
     details:      { managedAgentId },
@@ -1012,6 +1110,7 @@ async function runUpgrade(input: RunUpgradeInput): Promise<void> {
     action:       "agent.upgrade_succeeded",
     resourceType: "asset",
     resourceId:   row.assetId,
+    resourceName: row.asset.hostname || row.asset.ipAddress || undefined,
     actor:        input.actor,
     level:        "info",
     message:      input.resolved.adopted
@@ -1031,6 +1130,8 @@ async function runUpgrade(input: RunUpgradeInput): Promise<void> {
 }
 
 async function failUpgrade(managedAgentId: string, assetId: string, reason: string, actor: string): Promise<void> {
+  // The agent may be down and staying down. Let it alert.
+  await dropAgentHold(assetId, "agent-upgrade");
   await prisma.managedAgent.update({
     where: { id: managedAgentId },
     data:  { installStatus: "upgrade_failed", installError: reason },
@@ -1039,6 +1140,7 @@ async function failUpgrade(managedAgentId: string, assetId: string, reason: stri
     action:       "agent.upgrade_failed",
     resourceType: "asset",
     resourceId:   assetId,
+    resourceName: await assetLabel(assetId),
     actor,
     level:        "warning",
     message:      `Agent upgrade failed: ${reason}`,

@@ -35,6 +35,19 @@
  * `releaseAssetsForDecommission()` (called by the discovery decommission
  * sweeps) force-closes the windows and decommissions the asset outright —
  * see its doc comment for why roster absence is not a reachability signal.
+ *
+ * HOLDS (business rule 80). A schedule is not the only thing that can hold an
+ * asset in maintenance: `MaintenanceHold` rows say "Polaris is doing something
+ * to this device right now" — today an agent upgrade / reinstall / uninstall,
+ * each of which stops the agent service and would otherwise fire the
+ * `agent.disconnected` automation about downtime the operator asked for. A
+ * hold is a HOLDER, exactly like a schedule: `runReconcile` diffs open windows
+ * against live holds the same way it diffs them against in-window schedules, so
+ * a hold enters through the one path that parks the status, writes
+ * `maintenance.entered` and sweeps live alerts. Two differences: a hold is
+ * opened and released by code rather than by the clock (`openMaintenanceHold` /
+ * `releaseMaintenanceHold`), and it carries `expiresAt` — a held asset is not
+ * being watched, so a release that never runs must not be able to strand one.
  */
 
 import { prisma } from "../db.js";
@@ -63,6 +76,44 @@ const SYSTEM_ACTOR = "system:maintenance";
 const PREVIEW_CAP = 50;
 /** Closed window rows older than this are pruned by the reconcile tick. */
 const HISTORY_RETENTION_DAYS = 400;
+
+// ─── Holds ───────────────────────────────────────────────────────────────────
+
+/**
+ * What Polaris can hold an asset in maintenance FOR. Every one of these stops
+ * the agent service on the host, which drops the WebSocket and writes
+ * `agent.disconnected`.
+ *
+ * A first install is deliberately absent: there is no agent yet to disconnect,
+ * and a hold would only silence alerts that are still telling the truth about
+ * the host while the install runs. So is a retry of a failed install, for the
+ * same reason.
+ */
+export const MAINTENANCE_HOLD_KINDS = {
+  "agent-upgrade":   "Polaris Agent upgrade",
+  "agent-reinstall": "Polaris Agent reinstall",
+  "agent-uninstall": "Polaris Agent uninstall",
+} as const;
+
+export type MaintenanceHoldKind = keyof typeof MAINTENANCE_HOLD_KINDS;
+
+/**
+ * How long a hold may keep an asset out of monitoring before the reconcile
+ * closes it on its own.
+ *
+ * Sized against the operation, not against the alert: a Windows upgrade over
+ * WinRM on a slow link is minutes, a reinstall re-pushes the binary and
+ * re-enrolls. The cap exists for the paths where nothing releases the hold —
+ * the process died between the update and the release, the host never came
+ * back — and the cost of it being too generous is an alert that fires late,
+ * while the cost of no cap at all is an asset nobody is watching and no trace
+ * of why.
+ */
+const HOLD_TTL_MINUTES: Record<MaintenanceHoldKind, number> = {
+  "agent-upgrade":   20,
+  "agent-reinstall": 30,
+  "agent-uninstall": 20,
+};
 
 // ─── Input validation ────────────────────────────────────────────────────────
 
@@ -677,7 +728,7 @@ export interface AssetMaintenanceInfo {
  * fine at single-asset cost, schedule counts are notification-rule-sized.
  */
 export async function getAssetMaintenanceInfo(assetId: string): Promise<AssetMaintenanceInfo> {
-  const [asset, open, schedules] = await Promise.all([
+  const [asset, open, schedules, holds] = await Promise.all([
     prisma.asset.findUnique({
       where: { id: assetId },
       select: { id: true, status: true, maintenanceReturnStatus: true, monitored: true },
@@ -685,11 +736,16 @@ export async function getAssetMaintenanceInfo(assetId: string): Promise<AssetMai
     prisma.assetMaintenanceWindow.findMany({
       where: { assetId, endedAt: null },
       orderBy: { startedAt: "asc" },
-      select: { id: true, scheduleId: true, scheduleName: true, startedAt: true },
+      select: { id: true, scheduleId: true, holdKind: true, scheduleName: true, startedAt: true },
     }),
     prisma.maintenanceSchedule.findMany({ orderBy: { name: "asc" } }),
+    prisma.maintenanceHold.findMany({
+      where:  { assetId },
+      select: { kind: true, expiresAt: true },
+    }),
   ]);
   if (!asset) throw new AppError(404, "Asset not found");
+  const holdExpiryByKind = new Map(holds.map((h) => [h.kind, h.expiresAt]));
 
   const now = new Date();
   const shapeById = new Map<string, MaintenanceScheduleShape>();
@@ -739,7 +795,10 @@ export async function getAssetMaintenanceInfo(assetId: string): Promise<AssetMai
         scheduleId: w.scheduleId,
         scheduleName: w.scheduleName,
         startedAt: w.startedAt,
-        until: occ?.end ?? null,
+        // A hold has no occurrence to end — what it has is the cap past which
+        // the reconcile closes it regardless. That is the honest answer to
+        // "until when", and the tab renders it the same way.
+        until: (w.holdKind ? holdExpiryByKind.get(w.holdKind) : occ?.end) ?? null,
       };
     }),
     schedules: covering,
@@ -761,6 +820,11 @@ export async function operatorReleaseAsset(assetId: string, actor?: string): Pro
   });
   if (open.length === 0) return false;
   const now = new Date();
+  // Holds die with the windows they opened. Closing the window alone would let
+  // the next 30s tick re-open it from the still-live hold, so the operator's
+  // release would visibly undo itself — the operator outranks a hold exactly as
+  // they outrank a schedule.
+  const releasedKinds = await releaseAllHolds([assetId]);
   await prisma.$transaction([
     prisma.assetMaintenanceWindow.updateMany({
       where: { id: { in: open.map((w) => w.id) } },
@@ -776,7 +840,11 @@ export async function operatorReleaseAsset(assetId: string, actor?: string): Pro
     resourceName: asset?.hostname ?? assetId,
     actor,
     message: `Maintenance ended by operator (${open.map((w) => w.scheduleName).join(", ")})`,
-    details: { reason: "operator", schedules: open.map((w) => w.scheduleName) },
+    details: {
+      reason: "operator",
+      schedules: open.map((w) => w.scheduleName),
+      ...(releasedKinds.length > 0 ? { releasedHolds: releasedKinds } : {}),
+    },
   });
 
   // Spent ad-hoc cleanup: a released single-asset one-shot can never fire
@@ -862,6 +930,11 @@ export async function releaseAssetsForDecommission(
 
   const now = opts.at ?? new Date();
   const releasedIds = Array.from(new Set(open.map((w) => w.assetId)));
+  // Same reason as the operator path: a live hold would re-open the window on
+  // the next tick, and re-entering maintenance is not a thing a decommissioned
+  // asset should be able to do. The agent operation that took the hold is
+  // moot — the device it was upgrading is gone from its source.
+  await releaseAllHolds(releasedIds);
   await prisma.$transaction([
     prisma.assetMaintenanceWindow.updateMany({
       where: { id: { in: open.map((w) => w.id) } },
@@ -920,6 +993,89 @@ export async function releaseAssetsForDecommission(
   return releasedIds;
 }
 
+// ─── Hold open / release ─────────────────────────────────────────────────────
+
+/**
+ * Hold `assetId` in maintenance while Polaris does something to it (business
+ * rule 80). Idempotent per (asset, kind): a retried upgrade EXTENDS the hold
+ * rather than stacking a second one, which is also what makes the expiry safe
+ * to keep short.
+ *
+ * Returns false when the asset is not monitored — there is nothing to suppress
+ * and the schedule path ignores unmonitored assets too, so a hold on one would
+ * be a window nothing reads. The caller carries on with its operation either
+ * way: a hold that could not be taken must never be a reason not to upgrade.
+ *
+ * Reconciles inline, so the status is parked and the live alerts swept BEFORE
+ * this resolves — the caller's next step is stopping the agent service, and a
+ * hold that lands 30s later would have let the disconnect through.
+ */
+export async function openMaintenanceHold(input: {
+  assetId: string;
+  kind: MaintenanceHoldKind;
+  actor?: string;
+}): Promise<boolean> {
+  const label = MAINTENANCE_HOLD_KINDS[input.kind];
+  if (!label) throw new AppError(400, `Unknown maintenance hold kind "${input.kind}"`);
+
+  const asset = await prisma.asset.findUnique({
+    where: { id: input.assetId },
+    select: { id: true, monitored: true },
+  });
+  if (!asset || !asset.monitored) return false;
+
+  const expiresAt = new Date(Date.now() + HOLD_TTL_MINUTES[input.kind] * 60_000);
+  await prisma.maintenanceHold.upsert({
+    where:  { assetId_kind: { assetId: input.assetId, kind: input.kind } },
+    create: { assetId: input.assetId, kind: input.kind, label, expiresAt, createdBy: input.actor ?? null },
+    // startedAt is NOT refreshed — the window it opened is still the same one,
+    // and re-dating it would shorten the chart band the operator reads.
+    update: { expiresAt, label },
+  });
+  await reconcileMaintenance();
+  return true;
+}
+
+/**
+ * End a hold. Safe to call when none is held — a failure path that runs before
+ * the hold was taken, or after the expiry already closed it, must not throw on
+ * top of whatever it was reporting.
+ *
+ * The window closes on the reconcile this triggers, with `endReason:
+ * "released"`; the asset's parked status is restored there, by the same code
+ * that restores it for a schedule.
+ */
+export async function releaseMaintenanceHold(input: {
+  assetId: string;
+  kind: MaintenanceHoldKind;
+}): Promise<boolean> {
+  const { count } = await prisma.maintenanceHold.deleteMany({
+    where: { assetId: input.assetId, kind: input.kind },
+  });
+  if (count === 0) return false;
+  await reconcileMaintenance();
+  return true;
+}
+
+/**
+ * Release every hold on an asset, whatever kind. For the paths that end
+ * maintenance wholesale — an operator saying the device is not in maintenance,
+ * a decommission — where leaving the holder alive would re-open the window on
+ * the next tick and make the operator's action look ignored.
+ *
+ * Returns the kinds actually released, for the caller's event message.
+ */
+async function releaseAllHolds(assetIds: string[]): Promise<string[]> {
+  if (assetIds.length === 0) return [];
+  const held = await prisma.maintenanceHold.findMany({
+    where:  { assetId: { in: assetIds } },
+    select: { kind: true },
+  });
+  if (held.length === 0) return [];
+  await prisma.maintenanceHold.deleteMany({ where: { assetId: { in: assetIds } } });
+  return Array.from(new Set(held.map((h) => h.kind)));
+}
+
 // ─── Reconcile ───────────────────────────────────────────────────────────────
 
 // Serialized + coalesced: an in-flight run never overlaps another, and a call
@@ -971,15 +1127,64 @@ async function runReconcile(): Promise<void> {
     desired.set(s.id, new Set(targets.map((t) => t.id)));
   }
 
+  // Live holds — the other kind of holder (business rule 80). An expired one
+  // is deleted HERE rather than by whoever forgot to release it: the whole
+  // point of the cap is that it survives the release not running at all.
+  const expiredHolds = await prisma.maintenanceHold.findMany({
+    where:  { expiresAt: { lte: now } },
+    select: { id: true, assetId: true, kind: true, label: true },
+  });
+  if (expiredHolds.length > 0) {
+    await prisma.maintenanceHold.deleteMany({ where: { id: { in: expiredHolds.map((x) => x.id) } } });
+    logger.warn(
+      { count: expiredHolds.length, kinds: Array.from(new Set(expiredHolds.map((x) => x.kind))) },
+      "maintenance holds expired before anything released them — the assets leave maintenance and resume alerting",
+    );
+  }
+  const liveHolds = await prisma.maintenanceHold.findMany({
+    where:  { expiresAt: { gt: now } },
+    select: { assetId: true, kind: true, label: true },
+  });
+  // Same shape as `desired`, keyed by hold kind so the diff below can treat a
+  // hold exactly like a schedule: "assetId|<holder>" either has an open window
+  // or needs one.
+  const heldByKind = new Map<string, Set<string>>();
+  const holdLabelByKind = new Map<string, string>();
+  for (const hold of liveHolds) {
+    holdLabelByKind.set(hold.kind, hold.label);
+    const set = heldByKind.get(hold.kind) ?? new Set<string>();
+    set.add(hold.assetId);
+    heldByKind.set(hold.kind, set);
+  }
+
   const openRows = await prisma.assetMaintenanceWindow.findMany({
     where: { endedAt: null },
-    select: { id: true, assetId: true, scheduleId: true, scheduleName: true },
+    select: { id: true, assetId: true, scheduleId: true, holdKind: true, scheduleName: true },
   });
 
   // ── Diff ──────────────────────────────────────────────────────────────────
   const toClose: Array<{ id: string; assetId: string; scheduleId: string | null; reason: string }> = [];
   const openPairs = new Set<string>(); // "assetId|scheduleId" for rows staying open
+  const openHoldPairs = new Set<string>(); // "assetId|holdKind" for hold rows staying open
   for (const row of openRows) {
+    // A hold's window answers to its hold, never to the schedule table — and
+    // it has no scheduleId, so letting it fall through would close it as an
+    // orphan on the very next tick after it opened.
+    if (row.holdKind) {
+      if (heldByKind.get(row.holdKind)?.has(row.assetId)) {
+        openHoldPairs.add(`${row.assetId}|${row.holdKind}`);
+      } else {
+        // The hold was released, or it expired and was deleted above.
+        const expired = expiredHolds.some((x) => x.assetId === row.assetId && x.kind === row.holdKind);
+        toClose.push({
+          id: row.id,
+          assetId: row.assetId,
+          scheduleId: null,
+          reason: expired ? "expired" : "released",
+        });
+      }
+      continue;
+    }
     const sched = row.scheduleId ? scheduleById.get(row.scheduleId) : undefined;
     if (!sched) {
       toClose.push({ id: row.id, assetId: row.assetId, scheduleId: row.scheduleId, reason: "deleted" });
@@ -1029,7 +1234,19 @@ async function runReconcile(): Promise<void> {
     });
   }
 
-  if (toClose.length === 0 && toOpen.length === 0) {
+  // Hold opens. No operator-release suppression arm: a hold is minutes long and
+  // has no recurrence to be inside of, so "this occurrence" has no meaning —
+  // an operator who releases one has released it, and the code that took it
+  // releases the holder on its way out (operatorReleaseAsset deletes holds).
+  const holdOpens: Array<{ assetId: string; holdKind: string; label: string }> = [];
+  for (const [kind, assetIds] of heldByKind) {
+    for (const assetId of assetIds) {
+      if (openHoldPairs.has(`${assetId}|${kind}`)) continue;
+      holdOpens.push({ assetId, holdKind: kind, label: holdLabelByKind.get(kind) ?? kind });
+    }
+  }
+
+  if (toClose.length === 0 && toOpen.length === 0 && holdOpens.length === 0) {
     await pruneOldWindows(now);
     return;
   }
@@ -1040,6 +1257,7 @@ async function runReconcile(): Promise<void> {
   const afterCount = new Map<string, number>(beforeCount);
   for (const c of toClose) afterCount.set(c.assetId, (afterCount.get(c.assetId) ?? 0) - 1);
   for (const o of toOpen) afterCount.set(o.assetId, (afterCount.get(o.assetId) ?? 0) + 1);
+  for (const o of holdOpens) afterCount.set(o.assetId, (afterCount.get(o.assetId) ?? 0) + 1);
 
   const entering = Array.from(afterCount.entries())
     .filter(([assetId, n]) => n > 0 && (beforeCount.get(assetId) ?? 0) === 0)
@@ -1071,6 +1289,22 @@ async function runReconcile(): Promise<void> {
           assetId: o.assetId,
           scheduleId: o.scheduleId,
           scheduleName: scheduleById.get(o.scheduleId)?.name ?? "(unknown)",
+          startedAt: now,
+        })),
+      }),
+    );
+  }
+  if (holdOpens.length > 0) {
+    writes.push(
+      prisma.assetMaintenanceWindow.createMany({
+        // scheduleId stays null and the label lands in scheduleName — the chart
+        // band and the asset's Maintenance tab read that column and neither
+        // needs to know a schedule was never involved.
+        data: holdOpens.map((o) => ({
+          assetId: o.assetId,
+          scheduleId: null,
+          holdKind: o.holdKind,
+          scheduleName: o.label,
           startedAt: now,
         })),
       }),
@@ -1111,6 +1345,11 @@ async function runReconcile(): Promise<void> {
     for (const o of toOpen) {
       const list = openNamesByAsset.get(o.assetId) ?? [];
       list.push(scheduleById.get(o.scheduleId)?.name ?? "(unknown)");
+      openNamesByAsset.set(o.assetId, list);
+    }
+    for (const o of holdOpens) {
+      const list = openNamesByAsset.get(o.assetId) ?? [];
+      list.push(o.label);
       openNamesByAsset.set(o.assetId, list);
     }
     const schedNames = (assetId: string) => openNamesByAsset.get(assetId) ?? [];

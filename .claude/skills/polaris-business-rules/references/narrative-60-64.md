@@ -25,6 +25,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 77](#rule-77) — A VIP describes an address; it does not claim it, and the status says every fact it has
 - [Rule 78](narrative-78.md#rule-78) — An automation may choose to speak for a silenced device, and then it must name who silenced it (in `narrative-78.md`; this file reached the 1500-line ceiling)
 - [Rule 79](#rule-79) — An operator's removal of a MAC is a correction, not a suppression
+- [Rule 80](narrative-80.md#rule-80) — Downtime Polaris itself causes is not an incident, and a silence it grants expires on its own (in `narrative-80.md`; this file reached the 1500-line ceiling)
 
 <a id="rule-60"></a>
 

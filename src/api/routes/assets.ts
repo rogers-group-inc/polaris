@@ -6435,7 +6435,14 @@ router.post("/:id/agent/reinstall", requirePermission("assets", "fullwrite"), as
     });
 
     const { startInstall } = await import("../../services/agentInstallService.js");
-    await startInstall({ managedAgentId: row.id, credentialId: row.installCredentialId });
+    // A reinstall stops an agent that is running right now — hold the asset in
+    // maintenance so the disconnect it causes doesn't page anyone (rule 80).
+    // /retry and a first install pass no kind: nothing is running to drop.
+    await startInstall({
+      managedAgentId: row.id,
+      credentialId:   row.installCredentialId,
+      holdKind:       "agent-reinstall",
+    });
 
     res.json({
       managedAgentId: row.id,
