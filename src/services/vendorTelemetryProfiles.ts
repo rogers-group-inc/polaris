@@ -220,9 +220,15 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
     //   fsSysMemUsage    @ 12356.106.4.1.3 → bytes USED  (not a percent — distinct
     //                                                     from FortiGate's fgSysMemUsage)
     //   fsSysMemCapacity @ 12356.106.4.1.4 → bytes TOTAL
-    // collectMemoryVendor derives memPct from used/total. All three symbols
-    // are seeded into oidRegistry so the probe works without uploading
-    // FORTINET-FORTISWITCH-MIB.
+    // collectMemoryVendor derives memPct from used/total. These three symbols
+    // USED to be seeded into oidRegistry so the probe worked with no upload;
+    // that seed was removed in 2026-09 when vendor OID layout became operator
+    // data rather than something Polaris owns (business rule 68, and the
+    // no-enterprise-OID boundary in CLAUDE.md). They now resolve only once the
+    // operator has uploaded FORTINET-FORTISWITCH-MIB **and** the core module
+    // it IMPORTs its root from — until then the profile page reads UNRESOLVED
+    // and names the module, which is the documented symptom in
+    // runbooks/telemetry-unresolved-symbols.md.
     cpu: { symbol: "fsSysCpuUsage", mode: "scalar" },
     memory: {
       usedBytesSymbol:  "fsSysMemUsage",
@@ -265,8 +271,9 @@ export const VENDOR_TELEMETRY_PROFILES: VendorTelemetryProfile[] = [
     //                                                    unlike FortiSwitch's
     //                                                    fsSysMemUsage which is bytes)
     //   fapTemperature @ 12356.120.3.44 → scalar Celsius (single sensor)
-    // All three symbols are seeded into oidRegistry so the probe works without
-    // uploading FORTINET-FORTIAP-MIB. The temperature scalar is consumed by
+    // These three symbols are no longer seeded into oidRegistry either — see
+    // the FortiSwitch entry above; they resolve once FORTINET-FORTIAP-MIB and
+    // its core module are uploaded. The temperature scalar is consumed by
     // collectTemperaturesSnmp as a third fallback after ENTITY-SENSOR-MIB +
     // the Fortinet sensor-name heuristic both return zero rows (FortiAPs
     // implement neither).
