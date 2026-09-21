@@ -268,7 +268,7 @@ single-pin key, so a downgrade to an older binary keeps working.
 |---|---|
 | responseTime | its own heartbeat |
 | cpuMemory, temperature, interfaces, storage | host telemetry |
-| — *per-core CPU and the memory breakdown* | **agent only** — see below |
+| — *per-core CPU and the memory breakdown* | the agent's own accounting — see below. [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) reports both too, in its own vocabulary |
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
