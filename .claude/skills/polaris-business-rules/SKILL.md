@@ -11,13 +11,15 @@ rule before changing behavior it governs, and never paraphrase a rule when quoti
 
 > **Rule numbers are a stable citation key** (commits, code comments and the other docs cite "business rule 23"). Never renumber; retire a rule in place and give a new one the next free number.
 
-(74 is the next free number.)
+(77 is the next free number. 75 is held by the `worktree-alert-grouping` branch and 76 by
+`worktree-vip-discover-status`; whichever merges second re-checks this line.)
 
 ## How to read
 
 | You are about to… | Read |
 |---|---|
-| touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11 below; 20a, 23, 26, 41, 42, 69 in the references |
+| touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11 below; 20a, 23, 26, 41, 42, 69, 76 in the references |
+| touch what the IP panel's Status column SAYS about an address, a FortiGate VIP or virtual server, `vipInfo`, or whether an address can be reserved at all | 23 first (the two-facts split), then 76 (which adds the third and composes the pill) |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | rules 9–10 below; 12, 16, 36, 37 |
 | touch probes, `monitorStatus`, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 67 |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 66, 67 |
@@ -128,6 +130,7 @@ before changing anything the invariant constrains.
 | 72 | A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success | invariants-30-43 | narrative-60-64 |
 | 73 | Planned downtime is reported as planned, and a scoped view of a window still reports the WHOLE window | invariants-30-43 | narrative-60-64 |
 | 74 | A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the DEVICE's | invariants-30-43 | narrative-60-64 |
+| 76 | A VIP describes an address; it does not claim it — and the status says every fact it has | invariants-30-43 | narrative-60-64 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),

@@ -247,3 +247,20 @@ column of numbers to compare by eye.
 - Where the row carries an active alert, its **severity color wins over the value bands** (`PolarisWidgets.alertSeverityBarColor`) — see the widget-surface section below.
 
 ---
+
+## Status cell that reports more than one fact ("VIP / Leased")
+
+**What it is:** A Status column whose subject can be true of several things at
+once, rendered as `<qualifier> / <primary state>` instead of as whichever fact a
+ladder happened to test first.
+
+**Canonical implementation:** `_ipStatusPresentation` / `_ipAllocationPresentation` in [public/js/ip-panel.js](public/js/ip-panel.js), which return `{ dotClass, label, tooltip }` for one address. The allocation half owns the dot and the standalone label; the qualifier (a FortiGate VIP, from `vipInfo`) is prefixed when present, using a SHORT spelling of the allocation so two facts fit one column. Pinned by [tests/unit/ipPanelStatusDom.test.ts](tests/unit/ipPanelStatusDom.test.ts), which slices the functions out of the browser file and asserts every combination. Business rule 76.
+
+**Key conventions:**
+- **An if/else ladder silently hides facts as a surface grows.** The IP panel's Status column was one, six rungs deep, and it was correct for years — until addresses started carrying a VIP *and* a lease, at which point it reported the lease and nothing else. Nothing threw, nothing logged, and the fact was simply absent from the page. When a second orthogonal fact appears about a row, split the ladder into a function per fact rather than adding a seventh rung.
+- **Standalone labels do not change when you add composition.** Every label an operator already reads stays byte-for-byte what it was; only the composed form uses the short spelling. A rename that rides along with a feature makes the feature look like a regression.
+- **The dot and the label answer different questions.** The dot is "is this row spoken for" and the qualifier claims it; the label carries the detail. The exception is any state that asks somebody to ACT — a conflict, a permanently failed push — which keeps its red dot whatever else is true.
+- **Every export of the same table reads the same function.** The IP panel's PDF and CSV builders call `_ipStatusPresentation` rather than carrying their own ladders; before this they carried two, both already drifted (the CSV had no VIP branch at all, so a VIP address exported as "Active"). A record that leaves the screen is the one people treat as authoritative, so it must not be able to disagree with the table it came from.
+- **Check the server DTO before assuming a rendering bug.** The panel's VIP badge and its two push-state rungs were unreachable for their whole existence because `toReservationDto` in [src/services/subnetService.ts](src/services/subnetService.ts) never shipped `vipInfo`, `pushStatus`, `pushQueuedAt`, `pushAttempts` or `pushError`. A branch that never fires looks identical to a branch that is wrong.
+
+---
