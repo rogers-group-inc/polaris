@@ -8787,6 +8787,12 @@ async function openAutomationWizard(existing, opts) {
 
   document.getElementById("aw-next").addEventListener("click", function () { goToStep(step + 1, { validate: true }); });
   document.getElementById("aw-back").addEventListener("click", function () { goToStep(step - 1); });
+  // → / ← walk the steps and Enter advances while Next is showing, submitting
+  // only on step 6 (app.js § Stepped-modal keyboard navigation). Guarded on the
+  // global because the wizard is standalone and loads on five pages.
+  if (typeof wireModalStepKeys === "function") {
+    wireModalStepKeys({ back: "aw-back", next: "aw-next", submit: "aw-save" });
+  }
   document.querySelectorAll("#aw-stepper .stepper-step").forEach(function (el) {
     el.addEventListener("click", function () {
       var n = Number(el.getAttribute("data-step"));

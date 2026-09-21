@@ -2887,6 +2887,96 @@ function _focusFirstIn(container) {
 }
 var _modalReturnFocus = null;  // element refocused when the shared modal closes
 var _modalKeyTeardown = null;  // active focus-trap teardown for the shared modal
+var _modalStepKeyTeardown = null; // active stepper-key teardown for the shared modal
+
+// ─── Stepped-modal keyboard navigation ────────────────────────────────────────
+//
+// Every wizard footer is `Cancel · ← Back · Next → · Save`, with only the
+// buttons that apply to the current step on screen (each toggled through an
+// inline `style.display` by the wizard's own syncFooter). `wireModalStepKeys`
+// puts the keyboard on that footer so a six-step form can be walked without
+// reaching for the mouse:
+//
+//   → / ←   click Next / Back, whenever that button is showing
+//   Enter   Next while Next is showing; the submit button only once it is not
+//
+// Enter is deliberately NOT "submit the dialog". On a stepped form the primary
+// button under the operator's eye is Next, so Enter on step 2 has to mean step
+// 3 — an Enter that instead saved a form the operator hadn't finished would
+// create half-built automations, and the wizards keep every later step's
+// validation for when it is reached.
+//
+// Registered against openModal's ONE shared #modal-overlay, which is why the
+// teardown hangs off the same two places `_modalKeyTeardown` does: a wizard
+// never has to remember to unwire on close, and the next modal to use that
+// overlay — a plain form with a single Save — cannot inherit these keys.
+function wireModalStepKeys(opts) {
+  if (_modalStepKeyTeardown) { _modalStepKeyTeardown(); _modalStepKeyTeardown = null; }
+  function onKey(e) {
+    if (e.key !== "Enter" && e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    // A field-level handler that already acted owns the key: both wizard
+    // typeaheads preventDefault on Enter while a suggestion is highlighted.
+    if (e.defaultPrevented || e.repeat) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // Only keys typed inside the shared modal. A dialog stacked OVER the
+    // wizard (the code editor, the address book, a showConfirm) builds its own
+    // overlay, so this leaves that layer's Enter alone.
+    var t = e.target;
+    if (!t || !t.closest || !t.closest("#modal-overlay")) return;
+    var tag = (t.tagName || "").toUpperCase();
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      // Arrows belong to the caret in a text field and to the options of a
+      // select; the footer only hears them from elsewhere in the dialog.
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable) return;
+      var move = _stepKeyBtn(e.key === "ArrowRight" ? opts.next : opts.back);
+      if (!move) return;
+      e.preventDefault();
+      move.click();
+      _focusVisibleStepPanel(move);
+      return;
+    }
+    // Enter: a textarea keeps it for newlines, and a focused button or link
+    // keeps its own activation (Tab to Back, press Enter, and you go back).
+    if (tag === "TEXTAREA" || t.closest("button, a[href]")) return;
+    var next = _stepKeyBtn(opts.next);
+    var btn = next || _stepKeyBtn(opts.submit);
+    if (!btn) return;
+    e.preventDefault();
+    btn.click();
+    if (next) _focusVisibleStepPanel(next);
+  }
+  document.addEventListener("keydown", onKey);
+  _modalStepKeyTeardown = function () { document.removeEventListener("keydown", onKey); };
+  return _modalStepKeyTeardown;
+}
+
+// A footer button that is on screen and clickable, by id or element. Visibility
+// is read off the inline `display` those footers toggle — deliberately NOT
+// `offsetParent === null` the way `_focusableIn` does it, because happy-dom has
+// no layout engine and that test would call every button hidden, making the DOM
+// tests vacuous.
+function _stepKeyBtn(ref) {
+  var el = typeof ref === "string" ? document.getElementById(ref) : ref;
+  if (!el || el.disabled || el.hidden) return null;
+  if (el.isConnected === false) return null;
+  if (el.style && el.style.display === "none") return null;
+  return el;
+}
+
+// Move focus into the step that just became visible, so the next keystroke
+// isn't typed into a field on the step the operator has left (a hidden field
+// keeps focus, swallows the arrows, and reads as a dead keyboard). Falls back
+// to the button that did the moving, which keeps Enter and the arrows live.
+function _focusVisibleStepPanel(fallback) {
+  var overlay = document.getElementById("modal-overlay");
+  var panel = overlay && overlay.querySelector(".step-panel.visible");
+  var f = panel ? _focusableIn(panel) : [];
+  if (f.length) { try { f[0].focus(); return; } catch (_) { /* element gone */ } }
+  if (fallback && typeof fallback.focus === "function") {
+    try { fallback.focus(); } catch (_) { /* element gone */ }
+  }
+}
+if (typeof window !== "undefined") window.wireModalStepKeys = wireModalStepKeys;
 
 // ─── Panel lock (per-user, app-wide) ────────────────────────────────────────
 //
@@ -3381,6 +3471,9 @@ function openModal(title, bodyHTML, footerHTML, options) {
   _modalReturnFocus = document.activeElement;
   if (_modalKeyTeardown) { _modalKeyTeardown(); }
   _modalKeyTeardown = _trapFocus(modal, closeModal);
+  // The previous occupant of this overlay may have been a wizard; its stepper
+  // keys must not survive into a dialog whose footer means something else.
+  if (_modalStepKeyTeardown) { _modalStepKeyTeardown(); _modalStepKeyTeardown = null; }
   // rAF so the transition has a start state to animate from — but rAF does
   // NOT fire in a hidden tab, which would leave the dialog built and invisible
   // until the tab is next looked at. The timeout is the floor; `reveal` is
@@ -3403,6 +3496,7 @@ function closeModal() {
     overlay.classList.remove("above-slideover");
   }
   if (_modalKeyTeardown) { _modalKeyTeardown(); _modalKeyTeardown = null; }
+  if (_modalStepKeyTeardown) { _modalStepKeyTeardown(); _modalStepKeyTeardown = null; }
   if (_modalReturnFocus && typeof _modalReturnFocus.focus === "function") {
     try { _modalReturnFocus.focus(); } catch (_) { /* element gone */ }
   }
@@ -3737,9 +3831,14 @@ function showConfirm(message) {
     overlay.querySelector(".modal-body p").textContent = message;
     document.body.appendChild(overlay);
     var dialog = overlay.querySelector(".modal");
+    var cancelBtn = overlay.querySelector('[data-confirm="cancel"]');
+    var okBtn = overlay.querySelector('[data-confirm="ok"]');
     var prevFocus = document.activeElement;
+    var settled = false;
     var teardownTrap = _trapFocus(dialog, function () { done(false); });
     function done(val) {
+      if (settled) return;
+      settled = true;
       teardownTrap();
       overlay.classList.remove("open");
       overlay.addEventListener("transitionend", function () {
@@ -3752,15 +3851,34 @@ function showConfirm(message) {
       }
       resolve(val);
     }
-    overlay.querySelector('[data-confirm="cancel"]').onclick = function () { done(false); };
-    overlay.querySelector('[data-confirm="ok"]').onclick = function () { done(true); };
+    cancelBtn.onclick = function () { done(false); };
+    okBtn.onclick = function () { done(true); };
+    // Keyboard: Enter confirms, Escape cancels (`_trapFocus` wires Escape).
+    // Confirm also TAKES focus on open, so the default action is the one the
+    // operator can see is default — but Enter is handled here rather than left
+    // to the focused button, so it still confirms if anything on the page has
+    // stolen focus back.
+    //
+    // Two things this must not do. An operator who Tabs to Cancel and presses
+    // Enter cancels: that key belongs to the button they chose. And an
+    // auto-REPEATING Enter is swallowed outright, because these dialogs open
+    // from row menus whose items are themselves activated with Enter — the
+    // repeat of that same keypress lands on a button that appeared mid-press,
+    // and a held key must never confirm a destructive act nobody has read.
+    dialog.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      if (e.repeat) { e.preventDefault(); return; }
+      if (e.target === cancelBtn) return;
+      e.preventDefault();
+      done(true);
+    });
     // See openModal: rAF alone never fires in a hidden tab.
     var shown = false;
     var reveal = function () {
       if (shown) return;
       shown = true;
       overlay.classList.add("open");
-      _focusFirstIn(dialog);
+      try { okBtn.focus(); } catch (_) { _focusFirstIn(dialog); }
     };
     requestAnimationFrame(reveal);
     setTimeout(reveal, 50);

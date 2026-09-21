@@ -180,6 +180,27 @@ Most detail in Polaris opens in a **slide-over** (a panel from the right) or a
   MAC-table match and the Application Map rail all pivot the *open* panel to
   another asset in place, and the arrows walk you back.
 
+### Keyboard
+
+| Key | In a confirmation | In a stepped wizard |
+|---|---|---|
+| Enter | Confirm | **Next**, while there is a next step — it saves only on the last one |
+| Escape | Cancel | Close the wizard |
+| → / ← | — | Next / Back |
+| Tab | Moves between the buttons | Moves through the fields |
+
+A confirmation opens with **Confirm** focused, so Enter confirms it — but Tab to
+Cancel and Enter cancels instead, because the key belongs to the button you
+picked. Holding Enter down from whatever opened the dialog does nothing: the
+repeat is ignored so a held key cannot confirm something you have not read.
+
+In a wizard (New automation, New discovery, New map rule) Enter means *next*
+rather than *save*, so a form is never submitted from a step you are still
+filling in — on the last step, where there is no Next button, Enter saves. The
+arrows move between steps whenever you are not typing in a field; inside a text
+box or a dropdown they belong to the cursor and the options, so use Enter or Tab
+out first.
+
 ---
 
 ## Saved views
