@@ -302,7 +302,7 @@ single-pin key, so a downgrade to an older binary keeps working.
 |---|---|
 | responseTime | its own heartbeat |
 | cpuMemory, temperature, interfaces, storage | host telemetry |
-| — *per-core CPU and the memory breakdown* | **agent only** — see below |
+| — *per-core CPU and the memory breakdown* | the agent's own accounting — see below. [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) reports both too, in its own vocabulary |
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
@@ -314,12 +314,24 @@ keeps running and the agent looks connected.
 
 ### Per-core CPU and the memory breakdown
 
-An agent-monitored host is the only kind whose **CPU** chart on the Assets →
-System tab draws **one coloured line per logical core** alongside the
-cross-core average, and whose **Memory** chart is a **stacked area in bytes**
-rather than a single percentage line. No other transport — FortiOS, SNMP,
-WinRM, vCenter, SSH — can report either, so on those assets the two charts
-fall back to a single line each.
+An agent-monitored host's Assets → System tab splits **CPU & Memory into two
+charts**: a **CPU** chart drawing **one coloured line per logical core**
+alongside the cross-core average, and a **Memory** chart that is a **stacked
+area in bytes**. FortiOS, SNMP, WinRM and SSH can report neither, so those
+assets keep the single combined CPU & Memory chart on one 0–100% axis.
+[vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) splits
+too, in its own vocabulary — it measures the same host from outside.
+
+The split follows the **CPU/Memory stream's polling method**, not the presence
+of an agent: a host with the agent installed but that stream still pointed at
+SNMP is collecting one CPU figure per sample, and gets the combined chart.
+
+What the agent sees and vCenter does not, and the reverse, is the point of
+running both on one VM. The agent reports the guest's own accounting —
+buffers and page cache, and which processes hold the rest. It cannot see
+ballooning or host swap at all: those are the hypervisor reclaiming memory
+from underneath the guest, and to the guest they simply look like memory it
+never had.
 
 On the CPU chart:
 

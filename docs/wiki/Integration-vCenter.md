@@ -78,12 +78,53 @@ Two warm caches back it, each one SOAP round trip per integration per tick:
 
 | Cache | Serves |
 |---|---|
-| VM quick-stats | CPU, RAM, power state, uptime, guest disk, guest net |
+| VM quick-stats | CPU, RAM, **the memory breakdown**, power state, uptime, guest disk, guest net |
 | Host snapshot | CPU, RAM, connection state, uptime, pNICs, VMkernel ports, virtual switches — **paired with the datastore inventory in one session** |
 
 The host snapshot is the **same fetch** discovery uses, and its two halves report
 failure separately, so a host-property gap cannot cost discovery its datastore
 detail.
+
+### Per-core CPU and the memory breakdown
+
+A vCenter-monitored VM or ESXi host is charted the way an agent-monitored host
+is: **Assets → System splits CPU & Memory into two charts**, a per-core CPU
+chart and a byte-scaled memory stack, under one range selector.
+
+| | CPU chart | Memory chart, against |
+|---|---|---|
+| **VM** | one line per **vCPU** | **configured RAM** — private, shared, ballooned, host-swapped, compressed |
+| **ESXi host** | one line per **physical core** | **installed RAM** — consumed, ballooned, host-swapped |
+
+The gap between the stack and the dashed *Installed total* line is memory
+nothing has had to touch.
+
+**These bands are the hypervisor's accounting, not the guest's**, and the
+legend says so. They answer a question no agent inside the VM can: **ballooned**
+is memory the balloon driver has handed back to the host, **host-swapped** is
+guest memory ESXi has paged out to disk, and **compressed** is guest memory it
+has squeezed rather than paged. All three climbing is a host under memory
+pressure taking memory away from this guest — from inside the guest that is
+invisible, and its own free-memory figure will not move.
+
+They are also why the agent's bands and these are never mixed in one chart.
+Processes / buffers / cache and private / shared / ballooned are two different
+measurements of the same RAM, and stacking them together would be arithmetic
+about nothing.
+
+#### Two things that make cores go missing
+
+- **Per-core detail is kept for the detail-retention window only** (7 days by
+  default — Server Settings → Retention). A longer range is served from
+  hourly/daily rollups, which keep the cross-core average alone; the chart says
+  so when that is why.
+- **The account needs the Performance privilege.** Per-core CPU and a host's
+  balloon/swap come from vCenter's PerformanceManager, not from the quick-stats
+  properties everything else here uses. A read-only service account that lacks
+  it still yields full CPU, memory, power state and interfaces — the charts
+  simply fall back to the aggregate line, exactly as they do for SNMP. Nothing
+  fails, and nothing says so louder than a missing legend; check the privilege
+  if an ESXi host charts one CPU line where you expect its cores.
 
 ### Absent is not unreachable
 

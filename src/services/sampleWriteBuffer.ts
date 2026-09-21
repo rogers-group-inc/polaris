@@ -119,9 +119,9 @@ export interface TelemetrySampleRow {
   assetId: string;
   timestamp: Date;
   cpuPct: number | null;
-  // Per-logical-core utilisation (jsonb), agent-only. null = this source
-  // does not break CPU down by core; never `[]`, which would read as a host
-  // with no cores. Detail tier only — deliberately not rolled up.
+  // Per-logical-core utilisation (jsonb) — agent and vCenter. null = this
+  // source does not break CPU down by core; never `[]`, which would read as
+  // a host with no cores. Detail tier only — deliberately not rolled up.
   cpuCorePcts: number[] | null;
   memPct: number | null;
   memUsedBytes: bigint | null;
@@ -132,6 +132,16 @@ export interface TelemetrySampleRow {
   memFreeBytes: bigint | null;
   swapUsedBytes: bigint | null;
   swapTotalBytes: bigint | null;
+  // The vCenter band set (hypervisor-side), disjoint from the agent's above.
+  // A row carries one set or the other, never both. VM: private / shared /
+  // ballooned / swapped / compressed against configured RAM. ESXi host:
+  // consumed / ballooned / swapped against installed RAM.
+  memPrivateBytes: bigint | null;
+  memSharedBytes: bigint | null;
+  memBalloonedBytes: bigint | null;
+  memSwappedBytes: bigint | null;
+  memCompressedBytes: bigint | null;
+  memConsumedBytes: bigint | null;
   sessionCount: number | null;
 }
 

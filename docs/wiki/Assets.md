@@ -204,13 +204,61 @@ asset whose only remaining entries are ranges correctly shows no primary MAC.
 Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
 
-**CPU and Memory are two charts under one range selector** — a percentage and
-a byte scale cannot share an axis, but they are two readings of the same
-sample, so picking a range (or dragging a window on either) moves both. On a
-host running the [Polaris Agent](Polaris-Agent#per-core-cpu-and-the-memory-breakdown)
-the CPU chart draws one coloured line per logical core and the Memory chart
-stacks processes, buffers and cache against the installed total; every other
-transport draws a single line in each.
+**CPU & Memory is one chart, or two, depending on what is collecting it.**
+Two sources report CPU per core and memory as a composition, and on those the
+section splits into a CPU chart and a Memory chart:
+
+| Source | CPU chart | Memory chart |
+|---|---|---|
+| [Polaris Agent](Polaris-Agent#per-core-cpu-and-the-memory-breakdown) | one line per logical core | processes / buffers / cache against installed RAM |
+| [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) — VM | one line per vCPU | private / shared / ballooned / host-swapped / compressed against configured RAM |
+| [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) — ESXi host | one line per physical core | consumed / ballooned / host-swapped against installed RAM |
+
+A percentage and a byte scale cannot share an axis, but they are two readings
+of the same sample, so the two charts keep one range selector — picking a
+range, or dragging a window on either, moves both.
+
+Every other transport — FortiGate REST, SNMP, WinRM, SSH — reports one CPU
+figure and one memory figure per sample, and keeps the single combined chart:
+both series on one 0–100% axis, with a memory reading in bytes shown as a
+percentage of the total. There is nothing a second chart could add.
+
+The two memory vocabularies are **not** translations of each other and never
+appear in one stack. The agent reports how the guest's own OS is spending its
+RAM; vCenter reports how the hypervisor is backing it. Ballooning and host
+swap are invisible from inside a guest, which is why an agent on the same VM
+cannot show them — and why, on a VM that is being squeezed, the vCenter chart
+is the one that says so.
+
+**Click a legend chip to switch that series off**, on either chart — a memory
+band, the swap line, a CPU core, or the cross-core average. A switched-off
+chip stays in the legend with a line through it; click it again to bring the
+series back. On the CPU chart, **double-click a core to show only that one**,
+and a **Show all** link appears whenever anything is hidden.
+
+The two charts remember your choice differently, on purpose. Memory bands are
+**saved to your account** and follow you between hosts and browsers — the
+bands mean the same thing everywhere, so which of them you want to see is a
+setting. Hidden CPU cores last only as long as the panel is open: core 5 of
+one server has nothing to do with core 5 of another, so carrying the choice
+across would hide a different core each time.
+
+### Cache starts switched off
+
+On an agent host the **Cache** band is hidden until you turn it on, and the
+legend says so.
+
+Page cache is memory the OS has filled with recently-read files because the
+RAM was otherwise idle — it is handed straight back the moment a program
+wants it. Counted in the stack it makes a perfectly healthy machine look
+nearly full, which is the most common way this chart gets misread. With it
+off, the stack answers *how much memory is actually spoken for*, and the gap
+above it is headroom you can rely on.
+
+Turn it on when you want the whole picture. While any band is hidden the
+legend reminds you that the gap above the stack includes it, and the tooltip
+keeps reporting every figure the host actually measured, hidden ones marked —
+so nothing is lost, only undrawn.
 
 Below the response-time section sits the **Polaris Agent** card: the installed
 agent's version, platform, last heartbeat, WebSocket state and privilege tier,

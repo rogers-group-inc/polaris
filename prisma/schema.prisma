@@ -1365,15 +1365,17 @@ model AssetTelemetrySample {
   memUsedBytes  BigInt?
   memTotalBytes BigInt?
   // Per-logical-core CPU utilisation, as a jsonb array of 0-100 numbers whose
-  // INDEX is the logical core id (`[12.5, 3.1, ...]`, one decimal). Only the
-  // Polaris Agent reports it; every other transport leaves it null, which is
-  // why it is nullable jsonb rather than a Float[] — a scalar list cannot
-  // express "this source does not break CPU down by core" distinctly from
-  // "this host has no cores". DETAIL TIER ONLY: the hourly/daily rollups do
-  // not carry it (element-wise averaging of a variable-length array across
-  // every asset in the fleet is the one aggregate that does not pay for
-  // itself), so a range that resolves to a rollup tier charts the aggregate
-  // `cpuPct` alone and the chart says so.
+  // INDEX is the logical core id (`[12.5, 3.1, ...]`, one decimal). Two
+  // sources fill it — the Polaris Agent (a host's own logical cores) and
+  // vCenter (a VM's vCPUs, an ESXi host's physical cores, from the
+  // PerformanceManager's real-time `cpu.usage` instances). Every other
+  // transport leaves it null, which is why it is nullable jsonb rather than a
+  // Float[] — a scalar list cannot express "this source does not break CPU
+  // down by core" distinctly from "this host has no cores". DETAIL TIER ONLY:
+  // the hourly/daily rollups do not carry it (element-wise averaging of a
+  // variable-length array across every asset in the fleet is the one
+  // aggregate that does not pay for itself), so a range that resolves to a
+  // rollup tier charts the aggregate `cpuPct` alone and the chart says so.
   cpuCorePcts   Json?
   // Memory BREAKDOWN (bytes) — the parts `memUsedBytes` is not. Agent-only
   // today. The four bands are defined to sum EXACTLY to memTotalBytes:
@@ -1393,6 +1395,34 @@ model AssetTelemetrySample {
   // — it is backing store, so it charts as its own overlaid line.
   swapUsedBytes   BigInt?
   swapTotalBytes  BigInt?
+  // The vCenter memory breakdown (bytes) — a SECOND, disjoint band set, not a
+  // rewording of the agent's. vSphere does not measure buffers or page cache;
+  // it measures how the HYPERVISOR is backing the guest's configured RAM, and
+  // the two vocabularies must not be mixed in one stack. A row carries the
+  // agent bands or these, never both, and the chart picks its band table from
+  // whichever is present.
+  //
+  // A VM partitions its CONFIGURED RAM (memTotalBytes) into:
+  //   memPrivateBytes + memSharedBytes + memBalloonedBytes
+  //     + memSwappedBytes + memCompressedBytes + (untouched) = total
+  // from `summary.quickStats` — private/shared are host memory backing the
+  // guest, ballooned is what the balloon driver reclaimed, swapped and
+  // compressed are what the host took back under pressure. The last three
+  // rising is the reading an operator opens a VM's memory chart FOR.
+  //
+  // An ESXi host partitions its INSTALLED RAM into:
+  //   memConsumedBytes + memBalloonedBytes + memSwappedBytes + (free) = total
+  // `memConsumedBytes` is machine memory actually in use (quickStats
+  // `overallMemoryUsage`); the other two come from the PerformanceManager.
+  // A host never sets private/shared/compressed and a VM never sets consumed,
+  // which is what keeps either stack from double-counting itself — host
+  // "shared" is a SUBSET of consumed and is deliberately not collected.
+  memPrivateBytes    BigInt?
+  memSharedBytes     BigInt?
+  memBalloonedBytes  BigInt?
+  memSwappedBytes    BigInt?
+  memCompressedBytes BigInt?
+  memConsumedBytes   BigInt?
   // Active session count (FortiGate only — read from the same
   // /api/v2/monitor/system/resource/usage `session` resource the CPU/mem
   // collector already fetches). Null for every other source.
@@ -2829,6 +2859,13 @@ model AssetTelemetrySampleHourly {
   avgMemFreeBytes    BigInt?
   avgSwapUsedBytes   BigInt?
   lastSwapTotalBytes BigInt?
+  // vCenter band averages. Same avg-only reasoning as the agent bands above.
+  avgMemPrivateBytes    BigInt?
+  avgMemSharedBytes     BigInt?
+  avgMemBalloonedBytes  BigInt?
+  avgMemSwappedBytes    BigInt?
+  avgMemCompressedBytes BigInt?
+  avgMemConsumedBytes   BigInt?
   avgSessionCount   Float?
   minSessionCount   Float?
   maxSessionCount   Float?
@@ -2858,6 +2895,13 @@ model AssetTelemetrySampleDaily {
   avgMemFreeBytes    BigInt?
   avgSwapUsedBytes   BigInt?
   lastSwapTotalBytes BigInt?
+  // vCenter band averages. Same avg-only reasoning as the agent bands above.
+  avgMemPrivateBytes    BigInt?
+  avgMemSharedBytes     BigInt?
+  avgMemBalloonedBytes  BigInt?
+  avgMemSwappedBytes    BigInt?
+  avgMemCompressedBytes BigInt?
+  avgMemConsumedBytes   BigInt?
   avgSessionCount   Float?
   minSessionCount   Float?
   maxSessionCount   Float?
