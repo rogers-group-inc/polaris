@@ -230,6 +230,47 @@ hostnames, serials, addresses and (once GAL directory sync has run) employee nam
 be published along with the image. The script header lists the pages it does not yet cover
 and what each would need.
 
+### Pointing a dev stack at real FortiGates
+
+Seeded data cannot exercise the Fortinet surface. The discovery phases, the
+per-network **Discover** pass, VIP and DHCP reconciliation, SD-WAN, description
+sync and every push pathway only tell you anything when real FortiOS devices are
+answering. `npm run lab:fortigates` registers a lab's gates as standalone
+`fortigate` integrations so a fresh stack is pointed at them in one command:
+
+```bash
+npm run lab:fortigates                # create/update one integration per gate
+npm run lab:fortigates -- --probe     # …and report what each gate answers
+npm run lab:fortigates -- --probe-only  # reach the gates, write nothing
+npm run lab:fortigates -- --prune     # drop lab-* rows no longer in the file
+```
+
+**The inventory it reads lives outside this checkout.** Copy
+[`prisma/lab-devices.example.json`](prisma/lab-devices.example.json) to
+`~/.polaris/lab-devices.json` (or anywhere, and set `POLARIS_LAB_DEVICES`) and
+fill in the real hosts and REST API tokens. Git cannot stage a path outside its
+own tree, which is the whole reason for that location: this repository is public,
+and an ignore rule is something a future change can undo. `.gitignore` carries
+`lab-devices.json` as a backstop for a copy that lands in the tree anyway.
+
+Two safeguards worth knowing before you run it. It **refuses a non-local
+`DATABASE_URL`** unless `POLARIS_LAB_ALLOW_REMOTE_DB=1`, because the rows it
+writes are ones a discovery cycle immediately acts on. And every **write toggle
+is off** by default — `pushReservations`, `autoReserveFortinetInfra`,
+`adoptDiscoveredMac`, `syncDescriptions` — so a cycle cannot start writing DHCP
+reservations or rewriting interface descriptions on real gear because a seed
+script turned something on. Turn one on in the inventory file for the run that
+tests it. Tokens are never printed; the log shows the last four characters.
+
+`verifySsl` defaults to **false** here, since lab gates usually present
+self-signed certificates. Production integrations default to verify-on, and the
+flag is per device so a gate with a real certificate keeps verification.
+
+If every gate answers `Authentication failed (HTTP 401)` while the login page
+loads, the token is not usually the problem — check the API administrator's
+**trusted hosts** on the gate and make sure they include the address this machine
+reaches the lab from.
+
 ### Running the full test suite
 
 Use `--no-file-parallelism`; the default parallel mode fails spuriously on the
