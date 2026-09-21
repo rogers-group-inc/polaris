@@ -82,7 +82,7 @@
     "@types/supertest": "^7.2.1",
     "@types/web-push": "^3.6.4",
     "@types/xml2js": "^0.4.14",
-    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/coverage-v8": "^5.0.1",
     "cytoscape": "^3.34.3",
     "cytoscape-dagre": "^4.0.1",
     "dagre": "^0.8.5",
