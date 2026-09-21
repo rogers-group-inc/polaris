@@ -675,3 +675,34 @@ discovery): only a save that actually changes the notes or the hostname is
 judged, so a row can always be shortened rather than being stuck.
 
 See [IPAM](IPAM#pushing-reservations-to-the-gate).
+
+### Rule 76
+
+**Access is granted on the network profile the endpoint is actually on, and
+scoping it counts for nothing while a wider rule stands beside it.**
+
+Installing the OpenSSH Server capability makes Windows create a firewall rule of
+its own, `OpenSSH-Server-In-TCP`. That rule accepts TCP/22 from **any source**,
+and it applies to the **Private profile only**. Both halves matter:
+
+- A **domain-joined** endpoint is on the Domain profile, so the rule never
+  applies to it. sshd is installed, running, and unreachable — the service looks
+  healthy and the event log says nothing.
+- On a Private network it opens port 22 to **every host on it**. Firewall rules
+  are additive allows, so a tightly scoped rule beside it narrows nothing.
+
+The Windows onboarding script settles it, and what "settled" means depends on
+whether you filled in **Polaris server address**:
+
+| Server address | Windows firewall after the run |
+|---|---|
+| set | `Polaris SSH (TCP 22)` allows TCP/22 from that address on **every** profile, and `OpenSSH-Server-In-TCP` is **disabled** — the Polaris rule is the only way in |
+| blank | nothing is opened, and `OpenSSH-Server-In-TCP` is widened from Private to **Domain, Private** so a domain-joined endpoint is reachable. Which sources may connect is unchanged, so restrict port 22 some other way |
+
+**Public is never added**, on either path: being unreachable on your own domain
+network is the problem being solved, and an any-source rule on the profile a
+laptop picks up in an airport is not part of it. Both paths are safe to re-run,
+and the detection script does not judge the firewall — it cannot know which of
+the two shapes to expect.
+
+See [Polaris Agent](Polaris-Agent#the-windows-firewall-rule-and-the-one-windows-writes-for-itself).

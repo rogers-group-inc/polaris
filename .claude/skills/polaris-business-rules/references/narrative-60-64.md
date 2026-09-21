@@ -1287,3 +1287,52 @@ characters into a field that will take 223 of them and learning so from an error
 `tests/unit/reservationNotesBudgetDom.test.ts` asserts the module's `budgetFor` against the
 server's own `reservationNotesBudget` across four shapes, which is what stops the mirror drifting
 from the thing it mirrors.
+
+## Rule 76 — Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it
+
+The Windows onboarding script ends by putting a firewall rule on the endpoint, and the rule it
+writes has always been right: `Polaris SSH (TCP 22)`, inbound TCP/22, `-RemoteAddress` the
+Polaris server, `-Profile Any`. Every profile. Nothing about it was ever Private-only.
+
+The rule beside it was the problem, and it is not ours. `Add-WindowsCapability -Online -Name
+OpenSSH.Server` makes Windows create `OpenSSH-Server-In-TCP` on its way in, and Windows creates
+it for the **Private profile only**, accepting TCP/22 from **any source**. Both halves of that
+are wrong for a fleet, in opposite directions:
+
+- A **domain-joined** endpoint is on the Domain profile, where that rule does not apply. On a
+  host where no Polaris server address was configured — the script then wrote no rule of its
+  own — sshd was installed, enabled, running and completely unreachable. The service reports
+  healthy. The event log says nothing. This is the same silence business rule 72 was written
+  about, arriving one step further along.
+- On a **Private** network it opens port 22 to every host on that network. Firewall rules are
+  additive allows: a second rule cannot narrow the first. So `-RemoteAddress 10.0.0.42` on the
+  Polaris rule restricted nothing at all while this one was enabled, even though the generated
+  script's own header told the operator it `scopes inbound TCP/22 to 10.0.0.42` — and so did the
+  card in the UI, and so did the wiki.
+
+The fix is to stop leaving Windows' rule unsettled, and what "settled" means follows from
+whether the operator gave Polaris a server address:
+
+| Server address | What the run leaves behind |
+|---|---|
+| set | the scoped Polaris rule on every profile, and `OpenSSH-Server-In-TCP` **disabled** — the Polaris rule is then the only inbound path to sshd, and the scoping claim is true |
+| blank | nothing opened, and `OpenSSH-Server-In-TCP` **widened** from `Private` to `Domain, Private` — a domain-joined endpoint becomes reachable, and which sources may connect is exactly what Windows wrote |
+
+**Public is deliberately never added.** The defect is that a domain-joined endpoint cannot be
+reached; enabling an any-source TCP/22 rule on the profile a laptop picks up in an airport is a
+different thing entirely, and not one an onboarding script should do on the operator's behalf.
+
+Three details carry the weight. The lookup is by **Name**, wildcarded (`OpenSSH-Server-In-*`) —
+the DisplayName is localized and the suffix is build-dependent (`-NoScope` exists on some), and
+a lookup that finds nothing takes the count-0 branch rather than throwing under the script's
+`$ErrorActionPreference = 'Stop'`. Both paths are **idempotent**, because each re-reads the
+rule's own `Enabled` / `Profile` before acting: this script runs on every boot and every
+remediation cycle. And the **detection half still judges no firewall** — it is not told whether
+a server address was configured, so both settled states would read as drift half the time, which
+is the boundary business rule 72 drew and this rule does not cross.
+
+What is NOT in scope here is who may use SSH once it is reachable. The script never writes
+`sshd_config`: stock Windows OpenSSH has no `AllowUsers`/`AllowGroups` and password
+authentication on, so every account the endpoint lets log on can authenticate. The account on
+the card is only the one whose KEY is authorized. The firewall scope above is the whole of what
+limits who can reach the port, which is why leaving a wider rule beside a narrow one mattered.
