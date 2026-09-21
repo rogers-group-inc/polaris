@@ -19,13 +19,14 @@
  * would reasonably conclude the list was broken, when the real answer is that
  * an event automation keeps no state a shared alert could resolve.
  *
- * ── Recipients ───────────────────────────────────────────────────────────────
+ * ── What this screen does NOT edit yet ───────────────────────────────────────
  *
- * A group's notify actions use the SAME shape as an automation's, so they are
- * seeded from the first member on create and edited here through the shared
- * recipient pills (`PolarisAutomationRecipients`). Escalation tiers are
- * accepted by the API but have no editor on this screen yet — a group created
- * here reminds and notifies; a chain has to be authored through the API.
+ * A group's notify actions and escalation chain use the same shapes an
+ * automation's do, and the API accepts both — but there is no editor for them
+ * here. This screen manages membership, the reminder cadence, the ack-note
+ * policy and the alert text; recipients and chains have to be set through the
+ * API, or the group runs with whatever it was seeded with. `tellsSummary`
+ * below reads them so the list can at least SAY what a group will do.
  */
 (function () {
   "use strict";
@@ -33,10 +34,12 @@
   var groups = [];
   var joinable = [];
 
+  /** `permAtLeast` is the page-wide helper in app.js (a global, not a
+   *  namespace). Defaults to FALSE when it is somehow absent: hiding a control
+   *  the caller may actually hold is recoverable, showing one they do not is a
+   *  403 they cannot explain. */
   function canEdit() {
-    return !!(window.PolarisPerms && window.PolarisPerms.atLeast
-      ? window.PolarisPerms.atLeast("automationManagement", "fullwrite")
-      : true);
+    return typeof permAtLeast === "function" && permAtLeast("automationManagement", "fullwrite");
   }
 
   // ── List ───────────────────────────────────────────────────────────────────
@@ -88,9 +91,11 @@
       "</td>" +
       "<td>" + memberText + "</td>" +
       "<td>" + escapeHtml(tellsSummary(g)) + "</td>" +
+      // badge-active / badge-deprecated are the real classes (styles.css);
+      // there is no badge-success.
       "<td>" + (g.enabled
-        ? '<span class="badge badge-success">Active</span>'
-        : '<span class="badge">Off</span> <span style="font-size:0.78rem;color:var(--color-text-tertiary)">members deliver on their own</span>') + "</td>" +
+        ? '<span class="badge badge-active">Active</span>'
+        : '<span class="badge badge-deprecated">Off</span> <span style="font-size:0.78rem;color:var(--color-text-tertiary)">members deliver on their own</span>') + "</td>" +
       '<td style="text-align:right;white-space:nowrap">' +
         (canEdit()
           ? '<button type="button" class="btn btn-sm" data-ag-edit="' + escapeHtml(g.id) + '">Edit</button> ' +
@@ -132,16 +137,25 @@
     var g = group || { name: "", description: "", enabled: true, requireAckNote: false, messageTemplate: "", repeat: null, rules: [] };
     var selected = new Set((g.rules || []).map(function (r) { return r.id; }));
 
-    var overlay = buildOverlay({
-      title: id ? "Edit alert group" : "New alert group",
-      width: "760px",
-      body: editorHtml(g, selected),
-      actions: [
-        { label: "Cancel", kind: "secondary", close: true },
-        { label: id ? "Save" : "Create group", kind: "primary", onClick: function (ov) { return save(id, ov); } },
-      ],
+    // buildOverlay is POSITIONAL — (z, title, bodyHtml, footerHtml, onClose,
+    // wide) — and returns { overlay, dialog, close }. The footer is raw HTML
+    // whose buttons this function wires itself; there is no actions array.
+    // 1300 is the rung for a dialog over a base modal (see app.js).
+    var footer =
+      '<button class="btn btn-secondary" id="ag-cancel" type="button">Cancel</button>' +
+      '<button class="btn btn-primary" id="ag-save" type="button">' + (id ? "Save" : "Create group") + "</button>";
+    var ov = buildOverlay(1300, id ? "Edit alert group" : "New alert group", editorHtml(g, selected), footer, null, true);
+
+    ov.overlay.querySelector("#ag-cancel").addEventListener("click", function () { ov.close(); });
+    var saveBtn = ov.overlay.querySelector("#ag-save");
+    saveBtn.addEventListener("click", async function () {
+      saveBtn.disabled = true;
+      try {
+        if (await save(id, ov)) ov.close();
+      } finally {
+        saveBtn.disabled = false;
+      }
     });
-    wireEditor(overlay);
   }
 
   function editorHtml(g, selected) {
@@ -196,19 +210,16 @@
       '<input type="checkbox" class="ag-member" value="' + escapeHtml(r.id) + '"' +
         (checked ? " checked" : "") + (disabled ? " disabled" : "") + "> " +
       escapeHtml(r.name) +
-      (r.enabled === false ? ' <span class="badge">disabled</span>' : "") +
+      (r.enabled === false ? ' <span class="badge badge-deprecated">disabled</span>' : "") +
       (r.reason ? '<div style="font-size:0.75rem;color:var(--color-text-tertiary);margin-left:1.5rem">' + escapeHtml(r.reason) + "</div>" : "") +
     "</label>";
   }
 
-  function wireEditor(overlay) {
-    // Nothing dynamic yet beyond the checkboxes, which need no wiring — kept
-    // as a seam so the recipient editor has somewhere to attach.
-    void overlay;
-  }
-
-  async function save(id, overlay) {
-    var root = overlay && overlay.el ? overlay.el : document;
+  async function save(id, ov) {
+    // Scope every read to THIS overlay: the Automations page has its own
+    // form fields, and a document-wide lookup would find whichever matched
+    // first. `ov.overlay` is the element buildOverlay returns.
+    var root = ov && ov.overlay ? ov.overlay : document;
     var name = (root.querySelector("#ag-name") || {}).value || "";
     if (!name.trim()) { showToast("Give the group a name", "error"); return false; }
     var repeatMin = parseInt((root.querySelector("#ag-repeat") || {}).value, 10);
@@ -254,12 +265,12 @@
       lines.push("⚠ These have no notify action of their own and will tell nobody until you give them one: " +
         impact.rulesWithNoOwnDelivery.map(function (r) { return r.name; }).join(", ") + ".");
     }
-    var ok = await showConfirm({
-      title: "Delete alert group “" + impact.name + "”?",
-      message: lines.join("\n"),
-      confirmLabel: "Delete group",
-      danger: true,
-    });
+    // showConfirm takes a plain STRING and renders it with white-space:pre-wrap,
+    // so the newlines below survive. There is no options object and no custom
+    // button label.
+    var ok = await showConfirm(
+      "Delete alert group “" + impact.name + "”?\n\n" + lines.join("\n"),
+    );
     if (!ok) return;
     try {
       await api.alertGroups.delete(id);
