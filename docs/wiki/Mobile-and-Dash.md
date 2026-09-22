@@ -46,8 +46,15 @@ Push enrollment is reconciled **at boot**, not only when the More tab is opened
 — the point of storing the preference on the account is that a device you never
 touch again still honours a choice made somewhere else.
 
-It **never prompts** on boot (a page load has no user activation), so a browser
-that has never been asked stays un-enrolled until you pick the preference there.
+It **never prompts** on boot (a page load has no user activation), so it can only
+enroll a phone that has already granted notification permission. A phone that has
+never been asked is instead **asked once**, on the first sign-in while your
+account prefers push: a sheet offering **Enable** or **Not now**. Dismissing it —
+either button, or a tap outside — is final on that phone, and the More tab's
+Notifications row is the way back.
+
+On **iPhone and iPad outside the installed app** you are not asked at all, for
+the reason above: add Polaris to your Home Screen first and the offer follows.
 
 ## Alerts reach the phone in four places
 

@@ -19,6 +19,11 @@
  *   the operator happened to click it on — the exact bug the rule was written
  *   for, and one nothing else would report.
  *
+ *   The OFFER. The reconcile cannot prompt, so it leaves a browser that has
+ *   never been asked for permission un-enrolled; the boot chain therefore ends
+ *   by putting the question to it once. What that offer does is pinned in
+ *   pushEnrollmentOffer.test.ts — here it is only that the chain reaches it.
+ *
  * wireNotificationPrefs + _notifPrefMenuItem + _openNotifPrefMenu +
  * _chooseNotifPref are exercised directly rather than by evaluating all of
  * app.js (119 KB with polling loops that would fire here). They share
@@ -58,7 +63,8 @@ function extractVar(decl: string): string {
 // they have to be evaluated in one scope. ICONS is stubbed — the row only
 // reads ICONS.bell for its glyph.
 const SRC = [
-  "var _pushState = null, _pushBusy = false, _notifPref = null;",
+  "var _pushState = null, _pushBusy = false, _notifPref = null, _pushOfferHandled = false;",
+  "var currentUsername = 'dmoore';",
   extractVar("var NOTIF_PREF_LABELS ="),
   extractVar("var NOTIF_PREF_ORDER ="),
   "var ICONS = { bell: '<svg/>' };",
@@ -66,6 +72,11 @@ const SRC = [
   extractFn("_notifPrefMenuItem"),
   extractFn("_openNotifPrefMenu"),
   extractFn("_chooseNotifPref"),
+  // The boot chain ends in the one-time enrollment offer for a browser that
+  // has never been asked for permission — pulled in because wire() calls it.
+  // What it does is pinned in pushEnrollmentOffer.test.ts.
+  extractFn("_maybeOfferPushEnrollment"),
+  extractFn("_openPushOfferDialog"),
   "return { wire: wireNotificationPrefs, item: _notifPrefMenuItem, open: _openNotifPrefMenu };",
 ].join("\n");
 
@@ -78,6 +89,7 @@ async function run(opts: {
   supported?: boolean;
   preference?: string;
   preferenceFails?: boolean;
+  offerEnrollment?: boolean;
 }) {
   const calls: string[] = [];
   const status: Status = { supported: true, enabledOnServer: true, permission: "default", subscribed: false, ...opts.status } as Status;
@@ -90,6 +102,11 @@ async function run(opts: {
     registerSW: vi.fn(async () => { calls.push("registerSW"); return {}; }),
     reconcileSubscription: vi.fn(async (s: string) => { calls.push("reconcile:" + s); return true; }),
     syncToPreference: vi.fn(async (p: string, s: string) => { calls.push("sync:" + p + ":" + s); return ""; }),
+    shouldOfferEnrollment: vi.fn(async (p: string) => {
+      calls.push("shouldOffer:" + p);
+      return !!opts.offerEnrollment;
+    }),
+    recordOfferMade: (u: string) => { calls.push("recordOffer:" + u); },
   };
 
   const RANK: Record<string, number> = { none: 0, read: 1, write: 2, fullwrite: 3 };
@@ -102,6 +119,12 @@ async function run(opts: {
   g.polarisPush = polarisPush;
   g.permAtLeast = (_key: string, level: string) => RANK[opts.perm ?? "read"] >= RANK[level];
   g.showToast = () => {};
+  g.escapeHtml = (v: unknown) => String(v ?? "");
+  g.openModal = (_t: string, _b: string, f: string) => {
+    calls.push("openModal");
+    document.body.innerHTML = '<div class="modal-footer">' + f + "</div>";
+  };
+  g.closeModal = () => { calls.push("closeModal"); };
   const menus: { items: MenuItem[]; opts: Record<string, unknown> }[] = [];
   g.showRowMenu = (_a: unknown, items: MenuItem[], o: Record<string, unknown>) => { menus.push({ items, opts: o }); };
   g.api = {
@@ -268,5 +291,21 @@ describe("boot reconcile", () => {
   it("syncs on an EMAIL preference too — that is how a device un-enrolls", async () => {
     const { calls } = await run({ preference: "email" });
     expect(calls).toContain("sync:email:desktop");
+  });
+
+  it("puts the enrollment offer to a browser the silent sync could not enroll", async () => {
+    // The sync cannot prompt, so it leaves a never-asked browser un-enrolled.
+    // If this call goes missing, an account that prefers push is silently not
+    // reachable on any new laptop, profile or re-install — the same class of
+    // bug as a missing sync, and just as invisible.
+    const { calls } = await run({ preference: "push", offerEnrollment: true });
+    expect(calls.indexOf("shouldOffer:push")).toBeGreaterThan(calls.indexOf("sync:push:desktop"));
+    expect(calls).toContain("openModal");
+  });
+
+  it("offers nothing when this browser is not one to ask", async () => {
+    const { calls } = await run({ preference: "push", offerEnrollment: false });
+    expect(calls).toContain("shouldOffer:push");
+    expect(calls).not.toContain("openModal");
   });
 });
