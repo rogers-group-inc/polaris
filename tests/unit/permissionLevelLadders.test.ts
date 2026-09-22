@@ -116,7 +116,7 @@ describe("no dead top rung", () => {
   // rest of the key. Everything else tops out at Read-Write. Adding a key
   // here is a deliberate act: say which route reads the fourth rung.
   const FULLWRITE_IS_MEANINGFUL: Record<string, string> = {
-    assets: "agent deployment (POST /assets/:id/agent/install and siblings)",
+    assets: "agent deployment (POST /assets/:id/agent/install and siblings), and merging two assets (POST /assets/:id/merge) — a merge edits one record and deletes another",
     alerts: "clearing an alert, vs. acknowledging it at write",
     assetMonitorSettings: "the outage simulation (POST /assets/:id/dependency-test)",
     integrations: "aborting a discovery in flight (DELETE /integrations/:id/discover)",

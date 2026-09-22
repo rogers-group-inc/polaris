@@ -3321,6 +3321,69 @@ function descriptionFieldValue() {
   return (max > 0 && v.length > max) ? v.slice(0, max) : v;
 }
 
+// Business rule 40(i): before a save puts an asset on an address, ask the
+// server who else is there. Resolves { proceed, mergeWith }: `proceed=false`
+// means the operator cancelled; `mergeWith` names the one current holder to
+// open the merge review against after the save lands (only offered when the
+// server says the caller may merge, and only when there is exactly ONE
+// current holder — with several, "merge with which one" is the conflict
+// card's question, not a dialog button's).
+//
+// The save itself is what raises the conflict card (the route re-evaluates the
+// address and returns `ipConflict`); this dialog exists so the person about to
+// cause the collision is told BEFORE it lands and can choose the path. A failed
+// check never blocks the save — the sweep re-derives the answer within ten
+// minutes, and a pre-flight that could refuse a save on a network blip would be
+// worse than no pre-flight.
+async function _preflightDuplicateIp(ip, excludeAssetId, formData) {
+  ip = (ip || "").trim();
+  if (!ip) return { proceed: true, mergeWith: null };
+  var check;
+  try {
+    check = await api.assets.ipCheck({
+      ip: ip,
+      excludeAssetId: excludeAssetId || undefined,
+      assetType: (formData && formData.assetType) || undefined,
+      macAddress: (formData && formData.macAddress) || undefined,
+    });
+  } catch (_) {
+    return { proceed: true, mergeWith: null };
+  }
+  if (!check || !check.wouldConflict || !Array.isArray(check.holders) || !check.holders.length) {
+    return { proceed: true, mergeWith: null };
+  }
+  var current = check.holders.filter(function (h) { return h.claimCurrent; });
+  var describe = function (h) {
+    var bits = [h.hostname || h.assetId, h.assetType || "unknown type", h.status || ""];
+    var seen = h.ipLastSeen || h.lastSeen;
+    if (h.pinned) bits.push("address pinned by an operator");
+    else if (seen && typeof timeAgo === "function") bits.push("address confirmed " + timeAgo(seen));
+    return "  • " + bits.filter(Boolean).join(" · ");
+  };
+  var msg = [
+    ip + " is already recorded on " + (current.length === 1 ? "another asset:" : current.length + " other assets:"),
+    current.map(describe).join("\n"),
+    "",
+    "Saving keeps your address and raises a Duplicate IP conflict for review — two devices on one " +
+      "address is a fault, and the conflict card is where it gets resolved (move one of them, or merge " +
+      "them if they are the same device).",
+  ].join("\n");
+  var choices = [{ id: "review", label: "Save & submit for conflict review", kind: "primary" }];
+  if (check.canMerge && current.length === 1) {
+    msg += "\n\nIf this IS the same device recorded twice, you can go straight to the merge review instead.";
+    choices.push({
+      id: "merge",
+      label: "Save & review merge with " + (current[0].hostname || "the other asset"),
+      kind: "secondary",
+    });
+  }
+  var picked = typeof showChoice === "function"
+    ? await showChoice(msg, { title: "Address already in use", choices: choices })
+    : (window.confirm(msg) ? "review" : null);
+  if (!picked) return { proceed: false, mergeWith: null };
+  return { proceed: true, mergeWith: picked === "merge" ? current[0].assetId : null };
+}
+
 function getAssetFormData() {
   var acq = document.getElementById("f-acquiredAt").value;
   var war = document.getElementById("f-warrantyExpiry").value;
@@ -4488,10 +4551,20 @@ async function openCreateModal() {
     var btn = this;
     btn.disabled = true;
     try {
-      await api.assets.create(getAssetFormData());
+      var formData = getAssetFormData();
+      // Rule 40(i): a typed address that another asset already holds is a
+      // collision the operator should hear about before, not after, the save.
+      var pre = await _preflightDuplicateIp(formData.ipAddress, null, formData);
+      if (!pre.proceed) return;
+      var created = await api.assets.create(formData);
       closeModal();
-      showToast("Asset created");
+      showToast(created && created.ipConflict
+        ? "Asset created — duplicate IP submitted for conflict review"
+        : "Asset created");
       loadAssets();
+      if (pre.mergeWith && created && created.id && typeof openAssetMergeModal === "function") {
+        openAssetMergeModal(created.id, pre.mergeWith, { onMerged: loadAssets });
+      }
     } catch (err) {
       showToast(err.message, "error");
     } finally {
@@ -4602,7 +4675,17 @@ async function openEditModal(id, opts) {
         var maint = _readAdhocMaintenanceRequest();
         if (maint.error) { _setMaintFormError(maint.error); throw new Error(maint.error); }
         _setMaintFormError("");
-        await api.assets.update(id, getAssetFormData());
+        var formData = getAssetFormData();
+        // Rule 40(i): only a CHANGED address is a new claim worth asking
+        // about — re-saving the form with the same IP is not.
+        var ipChanged = typeof formData.ipAddress === "string" &&
+          formData.ipAddress.trim() !== "" &&
+          formData.ipAddress.trim() !== (asset.ipAddress || "");
+        var pre = ipChanged
+          ? await _preflightDuplicateIp(formData.ipAddress, id, formData)
+          : { proceed: true, mergeWith: null };
+        if (!pre.proceed) return;
+        var updated = await api.assets.update(id, formData);
         var maintApplied = false;
         if (maint.requested) {
           if (typeof window.maintCreateAdhoc !== "function") {
@@ -4622,12 +4705,21 @@ async function openEditModal(id, opts) {
         else if (maint.requested) {
           showToast("Asset updated and schedule created, but the asset did not enter maintenance " +
             "(only monitored assets can).", "error");
-        } else showToast("Asset updated");
+        } else showToast(updated && updated.ipConflict
+          ? "Asset updated — duplicate IP submitted for conflict review"
+          : "Asset updated");
         loadAssets();
-        // The details panel can still be open behind this modal (locked
-        // slide-over, or the monitoring-pill path that never closes it) —
-        // re-render it so it doesn't sit on the pre-save values.
-        if (_isCurrentAsset(id)) openViewModal(id);
+        if (pre.mergeWith && typeof openAssetMergeModal === "function") {
+          // The operator chose the merge review over the conflict card: open
+          // it now, over the list, instead of re-rendering the details panel
+          // for a record they are about to fold into another one.
+          openAssetMergeModal(id, pre.mergeWith, { onMerged: loadAssets });
+        } else if (_isCurrentAsset(id)) {
+          // The details panel can still be open behind this modal (locked
+          // slide-over, or the monitoring-pill path that never closes it) —
+          // re-render it so it doesn't sit on the pre-save values.
+          openViewModal(id);
+        }
       } catch (err) {
         showToast(err.message, "error");
       } finally {

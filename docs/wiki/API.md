@@ -107,6 +107,7 @@ GET    /assets/:id
 GET    /assets/:id/sources                  every source's answer
 GET    /assets/:id/sightings                FortiGate sightings
 GET    /assets/:id/dependencies             the dependency tree
+GET    /assets/ip-check?ip=…                is this address already in use?
 POST   /assets                              create a device
 PUT    /assets/:id                          update + the monitoring surface
 POST   /assets/bulk-monitor                 flip monitoring on many at once
@@ -127,6 +128,20 @@ or paste the id into the client's config). This also sidesteps [the ownership
 trap](#the-ownership-trap) — a token that never writes a credential never needs
 `credentials:fullwrite`. `assets:write` alone covers both calls; add
 `credentials:read` only if the client resolves ids by name.
+
+**Duplicate addresses are checked as you write.** Both calls return an
+`ipConflict` field — `null`, or `{ conflictId, ip, qualifiedBy, members[] }` when
+the address you just set is already recorded by another network-present asset.
+Polaris raises the Duplicate IP conflict on the spot rather than on its
+ten-minute sweep, and a `PUT` that moves a device *off* a contested address
+closes that conflict in the same call. Ask before writing with
+`GET /assets/ip-check?ip=&excludeAssetId=&assetType=&macAddress=`
+(`assets:read`): it returns every current holder (`holders[]`, each with
+`claimCurrent` — a stale record is listed but does not collide),
+`wouldConflict`, and `canMerge` (whether the caller holds `assets:fullwrite`,
+which merging requires). The answer uses the same rules the write applies, so a
+`wouldConflict: true` is a conflict the save will raise. See
+[Conflict Resolution](Conflict-Resolution#checked-when-you-save-not-just-every-ten-minutes).
 
 A device created this way is a **manual-source** asset, and only response time
 gets a source default (ICMP). Every other stream stays dark until a polling

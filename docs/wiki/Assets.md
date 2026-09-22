@@ -82,7 +82,7 @@ Select rows to raise the bulk bar:
 | Action | Needs | Does |
 |---|---|---|
 | **Compare** | `assets:read` | overlays telemetry charts for several devices, after a metric picker |
-| **Merge** | admin, exactly **two** selected | opens the merge modal with the target pre-selected |
+| **Merge** | Assets **full read-write**, exactly **two** selected | opens the merge modal with the target pre-selected |
 | **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, and ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
 
@@ -515,6 +515,26 @@ reports; it never writes.
 A section your role cannot read says **"Not shown"**, never "none found".
 
 ---
+
+### If the address is already in use
+
+Saving an asset with an IP — on create, or when you change the IP in the edit
+form — first checks whether another network-present asset already records that
+address. If one does, a dialog names it (type, status, when its address was last
+confirmed, whether it is pinned) and asks how to proceed:
+
+- **Save & submit for conflict review** saves your record and raises a
+  [Duplicate IP conflict](Conflict-Resolution#checked-when-you-save-not-just-every-ten-minutes)
+  immediately, so it is in the queue — and alerting — without waiting for the
+  ten-minute sweep.
+- **Save & review merge with …** appears only if you hold Assets **full
+  read-write** and exactly one other asset currently holds the address. It saves,
+  then opens the merge review between the two records — for when the "other
+  asset" is the same device recorded twice.
+- **Cancel** writes nothing.
+
+A record whose address claim has gone stale is listed for information but does
+not count as a collision. Re-saving an asset without changing its IP asks nothing.
 
 ## Deleting an asset
 

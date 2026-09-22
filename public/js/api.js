@@ -650,6 +650,10 @@ const api = {
     agentSigningAlert: () => request("GET", "/assets/agent-signing-alert"),
     create:    (body)   => request("POST", "/assets", body),
     update:    (id, b)  => request("PUT", `/assets/${id}`, b),
+    // Pre-save duplicate-address check (business rule 40(i)): who else is on
+    // this IP and whether saving would raise a conflict. `excludeAssetId` is
+    // the asset being edited; `assetType` / `macAddress` feed the simulation.
+    ipCheck:   (params) => request("GET", "/assets/ip-check" + toQuery(params)),
     delete:    (id)     => request("DELETE", `/assets/${id}`),
     bulkDelete:(ids)    => request("DELETE", "/assets", { ids }),
     import:    (rows, dryRun) => request("POST", "/assets/import", { rows, dryRun }),

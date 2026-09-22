@@ -192,6 +192,92 @@ And a duplicate that resolves itself (a device decommissioned, a discovery write
 
 One limitation, stated rather than papered over: the Event is asset-scoped (`resourceType: "asset"`), so an automation firing on it obeys rule 37 — an unmonitored asset triggers nothing. A duplicate between two assets neither of which Polaris polls still lands in the Conflicts queue and its badge, but it will not page anyone. That is the same trade the rest of the alerting surface makes, and the queue is the backstop.
 
+### (i) The operator's own save is a trigger, and the operator's own address is a reason
+
+Everything above was built around one fact: the sweep finds duplicates the fleet PRODUCES —
+discovery phases, agent pushes, sightings, seventeen write sites nobody could hook one by one.
+An operator typing an address into the asset form is not that. It is one write site, it is a
+person, and they are standing right there. Telling them ten minutes later, through a badge on
+another page, that the address they just typed already belonged to something was the wrong
+shape for that moment.
+
+So the two writes that put a device on an address by hand — `POST /assets`, and a `PUT
+/assets/:id` that CHANGES `ipAddress` — now run the sweep's own reconcile, scoped to the
+addresses they touched. Not a second implementation: `reconcileDuplicateIpConflicts` takes a
+scope, and `reconcileDuplicateIpForAddresses` is that call with the one or two addresses a save
+named. The card it raises is the card the sweep would have raised, with the same `members[]`,
+the same dedup against a rejected row, the same `conflict.detected` Event the baseline
+automation alerts on — just now. On a move both ends are re-evaluated, because a save that
+takes a device OFF a contested address has resolved a collision and the card should close in
+the same breath rather than sit in the queue until the next tick. And the response carries the
+card as `ipConflict`, so the form can name it.
+
+**Scoping is what makes this safe to call from a request.** A scoped pass neither reads nor
+closes pending conflicts on addresses it did not look at. Without that, a save on `10.1.1.50`
+would have loaded the fleet's pending duplicate-ip rows, found no group for `10.9.9.9` in its
+one-address result set, and auto-closed a real conflict about a device it never examined.
+
+**Imports are deliberately not triggers,** although they looked like the obvious third case.
+`POST /assets/import` backdates `createdAt` from serial-and-date rows and writes no address at
+all; `/import-pdf` creates assets as `status: "storage"`, which clause (a) excludes from being
+network-present. Neither can create a claim. A `POST /assets/:id/merge` IS a trigger, in the
+other direction: it changes who claims the survivor's address — usually from two rows to one —
+so the survivor's address is re-evaluated fire-and-forget and the card the merge just resolved
+closes without waiting.
+
+**Then the clause that was missing.** With the trigger in place a problem surfaced that the
+sweep alone had hidden: an operator creating a workstation on an address a live laptop already
+held got no card, because neither device is in `CONFLICT_ELIGIBLE_ASSET_TYPES` and the address
+had no IPAM reservation — (g) filed it under "two endpoints trading a lease, DHCP working", and
+had the save raised a card anyway the sweep would have auto-closed it as ineligible on its next
+pass. But (g)'s reasoning was never about the type; the type was a proxy for *did somebody
+choose this address*. An operator typing an IP into a form is the least ambiguous instance of
+choosing an address that exists. So a group also qualifies when one of its current claims is
+operator-owned — `ipSource="manual"` or a pin equal to the address, the same
+`claimIsOperatorOwned` that already makes such a claim never expire. It is the narrowest
+clause and the newest, so it takes the `qualifiedBy` label (`"operator-addressed"`) only when
+neither (g) nor (h) applies, and the card's explainer says what happened in those terms: a
+person typed this address while something else already recorded it.
+
+Two things it does not change. It still takes two DEVICES — an operator claim sharing the
+other row's MAC is one device recorded twice, a merge's problem (c). And it still takes a
+CURRENT counterpart: the operator's claim is current by definition, but a departed laptop's
+leftover record beside it is the stale row (b) exists to ignore, not a collision. The scan's
+SQL prefilter admits the clause as a third `bool_or` superset, tested again on current claims
+in JS like the other two.
+
+**The form asks before it writes.** `GET /assets/ip-check` answers "if I put THIS asset on THIS
+address, is that a collision, and with whom?" — and the way it answers is the part worth
+protecting. The row does not exist on the address yet, so `checkIpForIncomingClaim` SIMULATES
+it: a synthetic operator-owned row (that is what a typed address becomes) is grouped with the
+real claims through the same `groupCurrentClaims` the sweep and the save use. There is no
+second opinion anywhere in the chain about what qualifies, which is the only way the dialog's
+warning, the save's card and the sweep's steady state can be guaranteed to agree. The holders
+it returns each carry `claimCurrent`, so a stale record can be SHOWN without being called a
+conflict. A failed check never blocks the save: the save is the thing the operator asked for,
+and a pre-flight that could refuse it on a network blip would be worse than none.
+
+**What the dialog offers depends on who is asking.** Everyone gets *save and submit for
+conflict review* — the save lands, the card exists, the queue is where it gets resolved by
+whoever holds that responsibility. An operator who may MERGE additionally gets *save and review
+merge*, which saves and opens the shared merge modal against the one current holder — the
+answer for the case where the "collision" is one device recorded twice, offered only when there
+is exactly one current holder because "merge with which one" is the card's question when there
+are several. Whether the caller may merge is `canMerge` in the check's response, computed
+server-side: the client renders what the server says rather than re-deriving the matrix, which
+is the too-strict-client-gate trap this codebase has hit before.
+
+**And what "may merge" means had to be decided, because it never had been.** A merge is editing
+one asset and deleting another. The endpoint behind it gated on `assets:write` — the same level
+as creating and editing — while the modal that reaches it opened for `isAdmin()` alone, so an
+`assetsadmin` could merge through the API and never through the UI, and no custom role could be
+granted it at all. It now takes `assets:fullwrite` everywhere: `POST /assets/:id/merge`, the
+conflict verb's chained check, the merge modal and the card's merge verbs, all read off the
+permission matrix. That is the level the key already uses for its other destructive act (agent
+deploy), it is admin-only among the built-in roles (which is what the UI already enforced), and
+it is a level a custom role can hold. The reassign verb stays at `write`: it edits an address
+and deletes nothing.
+
 ---
 
 <a id="rule-41"></a>

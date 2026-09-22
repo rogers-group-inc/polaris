@@ -174,6 +174,48 @@ What (h) reports is overwhelmingly **one device recorded twice**, so the card
 leads with the merge rather than with renumbering. The card records which clause
 admitted it.
 
+### (i) Or an operator typed the address
+
+The third way a pair qualifies. (g) asks whether the *device* has deliberate
+addressing and (h) whether the *address* does; this asks whether a **person**
+did the addressing. An IP you typed into the asset form — or pinned — is an
+address somebody chose, exactly as a reservation is, so two workstations one of
+which was hand-addressed is a conflict even though neither device's type would
+qualify it on its own. The card says so in those terms.
+
+It still takes two devices (a shared MAC is one device recorded twice — merge
+it) and a *current* counterpart (a departed device's leftover record is not a
+collision with the one you just addressed).
+
+### Checked when you save, not just every ten minutes
+
+Creating an asset with an IP, or changing an asset's IP in the edit form, checks
+that address **before** the write. If another network-present asset already
+records it, a dialog names the holder — type, status, when the address was last
+confirmed, whether it is pinned — and offers:
+
+- **Save & submit for conflict review** — the save lands and the Duplicate IP
+  card is raised immediately, with the `conflict.detected` event your
+  automations already alert on. This is the choice for everyone.
+- **Save & review merge with …** — shown only when you hold Assets **full
+  read-write** and there is exactly one current holder. It saves, then opens the
+  merge review between your record and the holder — the answer when the
+  "collision" is one device recorded twice. With several holders, merge from the
+  conflict card instead.
+- **Cancel** — nothing is written.
+
+A record whose claim is **stale** is listed but does not count as a collision;
+saving over it raises nothing. If the check itself fails (a network blip), the
+save proceeds — the ten-minute sweep is the backstop, and a pre-flight that could
+block a save would be worse than none.
+
+Changing an asset **off** a contested address closes that card on the same save
+rather than on the next sweep. Merging two assets re-checks the survivor's
+address the same way.
+
+CSV and PDF imports do not trigger this: the CSV import writes no address, and
+PDF-imported assets are created in `storage`, which (a) excludes.
+
 ---
 
 ## IP override conflicts
@@ -238,7 +280,14 @@ The fix is a [network exclusion](IPAM#exclusions), not a rejection.
 ## Merging assets by hand
 
 The **Sources** tab's merge modal, or the Assets bulk bar with exactly two rows
-selected.
+selected — or, from the asset form's duplicate-address dialog, *Save & review
+merge*.
+
+**Merging requires Assets full read-write.** A merge edits one record and
+deletes another, so it takes the same level as deploying the agent, on every
+path: the modal, the Duplicate IP card's *Merge into this* and *Review & merge*
+buttons, and the API. Reassigning an address from the card needs only Assets
+write — it deletes nothing.
 
 Per-field winners are pre-selected from the
 [Sources priority order](Assets#sources), with the winning column badged

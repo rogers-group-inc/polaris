@@ -114,7 +114,7 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "subnets", label: "Subnets", description: "Networks inside a block. Read-Write = your own rows; Full Read-Write = any row, plus exclusions and archiving.", hasOwnershipDimension: true },
   { key: "reservations", label: "Reservations", description: "Reserved IPs, including DHCP push to FortiGate. Read-Write = your own rows; Full Read-Write = any row.", hasOwnershipDimension: true },
   { key: "allocationTemplates", label: "Allocation Templates", description: "Saved multi-network templates the bulk-allocate modal offers.", levels: UP_TO_WRITE },
-  { key: "assets", label: "Assets", description: "Asset inventory CRUD and CSV / PDF export. Full Read-Write also deploys the Polaris Agent." },
+  { key: "assets", label: "Assets", description: "Asset inventory CRUD and CSV / PDF export. Full Read-Write also deploys the agent and merges two assets." },
   { key: "assetsQuarantine", label: "Asset Quarantine", description: "Push MAC quarantine to FortiGates, release it, verify it.", levels: UP_TO_WRITE },
   // Read-only by nature: a probe dials the device and writes nothing in
   // Polaris, so `read` IS the grant and there is no higher level to offer.

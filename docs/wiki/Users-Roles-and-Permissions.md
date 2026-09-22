@@ -82,7 +82,7 @@ the only thing that justifies the rung existing.
 
 | Key | Top rung | |
 |---|---|---|
-| `assets` | Full RW | inventory CRUD and export. **Full RW = deploy the agent** |
+| `assets` | Full RW | inventory CRUD and export. **Full RW = deploy the agent, and merge assets** (a merge edits one record and deletes another) |
 | `assetsQuarantine` | Read-Write | push MAC quarantine to FortiGates, release, verify |
 | `assetsProbe` | **Read-Only** | probe-now, SNMP walk, DNS lookup — a probe writes nothing here |
 | `assetMonitorSettings` | Full RW | monitor cadence and retention overrides at every tier, plus the auto-decommission thresholds. **Full RW = the outage simulation** |

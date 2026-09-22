@@ -283,6 +283,19 @@ The short version: only network-present assets, only current claims, two
 one claimant must be equipment somebody addressed on purpose **or** the address
 itself must be deliberate with disjoint reporting sources.
 
+**Since 2026-09-22 the sweep is not the only trigger.** Creating an asset with an
+IP, or changing an asset's IP in the edit form, re-checks that address on the
+spot: the form first asks whether another network-present asset already records
+it and, if so, offers *Save & submit for conflict review* — and, to an operator
+with Assets **full read-write**, *Save & review merge* — before anything is
+written. The save then raises the Duplicate IP conflict immediately instead of
+on the sweep's next tick. A third reason a pair qualifies came with it: **an
+address an operator typed** counts as deliberately assigned whatever the device
+types are, so two workstations one of which you addressed by hand is a conflict.
+Merging assets now requires Assets **full read-write** everywhere — it edits one
+record and deletes another. See
+[Conflict Resolution](Conflict-Resolution#i-or-an-operator-typed-the-address).
+
 ### Rule 41
 **A subnet dies with its FortiGate, and the chassis — not the name — says which
 gate that is.** A name cannot tell a rename from a replacement. Tri-state in both
