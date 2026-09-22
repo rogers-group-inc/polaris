@@ -14,8 +14,8 @@
  * decommissioned / disabled / storage / quarantined; see business rule 10),
  * where the address was ASSIGNED rather than handed out by a pool. Two
  * endpoints trading a DHCP address is DHCP working; an endpoint sitting on an
- * access point's address is an outage. There are TWO ways a group can clear
- * that bar, and either is enough:
+ * access point's address is an outage. There are THREE ways a group can clear
+ * that bar, and any one is enough:
  *
  *   • **The device was addressed on purpose** — at least one claimant is a
  *     CONFLICT_ELIGIBLE_ASSET_TYPES member (switch / access_point / firewall /
@@ -31,6 +31,19 @@
  *     reservation or an operator's manual row — because on a leased address two
  *     genuinely different devices can legitimately trade places inside the
  *     freshness window, and reporting those would bury the real ones.
+ *   • **A PERSON did the addressing** — at least one current claim is
+ *     operator-owned (`claimIsOperatorOwned`: `ipSource="manual"` or a pin).
+ *     Rule 40(i): a typed address is a chosen address whatever the device is.
+ *     This is also what the asset form's write-time check (below) relies on —
+ *     without it a save would raise a card the next sweep auto-closed.
+ *
+ * WRITE-TIME CHECK (rule 40(i))
+ * The sweep is no longer the only trigger. `POST /assets` and an IP-changing
+ * `PUT /assets/:id` run `reconcileDuplicateIpForAddresses` — this same
+ * reconcile, SCOPED to the addresses they touched — and `GET /assets/ip-check`
+ * asks `checkIpForIncomingClaim` before the write, which SIMULATES the
+ * incoming claim through the same `groupCurrentClaims`. One grouping function
+ * is what keeps dialog, save and sweep in agreement.
  *
  * One address answering for two devices breaks routing, monitoring and
  * quarantine alike, and nothing else in Polaris notices: the IPAM half has a
