@@ -23,6 +23,7 @@ import { symbolReadiness, ensureRegistryLoaded, type SymbolReadiness } from "./o
 import { logEvent } from "./eventLogService.js";
 import { isKnownAssetType, normalizeAssetTypeName } from "../utils/assetTypes.js";
 import { validateModelParse } from "../utils/modelParse.js";
+import { findUnsafeRegexConstruct } from "../utils/regexSafety.js";
 import { validateHttpCheckDefinition } from "./credentialService.js";
 import { logger } from "../utils/logger.js";
 import {
@@ -360,10 +361,23 @@ function assertValidModelPattern(pattern: string): void {
   if (pattern.length > 512) {
     throw new AppError(400, "modelPattern is too long (max 512 characters)");
   }
+  let re: RegExp;
   try {
-    new RegExp(pattern);
+    re = new RegExp(pattern);
   } catch {
     throw new AppError(400, "modelPattern must be a valid regex");
+  }
+  // Guards both fields that reach here — a per-model exception's `modelPattern`
+  // and a profile's `matchPattern`. `profileResolver` runs them per asset per
+  // poll, and a JS regex cannot be interrupted, so the one shape that goes
+  // exponential is refused while the operator is still looking at it.
+  // See utils/regexSafety.ts.
+  const unsafe = findUnsafeRegexConstruct(re.source);
+  if (unsafe) {
+    throw new AppError(
+      400,
+      `modelPattern may never finish on some inputs: \`${unsafe}\` repeats a group that already repeats. Rewrite it so only one of the two repeats.`,
+    );
   }
 }
 
