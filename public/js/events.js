@@ -1250,6 +1250,11 @@ function getAlertsFormData() {
     var ip = proposed.ipAddress || "—";
     var members = Array.isArray(proposed.members) ? proposed.members : [];
     var isResolved = c.status !== "pending";
+    // Both merge verbs on this card delete an asset row, so both gate on the
+    // assets key's full read-write level — the level the endpoints behind them
+    // require. Reassign (the "New IP address" column) is an edit and stays
+    // available to anyone who may resolve conflicts and write assets.
+    var canMerge = typeof permAtLeast === "function" && permAtLeast("assets", "fullwrite");
 
     var rows = members.map(function (m) {
       var name = m.hostname || m.assetId || "(unnamed)";
@@ -1278,7 +1283,7 @@ function getAlertsFormData() {
       // The other cause of a shared address: one device recorded twice. Keeping
       // THIS row absorbs the others through the same merge engine the asset
       // page's Merge modal uses.
-      var mergeCell = isResolved
+      var mergeCell = (isResolved || !canMerge)
         ? '<td></td>'
         : '<td class="conflict-action-cell">' +
             '<button class="btn btn-secondary btn-sm" data-dupip-merge data-conflict-id="' + c.id + '" ' +
@@ -1303,11 +1308,21 @@ function getAlertsFormData() {
     // cross-linked, so the card leads with the merge rather than with
     // renumbering. Absent on conflicts raised before that clause shipped.
     var crossSource = proposed.qualifiedBy === "cross-source";
+    // `operator-addressed` (rule 40(i)): somebody TYPED this address onto one
+    // of the records — usually the asset form, which raised this card at save
+    // time. Nothing about the device types made it a conflict; the person's
+    // choice did.
+    var operatorAddressed = proposed.qualifiedBy === "operator-addressed";
     var lead = crossSource
       ? '<strong class="mono">' + escapeHtml(ip) + '</strong> is recorded on ' + members.length +
         ' assets that were discovered by <strong>different integrations</strong>, and IPAM says the address ' +
         'was assigned on purpose rather than leased from a pool. That is usually ONE device recorded twice ' +
         'because nothing cross-linked the records. '
+      : operatorAddressed
+      ? '<strong class="mono">' + escapeHtml(ip) + '</strong> was <strong>typed onto one of these ' +
+        members.length + ' assets by an operator</strong> while another network-present asset already ' +
+        'recorded it. A chosen address held by two devices is a fault whatever the devices are; if the ' +
+        'records are one device, merge them instead. '
       : '<strong class="mono">' + escapeHtml(ip) + '</strong> is recorded on ' +
         members.length + ' assets that are all in a network-present status. Two devices, or one device ' +
         'recorded twice — resolve it whichever way it actually is. ';
@@ -1323,14 +1338,15 @@ function getAlertsFormData() {
     // "Review & merge" opens the full comparison modal (asset-merge-modal.js,
     // shared with the asset page's Sources tab) instead of the one-click row
     // verb: it shows polling history, sources, dependency edges and per-field
-    // winners before anything is deleted. Admin-only, matching the modal's own
-    // gate and the assets:write the endpoint behind it requires.
+    // winners before anything is deleted. Gated on assets full read-write,
+    // matching the modal's own gate and the level the endpoint behind it
+    // requires.
     //
     // With more than two claimants it seeds the first two and the modal's own
     // "Choose a different asset" link re-targets — the alternative was a button
     // per row, which is the one-click verb the row already has.
     var reviewBtn = "";
-    if (!isResolved && members.length >= 2 && typeof isAdmin === "function" && isAdmin()) {
+    if (!isResolved && members.length >= 2 && canMerge) {
       reviewBtn =
         '<button class="btn btn-secondary btn-sm" data-dupip-review ' +
           'data-conflict-id="' + c.id + '" ' +

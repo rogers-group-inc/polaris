@@ -3886,6 +3886,102 @@ function showConfirm(message) {
 }
 
 /**
+ * showConfirm's sibling for a question with MORE than two answers: resolves to
+ * the chosen choice's `id`, or `null` if the operator cancelled (Escape,
+ * backdrop, or the Cancel button).
+ *
+ * Exists because showConfirm is binary by contract — Confirm or Cancel — and
+ * some decisions genuinely have a third answer that is not "no". The first use
+ * is the asset form's duplicate-address dialog (business rule 40(i)): save and
+ * submit the collision for conflict review, or save and go straight to the
+ * merge review, or cancel. Two stacked confirms would ask the same question
+ * twice; a checkbox would hide the more consequential path behind a default.
+ *
+ * Same overlay discipline as showConfirm — a standalone element at z-index
+ * 1300 that STACKS over an open modal without touching its DOM, so a save flow
+ * can still read the form after this resolves. Keyboard: Escape cancels via
+ * `_trapFocus`; Enter activates the FOCUSED button and nothing else — with
+ * three or more answers there is no default an operator can be assumed to
+ * have read, so unlike showConfirm this never confirms on a stray Enter, and
+ * a held (auto-repeating) Enter is swallowed for the same reason it is there.
+ *
+ * opts: { title, choices: [{ id, label, kind: "primary" | "secondary" | "danger" }],
+ *         cancelLabel }
+ * Choices render in order; the first receives focus on open.
+ */
+function showChoice(message, opts) {
+  opts = opts || {};
+  var choices = Array.isArray(opts.choices) ? opts.choices.filter(function (c) { return c && c.id; }) : [];
+  return new Promise(function (resolve) {
+    var overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.zIndex = "1300";
+    var title = opts.title || "Choose";
+    overlay.innerHTML =
+      '<div class="modal" role="dialog" aria-modal="true" tabindex="-1">' +
+        '<div class="modal-header"><h3></h3></div>' +
+        '<div class="modal-body"><p style="font-size:0.9rem;color:var(--color-text-secondary);white-space:pre-wrap"></p></div>' +
+        '<div class="modal-footer" style="flex-wrap:wrap;gap:0.5rem">' +
+          '<button class="btn btn-secondary" data-choice="cancel"></button>' +
+        '</div>' +
+      '</div>';
+    var dialog = overlay.querySelector(".modal");
+    dialog.setAttribute("aria-label", title);
+    dialog.querySelector(".modal-header h3").textContent = title;
+    // textContent throughout: the message interpolates hostnames straight
+    // from the database.
+    overlay.querySelector(".modal-body p").textContent = message || "";
+    var footer = overlay.querySelector(".modal-footer");
+    var cancelBtn = overlay.querySelector('[data-choice="cancel"]');
+    cancelBtn.textContent = opts.cancelLabel || "Cancel";
+    var firstBtn = null;
+    choices.forEach(function (c) {
+      var b = document.createElement("button");
+      b.className = "btn " + (c.kind === "danger" ? "btn-danger" : c.kind === "secondary" ? "btn-secondary" : "btn-primary");
+      b.setAttribute("data-choice", String(c.id));
+      b.textContent = c.label || String(c.id);
+      b.onclick = function () { done(String(c.id)); };
+      footer.appendChild(b);
+      if (!firstBtn) firstBtn = b;
+    });
+
+    document.body.appendChild(overlay);
+    var prevFocus = document.activeElement;
+    var settled = false;
+    var teardownTrap = _trapFocus(dialog, function () { done(null); });
+    function done(val) {
+      if (settled) return;
+      settled = true;
+      teardownTrap();
+      overlay.classList.remove("open");
+      overlay.addEventListener("transitionend", function () {
+        if (overlay.parentNode) overlay.remove();
+      }, { once: true });
+      setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 400);
+      if (prevFocus && typeof prevFocus.focus === "function") {
+        try { prevFocus.focus(); } catch (_) { /* element gone */ }
+      }
+      resolve(val);
+    }
+    cancelBtn.onclick = function () { done(null); };
+    // A held Enter must not pick an answer nobody has read (see showConfirm).
+    // A deliberate Enter falls through to the focused button's own click.
+    dialog.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && e.repeat) e.preventDefault();
+    });
+    var shown = false;
+    var reveal = function () {
+      if (shown) return;
+      shown = true;
+      overlay.classList.add("open");
+      try { (firstBtn || cancelBtn).focus(); } catch (_) { _focusFirstIn(dialog); }
+    };
+    requestAnimationFrame(reveal);
+    setTimeout(reveal, 50);
+  });
+}
+
+/**
  * showConfirm's sibling for the case where the operator has to TYPE something:
  * resolves to the entered string, or `null` if they cancelled.
  *

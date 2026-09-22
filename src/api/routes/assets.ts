@@ -10,6 +10,11 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
 import { requirePermission, hasPermission } from "../middleware/permissions.js";
+import {
+  checkIpForIncomingClaim,
+  reconcileDuplicateIpForAddresses,
+  type WriteTimeIpConflict,
+} from "../../services/duplicateIpConflictService.js";
 import { requestActor } from "../middleware/auth.js";
 import { machineApiLimiter } from "../middleware/rateLimits.js";
 import { logEvent, buildChanges } from "./events.js";
@@ -32,7 +37,7 @@ import {
   getQuarantinePushAvailability,
 } from "../../services/assetQuarantineService.js";
 import { syncDescriptionsOnSave } from "../../services/descriptionSyncService.js";
-import { cidrContains } from "../../utils/cidr.js";
+import { cidrContains, isValidIpAddress } from "../../utils/cidr.js";
 import { buildIpContexts } from "../../services/subnetService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
@@ -1421,6 +1426,41 @@ router.put("/sighting-settings", requirePermission("assetsQuarantine", "write"),
 });
 
 // GET /api/v1/assets/:id — get single asset (all authenticated users)
+// GET /api/v1/assets/ip-check?ip=&excludeAssetId=&assetType=&macAddress=
+//
+// The asset form's pre-save question (business rule 40(i)): who else is on
+// this address, and would saving raise a duplicate-ip conflict? Answered by
+// SIMULATING the incoming claim through the same grouping the sweep uses, so
+// what the dialog warns about is exactly what the save will raise. Read-only;
+// `assets:read` because the assets list already exposes every IP it names.
+//
+// `canMerge` rides along so the form's "review merge" button is gated by the
+// SERVER's answer rather than a client-side re-derivation of the matrix — the
+// too-strict-client-gate trap this codebase has hit before.
+//
+// Declared above `/:id` so Express does not read "ip-check" as an asset id.
+const IpCheckQuerySchema = z.object({
+  ip: z.string().trim().min(1),
+  excludeAssetId: z.string().trim().min(1).optional(),
+  assetType: z.string().trim().min(1).optional(),
+  macAddress: z.string().trim().min(1).optional(),
+});
+router.get("/ip-check", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const q = IpCheckQuerySchema.parse(req.query);
+    if (!isValidIpAddress(q.ip)) throw new AppError(400, `"${q.ip}" is not a valid IP address`);
+    const result = await checkIpForIncomingClaim({
+      ip: q.ip,
+      excludeAssetId: q.excludeAssetId ?? null,
+      assetType: q.assetType ?? null,
+      macAddress: q.macAddress ? q.macAddress.toUpperCase().replace(/-/g, ":") : null,
+    });
+    res.json({ ...result, canMerge: hasPermission(req, "assets", "fullwrite") });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get("/:id", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const asset = await prisma.asset.findUnique({
@@ -3724,6 +3764,26 @@ router.put("/:id/processes/:name/config", requirePermission("assets", "write"), 
 // the AgentCommand queue with action="run_script").
 
 // POST /api/v1/assets — create (assets admin)
+/**
+ * Business rule 40(i): re-evaluate the duplicate-ip conflicts for the
+ * addresses an operator write touched and hand back the one on the address
+ * it wrote (`null` when the save raised nothing). A failure here must never
+ * cost the save that already landed — the sweep re-derives the same answer
+ * within ten minutes — so it degrades to `null` with a log line.
+ */
+async function writeTimeIpConflictFor(
+  touched: readonly (string | null | undefined)[],
+  writtenIp: string | null | undefined,
+): Promise<WriteTimeIpConflict | null> {
+  try {
+    const byIp = await reconcileDuplicateIpForAddresses(touched);
+    return writtenIp ? (byIp.get(writtenIp) ?? null) : null;
+  } catch (err: any) {
+    logger.warn({ err: err?.message, touched }, "write-time duplicate-ip check failed; the sweep will re-evaluate");
+    return null;
+  }
+}
+
 router.post("/", requirePermission("assets", "write"), async (req, res, next) => {
   try {
     const input = CreateAssetSchema.parse(req.body);
@@ -3759,7 +3819,15 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     if (asset.assetType === "firewall" && typeof input.latitude === "number") {
       reconcileMapRegions().catch(() => {});
     }
-    res.status(201).json(asset);
+    // Business rule 40(i): an operator just put a device on an address. If
+    // something else network-present already records it, the collision is
+    // raised NOW — a duplicate-ip conflict card plus the `conflict.detected`
+    // Event the baseline automation alerts on — rather than on the sweep's
+    // next tick, and the response names the card so the form can open it or
+    // hand the pair to the merge review. Awaited, not fire-and-forget: the
+    // whole point is that the person who caused the collision is told.
+    const ipConflict = await writeTimeIpConflictFor(asset.ipAddress ? [asset.ipAddress] : [], asset.ipAddress);
+    res.status(201).json({ ...asset, ipConflict });
   } catch (err) {
     next(err);
   }
@@ -4197,7 +4265,16 @@ router.put("/:id", requirePermission("assets", "write"), async (req, res, next) 
     const { data, ipOverrideTouched, coordChanged } = await buildAssetUpdatePatch(id, existing, input, actor);
     const asset = await prisma.asset.update({ where: { id }, data: data as any });
     await applyAssetUpdateSideEffects(id, existing, asset, input, actor, { ipOverrideTouched, coordChanged });
-    res.json(asset);
+    // Business rule 40(i): when the edit MOVED the address, re-evaluate both
+    // ends — the new address may now be a collision (raise it, tell the
+    // operator), and the old one may have just stopped being one (close it,
+    // rather than leaving the card up for ten minutes). Unchanged address ⇒
+    // nothing to ask; the sweep owns the steady state.
+    const ipMoved = (asset.ipAddress ?? null) !== (existing.ipAddress ?? null);
+    const ipConflict = ipMoved
+      ? await writeTimeIpConflictFor([existing.ipAddress, asset.ipAddress], asset.ipAddress)
+      : null;
+    res.json({ ...asset, ipConflict });
   } catch (err) {
     next(err);
   }
@@ -5215,7 +5292,11 @@ const mergeBodySchema = z.object({
   fieldWinners: z.record(z.enum(["this", "other"])).optional(),
   dependencyWinner: z.enum(["this", "other"]).optional(),
 });
-router.post("/:id/merge", requirePermission("assets", "write"), async (req, res, next) => {
+// Merging is editing one asset AND deleting another, which is why it takes the
+// assets key's destructive tier rather than the `write` that create/edit use.
+// The merge modal (asset-merge-modal.js) and the conflict card's merge verbs
+// gate on the same level, so what the UI offers is what the API allows.
+router.post("/:id/merge", requirePermission("assets", "fullwrite"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const { otherAssetId, survivor, fieldWinners, dependencyWinner } = mergeBodySchema.parse(req.body);
@@ -5283,6 +5364,15 @@ router.post("/:id/merge", requirePermission("assets", "write"), async (req, res,
         fieldWinners: resolvedWinners,
       },
     });
+
+    // A merge changes who claims the survivor's address — usually from two
+    // rows to one. Re-evaluate it so a duplicate-ip card this merge just
+    // resolved closes now instead of on the sweep's next tick (rule 40(i)).
+    // Fire-and-forget: the merge is done and the sweep is the backstop.
+    prisma.asset
+      .findUnique({ where: { id: result.survivorId }, select: { ipAddress: true } })
+      .then((s) => reconcileDuplicateIpForAddresses([s?.ipAddress]))
+      .catch(() => {});
 
     res.json(result);
   } catch (err) {
