@@ -143,6 +143,7 @@ before changing anything the invariant constrains.
 | 78 | An automation may choose to speak for a silenced device, and then it must name who silenced it | invariants-30-43 | narrative-78 |
 | 79 | An operator's removal of a MAC is a correction, not a suppression | invariants-30-43 | narrative-60-64 |
 | 80 | Downtime Polaris itself causes is not an incident — and a silence it grants expires on its own | invariants-30-43 | narrative-80 |
+| 80a | A silence is granted for when the event HAPPENED, not for when something got round to reading it | invariants-30-43 | narrative-80 |
 | 82 | A measurement of the host must not be dominated by the measurer, and a scheduling offset is not a way to protect one | invariants-30-43 | narrative-82 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),

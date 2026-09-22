@@ -873,6 +873,60 @@ its upgrade failed is exactly what you want to hear about.
 See [Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)
 and [Polaris Agent](Polaris-Agent#upgrading).
 
+### Rule 80a
+
+**A silence is granted for when the event happened, not for when something got
+round to reading it.**
+
+Rule 80 shipped and operators were still paged by their own agent upgrades. The
+maintenance window was being taken correctly every time — you can see it in the
+asset's own event list:
+
+```
+10:30:47  agent.upgrade_kickoff     0.19.0 -> 0.20.0
+10:30:47  maintenance.entered       Polaris Agent upgrade
+10:30:49  agent.disconnected        WARNING
+10:30:49  agent.connected
+10:30:49  maintenance.exited
+```
+
+The device really was in maintenance when the disconnect was recorded. But
+**automations that watch events are evaluated once a minute**, against a
+backlog — and they used to ask "is this device in maintenance?" rather than
+"was it in maintenance when this happened?". By the time the automation looked,
+the two-second window had been shut for most of a minute, the device was back
+to active, and the alert went out.
+
+The consequence was general, not specific to agents: **any maintenance window
+shorter than a minute suppressed nothing at all.** A short scheduled window, or
+releasing a device from maintenance shortly after something happened to it,
+leaked the same way. An agent upgrade just made it happen every single time,
+because the window is only about two seconds wide.
+
+Event automations now check the device's maintenance **history** at the moment
+the event was recorded. In practice:
+
+- **An event that happened inside a maintenance window stays silent**, however
+  briefly that window was open and however long ago it closed.
+- **An event just outside one still alerts.** A device that drops again ten
+  seconds after its upgrade finished is a real outage and you will hear about
+  it.
+- **A failed upgrade still alerts.** Polaris ends the maintenance window
+  *before* recording the failure, deliberately, so an agent that is down
+  because its upgrade failed is never covered by the silence its own upgrade
+  was granted.
+- **Recovery still clears.** The counterpart event that closes an alert is
+  never suppressed — otherwise an alert raised before a window could be left
+  with nothing able to clear it.
+
+One limit worth knowing: this covers maintenance windows. A device silenced by
+[dependency suppression](Dependency-Suppression) that recovers within the same
+minute can still produce an alert, because Polaris keeps no history of when
+suppression started and stopped the way it does for windows.
+
+See [Maintenance Windows](Maintenance-Windows) and
+[Automation Triggers](Automation-Triggers).
+
 ### Rule 82
 
 **A measurement of the host must not be dominated by the measurer, and a
