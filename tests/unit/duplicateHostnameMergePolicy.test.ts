@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   decideDuplicateHostnameGroup,
+  decideDuplicateSerialGroup,
   type DuplicateHostnameAssetRow,
 } from "../../src/services/assetGhostMergeService.js";
 
@@ -111,5 +112,65 @@ describe("decideDuplicateHostnameGroup", () => {
       row({ id: "y", sources: [{ sourceKind: "ad" }], macAddress: "AA:BB:CC:DD:EE:02" }),
     ]);
     expect(d.kind).toBe("merge");
+  });
+});
+
+/**
+ * The serial pass shares the tier ordering and drops the MAC tie-break: a
+ * shared hostname has an innocent explanation (two devices named the same),
+ * a shared REAL serial does not. Callers filter the group through rule 83's
+ * `isUsableSerial` + vendor-default cap first, so anything reaching here is
+ * one device recorded twice.
+ */
+describe("decideDuplicateSerialGroup", () => {
+  it("picks the sourced row over the orphan — the prod FortiSwitch case", () => {
+    // One switch recorded twice: the older row lost its AssetSource when the
+    // newer asset claimed the (fortiswitch, serial) unique key.
+    const orphan = row({
+      id: "older-no-sources",
+      sources: [],
+      serialNumber: "S108FFTV21018409",
+      lastSeen: new Date("2026-09-22"),
+    });
+    const sourced = row({
+      id: "newer-fortiswitch",
+      sources: [{ sourceKind: "fortiswitch" }],
+      serialNumber: "S108FFTV21018409",
+      lastSeen: new Date("2026-09-22"),
+    });
+    const d = decideDuplicateSerialGroup([orphan, sourced]);
+    expect(d.kind).toBe("merge");
+    if (d.kind === "merge") {
+      expect(d.canonical.id).toBe("newer-fortiswitch");
+      expect(d.ghosts.map((g) => g.id)).toEqual(["older-no-sources"]);
+    }
+  });
+
+  it("merges despite conflicting MACs, where the hostname pass would refuse", () => {
+    // Same tier, two different MACs. The hostname pass skips this as
+    // "two different devices"; on a shared serial it is one chassis with a
+    // baseMac and a DHCP-learned mgmt MAC, and must still merge.
+    const a = row({ id: "a", sources: [{ sourceKind: "fortiswitch" }], macAddress: "AA:BB:CC:DD:EE:01", serialNumber: "S108FFTV21018409" });
+    const b = row({ id: "b", sources: [{ sourceKind: "fortiswitch" }], macAddress: "AA:BB:CC:DD:EE:99", serialNumber: "S108FFTV21018409" });
+
+    expect(decideDuplicateHostnameGroup([a, b]).kind).toBe("skip");
+    expect(decideDuplicateSerialGroup([a, b]).kind).toBe("merge");
+  });
+
+  it("keeps the hostname pass's tier order — identity sources still win", () => {
+    const sw = row({ id: "sw", sources: [{ sourceKind: "fortiswitch" }], lastSeen: new Date("2026-09-01") });
+    const entra = row({ id: "en", sources: [{ sourceKind: "entra" }], lastSeen: new Date("2026-01-01") });
+    const d = decideDuplicateSerialGroup([sw, entra]);
+    if (d.kind === "merge") expect(d.canonical.id).toBe("en");
+  });
+
+  it("breaks a tier tie on lastSeen, so the live record survives", () => {
+    const stale = row({ id: "stale", sources: [{ sourceKind: "fortiap" }], lastSeen: new Date("2026-01-01") });
+    const live = row({ id: "live", sources: [{ sourceKind: "fortiap" }], lastSeen: new Date("2026-09-22") });
+    const d = decideDuplicateSerialGroup([stale, live]);
+    if (d.kind === "merge") {
+      expect(d.canonical.id).toBe("live");
+      expect(d.ghosts.map((g) => g.id)).toEqual(["stale"]);
+    }
   });
 });

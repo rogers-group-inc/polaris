@@ -215,17 +215,12 @@ function tierForAsset(sourceKinds: string[]): SourceTier {
 // ghosts can't group into one merge candidate on 00:00:00:00:00:00.
 const normMac = macHexKeyOrNull;
 
-export type DuplicateGroupDecision =
-  | { kind: "merge"; canonical: DuplicateHostnameAssetRow; ghosts: DuplicateHostnameAssetRow[]; tiers: number[] }
-  | { kind: "skip"; reason: string };
-
 /**
- * Pick the canonical row of a duplicate-hostname group by source-kind tier
- * (ties broken by most-recent lastSeen, then updatedAt). Tie-safety: a
- * same-tier sibling whose non-null MAC disagrees with the canonical's is a
- * genuine second device — the whole group is skipped for operator review.
+ * Order a group best-canonical-first: source tier, then most-recent lastSeen,
+ * then most-recent updatedAt. Shared by the hostname and serial passes so the
+ * two can never disagree about which row of a group should survive.
  */
-export function decideDuplicateHostnameGroup(rows: DuplicateHostnameAssetRow[]): DuplicateGroupDecision {
+function rankBySourceTier(rows: DuplicateHostnameAssetRow[]) {
   const decorated = rows.map((r) => ({
     row: r,
     tier: tierForAsset(r.sources.map((s) => s.sourceKind)),
@@ -237,6 +232,21 @@ export function decideDuplicateHostnameGroup(rows: DuplicateHostnameAssetRow[]):
     if (at !== bt) return bt - at;
     return b.row.updatedAt.getTime() - a.row.updatedAt.getTime();
   });
+  return decorated;
+}
+
+export type DuplicateGroupDecision =
+  | { kind: "merge"; canonical: DuplicateHostnameAssetRow; ghosts: DuplicateHostnameAssetRow[]; tiers: number[] }
+  | { kind: "skip"; reason: string };
+
+/**
+ * Pick the canonical row of a duplicate-hostname group by source-kind tier
+ * (ties broken by most-recent lastSeen, then updatedAt). Tie-safety: a
+ * same-tier sibling whose non-null MAC disagrees with the canonical's is a
+ * genuine second device — the whole group is skipped for operator review.
+ */
+export function decideDuplicateHostnameGroup(rows: DuplicateHostnameAssetRow[]): DuplicateGroupDecision {
+  const decorated = rankBySourceTier(rows);
   const canonical = decorated[0];
   const rest = decorated.slice(1);
 
@@ -257,6 +267,33 @@ export function decideDuplicateHostnameGroup(rows: DuplicateHostnameAssetRow[]):
     canonical: canonical.row,
     ghosts: rest.map((d) => d.row),
     tiers: [canonical.tier, ...rest.map((d) => d.tier)],
+  };
+}
+
+/**
+ * Pick the canonical row of a duplicate-SERIAL group. Same tier ordering as
+ * the hostname pass, and deliberately WITHOUT its MAC tie-safety.
+ *
+ * That guard exists because a shared hostname has an innocent explanation —
+ * two genuinely different devices named the same — so conflicting MACs at a
+ * tied tier mean "don't guess". A shared serial has no such explanation: the
+ * only innocent case is that the string is not really a serial, which
+ * `isUsableSerial` and the vendor-default cap filter out BEFORE a group is
+ * formed. Whatever survives those is one device recorded twice, which is the
+ * same conclusion business rule 83's `duplicate-serial` card reaches when it
+ * offers a merge as its only action. Two MACs on one chassis is ordinary
+ * (a switch's baseMac beside a DHCP-learned mgmt MAC) and must not block it.
+ *
+ * Callers must therefore have filtered the group through `isUsableSerial` +
+ * `MAX_PLAUSIBLE_DUPLICATES` first — this function trusts the grouping.
+ */
+export function decideDuplicateSerialGroup(rows: DuplicateHostnameAssetRow[]): DuplicateGroupDecision {
+  const decorated = rankBySourceTier(rows);
+  return {
+    kind: "merge",
+    canonical: decorated[0].row,
+    ghosts: decorated.slice(1).map((d) => d.row),
+    tiers: decorated.map((d) => d.tier),
   };
 }
 
