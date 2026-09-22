@@ -9,8 +9,8 @@ Polaris a monitoring tool rather than an inventory.
 | Gate | Grants |
 |---|---|
 | `automationManagement:read` | see the page, preview, export, view code |
-| `automationManagement:fullwrite` | create, edit, clone, delete, run test deliveries |
-| `automationScripts:read` / `:fullwrite` | the Scripts tab; attaching a script action needs **fullwrite** |
+| `automationManagement:write` | create, edit, clone, delete, run test deliveries |
+| `automationScripts:read` / `:write` | the Scripts tab; attaching a script action needs **write** |
 | `contacts:read` | the Address Book tab |
 | `alerts:read` / `:write` / `:fullwrite` | see alerts / acknowledge / clear |
 
@@ -56,7 +56,7 @@ channel rather than people who would never receive it.
 filtered by kind.
 
 Clicking an automation's **name** opens a menu: **Edit**, **Clone**, **Delete**.
-Below `automationManagement:fullwrite` the name renders as plain text.
+Below `automationManagement:write` the name renders as plain text.
 
 **Clone** pre-fills the wizard, saves as a create, names it `<name> (copy)`, and
 is **created disabled**. That is not politeness: two automations with the same
@@ -200,7 +200,7 @@ That strip is also the security half. It carries no ids and **no secrets**:
 dropping `api_call` actions is what keeps an `api_call` bearer token — stored
 unmasked by design — out of a file operators email and commit. It also means an
 imported file **can never name a script action**, so the RCE surface is
-untouched and `automationScripts:fullwrite` is never involved.
+untouched and `automationScripts:write` is never involved.
 
 **View code** is deliberately a *different* serialisation: full fidelity, ids and
 headers included, because an edit there must round-trip losslessly onto the same
@@ -217,7 +217,7 @@ automation. The editor says so.
 
 ## Testing an automation
 
-Step 6 carries a **Test delivery** block (`automationManagement:fullwrite`;
+Step 6 carries a **Test delivery** block (`automationManagement:write`;
 omitted entirely otherwise), with one button per distinct delivery the draft
 would perform: *Send Test Web Push*, *Send Test Email*, *Send Test <channel>*,
 *Write a Test Event*. Deduplicated by channel across base actions, band actions,

@@ -61,7 +61,7 @@ The card hosts the **alert / event message template** and nothing else.
 | Args template | ≤ 2000 chars, `{token}` vocabulary |
 | Timeout | 1–600 s, overrides the script's own default |
 
-Attaching one needs `automationScripts:fullwrite`. See
+Attaching one needs `automationScripts:write`. See
 [Automation scripts](Automation-Scripts) — it is an RCE-equivalent surface and
 the page says what that means.
 

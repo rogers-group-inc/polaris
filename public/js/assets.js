@@ -20916,7 +20916,7 @@ function _paintAssetDownDetectionPanel(assetId) {
     var dd = eff && eff.downDetection;
     if (!dd) { el2.textContent = "Could not resolve which automation decides Down for this device."; return; }
     if (dd.passive) {
-      var canEdit = permAtLeast("automationManagement", "fullwrite");
+      var canEdit = permAtLeast("automationManagement", "write");
       el2.innerHTML =
         '<strong style="color:var(--color-warning)">Passive</strong> — no down-detection automation covers this device. ' +
         'Polaris records its polls but will never declare it Missed or Down, and no alert will ever be raised about it going offline.' +
@@ -21259,7 +21259,7 @@ function _renderAssetRuleRows(rTbody, rules, sent, assetId) {
   // Clicking an automation's name opens the same edit modal the Automations
   // page uses — offered only to operators who could actually save it (the
   // wizard is an editor, not a viewer).
-  var canEdit = typeof openAutomationWizard === "function" && permAtLeast("automationManagement", "fullwrite");
+  var canEdit = typeof openAutomationWizard === "function" && permAtLeast("automationManagement", "write");
   rTbody.innerHTML = rules.length ? rules.map(function (r, i) {
     var scope = r.scope && r.scope.allAssets ? "All assets"
       : (r.scope && ((r.scope.assetTypes || []).concat(r.scope.tags || []).join(", "))) || "—";

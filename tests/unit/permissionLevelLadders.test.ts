@@ -103,3 +103,70 @@ describe("ownership-dimensioned keys", () => {
     }
   });
 });
+
+/**
+ * The 2026-09-22 catalogue sweep. Seventeen keys carried a rung no route and
+ * no frontend check ever asked for, which let an admin pick a level that
+ * granted exactly what the level below it granted. The rule that replaced
+ * them is the one pinned here: a fourth rung has to MEAN something.
+ */
+describe("no dead top rung", () => {
+  // Full Read-Write is meaningful on a key only when it either lifts an
+  // ownership filter, or reserves an act materially more dangerous than the
+  // rest of the key. Everything else tops out at Read-Write. Adding a key
+  // here is a deliberate act: say which route reads the fourth rung.
+  const FULLWRITE_IS_MEANINGFUL: Record<string, string> = {
+    assets: "agent deployment (POST /assets/:id/agent/install and siblings), and merging two assets (POST /assets/:id/merge) — a merge edits one record and deletes another",
+    alerts: "clearing an alert, vs. acknowledging it at write",
+    assetMonitorSettings: "the outage simulation (POST /assets/:id/dependency-test)",
+    integrations: "aborting a discovery in flight (DELETE /integrations/:id/discover)",
+    users: "IdP group-mapping CRUD (the /group-mappings mount)",
+    roles: "admin-equivalence, together with users=fullwrite",
+    savedDashboards: "deleting someone else's dashboard",
+    // The odd one out, and knowingly so: `write` on this key gates ONLY the
+    // identity-provider settings (SAML / OIDC / LDAP / App Proxy) and their
+    // test buttons, while fullwrite gates the other ~54 routes — TLS, HA,
+    // tags, DNS, NTP, branding, capacity, the agent fleet. So the rung is
+    // load-bearing, but it is dividing the key in the wrong place: pointing
+    // every login at a different IdP sits one rung BELOW changing the logo.
+    // The fix is to lift the providers onto an `authentication` key of their
+    // own, not to shorten this ladder.
+    serverSettingsSystem: "everything on the System tab except the login providers, which sit at write",
+  };
+
+  it("only an ownership key or a named exception offers Full Read-Write", () => {
+    for (const def of FUNCTION_KEYS) {
+      if (!keySupportsLevel(def.key, "fullwrite")) continue;
+      const excused = def.hasOwnershipDimension || def.key in FULLWRITE_IS_MEANINGFUL;
+      expect(
+        excused,
+        `${def.key} offers Full Read-Write but nothing documents what it grants `
+        + "beyond Read-Write. Either gate a route on it and add it to "
+        + "FULLWRITE_IS_MEANINGFUL, or give the key a shorter ladder.",
+      ).toBe(true);
+    }
+  });
+
+  it("every exception is still in the catalogue", () => {
+    // Keeps the allow-list from outliving the key it excuses.
+    const keys = new Set(FUNCTION_KEYS.map(f => f.key));
+    for (const key of Object.keys(FULLWRITE_IS_MEANINGFUL)) expect(keys).toContain(key);
+  });
+
+  it("serverSettingsData has no Read-Only rung", () => {
+    // Its reads (the backup list, the schedule, update status) sit on the
+    // serverSettings mount's serverSettingsSystem=read floor. Everything this
+    // key gates either changes the database or hands over a copy of it, so a
+    // Read-Only grant here would have granted precisely nothing.
+    expect(levelsFor("serverSettingsData")).toEqual(["none", "write"]);
+    expect(keySupportsLevel("serverSettingsData", "read")).toBe(false);
+    expect(clampLevelToKey("serverSettingsData", "read")).toBe("none");
+  });
+
+  it("processControl is gone from the catalogue", () => {
+    // Process/service control was removed in the Satellite-posture change;
+    // the key outlived it by a year, gating nothing.
+    expect(FUNCTION_KEYS.map(f => f.key)).not.toContain("processControl");
+    expect(normalizePermissions({ processControl: "fullwrite" })).not.toHaveProperty("processControl");
+  });
+});

@@ -84,13 +84,18 @@ async function seedAsset(hostname: string, over: Record<string, unknown> = {}) {
 }
 
 d("maintenance-schedules RBAC", () => {
-  it("admin lists; a readonly-role caller is 403 on read and write", async () => {
+  it("admin lists; a readonly-role caller reads the calendar but is 403 on every write", async () => {
     const { agent, csrf } = await authedAgent(app);
     const ok = await agent.get("/api/v1/maintenance-schedules");
     expect(ok.status).toBe(200);
     expect(Array.isArray(ok.body.schedules)).toBe(true);
 
-    // readonly user: the maintenanceManagement key seeds "none" for readonly.
+    // readonly user: the maintenanceManagement key seeds "read" for readonly
+    // as of migration 20260922000000_rbac_catalogue_hygiene. It seeded "none"
+    // before that, which put the role below its own description ("read on
+    // every function that allows non-admin reads") and hid the maintenance
+    // calendar from a NOC account whose whole job is knowing what is silenced
+    // and why. Read is the grant; every mutation stays at write.
     const roRole = await prisma.role.findUnique({ where: { name: "readonly" } });
     expect(roRole).toBeTruthy();
     await prisma.user.upsert({
@@ -111,12 +116,18 @@ d("maintenance-schedules RBAC", () => {
     const roCookies = (roAgent.jar as any).getCookies({ domain: "127.0.0.1", path: "/", secure: false, script: false });
     const roCsrf = (roCookies.find((c: any) => c.name === "polaris_csrf") || {}).value || "";
 
-    expect((await roAgent.get("/api/v1/maintenance-schedules")).status).toBe(403);
+    // Reads the calendar…
+    expect((await roAgent.get("/api/v1/maintenance-schedules")).status).toBe(200);
+    // …and cannot schedule, edit or delete anything on it.
     const post = await roAgent
       .post("/api/v1/maintenance-schedules")
       .set("X-CSRF-Token", roCsrf)
       .send({ name: "nope", assetIds: ["x"], schedule: activeOneshot() });
     expect(post.status).toBe(403);
+    const del = await roAgent
+      .delete("/api/v1/maintenance-schedules/does-not-matter")
+      .set("X-CSRF-Token", roCsrf);
+    expect(del.status).toBe(403);
 
     // Admin write passes the same gate.
     const asset = await seedAsset("rbac-target");

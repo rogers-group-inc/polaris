@@ -174,7 +174,7 @@ opens, loaded on that schedule) and **Disable schedule** — which ends its open
 windows immediately, returns the held devices to polling, and stops the
 schedule firing until re-enabled. A **+ New schedule** button at the top of the
 widget opens that editor empty, so a window can be scheduled from the dashboard
-without going to Assets first. All three need `maintenanceManagement:fullwrite`,
+without going to Assets first. All three need `maintenanceManagement:write`,
 like the modal itself.
 
 A row filtered out of a *device*-scoped board does not mean the maintenance is

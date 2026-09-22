@@ -293,7 +293,7 @@ router.get("/database", async (_req, res, next) => {
 
 mkdirSync(BACKUP_DIR, { recursive: true });
 
-router.post("/database/backup", maintenanceLimiter, requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
+router.post("/database/backup", maintenanceLimiter, requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     // Reject empty/weak passphrases before they become an AES-256-GCM key —
     // see src/utils/backupPassword.ts + the 2026-06-03 review (M5). null = no
@@ -326,7 +326,7 @@ router.post("/database/backup", maintenanceLimiter, requirePermission("serverSet
   }
 });
 
-router.post("/database/restore", maintenanceLimiter, requirePermission("serverSettingsData", "fullwrite"), restoreUpload.single("file"), async (req, res, next) => {
+router.post("/database/restore", maintenanceLimiter, requirePermission("serverSettingsData", "write"), restoreUpload.single("file"), async (req, res, next) => {
   // Track upload temp file for cleanup regardless of outcome. multer's
   // diskStorage generates the temp name itself, but the path rides in on
   // req.file — require containment under tmpdir() before touching it.
@@ -420,7 +420,7 @@ router.get("/database/backup-schedule", async (_req, res, next) => {
   }
 });
 
-router.put("/database/backup-schedule", requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
+router.put("/database/backup-schedule", requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     const input = BackupScheduleSchema.parse(req.body);
     const before = await getBackupScheduleMasked();
@@ -446,7 +446,7 @@ router.put("/database/backup-schedule", requirePermission("serverSettingsData", 
   }
 });
 
-router.delete("/database/backups/:id", maintenanceLimiter, requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
+router.delete("/database/backups/:id", maintenanceLimiter, requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     await deleteBackup(req.params.id as string, requestActor(req));
     res.status(204).send();
@@ -455,9 +455,13 @@ router.delete("/database/backups/:id", maintenanceLimiter, requirePermission("se
   }
 });
 
-// Download hands out the full DB dump — data-sensitive beyond the blanket
-// serverSettingsSystem read on the mount.
-router.get("/database/backups/:id/download", maintenanceLimiter, requirePermission("serverSettingsData", "read"), async (req, res, next) => {
+// Download hands out the full DB dump — every asset, credential blob, session
+// and audit row in one file. That is not a READ of a setting, it is the whole
+// database leaving the host, so it sits at the key's write tier alongside
+// backup/restore rather than one rung below them. It was `read` until
+// 2026-09-22, which made "may look at the Data tab" and "may walk off with the
+// database" the same grant.
+router.get("/database/backups/:id/download", maintenanceLimiter, requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const filePath = backupFilePath(id);
@@ -1410,7 +1414,7 @@ router.get("/queue-mode", async (_req, res, next) => {
   }
 });
 
-router.post("/queue-mode", requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
+router.post("/queue-mode", requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     const requested = req.body?.mode;
     if (requested !== "cursor" && requested !== "pgboss") {
@@ -1839,7 +1843,7 @@ router.post("/capacity-advisor/stage", requirePermission("serverSettingsSystem",
 // `health_token_unset` capacity reasons. Writes a fresh 32-byte hex value
 // into .env and stamps process.env so the gate takes effect without a
 // restart. Admin-only by virtue of the parent /server-settings guard.
-router.post("/security-tokens/generate", requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
+router.post("/security-tokens/generate", requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     const which = req.body?.which;
     if (which !== "metrics" && which !== "health") {
@@ -1870,7 +1874,7 @@ router.post("/security-tokens/generate", requirePermission("serverSettingsData",
 // Exits with code 1 so systemd's Restart=on-failure brings the process back.
 // Responds before the exit so the client sees a clean 200 and can switch to
 // its restart-polling UI.
-router.post("/restart", requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
+router.post("/restart", requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     await logEvent({
       level: "warning",
@@ -1915,7 +1919,7 @@ router.get("/updates/repo", async (_req, res, next) => {
   }
 });
 
-router.post("/updates/apply", requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
+router.post("/updates/apply", requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     if (!isUpdateMechanismAvailable()) {
       return res.status(409).json({ error: "In-app updates are disabled in this deployment." });
@@ -1953,7 +1957,7 @@ router.post("/updates/apply", requirePermission("serverSettingsData", "fullwrite
   }
 });
 
-router.post("/updates/dismiss", requirePermission("serverSettingsData", "fullwrite"), async (req, res) => {
+router.post("/updates/dismiss", requirePermission("serverSettingsData", "write"), async (req, res) => {
   // Dismiss deletes .update-status.json — until 2026-09-09 the ONLY record of
   // a failed update. The pipeline now writes Events, and so does this, so the
   // audit log says who cleared what.
@@ -1987,7 +1991,7 @@ router.get("/updates/settings", async (_req, res, next) => {
 // PUT accepts either/both of { skipBackup, train } and updates only the keys
 // present, so the frontend can persist the backup checkbox and the train
 // dropdown independently without clobbering the other.
-router.put("/updates/settings", requirePermission("serverSettingsData", "fullwrite"), async (req, res, next) => {
+router.put("/updates/settings", requirePermission("serverSettingsData", "write"), async (req, res, next) => {
   try {
     const body = req.body || {};
 

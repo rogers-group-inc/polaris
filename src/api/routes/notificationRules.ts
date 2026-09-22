@@ -76,7 +76,7 @@ notificationRulesRouter.get("/recipient-users", requirePermission("automationMan
 
 // Preview accepts partial drafts: `{scope}`-only (wizard Step 2 device list)
 // and `{trigger, scope}` (Step 3 current-values check) — name is defaulted.
-notificationRulesRouter.post("/preview", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.post("/preview", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = previewInputSchema.parse(req.body);
     res.json(await previewRule(input));
@@ -107,7 +107,7 @@ const testDeliverySchema = z.object({
   // rather than 400ing it.
 });
 
-notificationRulesRouter.post("/test-delivery", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.post("/test-delivery", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const userId = req.session?.userId;
     const username = req.session?.username;
@@ -185,17 +185,20 @@ notificationRulesRouter.post("/poll-cadence", requirePermission("automationManag
 
 /**
  * Script actions are RCE-equivalent, so saving a rule that carries any
- * (top-level or in an escalation tier) requires automationScripts=fullwrite
- * ON TOP of automationManagement=fullwrite. Editing a rule without script
+ * (top-level or in an escalation tier) requires automationScripts=write
+ * ON TOP of automationManagement=write. Editing a rule without script
  * actions never needs the key — including edits that REMOVE script actions.
+ * Both keys top out at write (their fourth rung was never routed); the
+ * protection is that automationScripts is granted to almost nobody, not
+ * that its top rung is spelled differently from every other key's.
  */
 function assertScriptActionPermission(req: Request, input: RuleInput): void {
   // allRuleActionRefs is the canonical walk over every place actions live —
   // top-level (+ per-action escalation tiers), rule-level escalation tiers,
   // severity-band actions (+ their tiers), band-level tiers, resolved actions.
   const hasScript = allRuleActionRefs(input).some((r) => r.action.type === "script");
-  if (hasScript && !hasPermission(req, "automationScripts", "fullwrite")) {
-    throw new AppError(403, "Attaching script actions requires Full Read-Write on Automation Scripts (automationScripts)");
+  if (hasScript && !hasPermission(req, "automationScripts", "write")) {
+    throw new AppError(403, "Attaching script actions requires Read-Write on Automation Scripts (automationScripts)");
   }
 }
 
@@ -216,7 +219,7 @@ notificationRulesRouter.get("/:id/removal-impact", requirePermission("automation
   }
 });
 
-notificationRulesRouter.post("/", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.post("/", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = ruleInputSchema.parse(req.body);
     assertScriptActionPermission(req, input);
@@ -225,7 +228,7 @@ notificationRulesRouter.post("/", requirePermission("automationManagement", "ful
   } catch (err) { next(err); }
 });
 
-notificationRulesRouter.put("/:id", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.put("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = ruleInputSchema.parse(req.body);
     assertScriptActionPermission(req, input);
@@ -237,7 +240,7 @@ notificationRulesRouter.put("/:id", requirePermission("automationManagement", "f
   }
 });
 
-notificationRulesRouter.delete("/:id", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+notificationRulesRouter.delete("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     await deleteRule(req.params.id as string, req.session?.username);
     res.status(204).end();

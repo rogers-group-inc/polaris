@@ -109,7 +109,7 @@ server {
   #     instead of spooling the whole upload into client_body_temp first, so
   #     an oversized body can't fill nginx's temp volume.
   #   * On that route Polaris runs its rate limiter and the
-  #     serverSettingsData=fullwrite permission check BEFORE multer touches
+  #     serverSettingsData=write permission check BEFORE multer touches
   #     the body, so an unauthenticated POST is refused without a byte
   #     reaching disk.
   location = /api/v1/server-settings/database/restore {
