@@ -377,7 +377,7 @@ note at all.
 The second table lists matching automations: **Name · Trigger · Scope**, where
 Trigger is the automation's plain-English sentence — every severity tier
 included, which is why there is no separate Severity column. The name opens the
-automation in the wizard in place, for `automationManagement:fullwrite`.
+automation in the wizard in place, for `automationManagement:write`.
 
 ### Wireless (access points)
 

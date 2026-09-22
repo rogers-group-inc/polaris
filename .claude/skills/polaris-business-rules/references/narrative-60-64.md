@@ -495,7 +495,7 @@ stapled to a headline). A reader — or anyone the mail was forwarded to — had
 it from an outage.
 
 The premise is what was wrong. A test email is sent **on demand**, by anyone holding
-`automationManagement:fullwrite`, to an address they type at the keyboard, and it lands in an
+`automationManagement:write`, to an address they type at the keyboard, and it lands in an
 inbox nobody treats as inventory. Against that, "looks exactly like the real thing" is worth
 much less than it costs. So a test is now a **specimen**: the same email, the same layout, the
 same pruning behaviour, made of facts that are invented end to end.
@@ -1208,7 +1208,7 @@ to prevent — a window painted on the wrong hour for every operator outside the
 
 The widget reads at `maintenanceManagement:read`, which is what the feed gates on. Its verbs —
 Open schedule…, Disable schedule, + New schedule — all open or write through the Maintenance
-editor, so they carry that editor's own `maintenanceManagement:fullwrite` gate and are withheld
+editor, so they carry that editor's own `maintenanceManagement:write` gate and are withheld
 entirely below it, on the `/dash` wallboard (no session to act with), and in a library preview. A
 button that opens an editor whose every save 403s is worse than no button; the route stays the
 control either way. A write made from there must also survive being off the Assets page: the

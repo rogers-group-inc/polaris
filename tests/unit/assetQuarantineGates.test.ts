@@ -26,6 +26,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { clampLevelToKey, levelsFor } from "../../src/api/middleware/permissions.js";
 
 const assetsSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
 const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
@@ -180,8 +181,16 @@ describe("quarantine RBAC defaults", () => {
     expect(matrixFor("assetsadmin")).toContain('"assetsQuarantine":"write"');
   });
 
-  it("seeds admin with fullwrite and the read-only roles with read", () => {
+  it("seeds admin with the top rung and the read-only roles with read", () => {
+    // The 2026-05 seed wrote `fullwrite` here. The catalogue sweep of
+    // 2026-09-22 shortened this key's ladder to none|read|write — no route
+    // ever asked for the fourth rung — and migration
+    // 20260922000000_rbac_catalogue_hygiene folds the stored value down, so
+    // admin's EFFECTIVE level today is `write`. Both are "the top of the
+    // ladder"; the seed text below is history and is asserted as such.
     expect(matrixFor("admin")).toContain('"assetsQuarantine":"fullwrite"');
+    expect(levelsFor("assetsQuarantine")).toEqual(["none", "read", "write"]);
+    expect(clampLevelToKey("assetsQuarantine", "fullwrite")).toBe("write");
     for (const role of ["readonly", "networkadmin", "user"]) {
       expect(matrixFor(role), role).toContain('"assetsQuarantine":"read"');
     }

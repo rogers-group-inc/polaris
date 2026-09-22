@@ -53,7 +53,10 @@ describe("permissionOf", () => {
       notificationManagement: "fullwrite",
     } as Record<string, AccessLevel>;
     expect(permissionOf(preRename, "alerts")).toBe("write");
-    expect(permissionOf(preRename, "automationManagement")).toBe("fullwrite");
+    // Resolves through the alias AND clamps into automationManagement's
+    // ladder, which lost its dead fourth rung on 2026-09-22 — a snapshot
+    // stamped before either change still lands on the key's top level.
+    expect(permissionOf(preRename, "automationManagement")).toBe("write");
   });
 
   it("returns none when neither key is present or values are invalid", () => {

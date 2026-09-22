@@ -302,6 +302,17 @@ refusal**, and it **destroys nothing**.
 `assets:fullwrite`, not `write`. `assetsProbe` is a **read-only key**.
 `credentials` carries the ownership dimension, testing a stored row included.
 
+Extended across the whole catalogue on 2026-09-22: **a level exists only where it
+grants something the level below it does not.** Eighteen keys were offering a rung
+no button or route ever asked for, so picking it and picking the one below it were
+the same grant. `processControl`, which had gated nothing since process control was
+removed, is gone. **Nothing lost a capability** — a stored level folds onto the one
+that always actually delivered it. Two levels also moved because they misdescribed
+the act: **downloading a backup is the whole database leaving the host**, so it is no
+longer a read, and the asset auto-decommission thresholds moved off the audit-log key
+onto monitor settings. See
+[Users, roles and permissions](Users-Roles-and-Permissions#short-ladders).
+
 ### Rule 44
 **A quiet window withholds the reminder, not the alert — and the reminder that
 follows says how long.** Held, never skipped. The hold is closed by the **send**,

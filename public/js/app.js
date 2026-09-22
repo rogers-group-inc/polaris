@@ -499,7 +499,7 @@ function canProbeAssets() { return permAtLeast("assetsProbe", "read"); }
 // `dependencyTestUntil` and can briefly mask a real outage — so it sits on
 // `assetMonitorSettings=fullwrite`, admin-only in every built-in role.
 function canSimulateDependencyDown() { return permAtLeast("assetMonitorSettings", "fullwrite"); }
-function canManageMaintenance() { return permAtLeast("maintenanceManagement", "fullwrite"); }
+function canManageMaintenance() { return permAtLeast("maintenanceManagement", "write"); }
 function isUserOrAbove() { return permAtLeast("subnets", "write") || permAtLeast("reservations", "write"); }
 function canReviewConflicts() { return permAtLeast("discoveryConflicts", "write"); }
 function canReserveIps() { return permAtLeast("reservations", "write"); }

@@ -41,7 +41,7 @@ router.get("/web-push", requirePermission("automationManagement", "read"), async
   try { res.json(await getWebPushState()); } catch (err) { next(err); }
 });
 
-router.put("/web-push", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+router.put("/web-push", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
     res.json(await setWebPushEnabled(enabled, req.session?.username));
@@ -53,7 +53,7 @@ router.put("/web-push", requirePermission("automationManagement", "fullwrite"), 
 // to build an automation and provoke a trigger. Scoped to the caller's own
 // subscriptions — this must never be a way to notify other people.
 // Declared before "/:id/test" or the literal path is captured as an id.
-router.post("/web-push/test", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+router.post("/web-push/test", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const userId = req.session?.userId;
     if (!userId) throw new AppError(401, "Not authenticated");
@@ -65,21 +65,21 @@ router.get("/:id", requirePermission("automationManagement", "read"), async (req
   try { res.json(await getChannel(req.params.id as string)); } catch (err) { next(err); }
 });
 
-router.post("/", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+router.post("/", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = channelInputSchema.parse(req.body);
     res.status(201).json(await createChannel(input, req.session?.username));
   } catch (err) { next(err); }
 });
 
-router.put("/:id", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+router.put("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const input = channelUpdateSchema.parse(req.body);
     res.json(await updateChannel(req.params.id as string, input as any, req.session?.username));
   } catch (err) { next(err); }
 });
 
-router.delete("/:id", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+router.delete("/:id", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     await deleteChannel(req.params.id as string, req.session?.username);
     res.status(204).end();
@@ -87,14 +87,14 @@ router.delete("/:id", requirePermission("automationManagement", "fullwrite"), as
 });
 
 // Generate + store a VAPID keypair on a web_push channel.
-router.post("/:id/generate-vapid", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+router.post("/:id/generate-vapid", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try { res.json(await generateWebPushKeys(req.params.id as string, req.session?.username)); } catch (err) { next(err); }
 });
 
 // Send a test through a channel. Email channels take a `to` address; chat /
 // pushbullet post to the channel's own destination. Uses the STORED config
 // (secrets intact) — save before testing.
-router.post("/:id/test", requirePermission("automationManagement", "fullwrite"), async (req, res, next) => {
+router.post("/:id/test", requirePermission("automationManagement", "write"), async (req, res, next) => {
   try {
     const ch = await getChannelRaw(req.params.id as string);
     if (!ch) throw new AppError(404, "Notification channel not found");

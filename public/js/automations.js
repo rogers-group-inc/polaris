@@ -38,9 +38,9 @@ var _rulesPage = 1;
 
   function applyPermGatedUI() {
     canManage = permAtLeast("automationManagement", "read");
-    canEditRules = permAtLeast("automationManagement", "fullwrite");
+    canEditRules = permAtLeast("automationManagement", "write");
     canReadScripts = permAtLeast("automationScripts", "read");
-    canEditScripts = permAtLeast("automationScripts", "fullwrite");
+    canEditScripts = permAtLeast("automationScripts", "write");
     canReadContacts = permAtLeast("contacts", "read");
     // "write" is enough to add — the ownership dimension decides which rows a
     // caller may then edit or delete, row by row, in the list renderer.
@@ -853,7 +853,7 @@ async function loadWebPushCard() {
 function renderWebPushCard(state) {
   var el = document.getElementById("web-push-card");
   if (!el) return;
-  var canEdit = permAtLeast("automationManagement", "fullwrite");
+  var canEdit = permAtLeast("automationManagement", "write");
   var on = !!(state && state.enabled);
   var count = (state && state.subscriberCount) || 0;
 
@@ -969,7 +969,7 @@ function channelDetailRows(c) {
 function renderChannelsList(allChannels) {
   var container = document.getElementById("channels-list");
   if (!container) return;
-  var canEdit = permAtLeast("automationManagement", "fullwrite");
+  var canEdit = permAtLeast("automationManagement", "write");
   // web_push is rendered by its own on/off card above, not as a configurable
   // destination. It still lives in _ruleChannels so the automation wizard can
   // select it as a Notify target.
@@ -1242,7 +1242,7 @@ async function loadScriptsTab() {
 function renderScriptsList(scripts) {
   var container = document.getElementById("scripts-list");
   if (!container) return;
-  var canEdit = permAtLeast("automationScripts", "fullwrite");
+  var canEdit = permAtLeast("automationScripts", "write");
   if (!scripts.length) {
     container.innerHTML = '<p class="empty-state">No scripts yet' + (canEdit ? ' — click "+ Add script" to create one.' : "") + '</p>';
     return;

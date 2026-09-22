@@ -2105,7 +2105,7 @@ async function openAutomationWizard(existing, opts) {
   // needs the registry to be readable + the fullwrite key to attach.
   function availableActionTypes() {
     return (s.actionTypes || [{ type: "notify", label: "Send a notification" }]).filter(function (t) {
-      if (t.type === "script") return Array.isArray(_awScripts) && permAtLeast("automationScripts", "fullwrite");
+      if (t.type === "script") return Array.isArray(_awScripts) && permAtLeast("automationScripts", "write");
       return true;
     });
   }
@@ -2279,7 +2279,7 @@ async function openAutomationWizard(existing, opts) {
       : "";
     // Import is offered when CREATING only \u2014 replacing the automation an
     // operator opened to edit would be a data-loss trap, not a feature.
-    var importRow = (!editing && !cloning && portability() && permAtLeast("automationManagement", "fullwrite"))
+    var importRow = (!editing && !cloning && portability() && permAtLeast("automationManagement", "write"))
       ? '<div style="display:flex;align-items:center;gap:0.5rem;margin:0 0 1rem;flex-wrap:wrap">' +
           '<button class="btn btn-secondary" id="aw-import-btn" type="button">Import from file\u2026</button>' +
           '<span style="font-size:0.8rem;color:var(--color-text-tertiary);flex:1 1 16rem">Start from an exported automation. The file\u2019s name becomes this automation\u2019s name.</span>' +
@@ -6631,7 +6631,7 @@ async function openAutomationWizard(existing, opts) {
     var viewBtn = document.getElementById('aw-view-code');
     if (viewBtn) {
       viewBtn.addEventListener('click', function () {
-        var canSave = permAtLeast('automationManagement', 'fullwrite');
+        var canSave = permAtLeast('automationManagement', 'write');
         P.openCodeModal({
           title: 'Automation code',
           body: buildPayload({ nameFallback: 'Untitled automation' }),
@@ -6679,7 +6679,7 @@ async function openAutomationWizard(existing, opts) {
       '</div>' +
       // Test delivery — omitted entirely (not disabled) without fullwrite, the
       // way the Delivery tab drops its buttons: the endpoint would 403 anyway.
-      (permAtLeast("automationManagement", "fullwrite")
+      (permAtLeast("automationManagement", "write")
         ? '<div class="form-group" id="aw-test-delivery" style="border:1px solid var(--color-border);border-radius:6px;padding:0.75rem">' +
             '<label style="font-weight:600;margin:0 0 6px;display:block">Test delivery</label>' +
             '<div id="aw-test-body"></div>' +
@@ -6688,7 +6688,7 @@ async function openAutomationWizard(existing, opts) {
     renderSummary();
     renderAffectedDevices();
     wireCodeButtons();
-    if (permAtLeast("automationManagement", "fullwrite")) renderTestDelivery();
+    if (permAtLeast("automationManagement", "write")) renderTestDelivery();
   }
 
   /**
