@@ -333,6 +333,45 @@ upgraded.
 Each agent also picks a small random offset of its own at startup, so a fleet
 deployed in one batch does not arrive at the server in lockstep.
 
+The offsets stagger when each collection **starts**. They cannot control how
+long one takes, and on a small or busy host a collection often overruns into
+the next one's slot — which is why nothing the agent measures is allowed to
+depend on having a quiet instant to itself. See the CPU reading below.
+
+### What the CPU number measures
+
+**Every CPU figure the agent reports is an average over the whole gap since
+its previous sample** — by default the last 60 seconds, whatever
+`telemetry_interval_sec` is set to. The agent reads the kernel's running CPU
+counters and reports the difference; it does not sample a moment and it does
+not pause to watch.
+
+That matters on small hosts. **Before agent 0.20.0 the reading was a single
+1-second window once a minute**, so it described 1 second in 60 and said
+nothing about the other 59. On a **single-vCPU VM** that was actively
+misleading: if one of the agent's own collections was still running when the
+window opened, it held the only core, and the sample reported ~100% CPU for a
+host that was otherwise idle. The chart was describing the agent, not the
+machine. Spreading the collections across the minute (0.19.0) did not fix it,
+because a collection that starts in its own slot can still be running when
+the window opens 11 seconds later.
+
+Two things follow from the current behaviour, both worth knowing before you
+read a chart or set a threshold:
+
+- **The agent's own overhead can no longer dominate a sample.** It now shows
+  up as what it actually costs — a few percent of the interval — instead of
+  as the entire reading on the ticks where it collided.
+- **The cadence is the smoothing.** A brief spike is averaged across the
+  whole interval rather than caught or missed at random, so the chart is
+  flatter than it was before 0.20.0 and **CPU thresholds fire on a sustained
+  average rather than on a lucky sample**. If you want a sharper chart on a
+  particular host, shorten `telemetry_interval_sec`; that shortens the
+  averaging window with it.
+
+Upgrading the agent is what applies this — an installed agent keeps its old
+behaviour until it is upgraded.
+
 ### Per-core CPU and the memory breakdown
 
 An agent-monitored host's Assets → System tab splits **CPU & Memory into two
