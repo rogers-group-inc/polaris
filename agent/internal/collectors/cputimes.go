@@ -1,5 +1,6 @@
 // cputimes.go — host CPU% measured across the WHOLE cadence, not a 1 s slice
-// of it.
+// of it. Business rule 82: a measurement of the host must not be dominated by
+// the measurer, and a scheduling offset is not a way to protect one.
 //
 // The reading used to be `cpu.Percent(1*time.Second, true)`: block for one
 // second, report that second. On a host with spare cores that is merely

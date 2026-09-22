@@ -52,6 +52,7 @@ Reference files (all verbatim):
 - [references/narrative-60-64.md](references/narrative-60-64.md) — full narrative, rules 60–74 (the filename keeps its original range: it is a stable citation key. Split out 2026-09-15 when the 44–48 file reached the 1500-line ceiling)
 - [references/narrative-78.md](references/narrative-78.md) — full narrative, rule 78 (split out 2026-09-21 when the 60-64 file reached the 1500-line ceiling; the filename is a stable citation key)
 - [references/narrative-80.md](references/narrative-80.md) — full narrative, rule 80 (split out for the same reason, same day; the filename is a stable citation key)
+- [references/narrative-82.md](references/narrative-82.md) — full narrative, rule 82 (written as its own file, the 60-64 file being at the ceiling; **81 is deliberately skipped** — it was published then reverted wholesale the same week, and a citation key that means two things is worse than a gap)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.
@@ -142,6 +143,7 @@ before changing anything the invariant constrains.
 | 78 | An automation may choose to speak for a silenced device, and then it must name who silenced it | invariants-30-43 | narrative-78 |
 | 79 | An operator's removal of a MAC is a correction, not a suppression | invariants-30-43 | narrative-60-64 |
 | 80 | Downtime Polaris itself causes is not an incident — and a silence it grants expires on its own | invariants-30-43 | narrative-80 |
+| 82 | A measurement of the host must not be dominated by the measurer, and a scheduling offset is not a way to protect one | invariants-30-43 | narrative-82 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain),
 `polaris-change-impact` (who else reads or writes the fields a rule governs),
