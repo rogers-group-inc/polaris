@@ -309,7 +309,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - The card's Username input reads `state[platform].username`, never a top-level `username` (there is none — reading it rendered the box permanently blank, so a saved account never showed and a blank Save was refused). Its placeholder follows the mode radio: `<domain>\<username>` (Windows) / `<username>` (Linux) for an existing account, `polaris-agent` for a created one.
 
 **When changing this:**
-- `POST /agents/windows-ssh/generate` must keep BOTH gates: `serverSettingsSystem:fullwrite` AND `credentials:write`. It mints a fleet-wide admin credential; the second gate is not redundant.
+- `POST /agents/windows-ssh/generate` must keep BOTH gates: `serverSettingsSystem:write` (that key's top rung since the 2026-09-23 split) AND `credentials:write`. It mints a fleet-wide admin credential; the second gate is not redundant.
 - Import ssh2's `utils` off the DEFAULT export. It is CommonJS and cjs-module-lexer surfaces `Client` but not `utils`, so a named import throws at module load under Node's ESM loader even though Vitest interops it fine.
 - Tests: `tests/unit/windowsSshOnboarding.test.ts` (in-memory prisma double so credentialService's real validation/masking runs).
 

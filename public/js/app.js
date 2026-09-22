@@ -4508,7 +4508,7 @@ function _tagChipStyle(color, checked) {
 // couldn't show).
 function _canCreateRegistryTags() {
   if (_tagCache.failed) return false;
-  return typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "fullwrite");
+  return typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
 }
 
 /**

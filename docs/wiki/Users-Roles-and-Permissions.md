@@ -8,7 +8,7 @@ Roles**, **Group Mappings**, **Authentication**.
 ## The model
 
 Every route declares a **function key** plus a required **level**. A role is a
-matrix over the 32 keys:
+matrix over the 33 keys:
 
 ```
 none  <  read  <  write  <  fullwrite
@@ -44,9 +44,9 @@ decision the operator did not really make.
 | Ladder | Keys | Why |
 |---|---|---|
 | `none \| read` | `assetsProbe` | A probe dials the device and writes nothing in Polaris, so Read *is* the whole grant |
-| `none \| read \| write` | 17 keys — see the tables below | Full Read-Write was never routed. It means something only where it lifts an ownership filter or reserves a more dangerous act |
+| `none \| read \| write` | 19 keys — see the tables below | Full Read-Write was never routed. It means something only where it lifts an ownership filter or reserves a more dangerous act |
 | `none \| write` | `serverSettingsData` | Nothing on the key is merely viewable. Its reads sit on the System key's floor, and everything it gates changes the database or hands over a copy of it |
-| all four | the 8 ownership keys and named exceptions | Marked in the tables below |
+| all four | the 5 ownership keys and 7 named exceptions | Marked in the tables below |
 
 The UI renders a dash instead of a radio for an unsupported cell. Stored values
 **clamp down, never up** — a `fullwrite` on a read-only key means "as much as
@@ -62,7 +62,7 @@ silently revoke.
 
 ---
 
-## The 32 function keys
+## The 33 function keys
 
 **Top rung** names the highest level the key offers. Where that is Full
 Read-Write, the last column says what it buys over Read-Write — because that is
@@ -134,22 +134,55 @@ the only thing that justifies the rung existing.
 | `apiTokens` | Read-Write | long-lived bearer tokens |
 | `users` | Full RW | user CRUD, role assignment, TOTP and passkey reset. **Full RW = IdP group mappings** |
 | `roles` | Full RW | **the matrix itself** — Full RW here plus Full RW on Users is admin-equivalent |
+| `authentication` | Read-Write | how operators sign in: the SAML / OIDC / LDAP / App Proxy providers, the passkey policy and the password policy |
 | `savedDashboards` | Full RW | named layouts; Read-Write **publishes**, Full RW deletes anyone's |
-| `serverSettingsSystem` | Full RW | HTTPS, branding, DNS, NTP, certificates, capacity, tags, HA, the agent fleet. **Read-Write alone = the login providers** |
+| `serverSettingsSystem` | Read-Write | HTTPS, branding, DNS, NTP, certificates, capacity, tags, HA, the agent fleet |
 | `serverSettingsData` | **Read-Write** (no Read) | backup, restore, **download**, queue mode, security tokens, restart, in-app updates |
 
-> **Two levels here are worth knowing about.**
->
 > `serverSettingsData` has no Read rung because **downloading a backup is not a
 > read** — the archive is the entire database. It sat at Read until 2026-09-22,
 > one rung below backup and restore, which made "may look at the Data tab" and
 > "may walk off with the database" the same grant. Every other read on that tab
 > rides the System key's floor.
->
-> `serverSettingsSystem`'s Read-Write rung gates **only the identity providers**
-> (SAML / OIDC / LDAP / App Proxy) while Full Read-Write gates everything else on
-> the tab. So repointing every login at a different IdP currently sits a rung
-> *below* changing the logo. The providers are due to move to a key of their own.
+
+### Who may change how people log in
+
+`authentication` was **split out of `serverSettingsSystem` on 2026-09-23**, and
+it is worth knowing why if you maintain custom roles.
+
+The System key had two rungs in use. Read-Write gated exactly twelve routes, all
+of them **identity-provider configuration**; Full Read-Write gated the other
+fifty-four — TLS, HA, tags, DNS, NTP, branding, capacity, the agent fleet. So
+repointing every login in the install at an identity provider of your choosing
+was a *lesser* grant than changing the logo, and the two could not be separated:
+you could not delegate branding without also delegating the login path.
+
+Now they are separate keys, and the System key tops out at Read-Write like most
+others.
+
+**What this did to existing roles.** Nobody gained anything:
+
+| Had | Gets | |
+|---|---|---|
+| `serverSettingsSystem` Full RW | `authentication` Read-Write | unchanged — it could already reach all of this |
+| `serverSettingsSystem` Read-Only | `authentication` Read-Only | unchanged |
+| `serverSettingsSystem` **Read-Write** | `authentication` **Read-Only** | **the one change** |
+
+That last row is the point of the split. A role on that rung could edit every
+identity provider, and an admin who granted it was almost certainly delegating
+"some server settings" rather than the install's login path. It keeps sight of
+the configuration and loses the ability to repoint it. **No built-in role is on
+that rung** — only a custom role someone set deliberately. To give it back,
+grant `authentication` Read-Write, which is now a decision rather than a side
+effect.
+
+Two neighbours deliberately stayed put. **IdP group mappings** remain on
+`users` Full Read-Write: a mapping decides which *role* an IdP group receives,
+which is granting authority rather than configuring authentication, and it is
+already the documented path to admin outside the last-admin guard. And the
+**login-page source-IP restriction** remains on `serverSettingsSystem`: it
+governs who can reach a page over the network, not how Polaris decides who you
+are.
 
 ---
 

@@ -110,7 +110,7 @@ There is no escrow — recovery is regenerate and re-run the script, which is wh
 the scripts are idempotent. The public key is deliberately non-secret so the
 script can be re-rendered without rotating the key.
 
-Generating it carries a **chained** gate: `serverSettingsSystem:fullwrite`
+Generating it carries a **chained** gate: `serverSettingsSystem:write`
 **and** `credentials:write`, since it mints a fleet-wide admin credential.
 
 Settings are **per platform**, and Polaris maintains one managed credential per

@@ -65,7 +65,7 @@ router.get("/", requirePermission("serverSettingsSystem", "read"), async (_req, 
 
 // ─── PUT / : save without applying ─────────────────────────────────────────
 
-router.put("/", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+router.put("/", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     // TS-level cast only — runtime validation lives in the service
     // (saveProxyConfig → mergeProxyConfig + validateProxyConfig field-checks
@@ -87,7 +87,7 @@ router.put("/", requirePermission("serverSettingsSystem", "fullwrite"), async (r
 // Operator clicks "Adopt managed mode" in the drift banner; flips the gate
 // so subsequent /apply calls are allowed.
 
-router.post("/adopt-managed-mode", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+router.post("/adopt-managed-mode", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const saved = await saveProxyConfig({ managedMode: true });
     await logEvent({
@@ -106,7 +106,7 @@ router.post("/adopt-managed-mode", requirePermission("serverSettingsSystem", "fu
 
 // ─── POST /apply : render + stage + sudo apply ─────────────────────────────
 
-router.post("/apply", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+router.post("/apply", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     // Cast is TS-level only — applyProxyConfig routes through saveProxyConfig's
     // field-checked merge/validate before anything touches nginx.
@@ -136,7 +136,7 @@ router.post("/apply", requirePermission("serverSettingsSystem", "fullwrite"), as
 
 router.post(
   "/cert/preflight",
-  requirePermission("serverSettingsSystem", "fullwrite"),
+  requirePermission("serverSettingsSystem", "write"),
   upload.fields([{ name: "cert", maxCount: 1 }, { name: "key", maxCount: 1 }]),
   async (req, res, next) => {
     try {
@@ -159,7 +159,7 @@ router.post(
 // agent already covers the new cert; otherwise agents will refuse the new
 // cert at next reconnect.
 
-router.post("/cert/rotate", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+router.post("/cert/rotate", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const certPem = String(req.body?.certPem ?? "");
     const keyPem = String(req.body?.keyPem ?? "");

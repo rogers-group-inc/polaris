@@ -581,6 +581,14 @@ async function initAuthSettingsButton() {
   var btn = document.getElementById("btn-auth-settings");
   if (!btn) return;
 
+  // Gated on the `authentication` key since the 2026-09-23 split. Until then
+  // this button showed for every caller who could reach the Users page and the
+  // modal's seven reads each fell back to their shipped defaults on 403 — so an
+  // operator without the grant was shown a complete, editable-looking
+  // Authentication dialog describing a configuration that was not theirs and
+  // whose Save could only fail.
+  if (typeof permAtLeast === "function" && !permAtLeast("authentication", "read")) return;
+
   btn.style.display = "";
   btn.addEventListener("click", openAuthSettingsModal);
 }
@@ -2107,7 +2115,7 @@ function tagCategoryFor(name) {
 // to this assignment alone and the hint says so, instead of the click landing
 // on a 403.
 function canCreateRegistryTags() {
-  return _tagCatalogLoaded && typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "fullwrite");
+  return _tagCatalogLoaded && typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
 }
 
 function otherTagChipHtml(t) {
