@@ -1,5 +1,9 @@
 // serialnumber.go — is this string actually a serial number?
 //
+// Business rule 84 (the server half is src/utils/serialNumber.ts): a value that
+// cannot identify a device is refused where it would be WRITTEN — here, before
+// it ever goes on the wire.
+//
 // SMBIOS serial fields are free text that the board vendor is supposed to
 // program at manufacture and frequently doesn't. What comes back instead is a
 // placeholder ("To Be Filled By O.E.M.", "Default string", "System Serial

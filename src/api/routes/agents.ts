@@ -1134,8 +1134,8 @@ agentsRouter.post("/system-info", async (req, res, next) => {
         }
       }
 
-      // A stored serial that is NOT a serial gets cleared when no source can
-      // replace it. The loop above deliberately never writes a null — "no
+      // Business rule 84: a stored serial that is NOT a serial gets cleared when
+      // no source can replace it. The loop above deliberately never writes a null — "no
       // source has an opinion" must not wipe a field — but that rule stranded
       // the values this endpoint used to create: agents before 0.20.1 reported
       // the Windows SystemSKU as the serial, and a fixed agent on the same host

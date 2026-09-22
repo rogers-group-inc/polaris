@@ -258,7 +258,7 @@ const HOSTNAME_RULES: FieldRule[] = [
 ];
 
 /**
- * Every serial rule reads through `obsSerial`, not `obsString`: a value that
+ * Business rule 84. Every serial rule reads through `obsSerial`, not `obsString`: a value that
  * cannot identify a device must FALL THROUGH to the next source rather than
  * win the field. SMBIOS placeholders ("To Be Filled By O.E.M.", "Default
  * string") are identical on every unit of a model, so storing one both hides

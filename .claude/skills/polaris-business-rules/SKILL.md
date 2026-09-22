@@ -55,6 +55,7 @@ Reference files (all verbatim):
 - [references/narrative-80.md](references/narrative-80.md) — full narrative, rule 80 (split out for the same reason, same day; the filename is a stable citation key)
 - [references/narrative-82.md](references/narrative-82.md) — full narrative, rule 82 (written as its own file, the 60-64 file being at the ceiling; **81 is deliberately skipped** — it was published then reverted wholesale the same week, and a citation key that means two things is worse than a gap)
 - [references/narrative-83.md](references/narrative-83.md) — full narrative, rule 83 (its own file for the same reason; the filename is a stable citation key)
+- [references/narrative-84.md](references/narrative-84.md) — full narrative, rule 84 (its own file for the same reason; the filename is a stable citation key)
 
 Read the invariant first (it is the contract), then the narrative for the same number
 before changing anything the invariant constrains.

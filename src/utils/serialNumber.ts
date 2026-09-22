@@ -1,6 +1,9 @@
 /**
  * src/utils/serialNumber.ts — is this string actually a serial number?
  *
+ * BUSINESS RULE 84: a value that cannot identify a device is refused where it
+ * would be WRITTEN, not where a sweep would read it.
+ *
  * Extracted from `services/duplicateSerialConflictService.ts` (business rule
  * 83), which was the first caller and for a while the only one. It needs to be
  * shared because a value that cannot identify a device must not be allowed to

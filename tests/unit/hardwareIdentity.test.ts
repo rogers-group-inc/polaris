@@ -82,10 +82,13 @@ describe("indexUniqueBy", () => {
   });
 
   it("DROPS a key claimed by two different assets", () => {
-    // This is the defence against the agent's Windows SystemSKU fallback: a
-    // model SKU is a well-formed string that normalization can't reject, so
-    // the data itself has to disqualify it. Merging on it would collapse
-    // every machine of that model into one asset.
+    // A model SKU is a well-formed string that normalization cannot reject, so
+    // the data itself has to disqualify it — merging on one would collapse every
+    // machine of that model into a single asset. The motivating case was our own
+    // agent (business rule 84): its Windows collector reported SystemSKU as the
+    // serial until 0.20.1. That is fixed at the source now, but this guard is not
+    // retired with it — un-upgraded agents still report SKUs, and a cloned VM
+    // duplicates its template serial no matter what any collector does.
     const { index, ambiguous } = indexUniqueBy([
       e("MODEL-SKU-0A1B", "asset-1"),
       e("MODEL-SKU-0A1B", "asset-2"),
