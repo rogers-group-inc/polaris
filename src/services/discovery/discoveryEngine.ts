@@ -33,7 +33,7 @@ import { ENTRA_ASSET_TAG_PREFIX, AD_ASSET_TAG_PREFIX, AD_GUID_TAG_PREFIX, SID_TA
 import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanagerService.js";
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
-import { scoreDhcpClaim, claimBeats, type DhcpClaimScore } from "../../utils/dhcpClaimFreshness.js";
+import { scoreDhcpClaim, claimBeats, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
 import { readFirewallDeviceName, normalizeNameKey } from "../../utils/fortinetParentKey.js";
 import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
@@ -815,10 +815,17 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     // per run the way infraReservationPushService is bounded per integration.
     const adoptionBudget = createAdoptionBudget();
 
+    // Which gate speaks for each asset's address, for this ENTIRE run — the
+    // same per-run shape as the budget above, and needed for the same reason.
+    // The per-gate sync below would otherwise start from an empty ranking
+    // every time, so each gate would win uncontested and the last gate to
+    // finish would own the address no matter what evidence the others held.
+    const claimState = createDhcpClaimState();
+
     // Per-device callback: sync each FortiGate's data as it arrives (phases 1, 3–9).
     // Phase 2 (stale deprecation) runs separately at the end once all devices are known.
     const onDeviceComplete = async (deviceResult: DiscoveryResult) => {
-      const r = await syncDhcpSubnets(integrationId, integrationName, integration.type, deviceResult, actor, "skip-deprecation", ac.signal, adoptionBudget);
+      const r = await syncDhcpSubnets(integrationId, integrationName, integration.type, deviceResult, actor, "skip-deprecation", ac.signal, adoptionBudget, claimState);
       syncTotals.created.push(...r.created);
       syncTotals.updated.push(...r.updated);
       syncTotals.skipped.push(...r.skipped);
@@ -1993,7 +2000,13 @@ export function isVouchedManagedDevice(
 // inline, and the hazard that shape has to survive — two sightings of ONE
 // asset in a single run — is only observable through the real function against
 // a real database.
-export async function syncDhcpSubnets(integrationId: string, integrationName: string, integrationType: string, result: DiscoveryResult, actor?: string, mode: SyncMode = "full", signal?: AbortSignal, adoptionBudget?: AdoptionBudget) {
+export async function syncDhcpSubnets(integrationId: string, integrationName: string, integrationType: string, result: DiscoveryResult, actor?: string, mode: SyncMode = "full", signal?: AbortSignal, adoptionBudget?: AdoptionBudget, claimState?: DhcpClaimState) {
+  // Which gate speaks for an asset's address. RUN-scoped, not call-scoped: in
+  // FMG mode this function runs once per managed gate, so a state created here
+  // would let every gate win its own empty map and make the address
+  // last-gate-wins. Callers that fan out over gates pass one state for the
+  // whole run; a single-call path can omit it. See utils/dhcpClaimFreshness.ts.
+  const claims = claimState ?? createDhcpClaimState();
   const syncLog = (level: "info" | "warning" | "error", message: string) => {
     logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
   };
@@ -5476,8 +5489,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // name regardless of which pathway carried it, instead of whichever pathway
   // (or gate) happened to iterate last. Only strictly-fresher evidence takes
   // over, so a remembered-but-offline (but still local-attributed) inventory
-  // row can't out-name a currently-held lease.
-  const bestGateClaimMsByAsset = new Map<string, number>();
+  // row can't out-name a currently-held lease. Lives on the run-scoped
+  // `claims` state so it also spans the per-gate syncs of an FMG run.
+  const bestGateClaimMsByAsset = claims.bestGateClaimMsByAsset;
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 6 — Associate DHCP MACs with assets & cross-update reservations
@@ -5536,7 +5550,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // take ipAddress / ipSource / learnedLocation — and the fortigate-endpoint
     // source blob's gate — from the FRESHEST sighting, not from whichever
     // entry iterates last. See utils/dhcpClaimFreshness.ts for the ranking.
-    const bestIpClaimByAsset = new Map<string, DhcpClaimScore>();
+    // Run-scoped, so the gates of an FMG run — which each get their own call
+    // to this function — compete in one set rather than one set apiece.
+    const bestIpClaimByAsset = claims.bestIpClaimByAsset;
 
     for (const entry of result.dhcpEntries) {
       if (!entry.macAddress || !entry.ipAddress) continue;
@@ -5884,8 +5900,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // Phase 6 rule applied to inventory-only MACs: several gates can report
     // the same client (the site it left keeps a remembered-but-offline row),
     // and without ranking the LAST row iterated wrote the IP. The gate whose
-    // per-client last_seen is freshest speaks for the address.
-    const bestInvIpSeenByAsset = new Map<string, number>();
+    // per-client last_seen is freshest speaks for the address. Run-scoped for
+    // the same reason as the Phase 6 map above.
+    const bestInvIpSeenByAsset = claims.bestInvIpSeenByAsset;
 
     // Deferred I/O for the update path (see the note at the write site).
     // deviceInventory is every DHCP client across every gate — routinely the
