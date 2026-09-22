@@ -216,6 +216,13 @@ open when the operation starts and end when the agent reconnects.
 | **If the operation fails** | it ends immediately. An agent that is down because its upgrade failed is a real problem and you should hear about it |
 | **If nothing ends it** | it expires on its own — 20 minutes for an upgrade or uninstall, 30 for a reinstall. A device in maintenance is not being watched, so this can never be left open by a crash |
 
+These windows are usually **very short** — an agent upgrade can open and close
+one inside two seconds. That is shorter than the interval event automations run
+on, which is why they judge an event against the device's maintenance history at
+the moment it happened rather than against its state when they get round to
+reading it ([rule 80a](Business-Rules#rule-80a)). Without that, a window this
+brief would suppress nothing at all.
+
 They do **not** appear on the Active Maintenance widget, which lists your
 schedules — a fleet-wide agent upgrade would otherwise fill a wallboard with
 one-minute entries. They do appear on the device: its status, its Maintenance

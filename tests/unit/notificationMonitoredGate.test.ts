@@ -28,6 +28,11 @@ const h = vi.hoisted(() => ({
     event: { findMany: vi.fn() },
     setting: { findUnique: vi.fn(), upsert: vi.fn() },
     hostMetricsSample: { findMany: vi.fn() },
+    // The event tail's second gate reads maintenance-window HISTORY, so it can
+    // judge an event against the window that was open when it happened rather
+    // than against the asset's status a tick later (business rule 80a).
+    // Default: no windows — the asset was never in maintenance.
+    assetMaintenanceWindow: { findMany: vi.fn(async () => []) },
   },
 }));
 
