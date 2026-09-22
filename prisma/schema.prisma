@@ -271,6 +271,7 @@ model Integration {
   pushedReservations    Reservation[]            @relation("ReservationPushedTo")
   fortigateSightings    AssetFortigateSighting[] // Back-relation: sightings recorded against this integration's discovered FortiGates
   assetSources          AssetSource[] // Back-relation: per-source asset rows attributed to this integration
+  controllerClaims      AssetControllerClaim[] // Back-relation: managed-device claims this integration's gates asserted (business rule 83)
   monitorClassOverrides MonitorClassOverride[] // Back-relation: (assetType, integration) override rows
   vcenterDatastores     VcenterDatastore[] // Back-relation: current-state datastore rows (vcenter type only)
 
@@ -1180,6 +1181,7 @@ model Asset {
   conflicts              Conflict[]
   ipHistory              AssetIpHistory[]
   fortigateSightings     AssetFortigateSighting[]
+  controllerClaims       AssetControllerClaim[]
   interfaceOverrides     AssetInterfaceOverride[]
   // NOTE: the append-only sample/rollup time-series (AssetMonitorSample,
   // *InterfaceSample, the *Hourly/*Daily rollups, AssetCustomWidgetSample, etc.)
@@ -4358,6 +4360,66 @@ model AssetFortigateSighting {
   // in through assetId.
   @@index([ipAddress])
   @@map("asset_fortigate_sightings")
+}
+
+// One controller FortiGate's CLAIM on one managed device (business rule 83).
+//
+// Why this table exists: `AssetSource` is unique on `(sourceKind, externalId)`
+// and externalId for a FortiSwitch/FortiAP is its SERIAL, so exactly one row
+// can exist per managed device however many gates report it. Discovery's
+// switch/AP loops then stamp `Asset.fortinetTopology` and
+// `discoveredByIntegrationId` unconditionally, so when two gates both carry a
+// device on their managed roster the record simply flips to whichever
+// integration ran last — silently, every pass, taking dependency suppression,
+// Device Map membership, region tags and description-sync targeting with it.
+// Nothing persisted the fact that a SECOND gate also claimed the serial, so
+// nothing could report it. This row is that evidence: one row per
+// (device serial, claiming controller), re-asserted on every discovery pass.
+//
+// It is NOT a projection input — `projectAssetFromSources` never reads it and
+// the claim never decides which controller wins. Report-only by design: the
+// conflict card tells an operator that two gates disagree, discovery keeps its
+// existing last-writer-wins behaviour, and a claim that stops being re-asserted
+// ages out (which is how a completed move closes its own card).
+model AssetControllerClaim {
+  id      String @id @default(uuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  /// The managed device's own serial, upper-cased — the same key
+  /// `AssetSource.externalId` uses for the fortiswitch/fortiap kinds.
+  deviceSerial String
+  /// "fortiswitch" | "fortiap" — matches the AssetSource sourceKind that
+  /// recorded the device, so a card can say what kind of thing is contested.
+  sourceKind   String
+
+  /// Chassis identity of the CLAIMING gate (business rule 41's vocabulary:
+  /// the serial, never the name, is what identifies a gate). Null when the
+  /// controller published no serial, which is why `controllerKey` exists.
+  controllerSerial String?
+  /// FortiManager's device NAME for the claiming gate — what
+  /// `fortinetTopology.controllerFortigate` holds. Kept alongside the serial
+  /// because it is the string an operator sees in FMG and in the Sources
+  /// column (business rule 22), and because it is the only identity a gate
+  /// that published no serial has.
+  controllerDevice String
+  /// The stable dedupe key: the upper-cased controller serial when there is
+  /// one, else `name:<lower-cased device name>`. Two claims sharing this key
+  /// are the same gate saying the same thing twice.
+  controllerKey    String
+
+  integrationId String?
+  integration   Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+
+  @@unique([deviceSerial, controllerKey])
+  @@index([assetId])
+  // The sweep's read: every fresh claim, grouped by the contested serial.
+  @@index([deviceSerial, lastSeen])
+  @@index([integrationId])
+  @@map("asset_controller_claims")
 }
 
 // Bearer-token authentication for external callers (e.g. SIEM systems) that

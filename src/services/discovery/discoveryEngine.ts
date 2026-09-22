@@ -77,6 +77,7 @@ import { releaseDnsResolvedAt } from "../dnsResolvedReservationService.js";
 import { createSubnetRowChecked } from "../subnetService.js";
 import { snapshotSubnet, archiveSubnet } from "../subnetArchiveService.js";
 import { raiseChassisReplacedConflict } from "../subnetChassisConflictService.js";
+import { recordControllerClaims, type ControllerClaimInput } from "../duplicateSerialConflictService.js";
 import { classifyChassis, verdictWritesSerial, classifyDeprecatedSupersede } from "../../utils/chassisIdentity.js";
 import { findCoveringExclusion } from "../../utils/subnetExclusion.js";
 import { isMergeableEndpointGhost, mergeEndpointGhostIntoAsset } from "../assetGhostMergeService.js";
@@ -3960,6 +3961,32 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     }
   }
 
+  // Controller claims for THIS pass (business rule 83). Every managed switch
+  // and AP this run saw, paired with the gate that reported it — the evidence
+  // `AssetSource` cannot hold, because its `(sourceKind, externalId)` key is
+  // unique on the DEVICE serial and a second claiming gate therefore overwrites
+  // the first instead of colliding with it. Accumulated in memory and flushed
+  // once below rather than written per device: at 2000 managed devices a round
+  // trip inside these loops would add 2000 sequential awaits to the run.
+  const controllerClaims: ControllerClaimInput[] = [];
+  const noteControllerClaim = (
+    assetId: string,
+    deviceSerial: string | null | undefined,
+    sourceKind: "fortiswitch" | "fortiap",
+    controllerDevice: string | null | undefined,
+    controllerSerial: string | null | undefined,
+  ): void => {
+    if (!deviceSerial || !controllerDevice) return;
+    controllerClaims.push({
+      assetId,
+      deviceSerial,
+      sourceKind,
+      controllerDevice,
+      controllerSerial: controllerSerial || null,
+      integrationId,
+    });
+  };
+
   for (const sw of result.fortiSwitches || []) {
     const swStatus = sw.state === "Unauthorized" ? "storage" : "active";
     const swJoinDate = sw.joinTime && Number.isFinite(sw.joinTime) && sw.joinTime > 0
@@ -4028,6 +4055,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             const observed = buildFortiswitchObservedBlob(sw, syncedAt);
             await upsertFortinetInfraAssetSource("fortiswitch", existingAsset.id, integrationId, sw.serial, observed, syncedAt, syncedAt, integrationName, infraPriorObserved(existingAsset.id, "fortiswitch", sw.serial));
             applyInfraSourceInMemory(existingAsset.id, "fortiswitch", sw.serial, observed, syncedAt, syncedAt);
+            noteControllerClaim(existingAsset.id, sw.serial, "fortiswitch", sw.device, sw.deviceSerial);
           } catch (err: any) {
             syncLog("error", `Failed to upsert fortiswitch AssetSource for ${sw.name}: ${err?.message || "Unknown error"}`);
           }
@@ -4177,6 +4205,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           try {
             await upsertFortinetInfraAssetSource("fortiswitch", newAsset.id, integrationId, sw.serial, swObserved, swSyncedAt, swSyncedAt, integrationName);
             applyInfraSourceInMemory(newAsset.id, "fortiswitch", sw.serial, swObserved, swSyncedAt, swSyncedAt);
+            noteControllerClaim(newAsset.id, sw.serial, "fortiswitch", sw.device, sw.deviceSerial);
           } catch (err: any) {
             syncLog("error", `Created FortiSwitch asset ${sw.name} but failed to upsert AssetSource row: ${err?.message || "Unknown error"}`);
           }
@@ -4336,6 +4365,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             const observed = buildFortiapObservedBlob(ap, syncedAt);
             await upsertFortinetInfraAssetSource("fortiap", existingAsset.id, integrationId, ap.serial, observed, syncedAt, syncedAt, integrationName, infraPriorObserved(existingAsset.id, "fortiap", ap.serial));
             applyInfraSourceInMemory(existingAsset.id, "fortiap", ap.serial, observed, syncedAt, syncedAt);
+            noteControllerClaim(existingAsset.id, ap.serial, "fortiap", ap.device, ap.deviceSerial);
           } catch (err: any) {
             syncLog("error", `Failed to upsert fortiap AssetSource for ${ap.name}: ${err?.message || "Unknown error"}`);
           }
@@ -4447,6 +4477,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           try {
             await upsertFortinetInfraAssetSource("fortiap", newAsset.id, integrationId, ap.serial, apObserved, apSyncedAt, apSyncedAt, integrationName);
             applyInfraSourceInMemory(newAsset.id, "fortiap", ap.serial, apObserved, apSyncedAt, apSyncedAt);
+            noteControllerClaim(newAsset.id, ap.serial, "fortiap", ap.device, ap.deviceSerial);
           } catch (err: any) {
             syncLog("error", `Created FortiAP asset ${ap.name} but failed to upsert AssetSource row: ${err?.message || "Unknown error"}`);
           }
@@ -4697,6 +4728,20 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     }
     if (vipNames.length > 0) {
       syncLog("info", `VIP sync: created ${vipNames.length} VIP reservation(s)`);
+    }
+  }
+
+  // Flush this pass's controller claims (business rule 83). Best-effort and
+  // never fatal: the claims are evidence for a REPORT, and losing a pass of
+  // them costs the sweep some freshness, never the inventory this run wrote.
+  if (controllerClaims.length) {
+    try {
+      const written = await recordControllerClaims(controllerClaims);
+      if (verboseLogging) {
+        syncLog("info", `Recorded ${written} controller claim(s) for managed switches/APs`);
+      }
+    } catch (err: any) {
+      syncLog("error", `Failed to record controller claims: ${err?.message || "Unknown error"}`);
     }
   }
 

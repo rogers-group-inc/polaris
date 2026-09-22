@@ -917,3 +917,52 @@ high.
 An agent already installed keeps its old behaviour until it is upgraded.
 
 See [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures).
+
+### Rule 83
+
+**A serial belongs to one device and one owner; two claimants is a report,
+never a silent winner.**
+
+A serial number is meant to settle arguments, and two situations can make it the
+argument instead. Polaris now reports both on the
+[Conflicts](Conflict-Resolution) page.
+
+**One device, two FortiGates.** A FortiSwitch or FortiAP is discovered through
+the gate that manages it. If two gates both carry it on their managed roster —
+because the device was moved and nobody removed it from the old gate's
+configuration, or because two integrations cover overlapping equipment — then
+**whichever integration ran discovery most recently owned the record**, and the
+next run of the other one took it back. That decided the device's parent for
+[dependency suppression](Dependency-Suppression), where it appeared on the
+[Device Map](Device-Map), which region tags it carried, and which gate a
+description sync was addressed to. None of it was visible: the record simply
+said something different depending on which run was last.
+
+The card names both gates and, for each, when it last reported the device. That
+last column is the one that tells the two explanations apart, because a gate
+that has genuinely lost the device stops reporting it.
+
+**Polaris changes nothing on the devices, and picks no winner.** A completed
+move and a forgotten roster entry look identical for as long as both gates keep
+answering, and only you know which happened — the fix is on the FortiGates
+either way. So there is no "accept": remove the device from the gate that no
+longer owns it, and **the card closes itself** once that gate has stopped
+reporting it for two days. A stale entry keeps being reported, so it keeps the
+card.
+
+**One serial, two records.** The other case is two assets carrying the same
+serial — usually one device that two integrations both found and nothing
+cross-linked, or a record that outlived a re-enrolment. Here there is nothing to
+weigh up: a serial identifies one unit, so the card's action is a merge, either
+one-click from the row you want to keep or through the full comparison first.
+Merging needs full read-write on Assets, because it deletes a record.
+
+Serials that identify nothing are ignored rather than reported: the placeholders
+some hardware ships (`To Be Filled By O.E.M.`, `Default string`, `System Serial
+Number`, and a serial that is one character repeated), and any serial shared by
+more than eight assets — past that count the serial is the problem, not the
+assets. If two genuinely different units do report one serial, Reject the card
+and that pair will not come back.
+
+See [Conflict Resolution](Conflict-Resolution) and
+[Integration: Fortinet](Integration-Fortinet).
