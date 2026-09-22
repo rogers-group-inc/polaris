@@ -35,7 +35,7 @@ import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/as
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { scoreDhcpClaim, claimBeats, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
-import { readFirewallDeviceName, normalizeNameKey } from "../../utils/fortinetParentKey.js";
+import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
 import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
 import { refreshCache as refreshAssetTypeCache } from "../assetTypeService.js";
 import { normalizeManufacturer } from "../../utils/manufacturerNormalize.js";
@@ -1729,7 +1729,11 @@ export async function upsertFortinetInfraAssetSource(
 }
 
 // ─── Asset index — multi-key lookup for MAC, serial, hostname, IP ───────────
-class AssetIndex {
+// Exported for tests: the normalization each key applies is what decides
+// whether discovery RE-USES an existing asset or mints a second one for the
+// same device, and a mismatch between `add` and `find*` is silent — the only
+// symptom is a duplicate asset appearing days later.
+export class AssetIndex {
   private byId = new Map<string, any>();
   private byMac = new Map<string, any>();       // normalized MAC → asset
   private bySerial = new Map<string, any>();
@@ -1748,7 +1752,16 @@ class AssetIndex {
         if (m.mac) this.byMac.set(m.mac.toUpperCase(), a);
       }
     }
-    if (a.serialNumber) this.bySerial.set(a.serialNumber, a);
+    // Serial is normalized on the way in exactly as MAC and hostname are.
+    // It used to be the one identity index keyed VERBATIM, while every
+    // caller's input came off a device: a gate reporting `s108f…` or a
+    // padded serial missed an asset stored as `S108F…`, discovery fell
+    // through to the MAC rung (null on a FortiSwitch until the 2026-08
+    // baseMac capture) and then to hostname, and a miss there CREATES A
+    // SECOND ASSET for a device Polaris already had. `normalizeSerialKey`
+    // is the same helper the rule 83 duplicate-serial sweep keys on, so the
+    // sweep and the lookup can no longer disagree about what one serial is.
+    if (a.serialNumber) this.bySerial.set(normalizeSerialKey(a.serialNumber), a);
     if (a.hostname) this.byHostname.set(a.hostname.toLowerCase(), a);
     if (a.ipAddress) this.byIp.set(a.ipAddress, a);
   }
@@ -1772,12 +1785,12 @@ class AssetIndex {
         drop(this.byMac, m?.mac ? String(m.mac).toUpperCase() : null);
       }
     }
-    drop(this.bySerial, a.serialNumber);
+    drop(this.bySerial, a.serialNumber ? normalizeSerialKey(a.serialNumber) : null);
     drop(this.byHostname, a.hostname ? String(a.hostname).toLowerCase() : null);
     drop(this.byIp, a.ipAddress);
   }
 
-  findBySerial(serial: string) { return this.bySerial.get(serial); }
+  findBySerial(serial: string) { return this.bySerial.get(normalizeSerialKey(serial)); }
 
   findByMac(mac: string) { return this.byMac.get(mac.toUpperCase()); }
 
@@ -3447,7 +3460,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // serial (an RMA'd chassis keeping the old hostname is new hardware —
       // Phase 2a retires the old asset by serial).
       if (existingAsset && member.serial && existingAsset.serialNumber
-          && String(existingAsset.serialNumber).toUpperCase() !== member.serial.toUpperCase()) {
+          && normalizeSerialKey(existingAsset.serialNumber) !== normalizeSerialKey(member.serial)) {
         existingAsset = null;
       }
       if (existingAsset) {
@@ -4024,7 +4037,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // DIFFERENT non-empty serial (RMA'd replacement hardware inheriting
       // the old unit's address). Serial-less orphan adoption still binds.
       if (existingAsset && sw.serial && existingAsset.serialNumber
-          && String(existingAsset.serialNumber).toUpperCase() !== sw.serial.toUpperCase()) {
+          && normalizeSerialKey(existingAsset.serialNumber) !== normalizeSerialKey(sw.serial)) {
         existingAsset = null;
       }
 
@@ -4320,7 +4333,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // serial at one site, one decommission Event every run).
       // Serial-less matches (orphan fortigate-endpoint adoption) still bind.
       if (existingAsset && ap.serial && existingAsset.serialNumber
-          && String(existingAsset.serialNumber).toUpperCase() !== ap.serial.toUpperCase()) {
+          && normalizeSerialKey(existingAsset.serialNumber) !== normalizeSerialKey(ap.serial)) {
         existingAsset = null;
       }
 
