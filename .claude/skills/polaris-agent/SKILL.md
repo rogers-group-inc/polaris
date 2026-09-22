@@ -1,6 +1,6 @@
 ---
 name: polaris-agent
-description: "The Polaris Agent (Go, agent/) end to end: enrollment and bearer tokens, leaf-cert pinning and dual-pin rotation, the WebSocket command channel, sample streams, remote install over SSH/WinRM, privilege tiers (unprivileged / ptrace), in-app build and internal-CA code signing, auto-deploy, upgrade, the agent.conf format, and the rebuild/VERSION lockstep contract. Load for any change under agent/, src/api/routes/agents*.ts or the agent* services, anything about ManagedAgent/AgentCommand, 'agent' install or heartbeat problems, a new sample stream, a figure an agent REPORTS that looks wrong — CPU too high or too flat on a small or single-core VM, a chart that spikes on a cadence, a reading that seems to describe the agent rather than the host — or the generated SSH onboarding scripts — the account they create, the key they authorize, and the endpoint firewall rule, profile (Domain / Private / Public) and OpenSSH capability they settle."
+description: "The Polaris Agent (Go, agent/) end to end: enrollment and bearer tokens, leaf-cert pinning and dual-pin rotation, the WebSocket command channel, sample streams, remote install over SSH/WinRM, privilege tiers (unprivileged / ptrace), in-app build and internal-CA code signing, auto-deploy, upgrade, the agent.conf format, and the rebuild/VERSION lockstep contract. Load for any change under agent/, src/api/routes/agents*.ts or the agent* services, anything about ManagedAgent/AgentCommand, 'agent' install or heartbeat problems, a new sample stream, a figure an agent REPORTS that looks wrong — CPU too high or too flat on a small or single-core VM, a chart that spikes on a cadence, a reading that seems to describe the agent rather than the host, a serial number that is wrong or identical across a whole model line, a serial that is empty or vanished after an agent upgrade — or the generated SSH onboarding scripts — the account they create, the key they authorize, and the endpoint firewall rule, profile (Domain / Private / Public) and OpenSSH capability they settle."
 ---
 
 # Polaris Agent
@@ -33,6 +33,11 @@ was retired with it; Linux runs `unprivileged` or `ptrace` (that unit plus `CAP_
 - **Cert rotation is dual-pin**: stage the new pin on every agent (`POST /server-settings/agents/cert-pins/bulk-add`) → rotate the server cert → wait for heartbeats → retire the old pin. Never leave an agent with zero pins.
 - **Unit text is written only at install/reinstall** — a privilege-tier fix needs a reinstall; the agent reports its actual `CapEff` on heartbeat so the UI shows the verified state.
 - **`processes` is agent-default-ON**; `eventLog` stays opt-in everywhere (PII/volume) behind the global `agentEventLog` switch.
+- **Never run `gofmt -w` across the package.** `.gitattributes` is `* text=auto`, so every
+  committed .go file is LF in the repo and CRLF in a Windows checkout — which means
+  `gofmt -l ./internal/collectors/` lists EVERY file, pre-existing ones included, and a
+  package-wide `-w` rewrites them all into one unreviewable whole-file diff. Format only the
+  files you actually touched, by name, and read the PER-FILE diffstat before committing.
 - Agent-bearer routes are rate-limited (1200 / 5 min per IP) and gated by `requireAgentBearer`; the WS upgrade is attached at the HTTP-server level in `src/app.ts`, not via the REST router.
 
 Related: `polaris-monitoring-discovery` (the `agent` polling method inside the resolver),

@@ -65,6 +65,7 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { mergeAssets } from "./assetMergeService.js";
+import { isUsableSerial } from "../utils/serialNumber.js";
 import {
   buildInfraParentIndex,
   resolveInfraParentAsset,
@@ -119,38 +120,6 @@ export const CLAIM_PRUNE_DAYS = 30;
 export const CLAIM_EXCLUDED_STATUSES = ["decommissioned", "disabled"] as const;
 
 /**
- * A serial that identifies nothing.
- *
- * Whiteboxes, hypervisors and cheap hardware ship SMBIOS defaults, and a fleet
- * of them would otherwise be reported as one enormous duplicate group. Matched
- * case-insensitively after trimming; `looksLikeFleetDefault` below is the
- * second net for the ones nobody has seen yet.
- */
-const PLACEHOLDER_SERIALS = new Set([
-  "0",
-  "00000000",
-  "123456789",
-  "0123456789",
-  "default string",
-  "invalid",
-  "n/a",
-  "na",
-  "none",
-  "not applicable",
-  "not available",
-  "not specified",
-  "null",
-  "o.e.m.",
-  "oem",
-  "system serial number",
-  "to be filled by o.e.m.",
-  "unknown",
-  "unspecified",
-  "x",
-  "xxxxxxx",
-]);
-
-/**
  * How many assets may share one serial before the serial itself is the suspect
  * rather than the assets. Nine identical "serials" is a vendor default this
  * code has not met yet, not nine records of one device — and raising a card
@@ -158,27 +127,15 @@ const PLACEHOLDER_SERIALS = new Set([
  */
 export const MAX_PLAUSIBLE_DUPLICATES = 8;
 
-/** A serial too short to be one. Real Fortinet/Dell/HP serials are 7+. */
-const MIN_SERIAL_LENGTH = 4;
-
 // ─── Pure helpers ────────────────────────────────────────────────────────────
 
 /**
- * Is this string a serial that identifies a specific piece of hardware?
- *
- * Rejects the SMBIOS placeholders, anything under `MIN_SERIAL_LENGTH`, and any
- * value that is a single character repeated (`0000000`, `XXXXXXXX`) — the shape
- * every "we didn't program one" serial takes.
+ * Re-exported so this service stays the place rule 83 reads about serial
+ * usability, while the rule itself lives in utils/serialNumber.ts — the
+ * projection and the agent ingest path apply the SAME test at write time, so
+ * a placeholder never becomes an Asset.serialNumber for this sweep to find.
  */
-export function isUsableSerial(raw: string | null | undefined): boolean {
-  const trimmed = typeof raw === "string" ? raw.trim() : "";
-  if (trimmed.length < MIN_SERIAL_LENGTH) return false;
-  const lower = trimmed.toLowerCase();
-  if (PLACEHOLDER_SERIALS.has(lower)) return false;
-  // A single repeated character, whatever it is.
-  if (/^(.)\1+$/.test(trimmed)) return false;
-  return true;
-}
+export { isUsableSerial } from "../utils/serialNumber.js";
 
 /**
  * The dedupe key for ONE claiming controller.

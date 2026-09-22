@@ -7802,13 +7802,18 @@ async function syncArcDevices(
   }
 
   // Uniqueness guard, not just normalization. `normalizeHardwareSerial`
-  // rejects vendor placeholders, but it CANNOT reject our own agent's
-  // Windows fallback: when SystemSerialNumber is empty the agent reports
-  // `SystemSKU`, a MODEL sku shared by every machine of that model, and
-  // that's a perfectly well-formed string. So any serial claimed by two
-  // different assets is discarded — a key that's ambiguous in the data is
-  // not an identity, whatever it looks like. Without this, one empty-serial
-  // model line would collapse into a single asset.
+  // rejects vendor placeholders, but a value can be well-formed and still
+  // not be an identity. The motivating case was our own agent: on Windows it
+  // used to report `SystemSKU` — a MODEL sku shared by every machine of that
+  // model — because the registry publishes no serial and the collector had
+  // nowhere else to look. Agent 0.20.1 reads the real SMBIOS table instead,
+  // but this guard is NOT retired with it: assets stamped by an older agent
+  // keep the SKU until it upgrades and reports again, cloned VMs duplicate a
+  // template's serial, and a placeholder this list has not met behaves the
+  // same way. So any serial claimed by two different assets is discarded — a
+  // key that's ambiguous in the data is not an identity, whatever it looks
+  // like. Without this, one empty-serial model line would collapse into a
+  // single asset.
   const { index: assetBySerial, ambiguous: ambiguousSerials } = indexUniqueBy(serialCandidates);
   if (ambiguousSerials.size > 0) {
     syncLog("info", `Serial match: ignoring ${ambiguousSerials.size} hardware serial(s) reported by more than one asset `

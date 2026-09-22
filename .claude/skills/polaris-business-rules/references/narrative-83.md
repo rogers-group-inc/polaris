@@ -128,6 +128,19 @@ by the single-repeated-character shape every unprogrammed serial takes. `MAX_PLA
 DUPLICATES` (8) is the second net for the defaults nobody has met yet: past that count
 the serial is the suspect, not the assets.
 
+That test is applied where a serial would be WRITTEN, not only here where it is read.
+The list, the length floor and the repeated-character shape live in
+`utils/serialNumber.ts`; `utils/assetProjection.ts` runs every one of its `SERIAL_RULES`
+picks through it, so a placeholder falls through to the next source instead of winning
+the field, and `api/routes/agents.ts POST /system-info` clears a stored one once no
+source can replace it. Filtering only at sweep time was half a fix: it stopped the false
+conflict card, but the junk still sat on the asset, was still rendered as that device's
+serial, and was still what a human compared two records by — and because the Polaris
+Agent outranks Arc and Intune for this field, a placeholder it reported also buried the
+real serial a cloud source already had. The agent carries the same list
+(`agent/internal/collectors/serialnumber.go`) so the value never reaches the wire;
+`tests/unit/serialNumber.test.ts` asserts the two copies are identical.
+
 ### What is deliberately narrower than rule 40
 
 The duplicate-IP sweep excludes every status in `UNMONITORABLE_STATUSES`, because its

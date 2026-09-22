@@ -312,6 +312,33 @@ The storage and interface collectors run under a 30-second guard, because
 an unresponsive NIC — without it the whole push loop freezes while the heartbeat
 keeps running and the agent looks connected.
 
+### Host identity — hostname, OS, make, model, serial
+
+Alongside the telemetry streams the agent reports what the machine *is*:
+hostname, OS and version, manufacturer, model, BIOS version and serial
+number. Because it runs on the host, this beats what a directory or MDM
+holds — those describe the machine as it was when it enrolled.
+
+The serial comes from the firmware: `/sys/class/dmi/id/product_serial` on
+Linux, the IORegistry on macOS, and the SMBIOS table on Windows.
+
+> **Windows hosts and agent versions before 0.20.1.** Windows publishes no
+> serial number in the registry, and older agents fell back to the system
+> **SKU** — a model code, identical on every unit of that model (a PowerEdge
+> R740 would report `SKU=NotProvided;ModelName=PowerEdge R740`). From 0.20.1
+> the agent reads the firmware table directly and reports the real serial,
+> the same value `Get-CimInstance Win32_BIOS` shows. **Upgrade the agent, and
+> the serial corrects itself on the next check-in.** Two things you may see
+> when it does: a serial that changes on a Windows asset for no other reason,
+> and — where the firmware has no serial to give — one that clears instead,
+> which is deliberate. Both are recorded in Events.
+
+On a hardened Linux host `product_serial` is often root-only, so an agent on
+the **unprivileged** tier reports no serial and Polaris falls back to another
+source. A serial the hardware never had programmed (`To Be Filled By O.E.M.`
+and friends) is reported as no serial at all rather than passed on — see
+[Business Rules](Business-Rules#rule-83).
+
 ### The collections are spread across the minute
 
 Each collection runs on its own cadence, and each one starts at a different
