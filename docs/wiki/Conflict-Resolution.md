@@ -29,7 +29,7 @@ the conflict slide-over.
 | **`duplicate-ip`** | asset | two network-present devices claim one address |
 | **IP override** | asset | discovery disagrees with an operator's IP pin |
 | **`serial-two-controllers`** | asset | one managed FortiSwitch/FortiAP is on **two FortiGates'** rosters |
-| **`duplicate-serial`** | asset | two asset records carry the **same serial number** |
+| **`duplicate-serial`** | asset | two asset records carry the **same serial number** — usually merged automatically, see below |
 | **`chassis-replaced`** | subnet | a network's serving FortiGate answers with a different chassis serial |
 
 ---
@@ -274,6 +274,13 @@ same FortiGate and never raise this card between themselves.
 Two assets carry the same serial. Nearly always one device recorded twice:
 two integrations found it and nothing cross-linked the records, or a record
 outlived a re-enrolment.
+
+**Polaris usually merges these for you.** Because a shared real serial leaves
+no room for doubt — it is one device — a background pass absorbs these groups
+automatically, every 30 minutes, keeping whichever record has the stronger
+provenance. So you will rarely see this card, and one that *does* appear is a
+group the automatic pass declined: a serial shared by more assets than any one
+device could have, or a merge that failed. The verbs below are for those.
 
 | Verb | Does |
 |---|---|
