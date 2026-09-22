@@ -1018,5 +1018,43 @@ more than eight assets — past that count the serial is the problem, not the
 assets. If two genuinely different units do report one serial, Reject the card
 and that pair will not come back.
 
+Those placeholders are also refused at the point a serial would be recorded,
+not just here — see [Rule 84](#rule-84).
+
 See [Conflict Resolution](Conflict-Resolution) and
 [Integration: Fortinet](Integration-Fortinet).
+
+### Rule 84
+
+**A serial that identifies nothing is refused when it would be recorded, not
+when something later reads it.**
+
+Hardware is supposed to carry a serial number programmed at the factory.
+Plenty of it does not, and reports a placeholder instead — `To Be Filled By
+O.E.M.`, `Default string`, `System Serial Number`, a row of zeroes. Every unit
+of that model reports the same one.
+
+Polaris refuses those values wherever a serial would be recorded, rather than
+storing them and filtering them later. Three things follow, and they are what
+you will actually see:
+
+- **An asset shows no serial rather than a fake one.** An empty Serial Number
+  field means nothing that saw this device could tell you — not that the value
+  was lost.
+- **Polaris falls through to the next source.** A device known to both an agent
+  and Intune, where the agent can only read a placeholder, shows Intune's
+  serial. The agent normally outranks Intune for this field; it does not get to
+  win it with a value that identifies nothing.
+- **A stored placeholder is cleared once nothing can replace it**, and the
+  change is written to Events as `asset.serial.cleared`. This is why a serial
+  can disappear from a Windows asset after you upgrade its agent — see
+  [Polaris Agent](Polaris-Agent#host-identity--hostname-os-make-model-serial).
+  It was never that machine's serial.
+
+Serials are still checked for uniqueness on top of this. A value can be
+well-formed and still not identify anything — a cloned VM inherits its
+template's serial, and a machine whose agent has not been upgraded yet keeps
+whatever it reported before. A serial two different assets both claim is not
+used to match them.
+
+See [Polaris Agent](Polaris-Agent) and [Conflict Resolution](Conflict-Resolution).

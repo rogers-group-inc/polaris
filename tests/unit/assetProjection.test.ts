@@ -880,3 +880,56 @@ describe("projectAssetFromSources — snmp-sysdescr (the device's own word)", ()
     expect(projected.ipAddress).toBeNull();
   });
 });
+
+describe("projectAssetFromSources — a placeholder serial is not a serial", () => {
+  it("falls through to the next source when the agent reports a placeholder", () => {
+    // The shape after the pre-0.20.1 Windows collector bug: the agent is the
+    // TOP-priority serial source, so without the guard its junk would bury a
+    // real serial Intune already had.
+    const { projected, provenance } = projectAssetFromSources([
+      src("polaris-agent", { serialNumber: "To Be Filled By O.E.M." }),
+      src("intune", { serialNumber: "MP2YZAC2" }),
+    ]);
+    expect(projected.serialNumber).toBe("MP2YZAC2");
+    expect(provenance.serialNumber).toBe("intune");
+  });
+
+  it("keeps falling through past every placeholder in the ladder", () => {
+    const { projected, provenance } = projectAssetFromSources([
+      src("polaris-agent", { serialNumber: "Default string" }),
+      src("arc", { serialNumber: "0000000000" }),
+      src("intune", { serialNumber: "System Serial Number" }),
+      src("fortigate-firewall", { serial: "FGT60FTK21000123" }),
+    ]);
+    expect(projected.serialNumber).toBe("FGT60FTK21000123");
+    expect(provenance.serialNumber).toBe("fortigate-firewall");
+  });
+
+  it("projects null when every source reports a placeholder", () => {
+    // Null is the honest answer and it is what lets the agents.ts write-back
+    // clear a junk value that an earlier agent stored.
+    const { projected, provenance } = projectAssetFromSources([
+      src("polaris-agent", { serialNumber: "None" }),
+      src("intune", { serialNumber: "XXXXXXXX" }),
+    ]);
+    expect(projected.serialNumber).toBeNull();
+    expect(provenance.serialNumber).toBeUndefined();
+  });
+
+  it("still lets a real agent serial outrank Arc and Intune", () => {
+    const { projected, provenance } = projectAssetFromSources([
+      src("polaris-agent", { serialNumber: "MP2YZAC2" }),
+      src("arc", { serialNumber: "SMBIOS-999" }),
+      src("intune", { serialNumber: "OLD-ENROLL-123" }),
+    ]);
+    expect(projected.serialNumber).toBe("MP2YZAC2");
+    expect(provenance.serialNumber).toBe("polaris-agent");
+  });
+
+  it("trims a serial that is real but padded", () => {
+    const { projected } = projectAssetFromSources([
+      src("polaris-agent", { serialNumber: "  MP2YZAC2  " }),
+    ]);
+    expect(projected.serialNumber).toBe("MP2YZAC2");
+  });
+});

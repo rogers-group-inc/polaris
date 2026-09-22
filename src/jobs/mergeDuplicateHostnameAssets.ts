@@ -141,10 +141,11 @@ import {
 // Serial usability + the vendor-default cap are business rule 83's, reused so
 // the merge pass and the `duplicate-serial` conflict card can never disagree
 // about which serials identify hardware.
-import {
-  isUsableSerial,
-  MAX_PLAUSIBLE_DUPLICATES,
-} from "../services/duplicateSerialConflictService.js";
+import { MAX_PLAUSIBLE_DUPLICATES } from "../services/duplicateSerialConflictService.js";
+// Business rule 84 moved the "is this string an identity?" test to its own
+// util so every WRITE point can run it; the service still re-exports it, but
+// the util is the canonical home and what new callers should import.
+import { isUsableSerial } from "../utils/serialNumber.js";
 import { normalizeSerialKey } from "../utils/fortinetParentKey.js";
 
 /** The row shape both passes hydrate — must satisfy DuplicateHostnameAssetRow. */
