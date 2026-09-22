@@ -1018,5 +1018,13 @@ more than eight assets — past that count the serial is the problem, not the
 assets. If two genuinely different units do report one serial, Reject the card
 and that pair will not come back.
 
+Those placeholders are also refused at the point a serial would be recorded, so
+an asset shows no serial rather than a fake one. Where a device has more than
+one source, Polaris moves down to the next one that reported a real serial — an
+empty Serial Number field means nothing that saw this device could tell you, not
+that the value was lost. If an asset's serial disappears after an agent upgrade,
+that is this: the stored value was a placeholder, and the change is recorded in
+Events.
+
 See [Conflict Resolution](Conflict-Resolution) and
 [Integration: Fortinet](Integration-Fortinet).

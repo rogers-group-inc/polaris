@@ -55,6 +55,7 @@ import { persistAssetServices } from "../../services/serviceInventoryService.js"
 import { persistInterfaceRows } from "../../services/interfaceInventoryService.js";
 import { reconcileMacAddresses, reconcileInterfaceMacs } from "../../services/macAddressService.js";
 import { selectPrimaryMac } from "../../utils/macAddresses.js";
+import { isUsableSerial } from "../../utils/serialNumber.js";
 import { logEvent } from "./events.js";
 import { buildFirmwareChangedEvent } from "../../services/eventLogService.js";
 import { ingestOsEventLog, getAgentEventLogConfig } from "../../services/osEventLogService.js";
@@ -1133,6 +1134,23 @@ agentsRouter.post("/system-info", async (req, res, next) => {
         }
       }
 
+      // A stored serial that is NOT a serial gets cleared when no source can
+      // replace it. The loop above deliberately never writes a null — "no
+      // source has an opinion" must not wipe a field — but that rule stranded
+      // the values this endpoint used to create: agents before 0.20.1 reported
+      // the Windows SystemSKU as the serial, and a fixed agent on the same host
+      // reports an honest empty one, which the projection turns into null and
+      // the loop then ignores. The junk would outlive the bug forever.
+      // Scoped as narrowly as it can be: only a value that fails isUsableSerial
+      // is cleared, so a real serial is never lost to a transient read failure.
+      if (
+        projected.serialNumber === null &&
+        current.serialNumber !== null &&
+        !isUsableSerial(current.serialNumber)
+      ) {
+        diff.serialNumber = null;
+      }
+
       // MAC isn't owned by projectAssetFromSources (see polaris-change-impact -> cross-cutting/asset-source-projection.md "Fields the
       // projection does NOT own") — every discovery path writes it inline.
       // Mirror that here: normalize the agent's primaryMac to colon-upper,
@@ -1189,6 +1207,24 @@ agentsRouter.post("/system-info", async (req, res, next) => {
           diff,
         );
         if (firmwareEvent) void logEvent(firmwareEvent);
+
+        // The serial clear is its own record: a value disappearing off an
+        // asset is exactly the change an operator will otherwise spend an
+        // afternoon explaining, and it is a mutation this handler makes on
+        // its own initiative rather than one a source asked for.
+        if (diff.serialNumber === null) {
+          void logEvent({
+            action:       "asset.serial.cleared",
+            resourceType: "asset",
+            resourceId:   assetId,
+            resourceName: current.hostname || undefined,
+            actor:        "system:agent",
+            level:        "info",
+            message:      `Cleared the serial number on "${current.hostname || assetId}" — the stored value ` +
+                          `"${current.serialNumber}" is a vendor placeholder, not a serial, and no source reported a real one`,
+            details:      { previousSerialNumber: current.serialNumber, source: "polaris-agent", managedAgentId },
+          });
+        }
       }
     }
 
