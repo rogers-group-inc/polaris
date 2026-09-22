@@ -1456,7 +1456,7 @@ function getAlertsFormData() {
         '</span>' +
       '</div>' +
       '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
-      '<div class="conflict-table" style="padding:0">' +
+      '<div class="conflict-table conflict-table-serial-claim" style="padding:0">' +
         '<table><thead><tr>' +
           '<th class="conflict-field">Controller FortiGate</th>' +
           '<th>Chassis serial</th>' +
@@ -1538,7 +1538,7 @@ function getAlertsFormData() {
         '<span class="conflict-card-subnet" style="font-size:0.78rem">' + members.length + ' assets</span>' +
       '</div>' +
       '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
-      '<div class="conflict-table conflict-table-dupip" style="padding:0">' +
+      '<div class="conflict-table conflict-table-dupserial" style="padding:0">' +
         '<table><thead><tr>' +
           '<th class="conflict-field">Asset</th>' +
           '<th>Type</th>' +
