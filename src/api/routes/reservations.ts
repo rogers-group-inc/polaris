@@ -263,11 +263,13 @@ router.post("/", requireOwnership("reservations"), async (req, res, next) => {
 // Addresses owned by the DEVICE's own configuration rather than by anything
 // Polaris granted: a FortiGate virtual IP, and a statically-configured router /
 // firewall interface address. Polaris discovers and reports them; every way of
-// changing one lives on the device. Creating over them was already refused
-// (neither sourceType is in `isSupersedableByCreate`, so the collision check
-// 409s) — this closes the other two verbs. Enforced at the ROUTE layer rather
-// than in the service, because discovery's own reconcile still has to be able
-// to refresh and retire these rows.
+// changing one lives on the device. This closes the edit and release verbs.
+// Enforced at the ROUTE layer rather than in the service, because discovery's
+// own reconcile still has to be able to refresh and retire these rows.
+// CREATE is deliberately not one of them: business rule 77 admitted `vip` into
+// `isSupersedableByCreate`, so a create over a VIP succeeds and carries the VIP
+// snapshot onto the operator's row. `interface_ip` is still absent from that
+// set, so the collision check 409s a create over one.
 // The set itself now lives in reservationService (a second consumer arrived
 // with business rule 41's chassis-replacement diff, which must not offer to
 // migrate a device-owned line onto the new gate). The route keeps the
