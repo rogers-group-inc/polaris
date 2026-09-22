@@ -95,17 +95,6 @@ export interface DiscoveredVcenterVm {
   guestOsFullName: string | null;
   toolsRunState: string | null; // RUNNING | NOT_RUNNING | EXECUTING_SCRIPTS
   toolsVersionStatus: string | null;
-  /**
-   * True only when the guest-identity call below actually ANSWERED. Without
-   * it `guestIp: null` conflates three different things — Tools not running,
-   * the identity endpoint erroring, and a guest that genuinely reports no
-   * address — and discovery cannot tell whether a null means "this VM has no
-   * address" or "we could not ask". Business rule 81 needs that distinction
-   * to decide whether to strip the stored address, so it is recorded here
-   * rather than guessed from `toolsRunState` (which is read by a SEPARATE
-   * call that can succeed while this one fails).
-   */
-  guestIdentityRead: boolean;
   cpuCount: number | null;
   memoryMiB: number | null;
   // SOAP quickStats snapshot (null when the SOAP surface is unavailable):
@@ -1847,7 +1836,6 @@ export function parseVmDetail(
     guestOsFullName: null,
     toolsRunState: null,
     toolsVersionStatus: null,
-    guestIdentityRead: false,
     cpuCount: typeof cpu?.count === "number" ? cpu.count : null,
     memoryMiB: typeof memory?.size_MiB === "number" ? memory.size_MiB : null,
     cpuUsageMhz: null,
@@ -2075,11 +2063,6 @@ export async function discoverInventory(
         if (vm.toolsRunState === "RUNNING") {
           try {
             const identity = await session.request<any>("GET", `/api/vcenter/vm/${row.vm}/guest/identity`, { signal });
-            // Set BEFORE the field reads: what this flag records is that the
-            // guest answered, which is true whatever it answered with. A
-            // running guest reporting no address is exactly the case rule 81
-            // needs to tell apart from a call that never came back.
-            vm.guestIdentityRead = true;
             vm.guestHostname = typeof identity?.host_name === "string" && identity.host_name ? identity.host_name : null;
             vm.guestIp = typeof identity?.ip_address === "string" && identity.ip_address ? identity.ip_address : null;
             vm.guestOsFullName = typeof identity?.full_name?.default_message === "string"
