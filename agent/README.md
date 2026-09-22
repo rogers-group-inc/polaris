@@ -76,6 +76,15 @@ the aggregate pair every other transport can produce. Fields beyond
 `cpuPct` / `memPct` / `memUsedBytes` / `memTotalBytes` are agent-only and null
 on every server-side collector:
 
+**`cpuPct` and `cpuCorePcts` are interval means, not samples.**
+`internal/collectors/cputimes.go` reads the kernel's cumulative per-core
+counters and reports the delta since the previous pass, so the figure covers
+the whole telemetry cadence and the collector never blocks — the loop's
+cadence is the averaging window. Until agent 0.20.0 this was a 1-second
+blocking window once a minute, which on a single-vCPU VM reported the agent's
+own colliding collectors as host load. Read that file's header before
+changing anything here.
+
 | Field | Meaning |
 |---|---|
 | `cpuCorePcts` | Per-logical-core utilisation, array index = core id, one decimal. Capped at 512 cores (the server's Zod schema refuses more). Omitted entirely — not sent as `[]` — when the per-core read fails. Stored on the DETAIL tier only; the hourly/daily rollups carry the aggregate alone. |

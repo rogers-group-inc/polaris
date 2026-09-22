@@ -91,12 +91,13 @@ and SSH, and the System tab's charts key their fallbacks off exactly that:
 
 - **`cpuCorePcts`** — per-logical-core utilisation, array index = core id, one
   decimal, capped at `maxReportedCores` (512, mirrored by the Zod schema).
-  **One `cpu.Percent(1s, true)` call produces both this and `cpuPct`**, the
-  aggregate being the mean of the vector: calling `Percent(_, false)` as well
-  would block a second time AND sample a different window, so the aggregate a
-  threshold fires on would not be the mean of the cores drawn beside it. The
-  aggregate is the mean over EVERY core including any past the report cap.
-  Omitted (not `[]`) when the read fails; the server stores `Prisma.DbNull`.
+  **One counter read produces both this and `cpuPct`**, so the aggregate a
+  threshold fires on always describes the same span as the cores drawn beside
+  it. The aggregate is computed over EVERY core including any past the report
+  cap — from the summed deltas, not as the mean of the vector, so it keeps
+  meaning "this host's CPU" when one core was parked for part of the span or
+  when the vector was truncated. Omitted (not `[]`) when the read fails; the
+  server stores `Prisma.DbNull`.
 - **`memBuffersBytes` / `memCachedBytes` / `memFreeBytes`** — the bands
   `memUsedBytes` is not, reconciled so that **used + buffers + cached + free ==
   total, exactly**, on every OS. That contract is the agent's job and not the
@@ -117,6 +118,7 @@ and SSH, and the System tab's charts key their fallbacks off exactly that:
 **Agent stream config (Phase 0).** Historically the agent IGNORED the `/config` `streams` map and ran every loop unconditionally. The opt-in **`eventLog`** stream changed that: `main.go` keeps an `atomic.Value` `eventLogRuntimeCfg` updated by `applyServerStreams(resp)`, called on startup + heartbeat-ETag change (`refreshConfig`) + the WS `refresh-config` frame. `eventLogLoop`/`pushEventLogOne` gate on `loadEventLogCfg().enabled` so toggling the stream server-side takes effect live (no reinstall). The eventlog collector (`agent/internal/collectors/eventlog*.go`) reads NEW entries since a per-channel cursor in `eventlog-cursors.json` (next to agent.conf; first run seeds at "now" so no history dump), normalizes severity, dedupes, caps, and ships `transport.EventLogSample` rows on stream `"eventLog"`. Windows reader = `wevtutil` (thin-first; native wevtapi is the later swap), Linux = `journalctl --after-cursor`, darwin/other = nil stub. The server `/samples` eventLog branch does NOT write a sample table — it calls `osEventLogService.ingestOsEventLog` (audit Events).
 
 **When changing this:**
+- **`gofmt -l .` is not a usable formatting gate in this checkout** — the Go sources are stored CRLF, so it lists EVERY file whether or not anything is wrong with it, and a session reading that as "the tree is unformatted" will either panic or reformat the lot. Format the file you touched (`gofmt -w <file>`) and judge the result from `git diff --stat` per file: git normalizes the line endings on commit, so a correctly-formatted file shows only the lines you changed. A whole-file diffstat means something else went wrong — see the CRLF traps in the session memory.
 - New sample stream: add Zod variant to `SamplesBodySchema`, map to enqueue helper, mirror in the Go agent collector (Phase 3+). For an OPT-IN stream, also gate the agent loop on a server `/config` stream flag via `applyServerStreams` (see the eventLog precedent) rather than running it unconditionally. **A new loop also needs a phase in `loopPhaseSec` and a cadence in `pacing_test.go`'s mirror table** — the tests fail without both, deliberately.
 
 **INVARIANT — every collection loop is PHASE-OFFSET, and the offsets are what keep it fixed** (2026-09-21, agent 0.19.0). Every loop used to start in the same instant with a bare `time.NewTicker`, and several share a cadence: four at 300 s (heartbeat, systemInfo, processInventory, serviceInventory) and five at 60 s. A Go ticker keeps the phase it was created with, so those groups did not collide once at boot — they fired on the same tick for the life of the process. On a two-core Windows host that meant `powershell -Command "Get-CimInstance Win32_Service"` (serviceInventory) and `tasklist /svc` (processInventory) spawning on the same instant every five minutes, while the response-time probe — which times a `/heartbeat` round trip **through this same process** — was being measured. The operator saw a five-minute sawtooth on BOTH the CPU chart and the response-time chart, describing the agent's scheduling rather than the host.
@@ -129,6 +131,17 @@ and SSH, and the System tab's charts key their fallbacks off exactly that:
 Three rules make the separation PERMANENT rather than merely true at boot, and `pacing_test.go` walks a simulated hour rather than trusting the reasoning: **every staggered cadence is a multiple of 60 s**, **every phase is distinct and inside [0, 60)**, and **`responseTime` owns phase 0 alone** — it is the measurement everything else has to get out of the way of, so anything sharing its tick is being timed along with it. Add a cadence that is not a minute multiple, or two loops on one phase, and pairs start converging on a period nobody will think to look for. `command` (20 s) is the documented exception: it re-enters the minute at 2/22/42 and does brush past other loops, which is allowed because it is one cheap GET with no subprocess and no collector.
 
 Phases are capped inside one minute on purpose — proportional-to-interval would space the 300 s loops further apart but leave an operator who just installed the agent waiting minutes for their first process list.
+
+**INVARIANT — host CPU is an INTERVAL MEAN over the whole cadence, never a sampling window, and the phase table is not allowed to be what protects a measurement** (business rule 82; 2026-09-22, agent 0.20.0). `collectors/cputimes.go` reads the kernel's cumulative per-core counters (`cpu.Times(true)`) each telemetry pass and reports the delta since the previous pass; `TelemetryOnce` never blocks. **The telemetry loop's cadence IS the averaging window** — lengthen `telemetry_interval_sec` and the chart smooths, shorten it and it sharpens.
+
+It was `cpu.Percent(1*time.Second, true)` until 0.20.0: one second measured out of every sixty. That is not merely noisy, it is BIASED, and the bias is the agent's own. Anything the agent was doing inside that second appeared in the chart magnified ~60×, and on a **single-vCPU VM** the agent's own work is the entire core — a `processConnections` sweep (phase 57) or a `tasklist /svc` (phase 42) that overran into telemetry's window (phase 8) reported ~100% CPU for an otherwise idle host. **The phase offsets above cannot fix this class of bug and must never be relied on to**: they stagger when a pass STARTS and say nothing about how long it runs, and on the single-core hosts where it matters every pass runs long. `processConnections` only had to overrun by 11 s to reach the window. The fix was deleting the window, not moving the phase.
+
+Consequences to keep straight when touching this:
+
+- **Do not route host CPU through `cpu.Percent(0, …)`** even though gopsutil offers exactly this semantic. Its last-call state is a package global shared by every caller in the process, so a second collector calling `Percent` would consume this one's baseline and silently shrink the window to the gap between the two calls — reintroducing the bug in a form no test on `cputimes.go` would see. The baseline is ours, in `cpuSampler`.
+- **The aggregate is the summed-delta ratio, not the mean of the per-core vector.** They agree only when every core advanced equally; the summed form is the one that survives a parked core and a vector truncated at `maxReportedCores`.
+- **Four conditions fall back to one short (250 ms) blocking read** and are covered by `cputimes_test.go`: no baseline, a changed logical-core count (vCPU hot-plug), counters that did not advance (two reads in one instant), and counters that went backwards (VM restored from a snapshot, host resumed from suspend). The fallback is not expected to fire in normal operation — the baseline is primed in the package's `init()` at process start, so even the first telemetry pass has one.
+- **Operator-visible**: the CPU chart is flatter than pre-0.20.0 and thresholds fire on a sustained average rather than a lucky sample. Documented for operators in `docs/wiki/Polaris-Agent.md` → "What the CPU number measures". An installed agent keeps the old behaviour until upgraded.
 - New ManagedAgent column: update Prisma model + the route GET /:id/agent response shape (which strips hash fields explicitly).
 - Cert-pin algorithm change: update `certInfo.getServerCertFingerprint()` AND the Go agent's TLS verifier in lockstep — server pin AND agent pin both compute fingerprint the same way (sha256 of leaf DER).
 - New /agents/* route: decide whether it's public (mount under `agentsEnrollRouter`) or bearer-gated (mount under `agentsRouter`). Both are wired in `src/api/router.ts` BEFORE the blanket `requireAuth` gate.

@@ -872,3 +872,48 @@ its upgrade failed is exactly what you want to hear about.
 
 See [Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)
 and [Polaris Agent](Polaris-Agent#upgrading).
+
+### Rule 82
+
+**A measurement of the host must not be dominated by the measurer, and a
+scheduling offset is not a way to protect one.**
+
+The [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures) used to report
+host CPU by measuring **one second out of every sixty**. On a host with cores to
+spare that is just an imprecise way to describe a minute. On a **single-vCPU VM**
+it was actively wrong: if one of the agent's own collections was still running
+when that one-second window opened, it held the only core, and the sample
+reported close to 100% CPU for a host that was otherwise idle.
+
+The error was not random, which is what made it worth a rule. The same
+collections overrun on the same hosts every minute, so those hosts read high the
+same way every time, and nothing on the chart said so.
+
+Spreading the collections across the minute — which Polaris already does, and
+which fixed an [earlier problem](Polaris-Agent#the-collections-are-spread-across-the-minute)
+of the same family — could not fix this one. **An offset controls when a
+collection starts, not how long it runs**, and on the small hosts where this
+matters everything runs long. One collection only had to overrun by 11 seconds
+to land on the reading.
+
+So the sampling window was removed rather than moved. The agent now reads the
+operating system's running CPU counters and reports the difference since its
+previous sample, which means:
+
+- **The measured span is the whole interval between samples** — by default 60
+  seconds. Nothing goes unmeasured, and the agent's own work can only ever
+  count for what it actually costs.
+- **The chart is flatter, and CPU thresholds fire on a sustained average**
+  rather than on whichever second happened to be sampled. If you tuned a CPU
+  threshold before agent 0.20.0, re-check it.
+- **The sample interval is the smoothing.** Shorten `telemetry_interval_sec` on
+  a host you want a sharper chart for; that shortens the averaging window too.
+
+This applies to host CPU. Per-program CPU still takes a brief sample, because a
+single program's percentage is measured against elapsed time rather than against
+the machine — a collection competing with it makes that number read *low*, not
+high.
+
+An agent already installed keeps its old behaviour until it is upgraded.
+
+See [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures).
