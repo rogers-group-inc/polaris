@@ -61,7 +61,7 @@ silently revoke.
 
 | Key | |
 |---|---|
-| `assets` | inventory CRUD and export. **`fullwrite` = deploy the agent** |
+| `assets` | inventory CRUD and export. **`fullwrite` = deploy the agent, and merge assets** (a merge edits one record and deletes another) |
 | `assetsQuarantine` | push MAC quarantine to FortiGates, release, verify |
 | `assetsProbe` | probe-now, SNMP walk, DNS lookup. **`none \| read` only** |
 | `assetMonitorSettings` | monitor cadence and retention overrides at every tier. **`fullwrite` also gates the outage simulation** |

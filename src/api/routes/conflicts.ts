@@ -208,8 +208,12 @@ router.post("/:id/merge", async (req, res, next) => {
     // Same chained gate as /reassign-ip — it deletes asset rows.
     const proposedKind = (conflict.proposedAssetFields || {}) as Record<string, unknown>;
     if (proposedKind.collisionReason === DUPLICATE_IP_COLLISION_REASON) {
-      if (!hasPermission(req, "assets", "write")) {
-        throw new AppError(403, "You do not have permission to merge assets");
+      // Merging is editing one asset AND deleting another, so it takes the
+      // assets key's destructive tier — the same level `POST /assets/:id/merge`
+      // requires, and the level the merge modal is gated on client-side. The
+      // reassign verb below stays at `write`: it edits, it deletes nothing.
+      if (!hasPermission(req, "assets", "fullwrite")) {
+        throw new AppError(403, "Merging assets requires full read-write on Assets");
       }
       const survivorAssetId =
         typeof req.body?.survivorAssetId === "string" ? req.body.survivorAssetId : "";

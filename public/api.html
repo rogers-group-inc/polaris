@@ -413,6 +413,23 @@
         </p>
 
         <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /assets/ip-check
+            <span class="gate">assets:read</span></div>
+          <p>Ask, before creating or re-addressing a device, whether an address is already in use.
+            Query: <code>ip</code> (required), <code>excludeAssetId</code> (the asset being edited,
+            so it is not reported as colliding with itself), and optionally <code>assetType</code>
+            and <code>macAddress</code> for the incoming device. Returns
+            <code>{ ip, holders[], wouldConflict, qualifiedBy, canMerge }</code>: every
+            network-present asset already recording the address (each with
+            <code>claimCurrent</code> &mdash; a stale record is listed but does not collide),
+            whether saving would raise a Duplicate IP conflict, and whether the caller may merge
+            assets (<code>assets:fullwrite</code>). The answer is computed with the same rules the
+            save applies, so a <code>wouldConflict: true</code> here is a conflict the write will
+            raise. <code>400</code> on an invalid address.</p>
+          <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN"   "<span class="js-base-url">/api/v1</span>/assets/ip-check?ip=10.20.30.4&amp;assetType=switch"</code></pre>
+        </div>
+
+        <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /assets
             <span class="gate">assets:write</span></div>
           <p>Create a device. Body (all optional, but give it at least an address or a hostname):
@@ -421,7 +438,11 @@
             department?, assignedTo?, os?, acquiredAt?, warrantyExpiry?, purchaseOrder?, notes?,
             description?, tags? }</code>. <code>assetType</code> defaults to <code>other</code> and
             <code>status</code> to <code>active</code>.
-            <code>201</code> with the created record.</p>
+            <code>201</code> with the created record, plus <code>ipConflict</code>: when the new
+            device's address is already recorded by another network-present asset, Polaris raises
+            a Duplicate IP conflict on the spot (rather than on its ten-minute sweep) and returns
+            it as <code>{ conflictId, ip, qualifiedBy, members[] }</code>; otherwise
+            <code>null</code>. Ask before writing with <code>GET /assets/ip-check</code> below.</p>
           <p><strong>Monitoring fields are not accepted here</strong> &mdash;
             <code>monitored</code> and every <code>*CredentialId</code> belong to the PUT below.
             A device created by this endpoint is a manual-source asset: only response time gets a
@@ -442,7 +463,11 @@
             disabled</code>), and the per-stream credentials
             <code>{ responseTimeCredentialId?, cpuMemoryCredentialId?,
             temperatureCredentialId?, interfacesCredentialId?, lldpCredentialId? }</code>.
-            <code>null</code> clears a slot and falls back to the next settings tier.</p>
+            <code>null</code> clears a slot and falls back to the next settings tier.
+            When the update <em>changes</em> <code>ipAddress</code>, the response carries
+            <code>ipConflict</code> exactly as <code>POST /assets</code> does &mdash; the conflict on
+            the new address, or <code>null</code> &mdash; and a conflict the device just moved off
+            is closed in the same call.</p>
           <p>Refusals worth coding against:</p>
           <ul>
             <li><code>400</code> &mdash; <code>Credential … not found</code>, naming the id.

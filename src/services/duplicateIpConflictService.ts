@@ -194,8 +194,12 @@ export interface DuplicateIpGroup {
    * by two integrations on a deliberately-assigned address. The card renders a
    * different explainer per value, because the two have different answers —
    * the first usually ends in "move one of them", the second in a merge.
+   * `operator-addressed` is rule 40(i): an operator TYPED one of the claims
+   * (`ipSource="manual"` or a pin), which is deliberate addressing whatever
+   * the device's type — the clause that lets "submit this collision for
+   * review" on the asset form mean something for two workstations.
    */
-  qualifiedBy: "asset-type" | "cross-source";
+  qualifiedBy: "asset-type" | "cross-source" | "operator-addressed";
 }
 
 /**
@@ -367,11 +371,23 @@ export function groupCurrentClaims(
       !byType &&
       ctx.deliberateIps.has(ip) &&
       groupHasDisjointSources(members, ctx.sourceKindsByAsset);
-    if (!byType && !byCrossSource) continue;
+    // Rule 40(i): (g) asks whether the DEVICE has deliberate addressing and
+    // (h) whether the ADDRESS does; this asks whether a PERSON did the
+    // addressing. An operator who typed an IP onto an asset chose it exactly
+    // as a reservation chooses one, so two workstations one of which was
+    // hand-addressed is a collision worth a card — and it is the clause that
+    // lets the asset form's "submit for conflict review" raise one at all,
+    // since without it the sweep would auto-close the card the save just
+    // raised. Tested on CURRENT claims like the others; an operator claim is
+    // current by definition (`claimIsCurrent`), so a stale operator row cannot
+    // exist to license anything. Narrowest and newest, so it takes the label
+    // only when neither older clause applies.
+    const byOperator = !byType && !byCrossSource && members.some(claimIsOperatorOwned);
+    if (!byType && !byCrossSource && !byOperator) continue;
     groups.push({
       ip,
       members: [...members].sort((a, b) => a.id.localeCompare(b.id)),
-      qualifiedBy: byType ? "asset-type" : "cross-source",
+      qualifiedBy: byType ? "asset-type" : byCrossSource ? "cross-source" : "operator-addressed",
     });
   }
   return groups.sort((a, b) => a.ip.localeCompare(b.ip));
@@ -496,6 +512,9 @@ export async function loadDuplicateIpClaims(): Promise<IpClaimRow[]> {
          AND (
            bool_or(c."assetType" = ANY(${CONFLICT_ELIGIBLE_ASSET_TYPES}::text[]))
            OR bool_or(dl.ip IS NOT NULL)
+           -- rule 40(i): an operator-typed claim. Mirrors claimIsOperatorOwned;
+           -- a superset like the two above (the JS re-tests it on current claims).
+           OR bool_or(c."ipSource" = 'manual' OR c."ipOverride" = c.ip)
          )
     )
     SELECT c.* FROM claims c JOIN dups d ON d.ip = c.ip
@@ -504,8 +523,15 @@ export async function loadDuplicateIpClaims(): Promise<IpClaimRow[]> {
   `;
 }
 
-/** Every network-present claim on ONE address (no "at least two" pre-filter). */
-async function loadClaimsForIp(ip: string): Promise<IpClaimRow[]> {
+/**
+ * Every network-present claim on a SET of addresses (no "at least two"
+ * pre-filter, no eligibility pre-filter — the JS decides both). This is the
+ * write-time scan: an operator save names the one or two addresses it
+ * touched, and the sweep's fleet-wide CTE would be the wrong tool for it.
+ */
+async function loadClaimsForIps(ips: readonly string[]): Promise<IpClaimRow[]> {
+  const list = [...new Set(ips.map((ip) => (ip || "").trim()).filter(Boolean))];
+  if (list.length === 0) return [];
   return prisma.$queryRaw<IpClaimRow[]>`
     SELECT a.id, a."ipAddress" AS ip, a.hostname, a."assetType",
            a.status::text AS status, a.monitored, a."macAddress",
@@ -513,10 +539,15 @@ async function loadClaimsForIp(ip: string): Promise<IpClaimRow[]> {
            h."lastSeen" AS "ipLastSeen"
     FROM assets a
     LEFT JOIN asset_ip_history h ON h."assetId" = a.id AND h.ip = a."ipAddress"
-    WHERE a."ipAddress" = ${ip}
+    WHERE a."ipAddress" = ANY(${list}::text[])
       AND a.status::text <> ALL(${UNMONITORABLE_STATUSES}::text[])
-    ORDER BY a.id
+    ORDER BY a."ipAddress", a.id
   `;
+}
+
+/** Every network-present claim on ONE address (no "at least two" pre-filter). */
+async function loadClaimsForIp(ip: string): Promise<IpClaimRow[]> {
+  return loadClaimsForIps([ip]);
 }
 
 /**
@@ -594,6 +625,137 @@ async function evaluateIp(ip: string): Promise<DuplicateIpGroup | null> {
   return groups.find((g) => g.ip === ip) ?? null;
 }
 
+/** The qualified duplicate group on ONE address right now, or null. */
+export const evaluateDuplicateIp = evaluateIp;
+
+// ─── Write-time check (rule 40(i)) ────────────────────────────────────────────
+//
+// The sweep answers "where are the duplicates" for the fleet every ten minutes.
+// The asset form asks a narrower question at a specific moment: "if I put THIS
+// asset on THIS address, is that a collision, and with whom?" — and it has to be
+// answered before the write lands, so the operator can be told. The row the
+// form is about to create or move does not exist on the address yet, so the
+// question is answered by SIMULATING its claim: a synthetic operator-owned row
+// (that is what a typed address becomes — `ipSource="manual"`) is grouped with
+// the real claims through the SAME `groupCurrentClaims` the sweep uses. That
+// sameness is the point: what the check says will be raised is exactly what the
+// save raises and exactly what the next sweep leaves standing.
+
+/** One network-present asset already recording the address, as the form shows it. */
+export interface IpHolder extends DuplicateIpMember {
+  /** Whether this holder's claim is CURRENT (rule 40(b)); a stale one is shown but does not collide. */
+  claimCurrent: boolean;
+}
+
+export interface IpCheckResult {
+  ip: string;
+  /** Every network-present asset on the address other than the one being saved. */
+  holders: IpHolder[];
+  /**
+   * Whether saving would raise (or refresh) a duplicate-ip conflict — i.e. the
+   * simulated group qualifies. False when the only other claims are stale, or
+   * the "other" asset is the same device (shared MAC, rule 40(c)).
+   */
+  wouldConflict: boolean;
+  qualifiedBy: DuplicateIpGroup["qualifiedBy"] | null;
+}
+
+/** What the asset form is about to write, for the simulation. */
+export interface IncomingClaim {
+  ip: string;
+  /** The asset being edited, excluded from the holders (a create has none). */
+  excludeAssetId?: string | null;
+  assetType?: string | null;
+  macAddress?: string | null;
+}
+
+/** Sentinel id for the simulated row — never a real asset id. */
+export const INCOMING_CLAIM_ID = "__incoming-claim__";
+
+/**
+ * Pure half of the check: group the real claims plus the simulated one and
+ * report whether the address qualifies. Exported so the decision is testable
+ * without a database, exactly like `groupCurrentClaims` itself.
+ */
+export function simulateIncomingClaim(
+  rows: IpClaimRow[],
+  incoming: IncomingClaim,
+  cutoff: Date,
+  ctx: CrossSourceContext = EMPTY_CROSS_SOURCE_CONTEXT,
+  now: Date = new Date(),
+): IpCheckResult {
+  const ip = (incoming.ip || "").trim();
+  const others = rows.filter((r) => r.ip === ip && r.id !== incoming.excludeAssetId);
+  const holders: IpHolder[] = others.map((r) => ({
+    ...toStoredMember(r),
+    claimCurrent: claimIsCurrent(r, cutoff),
+  }));
+  if (others.length === 0) return { ip, holders, wouldConflict: false, qualifiedBy: null };
+
+  // The form's write is an operator claim: current by definition, and what
+  // makes the group qualify under (i) when nothing else does.
+  const synthetic: IpClaimRow = {
+    id: INCOMING_CLAIM_ID,
+    ip,
+    hostname: null,
+    assetType: incoming.assetType ?? null,
+    status: "active",
+    monitored: false,
+    macAddress: incoming.macAddress ?? null,
+    ipSource: "manual",
+    ipOverride: null,
+    lastSeen: now,
+    ipLastSeen: now,
+  };
+  const group = groupCurrentClaims([...others, synthetic], cutoff, ctx).find((g) => g.ip === ip);
+  return { ip, holders, wouldConflict: !!group, qualifiedBy: group?.qualifiedBy ?? null };
+}
+
+/**
+ * The asset form's pre-save question, answered from the database: who else is
+ * on this address, and would saving raise a conflict? Three small queries
+ * bounded by ONE address — never the fleet.
+ */
+export async function checkIpForIncomingClaim(incoming: IncomingClaim): Promise<IpCheckResult> {
+  const ip = (incoming.ip || "").trim();
+  if (!ip) return { ip, holders: [], wouldConflict: false, qualifiedBy: null };
+  const rows = await loadClaimsForIp(ip);
+  const others = rows.filter((r) => r.id !== incoming.excludeAssetId);
+  if (others.length === 0) return { ip, holders: [], wouldConflict: false, qualifiedBy: null };
+  const ctx = await loadCrossSourceContext(others);
+  return simulateIncomingClaim(others, incoming, freshnessCutoff(), ctx);
+}
+
+/** What the route hands back about the conflict a save raised or refreshed. */
+export interface WriteTimeIpConflict {
+  conflictId: string;
+  ip: string;
+  qualifiedBy: DuplicateIpGroup["qualifiedBy"];
+  members: DuplicateIpMember[];
+}
+
+/**
+ * Re-evaluate the duplicate-ip conflict set for the addresses ONE write
+ * touched — the address an asset was just created on or moved to, and the one
+ * it moved off. Raises, refreshes or auto-closes exactly as the sweep would,
+ * because it IS the sweep's reconcile scoped to those addresses; it exists so
+ * an operator hears about a collision on save rather than up to ten minutes
+ * later, and so the card a save raised carries an id the form can open.
+ *
+ * Returns the open conflict per address after the pass (raised or refreshed),
+ * keyed by address, so a caller can attach the one for the address it wrote.
+ */
+export async function reconcileDuplicateIpForAddresses(
+  ips: readonly (string | null | undefined)[],
+): Promise<Map<string, WriteTimeIpConflict>> {
+  const scoped = [...new Set(ips.map((ip) => (ip || "").trim()).filter(Boolean))];
+  const out = new Map<string, WriteTimeIpConflict>();
+  if (scoped.length === 0) return out;
+  const result = await reconcileDuplicateIpConflicts({ ips: scoped });
+  for (const c of result.conflicts) out.set(c.ip, c);
+  return out;
+}
+
 // ─── Reconcile (the job's entry point) ───────────────────────────────────────
 
 export interface DuplicateIpReconcileResult {
@@ -602,6 +764,19 @@ export interface DuplicateIpReconcileResult {
   refreshed: number;
   closed: number;
   suppressed: number;
+  /** The open conflict per qualifying address after this pass (raised or refreshed). */
+  conflicts: WriteTimeIpConflict[];
+}
+
+/**
+ * Restrict a reconcile to the addresses one write touched. Everything about
+ * the pass is identical — same claims query shape, same grouping, same
+ * raise / refresh / suppress / auto-close — except that pending conflicts on
+ * OTHER addresses are neither read nor closed, so a save cannot retire a card
+ * about an address it never looked at.
+ */
+export interface ReconcileScope {
+  ips: readonly string[];
 }
 
 function conflictIpOf(conflict: { proposedAssetFields: unknown }): string | null {
@@ -620,16 +795,20 @@ function conflictMembersOf(conflict: { proposedAssetFields: unknown }): Duplicat
  * Raise / refresh / close the duplicate-address conflict set. Idempotent — a
  * steady-state fleet with no duplicates issues zero writes.
  */
-export async function reconcileDuplicateIpConflicts(): Promise<DuplicateIpReconcileResult> {
+export async function reconcileDuplicateIpConflicts(
+  scope?: ReconcileScope,
+): Promise<DuplicateIpReconcileResult> {
   const result: DuplicateIpReconcileResult = {
     groups: 0,
     raised: 0,
     refreshed: 0,
     closed: 0,
     suppressed: 0,
+    conflicts: [],
   };
+  const scopeIps = scope ? new Set(scope.ips) : null;
 
-  const rows = await loadDuplicateIpClaims();
+  const rows = scopeIps ? await loadClaimsForIps([...scopeIps]) : await loadDuplicateIpClaims();
   const ctx = await loadCrossSourceContext(rows);
   const groups = groupCurrentClaims(rows, freshnessCutoff(), ctx);
   result.groups = groups.length;
@@ -641,12 +820,14 @@ export async function reconcileDuplicateIpConflicts(): Promise<DuplicateIpReconc
   });
   // One pending row per ADDRESS is the invariant; the OLDEST wins and any
   // extra (a raced create, a hand-inserted row) is closed below rather than
-  // left to linger unreachable behind the winner.
+  // left to linger unreachable behind the winner. A scoped pass sees only the
+  // rows on its addresses — everything else is another pass's business.
   const pendingByIp = new Map<string, (typeof pending)[number]>();
   const strandedPendingIds: string[] = [];
   for (const row of pending) {
     const ip = conflictIpOf(row);
     if (!ip) continue;
+    if (scopeIps && !scopeIps.has(ip)) continue;
     if (pendingByIp.has(ip)) strandedPendingIds.push(row.id);
     else pendingByIp.set(ip, row);
   }
@@ -703,6 +884,7 @@ export async function reconcileDuplicateIpConflicts(): Promise<DuplicateIpReconc
         },
       });
       result.refreshed++;
+      result.conflicts.push({ conflictId: open.id, ip: group.ip, qualifiedBy: group.qualifiedBy, members });
       continue;
     }
 
@@ -718,7 +900,7 @@ export async function reconcileDuplicateIpConflicts(): Promise<DuplicateIpReconc
 
     const primaryId = pickPrimaryMemberId(group.members);
     if (!primaryId) continue;
-    await prisma.conflict.create({
+    const created = await prisma.conflict.create({
       data: {
         entityType: "asset",
         assetId: primaryId,
@@ -726,8 +908,10 @@ export async function reconcileDuplicateIpConflicts(): Promise<DuplicateIpReconc
         proposedAssetFields,
         existingAssetSnapshot,
       },
+      select: { id: true },
     });
     result.raised++;
+    result.conflicts.push({ conflictId: created.id, ip: group.ip, qualifiedBy: group.qualifiedBy, members });
     const names = group.members.map((m) => m.hostname || m.id).join(", ");
     logEvent({
       action: "conflict.detected",
