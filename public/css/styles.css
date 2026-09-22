@@ -3401,6 +3401,50 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 /* The shared `word-break: break-word` is for the comparison table's two value
    columns; here it hyphenates "access_point" down the Type column. */
 .conflict-table-dupip td { word-break: normal; }
+
+/* Serial conflicts (business rule 83) — two more column counts the
+   three-column comparison rules above are wrong for. Same failure the
+   duplicate-IP block documents: the nth-child(2)/(3) half-width rule hands two
+   columns half the table each and starves everything after them, so each
+   variant declares its own widths and carries its own min-width + scroll
+   wrapper rather than crushing a column in a narrowed panel.
+
+   Contested serial (renderSerialClaimConflictCard): FIVE columns, no controls
+   — the card is report-only, so the width goes to the gate's name and to the
+   two timestamps that tell a completed move from a stale roster entry. */
+.conflict-table-serial-claim { overflow-x: auto; }
+.conflict-table-serial-claim table { min-width: 720px; }
+.conflict-table-serial-claim .conflict-field { width: auto; } /* Controller FortiGate — takes the remainder */
+.conflict-table-serial-claim th:nth-child(2),
+.conflict-table-serial-claim td:nth-child(2) { width: 170px; } /* Chassis serial */
+.conflict-table-serial-claim th:nth-child(3),
+.conflict-table-serial-claim td:nth-child(3) { width: 150px; } /* Integration */
+.conflict-table-serial-claim th:nth-child(4),
+.conflict-table-serial-claim td:nth-child(4) { width: 120px; } /* First claimed */
+.conflict-table-serial-claim th:nth-child(5),
+.conflict-table-serial-claim td:nth-child(5) { width: 120px; } /* Last confirmed */
+.conflict-table-serial-claim td { word-break: normal; }
+
+/* Duplicate serial (renderDuplicateSerialConflictCard): SIX columns, the last
+   holding the Merge control. Its own block rather than borrowing the
+   duplicate-IP one: the columns line up by count only — that card's 240px
+   column holds an address field beside a button, this one holds a timestamp —
+   and a variant that borrows another's widths drifts the moment either card
+   gains a column. */
+.conflict-table-dupserial { overflow-x: auto; }
+.conflict-table-dupserial table { min-width: 800px; }
+.conflict-table-dupserial .conflict-field { width: auto; }     /* Asset — takes the remainder */
+.conflict-table-dupserial th:nth-child(2),
+.conflict-table-dupserial td:nth-child(2) { width: 100px; }    /* Type */
+.conflict-table-dupserial th:nth-child(3),
+.conflict-table-dupserial td:nth-child(3) { width: 100px; }    /* Status */
+.conflict-table-dupserial th:nth-child(4),
+.conflict-table-dupserial td:nth-child(4) { width: 130px; }    /* IP */
+.conflict-table-dupserial th:nth-child(5),
+.conflict-table-dupserial td:nth-child(5) { width: 120px; }    /* Last seen */
+.conflict-table-dupserial th:nth-child(6),
+.conflict-table-dupserial td:nth-child(6) { width: 150px; }    /* Same device */
+.conflict-table-dupserial td { word-break: normal; }
 .conflict-table .conflict-action-cell { white-space: nowrap; }
 .conflict-inline-controls {
   display: flex;

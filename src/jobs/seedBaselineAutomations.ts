@@ -383,7 +383,7 @@ const EVENT_BASELINE_RULES: Record<string, unknown>[] = [
   {
     name: "IP conflict detected",
     description:
-      "Fires on the two address conflicts that stamp an Event (conflict.detected): an ip-override conflict — a discovered IP disagreeing with an operator IP pin — and a duplicate-IP conflict, two network-present assets recording the same address (business rule 40). The discovery hostname-collision flavors surface on the Conflicts page without an Event. Baseline example — edit or delete freely.",
+      "Fires on every conflict that stamps an Event (conflict.detected): an ip-override conflict — a discovered IP disagreeing with an operator IP pin — a duplicate-IP conflict, two network-present assets recording the same address (business rule 40), a chassis replacement under a subnet (business rule 41), and the two serial conflicts — one managed device on two FortiGates' rosters, and one serial on two asset records (business rule 83). The discovery hostname-collision flavors surface on the Conflicts page without an Event. Baseline example — edit or delete freely.",
     severity: "notice",
     trigger: { type: "event", actionPattern: "conflict.detected" },
     reset: { mode: "timed", afterSec: 86400 },

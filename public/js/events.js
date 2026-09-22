@@ -810,12 +810,19 @@ function getAlertsFormData() {
       // operator merge engine. Destructive and irreversible, so the confirm
       // NAMES every record that will be deleted rather than counting them, and
       // points at the asset page's Merge modal for per-field control.
-      body.querySelectorAll("[data-dupip-merge]").forEach(function (el) {
+      // The duplicate-SERIAL card (business rule 83) reaches the same endpoint
+      // with the same body — one device recorded twice is one device recorded
+      // twice, whether the give-away was the address or the serial — so it
+      // shares this wiring and only the wording differs.
+      body.querySelectorAll("[data-dupip-merge], [data-dupserial-merge]").forEach(function (el) {
         var conflictId = el.getAttribute("data-conflict-id");
         var survivorId = el.getAttribute("data-asset-id");
+        var bySerial = el.hasAttribute("data-dupserial-merge");
+        var rowSelector = bySerial ? "[data-dupserial-merge]" : "[data-dupip-merge]";
+        var subject = bySerial ? "serial number" : "address";
         el.addEventListener("click", async function () {
           var card = el.closest(".conflict-card");
-          var rows = card ? Array.prototype.slice.call(card.querySelectorAll("[data-dupip-merge]")) : [];
+          var rows = card ? Array.prototype.slice.call(card.querySelectorAll(rowSelector)) : [];
           var others = rows
             .map(function (b) {
               return {
@@ -826,7 +833,7 @@ function getAlertsFormData() {
               };
             })
             .filter(function (r) { return r.id && r.id !== survivorId; });
-          if (!others.length) { showToast("Nothing to merge — only one asset on this address", "error"); return; }
+          if (!others.length) { showToast("Nothing to merge — only one asset on this " + subject, "error"); return; }
           var survivorLabel = (el.closest("tr") && el.closest("tr").firstElementChild)
             ? el.closest("tr").firstElementChild.textContent.trim()
             : survivorId;
@@ -856,7 +863,7 @@ function getAlertsFormData() {
             });
             showToast(out && out.resolved
               ? "Merged — duplicate resolved, moved " + ((out && out.movedSources) || 0) + " source(s)"
-              : "Merged — " + ((out && out.remaining) || 0) + " assets still share the address");
+              : "Merged — " + ((out && out.remaining) || 0) + " assets still share the " + subject);
             var scrollTop = body.scrollTop;
             await loadConflicts(true);
             body.scrollTop = scrollTop;
@@ -879,7 +886,7 @@ function getAlertsFormData() {
       // collision and the next pass auto-resolves it (`system:auto-resolved`).
       // Reloading the queue here is therefore a refresh, not a resolution —
       // the card can legitimately still be listed until that pass runs.
-      body.querySelectorAll("[data-dupip-review]").forEach(function (el) {
+      body.querySelectorAll("[data-dupip-review], [data-dupserial-review]").forEach(function (el) {
         el.addEventListener("click", function () {
           var thisId = el.getAttribute("data-asset-id");
           var otherId = el.getAttribute("data-other-id");
@@ -1384,10 +1391,175 @@ function getAlertsFormData() {
     '</div>';
   }
 
+  // One managed device, two controller FortiGates (business rule 83).
+  //
+  // Report-only: there is no verb that makes one gate right, because whether
+  // this is a completed move or a stale roster entry is a fact about the gates'
+  // configuration. The card's whole job is to say WHICH gates are arguing and
+  // when each last said so, so an operator can go and look.
+  function renderSerialClaimConflictCard(c) {
+    var proposed = c.proposedAssetFields || {};
+    var serial = proposed.deviceSerial || "—";
+    var claimants = Array.isArray(proposed.claimants) ? proposed.claimants : [];
+    var isResolved = c.status !== "pending";
+    var deviceLabel = proposed.hostname || serial;
+    var kindLabel = proposed.sourceKind === "fortiap" ? "FortiAP" : "FortiSwitch";
+
+    var rows = claimants.map(function (g, i) {
+      var name = g.controllerDevice || g.controllerSerial || "(unnamed gate)";
+      var link = g.controllerAssetId
+        ? '<a href="/assets.html#view=asset:' + encodeURIComponent(g.controllerAssetId) + '">' + escapeHtml(name) + '</a>'
+        : escapeHtml(name);
+      // The claim list arrives newest-first, so the first row is the gate whose
+      // stamp the asset is carrying right now — which is the single most useful
+      // thing on this card and the only reason the order matters.
+      var owns = i === 0
+        ? ' <span class="badge badge-conflict" style="font-size:0.65rem">owns the record</span>'
+        : "";
+      return '<tr class="conflict-changed">' +
+        '<td class="conflict-field">' + link + owns + '</td>' +
+        '<td class="mono" style="font-size:0.75rem">' + escapeHtml(g.controllerSerial || "—") + '</td>' +
+        '<td style="font-size:0.75rem">' + escapeHtml(g.integrationName || "—") + '</td>' +
+        '<td style="font-size:0.75rem">' + (g.firstSeen ? timeAgo(g.firstSeen) : "—") + '</td>' +
+        '<td style="font-size:0.75rem">' + (g.lastSeen ? timeAgo(g.lastSeen) : "—") + '</td>' +
+        '</tr>';
+    }).join("");
+
+    var explainer =
+      '<strong class="mono">' + escapeHtml(serial) + '</strong> is on the managed roster of ' +
+      claimants.length + ' FortiGates at once, so <strong>whichever one ran discovery last owns the ' +
+      'record</strong> — and with it the dependency parent, the Device Map placement, the region tags and ' +
+      'the description-sync target, which change back and forth on every pass. ' +
+      '<strong>If the ' + kindLabel + ' was moved:</strong> remove it from the configuration of the gate it ' +
+      'left, and this card closes itself once that gate stops reporting it. ' +
+      '<strong>If it was not moved:</strong> one of these gates has a stale entry — the "last confirmed" ' +
+      'column says which one is still being told about it. ' +
+      'Polaris changes nothing on the devices either way. ' +
+      '<strong>Reject</strong> dismisses the card; the same pair of gates will not re-raise, a different ' +
+      'pair will.';
+
+    var actions = isResolved
+      ? resolvedActionsHtml(c)
+      : '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '" ' +
+          'title="Dismiss — both gates keep the device on their roster">Reject (dismiss)</button>';
+
+    var deviceLink = c.assetId
+      ? '<a href="/assets.html#view=asset:' + encodeURIComponent(c.assetId) + '">' + escapeHtml(deviceLabel) + '</a>'
+      : escapeHtml(deviceLabel);
+
+    return '<div class="conflict-card">' +
+      '<div class="conflict-card-header">' +
+        '<span class="badge badge-conflict">Contested serial</span>' +
+        '<strong>' + deviceLink + '</strong>' +
+        '<span class="conflict-card-subnet" style="font-size:0.78rem">' +
+          escapeHtml(kindLabel) + ' · ' + claimants.length + ' controllers' +
+        '</span>' +
+      '</div>' +
+      '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
+      '<div class="conflict-table conflict-table-serial-claim" style="padding:0">' +
+        '<table><thead><tr>' +
+          '<th class="conflict-field">Controller FortiGate</th>' +
+          '<th>Chassis serial</th>' +
+          '<th>Integration</th>' +
+          '<th>First claimed</th>' +
+          '<th>Last confirmed</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+      '<div class="conflict-card-actions">' + actions + '</div>' +
+    '</div>';
+  }
+
+  // Two asset records, one serial number (business rule 83) — one device
+  // recorded twice, so the card's only verb is a merge. Same buttons and the
+  // same endpoint body as the duplicate-IP card's "one device" half.
+  function renderDuplicateSerialConflictCard(c) {
+    var proposed = c.proposedAssetFields || {};
+    var serial = proposed.serialNumber || "—";
+    var members = Array.isArray(proposed.members) ? proposed.members : [];
+    var isResolved = c.status !== "pending";
+    var canMerge = typeof permAtLeast === "function" && permAtLeast("assets", "fullwrite");
+
+    var rows = members.map(function (m) {
+      var name = m.hostname || m.assetId || "(unnamed)";
+      var link = m.assetId
+        ? '<a href="/assets.html#view=asset:' + encodeURIComponent(m.assetId) + '">' + escapeHtml(name) + '</a>'
+        : escapeHtml(name);
+      var mergeCell = (isResolved || !canMerge)
+        ? '<td></td>'
+        : '<td class="conflict-action-cell">' +
+            '<button class="btn btn-secondary btn-sm" data-dupserial-merge data-conflict-id="' + c.id + '" ' +
+              'data-asset-id="' + escapeHtml(m.assetId || "") + '" ' +
+              'title="Keep ' + escapeHtml(name) + ' and absorb the other' +
+              (members.length > 2 ? 's' : '') + '">Merge into this</button>' +
+          '</td>';
+      return '<tr class="conflict-changed">' +
+        '<td class="conflict-field">' + link + '</td>' +
+        '<td>' + escapeHtml(m.assetType || "—") + '</td>' +
+        '<td>' + escapeHtml(m.status || "—") + '</td>' +
+        '<td class="mono" style="font-size:0.75rem">' + escapeHtml(m.ipAddress || "—") + '</td>' +
+        '<td style="font-size:0.75rem">' + (m.lastSeen ? timeAgo(m.lastSeen) : "—") + '</td>' +
+        mergeCell +
+        '</tr>';
+    }).join("");
+
+    var explainer =
+      '<strong class="mono">' + escapeHtml(serial) + '</strong> is recorded on ' + members.length +
+      ' assets. A serial number identifies one physical unit, so this is almost always <strong>one device ' +
+      'recorded twice</strong> — two integrations that never cross-linked, or a record that outlived a ' +
+      're-enrolment. Use <em>Merge into this</em> on the record to keep — the other' +
+      (members.length > 2 ? 's are' : ' is') + ' absorbed into it and deleted — or ' +
+      '<em>Review &amp; merge</em> to compare them field by field first. ' +
+      '<strong>Reject</strong> if they really are different units reporting the same serial (some vendors ' +
+      'ship a placeholder); the same set will not re-raise.';
+
+    var reviewBtn = "";
+    if (!isResolved && members.length >= 2 && canMerge) {
+      reviewBtn =
+        '<button class="btn btn-secondary btn-sm" data-dupserial-review ' +
+          'data-conflict-id="' + c.id + '" ' +
+          'data-asset-id="' + escapeHtml(members[0].assetId || "") + '" ' +
+          'data-other-id="' + escapeHtml(members[1].assetId || "") + '" ' +
+          'title="Compare the two records field by field, then merge — nothing is deleted until you confirm">' +
+          'Review &amp; merge...</button>';
+    }
+
+    var actions = isResolved
+      ? resolvedActionsHtml(c)
+      : reviewBtn +
+        '<button class="btn btn-secondary btn-sm" data-conflict-action="reject" data-conflict-id="' + c.id + '" ' +
+          'title="Keep both records — they are different devices">Reject (dismiss)</button>';
+
+    return '<div class="conflict-card">' +
+      '<div class="conflict-card-header">' +
+        '<span class="badge badge-conflict">Duplicate serial</span>' +
+        '<strong class="mono">' + escapeHtml(serial) + '</strong>' +
+        '<span class="conflict-card-subnet" style="font-size:0.78rem">' + members.length + ' assets</span>' +
+      '</div>' +
+      '<div style="padding:6px 14px;font-size:0.78rem;color:var(--color-text-secondary)">' + explainer + '</div>' +
+      '<div class="conflict-table conflict-table-dupserial" style="padding:0">' +
+        '<table><thead><tr>' +
+          '<th class="conflict-field">Asset</th>' +
+          '<th>Type</th>' +
+          '<th>Status</th>' +
+          '<th>IP</th>' +
+          '<th>Last seen</th>' +
+          '<th>' + (isResolved ? '' : 'Same device') + '</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>' +
+      '<div class="conflict-card-actions">' + actions + '</div>' +
+    '</div>';
+  }
+
   function renderAssetConflictCard(c) {
     var proposedKind = c.proposedAssetFields || {};
     if (proposedKind.collisionReason === "ip-override") return renderIpOverrideConflictCard(c);
     if (proposedKind.collisionReason === "duplicate-ip") return renderDuplicateIpConflictCard(c);
+    if (proposedKind.collisionReason === "serial-two-controllers") return renderSerialClaimConflictCard(c);
+    if (proposedKind.collisionReason === "duplicate-serial") return renderDuplicateSerialConflictCard(c);
     // Prefer the conflict-time snapshot of the existing asset so a resolved
     // card shows what the asset looked like when the conflict was raised, not
     // the post-merge live row. Conflicts predating the snapshot column fall

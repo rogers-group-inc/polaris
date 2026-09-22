@@ -1173,6 +1173,12 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // recording one IP. Scheduler role only: one grouped scan for the
       // fleet, not one per monitor replica.
       "./jobs/detectDuplicateIpAssets.js",
+      // Serial sweep (business rule 83) — raises/closes the
+      // `serial-two-controllers` flavour (one managed device on two
+      // FortiGates' rosters) and the `duplicate-serial` flavour (one serial on
+      // two asset records). Scheduler role only, same reasoning: one grouped
+      // scan for the fleet.
+      "./jobs/detectSerialConflicts.js",
       // IP-keyed upstream sweep: MAC-less assets get their Last Seen Switch /
       // AP derived through the owning gate's ARP cache, since every MAC-keyed
       // writer of those columns can never reach them. Scheduler role only.

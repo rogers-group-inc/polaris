@@ -269,6 +269,43 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/duplicateSerialConflictService.ts
+
+**What it owns:** Both serial Conflict flavours end to end (business rule 83) — `serial-two-controllers` (one managed device on the roster of two controller FortiGates) and `duplicate-serial` (one serial on two Asset rows) — plus the write path that makes the first one detectable at all (`recordControllerClaims`, the `AssetControllerClaim` rows discovery re-asserts per pass). Sibling of `duplicateIpConflictService` (same sweep shape, same raise/refresh/auto-close lifecycle, same dedup-on-dismissal convention); it lives here rather than with the IPAM services because its subject is asset identity, not address space.
+
+**Public API:** pure — `isUsableSerial(raw)`, `controllerKeyFor(claim)`, `claimFoldKey(claim, ctx)`, `groupContestedSerials(claims, cutoff, ctx?)`, `claimantSetKey(claimants)`, `groupDuplicateSerialAssets(rows)`, `memberSetKey(members)`, `pickPrimaryMemberId(members)`, `resolveMergeTargets(members, survivorId, rawAbsorbIds)`, `freshnessCutoff(now?)`, `conflictSerialOf(conflict)`, `conflictClaimantsOf(conflict)`, `conflictMembersOf(conflict)`, `serialClaimRejectMessage(conflict)`, `duplicateSerialRejectMessage(conflict)`; DB — `recordControllerClaims(inputs)`, `pruneStaleControllerClaims(now?)`, `loadFreshControllerClaims(cutoff)`, `loadControllerContext(claims)`, `loadDuplicateSerialAssets()`, `reconcileSerialConflicts(now?)` (the job's entry point), `mergeDuplicateSerialAssets(conflict, survivorAssetId, absorbIds, actor)`, `logSerialClaimDismissal(conflict, actor)`, `logDuplicateSerialDismissal(conflict, actor)`, `logScanFailure(err)`. Constants `SERIAL_CLAIM_COLLISION_REASON`, `DUPLICATE_SERIAL_COLLISION_REASON`, `CLAIM_FRESH_DAYS`, `CLAIM_PRUNE_DAYS`, `CLAIM_EXCLUDED_STATUSES`, `MAX_PLAUSIBLE_DUPLICATES`, `EMPTY_CONTROLLER_CONTEXT`.
+
+**Cross-service deps:** `prisma`, `logEvent` (eventLogService), `mergeAssets` (assetMergeService — the merge verb delegates rather than re-implementing an absorb), `utils/fortinetParentKey` (`buildInfraParentIndex` / `resolveInfraParentAsset` / `normalizeSerialKey` / `normalizeNameKey` — controller resolution goes through the shared resolver, never a hostname compare).
+
+**Used by:** `src/jobs/detectSerialConflicts.ts` (30-min sweep, scheduler role), `src/services/discovery/discoveryEngine.ts` (`syncDhcpSubnets` — the FortiSwitch and FortiAP loops collect claims through a local `noteControllerClaim` and flush once with `recordControllerClaims` before Phase 4), `src/api/routes/conflicts.ts` (the duplicate-serial branch of `POST /:id/merge`), `src/services/conflictResolutionService.ts` (imports both reason constants + both dismissal loggers for the accept-refusal and reject branches). Frontend readers: `renderSerialClaimConflictCard` / `renderDuplicateSerialConflictCard` in `public/js/events.js` and the reason labels in `public/js/widgets/conflictQueue.js`.
+
+**Invariants:**
+- ONE pending conflict per SERIAL per flavour, never per pair; extra pending rows on one serial are auto-closed as stranded (the duplicate-IP convention).
+- `AssetControllerClaim` is evidence, never a projection input — `projectAssetFromSources` does not read it and no claim decides which controller wins. Discovery's last-writer-wins stamp is deliberately untouched (rule 83's report-only scope).
+- Claims are written ONCE PER PASS in batched `$transaction` chunks of 200, not per device — the switch/AP loops already carry several awaits per device and 2000 managed devices must not add 2000 more.
+- Recording a claim is best-effort: `recordControllerClaims` swallows and logs a chunk failure, and the discovery call site wraps it again. A run that reports inventory must never fail because a report's evidence could not be stored.
+- A claim counts only while fresh (`CLAIM_FRESH_DAYS` = 2). That is what auto-closes a completed device move, and it is SHORTER than duplicate-IP's 7 on purpose — a controller claim is re-asserted by every discovery pass, an address claim is not.
+- **HA folds to one claimant**: claimants are grouped by the firewall ASSET they resolve to (`claimFoldKey`), because every cluster member serial maps to one asset through its own `fortigate-firewall` AssetSource row. The same fold absorbs a gate re-registered under a second FMG device entry. Resolution order is `loadControllerContext`: the AssetSource serial map first, then `resolveInfraParentAsset` for name-keyed claims — never `Asset.hostname` matching (see `cross-cutting/fortinet-parent-key-resolution.md`).
+- `controllerKey` is the upper-cased controller serial, else `name:<lower-cased device name>`. The prefix is load-bearing: without it a name could collide with a serial.
+- Status filter is `CLAIM_EXCLUDED_STATUSES` (`decommissioned` / `disabled`) — deliberately NARROWER than duplicate-IP's `UNMONITORABLE_STATUSES`, because a `storage` or `quarantined` device still holds map placement and region tags and still changes owner. Do not "fix" this to match rule 40(a).
+- A serial only counts when `isUsableSerial` accepts it (SMBIOS placeholders, < 4 chars, single repeated character), and a duplicate group larger than `MAX_PLAUSIBLE_DUPLICATES` (8) is treated as a vendor default rather than a device recorded nine times.
+- Accept is REFUSED for both flavours (`acceptAssetConflict` throws 400). `serial-two-controllers` has NO resolution verb at all — the fix is on the gates; `duplicate-serial`'s verb is the merge.
+- Re-raise suppression: a REJECTED row suppresses the same CLAIMANT set (contested) or the same MEMBER set (duplicate); a changed set raises anew.
+- Auto-close convention matches the sibling sweeps: `status="rejected"`, `resolvedBy="system:auto-resolved"`.
+- `mergeDuplicateSerialAssets` re-points `Conflict.assetId` at the survivor BEFORE the first merge — deleting an absorbed asset cascades to conflicts pointing at it — takes NO field winners, and delegates to `mergeAssets`.
+- Reconcile is idempotent: a fleet with no serial trouble issues zero writes beyond the claim prune.
+
+**When changing this:**
+- The `proposedAssetFields` shapes are read by both card renderers in `events.js`, the `conflictQueue` widget subtitles and `resolveMergeTargets` — change them together.
+- The duplicate-serial card reuses the duplicate-IP merge WIRING in `events.js` (`[data-dupip-merge], [data-dupserial-merge]` in one `querySelectorAll`, wording switched off the attribute). A new action needs both the renderer and that block.
+- Merge stays `assets:fullwrite` on every path, matching rule 40's level and `POST /assets/:id/merge`.
+- Adding a `sourceKind` to the claim write (a third managed-device kind) means adding it to the discovery call sites AND to the card's kind label.
+- Both flavours stamp `conflict.detected`; the baseline "IP conflict detected" automation subscribes to that action string, so its seeded description names them. A new action string would silently un-alert the feature.
+- The duplicate-serial scan's SQL names raw columns (`assets`); a rename in `prisma/schema.prisma` needs a matching edit here. Reads only — never add writes to it (it bypasses the `db.ts` extensions).
+- `CLAIM_FRESH_DAYS` is the auto-close clock. Lengthening it keeps finished moves on the queue; shortening it below a slow install's discovery interval closes real conflicts between passes.
+
+---
+
 ## services/assetUpstreamService.ts
 
 **What it owns:** `resolveAssetUpstream(assetId, {includeFirewall, includeSubnetGate})` — turning the three UPSTREAM device NAMES the asset-details General tab renders (Last Seen Switch / AP / Firewall) into the Asset rows behind them, so those rows can carry verbs (open the device, open its HTTPS UI, SSH to it) instead of being text an operator re-finds by hand in the Assets list. Since 2026-09 it also answers the firewall row for a device NO gate has ever sighted, from IPAM (business rule 55).
