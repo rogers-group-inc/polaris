@@ -89,8 +89,17 @@ push" mean push on every device you use.
 Three things follow from that:
 
 - The boot-time reconcile **never prompts** — a page load has no user
-  activation — so a browser that has never been asked stays un-enrolled until
-  you pick the preference *on that browser*.
+  activation — so it can only enroll a browser that has already granted
+  notification permission. A browser that has never been asked is instead
+  **asked once**, the first time you sign in on it while your account prefers
+  push: a short dialog offering **Enable** or **Not now**. Enable raises the
+  browser's own permission prompt and enrolls that browser; dismissing it — by
+  either button, Escape or clicking away — is final on that browser, and this
+  row is the way back. You are asked separately on each browser, and a second
+  person signing in on the same browser is asked in their turn.
+- Polaris does not ask on **iPhone or iPad outside the installed app**. Apple
+  grants push only to a home-screen app, so add Polaris to your Home Screen
+  first (**More → Add to Home Screen**) and the offer follows.
 - The preference is **saved even if this browser refuses**, because it belongs
   to the account. Your phone may honour what this laptop cannot.
 - A preference **never deletes an alert**. If you prefer push but have no

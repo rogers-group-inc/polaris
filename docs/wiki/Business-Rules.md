@@ -271,9 +271,11 @@ down, leaving needs a parent genuinely back (`up` / `unknown` / `passive` only;
 ### Rule 39
 **How a person wants to be reached is theirs, not the automation's.** The
 notification preference is an **account** setting, and every client reconciles its
-own subscription to it at boot. It is consulted only when the action group offers
-both methods, only accounts are filtered, and **a preference never deletes an
-alert**.
+own subscription to it at boot. That reconcile never prompts, so a browser that
+has never been asked for notification permission is **asked once** instead — and
+never on iOS outside the installed app. It is consulted only when the action group
+offers both methods, only accounts are filtered, and **a preference never deletes
+an alert**.
 
 ### Rule 40
 **Two assets on one address is a conflict; one asset on a stale address is not.**

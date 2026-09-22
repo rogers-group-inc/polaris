@@ -585,6 +585,11 @@ var _pushState = null;
 var _pushBusy = false;
 var _notifPref = null;
 
+// renderNav (and with it wireNotificationPrefs) runs twice on a cold cache —
+// once off the cached user, once after /auth/me lands. One enrollment offer
+// per page load, checked at most once.
+var _pushOfferHandled = false;
+
 // The three answers to "how do you want to be alerted", in menu order. Kept
 // here rather than fetched from GET /me/notification-preference's `options`
 // so the menu can be built the instant the preference resolves — the server
@@ -665,7 +670,87 @@ function wireNotificationPrefs() {
     .catch(function () { _notifPref = _notifPref || "email"; })
     .then(function () {
       return polarisPush.status().then(function (st) { _pushState = st || null; }).catch(function () {});
+    })
+    // Status first, so the offer can answer "does the server even do push?"
+    // from the reading already in hand instead of fetching the key again.
+    .then(function () { return _maybeOfferPushEnrollment(); });
+}
+
+/**
+ * Ask a browser that has never been asked whether it should receive push.
+ *
+ * The reconcile above enrolls this browser silently when permission is already
+ * granted — which is every browser that has enrolled before. A browser signing
+ * in for the first time sits at permission "default", and nothing may enroll
+ * it without the permission prompt, which needs live user activation. Without
+ * this, an operator whose account prefers push had to go and re-pick the
+ * preference from the account menu on every new laptop, browser profile or
+ * re-install, and nothing told them so: the alert simply never arrived there.
+ *
+ * Asked once per account per browser (polarisPush records it), and inside the
+ * alerts:read gate wireNotificationPrefs already applies — the push routes
+ * themselves say any viewer may opt into push.
+ */
+function _maybeOfferPushEnrollment() {
+  if (_pushOfferHandled) return;
+  if (!window.polarisPush || !polarisPush.shouldOfferEnrollment) return;
+  _pushOfferHandled = true;
+  return polarisPush
+    .shouldOfferEnrollment(_notifPref, { username: currentUsername, status: _pushState })
+    .then(function (offer) { if (offer) _openPushOfferDialog(); })
+    .catch(function () { /* an offer nobody asked for is never worth an error */ });
+}
+
+/**
+ * The offer itself.
+ *
+ * Recorded as made the moment it opens rather than when a button is clicked.
+ * openModal's other exits — the X, a click on the scrim, Escape — hand back no
+ * callback, and an offer that reopens on every page navigation until it is
+ * answered through one specific button is a nag. So: asked once, however it
+ * ends, and the body says where to go afterwards.
+ *
+ * enable() is called as the FIRST statement of the click handler, before
+ * closeModal and before any await, because Notification.requestPermission()
+ * needs the click's transient user activation and Safari drops it across an
+ * await — the same ordering rule as _chooseNotifPref and push.js's enable().
+ */
+function _openPushOfferDialog() {
+  if (typeof openModal !== "function") return;
+  var body =
+    '<p style="font-size:0.9rem;color:var(--color-text-primary);margin:0 0 0.75rem">' +
+      'Your account is set to be notified by ' +
+      escapeHtml((NOTIF_PREF_LABELS[_notifPref] || _notifPref).toLowerCase()) +
+      ', but this browser has never been enrolled. Turn push notifications on here?' +
+    '</p>' +
+    '<p style="font-size:0.85rem;color:var(--color-text-secondary);margin:0">' +
+      'Your browser will ask for permission. You can turn push on or off at any time from ' +
+      'the Notifications row in your account menu.' +
+    '</p>';
+  var footer =
+    '<button class="btn btn-secondary" id="push-offer-dismiss">Not now</button>' +
+    '<button class="btn btn-primary" id="push-offer-enable">Enable</button>';
+  openModal("Push notifications", body, footer);
+  polarisPush.recordOfferMade(currentUsername);
+
+  var dismissBtn = document.getElementById("push-offer-dismiss");
+  if (dismissBtn) dismissBtn.onclick = function () { closeModal(); };
+
+  var enableBtn = document.getElementById("push-offer-enable");
+  if (!enableBtn) return;
+  enableBtn.onclick = function () {
+    var enrolling = polarisPush.enable({ surface: "desktop" });
+    closeModal();
+    enrolling.then(function () {
+      if (typeof showToast === "function") showToast("Push notifications are on for this browser", "success");
+    }, function (err) {
+      if (typeof showToast === "function") {
+        showToast((err && err.message) || "This browser refused push notifications.", "warning");
+      }
+    }).then(function () {
+      return polarisPush.status().then(function (st) { _pushState = st || null; }).catch(function () {});
     });
+  };
 }
 
 /**

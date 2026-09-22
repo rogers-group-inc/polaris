@@ -8,7 +8,9 @@
  * the consequence of the account-level preference, not a decision of its own.
  * `syncToPreference` is the entry point both surfaces call at boot;
  * `enable()`/`disable()` remain as the primitives it and the preference
- * choosers are built from.
+ * choosers are built from. `shouldOfferEnrollment` answers the one case that
+ * reconcile cannot fix on its own — a browser whose permission has never been
+ * asked for — by telling its caller to put the question to the operator once.
  *
  * Loaded on every desktop page that renders the sidebar (app.js wires the
  * account menu's "Notifications: …" row) and on the mobile SPA (the More tab's
@@ -221,6 +223,86 @@
     }
   }
 
+  // ───────────────────────────────────────────────────────────────────────
+  // The one-time enrollment offer (business rule 39).
+  //
+  // syncToPreference enrolls a browser whose permission is ALREADY granted,
+  // silently, which covers every browser that has enrolled before. A browser
+  // that has never been asked cannot be enrolled without raising the
+  // permission prompt, and that prompt needs live user activation — so an
+  // account that prefers push reaches a NEW browser only if something there
+  // asks. This is that question, and the click on its Enable button is the
+  // activation the prompt needs.
+  //
+  // It is asked ONCE per account per browser: the offer records itself the
+  // moment it is shown, so dismissing it any way at all (a button, Escape, a
+  // click outside, or navigating past it) is final and the account menu's
+  // Notifications row is the way back. Whatever the operator answers, the
+  // answer is a BROWSER fact and deliberately not an account one — the point
+  // of rule 39 is that the preference belongs to the account and reaches
+  // every device, so "no" on a shared kiosk must not disturb their laptop.
+  // ───────────────────────────────────────────────────────────────────────
+  var OFFER_ASKED_PREFIX = "polaris-push-offer-asked-";
+
+  // Storage can be absent or throw (private mode, blocked site data). Falling
+  // back to memory keeps the offer to once per PAGE LOAD there rather than
+  // once per browser — the alternative is a silence nothing can lift.
+  var _askedInMemory = {};
+
+  function offerKey(username) { return OFFER_ASKED_PREFIX + (username || ""); }
+
+  function offerAlreadyMade(username) {
+    if (_askedInMemory[offerKey(username)]) return true;
+    try { return window.localStorage.getItem(offerKey(username)) === "1"; }
+    catch (e) { return false; }
+  }
+
+  function recordOfferMade(username) {
+    _askedInMemory[offerKey(username)] = true;
+    try { window.localStorage.setItem(offerKey(username), "1"); } catch (e) { /* memory it is */ }
+  }
+
+  /**
+   * Should this browser be ASKED to enroll? Resolves true only when all of:
+   *
+   *   - push works here at all;
+   *   - the ACCOUNT prefers push ("push" or "any");
+   *   - permission is exactly "default" — "granted" means syncToPreference has
+   *     already enrolled this browser silently, and "denied" cannot be
+   *     re-prompted from script at all, so asking would open a dialog whose
+   *     button provably does nothing;
+   *   - this browser holds no subscription yet;
+   *   - the SERVER has Web Push configured (pass `opts.status` to reuse a
+   *     status() the caller has already read instead of re-fetching the key);
+   *   - the offer has not already been made here.
+   *
+   * Never prompts and never throws — it runs on page loads for people who did
+   * nothing.
+   */
+  async function shouldOfferEnrollment(pref, opts) {
+    opts = opts || {};
+    if (!isSupported()) return false;
+    if (pref !== "push" && pref !== "any") return false;
+    if (Notification.permission !== "default") return false;
+    if (offerAlreadyMade(opts.username)) return false;
+    try {
+      if (await getSubscription()) return false;
+      var enabledOnServer;
+      if (opts.status && typeof opts.status.enabledOnServer === "boolean") {
+        enabledOnServer = opts.status.enabledOnServer;
+      } else {
+        var key = await api.push.key();
+        enabledOnServer = !!(key && key.enabled && key.publicKey);
+      }
+      if (!enabledOnServer) return false;
+    } catch (e) {
+      return false;
+    }
+    // Re-read rather than trust the check above: the awaits are a window in
+    // which the operator may have answered the browser's prompt in another tab.
+    return Notification.permission === "default";
+  }
+
   window.polarisPush = {
     isSupported: isSupported,
     registerSW: registerSW,
@@ -229,5 +311,8 @@
     disable: disable,
     reconcileSubscription: reconcileSubscription,
     syncToPreference: syncToPreference,
+    shouldOfferEnrollment: shouldOfferEnrollment,
+    recordOfferMade: recordOfferMade,
+    offerAlreadyMade: offerAlreadyMade,
   };
 })();
