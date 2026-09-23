@@ -142,3 +142,35 @@ describe("asset panel header actions — source invariants", () => {
     expect(assetsSrc).toMatch(/footerEl\.innerHTML = dismissBtns;/);
   });
 });
+
+// The tab strip is frozen in the header (2026-09): openViewModal renders it
+// into the body with tabbedBodyHTML, then moves #asset-view-tabs into the
+// header slot so it no longer scrolls away with the tab content.
+describe("asset panel frozen tab strip", () => {
+  it("renders an empty tab slot in the header, after the meta row, outside the body", () => {
+    const slot = document.getElementById("asset-panel-tabs")!;
+    expect(slot.className).toBe("slideover-tabs");
+    expect(slot.parentElement!.classList.contains("slideover-header")).toBe(true);
+    expect(slot.closest("#asset-panel-body")).toBeNull();
+    expect(slot.previousElementSibling!.id).toBe("asset-panel-meta");
+    expect(slot.innerHTML).toBe("");
+  });
+
+  it("moves the rendered strip into the slot and clears it in the loading reset", () => {
+    expect(assetsSrc).toMatch(/var tabBar = bodyEl\.querySelector\("#asset-view-tabs"\);/);
+    expect(assetsSrc).toMatch(/tabsSlot\.appendChild\(tabBar\);/);
+    const loading = assetsSrc.indexOf(
+      'bodyEl.innerHTML = \'<p class="empty-state" style="padding:1rem 1.25rem">Loading...</p>\';',
+    );
+    expect(loading).toBeGreaterThan(0);
+    const reset = assetsSrc.slice(loading - 300, loading);
+    expect(reset).toMatch(/tabsSlot\.innerHTML = ""/);
+  });
+
+  it("styles the slot so the header border is the strip's rule", () => {
+    expect(cssSrc).toMatch(/\.slideover-tabs:empty\s*\{\s*display:\s*none/);
+    expect(cssSrc).toMatch(
+      /\.slideover-header:has\(> \.slideover-tabs:not\(:empty\)\)\s*\{\s*padding-bottom:\s*0/,
+    );
+  });
+});
