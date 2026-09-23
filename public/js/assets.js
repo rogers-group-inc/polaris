@@ -10255,9 +10255,58 @@ function _observeChartResize(container, rerender) {
   container._chartResizeObs = obs;
 }
 
-// Rasterize the SVG inside `container` to a PNG blob via Image+Canvas. The
-// rasterizer can't resolve currentColor or var(--color-*), so we substitute
-// the resolved values into the serialized SVG before drawing. The hit-target
+// Serialize a live chart SVG into a standalone document an <img> can paint.
+// Loaded as an image the SVG sees NO page stylesheet and NO custom property,
+// so everything it inherited from the page has to be written into it:
+//   - every var(--token[, fallback]) is replaced by the value the live SVG
+//     resolves it to — not just the accent: the response-time chart's normal
+//     samples are var(--color-success), which the rasterizer painted black
+//     while only --color-accent was substituted;
+//   - currentColor becomes the SVG's computed color;
+//   - the root gets the computed font stack (with a sans tail, since page
+//     webfonts don't load inside an image), or every tick label falls back to
+//     the renderer's default serif.
+// Hit targets and in-SVG axis titles are stripped (the canvas wrapper redraws
+// the titles in its margins). Returns the serialized string.
+function _serializeChartSvgForRaster(svgEl, width, height) {
+  var cs = getComputedStyle(svgEl);
+  var rootCs = getComputedStyle(document.documentElement);
+  var resolvedText = cs.color || rootCs.getPropertyValue("--color-text-primary").trim() || "#111111";
+  var fontStack = (cs.fontFamily || "").trim();
+  fontStack = (fontStack ? fontStack + ", " : "") + "system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+  var clone = svgEl.cloneNode(true);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  clone.setAttribute("width", width);
+  clone.setAttribute("height", height);
+  clone.removeAttribute("style");
+  clone.setAttribute("font-family", fontStack);
+  if (!clone.getAttribute("viewBox")) {
+    clone.setAttribute("viewBox", "0 0 " + width + " " + height);
+  }
+  Array.prototype.forEach.call(clone.querySelectorAll(".chart-hit, .monitor-hit, .chart-axis-title"), function (n) {
+    n.parentNode.removeChild(n);
+  });
+
+  var serialized = new XMLSerializer().serializeToString(clone);
+  serialized = serialized.replace(/currentColor/g, resolvedText);
+  // Innermost var() first, looping so a fallback that is itself a var()
+  // resolves too. An unresolvable token with no fallback becomes the text
+  // colour rather than staying a var() the image renders as black.
+  var varRe = /var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,\s*([^()]*))?\)/g;
+  for (var guard = 0; guard < 5 && serialized.indexOf("var(") !== -1; guard++) {
+    serialized = serialized.replace(varRe, function (_m, name, fallback) {
+      var v = cs.getPropertyValue(name).trim() || rootCs.getPropertyValue(name).trim();
+      if (v) return v;
+      return fallback != null && fallback.trim() ? fallback.trim() : resolvedText;
+    });
+  }
+  return serialized;
+}
+
+// Rasterize the SVG inside `container` to a PNG blob via Image+Canvas, using
+// _serializeChartSvgForRaster to make the SVG self-contained. The hit-target
 // circles and tooltip element are stripped — they're interactive scaffolding,
 // not part of the visual. `meta` adds a header (title / subject / asset) and
 // axis labels (xAxis / yAxis) drawn in canvas margins around the chart so the
@@ -10287,29 +10336,10 @@ function _captureChartAsPng(container, meta, callback) {
   // Uses --color-bg-primary — the same token the chart panels and the
   // slide-over surface render, so the capture matches what's on screen.
   var bgPrimary  = pickVar("--color-bg-primary", "#ffffff");
-  var accent     = pickVar("--color-accent", "#4fc3f7");
   var textSec    = pickVar("--color-text-secondary", "#666666");
   var resolvedText = getComputedStyle(svgEl).color || pickVar("--color-text-primary", "#111111");
 
-  var clone = svgEl.cloneNode(true);
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
-  clone.setAttribute("width", width);
-  clone.setAttribute("height", height);
-  clone.removeAttribute("style");
-  if (!clone.getAttribute("viewBox")) {
-    clone.setAttribute("viewBox", "0 0 " + width + " " + height);
-  }
-  // Drop transparent hit targets — they don't affect the picture but inflate it.
-  // Also strip in-SVG axis titles: the canvas wrapper redraws them in the margins,
-  // so leaving them in produces duplicates in the screenshot.
-  Array.prototype.forEach.call(clone.querySelectorAll(".chart-hit, .monitor-hit, .chart-axis-title"), function (n) {
-    n.parentNode.removeChild(n);
-  });
-
-  var serialized = new XMLSerializer().serializeToString(clone);
-  serialized = serialized.replace(/currentColor/g, resolvedText);
-  serialized = serialized.replace(/var\(--color-accent\)/g, accent);
+  var serialized = _serializeChartSvgForRaster(svgEl, width, height);
 
   var blob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
   var url = URL.createObjectURL(blob);
@@ -10480,9 +10510,8 @@ function _addChartScreenshotButton(container, label, axisOpts) {
 }
 
 // Rasterize the SVG inside `container` to a fully-loaded HTMLImageElement at
-// native size. Mirrors the SVG-prep logic in _captureChartAsPng (strips hit
-// targets, substitutes resolved CSS-variable colors) but stops short of
-// drawing to canvas — the caller composites multiple images together.
+// native size. Shares _serializeChartSvgForRaster with _captureChartAsPng
+// but stops short of drawing to canvas — the caller composites multiple images together.
 // Calls back with `{ img, width, height, url }` (caller revokes `url`) or null.
 function _rasterizeChartSvgToImage(container, callback) {
   var svgEl = null;
@@ -10498,30 +10527,7 @@ function _rasterizeChartSvgToImage(container, callback) {
   var height = Math.ceil(rect.height);
   if (!width || !height) { callback(null); return; }
 
-  var rootCs = getComputedStyle(document.documentElement);
-  var pickVar = function (name, fallback) {
-    var v = rootCs.getPropertyValue(name).trim();
-    return v || fallback;
-  };
-  var accent = pickVar("--color-accent", "#4fc3f7");
-  var resolvedText = getComputedStyle(svgEl).color || pickVar("--color-text-primary", "#111111");
-
-  var clone = svgEl.cloneNode(true);
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-  clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
-  clone.setAttribute("width", width);
-  clone.setAttribute("height", height);
-  clone.removeAttribute("style");
-  if (!clone.getAttribute("viewBox")) {
-    clone.setAttribute("viewBox", "0 0 " + width + " " + height);
-  }
-  Array.prototype.forEach.call(clone.querySelectorAll(".chart-hit, .monitor-hit, .chart-axis-title"), function (n) {
-    n.parentNode.removeChild(n);
-  });
-
-  var serialized = new XMLSerializer().serializeToString(clone);
-  serialized = serialized.replace(/currentColor/g, resolvedText);
-  serialized = serialized.replace(/var\(--color-accent\)/g, accent);
+  var serialized = _serializeChartSvgForRaster(svgEl, width, height);
 
   var blob = new Blob([serialized], { type: "image/svg+xml;charset=utf-8" });
   var url = URL.createObjectURL(blob);
