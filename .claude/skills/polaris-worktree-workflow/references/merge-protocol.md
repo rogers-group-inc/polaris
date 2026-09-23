@@ -53,12 +53,15 @@ For each selected worktree:
    by keeping both entries.
    **One conflict is foreseeable and is resolved before merging, not reported**: two open
    worktrees that each added a business rule both took "the next free number". The branch
-   merging second renumbers its rule to main's current next-free number (`(N is the next free
-   number.)` in `polaris-business-rules/SKILL.md`, plus every `rule N` citation in its code,
-   tests and skill entries), and **the rule reference files are never renamed** — main keeps
+   merging second renumbers its rule to the number `npm run rules:next` reports AFTER the first
+   merge (the script scans every branch, so it also shows which numbers other open worktrees
+   still hold), plus every `rule N` citation in its code, tests, skill entries and its
+   `narrative-N.md` filename — and **the range reference files are never renamed** — main keeps
    `invariants-30-43.md` / `narrative-36-43.md` whatever range they now hold, because other
    skills and code link to those paths. Do it in the worktree (re-enter it, WORKLOCK, `git merge
-   main`, fix, commit), then merge to main. 2026-09-08: two branches both claimed rule 44.
+   main`, fix, commit), then merge to main. 2026-09-08: two branches both claimed rule 44;
+   2026-09-21: two claimed 77. The next-free number is no longer written in `SKILL.md` for
+   exactly this reason — a stated number is stale the moment another branch merges.
 4. Continue with the next selection only after the previous merge is clean.
 
 ## 4. Review what landed against the skills
