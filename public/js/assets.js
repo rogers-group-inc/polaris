@@ -4982,6 +4982,12 @@ function _ensureAssetPanelDOM() {
           '<button class="btn-icon" id="asset-panel-close" title="Close" aria-label="Close asset details">&times;</button>' +
         '</div>' +
         '<div class="slideover-meta" id="asset-panel-meta"></div>' +
+        // The tab strip is rendered into the body by tabbedBodyHTML and then
+        // moved here by openViewModal, so it stays frozen in the header while
+        // the tab content scrolls. Every reader finds it by id
+        // (#asset-view-tabs), never by container, so the move is invisible
+        // to them.
+        '<div class="slideover-tabs" id="asset-panel-tabs"></div>' +
       '</div>' +
       '<div class="slideover-body" id="asset-panel-body"><p class="empty-state">Loading...</p></div>' +
       '<div class="slideover-footer" id="asset-panel-footer"></div>' +
@@ -5098,6 +5104,10 @@ async function openViewModal(id, opts) {
   var actionsEl = document.getElementById("asset-panel-actions");
   titleEl.textContent = "Asset Details";
   metaEl.innerHTML = "";
+  // Cleared with the body so a walk to another asset doesn't leave the
+  // previous device's tabs on screen over its loading state.
+  var tabsSlot = document.getElementById("asset-panel-tabs");
+  if (tabsSlot) tabsSlot.innerHTML = "";
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading...</p>';
   footerEl.innerHTML = "";
   // Cleared alongside the footer so a walk to another asset can't leave the
@@ -5338,6 +5348,15 @@ async function openViewModal(id, opts) {
     tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory) });
     var tabsHTML = tabbedBodyHTML("asset-view", tabs);
     bodyEl.innerHTML = '<div class="asset-panel-content">' + tabsHTML + '</div>';
+    // Lift the strip into the header slot so it doesn't scroll away with the
+    // tab content. tabbedBodyHTML stamps an inline margin-bottom meant for a
+    // strip sitting above its panels; in the header the header's own border
+    // is the divider.
+    var tabBar = bodyEl.querySelector("#asset-view-tabs");
+    if (tabsSlot && tabBar) {
+      tabBar.style.marginBottom = "0";
+      tabsSlot.appendChild(tabBar);
+    }
 
     titleEl.innerHTML = 'Asset Details' + (a.hostname
       ? ' <span style="color:var(--color-text-secondary);font-weight:400;margin-left:6px">— ' + escapeHtml(a.hostname) + '</span>'

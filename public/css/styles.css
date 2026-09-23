@@ -4436,6 +4436,22 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .slideover-meta code {
   font-size: 0.8rem;
 }
+/* Frozen tab strip in a slide-over header (asset details: openViewModal moves
+   #asset-view-tabs here out of the scrolling body). The header's bottom border
+   is the strip's rule, so the strip drops its own and the header drops its
+   bottom padding — the active tab's underline then sits on the header edge.
+   Too many tabs for the panel width scroll sideways rather than wrap, like
+   the sticky modal strip. */
+.slideover-tabs:empty { display: none; }
+.slideover-header:has(> .slideover-tabs:not(:empty)) { padding-bottom: 0; }
+.slideover-tabs .page-tabs {
+  border-bottom: none;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.slideover-tabs .page-tab { flex-shrink: 0; white-space: nowrap; }
 .slideover-body {
   flex: 1;
   overflow-y: auto;
