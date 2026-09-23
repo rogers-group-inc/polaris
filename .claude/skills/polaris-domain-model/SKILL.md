@@ -23,6 +23,7 @@ invariants** (one bullet per entity — the contract), **Schema** (the field dum
 | The seven sample hypertables + *Hourly/*Daily rollups, AssetCustomWidgetSample, AssetStateSample, HostMetricsSample, MonitorClassOverride | [references/samples-rollups.md](references/samples-rollups.md) |
 | NotificationRule, Notification, NotificationRuleState, NotificationChannel, NotificationDelivery, the alert email, Contact (+DirectoryContactSource), MaintenanceSchedule / AssetMaintenanceWindow, PushSubscription, AutomationScript / AutomationScriptRun, AgentCommand | [references/alerting.md](references/alerting.md) |
 | User, Role, ApiToken, Credential, SshHostKey, GroupMapping, ManagedAgent, MibFile, ManufacturerProfile family, ManufacturerAlias, DeviceIcon, UserDashboard, SavedDashboard, UserTableTabs, SavedTableFilter, TopologyLayout, ApplicationMapLayout, Event, Setting, Tag / TagAutoAssignment / RegionTagAssignment, GeocodeCache | [references/platform.md](references/platform.md) |
+| **Dormant columns** — `NotificationRule.cooldownSec`, the monitor-settings tiers' `failureThreshold`, `Asset.awaitingRecoveryConfirm` / `recoveryStartedAt` / `consecutiveSuccesses`: kept in the schema, deciding nothing, and the retirement precedent a rule follows when it stops reading a column | [references/dormant-columns.md](references/dormant-columns.md) |
 
 ## Rules that bind every write
 

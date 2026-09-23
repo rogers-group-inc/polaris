@@ -47,8 +47,9 @@ to `manual`.
 reservation creates a [Conflict](Conflict-Resolution) rather than overwriting.
 
 ### Rule 8
-**Event archival.** Events older than 7 days are pruned; syslog (CEF) and
-SFTP/SCP archival are configurable.
+**Event archival.** Events older than the configured retention (default 7 days,
+set under [Server Settings](Server-Settings)) are archived and then pruned; syslog
+(CEF) and SFTP/SCP archival are configurable.
 
 ### Rule 9
 **`acquiredAt` ≤ `lastSeen`**, clamped on every write and repaired at boot.
