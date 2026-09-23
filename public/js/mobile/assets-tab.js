@@ -11,6 +11,13 @@
 // mobile/alerts.js; this file supplies the summary that rides the list
 // payload and repaints the flag when the sheet hands back a new one.
 //
+// Above the chips sits the shared filter field + "Sort & filter" chip
+// (mobile/list-controls.js). The text rides the route's `search` param, the
+// sheet's status filter its `monitor` param, and the sort its sortBy/sortDir
+// — all server-side, because the list is paged. The topbar no longer carries
+// a search button: it only jumped to the Search tab, which the search bar
+// above every page already reaches.
+//
 // State management: filter + asset list are kept on the module so a
 // re-render (e.g. snapping back from a detail screen) can repopulate
 // without re-fetching. Re-fetch on filter change.
@@ -44,8 +51,41 @@
 
   var PAGE_SIZE = 50;
 
+  // Sort + filter run SERVER-side — the list is paged, so a client sort would
+  // only order the pages already loaded. Keys are the route's own sortBy
+  // whitelist (ASSET_SORT_COLUMNS in src/api/routes/assets.ts) and its
+  // `monitor` chip vocabulary (monitorClause), so nothing here can ask for a
+  // sort or a filter the server would refuse. "Recently added" is the
+  // server's default order (no sortBy), which is what the list always showed.
+  var PREFS_KEY = "polaris-mobile-assets-list";
+  var DEFAULTS = { sortKey: "", sortDir: "desc", monitor: "" };
+  var SORTS = [
+    { key: "",          label: "Recently added", defaultDir: "desc" },
+    { key: "hostname",  label: "Name",           defaultDir: "asc" },
+    { key: "ipAddress", label: "IP address",     defaultDir: "asc" },
+    { key: "_monitor",  label: "Status",         defaultDir: "asc" },
+    { key: "assetType", label: "Type",           defaultDir: "asc" },
+    { key: "lastSeen",  label: "Last seen",      defaultDir: "desc" },
+  ];
+  var MONITOR_FILTER = {
+    key: "monitor",
+    label: "Status",
+    options: [
+      { value: "",            label: "Any" },
+      { value: "Down",        label: "Down" },
+      { value: "Missed",      label: "Missed" },
+      { value: "Dep. Down",   label: "Dep. Down" },
+      { value: "Recovering",  label: "Recovering" },
+      { value: "Up",          label: "Up" },
+      { value: "Monitored",   label: "Monitored" },
+      { value: "Unmonitored", label: "Unmonitored" },
+    ],
+  };
+
   var _state = {
     filterKey: "all",
+    search: "",      // filter-field text; not persisted (see list-controls.js)
+    prefs: null,
     assets: [],      // accumulated rows
     total: 0,
     offset: 0,
@@ -64,18 +104,32 @@
         + '<div class="m3-topbar">'
         + '  <div class="leading"></div>'
         + '  <div class="title">Assets</div>'
-        + '  <div class="trailing">'
-        + '    <button class="icon-btn" id="assets-search-btn" aria-label="Search"><svg viewBox="0 0 24 24"><use href="#i-search"/></svg></button>'
-        + '  </div>'
+        + '  <div class="trailing"></div>'
         + '</div>';
     },
     render: function (body) {
+      var p = prefs();
       body.innerHTML = ''
+        + PolarisListControls.toolbarHTML({
+            id: "assets",
+            placeholder: "Filter assets",
+            value: _state.search,
+            sortLabel: sortLabel(),
+            dir: p.sortDir,
+            active: !!p.monitor,
+          })
         + '<div class="chip-row" id="assets-chips"></div>'
         + '<div id="assets-list-host"></div>';
 
-      var searchBtn = document.getElementById("assets-search-btn");
-      if (searchBtn) searchBtn.addEventListener("click", function () { PolarisRouter.go("search"); });
+      PolarisListControls.wireToolbar("assets", {
+        debounceMs: 350,
+        onFilter: function (text) {
+          if (text === _state.search) return;
+          _state.search = text;
+          reload();
+        },
+        onSort: openSortSheet,
+      });
 
       renderChips();
       // Reset list state on every fresh render — operators expect tapping
@@ -94,6 +148,57 @@
       return loadPage(true);
     },
   };
+
+  function prefs() {
+    if (!_state.prefs) _state.prefs = PolarisListControls.loadPrefs(PREFS_KEY, DEFAULTS);
+    var p = _state.prefs;
+    if (!SORTS.some(function (s) { return s.key === p.sortKey; })) p.sortKey = DEFAULTS.sortKey;
+    if (p.sortDir !== "asc" && p.sortDir !== "desc") p.sortDir = DEFAULTS.sortDir;
+    if (!MONITOR_FILTER.options.some(function (o) { return o.value === p.monitor; })) p.monitor = DEFAULTS.monitor;
+    return p;
+  }
+
+  function sortLabel() {
+    var p = prefs();
+    var s = SORTS.find(function (x) { return x.key === p.sortKey; });
+    var label = s ? s.label : "Sort";
+    // The status filter lives in the sheet, so the chip names it — a list
+    // narrowed by something the operator can't see reads as missing assets.
+    if (p.monitor) {
+      var m = MONITOR_FILTER.options.find(function (o) { return o.value === p.monitor; });
+      if (m) label += " · " + m.label;
+    }
+    return label;
+  }
+
+  // Reset paging and re-fetch the first page under the current filters.
+  function reload() {
+    _state.assets = [];
+    _state.offset = 0;
+    _state.total = 0;
+    return loadPage(true);
+  }
+
+  function openSortSheet() {
+    var p = prefs();
+    PolarisListControls.openSortSheet({
+      sortOptions: SORTS,
+      sortKey: p.sortKey,
+      sortDir: p.sortDir,
+      filters: [Object.assign({ value: p.monitor }, MONITOR_FILTER)],
+      onApply: function (choice) {
+        var changed = choice.sortKey !== p.sortKey || choice.sortDir !== p.sortDir
+          || choice.filters.monitor !== p.monitor;
+        if (!changed) return;
+        p.sortKey = choice.sortKey;
+        p.sortDir = choice.sortDir;
+        p.monitor = choice.filters.monitor || "";
+        PolarisListControls.savePrefs(PREFS_KEY, p);
+        PolarisListControls.updateSortChip("assets", sortLabel(), p.sortDir, !!p.monitor);
+        reload();
+      },
+    });
+  }
 
   function renderChips() {
     var row = document.getElementById("assets-chips");
@@ -132,6 +237,10 @@
 
     var params = { limit: PAGE_SIZE, offset: _state.offset };
     if (filter.type) params.assetType = filter.type;
+    var p = prefs();
+    if (_state.search) params.search = _state.search;
+    if (p.monitor) params.monitor = p.monitor;
+    if (p.sortKey) { params.sortBy = p.sortKey; params.sortDir = p.sortDir; }
 
     return api.assets.list(params).then(function (resp) {
       if (thisSeq !== _state.seq) return; // superseded by a later filter change
@@ -165,7 +274,9 @@
         + '<div class="empty-state" style="padding-top:48px;">'
         + '  <div class="icon"><svg viewBox="0 0 24 24"><use href="#i-list"/></svg></div>'
         + '  <div class="ttl">No assets</div>'
-        + '  <div class="desc">Nothing matches this filter. Try “All” or run a discovery to populate the inventory.</div>'
+        + '  <div class="desc">' + (_state.search || prefs().monitor
+          ? 'Nothing matches this filter. Clear it, or pick “Any” status in Sort &amp; filter.'
+          : 'Nothing matches this filter. Try “All” or run a discovery to populate the inventory.') + '</div>'
         + '</div>';
       return;
     }

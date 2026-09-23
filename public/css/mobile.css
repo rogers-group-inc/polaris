@@ -1929,3 +1929,143 @@ html[data-theme-fading="out"] .theme-strip-track { transition-timing-function: c
   html[data-theme-fading] *:not(.theme-strip-track)::before,
   html[data-theme-fading] *:not(.theme-strip-track)::after { transition: none; }
 }
+
+/* ─── List toolbar (Assets + Networks) ────────────────────────────────────
+   Filter field + "Sort & filter" chip on one row above a list's chips —
+   mobile/list-controls.js. The field is a list-scoped filter, deliberately
+   styled lighter than the app-wide search bar above it so the two don't
+   read as the same control twice. */
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+.list-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 12px;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-cont);
+  border: 1px solid var(--md-outline-variant);
+  color: var(--md-on-surface-variant);
+}
+.list-filter:focus-within { border-color: var(--md-primary); }
+.list-filter > svg { width: 20px; height: 20px; fill: currentColor; flex: 0 0 20px; }
+.list-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--md-on-surface);
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: .25px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.list-filter-input::placeholder { color: var(--md-on-surface-variant); }
+/* The browser's own clear button duplicates ours. */
+.list-filter-input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.list-filter-clear {
+  width: 32px; height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+}
+.list-filter-clear svg { width: 18px; height: 18px; fill: currentColor; }
+.list-sort-chip { flex: 0 1 auto; max-width: 48%; }
+.list-sort-chip span { overflow: hidden; text-overflow: ellipsis; }
+.list-sort-chip.selected { padding-left: 12px; }
+/* #i-down-arrow points down; flipped for ascending so the arrow shows the
+   direction the values climb. */
+.list-sort-dir { transform: rotate(180deg); transition: transform .15s ease; }
+.list-sort-dir.desc { transform: none; }
+
+.chip-row.wrap { flex-wrap: wrap; overflow-x: visible; }
+.sort-options .list-item { min-height: 48px; padding-left: 0; padding-right: 0; }
+.sort-option.selected .headline { color: var(--md-primary); font-weight: 500; }
+.sort-option .trailing { color: var(--md-primary); }
+
+.list-count {
+  text-align: center;
+  padding: 16px 16px 96px; /* clears the Reserve FAB */
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+  letter-spacing: .5px;
+}
+
+/* ─── Networks list ─────────────────────────────────────────────────────── */
+.network-row .headline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.network-status {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .4px;
+  text-transform: capitalize;
+  padding: 1px 8px;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-cont-highest);
+  color: var(--md-on-surface-variant);
+}
+.network-status.reserved { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.network-util .pct {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--md-on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Network IP sheet ──────────────────────────────────────────────────
+   Opened from a Networks row (PolarisNetworkSheet in subnet-detail.js).
+   Below the asset sheet (900) so "Open asset" lands on top of it, below the
+   generic .sheet (1000) so the Reserve / Edit sheets it opens stack over it,
+   and anchored above the navbar like the asset sheet so the tabs stay
+   reachable. */
+.network-scrim { z-index: 890; }
+.sheet.network-sheet {
+  z-index: 891;
+  max-height: 80vh;
+  bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px));
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.network-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.network-sheet-head .sheet-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.network-sheet-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.network-sheet-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.network-sheet-sub {
+  color: var(--md-on-surface-variant);
+  font-size: 13px;
+  letter-spacing: .25px;
+  word-break: break-word;
+}
+.network-sheet .list-item { padding-left: 4px; padding-right: 4px; }
+
+.icon-btn.spinning svg { animation: icon-spin .9s linear infinite; }
+@keyframes icon-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn.spinning svg { animation: none; }
+}

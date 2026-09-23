@@ -1,7 +1,7 @@
 // public/js/mobile/more-tab.js — More tab + its sub-pages.
 //
 // The More tab is two things: a menu of the rest of the app (Blocks /
-// Subnets / Reservations / Events / Profile), and a host for those
+// Alerts / Events / Profile), and a host for those
 // sub-pages. The router emits `#more/<sub>` and we dispatch on
 // route.parts[0] inside this module so the rest of app.js doesn't have
 // to know about More's sub-routes.
@@ -89,44 +89,8 @@
     },
   });
 
-  // ─── Subnets sub-page ──────────────────────────────────────────────────
-  registerSub("subnets", {
-    renderTopbar: function () { return backTopbar("Networks"); },
-    render: function (body) {
-      wireBack();
-      body.innerHTML = loadingHtml();
-      return api.subnets.list({ limit: 200 }).then(function (resp) {
-        // listSubnets returns { subnets, total, limit, offset }
-        var subnets = (resp && resp.subnets) || [];
-        if (subnets.length === 0) {
-          body.innerHTML = '<div class="empty-state" style="padding-top:48px;"><div class="icon"><svg viewBox="0 0 24 24"><use href="#i-subnet"/></svg></div><div class="ttl">No networks</div><div class="desc">No networks have been created yet.</div></div>';
-          return;
-        }
-        var html = "";
-        subnets.forEach(function (s, i) {
-          var pieces = [];
-          if (s.purpose) pieces.push(escapeHtml(s.purpose));
-          if (s.vlan) pieces.push('VLAN ' + s.vlan);
-          if (s.fortigateDevice) pieces.push(escapeHtml(s.fortigateDevice));
-          var subtitle = '<span class="mono">' + escapeHtml(s.cidr || "") + '</span>' + (pieces.length ? ' · ' + pieces.join(' · ') : '');
-          html += ''
-            + '<button class="list-item two-line" data-id="' + escapeHtml(s.id) + '">'
-            + '  <span class="leading tonal"><svg viewBox="0 0 24 24"><use href="#i-subnet"/></svg></span>'
-            + '  <div class="content">'
-            + '    <div class="headline">' + escapeHtml(s.name || s.cidr || "(unnamed)") + '</div>'
-            + '    <div class="supporting">' + subtitle + '</div>'
-            + '  </div>'
-            + '  <div class="trailing"><svg viewBox="0 0 24 24"><use href="#i-chev-right"/></svg></div>'
-            + '</button>'
-            + (i < subnets.length - 1 ? '<div class="list-divider"></div>' : '');
-        });
-        body.innerHTML = html;
-        body.querySelectorAll(".list-item").forEach(function (row) {
-          row.addEventListener("click", function () { PolarisRouter.go("subnet/" + row.dataset.id); });
-        });
-      }).catch(function (err) { body.innerHTML = errorState(err && err.message ? err.message : "error"); });
-    },
-  });
+  // (The Networks sub-page that lived here is now the Networks tab —
+  // networks-tab.js. app.js sends an old #more/subnets link there.)
 
   // ─── Events sub-page ───────────────────────────────────────────────────
   registerSub("events", {
@@ -359,8 +323,6 @@
     body.innerHTML = ''
       + '<div class="section-head">Network</div>'
       + menuRow("blocks", "i-block",   "Blocks",       "")
-      + '<div class="list-divider"></div>'
-      + menuRow("subnets", "i-subnet", "Networks",     "")
 
       + '<div class="section-head">Operations</div>'
       + menuRow("alerts", "i-bell", "Alerts", "Active alerts")
@@ -708,8 +670,7 @@
       if (subSpec) return subSpec.render(body, ctx);
       return renderMenu(body, ctx);
     },
-    // PTR only meaningful on the list sub-pages (blocks / subnets /
-    // events). The root menu is static and has nothing to refresh.
+    // PTR only meaningful on the list sub-pages (blocks / events). The root menu is static and has nothing to refresh.
     enablesPullToRefresh: function (ctx) {
       var sub = ctx && ctx.route && ctx.route.parts && ctx.route.parts[0];
       return !!(sub && SUB_PAGES[sub]);

@@ -109,7 +109,7 @@ export function buildManifest(
     shortcuts: [
       { name: "Assets", url: "/mobile.html#assets", icons: shortcutIcon },
       { name: "Device Map", url: "/mobile.html#map", icons: shortcutIcon },
-      { name: "Reservations", url: "/mobile.html#reservations", icons: shortcutIcon },
+      { name: "Networks", url: "/mobile.html#networks", icons: shortcutIcon },
     ],
   };
 }

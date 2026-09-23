@@ -22,6 +22,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "assets-tab.js"), "utf-8");
+// mobile.html loads the shared list toolbar first; assets-tab.js draws it.
+const LIST_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "list-controls.js"), "utf-8");
 
 const g = globalThis as any;
 
@@ -58,6 +60,8 @@ function mount(total: number) {
   g.PolarisTabs = { showSnackbar: vi.fn() };
   g.PolarisAssetDetail = { open: (id: string) => opened.push("detail:" + id) };
 
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(LIST_SRC)();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   const spec = g.PolarisAssetsTab.spec;

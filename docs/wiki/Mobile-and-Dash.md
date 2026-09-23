@@ -7,10 +7,36 @@ unauthenticated NOC wallboard.
 
 # The mobile app
 
-![The Polaris mobile web app: a scoped search screen with a bottom tab bar for Search, Device Map, Assets, Reservations and More.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/mobile-noon-mobile.png)
+![The Polaris mobile web app: a scoped search screen with a bottom tab bar.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/mobile-noon-mobile.png)
 
 An installable **PWA** with push notifications. Phones hitting `/` are
 redirected to it; `?desktop=1` escapes.
+
+The tab bar is **Search · Device Map · Assets · Networks · More**.
+
+## Assets and Networks
+
+Both lists carry a **filter field** and a **sort chip** above their chips. The
+chip opens a *Sort & filter* sheet; a choice applies as soon as you tap it, and
+tapping the selected column again flips its direction. Your sort (and on Assets,
+the status filter) is remembered on that phone; the filter text is not.
+
+| | Filter | Sort by | Extra filter |
+|---|---|---|---|
+| **Assets** | hostname, DNS name, IP, MAC, asset tag, assigned-to | Recently added, Name, IP address, Status, Type, Last seen | monitor **Status** (Down, Missed, Dep. Down, …) — named on the sort chip while it applies |
+| **Networks** | name, network, purpose, VLAN, FortiGate, block, tags — every word must match | Name, Network (address order), Utilization, Reservations, VLAN | the **All / Available / Reserved / Deprecated** chips |
+
+**Tapping a network opens its addresses in a sheet over the list**, so your
+filter and scroll position are still there when you close it. A reserved address
+expands to its details and verbs — **Reserve** (a DHCP lease), **Edit**,
+**Release / Revoke**, **Open asset**; a free one opens the Reserve form. A
+FortiGate **VIP** or **interface address** belongs to the device's own config
+and offers no Edit or Release. The **+ Reserve** button on the Networks tab
+takes any address and finds its network for you.
+
+Networks replaced the old **Reservations** tab: a reservation is now seen and
+changed in its network. An old home-screen shortcut or bookmark to Reservations
+opens Networks.
 
 ## Installing it
 
