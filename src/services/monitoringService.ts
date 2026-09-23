@@ -13733,6 +13733,7 @@ export async function pruneSystemInfoSamples(): Promise<number> {
   const [
     iDetail, iHourly, iDaily, sDetail, sHourly, sDaily, ipDetail, ipHourly, ipDaily,
     psDetail, psHourly, psDaily, lldp, customWidget, stateProbe, processLog, processConn, arpEntries,
+    cDetail, cHourly, cDaily, cTrace,
   ] = await Promise.all([
     // interfaces — detail is selection-aware. Nothing WRITES unselected
     // (cadence="slow") interface rows any more (see persistInterfaceSampleStream:
@@ -13782,9 +13783,18 @@ export async function pruneSystemInfoSamples(): Promise<number> {
     // ARP neighbour rows — the other accumulate+age table, on its own flat
     // `arpEntries` window. Same encoding as a tier (FOREVER = never prune).
     pruneArpEntries(),
+    // Agent-run connectivity checks — a tiered entity (every detail row is
+    // stamped "fast", so the plain by-days prune is correct) plus the
+    // traceroute snapshots, a standalone hypertable on the FLAT
+    // `connectivityTraceroutes` window.
+    pruneTierByDays((w) => prisma.assetConnectivitySample.deleteMany({       where: w as any }), r.connectivity.detail, "timestamp",   "asset_connectivity_samples"),
+    pruneTierByDays((w) => prisma.assetConnectivitySampleHourly.deleteMany({ where: w as any }), r.connectivity.hourly, "bucketStart", "asset_connectivity_samples_hourly"),
+    pruneTierByDays((w) => prisma.assetConnectivitySampleDaily.deleteMany({  where: w as any }), r.connectivity.daily,  "bucketStart", "asset_connectivity_samples_daily"),
+    pruneTierByDays((w) => prisma.assetConnectivityTraceroute.deleteMany({   where: w as any }), r.connectivityTraceroutes.days, "timestamp", "asset_connectivity_traceroutes"),
   ]);
   return iDetail + iHourly + iDaily + sDetail + sHourly + sDaily + ipDetail + ipHourly + ipDaily
-    + psDetail + psHourly + psDaily + lldp + customWidget + stateProbe + processLog + processConn + arpEntries;
+    + psDetail + psHourly + psDaily + lldp + customWidget + stateProbe + processLog + processConn + arpEntries
+    + cDetail + cHourly + cDaily + cTrace;
 }
 
 async function pruneLldpNeighbors(days: number): Promise<number> {

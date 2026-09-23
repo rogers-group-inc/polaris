@@ -1014,6 +1014,89 @@ export async function readPerfSlaHistory(
   };
 }
 
+// ─── Agent-run connectivity checks ───────────────────────────────────────────
+//
+// One (agent host, check) series. Detail rows carry the per-run verdict; rollup
+// rows translate back to the SAME field names (latencyMs = the bucket average,
+// ok = the bucket's majority verdict) plus the counts the availability chart
+// and the status strip need: okCount / failCount / sampleCount.
+
+export interface ConnectivityHistoryRow {
+  timestamp:  Date;
+  ok:         boolean;
+  latencyMs:  number | null;
+  dnsMs:      number | null;
+  connectMs:  number | null;
+  tlsMs:      number | null;
+  ttfbMs:     number | null;
+  httpStatus: number | null;
+  hopCount:   number | null;
+  error?:     string | null;
+  // Rollup-tier extras; omitted on the detail tier.
+  minLatencyMs?: number | null;
+  maxLatencyMs?: number | null;
+  okCount?:      number;
+  failCount?:    number;
+  sampleCount?:  number;
+}
+
+export async function readConnectivityHistory(
+  assetId: string,
+  since: Date,
+  until: Date,
+  tier: SampleTier,
+  checkId: string,
+  fetchSince?: Date,
+): Promise<{ samples: ConnectivityHistoryRow[] }> {
+  const queryFrom = fetchSince ?? since;
+  if (tier === "detail") {
+    const samples = await prisma.assetConnectivitySample.findMany({
+      where: { assetId, checkId, timestamp: { gte: queryFrom, lte: until } },
+      orderBy: { timestamp: "asc" },
+      select: {
+        timestamp: true, ok: true, latencyMs: true, dnsMs: true, connectMs: true,
+        tlsMs: true, ttfbMs: true, httpStatus: true, hopCount: true, error: true,
+      },
+    });
+    return { samples };
+  }
+  const table = tier === "hourly" ? "asset_connectivity_samples_hourly" : "asset_connectivity_samples_daily";
+  const rows = await prisma.$queryRawUnsafe<Array<{
+    bucketStart: Date;
+    sampleCount: number; okCount: number; failCount: number;
+    avgLatencyMs: number | null; minLatencyMs: number | null; maxLatencyMs: number | null;
+    avgDnsMs: number | null; avgConnectMs: number | null; avgTlsMs: number | null; avgTtfbMs: number | null;
+    avgHopCount: number | null; modeHttpStatus: number | null;
+  }>>(
+    `SELECT "bucketStart", "sampleCount", "okCount", "failCount",
+            "avgLatencyMs", "minLatencyMs", "maxLatencyMs",
+            "avgDnsMs", "avgConnectMs", "avgTlsMs", "avgTtfbMs",
+            "avgHopCount", "modeHttpStatus"
+     FROM "${table}"
+     WHERE "assetId" = $1 AND "checkId" = $2 AND "bucketStart" >= $3 AND "bucketStart" <= $4
+     ORDER BY "bucketStart" ASC`,
+    assetId, checkId, queryFrom, until,
+  );
+  return {
+    samples: rows.map((r) => ({
+      timestamp:    r.bucketStart,
+      ok:           r.okCount >= r.failCount,
+      latencyMs:    r.avgLatencyMs,
+      dnsMs:        r.avgDnsMs,
+      connectMs:    r.avgConnectMs,
+      tlsMs:        r.avgTlsMs,
+      ttfbMs:       r.avgTtfbMs,
+      httpStatus:   r.modeHttpStatus,
+      hopCount:     r.avgHopCount === null ? null : Math.round(r.avgHopCount),
+      minLatencyMs: r.minLatencyMs,
+      maxLatencyMs: r.maxLatencyMs,
+      okCount:      r.okCount,
+      failCount:    r.failCount,
+      sampleCount:  r.sampleCount,
+    })),
+  };
+}
+
 // ─── Polling-history summary (merge comparison) ──────────────────────────────
 //
 // "How much polling history does this asset have?" for the asset-merge

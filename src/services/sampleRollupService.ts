@@ -50,6 +50,7 @@ export type SourceTable =
   | "storage"
   | "ipsec"
   | "perfSla"
+  | "connectivity"
   | "process";
 
 interface RollupDef {
@@ -70,6 +71,7 @@ const DEFS: RollupDef[] = [
   { source: "storage",     detailTable: "asset_storage_samples",       hourlyTable: "asset_storage_samples_hourly",       dailyTable: "asset_storage_samples_daily"       },
   { source: "ipsec",       detailTable: "asset_ipsec_tunnel_samples",  hourlyTable: "asset_ipsec_tunnel_samples_hourly",  dailyTable: "asset_ipsec_tunnel_samples_daily"  },
   { source: "perfSla",     detailTable: "asset_perf_sla_samples",      hourlyTable: "asset_perf_sla_samples_hourly",      dailyTable: "asset_perf_sla_samples_daily"      },
+  { source: "connectivity", detailTable: "asset_connectivity_samples", hourlyTable: "asset_connectivity_samples_hourly", dailyTable: "asset_connectivity_samples_daily" },
   { source: "process",     detailTable: "asset_process_samples",       hourlyTable: "asset_process_samples_hourly",       dailyTable: "asset_process_samples_daily"       },
 ];
 
@@ -145,6 +147,7 @@ function buildSql(def: RollupDef, tier: RollupTier): string {
     case "storage":      return tier === "hourly" ? sqlStorageHourly()      : sqlStorageDaily();
     case "ipsec":        return tier === "hourly" ? sqlIpsecHourly()        : sqlIpsecDaily();
     case "perfSla":      return tier === "hourly" ? sqlPerfSlaHourly()      : sqlPerfSlaDaily();
+    case "connectivity": return tier === "hourly" ? sqlConnectivityHourly() : sqlConnectivityDaily();
     case "process":      return tier === "hourly" ? sqlProcessHourly()      : sqlProcessDaily();
   }
 }
@@ -908,6 +911,109 @@ function sqlPerfSlaHourly(): string {
       "avgPacketLoss"      = EXCLUDED."avgPacketLoss",
       "minPacketLoss"      = EXCLUDED."minPacketLoss",
       "maxPacketLoss"      = EXCLUDED."maxPacketLoss",
+      "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
+  `;
+}
+
+// ─── Agent-run connectivity checks (gauge + pass/fail per check) ─────────────
+//
+// Latency and its phases are gauges → averaged. ok/fail roll up as counts, the
+// SD-WAN state precedent, which is what the availability chart and the
+// connFailurePct metric need on the long-range tiers. The HTTP status rolls up
+// as the bucket's MOST FREQUENT code (mode ignores the nulls tcp/icmp rows
+// carry). The daily tier weights each average by the number of hourly samples
+// that actually HAD a value — a failed run carries no latency, so weighting by
+// sampleCount would drag the day's average toward zero.
+
+function sqlConnectivityHourly(): string {
+  return `
+    INSERT INTO "asset_connectivity_samples_hourly" (
+      "id", "assetId", "bucketStart", "checkId", "sampleCount",
+      "okCount", "failCount",
+      "avgLatencyMs", "minLatencyMs", "maxLatencyMs",
+      "avgDnsMs", "avgConnectMs", "avgTlsMs", "avgTtfbMs",
+      "avgHopCount", "maxHopCount", "modeHttpStatus",
+      "lastBucketSampleAt"
+    )
+    SELECT
+      gen_random_uuid()::text,
+      "assetId",
+      date_trunc('hour', "timestamp") AS bucket_start,
+      "checkId",
+      COUNT(*)::int,
+      COUNT(*) FILTER (WHERE "ok")::int,
+      COUNT(*) FILTER (WHERE NOT "ok")::int,
+      AVG("latencyMs"), MIN("latencyMs"), MAX("latencyMs"),
+      AVG("dnsMs"), AVG("connectMs"), AVG("tlsMs"), AVG("ttfbMs"),
+      AVG("hopCount"), MAX("hopCount"),
+      mode() WITHIN GROUP (ORDER BY "httpStatus"),
+      MAX("timestamp")
+    FROM "asset_connectivity_samples"
+    WHERE "timestamp" >= $1 AND "cadence" = 'fast'
+    GROUP BY "assetId", bucket_start, "checkId"
+    ON CONFLICT ("bucketStart", "assetId", "checkId") DO UPDATE SET
+      "sampleCount"        = EXCLUDED."sampleCount",
+      "okCount"            = EXCLUDED."okCount",
+      "failCount"          = EXCLUDED."failCount",
+      "avgLatencyMs"       = EXCLUDED."avgLatencyMs",
+      "minLatencyMs"       = EXCLUDED."minLatencyMs",
+      "maxLatencyMs"       = EXCLUDED."maxLatencyMs",
+      "avgDnsMs"           = EXCLUDED."avgDnsMs",
+      "avgConnectMs"       = EXCLUDED."avgConnectMs",
+      "avgTlsMs"           = EXCLUDED."avgTlsMs",
+      "avgTtfbMs"          = EXCLUDED."avgTtfbMs",
+      "avgHopCount"        = EXCLUDED."avgHopCount",
+      "maxHopCount"        = EXCLUDED."maxHopCount",
+      "modeHttpStatus"     = EXCLUDED."modeHttpStatus",
+      "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
+  `;
+}
+
+function sqlConnectivityDaily(): string {
+  // Weight = hours that reported a value × their sample count. The ok count
+  // stands in for "samples that had a latency" (a failed run has none).
+  const wavg = (col: string) =>
+    `SUM("${col}" * "okCount") / NULLIF(SUM(CASE WHEN "${col}" IS NOT NULL THEN "okCount" END), 0)`;
+  return `
+    INSERT INTO "asset_connectivity_samples_daily" (
+      "id", "assetId", "bucketStart", "checkId", "sampleCount",
+      "okCount", "failCount",
+      "avgLatencyMs", "minLatencyMs", "maxLatencyMs",
+      "avgDnsMs", "avgConnectMs", "avgTlsMs", "avgTtfbMs",
+      "avgHopCount", "maxHopCount", "modeHttpStatus",
+      "lastBucketSampleAt"
+    )
+    SELECT
+      gen_random_uuid()::text,
+      "assetId",
+      date_trunc('day', "bucketStart") AS bucket_start,
+      "checkId",
+      SUM("sampleCount")::int,
+      SUM("okCount")::int,
+      SUM("failCount")::int,
+      ${wavg("avgLatencyMs")}, MIN("minLatencyMs"), MAX("maxLatencyMs"),
+      ${wavg("avgDnsMs")}, ${wavg("avgConnectMs")}, ${wavg("avgTlsMs")}, ${wavg("avgTtfbMs")},
+      SUM("avgHopCount" * "sampleCount") / NULLIF(SUM(CASE WHEN "avgHopCount" IS NOT NULL THEN "sampleCount" END), 0),
+      MAX("maxHopCount"),
+      mode() WITHIN GROUP (ORDER BY "modeHttpStatus"),
+      MAX("lastBucketSampleAt")
+    FROM "asset_connectivity_samples_hourly"
+    WHERE "bucketStart" >= $1
+    GROUP BY "assetId", bucket_start, "checkId"
+    ON CONFLICT ("bucketStart", "assetId", "checkId") DO UPDATE SET
+      "sampleCount"        = EXCLUDED."sampleCount",
+      "okCount"            = EXCLUDED."okCount",
+      "failCount"          = EXCLUDED."failCount",
+      "avgLatencyMs"       = EXCLUDED."avgLatencyMs",
+      "minLatencyMs"       = EXCLUDED."minLatencyMs",
+      "maxLatencyMs"       = EXCLUDED."maxLatencyMs",
+      "avgDnsMs"           = EXCLUDED."avgDnsMs",
+      "avgConnectMs"       = EXCLUDED."avgConnectMs",
+      "avgTlsMs"           = EXCLUDED."avgTlsMs",
+      "avgTtfbMs"          = EXCLUDED."avgTtfbMs",
+      "avgHopCount"        = EXCLUDED."avgHopCount",
+      "maxHopCount"        = EXCLUDED."maxHopCount",
+      "modeHttpStatus"     = EXCLUDED."modeHttpStatus",
       "lastBucketSampleAt" = EXCLUDED."lastBucketSampleAt"
   `;
 }

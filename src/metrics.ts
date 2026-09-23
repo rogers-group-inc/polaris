@@ -102,6 +102,29 @@ const downDetectionUnavailable = new Counter({
   registers: [registry],
 });
 
+// Agent-run connectivity checks. `outcome` ∈ ok | fail | rejected (a sample
+// naming a check the pushing host is not a source of).
+const connectivitySamplesTotal = new Counter({
+  name: "polaris_agent_connectivity_samples_total",
+  help: "Connectivity-check results ingested from Polaris Agents, by outcome.",
+  labelNames: ["outcome"] as const,
+  registers: [registry],
+});
+
+const connectivityPathChangesTotal = new Counter({
+  name: "polaris_connectivity_path_changes_total",
+  help: "Traceroute path changes detected on connectivity checks (connectivity.path_changed Events written).",
+  registers: [registry],
+});
+
+export function recordConnectivitySamples(outcome: "ok" | "fail" | "rejected", n: number): void {
+  if (n > 0) connectivitySamplesTotal.inc({ outcome }, n);
+}
+
+export function recordConnectivityPathChange(): void {
+  connectivityPathChangesTotal.inc();
+}
+
 const pgbossQueueJobs = new Gauge({
   name: "polaris_pgboss_queue_jobs",
   help: "pg-boss job counts by queue and state (pg-boss mode only).",

@@ -227,6 +227,32 @@ export interface PerfSlaSampleRow {
   packetLossThreshold: number | null;
 }
 
+// Agent-run connectivity check result (one row per check run). cadence is
+// always "fast" — the rollup SQL filters on it, so a row without it would
+// silently never reach the hourly/daily tiers.
+export interface ConnectivitySampleRow {
+  assetId: string;
+  timestamp: Date;
+  cadence: SampleCadence;
+  checkId: string;
+  ok: boolean;
+  latencyMs: number | null;
+  dnsMs: number | null;
+  connectMs: number | null;
+  tlsMs: number | null;
+  ttfbMs: number | null;
+  httpStatus: number | null;
+  bodyMatched: boolean | null;
+  bodySha256: string | null;
+  bodyBytes: number | null;
+  bodyExcerpt: string | null;
+  error: string | null;
+  resolvedIp: string | null;
+  tlsNotAfter: Date | null;
+  tlsIssuer: string | null;
+  hopCount: number | null;
+}
+
 // Pinned-process CPU/RAM time-series (Feature C). cadence is always "fast"
 // (only operator-pinned programs are sampled), included for shape uniformity.
 export interface ProcessSampleRow {
@@ -270,6 +296,7 @@ const buffers = {
   storage:        [] as StorageSampleRow[],
   ipsecTunnel:    [] as IpsecTunnelSampleRow[],
   perfSla:        [] as PerfSlaSampleRow[],
+  connectivity:   [] as ConnectivitySampleRow[],
   process:        [] as ProcessSampleRow[],
   processLog:     [] as ProcessLogRow[],
   serviceLog:     [] as ServiceLogRow[],
@@ -289,6 +316,7 @@ const TABLE_LABEL: Record<BufferKey, string> = {
   storage:     "asset_storage_samples",
   ipsecTunnel: "asset_ipsec_tunnel_samples",
   perfSla:     "asset_perf_sla_samples",
+  connectivity: "asset_connectivity_samples",
   process:     "asset_process_samples",
   processLog:  "asset_process_log_samples",
   serviceLog:  "asset_service_log_samples",
@@ -358,6 +386,13 @@ export function enqueuePerfSlaSamples(rows: PerfSlaSampleRow[]): void {
   if (buffers.perfSla.length >= SIZE_THRESHOLD) void flushTable("perfSla");
 }
 
+export function enqueueConnectivitySamples(rows: ConnectivitySampleRow[]): void {
+  if (rows.length === 0) return;
+  buffers.connectivity.push(...rows);
+  setSampleBufferDepth(TABLE_LABEL.connectivity, buffers.connectivity.length);
+  if (buffers.connectivity.length >= SIZE_THRESHOLD) void flushTable("connectivity");
+}
+
 export function enqueueProcessSamples(rows: ProcessSampleRow[]): void {
   if (rows.length === 0) return;
   buffers.process.push(...rows);
@@ -388,7 +423,7 @@ export function enqueueServiceLogSamples(rows: ServiceLogRow[]): void {
 const flushing: Record<BufferKey, boolean> = {
   monitor: false, telemetry: false, hardware: false,
   iface: false, storage: false, ipsecTunnel: false,
-  perfSla: false, process: false, processLog: false, serviceLog: false,
+  perfSla: false, connectivity: false, process: false, processLog: false, serviceLog: false,
 };
 
 async function flushTable(key: BufferKey): Promise<void> {
@@ -459,6 +494,9 @@ async function writeBatch(key: BufferKey, batch: unknown[]): Promise<void> {
       return;
     case "perfSla":
       await prisma.assetPerfSlaSample.createMany({ data: batch as PerfSlaSampleRow[] });
+      return;
+    case "connectivity":
+      await prisma.assetConnectivitySample.createMany({ data: batch as ConnectivitySampleRow[] });
       return;
     case "process":
       await prisma.assetProcessSample.createMany({ data: batch as ProcessSampleRow[] });

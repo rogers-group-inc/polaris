@@ -236,6 +236,33 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **A target/kind edit clears `lastPathHash` / `lastOk`** on every source so the first new traceroute is a baseline, not a "path changed" Event about a different destination.
 - Delete cascades sources only; samples and traceroutes age out on retention (a row DELETE in a compressed chunk decompresses it).
 
+**Wired into GET /agents/config and the heartbeat:** `agents.ts` ships `connectivityChecks: await agentConfigChecks(assetId, agentVersion)` in the payload (strong ETag covers it) AND folds `connectivityEtagFold(...)` into `computeConfigEtag` as `conn`. **Both halves or neither** — the heartbeat etag is the only thing that makes a running agent refetch.
+
 **When changing this:** a field the agent reads → `agentDefCore` + `transport.ConnectivityCheckDef` in `agent/internal/transport/client.go` + an `agent/VERSION` bump, in lockstep. A new kind → `CHECK_KINDS`, `targetHostOf`, the route's Zod enum, the agent's `ValidateCheckDef` + runner, and the modal. A new membership signal → the 5-minute job catches it; a write path that changes membership should reconcile inline.
+
+---
+
+## services/connectivityIngestService.ts
+
+**What it owns:** The server half of the agent's two connectivity streams (`POST /agents/samples`, stream `connectivity` and `connectivityTraceroute`): authorization of each sample against the pushing host's sources, the body-excerpt policy, buffered sample writes, the source's latest-result columns, hop resolution, and path-change Events.
+
+**Public API:** `ingestConnectivitySamples`, `ingestConnectivityTraceroutes`, `resolveHopContexts`, `excerptToKeep`, `hopIp`, `pathHashOf`, `sampleTime`, `PATH_CHANGE_EVENT_FLOOR_MS`; types `IngestResult`, `ConnectivitySampleInput`, `ConnectivityTracerouteInput`, `StoredHop`, `HopContext`.
+
+**Cross-service deps:** `prisma` (`connectivityCheckSource`, `assetConnectivityTraceroute`, `asset`, one `$queryRaw`), `sampleWriteBuffer.enqueueConnectivitySamples`, `eventLogService.logEvent`, `metrics` (`recordConnectivitySamples`, `recordConnectivityPathChange`), `utils/cidr.isValidIpAddress`, `utils/httpCheck.MAX_EXCERPT_CHARS`.
+
+**Used by:** `src/api/routes/agents.ts` (`POST /samples` — the two connectivity arms return `{accepted, rejected}` of their own).
+
+**Invariants:**
+- **The subject is the pushing agent's own asset.** Nothing in the body names a host; `assetId` comes from `req.managedAgent`.
+- **A sample for a check this host is not a source of is REJECTED**, counted in `rejected` and in `polaris_agent_connectivity_samples_total{outcome="rejected"}` — never stored.
+- **The excerpt policy is enforced HERE, not trusted from the wire** (`excerptToKeep`): kept only on a failed run or when the check keeps excerpts, re-cut to `MAX_EXCERPT_CHARS`. Hash + byte count are always stored.
+- **Nothing here touches `monitorStatus` / `consecutiveFailures` / `lastMonitorAt` / the responseTime stream.** A connectivity result describes a path from the host, not the host.
+- **Every row is stamped `cadence: "fast"`** — the rollup SQL filters on it.
+- **Hop resolution is ONE query per push** (`resolveHopContexts`: unnest + three LATERAL joins — primary `Asset.ipAddress`, then `AssetAssociatedIp` with the port name, then the most specific non-deprecated subnet via `cidr >>= inet`). Decommissioned assets skipped; `AssetIpHistory` deliberately not read (no `ip` index, and a live hop is not "who held it last month"). Hops are decorated at WRITE time, so a trace shows what Polaris knew when it was taken.
+- **`pathHashOf` excludes RTTs and trailing silent hops** — the same route at a different latency, or timing out two TTLs later, is not a change.
+- **`connectivity.path_changed` is written only against a non-null previous hash** (the first trace, and the first after a target edit, is a baseline) and at most once per `PATH_CHANGE_EVENT_FLOOR_MS` (10 min) per (host, check) — ECMP flap is recorded in the rows, not in the Event table. It names the asset (`resourceType: "asset"`, `resourceName`) so an event automation's device filter applies to the HOST (business rule 46).
+- A late-arriving older push never overwrites a newer latest result (`lastSampleAt` guard).
+
+**When changing this:** a new sample field → `ConnectivitySampleSchema` in agents.ts + `ConnectivitySampleRow` (sampleWriteBuffer) + the Prisma model/migration + the Go `transport.ConnectivitySample`, in lockstep; a rollup column also needs `sampleRollupService` + `sampleHistoryService.readConnectivityHistory`.
 
 ---

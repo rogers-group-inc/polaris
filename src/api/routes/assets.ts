@@ -92,6 +92,7 @@ import { getMetricSeverityTiers, listScopeOptions } from "../../services/notific
 import { SCOPE_FIELD_OPS, scopeConditionMeta, scopeConditionSchema } from "../../services/notificationTypes.js";
 import { loadScopeAssetIds } from "../../services/notificationEngine.js";
 import { listAssetTypes } from "../../services/assetTypeService.js";
+import { getAssetChecks as getAssetConnectivityChecks } from "../../services/connectivityCheckService.js";
 import {
   applyMassPins,
   getPinInventoryForAssets,
@@ -106,6 +107,7 @@ import { recordOperatorPinChanges, type OperatorPinChange } from "../../services
 import {
   readIpsecHistory,
   readPerfSlaHistory,
+  readConnectivityHistory,
   readSdwanMembers,
 } from "../../services/sampleHistoryService.js";
 import { readProbeOutages, serializeOutages } from "../../services/probeOutageService.js";
@@ -3426,6 +3428,58 @@ router.get("/:id/perf-sla-history", requirePermission("assets", "read"), async (
       bucketSeconds: pick.bucketSeconds,
       samples: result.samples,
     });
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/connectivity-checks — the agent-run connectivity checks this
+// host runs, each with its latest result (from connectivity_check_sources, never
+// the hypertable). Drives the slide-over's Connectivity tab AND its visibility:
+// an empty list means no tab. assets:read — the results describe this asset.
+router.get("/:id/connectivity-checks", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getAssetConnectivityChecks(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/connectivity-history?checkId=...&range=... — one check's
+// latency / phases / verdict series from this host, tier-picked like every
+// other history endpoint.
+router.get("/:id/connectivity-history", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const checkId = req.query.checkId ? String(req.query.checkId) : null;
+    if (!checkId) throw new AppError(400, "checkId query parameter is required");
+    const { since, until, rangeLabel } = resolveRange(req);
+    const pick = await pickSampleTierForAsset(id, "connectivity", since);
+    const fetchSince = extendSinceForLookback(since, pick.bucketSeconds);
+    const result = await readConnectivityHistory(id, since, until, pick.tier, checkId, fetchSince);
+    res.json({
+      range: rangeLabel,
+      checkId,
+      since,
+      until,
+      tier: pick.tier,
+      bucketSeconds: pick.bucketSeconds,
+      samples: result.samples,
+    });
+  } catch (err) { next(err); }
+});
+
+// GET /assets/:id/connectivity-traceroutes?checkId=...&limit=10 — the newest
+// traceroutes this host ran for one check, hops already resolved to assets and
+// subnets at write time. Newest first; limit ≤ 50.
+router.get("/:id/connectivity-traceroutes", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const id = req.params.id as string;
+    const checkId = req.query.checkId ? String(req.query.checkId) : null;
+    if (!checkId) throw new AppError(400, "checkId query parameter is required");
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const traceroutes = await prisma.assetConnectivityTraceroute.findMany({
+      where: { assetId: id, checkId },
+      orderBy: { timestamp: "desc" },
+      take: limit,
+    });
+    res.json({ checkId, traceroutes });
   } catch (err) { next(err); }
 });
 

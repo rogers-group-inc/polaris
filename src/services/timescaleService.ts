@@ -39,6 +39,7 @@ export const SAMPLE_TABLES = [
   "asset_storage_samples",
   "asset_ipsec_tunnel_samples",
   "asset_perf_sla_samples",
+  "asset_connectivity_samples",
   "asset_process_samples",
 ] as const;
 
@@ -63,6 +64,8 @@ export const ROLLUP_TABLES = [
   "asset_ipsec_tunnel_samples_daily",
   "asset_perf_sla_samples_hourly",
   "asset_perf_sla_samples_daily",
+  "asset_connectivity_samples_hourly",
+  "asset_connectivity_samples_daily",
   "asset_process_samples_hourly",
   "asset_process_samples_daily",
 ] as const;
@@ -80,12 +83,17 @@ export const ROLLUP_TABLES = [
  * `asset_state_samples` has no rollup companions on purpose: averaging a boolean
  * yields a duty cycle rather than a state, so there is nothing meaningful for
  * the rollup writer to compute.
+ *
+ * `asset_connectivity_traceroutes` (connectivity-check path snapshots) is the
+ * one standalone table with a retention number of its own — the flat
+ * `connectivityTraceroutes` entity — since a path has no meaningful average.
  */
 export const STANDALONE_SAMPLE_TABLES = [
   "asset_custom_widget_samples",
   "asset_state_samples",
   "asset_process_log_samples",
   "asset_service_log_samples",
+  "asset_connectivity_traceroutes",
 ] as const;
 
 /** Every table we manage as a hypertable — tiered source + rollup + standalone. */
