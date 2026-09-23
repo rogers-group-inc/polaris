@@ -31,8 +31,11 @@ the lock re-opens the race in [rule 20a](#rule-20).
 network, backed by a unique index.
 
 ### Rule 4
-**Block and network deletion are protected.** 409 while any active reservation
-exists inside. (Archiving is deliberately exempt — see [rule 41](#rule-41).)
+**Block and network deletion are protected.** A network delete is refused (409)
+while any active reservation exists inside it. A block delete is refused (409)
+while the block contains **any** network at all — move each one to another
+block (**Move to block…** on the Networks tab), archive it or delete it first.
+(Archiving is deliberately exempt — see [rule 41](#rule-41).)
 
 ### Rule 5
 **CIDRs are normalised on write.** Host bits are zeroed: `10.1.1.5/24` stores as

@@ -64,6 +64,7 @@ async function _initSubnetsPage() {
     var items = [{ label: "Open", onSelect: function () { openSubnetFromRow(trigger, id); } }];
     if (canEditSubnet(s)) {
       items.push({ label: "Edit", onSelect: function () { openSubnetEditModal(id); } });
+      items.push({ label: "Move to block…", onSelect: function () { openSubnetMoveModal(id, s); } });
       items.push({ separator: true });
       // Archive is `subnets:fullwrite`, not the ownership-aware write the rest
       // of this menu uses: a discovered network carries createdBy=null, so an
@@ -1226,6 +1227,63 @@ async function openSubnetEditModal(id) {
   } catch (err) {
     showToast(err.message, "error");
   }
+}
+
+// Re-parent a network onto another block. The server lists only blocks whose
+// range contains the CIDR (the containment math stays in src/utils/cidr.ts);
+// a block holding an overlapping network is shown but disabled, naming the
+// sibling in the way, so the operator sees why rather than hitting a 409.
+async function openSubnetMoveModal(id, s) {
+  var targets;
+  try {
+    targets = await api.subnets.moveTargets(id);
+  } catch (err) {
+    showToast(err.message, "error");
+    return;
+  }
+  var current = s.block ? escapeHtml(s.block.name) + ' (' + escapeHtml(s.block.cidr) + ')' : "—";
+  var allowed = targets.filter(function (t) { return !t.overlaps; });
+  var body = '<div class="form-group"><label>Network</label><input type="text" value="' +
+      escapeHtml(s.cidr) + '" disabled class="field-locked"></div>' +
+    '<div class="form-group"><label>Current block</label><input type="text" value="' +
+      current + '" disabled class="field-locked"></div>';
+  if (targets.length === 0) {
+    body += '<p class="hint">No other block contains ' + escapeHtml(s.cidr) +
+      '. Create a block that covers this range first.</p>';
+  } else {
+    var opts = '<option value="">Select a block...</option>';
+    targets.forEach(function (t) {
+      var label = escapeHtml(t.name) + ' (' + escapeHtml(t.cidr) + ')';
+      opts += t.overlaps
+        ? '<option value="' + t.id + '" disabled>' + label + ' — overlaps ' + escapeHtml(t.overlaps) + '</option>'
+        : '<option value="' + t.id + '">' + label + '</option>';
+    });
+    body += '<div class="form-group"><label>Move to *</label><select id="f-move-block">' + opts + '</select></div>' +
+      '<p class="hint">Reservations and history stay with the network. Only blocks whose range contains ' +
+      escapeHtml(s.cidr) + ' are listed.</p>';
+  }
+  var footer = allowed.length
+    ? '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="btn-move">Move</button>'
+    : '<button class="btn btn-secondary" onclick="closeModal()">Close</button>';
+  openModal("Move Network", body, footer);
+  if (!allowed.length) return;
+  document.getElementById("btn-move").addEventListener("click", async function () {
+    var btn = this;
+    var blockId = val("f-move-block");
+    if (!blockId) { showToast("Select a block to move the network to", "error"); return; }
+    btn.disabled = true;
+    try {
+      await api.subnets.move(id, blockId);
+      var dest = targets.find(function (t) { return t.id === blockId; });
+      closeModal();
+      showToast("Network moved to " + (dest ? dest.name : "the new block"));
+      loadSubnets();
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 // Retire a network (business rule 41). Deliberately worded against Delete

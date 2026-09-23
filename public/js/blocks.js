@@ -57,7 +57,7 @@ async function _initBlocksPage() {
     if (canManageNetworks()) {
       items.push({ label: "Edit", onSelect: function () { openBlockEditModal(id); } });
       items.push({ separator: true });
-      items.push({ label: "Delete", danger: true, onSelect: function () { confirmDeleteBlock(id, b.cidr); } });
+      items.push({ label: "Delete", danger: true, onSelect: function () { confirmDeleteBlock(id, b.cidr, b._count ? b._count.subnets : 0); } });
     }
     showRowMenu(trigger, items, { label: "Actions for " + b.name });
   });
@@ -215,7 +215,17 @@ async function openBlockEditModal(id) {
   }
 }
 
-async function confirmDeleteBlock(id, cidr) {
+// A block that still holds networks cannot be deleted (business rule 4) — say
+// so up front rather than asking to confirm a delete the server will refuse.
+// The server is still the authority: a network added since the list loaded
+// comes back as the same 409 message through the catch below.
+async function confirmDeleteBlock(id, cidr, networkCount) {
+  if (networkCount > 0) {
+    showToast('Block "' + cidr + '" still contains ' + networkCount + ' network' +
+      (networkCount !== 1 ? 's' : '') + '. Move them to another block (Networks → Move to block…), ' +
+      'archive or delete them first.', "error");
+    return;
+  }
   var ok = await showConfirm('Delete block "' + cidr + '"? This cannot be undone.');
   if (!ok) return;
   try {

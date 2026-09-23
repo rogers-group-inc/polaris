@@ -820,6 +820,123 @@ export async function updateSubnet(id: string, input: UpdateSubnetInput) {
   return updated;
 }
 
+// ─── Move to another block ───────────────────────────────────────────────────
+//
+// Re-parents a network onto a different block without touching anything it
+// holds: the row keeps its id, so reservations, conflicts and the IP panel's
+// history follow it. The destination must pass the same checks a create does —
+// it contains the CIDR (rule 2), matches the IP version, and holds no
+// overlapping sibling (rule 1) — and the overlap test runs under the
+// destination's subnet write lock (rule 20a). The SOURCE block is locked too,
+// so a concurrent deleteBlock cannot count this network as present and then
+// find it gone mid-transaction; the two locks are taken in id order so two
+// moves in opposite directions cannot deadlock.
+//
+// Discovery keys existing networks by CIDR, not by block, so a moved
+// integration-managed network stays the row its integration updates.
+
+export interface MoveTargetBlock {
+  id: string;
+  name: string;
+  cidr: string;
+  /** Sibling network in that block that would overlap, or null when the move is allowed. */
+  overlaps: string | null;
+}
+
+/** Every block (other than the current one) whose range can hold this network. */
+export async function listMoveTargets(id: string): Promise<MoveTargetBlock[]> {
+  const subnet = await prisma.subnet.findUnique({
+    where: { id },
+    select: { cidr: true, blockId: true },
+  });
+  if (!subnet) throw new AppError(404, `Subnet ${id} not found`);
+  const version = detectIpVersion(subnet.cidr);
+  const blocks = await prisma.ipBlock.findMany({
+    where: { ipVersion: version, id: { not: subnet.blockId } },
+    select: { id: true, name: true, cidr: true, subnets: { select: { cidr: true } } },
+    orderBy: { cidr: "asc" },
+  });
+  return blocks
+    .filter((b) => cidrContains(b.cidr, subnet.cidr))
+    .map((b) => ({
+      id: b.id,
+      name: b.name,
+      cidr: b.cidr,
+      overlaps: b.subnets.find((s) => cidrOverlaps(s.cidr, subnet.cidr))?.cidr ?? null,
+    }));
+}
+
+export async function moveSubnet(id: string, targetBlockId: string, actor?: string) {
+  const subnet = await prisma.subnet.findUnique({
+    where: { id },
+    include: { block: { select: { id: true, name: true, cidr: true } } },
+  });
+  if (!subnet) throw new AppError(404, `Subnet ${id} not found`);
+  if (subnet.blockId === targetBlockId)
+    throw new AppError(400, `Subnet ${subnet.cidr} is already in block ${subnet.block.cidr}`);
+
+  const target = await prisma.ipBlock.findUnique({ where: { id: targetBlockId } });
+  if (!target) throw new AppError(404, `IP Block ${targetBlockId} not found`);
+  if (detectIpVersion(subnet.cidr) !== target.ipVersion)
+    throw new AppError(
+      400,
+      `Subnet IP version does not match block IP version (${target.ipVersion})`,
+    );
+  if (!cidrContains(target.cidr, subnet.cidr))
+    throw new AppError(400, `Subnet ${subnet.cidr} is not within block ${target.cidr}`);
+
+  let moved;
+  try {
+    moved = await prisma.$transaction(async (tx) => {
+      for (const blockId of [subnet.blockId, targetBlockId].sort()) {
+        await lockBlockForSubnetWrites(tx, blockId);
+      }
+      // Re-read under the locks: the network may have been moved or deleted,
+      // and the destination deleted, since the pre-checks above.
+      const current = await tx.subnet.findUnique({ where: { id }, select: { blockId: true } });
+      if (!current) throw new AppError(404, `Subnet ${id} not found`);
+      if (current.blockId !== subnet.blockId)
+        throw new AppError(409, `Subnet ${subnet.cidr} was moved by another request — reload and try again`);
+      const stillThere = await tx.ipBlock.findUnique({ where: { id: targetBlockId }, select: { id: true } });
+      if (!stillThere) throw new AppError(404, `IP Block ${targetBlockId} not found`);
+
+      const siblings = await tx.subnet.findMany({
+        where: { blockId: targetBlockId },
+        select: { cidr: true },
+      });
+      const overlap = siblings.find((s) => cidrOverlaps(s.cidr, subnet.cidr));
+      if (overlap)
+        throw new AppError(
+          409,
+          `Subnet ${subnet.cidr} overlaps with existing subnet ${overlap.cidr} in block ${target.cidr}`,
+        );
+      return tx.subnet.update({ where: { id }, data: { blockId: targetBlockId } });
+    });
+  } catch (err: any) {
+    if (err?.code === "P2002")
+      throw new AppError(409, `Subnet ${subnet.cidr} already exists in block ${target.cidr}`);
+    throw err;
+  }
+
+  void logEvent({
+    action: "subnet.moved",
+    resourceType: "subnet",
+    resourceId: id,
+    resourceName: subnet.name,
+    actor,
+    message: `Subnet "${subnet.name}" (${subnet.cidr}) moved from block "${subnet.block.name}" (${subnet.block.cidr}) to "${target.name}" (${target.cidr})`,
+    details: {
+      changes: {
+        block: {
+          from: { id: subnet.block.id, name: subnet.block.name, cidr: subnet.block.cidr },
+          to: { id: target.id, name: target.name, cidr: target.cidr },
+        },
+      },
+    },
+  });
+  return moved;
+}
+
 // ─── IP Enumeration ──────────────────────────────────────────────────────────
 
 /** One full Reservation row, as the IP panel's DTO builder takes it. */

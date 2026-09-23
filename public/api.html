@@ -742,8 +742,9 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /blocks/:id
             <span class="gate">ipBlocks:write</span></div>
-          <p><code>204</code> on success; <code>409</code> while any subnet in the block holds
-            active reservations.</p>
+          <p><code>204</code> on success; <code>409</code> while the block contains any
+            network, whatever its status. Move networks out with
+            <code>POST /subnets/:id/move</code>, archive or delete them first.</p>
         </div>
       </section>
 
@@ -836,6 +837,23 @@
           <p>Re-pull one discovered network's addresses from its FortiGate now:
             <code>{ lastDiscoveredAt, created, updated, released, skipped }</code>.
             <code>400</code> for manually-created networks or non-Fortinet integrations.</p>
+        </div>
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /subnets/:id/move-targets
+            <span class="gate">subnets:read</span></div>
+          <p>Blocks other than the current one whose range contains this network's CIDR:
+            <code>[{ id, name, cidr, overlaps }]</code>. <code>overlaps</code> is the CIDR of
+            the network in that block that would collide, or <code>null</code> when the move
+            is allowed.</p>
+        </div>
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /subnets/:id/move
+            <span class="gate">subnets:write</span></div>
+          <p>Body <code>{ blockId }</code>. Re-parents the network onto another block and
+            returns the updated row; reservations and history stay with it.
+            Ownership-scoped like <code>PUT</code>. <code>400</code> when the block does not
+            contain the CIDR, the IP version differs, or it is already the network's block;
+            <code>409</code> when a network in the destination overlaps.</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /subnets/:id/archive
