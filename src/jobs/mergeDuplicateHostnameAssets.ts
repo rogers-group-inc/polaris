@@ -78,6 +78,15 @@
  * different devices sharing a hostname"). Logged at warn with the asset
  * ids so an operator can decide.
  *
+ * SCOPE OF WHAT FOLLOWS: the side-table / cascade / absorption notes below
+ * describe the HOSTNAME pass's executor (`mergeDuplicateHostnameGhost`). The
+ * SERIAL pass does not use it — it merges through `absorbDuplicateSerialGroup`
+ * (duplicateSerialConflictService → `assetMergeService.mergeAssets`), which
+ * RE-BINDS the ghost's AssetSource rows and moves its ManagedAgent instead of
+ * letting the delete cascade them. A duplicate-serial group is usually two
+ * authoritative records, and cascading would strip a directory identity and
+ * unenrol an agent (found 2026-09-22, the day the serial pass shipped).
+ *
  * Side-table transfer (delete-on-conflict for unique violations):
  *   - AssetMacAddress      — unique on (assetId, mac)
  *   - AssetAssociatedIp    — unique on (assetId, ip)
@@ -141,7 +150,13 @@ import {
 // Serial usability + the vendor-default cap are business rule 83's, reused so
 // the merge pass and the `duplicate-serial` conflict card can never disagree
 // about which serials identify hardware.
-import { MAX_PLAUSIBLE_DUPLICATES } from "../services/duplicateSerialConflictService.js";
+import {
+  MAX_PLAUSIBLE_DUPLICATES,
+  absorbDuplicateSerialGroup,
+} from "../services/duplicateSerialConflictService.js";
+
+/** Who a conflict closed by the automatic serial merge is resolved by. */
+const MERGE_ACTOR = "system:duplicate-serial-merge";
 // Business rule 84 moved the "is this string an identity?" test to its own
 // util so every WRITE point can run it; the service still re-exports it, but
 // the util is the canonical home and what new callers should import.
@@ -261,14 +276,20 @@ async function mergeDuplicateHostnameAssets(): Promise<void> {
             continue;
           }
 
+          // Executed by `absorbDuplicateSerialGroup` — the OPERATOR merge
+          // engine, NOT the hostname pass's `mergeDuplicateHostnameGhost`, whose
+          // cascade would delete the ghost's authoritative sources and its
+          // agent enrolment. See that function's header.
           try {
-            for (const ghost of ghosts) {
-              await mergeDuplicateHostnameGhost(canonical, ghost);
-              serialStats.ghostsAbsorbed++;
-            }
+            const { movedSources, movedManagedAgent, absorbedIds } = await absorbDuplicateSerialGroup(
+              canonical,
+              ghosts,
+              MERGE_ACTOR,
+            );
+            serialStats.ghostsAbsorbed += absorbedIds.length;
             serialStats.groupsMerged++;
             logger.info(
-              { serial, tiers, canonicalId: canonical.id, absorbedIds: ghosts.map((g) => g.id) },
+              { serial, tiers, canonicalId: canonical.id, absorbedIds: ghosts.map((g) => g.id), movedSources, movedManagedAgent },
               "duplicate-serial-merge: merged",
             );
             await logEvent({
@@ -277,7 +298,10 @@ async function mergeDuplicateHostnameAssets(): Promise<void> {
               resourceId: canonical.id,
               resourceName: canonical.hostname ?? undefined,
               level: "info",
-              message: `Duplicate-serial cleanup — absorbed ${ghosts.length} record${ghosts.length === 1 ? "" : "s"} of serial ${serial} into ${canonical.hostname || canonical.id}`,
+              message:
+                `Duplicate-serial cleanup — absorbed ${ghosts.length} record${ghosts.length === 1 ? "" : "s"} of serial ${serial} ` +
+                `into ${canonical.hostname || canonical.id}; moved ${movedSources} source(s)` +
+                (movedManagedAgent ? "; agent enrolment carried over" : ""),
               details: {
                 matchedOn: "serial",
                 serial,
@@ -285,6 +309,8 @@ async function mergeDuplicateHostnameAssets(): Promise<void> {
                 canonicalId: canonical.id,
                 absorbedIds: ghosts.map((g) => g.id),
                 absorbedSources: ghosts.map((g) => g.sources.map((s) => s.sourceKind)),
+                movedSources,
+                movedManagedAgent,
               },
             });
           } catch (err) {

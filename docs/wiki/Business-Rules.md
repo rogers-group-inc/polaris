@@ -167,8 +167,11 @@ everyone it names is on the same To line, so each reader can see who else is
 already on it. Nothing about the reader splits that message — not their
 timezone (times are the Polaris server's, and the footer names the zone) and
 not their permissions (a reader who cannot acknowledge gets the button and is
-refused, with a reason, on the acknowledge page). See
-[Actions](Automation-Actions#acknowledgement).
+refused, with a reason, on the acknowledge page). An alert outside a reader's
+regions reads as **not found** rather than forbidden — except to an
+administrator, whom region scope never narrows on alerts. See
+[Actions](Automation-Actions#acknowledgement) and
+[region scope](Users-Roles-and-Permissions#tags-and-region-scope).
 
 ### Rule 26
 **A generated MAC is a placeholder until the network proves otherwise.** The

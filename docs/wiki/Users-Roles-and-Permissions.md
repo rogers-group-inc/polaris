@@ -294,6 +294,15 @@ key**:
 > rather than promote the container region — because dropping the leaf would page
 > the division while the site's own people hear nothing.
 
+**Region scope never narrows an administrator's alerts.** An admin-equivalent
+role (Full Read-Write on both `users` and `roles`) sees and can acknowledge
+every alert, whatever region tags its user, role or SSO group carry. An admin
+in a regional IdP group picks up that group's tags without anyone meaning to
+narrow them, and the Active Alerts widget and the device's Alerts tab are not
+region-scoped — so a scoped admin used to see an alert there and then be told
+it was "not here any more" by its acknowledge card. Every other role is still
+narrowed by its regions on the Alerts list and the acknowledge page.
+
 The Users list draws **both** dimensions under the username — regions in their
 map colour, then tags in their registry colour.
 

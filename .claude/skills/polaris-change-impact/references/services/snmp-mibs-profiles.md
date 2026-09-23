@@ -73,11 +73,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `matchPattern` is consulted ONLY when no profile is keyed by the asset's canonical manufacturer, so a profile's "also applies when" can never steal an asset from the profile keyed by its manufacturer.
 - `fortinetClassHint` is still carried into the model haystack by `pickDbProfile` — for compatibility with a hand-made Fortinet profile whose model patterns the Phase 4 migration's `IN ('FortiSwitch','FortiAP')` backfill did not recognize, NOT because the resolver needs it. The device-type tier is its general replacement.
 - Regexes are compiled once per pattern TEXT into a module-level cache, so an edited pattern is a new key and a stale entry can never be read; nothing invalidates it in production (a service → resolver import would be a cycle). `listCachedProfiles` returns the cached array itself — read-only, rebuilt per `refreshProfileCache`.
+- **Every subject an operator pattern is matched against is clamped** through `clampRegexSubject` (utils/regexSafety.ts, 1024 chars). The patterns are operator-typed and the subjects are device-supplied SNMP text, matched once per asset per poll; a JS regex cannot be interrupted, so a pattern that backtracks catastrophically parks the worker rather than slowing it. The clamp bounds the polynomial cases; the exponential shape is refused at the WRITE path by `findUnsafeRegexConstruct`, called from manufacturerProfileService's `assertValidModelPattern` and modelParse's `validateModelParse`. Neither is a proof — a pattern stored before the guard existed still runs here.
 
 **When changing this:**
 - Any change to what a tuple resolves to must appear in `profileResolver.test.ts` (before the swap) or `profileResolverParity.test.ts` (after) as an explicit expectation — this module decides which OIDs 2000 assets walk every tick.
 - A new tier, or a change to tier precedence, changes what a mis-typed or modelless asset walks. Add the tuple to the parity table; do not rely on the unit cases alone.
 - Anything added to the per-asset path here runs once per asset per pass at 2000 assets. Precompute per refresh (as `listCachedProfiles` does), never per call.
+- A NEW place that compiles or runs an operator-supplied pattern gets both halves: clamp the subject with `clampRegexSubject`, and make sure the write path that stores the pattern runs `findUnsafeRegexConstruct`. Adding one without the other is how a field becomes the one that hangs the monitor role.
 
 ## services/mibParserUtils.ts
 
