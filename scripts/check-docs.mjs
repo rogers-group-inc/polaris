@@ -27,6 +27,10 @@
 //   reference-size             No reference .md over 1500 lines (fail); over 100 KB warns.
 //   orphan-reference           Every references/**/*.md and scripts/* is linked from its SKILL.md.
 //   claude-md-size             CLAUDE.md under 25 KB (fail); over 15 KB warns.
+//   rule-anchors               polaris-business-rules: every invariant's "→ [narrative-X.md#rule-N]"
+//                              pointer resolves to a "## Rule N" heading, its text and target agree,
+//                              every SKILL.md index row has an invariant and a narrative heading, and
+//                              every narrative heading has an invariant.
 //   util-tests (warn)          src/utils files with exports lacking tests/unit/<name>.test.ts.
 //   api-plugin-fresh (warn)    public/api.html changed since the polaris-api-conventions plugin
 //                              was generated from it (skipped when that clone isn't present).
@@ -264,6 +268,55 @@ if (docText["CLAUDE.md"]) {
   const kb = Buffer.byteLength(docText["CLAUDE.md"]) / 1024;
   if (kb > 25) fail("claude-md-size", `CLAUDE.md is ${kb.toFixed(1)} KB (limit 25 KB). It holds conventions and the skills index only — move reference material into a skill.`);
   else if (kb > 15) console.warn(`\n⚠ check-docs (warn): CLAUDE.md is ${kb.toFixed(1)} KB (target ≤ 15 KB).\n`);
+}
+
+// === rule-anchors: the three layers of every business rule agree ===
+// Rule numbers are a stable citation key, so a pointer that names the wrong file or a heading
+// that does not exist is a dead citation nothing else notices (two shipped for weeks in 2026-09:
+// rule 37 pointing at narrative-12-24.md#rule-3, rule 53's link text saying rule-52).
+{
+  const RS = `${SKILLS_DIR}/polaris-business-rules`;
+  const refDocs = DOCS.filter((d) => d.startsWith(`${RS}/references/`));
+  const base = (d) => d.split("/").pop();
+  const narrativeHeadings = new Map(); // "narrative-x.md" -> Set of rule ids with a "## Rule N" heading
+  for (const d of refDocs) {
+    if (!/^narrative-/.test(base(d))) continue;
+    narrativeHeadings.set(base(d), new Set([...docText[d].matchAll(/^## Rule (\d+a?)\b/gm)].map((m) => m[1])));
+  }
+  const invariantIds = new Map(); // id -> invariants file basename (without .md)
+  for (const d of refDocs) {
+    if (!/^invariants-/.test(base(d))) continue;
+    for (const line of docText[d].split("\n")) {
+      const m = /^(\d+a?)\. \*\*/.exec(line);
+      if (!m) continue;
+      const id = m[1];
+      if (invariantIds.has(id)) fail("rule-anchors", `rule ${id} has an invariant line in both ${invariantIds.get(id)}.md and ${base(d)}.`);
+      invariantIds.set(id, base(d).replace(/\.md$/, ""));
+      if (Number.parseInt(id, 10) <= 11) continue; // rules 1–11 have no narrative by design
+      const ptr = /→ \[(narrative-[\w.-]+\.md)#rule-(\d+a?)\]\((narrative-[\w.-]+\.md)#rule-(\d+a?)\)\s*$/.exec(line);
+      if (!ptr) { fail("rule-anchors", `${d}: rule ${id} does not end with a "→ [narrative-X.md#rule-${id}](narrative-X.md#rule-${id})" pointer.`); continue; }
+      const [, textFile, textId, linkFile, linkId] = ptr;
+      if (textFile !== linkFile || textId !== linkId) fail("rule-anchors", `${d}: rule ${id}'s pointer text (${textFile}#rule-${textId}) and link target (${linkFile}#rule-${linkId}) disagree.`);
+      if (linkId !== id) fail("rule-anchors", `${d}: rule ${id}'s pointer targets rule ${linkId}.`);
+      const heads = narrativeHeadings.get(linkFile);
+      if (!heads) fail("rule-anchors", `${d}: rule ${id} points at ${linkFile}, which does not exist under ${RS}/references/.`);
+      else if (!heads.has(id)) fail("rule-anchors", `${d}: rule ${id} points at ${linkFile}, which has no "## Rule ${id}" heading.`);
+    }
+  }
+  // Index rows in SKILL.md: | N | title | invariants-file | narrative-file |  (a "—" file means retired / gap / in-flight)
+  const skill = docText[`${RS}/SKILL.md`] ?? "";
+  for (const m of skill.matchAll(/^\| (\d+a?) \| ((?:\\\||[^|])*) \| ([\w—-]+) \| ([\w—-]+) \|/gm)) {
+    const [, id, , invBase, narrBase] = m;
+    if (invBase === "—" || narrBase === "—") continue;
+    if (!invariantIds.has(id)) fail("rule-anchors", `${RS}/SKILL.md: index row for rule ${id} but no "${id}. **" invariant line in any invariants-*.md.`);
+    else if (invariantIds.get(id) !== invBase) fail("rule-anchors", `${RS}/SKILL.md: index row says rule ${id} is in ${invBase}.md; its invariant line is in ${invariantIds.get(id)}.md.`);
+    const heads = narrativeHeadings.get(`${narrBase}.md`);
+    if (!heads) fail("rule-anchors", `${RS}/SKILL.md: index row for rule ${id} names ${narrBase}.md, which does not exist.`);
+    else if (!heads.has(id)) fail("rule-anchors", `${RS}/SKILL.md: index row for rule ${id} names ${narrBase}.md, which has no "## Rule ${id}" heading.`);
+  }
+  for (const [file, ids] of narrativeHeadings) {
+    for (const id of ids) if (!invariantIds.has(id)) fail("rule-anchors", `${RS}/references/${file} has a "## Rule ${id}" heading but no invariants-*.md line states rule ${id}.`);
+  }
 }
 
 // === util-tests (WARN-only): src/utils with exports lacking a unit test ===
