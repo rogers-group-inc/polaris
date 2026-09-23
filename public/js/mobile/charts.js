@@ -99,8 +99,8 @@
   // asset sheet's DOM (response time, CPU/memory, three SD-WAN charts).
   var _chartSeq = 0;
 
-  // Median sampling cadence of a time-ordered series (ms); sizes the collision
-  // guard in outageMarkers below. Port of `_medianCadenceMs` in
+  // Median sampling cadence of a time-ordered series (ms); sizes the hole test
+  // in seriesReportedThrough below. Port of `_medianCadenceMs` in
   // public/js/assets.js — keep the two in step.
   function medianCadenceMs(timestampsMs) {
     if (!timestampsMs || timestampsMs.length < 3) return 0;
@@ -131,20 +131,36 @@
   function outageMarkers(outages, sampleTimesMs) {
     if (!outages || !outages.length) return [];
     var times = (sampleTimesMs || []).slice().sort(function (a, b) { return a - b; });
-    var guardMs = medianCadenceMs(times) / 2;
+    var cadenceMs = medianCadenceMs(times);
     var markers = [];
     outages.forEach(function (o) {
       var from = +new Date(o.from);
       var to   = +new Date(o.to);
       var dep = o.kind === "dependency";
       if (!isFinite(from) || !isFinite(to)) return;
-      // Skip the WHOLE window when the series has data anywhere in it, not
-      // merely at its edges — see _outageMarkers in public/js/assets.js.
-      if (guardMs > 0 && times.some(function (t) { return t > from - guardMs && t < to + guardMs; })) return;
+      // Skip the WHOLE window when the series kept reporting through it, not
+      // merely its edges — see _outageMarkers in public/js/assets.js.
+      if (seriesReportedThrough(times, cadenceMs, from, to)) return;
       markers.push({ t: from, dep: dep });
       if (to > from) markers.push({ t: to, dep: dep });
     });
     return markers.sort(function (a, b) { return a.t - b.t; });
+  }
+
+  // A sample strictly inside the window, or no hole around it (the neighbours
+  // at-or-before `from` and at-or-after `to` within 1.5x cadence). Port of
+  // `_seriesReportedThrough` in public/js/assets.js, which carries the reasoning
+  // — keep the two in step.
+  function seriesReportedThrough(times, cadenceMs, from, to) {
+    var prev = null, next = null;
+    for (var i = 0; i < times.length; i++) {
+      var t = times[i];
+      if (t > from && t < to) return true;
+      if (t <= from) prev = t;
+      if (t >= to && next === null) next = t;
+    }
+    if (!(cadenceMs > 0) || prev === null || next === null) return false;
+    return next - prev <= cadenceMs * 1.5;
   }
 
   // Normalize one series' `values` into time-ordered { ts (ms), v, ok } points:
@@ -177,7 +193,7 @@
   // use. Union rather than per-series because CPU and memory ride the same
   // telemetry row: shared markers keep both lines diving at the same x instead
   // of drawing two offset red notches, and the union is also the right input to
-  // the collision guard (a sample on EITHER series proves the host was
+  // the reported-through test (a sample on EITHER series proves the host was
   // reporting).
   function applySharedOutageMarkers(prepared, outages) {
     var seen = {};
