@@ -156,7 +156,7 @@ profile's rows reading *unresolved* and names the module to re-upload; removing 
 shipped profile falls back to the generic MIBs. Either way the device keeps being
 monitored — you lose the vendor-specific figures, not the monitoring.
 
-Two things worth knowing when you build one:
+Three things worth knowing when you build one:
 
 - **FortiGate MIBs come from the FortiGate.** System → SNMP has download links
   for the FortiGate and Fortinet Core MIB files, so no support account is needed.
@@ -166,6 +166,14 @@ Two things worth knowing when you build one:
   FortiSwitches often arrive with an empty model. Adding the same row again
   scoped to a device type covers those. Where both exist, a stated model wins —
   so an asset that discovery typed wrongly still routes by what it says it is.
+- **A pattern that repeats a repeat is refused on save.** The profile's "also
+  applies when" pattern, a row's model pattern and a model parse pattern run
+  against every device's SNMP text on every poll, and a pattern such as
+  `(.+)+` can take effectively forever on some inputs — stalling monitoring
+  rather than slowing it. Polaris refuses any pattern that puts `+`, `*` or
+  `{n,}` on a group already containing one, and names the part to rewrite.
+  The check is deliberately cautious, so it also refuses a few patterns that
+  would have been fine (`(v\d+)+`); write those without the outer repeat.
 
 A profile row that cannot resolve says so: its MIB cell reads *unresolved* and
 names the module still missing, the profile header shows **N UNRESOLVED**, and

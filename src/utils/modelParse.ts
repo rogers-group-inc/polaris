@@ -27,6 +27,8 @@
  *   5. Otherwise the template with `$1` replaced.
  */
 
+import { MAX_REGEX_SUBJECT, countCaptureGroups, findUnsafeRegexConstruct } from "./regexSafety.js";
+
 export interface ModelParse {
   /** Regex applied to the raw scalar (case-insensitive); group 1 is the model token. */
   pattern: string;
@@ -47,6 +49,11 @@ export function applyModelParse(raw: string | null | undefined, parse: ModelPars
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
+  // Rule 2's "unrecognized, never a guess" also covers a scalar too long to be
+  // a model string. The cap is what keeps an operator's pattern — which this
+  // runs per asset per poll against whatever the DEVICE returned — from
+  // backtracking over an unbounded subject. See utils/regexSafety.ts.
+  if (trimmed.length > MAX_REGEX_SUBJECT) return null;
 
   let re: RegExp;
   try {
@@ -76,12 +83,22 @@ export function validateModelParse(pattern: string | null, template: string | nu
   if (pattern.length > 512) return "parsePattern is too long (max 512 characters)";
   let re: RegExp;
   try {
+    // Compiling what the operator typed is the feature, not a lapse — a parse
+    // rule has to be a ROW to be editable, so it cannot be a literal or an
+    // escaped string. utils/regexSafety.ts carries the reasoning and the two
+    // guards that stand in for escaping (CodeQL js/regex-injection).
     re = new RegExp(pattern, "i");
   } catch {
     return "parsePattern must be a valid regex";
   }
-  // A regex with no capturing group has `new RegExp(p + "|").exec("").length === 1`.
-  if (new RegExp(re.source + "|").exec("")!.length < 2) return "parsePattern needs a capture group for the model token";
+  if (countCaptureGroups(re.source) < 1) return "parsePattern needs a capture group for the model token";
+  // An operator types this and Polaris runs it on the monitor path, where a
+  // regex cannot be interrupted — so the nested-quantifier shape is refused at
+  // save time, while it is still in front of the person who can fix it.
+  const unsafe = findUnsafeRegexConstruct(re.source);
+  if (unsafe) {
+    return `parsePattern may never finish on some inputs: \`${unsafe}\` repeats a group that already repeats. Rewrite it so only one of the two repeats.`;
+  }
   if (template !== null && template !== undefined && template !== "" && !template.includes("$1")) {
     return "parseTemplate must contain $1";
   }
