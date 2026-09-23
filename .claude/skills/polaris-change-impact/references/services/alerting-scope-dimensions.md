@@ -166,7 +166,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma` (user + role + groupMapping), `groupMappingService.resolveGroupsToAccess`, `tagNormalize.unionTags` + `tagNormalize.renameTagInList` (pure rewrite; unit-tested in tests/unit/regionScopeRename.test.ts).
 
-**Used by:** `src/api/routes/auth.ts` (`GET /auth/me`), `src/api/routes/notifications.ts` (region-scoped list via `getEffectiveRegionTags`), `src/api/routes/mapRegions.ts` (`PUT` rename → `renameRegionInPrincipalScopes`, `DELETE` → `principalsScopedToRegion`).
+**Used by:** `src/api/routes/auth.ts` (`GET /auth/me`), `src/api/routes/notifications.ts` (region-scoped list + single-alert read via `getEffectiveRegionTags`, skipped for an admin-equivalent caller), `src/api/routes/mapRegions.ts` (`PUT` rename → `renameRegionInPrincipalScopes`, `DELETE` → `principalsScopedToRegion`).
 
 **Invariants:**
 - Group-derived tags are re-resolved live from `ssoGroups` each call — never persisted onto the user's own columns.
