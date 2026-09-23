@@ -15,6 +15,10 @@ import {
   reconcileDuplicateIpForAddresses,
   type WriteTimeIpConflict,
 } from "../../services/duplicateIpConflictService.js";
+import {
+  repointDuplicateSerialConflicts,
+  settleDuplicateSerialConflictsAfterMerge,
+} from "../../services/duplicateSerialConflictService.js";
 import { requestActor } from "../middleware/auth.js";
 import { machineApiLimiter } from "../middleware/rateLimits.js";
 import { logEvent, buildChanges } from "./events.js";
@@ -5327,6 +5331,11 @@ router.post("/:id/merge", requirePermission("assets", "fullwrite"), async (req, 
     if (!survivorBefore) throw new AppError(404, "Survivor asset not found");
     if (!absorbedBefore) throw new AppError(404, "Absorbed asset not found");
 
+    // A duplicate-serial card filed on the asset about to be deleted would
+    // cascade away with it — unresolved and unaudited. Move it first so the
+    // settle below can close it properly (business rule 83).
+    await repointDuplicateSerialConflicts(ghostId, canonicalId);
+
     const result = await mergeAssets({
       canonicalId,
       ghostId,
@@ -5373,6 +5382,22 @@ router.post("/:id/merge", requirePermission("assets", "fullwrite"), async (req, 
       .findUnique({ where: { id: result.survivorId }, select: { ipAddress: true } })
       .then((s) => reconcileDuplicateIpForAddresses([s?.ipAddress]))
       .catch(() => {});
+
+    // Same for a duplicate-serial card, but AWAITED: the card's own
+    // "Review & merge..." opens this modal and reloads the conflict queue on
+    // success, and a card that is still listed after the merge it asked for
+    // reads as a merge that did not happen. A failure here must not fail a
+    // merge that already committed — the sweep stays the backstop.
+    try {
+      await settleDuplicateSerialConflictsAfterMerge({
+        survivorAssetId: result.survivorId,
+        absorbedAssetId: result.absorbedId,
+        survivorLabel: survivorBefore.hostname || result.survivorId,
+        actor: requestActor(req),
+      });
+    } catch (err) {
+      logger.warn({ err, survivorId: result.survivorId }, "Duplicate-serial conflict settle after merge failed");
+    }
 
     res.json(result);
   } catch (err) {

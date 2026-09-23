@@ -1057,38 +1057,62 @@ export async function mergeDuplicateSerialAssets(
     });
   }
 
-  // Re-evaluate: a 3+ duplicate may still have members standing.
+  const { resolved, remaining } = await settleDuplicateSerialConflict(conflict.id, serial, {
+    survivorAssetId,
+    survivorLabel,
+    absorbedAssetIds: absorbed,
+    actor,
+  });
+  return { serialNumber: serial, survivorAssetId, absorbedAssetIds: absorbed, movedSources, resolved, remaining };
+}
+
+/**
+ * Re-evaluate one duplicate-serial conflict after a merge: close it as
+ * `accepted` (the merge WAS the resolution, so it carries the operator's name,
+ * not `system:auto-resolved`) when the serial no longer groups, or refresh its
+ * member snapshot when a 3+ duplicate still has records standing — the card
+ * renders that snapshot, so leaving it stale lists an asset that is gone.
+ */
+async function settleDuplicateSerialConflict(
+  conflictId: string,
+  serial: string,
+  merge: { survivorAssetId: string; survivorLabel: string; absorbedAssetIds: string[]; actor?: string },
+): Promise<{ resolved: boolean; remaining: number }> {
   const remainingRows = (await loadDuplicateSerialAssets()).filter(
     (r) => normalizeSerialKey(r.serialNumber) === serial,
   );
   const stillGrouped = groupDuplicateSerialAssets(remainingRows)[0] ?? null;
-  const remaining = stillGrouped ? stillGrouped.members.length : 0;
 
   if (!stillGrouped) {
     await prisma.conflict.update({
-      where: { id: conflict.id },
-      data: { status: "accepted", resolvedBy: actor ?? null, resolvedAt: new Date() },
+      where: { id: conflictId },
+      data: { status: "accepted", resolvedBy: merge.actor ?? null, resolvedAt: new Date() },
     });
     logEvent({
       action: "conflict.accepted",
       resourceType: "asset",
-      resourceId: survivorAssetId,
+      resourceId: merge.survivorAssetId,
       resourceName: serial,
-      actor,
-      message: `Duplicate serial ${serial} resolved by merge — ${absorbed.length} duplicate record(s) absorbed into "${survivorLabel}"`,
+      actor: merge.actor,
+      message:
+        `Duplicate serial ${serial} resolved by merge — ${merge.absorbedAssetIds.length} duplicate record(s) ` +
+        `absorbed into "${merge.survivorLabel}"`,
       details: {
         collisionReason: DUPLICATE_SERIAL_COLLISION_REASON,
         serialNumber: serial,
-        survivorAssetId,
-        absorbedAssetIds: absorbed,
+        survivorAssetId: merge.survivorAssetId,
+        absorbedAssetIds: merge.absorbedAssetIds,
       },
     });
-    return { serialNumber: serial, survivorAssetId, absorbedAssetIds: absorbed, movedSources, resolved: true, remaining };
+    return { resolved: true, remaining: 0 };
   }
 
   await prisma.conflict.update({
-    where: { id: conflict.id },
+    where: { id: conflictId },
     data: {
+      assetId: stillGrouped.members.some((m) => m.assetId === merge.survivorAssetId)
+        ? merge.survivorAssetId
+        : pickPrimaryMemberId(stillGrouped.members),
       proposedAssetFields: {
         collisionReason: DUPLICATE_SERIAL_COLLISION_REASON,
         serialNumber: serial,
@@ -1098,7 +1122,61 @@ export async function mergeDuplicateSerialAssets(
       existingAssetSnapshot: { serialNumber: serial, members: stillGrouped.members } as any,
     },
   });
-  return { serialNumber: serial, survivorAssetId, absorbedAssetIds: absorbed, movedSources, resolved: false, remaining };
+  return { resolved: false, remaining: stillGrouped.members.length };
+}
+
+// ─── A merge made somewhere other than the card ─────────────────────────────
+//
+// The asset page's Merge modal — and the card's own "Review & merge...", which
+// opens that modal — merges through `POST /assets/:id/merge`, not through
+// `mergeDuplicateSerialAssets`. Without these two hooks the card it resolved
+// stayed listed, showing both records, until the sweep's next 30-minute pass
+// closed it as `system:auto-resolved`. The route calls the first before
+// `mergeAssets` and the second after, mirroring what the card's own verb does.
+
+/**
+ * Move every pending duplicate-serial conflict filed on `fromAssetId` onto
+ * `toAssetId`. Must run BEFORE the merge: deleting the absorbed asset cascades
+ * to conflicts pointing at it, which would drop the card and its audit trail
+ * silently rather than resolve it.
+ */
+export async function repointDuplicateSerialConflicts(fromAssetId: string, toAssetId: string): Promise<number> {
+  const moved = await prisma.conflict.updateMany({
+    where: { ...DUPLICATE_SERIAL_CONFLICT_WHERE, status: "pending", assetId: fromAssetId },
+    data: { assetId: toAssetId },
+  });
+  return moved.count;
+}
+
+/**
+ * Settle every pending duplicate-serial conflict that names either side of a
+ * merge that just completed. Pending duplicate-serial rows are few (one per
+ * duplicated serial), so they are read whole and matched on their stored
+ * members in memory rather than through a JSON-array query.
+ */
+export async function settleDuplicateSerialConflictsAfterMerge(merge: {
+  survivorAssetId: string;
+  absorbedAssetId: string;
+  survivorLabel: string;
+  actor?: string;
+}): Promise<{ resolved: number; refreshed: number }> {
+  const out = { resolved: 0, refreshed: 0 };
+  const involved = new Set([merge.survivorAssetId, merge.absorbedAssetId]);
+  const pending = await loadPending(DUPLICATE_SERIAL_CONFLICT_WHERE);
+  for (const row of pending) {
+    if (!conflictMembersOf(row).some((m) => involved.has(m.assetId))) continue;
+    const serial = conflictSerialOf(row);
+    if (!serial) continue;
+    const { resolved } = await settleDuplicateSerialConflict(row.id, serial, {
+      survivorAssetId: merge.survivorAssetId,
+      survivorLabel: merge.survivorLabel,
+      absorbedAssetIds: [merge.absorbedAssetId],
+      actor: merge.actor,
+    });
+    if (resolved) out.resolved++;
+    else out.refreshed++;
+  }
+  return out;
 }
 
 // ─── Dismissal copy (the resolution engine marks the row itself) ─────────────

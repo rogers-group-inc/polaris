@@ -279,6 +279,36 @@ d("duplicate-serial", () => {
     expect(after?.status).toBe("accepted");
   });
 
+  // "Review & merge..." on the card opens the asset Merge modal, which merges
+  // through POST /assets/:id/merge rather than the conflict verb. That path
+  // must close the card too — both directions, because the card is filed on
+  // ONE member and merging that member away used to cascade-delete it.
+  for (const direction of ["into the card's asset", "away from the card's asset"] as const) {
+    it(`closes the card when merged through the asset Merge modal (${direction})`, async () => {
+      const { a, b } = await makeTwoRecords();
+      await reconcileSerialConflicts();
+      const [conflict] = await pendingDuplicateSerialConflicts();
+      const filedOn = conflict.assetId!;
+      const other = filedOn === a ? b : a;
+      const survivor = direction === "into the card's asset" ? filedOn : other;
+      const absorbed = survivor === a ? b : a;
+      const { agent, csrf } = await authedAgent(app);
+
+      const res = await agent
+        .post(`/api/v1/assets/${survivor}/merge`)
+        .set("X-CSRF-Token", csrf)
+        .send({ otherAssetId: absorbed, survivor: "this" });
+      expect(res.status).toBe(200);
+      expect(await prisma.asset.findUnique({ where: { id: absorbed } })).toBeNull();
+
+      const after = await prisma.conflict.findUnique({ where: { id: conflict.id } });
+      expect(after).not.toBeNull();
+      expect(after?.status).toBe("accepted");
+      expect(after?.assetId).toBe(survivor);
+      expect(await pendingDuplicateSerialConflicts()).toHaveLength(0);
+    });
+  }
+
   it("does not raise for a placeholder serial", async () => {
     await prisma.asset.createMany({
       data: [

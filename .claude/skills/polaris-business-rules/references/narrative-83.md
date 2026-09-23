@@ -119,6 +119,13 @@ through `assetMergeService.mergeAssets`, the same engine the asset page's Merge 
 the duplicate-IP card use, at `assets:fullwrite` because it deletes a row (rule 40's
 level, for the same reason).
 
+Whichever door the merge comes through, the card closes with it. *Review & merge...*
+opens the asset Merge modal, which merges through `POST /assets/:id/merge` rather than
+the conflict verb, and for a while that left the card on the queue — still listing the
+record that had just been deleted — until the next sweep auto-resolved it. An operator
+reads that as a merge that did not happen. The merge route now settles the card itself,
+as `accepted` in the operator's name, because the merge was the resolution.
+
 The one genuine innocent explanation is that the serial is not a serial. Whiteboxes and
 hypervisors ship SMBIOS defaults — `To Be Filled By O.E.M.`, `Default string`, `System
 Serial Number`, `0123456789` — and a fleet of them would otherwise arrive as one
