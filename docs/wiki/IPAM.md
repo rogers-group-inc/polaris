@@ -8,7 +8,8 @@ address panel you reach by opening a network.
 | Gate | Grants |
 |---|---|
 | `ipBlocks:read` / `subnets:read` | see the page |
-| `subnets:write` | create and edit **your own** rows |
+| `ipBlocks:write` | add, edit and delete blocks |
+| `subnets:write` | create, edit and move **your own** rows |
 | `subnets:fullwrite` | edit anyone's, plus archive and exclusions |
 | `reservations:write` / `:fullwrite` | same ownership split on reservations |
 

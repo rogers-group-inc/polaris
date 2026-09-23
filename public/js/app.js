@@ -470,6 +470,11 @@ function isAssetsAdmin() { return currentUserRole === "assetsadmin"; }
 // names map to the closest function-key check that matches the old
 // hardcoded-role behavior. Custom roles with the relevant grant pass.
 function canManageNetworks() { return permAtLeast("subnets", "fullwrite"); }
+// IP blocks are their OWN function key: POST/PUT/DELETE /blocks gate on
+// ipBlocks:write, so the Blocks tab's Add / Edit / Delete must not ride the
+// subnets gate above (a subnets:fullwrite role without ipBlocks:write saw
+// controls that could only 403, and an ipBlocks:write role never saw them).
+function canManageBlocks() { return permAtLeast("ipBlocks", "write"); }
 function canManageAssets() { return permAtLeast("assets", "write"); }
 // Quarantine is its OWN function key, not part of `assets` — a role can manage
 // asset records without being allowed to push MAC blocks to FortiGates, and
@@ -4710,6 +4715,9 @@ function hideAdminOnlyElements() {
   });
   document.querySelectorAll("[data-manage-networks]").forEach(function (el) {
     if (!canManageNetworks()) el.style.display = "none";
+  });
+  document.querySelectorAll("[data-manage-blocks]").forEach(function (el) {
+    if (!canManageBlocks()) el.style.display = "none";
   });
   document.querySelectorAll("[data-create-networks]").forEach(function (el) {
     if (!canCreateNetworks()) el.style.display = "none";
