@@ -20864,7 +20864,10 @@ function _assetNotificationsTabHTML() {
       // tellable apart; the dimension had its own column until that turned out
       // to restate the sentence. A rule with a custom messageTemplate that
       // drops the label keeps it in this cell's title instead.
-      '<th>Alert</th>' +
+      // The only unsized column, so without a floor it absorbs every pixel the
+      // ~750px of fixed columns take from a narrow slide-over and shrinks to
+      // one character per line; with it the wrapper scrolls sideways instead.
+      '<th style="min-width:260px">Alert</th>' +
       // What the acknowledger wrote. requireAckNote exists to make an operator
       // say what the problem was and what the fix was, and until this column
       // the answer was stored on the row and rendered by nothing.
@@ -20873,7 +20876,7 @@ function _assetNotificationsTabHTML() {
     '</tr></thead><tbody id="asset-notif-active-tbody"><tr><td colspan="' + shape.colspan + '" class="empty-state">Loading…</td></tr></tbody></table></div>' +
     '<h4 style="margin:1rem 0 0.5rem">Automations that can trigger for this asset</h4>' +
     '<div class="table-wrapper"><table><thead><tr>' +
-      '<th style="width:200px">Name</th><th>Trigger</th><th style="width:180px">Scope</th>' +
+      '<th style="width:200px">Name</th><th style="min-width:260px">Trigger</th><th style="width:180px">Scope</th>' +
     '</tr></thead><tbody id="asset-notif-rules-tbody"><tr><td colspan="3" class="empty-state">Loading…</td></tr></tbody></table></div>' +
   '</div>';
 }
