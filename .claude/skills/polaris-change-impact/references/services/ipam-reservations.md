@@ -61,17 +61,19 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** listBlocks, getBlock, createBlock, updateBlock, deleteBlock.
 
+**Cross-service deps:** subnetService (`lockBlockForSubnetWrites` — deleteBlock takes the per-block subnet write lock, rule 20a).
+
 **Used by:** src/api/routes/blocks.ts (all CRUD operations), src/services/subnetService.ts (block parent lookups, overlap validation).
 
 **Invariants:**
-- Block deletion forbidden if any active reservations exist across child subnets
+- Block deletion forbidden while the block holds ANY subnet, whatever its status (business rule 4) — the count and the delete share one transaction under `lockBlockForSubnetWrites(tx, blockId)`, so a create or move into the block cannot land between them and be cascaded away (`Subnet.block` is `onDelete: Cascade`). The 409 message tells the operator to move, archive or delete the networks first
 - CIDR must be normalized and unique
 - IP version immutable after creation (v4 vs v6)
 - Tags are optional arrays, filtered client-side in listBlocks
 - Exactly ONE audit Event per mutation, fired `void` after the write resolves — never from the route layer (double-logging) and never before/inside the write (phantom on failure). `tests/integration/blocks.test.ts` asserts the one-per-mutation + zero-on-validation-failure contract.
 
 **When changing this:**
-- Verify deleteBlock's active-reservation cascade check (affects data integrity)
+- Keep deleteBlock's network-count check inside the locked transaction — moving it out reopens the cascade race
 - Test CIDR normalization in createBlock (e.g., 10.1.1.5/24 → 10.1.1.0/24)
 - Check block-listing performance if tag filtering is optimized
 
@@ -510,9 +512,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/subnetService.ts
 
-**What it owns:** Subnet creation, allocation, bulk templates, and lifecycle (manual vs discovered), plus the `subnet.created` / `subnet.updated` / `subnet.deleted` / `subnet.bulk-allocated` audit Events (emitted in-service; inputs carry `actor?`, and `via: "auto-allocate"` discriminates the allocateNextSubnet message from a manual create).
+**What it owns:** Subnet creation, allocation, bulk templates, and lifecycle (manual vs discovered), plus the `subnet.created` / `subnet.updated` / `subnet.deleted` / `subnet.moved` / `subnet.bulk-allocated` audit Events (emitted in-service; inputs carry `actor?`, and `via: "auto-allocate"` discriminates the allocateNextSubnet message from a manual create).
 
-**Public API:** listSubnets, getSubnet, createSubnet, allocateNextSubnet, bulkAllocate, previewBulkAllocate, updateSubnet, getSubnetIps, deleteSubnet, buildIpContexts + IpContext (batched IP → most-specific containing subnet + active-reservation summary; THE single implementation of the `cidr >>= ip` / `masklen DESC` containment SQL).
+**Public API:** listSubnets, getSubnet, createSubnet, allocateNextSubnet, bulkAllocate, previewBulkAllocate, updateSubnet, listMoveTargets + moveSubnet (re-parent onto another block), getSubnetIps, deleteSubnet, buildIpContexts + IpContext (batched IP → most-specific containing subnet + active-reservation summary; THE single implementation of the `cidr >>= ip` / `masklen DESC` containment SQL).
 
 **Cross-service deps:** ipService (indirectly via cidrContains/cidrOverlaps from utils/cidr.ts), subnetExclusionService (`assertNotExcluded` inside `createSubnetRowChecked`; `loadExclusions` + `exclusionsOverlapping` in the two allocators — business rule 42).
 
@@ -523,6 +525,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `usableHosts` / `utilizationPercent` are `null` for IPv6 and for any CIDR `usableHostCount` refuses — never 0, which the cell would draw as an empty bar (a positive claim that the network is free)
 - Subnet must be contained within parent block CIDR
 - No overlapping sibling subnets in the same block (checked before create)
+- **`moveSubnet` re-parents in place** — the row keeps its id, so reservations / conflicts / history follow it. It re-runs every create-time check against the destination (containment, IP version, overlap), the overlap test under the destination's lock; it locks BOTH blocks, sorted by id so two opposite moves cannot deadlock, so a concurrent deleteBlock of the source cannot miscount. A moved discovered subnet stays its integration's row, because discovery keys existing subnets by CIDR (`subnetByCidr`), not by block. `listMoveTargets` does the containment math server-side so the browser never does IP math; blocks with an overlapping sibling come back flagged, not filtered
 - IPv4-only for auto-allocation (allocateNextSubnet, bulkAllocate)
 - Subnet status = "deprecated" rejects new reservations — but it does NOT release the CIDR. A deprecated row still holds `@@unique([blockId, cidr])` and is still counted by `createSubnetRowChecked`'s overlap re-read, while discovery's `subnetByCidr` index skips it: no update path and no create path, so the address space becomes unrecordable rather than reusable. Retiring a subnet so its CIDR can be re-used is `subnetArchiveService.archiveSubnet`, not a status change (business rule 41)
 - Full-subnet reservation (ipAddress=null) sets subnet status → "reserved"

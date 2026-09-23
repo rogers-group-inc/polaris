@@ -440,6 +440,10 @@ const api = {
     refresh:       (id)     => request("POST", `/subnets/${id}/refresh`),
     update:        (id, b)  => request("PUT", `/subnets/${id}`, b),
     delete:        (id)     => request("DELETE", `/subnets/${id}`),
+    // Re-parent a network onto another block. moveTargets lists the blocks
+    // whose range can hold it, each flagged with the sibling that would overlap.
+    moveTargets:   (id)     => request("GET", `/subnets/${id}/move-targets`),
+    move:          (id, blockId) => request("POST", `/subnets/${id}/move`, { blockId }),
     // Retire a network into the archive, freeing its CIDR (business rule 41).
     // Preserves everything it moves, unlike delete.
     archive:       (id)     => request("POST", `/subnets/${id}/archive`),

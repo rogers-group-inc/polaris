@@ -58,13 +58,15 @@ Business rules 63–64. Local accounts only. Whether each half is live is the in
 - `POST   /blocks`
 - `GET    /blocks/:id`                          — Get + utilization summary
 - `PUT    /blocks/:id`
-- `DELETE /blocks/:id`                          — 409 if active reservations exist
+- `DELETE /blocks/:id`                          — 409 while the block holds any subnet, whatever its status (business rule 4)
 
 ### Subnets — `requireAuth`
 - `GET    /subnets`                             — List (filter by blockId, status, tag, createdBy). `{ subnets, total, limit, offset }`, default limit 50 / caps 10000. Each row carries its address usage, and the two counts on it answer DIFFERENT questions: `_count.reservations` is FILTERED to reservations holding an address right now (`status: "active"` with an `ipAddress`) — the Networks list's Reservations column and the numerator of its `utilizationPercent`; `totalReservations` is every reservation row whatever its status, which is what a cascade delete or an archive takes with it and what those confirmations must quote. Released and expired rows are kept forever, so the two diverge on any churned DHCP network. Also `usableHosts` (what the CIDR can hand out, `null` for IPv6 and unmeasurable CIDRs) and `utilizationPercent` (to one decimal, `null` wherever `usableHosts` is — never 0, which the cell would draw as an empty bar).
 - `POST   /subnets`
 - `GET    /subnets/:id`                         — Get + reservation list
 - `PUT    /subnets/:id`
+- `GET    /subnets/:id/move-targets`             *(subnets:read)* — blocks other than the current one whose range contains the CIDR, `[{ id, name, cidr, overlaps }]`; `overlaps` names the colliding sibling or is `null`.
+- `POST   /subnets/:id/move`                     *(subnets:write, ownership-scoped like PUT)* — `{ blockId }`; re-parents the subnet (`subnetService.moveSubnet`), surfaced as **Move to block…** in the Networks row menu. 400 not-contained / version mismatch / same block; 409 overlap. Writes one `subnet.moved` Event.
 - `DELETE /subnets/:id`                         — 409 if active reservations exist
 - `POST   /subnets/next-available`              — Auto-allocate next available subnet of given prefix length
 - `POST   /subnets/bulk-allocate`                — Allocate multiple subnets in one call from a template. Body: `{ blockId, prefix, entries: [{name, prefixLength, vlan?} | {skip: true, prefixLength}], tags?, anchorPrefix? }`. Each non-skip entry becomes a subnet named `<prefix>_<entry.name>` (e.g. `Riverbend_Hardware`). **Skip entries** reserve address space inside the packed region without creating a subnet — used to leave gaps between allocations. **Anchor-based, all-or-nothing:** entries are packed into a single contiguous region aligned to `max(anchorPrefix, smallest-block-containing-the-group)`; `anchorPrefix` defaults to 24 if omitted. The whole call happens in one transaction — either every subnet is created or none are. Response: `{ created, anchorCidr, effectiveAnchorPrefix }`.

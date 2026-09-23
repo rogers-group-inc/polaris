@@ -8,7 +8,8 @@ address panel you reach by opening a network.
 | Gate | Grants |
 |---|---|
 | `ipBlocks:read` / `subnets:read` | see the page |
-| `subnets:write` | create and edit **your own** rows |
+| `ipBlocks:write` | add, edit and delete blocks |
+| `subnets:write` | create, edit and move **your own** rows |
 | `subnets:fullwrite` | edit anyone's, plus archive and exclusions |
 | `reservations:write` / `:fullwrite` | same ownership split on reservations |
 
@@ -29,8 +30,10 @@ Tags · Networks (count) · Created.
 
 **+ Add Block** takes a name, CIDR, version, description and tags.
 
-**Deleting a block is refused with a 409 while any active reservation exists
-inside it** ([rule 4](Business-Rules#rule-4)). Release or archive first.
+**Deleting a block is refused with a 409 while it still contains any network**
+([rule 4](Business-Rules#rule-4)) — deprecated and empty networks count too.
+Move the networks to another block ([Moving a network](#moving-a-network-to-another-block)),
+archive or delete them first.
 
 Utilisation (`allocatedAddresses / blockAddresses`) is what the Block
 Utilization dashboard widget ranks on. **Deprecated networks are excluded** from
@@ -103,6 +106,19 @@ Auto-allocation is **IPv4 only**. An allocator treats an
 Bulk allocation packs into an **anchor** (default /24 when not stated) and is
 all-or-nothing in one transaction. A single `subnet.bulk-allocated` audit Event
 is written after the transaction commits, not one per network.
+
+### Moving a network to another block
+
+**Move to block…** in the row menu re-parents a network onto a different block.
+The same permission as Edit applies (`subnets:write` moves networks you
+created; `fullwrite` moves any). The network keeps its identity, so its
+reservations, conflicts and history move with it, and an integration-managed
+network stays managed — discovery finds networks by CIDR, not by block.
+
+The dialog lists only blocks whose range contains the network's CIDR. A block
+that already holds an overlapping network is shown greyed out, naming the
+network in the way. The move is re-checked on the server under both blocks'
+locks: containment and IP version are `400`, an overlap is `409`.
 
 ### Archiving a network
 

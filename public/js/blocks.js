@@ -44,8 +44,9 @@ async function _initBlocksPage() {
 
   // The row's verbs live behind its name. "Open" is what the name click used to
   // do on its own; Edit / Delete appear only for operators who may manage
-  // networks, so a read-only viewer still gets a one-item menu that opens the
-  // block rather than a control that does nothing.
+  // blocks (ipBlocks:write — the key the /blocks routes gate on), so a read-only
+  // viewer still gets a one-item menu that opens the block rather than a
+  // control that does nothing.
   document.getElementById("blocks-tbody").addEventListener("click", function (e) {
     var trigger = e.target.closest(".block-menu");
     if (!trigger) return;
@@ -54,10 +55,10 @@ async function _initBlocksPage() {
     var b = (_blocksData || []).find(function (x) { return x.id === id; });
     if (!b) return;
     var items = [{ label: "Open", onSelect: function () { openBlockFromRow(trigger, id); } }];
-    if (canManageNetworks()) {
+    if (canManageBlocks()) {
       items.push({ label: "Edit", onSelect: function () { openBlockEditModal(id); } });
       items.push({ separator: true });
-      items.push({ label: "Delete", danger: true, onSelect: function () { confirmDeleteBlock(id, b.cidr); } });
+      items.push({ label: "Delete", danger: true, onSelect: function () { confirmDeleteBlock(id, b.cidr, b._count ? b._count.subnets : 0); } });
     }
     showRowMenu(trigger, items, { label: "Actions for " + b.name });
   });
@@ -174,7 +175,7 @@ async function openBlockEditModal(id) {
   try {
     var block = await api.blocks.get(id);
     await _ensureTagCache();
-    var readOnly = !canManageNetworks();
+    var readOnly = !canManageBlocks();
     var lock = readOnly ? ' disabled class="field-locked"' : '';
     var banner = readOnly
       ? '<p class="hint" style="margin-bottom:12px">View-only — you don\'t have permission to edit blocks.</p>'
@@ -215,7 +216,17 @@ async function openBlockEditModal(id) {
   }
 }
 
-async function confirmDeleteBlock(id, cidr) {
+// A block that still holds networks cannot be deleted (business rule 4) — say
+// so up front rather than asking to confirm a delete the server will refuse.
+// The server is still the authority: a network added since the list loaded
+// comes back as the same 409 message through the catch below.
+async function confirmDeleteBlock(id, cidr, networkCount) {
+  if (networkCount > 0) {
+    showToast('Block "' + cidr + '" still contains ' + networkCount + ' network' +
+      (networkCount !== 1 ? 's' : '') + '. Move them to another block (Networks → Move to block…), ' +
+      'archive or delete them first.', "error");
+    return;
+  }
   var ok = await showConfirm('Delete block "' + cidr + '"? This cannot be undone.');
   if (!ok) return;
   try {
