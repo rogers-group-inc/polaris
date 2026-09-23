@@ -1063,6 +1063,13 @@ model Asset {
   // table it writes into. Agent-mode assets never use it (the agent runs its
   // own loop and pushes to POST /agents/samples).
   lastEventLogAt          DateTime?
+  // SD-WAN cadence anchor (FortiOS Performance SLA + service-rule selection).
+  // Its own cadence since 2026-09 — it used to ride the system-info pass, so
+  // SLA readings arrived only as often as interfaces did (10 min by default).
+  // Interval is Integration.config.sdwanIntervalSeconds (default 60s). Stamped
+  // even on failure, like lastEventLogAt, so an unreachable gate is asked once
+  // per interval rather than once per 5s light tick.
+  lastSdwanAt             DateTime?
   // Bumped after every successful collectCustomWidgets pass.
   lastCustomWidgetAt      DateTime?
 

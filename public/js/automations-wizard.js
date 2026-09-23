@@ -3514,6 +3514,7 @@ async function openAutomationWizard(existing, opts) {
     temperature: "hardware-sensor",
     systemInfo: "interface/system",
     storage: "storage",
+    sdwan: "SD-WAN",
   };
 
   /** The metric whose cadence the poll fields are counted in: the first metric

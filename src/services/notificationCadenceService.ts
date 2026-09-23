@@ -29,28 +29,35 @@
  */
 
 import { prisma } from "../db.js";
-import { resolveMonitorSettings, type ResolvedMonitorSettings } from "./monitoringService.js";
+import { resolveMonitorSettings, resolveSdwanIntervalSec, sdwanShouldQueue, type ResolvedMonitorSettings } from "./monitoringService.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import type { RuleScope } from "./notificationTypes.js";
 
-/** The five cadences a metric can ride. */
-export type CadenceStream = "responseTime" | "cpuMemory" | "temperature" | "systemInfo" | "storage";
+/** The six cadences a metric can ride. */
+export type CadenceStream = "responseTime" | "cpuMemory" | "temperature" | "systemInfo" | "storage" | "sdwan";
 
-/** Which resolved settings fields carry each stream's cadence + collector timeout. */
-const STREAM_FIELDS: Record<CadenceStream, { interval: keyof ResolvedMonitorSettings; timeout: keyof ResolvedMonitorSettings }> = {
+/**
+ * Which resolved settings fields carry each stream's cadence + collector
+ * timeout. `sdwan` has no settings-hierarchy interval — it is per INTEGRATION
+ * (config.sdwanIntervalSeconds) and read from the resolver's sidecar in
+ * resolveScopeCadence — so `interval` is null there; its collector shares the
+ * system-info timeout.
+ */
+const STREAM_FIELDS: Record<CadenceStream, { interval: keyof ResolvedMonitorSettings | null; timeout: keyof ResolvedMonitorSettings }> = {
   responseTime: { interval: "intervalSeconds",            timeout: "probeTimeoutMs" },
   cpuMemory:    { interval: "cpuMemoryIntervalSeconds",   timeout: "cpuMemoryTimeoutMs" },
   temperature:  { interval: "temperatureIntervalSeconds", timeout: "temperatureTimeoutMs" },
   systemInfo:   { interval: "systemInfoIntervalSeconds",  timeout: "systemInfoTimeoutMs" },
   storage:      { interval: "storageIntervalSeconds",     timeout: "storageTimeoutMs" },
+  sdwan:        { interval: null,                         timeout: "systemInfoTimeoutMs" },
 };
 
 /**
  * Metric / state field → the collector whose cadence produces it. Mirrors the
  * metric dispatch in `resolveAssetMetricReadings` (which table each reading is
  * read from), because the table and the cadence are two halves of one fact: the
- * telemetry sample table is written by the cpuMemory pass, the interface and
- * SD-WAN tables by the systemInfo pass, and so on. A metric absent from this
+ * telemetry sample table is written by the cpuMemory pass, the interface
+ * tables by the systemInfo pass, the SD-WAN tables by the SD-WAN pass, and so on. A metric absent from this
  * map falls back to the probe cadence, which is the one every monitored asset
  * has.
  */
@@ -88,12 +95,14 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ifAdminStatus: "systemInfo",
   ifIpAddress: "systemInfo",
   poeStatus: "systemInfo",
-  sdwanLatencyMs: "systemInfo",
-  sdwanJitterMs: "systemInfo",
-  sdwanPacketLoss: "systemInfo",
-  sdwanRuleStatus: "systemInfo",
-  sdwanSelectedMember: "systemInfo",
-  sdwanMemberState: "systemInfo",
+  // SD-WAN pass — its own cadence since 2026-09 (runSdwanFor, the integration's
+  // sdwanIntervalSeconds, default 60s); it rode system-info before that.
+  sdwanLatencyMs: "sdwan",
+  sdwanJitterMs: "sdwan",
+  sdwanPacketLoss: "sdwan",
+  sdwanRuleStatus: "sdwan",
+  sdwanSelectedMember: "sdwan",
+  sdwanMemberState: "sdwan",
   ipsecThroughputBps: "systemInfo",
   ipsecStatus: "systemInfo",
   customWidgetValue: "systemInfo",
@@ -176,6 +185,7 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
   });
 
   const intervals: number[] = [];
+  let sdwanPolled = 0;
   const timeouts: number[] = [];
   for (const a of assets) {
     try {
@@ -183,7 +193,18 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
         ...a,
         discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
       } as Parameters<typeof resolveMonitorSettings>[0]);
-      const iv = eff[fields.interval];
+      let iv: unknown;
+      if (fields.interval) {
+        iv = eff[fields.interval];
+      } else {
+        // SD-WAN: the interval lives in the sidecar the resolve above warmed,
+        // and a device the SD-WAN pass never polls (toggle off, not on REST)
+        // has no cadence to report — the same exclusion the scheduler applies.
+        const sdwanSec = resolveSdwanIntervalSec(a);
+        if (!sdwanShouldQueue(a, eff, sdwanSec)) continue;
+        sdwanPolled++;
+        iv = sdwanSec;
+      }
       const to = eff[fields.timeout];
       if (typeof iv === "number" && iv > 0) intervals.push(iv);
       if (typeof to === "number" && to > 0) timeouts.push(to);
@@ -199,6 +220,8 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
     min: s?.min ?? 0,
     max: s?.max ?? 0,
     timeoutMs: modalOf(timeouts) ?? 0,
-    assetCount: assets.length,
+    // For SD-WAN, only the gates the SD-WAN pass actually polls — the caption
+    // says how many devices it is speaking for.
+    assetCount: fields.interval ? assets.length : sdwanPolled,
   };
 }

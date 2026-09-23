@@ -21,7 +21,7 @@
 - `src/utils/integrationFilter.ts` — assetMatchesIntegrationFilter() checks deviceInclude/Exclude for FMG/FortiGate and ouInclude/Exclude for AD (not shared)
 
 **Invariants:**
-- FMG and FortiGate must have identical modal tab layouts and toggle names (pushReservations, pushQuarantine, syncDescriptions, pullSdwan, monitorSettings JSON, deviceInclude/Exclude).
+- FMG and FortiGate must have identical modal tab layouts and toggle names (pushReservations, pushQuarantine, syncDescriptions, pullSdwan + sdwanIntervalSeconds, monitorSettings JSON, deviceInclude/Exclude). `sdwanIntervalSeconds` (int 60..86400, default 60) is declared on BOTH `FortiManagerConfigSchema` and `FortiGateConfigSchema` and rendered by the one `public/js/integrations.js → sdwanFormHTML(pullSdwan, intervalSec)` / `_readSdwanInterval()` pair on both modals.
 - buildTransportForIntegration() is the single source of truth for routing push/quarantine calls; all callers must use it, never inline a new transport builder.
 - Standalone FortiGate always routes through direct REST transport (no proxy option); FMG respects the useProxy toggle on the General tab.
 - DHCP Push and Quarantine Push are independent toggles; enabling one doesn't force the other (operators mix-and-match per deployment model).

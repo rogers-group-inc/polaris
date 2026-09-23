@@ -27,6 +27,11 @@ Companion pages: [Polling methods](Polling-Methods) ·
 Each has its own cadence, its own queue and its own worker pool. A slow stream
 cannot starve a fast one.
 
+SD-WAN on a FortiGate is not a stream of its own. It is read only where the
+interfaces stream resolves to FortiOS REST, but it has its own cadence, queue
+and worker pool. The interval is set per integration, 60 seconds by default
+(see [Integration-Fortinet](Integration-Fortinet)), not by the interface scrape.
+
 ---
 
 ## What "monitored" means

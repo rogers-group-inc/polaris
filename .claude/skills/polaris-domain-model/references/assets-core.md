@@ -211,6 +211,7 @@ Asset
   lastSystemInfoAt      DateTime?
   lastLldpAt            DateTime?
   lastStorageAt         DateTime?
+  lastSdwanAt           DateTime?        -- SD-WAN cadence anchor (2026-09-23, migration 20260923120000_sdwan_cadence_anchor): monitoringService.runSdwanFor stamps it BEFORE collecting, even on failure (the lastEventLogAt pattern), so an unreachable gate is asked once per Integration.config.sdwanIntervalSeconds (default 60s) rather than every 5s light tick. No per-asset interval column — the interval is per integration. Never dates the SD-WAN rows themselves (the tab reads the samples' own timestamps).
   lastCustomWidgetAt    DateTime?        -- Bumped after each successful collectAndRecordCustomWidgets pass.
   -- ifNames pinned for fast-cadence polling on the System tab. Each entry
   -- in this array is also scraped on the response-time interval (default
@@ -264,7 +265,7 @@ Asset
   -- set by the dependency reconciler when ALL of the asset's effective
   -- parents are confirmed down (or themselves suppressed); see the
   -- AssetDependencyParent model above for the resolution rules. While
-  -- suppressed, telemetry / systemInfo / fastFiltered cadences pause and
+  -- suppressed, telemetry / systemInfo / fastFiltered / sdwan cadences pause and
   -- the response-time probe runs at 2× the resolved interval, with each
   -- failed probe stamped AssetMonitorSample.dependencyDown so the charts
   -- can grey the stretch instead of drawing a red outage over it.

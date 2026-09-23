@@ -692,6 +692,50 @@ const tierSystemInfoFromPollIntervalCache = new Map<string, boolean>();
 // transport alone would break that, and would undo the change that made the
 // token reachable in proxy mode in the first place.
 const tierFortiosRestUnavailableCache = new Map<string, boolean>();
+// Sidecar: the SD-WAN cadence for this (integration, class) — the resolved
+// interval in seconds when the integration pulls SD-WAN at all, else null.
+// Populated by the same load that reads Integration.config, like the two
+// sidecars above, so the due-check on every light tick costs no query.
+const tierSdwanIntervalCache = new Map<string, number | null>();
+
+/** SD-WAN cadence bounds. 60s floor: the light loop cannot honour anything
+ *  shorter in practice, and a FortiOS health-check reading is itself a
+ *  moving average over the probe interval configured on the gate. */
+export const SDWAN_INTERVAL_DEFAULT_SEC = 60;
+export const SDWAN_INTERVAL_MIN_SEC     = 60;
+export const SDWAN_INTERVAL_MAX_SEC     = 86_400;
+
+/**
+ * The SD-WAN interval an integration config asks for, or null when it doesn't
+ * pull SD-WAN. Only FortiManager / FortiGate carry the stream, and a
+ * FortiManager on proxy with no FortiGate token has no REST path to the gate
+ * (see tierFortiosRestUnavailableCache) — both read as "not pulled". Pure;
+ * exported for unit testing.
+ */
+export function sdwanIntervalFromConfig(
+  type: string | null | undefined,
+  cfg: Record<string, unknown>,
+  fortiosRestUnavailable: boolean,
+): number | null {
+  if (!isFortinetIntegrationType(type)) return null;
+  if (cfg.pullSdwan !== true) return null;
+  if (fortiosRestUnavailable) return null;
+  const raw = Number(cfg.sdwanIntervalSeconds);
+  if (!Number.isFinite(raw) || raw <= 0) return SDWAN_INTERVAL_DEFAULT_SEC;
+  return Math.max(SDWAN_INTERVAL_MIN_SEC, Math.min(SDWAN_INTERVAL_MAX_SEC, Math.floor(raw)));
+}
+
+/**
+ * The SD-WAN cadence for one asset, read from the sidecar the tier load
+ * populated. Call AFTER resolveMonitorSettings for the same asset (both due
+ * paths do) — before it, the sidecar may be cold and this reads null. Null =
+ * no SD-WAN cadence for this asset: orphan assets, non-Fortinet sources, or
+ * the integration's pullSdwan toggle off.
+ */
+export function resolveSdwanIntervalSec(asset: { discoveredByIntegrationId: string | null; assetType: string }): number | null {
+  if (!asset.discoveredByIntegrationId) return null;
+  return tierSdwanIntervalCache.get(`${asset.discoveredByIntegrationId}:${asset.assetType}`) ?? null;
+}
 
 function classCacheKey(integrationId: string | null, assetType: string): string {
   return `${integrationId ?? MANUAL_TIER_CACHE_KEY}:${assetType}`;
@@ -711,6 +755,7 @@ export function invalidateMonitorSettingsCache(scope?: {
     classOverrideCache.clear();
     tierSystemInfoFromPollIntervalCache.clear();
     tierFortiosRestUnavailableCache.clear();
+    tierSdwanIntervalCache.clear();
     return;
   }
   const tierKey = scope.integrationId === null ? MANUAL_TIER_CACHE_KEY : scope.integrationId;
@@ -727,6 +772,7 @@ export function invalidateMonitorSettingsCache(scope?: {
       tierCache.delete(k);
       tierSystemInfoFromPollIntervalCache.delete(k);
       tierFortiosRestUnavailableCache.delete(k);
+      tierSdwanIntervalCache.delete(k);
     } else {
       // Whole-integration evict — walk every `<integrationId>:<assetType>`
       // entry. Integration config writes (PUT /integrations/:id, per-class
@@ -735,7 +781,8 @@ export function invalidateMonitorSettingsCache(scope?: {
         if (k.startsWith(`${tierKey}:`)) {
           tierCache.delete(k);
           tierSystemInfoFromPollIntervalCache.delete(k);
-      tierFortiosRestUnavailableCache.delete(k);
+          tierFortiosRestUnavailableCache.delete(k);
+          tierSdwanIntervalCache.delete(k);
         }
       }
     }
@@ -1170,12 +1217,12 @@ async function loadIntegrationTierSettings(integrationId: string, assetType: str
   // proxy — the same `!== false` reading every other consumer uses. Presence of
   // the token is what decides whether REST is reachable at all; its value is
   // never needed here.
-  tierFortiosRestUnavailableCache.set(
-    cacheKey,
+  const fortiosRestUnavailable =
     integration?.type === "fortimanager" &&
-      cfg.useProxy !== false &&
-      !String(cfg.fortigateApiToken || "").trim(),
-  );
+    cfg.useProxy !== false &&
+    !String(cfg.fortigateApiToken || "").trim();
+  tierFortiosRestUnavailableCache.set(cacheKey, fortiosRestUnavailable);
+  tierSdwanIntervalCache.set(cacheKey, sdwanIntervalFromConfig(integration?.type, cfg, fortiosRestUnavailable));
   return result;
 }
 
@@ -4619,17 +4666,8 @@ export interface SystemInfoSample {
    */
   trunkMembers?: TrunkPortEntry[];
   ipsecTunnels?: IpsecTunnelSample[];
-  /**
-   * SD-WAN Performance SLA health-check readings. `undefined` means the
-   * collector didn't try (toggle off / fast-cadence skip); `[]` means the
-   * device was queried and reported no health-check members.
-   */
-  perfSla?:      PerfSlaSample[];
-  /**
-   * SD-WAN service-rule selection snapshots. Same undefined/[] semantics as
-   * perfSla. Gated by Integration.config.pullSdwan.
-   */
-  sdwanRules?:   SdwanRuleSample[];
+  // SD-WAN (perfSla / sdwanRules) is not part of this sample any more — it has
+  // its own cadence and runner (runSdwanFor).
   /**
    * LLDP neighbors observed during this scrape. `undefined` means the
    * collector didn't try (unsupported transport / fast-cadence skip);
@@ -5538,12 +5576,14 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
         data = await collectSystemInfoFortinet(targetIp, integration as any, {
           includeIpsec: true,
           includeLldp:  lldpPolling === "rest_api",
-          includeSdwan: ((integration as any)?.config as any)?.pullSdwan === true,
+          // SD-WAN is NOT collected here any more: it has its own cadence
+          // (runSdwanFor, default 60s) so SLA readings no longer wait on the
+          // interface scrape's 10-minute default.
           // Firewall-class only, matching where the SNMP branch gates it.
           includeArp:   asset.assetType === "firewall",
           timeoutMs:    sysInfoTimeout,
         }, pickRestApiCredential(asset.interfacesCredential, asset.monitorCredential));
-        endRest({ interfaces: data.interfaces.length, ipsec: data.ipsecTunnels?.length ?? null, lldp: data.lldpNeighbors?.length ?? null, perfSla: data.perfSla?.length ?? null, sdwanRules: data.sdwanRules?.length ?? null });
+        endRest({ interfaces: data.interfaces.length, ipsec: data.ipsecTunnels?.length ?? null, lldp: data.lldpNeighbors?.length ?? null });
       }
 
       await overlayCrossTransportLldp(data, {
@@ -5940,7 +5980,7 @@ export function backfillFortiAggregateMembers(
 async function collectSystemInfoFortinet(
   host: string,
   integration: { type: string; config: Record<string, unknown> },
-  opts: { includeIpsec?: boolean; includeLldp?: boolean; includeSdwan?: boolean; includeArp?: boolean; timeoutMs?: number } = {},
+  opts: { includeIpsec?: boolean; includeLldp?: boolean; includeArp?: boolean; timeoutMs?: number } = {},
   credential?: CredentialLike | null,
 ): Promise<SystemInfoSample> {
   const fg = buildFortinetConfig(host, integration, credential);
@@ -5987,14 +6027,6 @@ async function collectSystemInfoFortinet(
           .then((neighbors) => { endLldp({ neighbors: neighbors?.length ?? null }); return neighbors; });
       })()
     : Promise.resolve<LldpNeighborSample[] | undefined>(undefined);
-  const sdwanPromise = opts.includeSdwan
-    ? (() => {
-        const endSdwan = startPhase("systeminfo.rest.sdwan");
-        return collectSdwanFortinet(fg, timeoutMs)
-          .catch(() => ({ perfSla: [] as PerfSlaSample[], sdwanRules: [] as SdwanRuleSample[] }))
-          .then((sdwan) => { endSdwan({ perfSla: sdwan.perfSla.length, rules: sdwan.sdwanRules.length }); return sdwan; });
-      })()
-    : Promise.resolve<{ perfSla: PerfSlaSample[]; sdwanRules: SdwanRuleSample[] } | undefined>(undefined);
   // IP neighbour cache. Same endpoint discovery already reads per gate, called
   // here so a monitored firewall refreshes it on the system-info cadence
   // instead of once per discovery interval. IPv4 only -- FortiOS exposes no
@@ -6009,12 +6041,11 @@ async function collectSystemInfoFortinet(
       })()
     : Promise.resolve<ArpNeighborEntry[] | undefined>(undefined);
 
-  const [cmdbRes, monitorOutcome, ipsecTunnels, lldpNeighbors, sdwan, arpNeighbors] = await Promise.all([
+  const [cmdbRes, monitorOutcome, ipsecTunnels, lldpNeighbors, arpNeighbors] = await Promise.all([
     cmdbInterfacePromise,
     monitorInterfacePromise,
     ipsecPromise,
     lldpPromise,
-    sdwanPromise,
     arpPromise,
   ]);
 
@@ -6053,8 +6084,6 @@ async function collectSystemInfoFortinet(
   return {
     interfaces, storage: [], ipsecTunnels, lldpNeighbors,
     lldpSource: opts.includeLldp !== false ? "fortios" : undefined,
-    perfSla:    sdwan?.perfSla,
-    sdwanRules: sdwan?.sdwanRules,
     arpNeighbors,
     fortilinkInterfaces,
   };
@@ -6332,8 +6361,8 @@ function normalizeSdwanState(v: unknown): "up" | "down" {
 }
 
 /**
- * SD-WAN collector (FortiOS only; gated by Integration.config.pullSdwan, rides
- * the system-info cadence). Pulls two things in parallel:
+ * SD-WAN collector (FortiOS only; gated by Integration.config.pullSdwan, its own
+ * cadence — runSdwanFor). Pulls two things in parallel:
  *   - Performance SLA health-check readings (/api/v2/monitor/virtual-wan/health-check):
  *     one PerfSlaSample per (health-check, WAN member) with latency/jitter/
  *     packet-loss gauges + link state.
@@ -6349,9 +6378,14 @@ function normalizeSdwanState(v: unknown): "up" | "down" {
  * inferred "selected" is only the top healthy member — the UI shows `mode` so
  * the operator has context.
  *
- * Each sub-fetch degrades independently (one failing → [] for that half), like
- * collectIpsecTunnelsFortinet's CMDB-optional handling. Older firmwares 404 the
- * endpoints → empty result → the SD-WAN tab just hides the section.
+ * Each sub-fetch degrades independently, like collectIpsecTunnelsFortinet's
+ * CMDB-optional handling. A failed health-check read yields no SLA samples. A
+ * failed CMDB read yields `sdwanRules: undefined` — "not read", so the caller
+ * leaves the stored rules alone — rather than [], which would full-replace
+ * them with nothing: on a per-minute cadence one timed-out request would
+ * otherwise blank the gate's SD-WAN tab. Older firmwares 404 the endpoints →
+ * the same "not read" → the SD-WAN tab just hides the section. `reachable` is
+ * false only when BOTH requests failed.
  *
  * NOTE (verify on a real FortiOS 7.x device): the health-check JSON shape, the
  * member-state field name (status vs state; "up"/"alive"/numeric), and the CMDB
@@ -6361,7 +6395,7 @@ function normalizeSdwanState(v: unknown): "up" | "down" {
 async function collectSdwanFortinet(
   fg: FortiGateConfig,
   timeoutMs?: number,
-): Promise<{ perfSla: PerfSlaSample[]; sdwanRules: SdwanRuleSample[] }> {
+): Promise<{ perfSla: PerfSlaSample[]; sdwanRules: SdwanRuleSample[] | undefined; reachable: boolean }> {
   const [hcRes, sdwanRes] = await Promise.all([
     fgRequest<any>(fg, "GET", "/api/v2/monitor/virtual-wan/health-check", { query: { scope: "vdom" }, timeoutMs })
       .catch(() => null as any),
@@ -6371,8 +6405,8 @@ async function collectSdwanFortinet(
   const thresholds = parseSdwanSlaThresholds(sdwanRes);
   const zones = parseSdwanMemberZones(sdwanRes);
   const { perfSla, memberUp } = parsePerfSlaHealthCheck(hcRes, thresholds, zones);
-  const sdwanRules = parseSdwanRules(sdwanRes, memberUp, zones);
-  return { perfSla, sdwanRules };
+  const sdwanRules = sdwanRes == null ? undefined : parseSdwanRules(sdwanRes, memberUp, zones);
+  return { perfSla, sdwanRules, reachable: hcRes != null || sdwanRes != null };
 }
 
 /**
@@ -9513,7 +9547,7 @@ function persistIpsecTunnelSampleStream(
 
 /**
  * SD-WAN SLA time-series (gated by Integration.config.pullSdwan, only present
- * when collectSdwanFortinet ran on this heavy pass). No pinned-subset concept
+ * when collectSdwanFortinet ran on this SD-WAN pass). No pinned-subset concept
  * — every row is stamped "fast" so the rollup (which filters cadence='fast')
  * includes it and prune treats them all uniformly.
  */
@@ -9940,20 +9974,7 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
   }
   persistStorageSampleStream(assetId, d.storage, pinned, now);
   persistIpsecTunnelSampleStream(assetId, d.ipsecTunnels, pinned, now);
-  persistPerfSlaSampleStream(assetId, d.perfSla, now);
-
-  // SD-WAN rules are CURRENT-STATE (no history): replace the asset's rows on
-  // every pass that collected SD-WAN data. `undefined` = collector didn't run
-  // → leave existing rows alone; an array (even empty) = full-replace. Mirrors
-  // the LLDP / wireless-station delete-replace pattern. (The SLA-metrics
-  // stream above stays a time-series.)
-  if (Array.isArray(d.sdwanRules)) {
-    const stopWrite = startSampleWriteTimer("asset_sdwan_rules");
-    const endSdwan = startPhase("systeminfo.persist.sdwan_rules");
-    await persistSdwanRules(assetId, d.sdwanRules);
-    endSdwan({ rules: d.sdwanRules.length });
-    stopWrite();
-  }
+  // SD-WAN SLA samples + rules are written by runSdwanFor on their own cadence.
 
   await persistAssocIpMirror(assetId, d.interfaces, pinned, now);
 
@@ -11662,6 +11683,8 @@ interface RunStats {
   processes:    { collected: number; failed: number };
   /** Agentless (ssh/winrm) OS event-log cadence — cursor mode only. */
   eventLog:     { collected: number; failed: number };
+  /** FortiOS SD-WAN SLA + rule selection (its own cadence, light loop). */
+  sdwan:        { collected: number; failed: number };
   /** ICMP packet-loss sampler (warning/recovering assets only). */
   lossSample:   { collected: number; failed: number };
 }
@@ -11673,7 +11696,7 @@ interface RunStats {
  */
 const EVENT_LOG_MAX_ENTRIES_PER_POLL = 300;
 
-export type MonitorCadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "lossSample";
+export type MonitorCadence = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "lldp" | "storage" | "processes" | "eventLog" | "sdwan" | "lossSample";
 
 /**
  * Per-cadence outcome tally returned by the runFooFor() functions. Used by
@@ -12686,6 +12709,127 @@ export async function runEventLogFor(assetId: string, labels: WorkItemLabels): P
   }
 }
 
+/**
+ * Should this asset get an SD-WAN pass at all? ONE predicate shared by both
+ * due paths (computeDueWork here, publishDueWork in jobs/monitorAssets.ts) and
+ * re-checked by runSdwanFor at pickup, so the three cannot drift.
+ *
+ * Same reach as when SD-WAN rode the system-info pass: the integration pulls
+ * SD-WAN (`intervalSec` non-null — see resolveSdwanIntervalSec), and the asset
+ * is polled over FortiOS REST — the SD-WAN endpoints are REST-only, and an
+ * operator who moved a gate's interfaces to SNMP did so because REST is not
+ * available to it. Managed FortiSwitches / FortiAPs have no SD-WAN and aren't
+ * directly REST-able. Liveness (the isUp gate) is applied by the callers.
+ */
+export function sdwanShouldQueue(
+  a: { assetType: string | null },
+  eff: { interfacesPolling: string | null },
+  intervalSec: number | null,
+): intervalSec is number {
+  if (intervalSec == null || intervalSec <= 0) return false;
+  if (eff.interfacesPolling !== "rest_api") return false;
+  return a.assetType !== "switch" && a.assetType !== "access_point";
+}
+
+/**
+ * The interval the SD-WAN cadence is actually polling one asset at, or null
+ * when nothing polls it (unmonitored / decommissioned / disabled, the
+ * integration doesn't pull SD-WAN, or the gate is not on FortiOS REST). Backs
+ * the SD-WAN tab's freshness strips, which turn amber past this figure — so it
+ * must be the SAME eligibility the scheduler applies (sdwanShouldQueue), not
+ * the system-info cadence the stream used to ride.
+ */
+export async function resolveSdwanPollIntervalForAsset(assetId: string): Promise<number | null> {
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    include: { discoveredByIntegration: { select: { type: true } } },
+  });
+  if (!asset || !asset.monitored || asset.status === "decommissioned" || asset.status === "disabled") return null;
+  const effective = await resolveMonitorSettings({
+    ...asset,
+    discoveredByIntegrationType: asset.discoveredByIntegration?.type ?? null,
+  });
+  const intervalSec = resolveSdwanIntervalSec(asset);
+  return sdwanShouldQueue(asset, effective, intervalSec) ? intervalSec : null;
+}
+
+/**
+ * SD-WAN cadence: Performance SLA health-check readings + SD-WAN service-rule
+ * selection for one FortiGate, on the integration's `sdwanIntervalSeconds`
+ * (default 60s). Split out of the system-info pass 2026-09 — riding that pass
+ * meant SLA latency / jitter / loss (and the alerts on them) moved only as
+ * often as interfaces were scraped, 10 minutes by default. Two small REST GETs
+ * per gate; nothing else from the system-info walk is repeated.
+ *
+ * `lastSdwanAt` is stamped **even on failure**, like lastEventLogAt: this runs
+ * on the 5s light loop, and a gate that stopped answering must be asked once
+ * per interval, not once per tick.
+ */
+export async function runSdwanFor(assetId: string, labels: WorkItemLabels): Promise<CadenceOutcome> {
+  const stopWork = startWorkTimer("sdwan", labels);
+  try {
+    const asset = await prisma.asset.findUnique({
+      where: { id: assetId },
+      include: { monitorCredential: true, interfacesCredential: true, discoveredByIntegration: true },
+    });
+    if (!asset || !asset.monitored) {
+      recordWorkOutcome("sdwan", "success", labels);
+      return "success";
+    }
+    const integration = asset.discoveredByIntegration ?? null;
+    const effective = await resolveMonitorSettings({
+      ...asset,
+      discoveredByIntegrationType: integration?.type ?? null,
+    });
+    // Re-check at pickup (after the resolver warmed the sidecar): the toggle
+    // may have been switched off, or the transport changed, since publish.
+    if (!integration || !sdwanShouldQueue(asset, effective, resolveSdwanIntervalSec(asset))) {
+      recordWorkOutcome("sdwan", "success", labels);
+      return "success";
+    }
+
+    const now = new Date();
+    await prisma.asset.update({ where: { id: assetId }, data: { lastSdwanAt: now } }).catch(() => {});
+
+    if (!asset.ipAddress) {
+      recordWorkOutcome("sdwan", "failure", labels);
+      return "failure";
+    }
+    const fg = buildFortinetConfig(
+      asset.ipAddress,
+      integration as any,
+      pickRestApiCredential(asset.interfacesCredential, asset.monitorCredential),
+    );
+    if ("error" in fg) {
+      recordWorkOutcome("sdwan", "failure", labels);
+      return "failure";
+    }
+    const sdwan = await collectSdwanFortinet(fg, effective.systemInfoTimeoutMs);
+    if (!sdwan.reachable) {
+      recordWorkOutcome("sdwan", "failure", labels);
+      return "failure";
+    }
+    persistPerfSlaSampleStream(assetId, sdwan.perfSla, now);
+    // Rules are CURRENT-STATE (no history): full-replace when the CMDB read
+    // succeeded (even to []), untouched when it didn't. Mirrors the LLDP /
+    // wireless-station delete-replace pattern. The SLA stream above stays a
+    // time-series.
+    if (sdwan.sdwanRules) {
+      const stopWrite = startSampleWriteTimer("asset_sdwan_rules");
+      await persistSdwanRules(assetId, sdwan.sdwanRules);
+      stopWrite();
+    }
+    recordWorkOutcome("sdwan", "success", labels);
+    return "success";
+  } catch (err) {
+    logger.error({ err, assetId }, "SD-WAN cadence crashed");
+    recordWorkOutcome("sdwan", "crash", labels);
+    return "crash";
+  } finally {
+    stopWork();
+  }
+}
+
 export async function runProcessesFor(assetId: string, labels: WorkItemLabels): Promise<CadenceOutcome> {
   const stopWork = startWorkTimer("processes", labels);
   try {
@@ -13094,13 +13238,16 @@ export async function loadMonitorPassCandidates() {
       monitoredProcesses: true, mappedProcesses: true,
       // Same, for the agentless event-log cadence.
       eventLogPolling: true, lastEventLogAt: true,
+      // SD-WAN cadence anchor; its interval comes from the integration sidecar
+      // (resolveSdwanIntervalSec), not a per-asset column.
+      lastSdwanAt: true,
       dependencySuppressed: true,
     },
   });
 }
 export type MonitorPassCandidate = Awaited<ReturnType<typeof loadMonitorPassCandidates>>[number];
 
-export type MonitorWorkKind = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "processes" | "eventLog" | "lossSample";
+export type MonitorWorkKind = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "processes" | "eventLog" | "sdwan" | "lossSample";
 export type MonitorWork = { id: string; kind: MonitorWorkKind };
 /**
  * Effective probe spacing in seconds for one asset.
@@ -13142,6 +13289,7 @@ export interface DueMonitorWork {
   systemInfos: MonitorWork[];
   processesWork: MonitorWork[];
   eventLogWork: MonitorWork[];
+  sdwanWork: MonitorWork[];
   lossSamples: MonitorWork[];
   /** ICMP assets due a probe, batched rather than dispatched per item. */
   probeBatch: ProbeBatchItem[];
@@ -13176,6 +13324,7 @@ export async function computeDueWork(
   const systemInfos: MonitorWork[]  = [];
   const processesWork: MonitorWork[] = [];
   const eventLogWork: MonitorWork[] = [];
+  const sdwanWork: MonitorWork[] = [];
   const lossSamples: MonitorWork[] = [];
   const probeBatch: ProbeBatchItem[] = [];
   // Same cadence resolution the pg-boss publisher makes — the operator's
@@ -13357,6 +13506,16 @@ export async function computeDueWork(
         isDue(a.lastEventLogAt, eff.eventLogIntervalSeconds)) {
       eventLogWork.push({ id: a.id, kind: "eventLog" });
     }
+    // SD-WAN cadence (FortiOS SLA + rule selection). Rides the light loop so a
+    // 60s interval lands on time; isUp gate like every authenticated stream.
+    // The interval is read AFTER resolveMonitorSettings above, which is what
+    // warms the sidecar it lives in. Keep in sync with publishDueWork.
+    const sdwanIntervalSec = resolveSdwanIntervalSec(a);
+    if (enabled.has("sdwan") && isUp &&
+        sdwanShouldQueue(a, eff, sdwanIntervalSec) &&
+        isDue(a.lastSdwanAt, sdwanIntervalSec)) {
+      sdwanWork.push({ id: a.id, kind: "sdwan" });
+    }
     // ICMP loss sweep: a uniform burst at EVERY eligible asset, whatever state
     // it is in — see utils/lossSweep.ts for why the old warning/recovering
     // window was itself the bias that got the sampler disabled. Independent of
@@ -13387,7 +13546,7 @@ export async function computeDueWork(
     );
     lossSamples.length = LOSS_SAMPLES_MAX_PER_PASS;
   }
-  return { probes, probeBatch, fastFiltereds, telemetries, systemInfos, processesWork, eventLogWork, lossSamples };
+  return { probes, probeBatch, fastFiltereds, telemetries, systemInfos, processesWork, eventLogWork, sdwanWork, lossSamples };
 }
 
 export async function runMonitorPass(opts?: { concurrency?: number; cadences?: MonitorCadence[] }): Promise<RunStats> {
@@ -13453,6 +13612,8 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
       storage:      a.storagePolling || ifT,
       processes:    a.processesPolling || "not_delivered",
       eventLog:     a.eventLogPolling  || "not_delivered",
+      // SD-WAN only ever runs over FortiOS REST (sdwanShouldQueue).
+      sdwan:        "rest_api",
       // The loss sampler is ICMP by definition, whatever the response-time
       // stream uses — that IS the finding the label should carry.
       lossSample:   "icmp",
@@ -13460,7 +13621,7 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
     assetTypeById.set(a.id, a.assetType ?? "unknown");
   }
 
-  const { probes, probeBatch, fastFiltereds, telemetries, systemInfos, processesWork, eventLogWork, lossSamples } =
+  const { probes, probeBatch, fastFiltereds, telemetries, systemInfos, processesWork, eventLogWork, sdwanWork, lossSamples } =
     await computeDueWork(candidates, enabled, now);
 
   // Order matters: probes first so a saturated worker pool drains the cheap
@@ -13478,7 +13639,9 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
   // runs as one call over all due ids after the per-asset pass rather than as
   // one work item per asset. Dispatching it per item would put back exactly the
   // per-host process spawn the batching exists to remove.
-  const work: MonitorWork[] = [...probes, ...fastFiltereds, ...telemetries, ...systemInfos, ...processesWork, ...eventLogWork];
+  // SD-WAN sits behind fastFiltered on the light loop: two small REST GETs,
+  // still behind the probes that decide whether anything is down.
+  const work: MonitorWork[] = [...probes, ...fastFiltereds, ...sdwanWork, ...telemetries, ...systemInfos, ...processesWork, ...eventLogWork];
 
   setQueueDepth({
     probe: probes.length,
@@ -13487,6 +13650,7 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
     systemInfo: systemInfos.length,
     processes: processesWork.length,
     eventLog: eventLogWork.length,
+    sdwan: sdwanWork.length,
     lossSample: lossSamples.length,
   });
 
@@ -13497,6 +13661,7 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
     fastFiltered: { collected: 0, failed: 0 },
     processes:  { collected: 0, failed: 0 },
     eventLog:   { collected: 0, failed: 0 },
+    sdwan:      { collected: 0, failed: 0 },
     lossSample: { collected: 0, failed: 0 },
   };
   if (work.length === 0) {
@@ -13551,6 +13716,12 @@ export async function runMonitorPass(opts?: { concurrency?: number; cadences?: M
             const outcome = await runEventLogFor(w.id, labelFor("eventLog"));
             if (outcome === "success") stats.eventLog.collected++;
             else stats.eventLog.failed++;
+            break;
+          }
+          case "sdwan": {
+            const outcome = await runSdwanFor(w.id, labelFor("sdwan"));
+            if (outcome === "success") stats.sdwan.collected++;
+            else stats.sdwan.failed++;
             break;
           }
 

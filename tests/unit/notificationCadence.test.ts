@@ -20,7 +20,9 @@ describe("streamForMetric", () => {
     expect(streamForMetric("hwSensorValue")).toBe("temperature");
     expect(streamForMetric("storageUsedPct")).toBe("storage");
     expect(streamForMetric("ifInBps")).toBe("systemInfo");
-    expect(streamForMetric("sdwanLatencyMs")).toBe("systemInfo");
+    // SD-WAN has its own cadence since 2026-09 — no longer the system-info pass.
+    expect(streamForMetric("sdwanLatencyMs")).toBe("sdwan");
+    expect(streamForMetric("sdwanRuleStatus")).toBe("sdwan");
   });
 
   it("maps the asset_state FIELDS too — a state trigger holds for polls like any other", () => {
@@ -37,7 +39,9 @@ describe("streamForMetric", () => {
   });
 
   it("names only streams the settings resolver actually carries", () => {
-    const allowed = new Set(["responseTime", "cpuMemory", "temperature", "systemInfo", "storage"]);
+    // `sdwan` is carried by the resolver's integration sidecar
+    // (resolveSdwanIntervalSec) rather than a settings field.
+    const allowed = new Set(["responseTime", "cpuMemory", "temperature", "systemInfo", "storage", "sdwan"]);
     for (const stream of Object.values(METRIC_STREAM)) expect(allowed.has(stream)).toBe(true);
   });
 
