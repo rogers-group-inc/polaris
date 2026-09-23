@@ -3336,7 +3336,8 @@ function formDivider() {
 // Compatibility / scope constraints stated UP FRONT — versions, on-prem vs
 // cloud, what the integration will and won't reach. Bold the specific values.
 function infoBox(html) {
-  return '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);' +
+  return '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);' +
+    'border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);' +
     'border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;' +
     'color:var(--color-text-secondary);line-height:1.5">' + html + "</div>";
 }

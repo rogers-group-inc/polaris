@@ -2710,6 +2710,20 @@ th.fav-col, td.fav-col { width: 20px; min-width: 20px; text-align: center; paddi
   color: var(--color-text-tertiary);
   margin-top: 3px;
 }
+/* Integration modal tabs: a hint outside a form-group (tab intros, bullet
+   lists, calloutHTML bodies) inherited full body size, so the feature tabs
+   rendered their prose larger than General's info box and field hints. That
+   prose is explanatory paragraphs, not a one-line field hint, so it takes the
+   infoBox() size (0.82rem) and a field hint keeps its 0.72rem — two tiers,
+   the same on every tab. Scoped to the integration panels (`intg-*` prefixes)
+   rather than made global because ~360 other `.hint`s were laid out against
+   the unscoped behaviour. Declared before `.hint-error` so that colour still
+   wins at equal specificity. */
+.page-tab-panel[id^="intg-"] .hint:not(.form-group .hint) {
+  font-size: 0.82rem;
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
 /* A hint that has turned into a refusal — the field's own value is now outside
    what the server will accept (the reservation-notes budget counter is the
    first user). Pairs with `.input-error` on the field itself. */

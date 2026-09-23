@@ -52,7 +52,9 @@ function loadForms(): Forms {
   };
   const stubs =
     'function calloutHTML(kind, title, body) { return "[callout " + kind + ": " + title + " | " + body + "]"; }\n' +
-    "function escapeHtml(s) { return String(s); }\n";
+    "function escapeHtml(s) { return String(s); }\n" +
+    'function sectionHeading(t) { return "<p data-section>" + t + "</p>"; }\n' +
+    'function formDivider() { return "<hr>"; }\n';
   const names = [
     "_fortigateAccessProfileHTML",
     "reservationPushFormHTML",
