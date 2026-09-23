@@ -9390,19 +9390,105 @@ function _formatNumber(n) {
 // window is supplied.
 // --- Shared chart scaffolding (2026-08 consolidation) ---
 // The byte-identical closures every SVG chart renderer used to re-declare:
-// zero-padded time parts, the span-aware X-tick label formatter, and the
-// linear time->x / value->y scales. Renderers keep their own paddings, tick
-// loops, and series drawing -- those genuinely differ per chart.
+// zero-padded time parts, the calendar-aligned X-axis ticks, and the linear
+// time->x / value->y scales. Renderers keep their own paddings, Y ticks, and
+// series drawing -- those genuinely differ per chart.
 // assets-compare.js (loaded after this file on assets.html) shares them.
 function _chartPad2(n) { return n < 10 ? "0" + n : String(n); }
-// Span-aware tick label: HH:MM inside one day, M/D beyond.
-function _chartTickFmt(t0, t1) {
-  var spanMs = t1 - t0, oneDayMs = 86400000;
-  return function (ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return _chartPad2(d.getHours()) + ":" + _chartPad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  };
+// X-axis ticks on CALENDAR boundaries, not on fifths of the window. The fifths
+// every chart used to draw landed at arbitrary instants (a 7-day window ticked
+// every 1.4 days: 9/17 18:36, 9/19 04:12 …), so a date-only label named a day
+// it sat in the middle of, skipped whole days (9/18 and 9/22 never appeared),
+// and never lined up with the dashed midnight lines _dateChangeMarkers draws.
+// Now the step is the smallest "nice" one that keeps labels ≥ ~80px apart, and
+// every tick is aligned to local time: a multiple of the step past local
+// midnight for sub-day steps, local midnight itself (via setDate, so DST cannot
+// drift it) for day steps — which puts a day tick exactly on its dashed line.
+// Returns [{ ts, label }], each strictly inside [t0, t1].
+var _CHART_TICK_STEPS_MS = [
+  60e3, 2 * 60e3, 5 * 60e3, 10 * 60e3, 15 * 60e3, 30 * 60e3,
+  3600e3, 2 * 3600e3, 3 * 3600e3, 6 * 3600e3, 12 * 3600e3,
+];
+var _CHART_TICK_STEPS_DAYS = [1, 2, 3, 7, 14, 30];
+function _chartTimeTicks(t0, t1, innerW) {
+  var span = t1 - t0;
+  if (!(span > 0)) return [];
+  var maxTicks = Math.max(2, Math.floor((innerW || 600) / 80));
+  var dayMs = 86400000;
+  var out = [];
+  var stepMs = null;
+  // HH:MM labels only while _dateChangeMarkers still names each midnight line
+  // (≤ 4 days); past that an hour label could belong to any of the days.
+  if (span <= 4 * dayMs) {
+    for (var i = 0; i < _CHART_TICK_STEPS_MS.length; i++) {
+      // +1: a window that starts ON a boundary holds one more tick than intervals.
+      if (Math.floor(span / _CHART_TICK_STEPS_MS[i]) + 1 <= maxTicks) { stepMs = _CHART_TICK_STEPS_MS[i]; break; }
+    }
+  }
+  if (stepMs != null) {
+    var mid = new Date(t0);
+    mid.setHours(0, 0, 0, 0);
+    var base = mid.getTime();
+    var ts = base + Math.ceil((t0 - base) / stepMs) * stepMs;
+    for (var guard = 0; ts <= t1 && guard < 200; guard++, ts += stepMs) {
+      var d = new Date(ts);
+      // A multi-day window names its midnights by date, not "00:00".
+      var atMidnight = d.getHours() === 0 && d.getMinutes() === 0;
+      out.push({
+        ts: ts,
+        label: atMidnight && span > dayMs
+          ? (d.getMonth() + 1) + "/" + d.getDate()
+          : _chartPad2(d.getHours()) + ":" + _chartPad2(d.getMinutes()),
+      });
+    }
+    return out;
+  }
+  var stepDays = _CHART_TICK_STEPS_DAYS[_CHART_TICK_STEPS_DAYS.length - 1];
+  for (var k = 0; k < _CHART_TICK_STEPS_DAYS.length; k++) {
+    if (Math.floor(span / (_CHART_TICK_STEPS_DAYS[k] * dayMs)) + 1 <= maxTicks) { stepDays = _CHART_TICK_STEPS_DAYS[k]; break; }
+  }
+  var day = new Date(t0);
+  day.setHours(0, 0, 0, 0);
+  if (day.getTime() < t0) day.setDate(day.getDate() + 1);
+  for (var g2 = 0; day.getTime() <= t1 && g2 < 200; g2++) {
+    out.push({ ts: day.getTime(), label: (day.getMonth() + 1) + "/" + day.getDate() });
+    day.setDate(day.getDate() + stepDays);
+  }
+  return out;
+}
+// The tick marks + labels for _chartTimeTicks, in the markup every renderer
+// used to inline. A label within half its width of either end of the plot is
+// anchored to that end instead of centred on it — a centred label on the last
+// tick overhung the 10px right padding and was clipped by the SVG edge.
+// `opts.dateLine` adds the M/D under the first tick and wherever the day
+// changes (the response-time chart on a ≤24h window, whose labels are HH:MM).
+function _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH, opts) {
+  opts = opts || {};
+  var ticks = _chartTimeTicks(t0, t1, innerW);
+  var right = padL + innerW;
+  var out = "";
+  var prevDay = null;
+  for (var i = 0; i < ticks.length; i++) {
+    var t = ticks[i];
+    var x = padL + ((t.ts - t0) / (t1 - t0)) * innerW;
+    var half = t.label.length * 3; // ~6px per glyph at font-size 10
+    var anchor = "middle";
+    if (x + half > right + 6) anchor = "end";
+    else if (x - half < padL - 6) anchor = "start";
+    out +=
+      '<line x1="' + x + '" y1="' + (padT + innerH) + '" x2="' + x + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
+      '<text x="' + x + '" y="' + (padT + innerH + 14) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor">' + t.label + '</text>';
+    if (opts.dateLine) {
+      var d = new Date(t.ts);
+      var key = d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+      if (key !== prevDay) {
+        out +=
+          '<text x="' + x + '" y="' + (padT + innerH + 26) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor" opacity="0.7">' + (d.getMonth() + 1) + "/" + d.getDate() + '</text>';
+        prevDay = key;
+      }
+    }
+  }
+  return out;
 }
 function _chartXScale(padL, innerW, t0, t1) {
   return function (ts) { return padL + ((new Date(ts).getTime() - t0) / (t1 - t0)) * innerW; };
@@ -9875,11 +9961,6 @@ function _renderSensorChart(container, samples, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var allC = samples.map(function (s) { return s.value; });
   var minC = Math.min.apply(null, allC);
@@ -9912,14 +9993,7 @@ function _renderSensorChart(container, samples, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 6) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _hwFmtNum(v) + unitTickSuffix + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   var titleY = 14;
   var xLabelY = padT + innerH + 38;
@@ -10793,11 +10867,6 @@ function _renderSystemChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var cpuValues = samples.map(function (s) { return { s: s, v: typeof s.cpuPct === "number" ? s.cpuPct : null }; })
                          .filter(function (e) { return typeof e.v === "number"; });
@@ -10874,14 +10943,7 @@ function _renderSystemChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var cpuColor = "var(--color-accent)";
   var memColor = "#f4a261";
   var legend =
@@ -11029,11 +11091,6 @@ function _renderCpuChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var cpuValues = samples.map(function (s) { return { s: s, v: typeof s.cpuPct === "number" ? s.cpuPct : null }; })
                          .filter(function (e) { return typeof e.v === "number"; });
@@ -11099,14 +11156,7 @@ function _renderCpuChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   var clipId = _chartClipId("cpu");
   var avgLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), _CPU_AVG_COLOR, clipId + "-avg");
@@ -11474,11 +11524,6 @@ function _renderMemoryChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var rows = samples.map(function (s) {
     var b = _memBandsFor(s);
@@ -11619,14 +11664,7 @@ function _renderMemoryChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBytes(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   function swatch(color, label, dashed) {
     return '<span style="display:inline-flex;align-items:center;gap:4px">' +
@@ -11779,11 +11817,6 @@ function _renderMemoryPctChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, 0, 100);
   var baselineY = padT + innerH;
@@ -11806,14 +11839,7 @@ function _renderMemoryPctChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var sorted = vals.slice().sort(function (a, b) { return new Date(a.s.timestamp).getTime() - new Date(b.s.timestamp).getTime(); });
   var hits = sorted.map(function (h, i) {
     var x = xFor(h.s.timestamp);
@@ -11891,11 +11917,6 @@ function _renderSessionsChart(container, data, asset) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   function fmtCount(n) {
     if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
     return String(Math.round(n));
@@ -11925,14 +11946,7 @@ function _renderSessionsChart(container, data, asset) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + fmtCount(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var color = "#2a9d8f";
   var clipId = _chartClipId("sessions");
   container.innerHTML =
@@ -12976,19 +12990,6 @@ function _renderMonitorChart(container, data, transitions) {
   var spanMs = t1 - t0;
   var oneDayMs = 24 * 60 * 60 * 1000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
-  function fmtDate(ts) {
-    var d = new Date(ts);
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
-  function dayKey(ts) {
-    var d = new Date(ts);
-    return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
-  }
 
   // Tier-aware sample classification. The detail tier carries a per-sample
   // `success` boolean; the rollup tiers (hourly/daily) instead carry
@@ -13139,25 +13140,7 @@ function _renderMonitorChart(container, data, transitions) {
   // date — render the date underneath the first tick and any tick whose day
   // differs from the previous one, so a window that crosses midnight is
   // unambiguous.
-  var xTicks = "";
-  var xTickCount = 5;
-  var dateLabelMode = spanMs <= oneDayMs;
-  var prevDayKey = null;
-  for (var j = 0; j <= xTickCount; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / xTickCount);
-    var xPos = padL + (j / xTickCount) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-    if (dateLabelMode) {
-      var k = dayKey(tsTick);
-      if (k !== prevDayKey) {
-        xTicks +=
-          '<text x="' + xPos + '" y="' + (padT + innerH + 26) + '" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">' + fmtDate(tsTick) + '</text>';
-        prevDayKey = k;
-      }
-    }
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH, { dateLine: spanMs <= oneDayMs });
 
   // Axis titles
   var yTitleX = 14;
@@ -13980,11 +13963,6 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxV = 0;
   inSeries.forEach (function (d) { if (d.inBps  > maxV) maxV = d.inBps;  });
   outSeries.forEach(function (d) { if (d.outBps > maxV) maxV = d.outBps; });
@@ -14040,14 +14018,7 @@ function _renderIfaceThroughputChart(container, derived, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBitsPerSecAxis(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var inColor  = "var(--color-accent)";
   var outColor = "#f4a261";
   var legend =
@@ -14111,11 +14082,6 @@ function _renderIfaceErrorChart(container, derived, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxE = 0;
   derived.forEach(function (d) {
     if (typeof d.inErr  === "number" && d.inErr  > maxE) maxE = d.inErr;
@@ -14162,14 +14128,7 @@ function _renderIfaceErrorChart(container, derived, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var legend =
     '<g font-size="10" fill="currentColor">' +
       '<rect x="' + (padL + 10) + '" y="2" width="10" height="10" fill="' + inErrColor + '"/>' +
@@ -14537,11 +14496,6 @@ function _renderIpsecStatusChart(container, samples, opts) {
     : 600000;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   function colorFor(s) {
     if (s === "up") return MONITOR_STATE_COLORS.up;
     if (s === "down") return MONITOR_STATE_COLORS.down;
@@ -14563,14 +14517,7 @@ function _renderIpsecStatusChart(container, samples, opts) {
       ' data-ts="' + escapeHtml(String(s.timestamp)) + '"' +
       ' data-status="' + escapeHtml(s.status) + '"/>';
   }).join("");
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var hasDynamic = samples.some(function (s) { return s.status === "dynamic"; });
   var legend =
     '<g font-size="10" fill="currentColor">' +
@@ -14619,11 +14566,6 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxV = Math.max.apply(null, values.map(function (e) { return e.v; }));
   if (maxV < 1000) maxV = 1000;
   function tidyCeil(n) {
@@ -14648,14 +14590,7 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBitsPerSec(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var color = side === "in" ? "var(--color-accent)" : "#f4a261";
   var clipId = _chartClipId("ipsecBps");
   container.innerHTML =
@@ -15196,7 +15131,6 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  var fmtTick = _chartTickFmt(t0, t1);
   var hasThreshold = typeof meta.threshold === "number" && meta.threshold > 0;
   // Scale the y-axis to the VISIBLE series so hiding a high member rescales the
   // rest (fall back to all members when everything is hidden).
@@ -15230,14 +15164,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + (Math.round(v * 100) / 100) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   // Legend row beneath the x-axis — one clickable swatch+label per member.
   // Click toggles that member's visibility on every chart; hidden members grey
   // out + strike through. Each item is a <g class="sdwan-legend-item"> with a
@@ -15857,11 +15784,6 @@ function _renderStorageChart(container, samples, opts) {
   }
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var ceil;
   if (view === "bytes") {
@@ -15893,14 +15815,7 @@ function _renderStorageChart(container, samples, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + label + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   // Missed polls. The storage cadence doesn't run while an asset is down, so a
   // skipped scrape leaves no row — same as telemetry and the interface
