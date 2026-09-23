@@ -23,6 +23,7 @@
           <button class="btn btn-primary" id="btn-new-rule" style="display:none">+ New automation</button>
           <button class="btn btn-primary" id="btn-add-channel" style="display:none">+ Add channel</button>
           <button class="btn btn-primary" id="btn-add-script" style="display:none">+ Add script</button>
+          <button class="btn btn-primary" id="btn-add-check" style="display:none">+ Add check</button>
           <button class="btn btn-primary" id="btn-add-contact" style="display:none">+ Add contact</button>
           <button class="btn btn-secondary" id="btn-refresh">Refresh</button>
         </div>
@@ -32,6 +33,7 @@
         <button type="button" class="page-tab active" data-tab="manage" id="auto-tab-manage-btn" style="display:none">Automations</button>
         <button type="button" class="page-tab" data-tab="delivery" id="auto-tab-delivery-btn" style="display:none">Delivery</button>
         <button type="button" class="page-tab" data-tab="scripts" id="auto-tab-scripts-btn" style="display:none">Scripts</button>
+        <button type="button" class="page-tab" data-tab="connectivity" id="auto-tab-connectivity-btn" style="display:none">Connectivity</button>
         <button type="button" class="page-tab" data-tab="contacts" id="auto-tab-contacts-btn" style="display:none">Address Book</button>
       </div>
 
@@ -114,6 +116,39 @@
         <div id="scripts-list"><p class="empty-state">Loading...</p></div>
       </div>
 
+      <!-- ─── Connectivity tab ──────────────────────────────────────────────
+           Agent-run connectivity checks (connectivity-checks.js). Gated by the
+           connectivityChecks key. A check says WHAT to measure and FROM which
+           agent hosts; SLAs are set by automations on its conn* metrics. -->
+      <div class="page-tab-panel" id="auto-tab-connectivity">
+        <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
+          Checks the <strong>Polaris Agent</strong> runs from the hosts you choose: an HTTP / HTTPS request, a TCP connect or a ping, with a traceroute of the path. Results appear on each host's <strong>Connectivity</strong> tab. To be alerted, create an automation on the <em>Connectivity</em> metrics (latency, failure rate, HTTP status…) — a check has no threshold of its own, and never changes the host's own Up / Down status.
+        </p>
+        <div id="conn-pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
+        <div class="table-wrapper table-wrapper-sticky">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:200px" data-col-id="name" data-sf-key="name" data-sf-type="string">Name</th>
+                <th style="width:80px" data-col-no-resize="true" data-col-id="kind" data-sf-key="kind" data-sf-type="string" data-sf-options="http|https|tcp|icmp">Kind</th>
+                <th style="width:260px" data-col-id="target" data-sf-key="target" data-sf-type="string">Target</th>
+                <th style="width:110px" data-col-no-resize="true" data-col-id="interval" data-sf-key="intervalSec" data-sf-type="number" data-sf-nofilter="true">Interval</th>
+                <th style="width:90px" data-col-no-resize="true" data-col-id="sources" data-sf-key="sourceCount" data-sf-type="number" data-sf-nofilter="true">Hosts</th>
+                <th style="width:170px" data-col-id="result" data-sf-key="failCount" data-sf-type="number" data-sf-nofilter="true">Result</th>
+                <th style="width:150px" data-col-id="lastRun" data-sf-key="lastRunAt" data-sf-type="date">Last run</th>
+                <th style="width:110px" data-col-no-resize="true" data-col-id="traceroute" data-sf-key="tracerouteEnabled" data-sf-type="string" data-sf-options="true=On|false=Off">Traceroute</th>
+                <th style="width:110px" data-col-no-resize="true" data-col-id="enabled" data-sf-key="enabled" data-sf-type="string" data-sf-options="true=Enabled|false=Disabled">Enabled</th>
+                <th data-col-id="createdBy" data-sf-key="createdBy" data-sf-type="string">Created by</th>
+              </tr>
+            </thead>
+            <tbody id="conn-tbody">
+              <tr><td colspan="10" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" id="conn-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+      </div>
+
       <!-- ─── Address Book tab ──────────────────────────────────────────────
            Every address an alert can route to. Gated by the ownership-
            dimensioned contacts key: read browses, write adds + curates your
@@ -159,6 +194,7 @@
   <script src="/js/passkeys-self.js"></script>
   <script src="/js/automations.js"></script>
   <script src="/js/condition-builder.js"></script>
+  <script src="/js/connectivity-checks.js"></script>
   <script src="/js/automations-address-book.js"></script>
   <script src="/js/automations-wizard.js"></script>
   <script src="/js/automations-portability.js"></script>

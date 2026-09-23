@@ -40,6 +40,17 @@ A number, compared against a threshold.
 | `ipsecThroughputBps` | bps | tunnel name |
 | `customWidgetValue` | — | widget |
 | `customStateValue` — Device state flag | 0/1 | state probe, row |
+| `connLatencyMs` — Connectivity latency | ms | connectivity check |
+| `connFailurePct` — Connectivity failure rate | % | connectivity check (windowed ratio, like packet loss) |
+| `connOk` — Connectivity check result | Reachable / Unreachable | connectivity check |
+| `connHttpStatus` — Connectivity HTTP status | — | connectivity check |
+| `connHopCount` — Traceroute hop count | hops | connectivity check |
+| `connTlsDaysLeft` — TLS certificate days remaining | days | connectivity check |
+
+The `conn*` metrics come from [agent-run connectivity checks](Connectivity-Checks).
+The device they are about is the **host that ran the check**, not the target, and
+they never change that host's Up / Down status. Pick the check on the condition
+row; blank means every check the host runs, one alert each.
 
 ### Prefer the device's own alarm bit
 
@@ -270,6 +281,10 @@ Sugar over the change Events Polaris emits:
 | `wireless_ap_changed` | a roam |
 | `gateway_firewall_changed` | the gate in front of the device changed |
 | `fortilink_changed` | controller link changed |
+| `connectivity_path_changed` | an agent's traceroute for a [connectivity check](Connectivity-Checks) took a different set of hops (at most once per 10 minutes per host and check) |
+
+The Devices step's **Polaris Agent installed** field (*yes* / *no*) selects hosts
+with an active Polaris Agent — the natural scope for connectivity automations.
 
 ---
 

@@ -464,6 +464,18 @@ of showing nothing.
 There is no Refresh button here — SD-WAN is read on the system-info pass, and
 the tab is showing you what that pass last brought back.
 
+### Connectivity (hosts with the Polaris Agent)
+
+Shown on a host that runs at least one [connectivity check](Connectivity-Checks).
+A table lists every check the host runs; click one to see its **Latency**
+(with optional DNS / Connect / TLS / TTFB lines and any automation SLA shaded),
+**Availability**, **HTTP status**, the **Latest result** (body fingerprint and
+size, TLS issuer and days to expiry, error text, and a body excerpt when one
+was kept) and the **Path** — the traceroute, each hop linked to the device
+Polaris monitors at that address, with changed hops marked against the previous
+trace. These results describe the path from this host; they never change the
+host's own Up / Down.
+
 ### Sources
 
 Every `AssetSource` row — one per system that reported this device — with what

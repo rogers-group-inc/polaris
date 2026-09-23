@@ -135,9 +135,9 @@ CREATE TABLE "asset_connectivity_samples_hourly" (
 
     CONSTRAINT "asset_connectivity_samples_hourly_pkey" PRIMARY KEY ("id","bucketStart")
 );
-CREATE UNIQUE INDEX "asset_connectivity_samples_hourly_bucketStart_assetId_checkId_key" ON "asset_connectivity_samples_hourly" ("bucketStart", "assetId", "checkId");
+CREATE UNIQUE INDEX "asset_connectivity_samples_hourly_bucketStart_assetId_check_key" ON "asset_connectivity_samples_hourly" ("bucketStart", "assetId", "checkId");
 CREATE INDEX "asset_connectivity_samples_hourly_assetId_bucketStart_idx" ON "asset_connectivity_samples_hourly" ("assetId", "bucketStart");
-CREATE INDEX "asset_connectivity_samples_hourly_assetId_checkId_bucketStart_idx" ON "asset_connectivity_samples_hourly" ("assetId", "checkId", "bucketStart");
+CREATE INDEX "asset_connectivity_samples_hourly_assetId_checkId_bucketSta_idx" ON "asset_connectivity_samples_hourly" ("assetId", "checkId", "bucketStart");
 
 CREATE TABLE "asset_connectivity_samples_daily" (
     "id"                 TEXT             NOT NULL,
@@ -161,9 +161,9 @@ CREATE TABLE "asset_connectivity_samples_daily" (
 
     CONSTRAINT "asset_connectivity_samples_daily_pkey" PRIMARY KEY ("id","bucketStart")
 );
-CREATE UNIQUE INDEX "asset_connectivity_samples_daily_bucketStart_assetId_checkId_key" ON "asset_connectivity_samples_daily" ("bucketStart", "assetId", "checkId");
+CREATE UNIQUE INDEX "asset_connectivity_samples_daily_bucketStart_assetId_checkI_key" ON "asset_connectivity_samples_daily" ("bucketStart", "assetId", "checkId");
 CREATE INDEX "asset_connectivity_samples_daily_assetId_bucketStart_idx" ON "asset_connectivity_samples_daily" ("assetId", "bucketStart");
-CREATE INDEX "asset_connectivity_samples_daily_assetId_checkId_bucketStart_idx" ON "asset_connectivity_samples_daily" ("assetId", "checkId", "bucketStart");
+CREATE INDEX "asset_connectivity_samples_daily_assetId_checkId_bucketStar_idx" ON "asset_connectivity_samples_daily" ("assetId", "checkId", "bucketStart");
 
 -- ─── 4. Traceroutes ─────────────────────────────────────────────────────
 CREATE TABLE "asset_connectivity_traceroutes" (

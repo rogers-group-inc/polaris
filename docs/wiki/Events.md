@@ -99,6 +99,17 @@ The `asset.*.changed` family: `asset.firmware.changed`,
 `asset.fortilink.changed`, `asset.ha.standby_down` / `_restored`,
 `asset.mac.adopted`, `asset.ip_override.released`.
 
+### Connectivity checks
+
+`connectivity.path_changed` — a host's traceroute for a
+[connectivity check](Connectivity-Checks) took a different set of hops from its
+previous one. Written against the **host** (so an automation's device filter
+applies to it), at most once every 10 minutes per host and check; the details
+list the old and new hops. `connectivity_check.created` / `.updated` /
+`.enabled` / `.disabled` / `.deleted` audit edits to a check (a target change is
+written at warning level), and `connectivity_check.agent_over_cap` names a host
+that matches more than 20 enabled checks.
+
 > These are diffed against a **run baseline**, not emitted at each write. Two
 > sequences legitimately ping-pong *within* one discovery run — a coarse cached
 > OS version replaced by the projected one, and two spellings of the same switch

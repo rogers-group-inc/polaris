@@ -26,6 +26,7 @@
 - [Actions and recipients](Automation-Actions)
 - [Escalation, reminders, quiet time](Automation-Escalation)
 - [Scripts](Automation-Scripts)
+- [Connectivity checks](Connectivity-Checks)
 - [Delivery channels](Delivery-Channels)
 - [Address book](Address-Book)
 

@@ -895,9 +895,22 @@ export async function getAssetChecks(assetId: string) {
       },
     },
   });
+  // The newest SAMPLE per check — the body fingerprint, TLS facts and (on a
+  // failed run, or a check that keeps them) the excerpt live there, not on the
+  // source row. One indexed findFirst per check; a host runs at most
+  // MAX_CHECKS_PER_AGENT, and this serves one slide-over open.
+  const newest = await Promise.all(rows.map((r) => prisma.assetConnectivitySample.findFirst({
+    where: { assetId, checkId: r.checkId },
+    orderBy: { timestamp: "desc" },
+    select: {
+      timestamp: true, ok: true, latencyMs: true, dnsMs: true, connectMs: true, tlsMs: true, ttfbMs: true,
+      httpStatus: true, bodyMatched: true, bodySha256: true, bodyBytes: true, bodyExcerpt: true,
+      error: true, resolvedIp: true, tlsNotAfter: true, tlsIssuer: true,
+    },
+  })));
   return {
     checks: rows
-      .map(({ check, ...latest }) => ({ ...check, latest }))
+      .map(({ check, ...latest }, i) => ({ ...check, latest, latestSample: newest[i] }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

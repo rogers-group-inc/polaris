@@ -8,7 +8,7 @@ Roles**, **Group Mappings**, **Authentication**.
 ## The model
 
 Every route declares a **function key** plus a required **level**. A role is a
-matrix over the 32 keys:
+matrix over the 33 keys:
 
 ```
 none  <  read  <  write  <  fullwrite
@@ -62,7 +62,7 @@ silently revoke.
 
 ---
 
-## The 32 function keys
+## The 33 function keys
 
 **Top rung** names the highest level the key offers. Where that is Full
 Read-Write, the last column says what it buys over Read-Write — because that is
@@ -130,6 +130,7 @@ the only thing that justifies the rung existing.
 | `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge · **Full RW** = clear |
 | `automationManagement` | Read-Write | automations and delivery channels |
 | `automationScripts` | Read-Write | **RCE-equivalent** — see [Automation scripts](Automation-Scripts) |
+| `connectivityChecks` | Read-Write | [agent-run connectivity checks](Connectivity-Checks). Read-Write tells every matching Polaris Agent to send traffic to a destination on a schedule. Seeded from each role's `automationManagement` level; enough on its own to open the Automations page (its Connectivity tab only) |
 | `maintenanceManagement` | Read-Write | maintenance windows; Read-Write is schedule CRUD |
 | `contacts` | Full RW | the address book — **ownership** |
 
