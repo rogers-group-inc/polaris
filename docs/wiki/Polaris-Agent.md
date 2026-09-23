@@ -312,6 +312,33 @@ The storage and interface collectors run under a 30-second guard, because
 an unresponsive NIC — without it the whole push loop freezes while the heartbeat
 keeps running and the agent looks connected.
 
+### Host identity — hostname, OS, make, model, serial
+
+Alongside the telemetry streams the agent reports what the machine *is*:
+hostname, OS and version, manufacturer, model, BIOS version and serial
+number. Because it runs on the host, this beats what a directory or MDM
+holds — those describe the machine as it was when it enrolled.
+
+The serial comes from the firmware: `/sys/class/dmi/id/product_serial` on
+Linux, the IORegistry on macOS, and the SMBIOS table on Windows.
+
+> **Windows hosts and agent versions before 0.20.1.** Windows publishes no
+> serial number in the registry, and older agents fell back to the system
+> **SKU** — a model code, identical on every unit of that model (a PowerEdge
+> R740 would report `SKU=NotProvided;ModelName=PowerEdge R740`). From 0.20.1
+> the agent reads the firmware table directly and reports the real serial,
+> the same value `Get-CimInstance Win32_BIOS` shows. **Upgrade the agent, and
+> the serial corrects itself on the next check-in.** Two things you may see
+> when it does: a serial that changes on a Windows asset for no other reason,
+> and — where the firmware has no serial to give — one that clears instead,
+> which is deliberate. Both are recorded in Events.
+
+On a hardened Linux host `product_serial` is often root-only, so an agent on
+the **unprivileged** tier reports no serial and Polaris falls back to another
+source. A serial the hardware never had programmed (`To Be Filled By O.E.M.`
+and friends) is reported as no serial at all rather than passed on — see
+[Business Rules](Business-Rules#rule-83).
+
 ### The collections are spread across the minute
 
 Each collection runs on its own cadence, and each one starts at a different
@@ -332,6 +359,45 @@ upgraded.
 
 Each agent also picks a small random offset of its own at startup, so a fleet
 deployed in one batch does not arrive at the server in lockstep.
+
+The offsets stagger when each collection **starts**. They cannot control how
+long one takes, and on a small or busy host a collection often overruns into
+the next one's slot — which is why nothing the agent measures is allowed to
+depend on having a quiet instant to itself. See the CPU reading below.
+
+### What the CPU number measures
+
+**Every CPU figure the agent reports is an average over the whole gap since
+its previous sample** — by default the last 60 seconds, whatever
+`telemetry_interval_sec` is set to. The agent reads the kernel's running CPU
+counters and reports the difference; it does not sample a moment and it does
+not pause to watch.
+
+That matters on small hosts. **Before agent 0.20.0 the reading was a single
+1-second window once a minute**, so it described 1 second in 60 and said
+nothing about the other 59. On a **single-vCPU VM** that was actively
+misleading: if one of the agent's own collections was still running when the
+window opened, it held the only core, and the sample reported ~100% CPU for a
+host that was otherwise idle. The chart was describing the agent, not the
+machine. Spreading the collections across the minute (0.19.0) did not fix it,
+because a collection that starts in its own slot can still be running when
+the window opens 11 seconds later.
+
+Two things follow from the current behaviour, both worth knowing before you
+read a chart or set a threshold:
+
+- **The agent's own overhead can no longer dominate a sample.** It now shows
+  up as what it actually costs — a few percent of the interval — instead of
+  as the entire reading on the ticks where it collided.
+- **The cadence is the smoothing.** A brief spike is averaged across the
+  whole interval rather than caught or missed at random, so the chart is
+  flatter than it was before 0.20.0 and **CPU thresholds fire on a sustained
+  average rather than on a lucky sample**. If you want a sharper chart on a
+  particular host, shorten `telemetry_interval_sec`; that shortens the
+  averaging window with it.
+
+Upgrading the agent is what applies this — an installed agent keeps its old
+behaviour until it is upgraded.
 
 ### Per-core CPU and the memory breakdown
 

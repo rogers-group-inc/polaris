@@ -57,6 +57,7 @@
 import { normalizeManufacturer } from "./manufacturerNormalize.js";
 import { normalizeWindowsOs } from "./osNormalize.js";
 import { isValidGeoCoord } from "./geo.js";
+import { usableSerialOrNull } from "./serialNumber.js";
 import {
   contributedLocation,
   defaultSourceLocationPriority,
@@ -256,23 +257,38 @@ const HOSTNAME_RULES: FieldRule[] = [
   { sourceKind: "fortigate-endpoint", pick: (o) => obsString(o, "hostname") },
 ];
 
+/**
+ * Business rule 84. Every serial rule reads through `obsSerial`, not `obsString`: a value that
+ * cannot identify a device must FALL THROUGH to the next source rather than
+ * win the field. SMBIOS placeholders ("To Be Filled By O.E.M.", "Default
+ * string") are identical on every unit of a model, so storing one both hides
+ * a real serial a lower-priority source had and feeds the duplicate-serial
+ * sweep of business rule 83 a fleet-sized false group. See
+ * utils/serialNumber.ts for the list and the reasoning.
+ */
+function obsSerial(o: Record<string, unknown> | null, key: string): string | null {
+  return usableSerialOrNull(obsString(o, key));
+}
+
 const SERIAL_RULES: FieldRule[] = [
-  // Polaris Agent reads DMI/SMBIOS directly (/sys/class/dmi/id/product_serial
-  // on Linux; ioreg IOPlatformSerialNumber on macOS; HKLM\HARDWARE\DESCRIPTION
-  // \System\BIOS on Windows). Authoritative — beats MDM serial fields that
-  // are populated by inventory-time enrollment and can be empty/cached.
+  // Polaris Agent reads SMBIOS/DMI directly (/sys/class/dmi/id/product_serial
+  // on Linux; ioreg IOPlatformSerialNumber on macOS; the raw SMBIOS table via
+  // GetSystemFirmwareTable on Windows — NOT the registry, which publishes no
+  // serial under any name and whose SystemSKU the collector once mistook for
+  // one). Authoritative — beats MDM serial fields that are populated by
+  // inventory-time enrollment and can be empty/cached.
   // On hardened Linux hosts product_serial may be 0400 (root only); the
-  // agent's DynamicUser then gets no value and the projection falls through
+  // agent DynamicUser then gets no value and the projection falls through
   // to Intune.
-  { sourceKind: "polaris-agent", pick: (o) => obsString(o, "serialNumber") },
+  { sourceKind: "polaris-agent", pick: (o) => obsSerial(o, "serialNumber") },
   // Arc reads SMBIOS in-guest on every agent check-in. Beats Intune, whose
   // serial is an enrollment-time inventory value that can be stale or empty;
   // below the Polaris Agent, which reads DMI directly with no cloud hop.
-  { sourceKind: "arc", pick: (o) => obsString(o, "serialNumber") },
-  { sourceKind: "intune", pick: (o) => obsString(o, "serialNumber") },
-  { sourceKind: "fortigate-firewall", pick: (o) => obsString(o, "serial") },
-  { sourceKind: "fortiswitch", pick: (o) => obsString(o, "serial") },
-  { sourceKind: "fortiap", pick: (o) => obsString(o, "serial") },
+  { sourceKind: "arc", pick: (o) => obsSerial(o, "serialNumber") },
+  { sourceKind: "intune", pick: (o) => obsSerial(o, "serialNumber") },
+  { sourceKind: "fortigate-firewall", pick: (o) => obsSerial(o, "serial") },
+  { sourceKind: "fortiswitch", pick: (o) => obsSerial(o, "serial") },
+  { sourceKind: "fortiap", pick: (o) => obsSerial(o, "serial") },
 ];
 
 const MANUFACTURER_RULES: FieldRule[] = [

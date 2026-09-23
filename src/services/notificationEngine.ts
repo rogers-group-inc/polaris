@@ -3666,9 +3666,21 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
   // Warm the asset-detail cache for the whole batch up front — the loop below
   // reads it per matched event, and the miss-per-distinct-asset pattern is at
   // its worst exactly when a broad outage fills the batch with asset events.
+  // Maintenance windows that were open at any point across this batch's span,
+  // for the gate below. Loaded per batch rather than per event: see
+  // loadMaintenanceSpansForEvents for why the live Asset row cannot answer
+  // this question for an event that is up to a tick old.
+  let maintenanceSpans = new Map<string, MaintenanceSpan[]>();
   if (compiled.length > 0) {
     const eventAssetIds = [...new Set(events.flatMap((ev) => (ev.resourceType === "asset" && ev.resourceId ? [ev.resourceId] : [])))];
     await primeAssetDetailCache(eventAssetIds);
+    // `events` is ordered by timestamp asc, so the ends of the batch are the
+    // ends of its span.
+    maintenanceSpans = await loadMaintenanceSpansForEvents(
+      eventAssetIds,
+      events[0]!.timestamp,
+      events[events.length - 1]!.timestamp,
+    );
     // Relation-backed device-filter leaves (interface name, SSID, FortiGate
     // sighting) resolve in SQL for the whole batch — one query per DISTINCT
     // leaf, and no query at all when no filter asks for one — instead of
@@ -3743,6 +3755,13 @@ async function runEventTail(rules: DbRule[]): Promise<void> {
       // the deletion audit trail. System-scoped events carry no assetId at
       // all and are unaffected.
       if (detail && !assetCanTrigger(detail)) continue;
+      // ...and the same gate asked as of WHEN THE EVENT HAPPENED. The check
+      // above reads the asset's status now; this one reads the maintenance
+      // window history at ev.timestamp, which is the only way a window shorter
+      // than this job's 60s interval can suppress anything at all (business
+      // rule 80a — an agent upgrade's window is about two seconds wide). The
+      // cursor still advances: a suppressed event is skipped, not deferred.
+      if (suppressedAtEventTime(maintenanceSpans, assetId, ev.timestamp)) continue;
       // Cooldown: skip when this (rule, asset/resource) fired within
       // cooldownSec — and stamp the map so later events in this batch dedupe.
       if (c.rule.cooldownSec) {
@@ -3933,6 +3952,114 @@ export async function assetDetail(assetId: string): Promise<AssetDetailRow | nul
   const row = a ? { ...a, status: String(a.status) } : null;
   _assetDetailCache.set(assetId, row);
   return row;
+}
+
+/**
+ * One maintenance window's span. `endedAt: null` = still open.
+ */
+export type MaintenanceSpan = { startedAt: Date; endedAt: Date | null };
+
+/**
+ * ─── Suppression at EVENT time, not tick time (business rule 80a) ───────────
+ *
+ * `assetCanTrigger` reads the live Asset row, which is the right question for
+ * a threshold rule: a reading is current by definition, so "is this device
+ * suppressed" and "was it suppressed when this was measured" are the same
+ * question. The EVENT tail is different, and the difference is a real leak.
+ *
+ * Events are a backlog. `runEventTail` reads everything since a cursor and the
+ * job runs once a MINUTE, so an event is routinely judged up to 60 seconds
+ * after it happened — against whatever the asset's status is by then. Any
+ * maintenance window shorter than that interval is therefore invisible to the
+ * gate: it opened and closed entirely between two ticks, and the engine sees
+ * an asset that is plainly `active`.
+ *
+ * That is not hypothetical. Business rule 80 holds an asset in maintenance for
+ * the duration of an agent upgrade so the `agent.disconnected` the operator
+ * asked for does not page anyone — and a 0.19.0 → 0.20.0 upgrade takes about
+ * TWO SECONDS end to end:
+ *
+ *   10:30:47  agent.upgrade_kickoff
+ *   10:30:47  maintenance.entered      ← hold taken, window opens
+ *   10:30:49  agent.disconnected       ← written INSIDE the window
+ *   10:30:49  agent.connected
+ *   10:30:49  maintenance.exited       ← released on reattach, window closes
+ *
+ * Every part of rule 80 worked. The window was open at the instant the event
+ * was written. But by the time the tail read that event the window had been
+ * shut for most of a minute, so the gate passed it and the operator was paged
+ * for exactly the work they had asked for — the thing rule 80 exists to stop.
+ * The faster the upgrade, the more reliably it leaks, which is why it survived
+ * the rule's own testing: a slow operation is still in its window when the
+ * tick lands.
+ *
+ * So the tail asks the question the event's own timestamp asks, against the
+ * window HISTORY (`AssetMaintenanceWindow` keeps `startedAt` / `endedAt` and is
+ * indexed `[assetId, startedAt]`). This is general, not an agent carve-out: a
+ * scheduled window that ends quickly, or an operator releasing maintenance
+ * shortly after an event, leaked the same way.
+ *
+ * **The boundary is strict — no grace after `endedAt`, deliberately.** It is
+ * tempting to extend the window by a few seconds to absorb the fact that
+ * `Event.timestamp` is `@default(now())` (stamped by the DATABASE at insert)
+ * while `detach()` writes its event without awaiting it, so a heavily loaded
+ * host could in principle land the insert just after the window closed. A
+ * grace would also swallow `agent.upgrade_failed`, which `failUpgrade` writes
+ * IMMEDIATELY after dropping the hold — on purpose, so a dead agent still
+ * alerts. Losing that is far worse than the rare race, which merely degrades
+ * to the behaviour we have today (one late alert), so the strict test wins.
+ *
+ * Covers the maintenance half of the gate only. `dependencySuppressed` is a
+ * live boolean on Asset with no history to consult, so a suppression that
+ * clears within the tick still leaks — a separate problem, and not one any
+ * table here can answer.
+ */
+export async function loadMaintenanceSpansForEvents(
+  assetIds: string[],
+  from: Date,
+  to: Date,
+): Promise<Map<string, MaintenanceSpan[]>> {
+  const byAsset = new Map<string, MaintenanceSpan[]>();
+  if (assetIds.length === 0) return byAsset;
+  const rows = await prisma.assetMaintenanceWindow.findMany({
+    where: {
+      assetId: { in: assetIds },
+      // Overlaps the batch's span: started no later than its newest event, and
+      // either still open or closed no earlier than its oldest. One query per
+      // tick, bounded by the assets IN THE BATCH rather than by the fleet —
+      // at 2000 assets a quiet minute still costs nothing.
+      startedAt: { lte: to },
+      OR: [{ endedAt: null }, { endedAt: { gte: from } }],
+    },
+    select: { assetId: true, startedAt: true, endedAt: true },
+  });
+  for (const r of rows) {
+    const list = byAsset.get(r.assetId);
+    if (list) list.push({ startedAt: r.startedAt, endedAt: r.endedAt });
+    else byAsset.set(r.assetId, [{ startedAt: r.startedAt, endedAt: r.endedAt }]);
+  }
+  return byAsset;
+}
+
+/**
+ * Was this asset inside a maintenance window at `at`? Pure, so the boundary
+ * cases are testable without a database — and the boundaries are the whole
+ * point of this function. Both ends are INCLUSIVE: an event stamped the same
+ * millisecond a window opened or closed belongs to it, which is the common
+ * case rather than an edge when a window lasts two seconds.
+ */
+export function suppressedAtEventTime(
+  spans: Map<string, MaintenanceSpan[]>,
+  assetId: string | null,
+  at: Date,
+): boolean {
+  if (!assetId) return false;
+  const list = spans.get(assetId);
+  if (!list || list.length === 0) return false;
+  const t = at.getTime();
+  return list.some(
+    (w) => w.startedAt.getTime() <= t && (w.endedAt === null || t <= w.endedAt.getTime()),
+  );
 }
 
 /** Warm the per-tick cache for a known id set in ONE query. A site-wide

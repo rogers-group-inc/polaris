@@ -28,6 +28,8 @@ the conflict slide-over.
 | **Hostname collision** | asset | a discovered device's hostname matches an existing asset |
 | **`duplicate-ip`** | asset | two network-present devices claim one address |
 | **IP override** | asset | discovery disagrees with an operator's IP pin |
+| **`serial-two-controllers`** | asset | one managed FortiSwitch/FortiAP is on **two FortiGates'** rosters |
+| **`duplicate-serial`** | asset | two asset records carry the **same serial number** — usually merged automatically, see below |
 | **`chassis-replaced`** | subnet | a network's serving FortiGate answers with a different chassis serial |
 
 ---
@@ -232,6 +234,71 @@ The pin is re-asserted, and **one** pending conflict is raised per asset.
 Note the self-disabling case that is *not* a conflict: a discovery write staging
 the **same** IP as the pin **releases** the pin in that write, audited. The pin
 did its job.
+
+---
+
+## Two FortiGates claim one device
+
+A FortiSwitch or FortiAP is discovered through the FortiGate that manages it,
+and that gate becomes the device's owner: its parent for
+[dependency suppression](Dependency-Suppression), its placement on the
+[Device Map](Device-Map), the source of its region tags, and the gate a
+description sync writes to.
+
+When **two** gates carry the same device on their managed roster, whichever
+integration ran discovery last owned the record — and the other one took it back
+on its next run. Nothing said so; the record just changed. This card is Polaris
+telling you it is happening.
+
+The card lists each claiming gate with **when it last reported the device**,
+which is the column that tells the two causes apart:
+
+| What you are looking at | What it means |
+|---|---|
+| Both gates reporting recently | the device was moved and the **old gate still has it configured**, or two integrations cover the same equipment |
+| One gate's "last confirmed" going stale | the move is settling; the card will close itself |
+
+**Polaris changes nothing on the FortiGates, and does not pick a winner.** There
+is no Accept — remove the device from the roster of the gate that no longer owns
+it, and once that gate stops reporting it for **two days** the conflict closes
+itself as auto-resolved. **Reject** dismisses the card and changes nothing; the
+same pair of gates will not raise it again, but a different pair will.
+
+An HA cluster is one gate, not two — the cluster's members are recognised as the
+same FortiGate and never raise this card between themselves.
+
+---
+
+## Two records, one serial number
+
+Two assets carry the same serial. Nearly always one device recorded twice:
+two integrations found it and nothing cross-linked the records, or a record
+outlived a re-enrolment.
+
+**Polaris usually merges these for you.** Because a shared real serial leaves
+no room for doubt — it is one device — a background pass absorbs these groups
+automatically, every 30 minutes, keeping whichever record has the stronger
+provenance. So you will rarely see this card, and one that *does* appear is a
+group the automatic pass declined: a serial shared by more assets than any one
+device could have, or a merge that failed. The verbs below are for those.
+
+| Verb | Does |
+|---|---|
+| **Merge into this** | keeps the row you clicked, absorbs and **deletes** the others |
+| **Review & merge…** | opens the full [comparison](Conflict-Resolution#merging-assets-by-hand) first |
+| **Reject** | they really are different units; the same set will not re-raise |
+
+Merging needs **full read-write on Assets** — it deletes a record. There is no
+Accept: there is nothing to adopt.
+
+Polaris ignores serials that identify nothing rather than reporting them: the
+placeholders some hardware ships (`To Be Filled By O.E.M.`, `Default string`,
+`System Serial Number`, `Not Specified`, and any serial that is one character
+repeated), anything under four characters, and any serial shared by **more than
+eight** assets — past that count the serial is the problem, not the assets.
+
+Both serial conflicts are swept every 30 minutes and are covered by business
+rule [83](Business-Rules#rule-83).
 
 ---
 

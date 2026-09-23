@@ -33,9 +33,9 @@ import { ENTRA_ASSET_TAG_PREFIX, AD_ASSET_TAG_PREFIX, AD_GUID_TAG_PREFIX, SID_TA
 import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanagerService.js";
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
-import { scoreDhcpClaim, claimBeats, type DhcpClaimScore } from "../../utils/dhcpClaimFreshness.js";
+import { scoreDhcpClaim, claimBeats, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
-import { readFirewallDeviceName, normalizeNameKey } from "../../utils/fortinetParentKey.js";
+import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
 import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
 import { refreshCache as refreshAssetTypeCache } from "../assetTypeService.js";
 import { normalizeManufacturer } from "../../utils/manufacturerNormalize.js";
@@ -77,6 +77,7 @@ import { releaseDnsResolvedAt } from "../dnsResolvedReservationService.js";
 import { createSubnetRowChecked } from "../subnetService.js";
 import { snapshotSubnet, archiveSubnet } from "../subnetArchiveService.js";
 import { raiseChassisReplacedConflict } from "../subnetChassisConflictService.js";
+import { recordControllerClaims, type ControllerClaimInput } from "../duplicateSerialConflictService.js";
 import { classifyChassis, verdictWritesSerial, classifyDeprecatedSupersede } from "../../utils/chassisIdentity.js";
 import { findCoveringExclusion } from "../../utils/subnetExclusion.js";
 import { isMergeableEndpointGhost, mergeEndpointGhostIntoAsset } from "../assetGhostMergeService.js";
@@ -815,10 +816,17 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     // per run the way infraReservationPushService is bounded per integration.
     const adoptionBudget = createAdoptionBudget();
 
+    // Which gate speaks for each asset's address, for this ENTIRE run — the
+    // same per-run shape as the budget above, and needed for the same reason.
+    // The per-gate sync below would otherwise start from an empty ranking
+    // every time, so each gate would win uncontested and the last gate to
+    // finish would own the address no matter what evidence the others held.
+    const claimState = createDhcpClaimState();
+
     // Per-device callback: sync each FortiGate's data as it arrives (phases 1, 3–9).
     // Phase 2 (stale deprecation) runs separately at the end once all devices are known.
     const onDeviceComplete = async (deviceResult: DiscoveryResult) => {
-      const r = await syncDhcpSubnets(integrationId, integrationName, integration.type, deviceResult, actor, "skip-deprecation", ac.signal, adoptionBudget);
+      const r = await syncDhcpSubnets(integrationId, integrationName, integration.type, deviceResult, actor, "skip-deprecation", ac.signal, adoptionBudget, claimState);
       syncTotals.created.push(...r.created);
       syncTotals.updated.push(...r.updated);
       syncTotals.skipped.push(...r.skipped);
@@ -1721,7 +1729,11 @@ export async function upsertFortinetInfraAssetSource(
 }
 
 // ─── Asset index — multi-key lookup for MAC, serial, hostname, IP ───────────
-class AssetIndex {
+// Exported for tests: the normalization each key applies is what decides
+// whether discovery RE-USES an existing asset or mints a second one for the
+// same device, and a mismatch between `add` and `find*` is silent — the only
+// symptom is a duplicate asset appearing days later.
+export class AssetIndex {
   private byId = new Map<string, any>();
   private byMac = new Map<string, any>();       // normalized MAC → asset
   private bySerial = new Map<string, any>();
@@ -1740,7 +1752,16 @@ class AssetIndex {
         if (m.mac) this.byMac.set(m.mac.toUpperCase(), a);
       }
     }
-    if (a.serialNumber) this.bySerial.set(a.serialNumber, a);
+    // Serial is normalized on the way in exactly as MAC and hostname are.
+    // It used to be the one identity index keyed VERBATIM, while every
+    // caller's input came off a device: a gate reporting `s108f…` or a
+    // padded serial missed an asset stored as `S108F…`, discovery fell
+    // through to the MAC rung (null on a FortiSwitch until the 2026-08
+    // baseMac capture) and then to hostname, and a miss there CREATES A
+    // SECOND ASSET for a device Polaris already had. `normalizeSerialKey`
+    // is the same helper the rule 83 duplicate-serial sweep keys on, so the
+    // sweep and the lookup can no longer disagree about what one serial is.
+    if (a.serialNumber) this.bySerial.set(normalizeSerialKey(a.serialNumber), a);
     if (a.hostname) this.byHostname.set(a.hostname.toLowerCase(), a);
     if (a.ipAddress) this.byIp.set(a.ipAddress, a);
   }
@@ -1764,12 +1785,12 @@ class AssetIndex {
         drop(this.byMac, m?.mac ? String(m.mac).toUpperCase() : null);
       }
     }
-    drop(this.bySerial, a.serialNumber);
+    drop(this.bySerial, a.serialNumber ? normalizeSerialKey(a.serialNumber) : null);
     drop(this.byHostname, a.hostname ? String(a.hostname).toLowerCase() : null);
     drop(this.byIp, a.ipAddress);
   }
 
-  findBySerial(serial: string) { return this.bySerial.get(serial); }
+  findBySerial(serial: string) { return this.bySerial.get(normalizeSerialKey(serial)); }
 
   findByMac(mac: string) { return this.byMac.get(mac.toUpperCase()); }
 
@@ -1993,7 +2014,13 @@ export function isVouchedManagedDevice(
 // inline, and the hazard that shape has to survive — two sightings of ONE
 // asset in a single run — is only observable through the real function against
 // a real database.
-export async function syncDhcpSubnets(integrationId: string, integrationName: string, integrationType: string, result: DiscoveryResult, actor?: string, mode: SyncMode = "full", signal?: AbortSignal, adoptionBudget?: AdoptionBudget) {
+export async function syncDhcpSubnets(integrationId: string, integrationName: string, integrationType: string, result: DiscoveryResult, actor?: string, mode: SyncMode = "full", signal?: AbortSignal, adoptionBudget?: AdoptionBudget, claimState?: DhcpClaimState) {
+  // Which gate speaks for an asset's address. RUN-scoped, not call-scoped: in
+  // FMG mode this function runs once per managed gate, so a state created here
+  // would let every gate win its own empty map and make the address
+  // last-gate-wins. Callers that fan out over gates pass one state for the
+  // whole run; a single-call path can omit it. See utils/dhcpClaimFreshness.ts.
+  const claims = claimState ?? createDhcpClaimState();
   const syncLog = (level: "info" | "warning" | "error", message: string) => {
     logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
   };
@@ -3433,7 +3460,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // serial (an RMA'd chassis keeping the old hostname is new hardware —
       // Phase 2a retires the old asset by serial).
       if (existingAsset && member.serial && existingAsset.serialNumber
-          && String(existingAsset.serialNumber).toUpperCase() !== member.serial.toUpperCase()) {
+          && normalizeSerialKey(existingAsset.serialNumber) !== normalizeSerialKey(member.serial)) {
         existingAsset = null;
       }
       if (existingAsset) {
@@ -3960,6 +3987,32 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     }
   }
 
+  // Controller claims for THIS pass (business rule 83). Every managed switch
+  // and AP this run saw, paired with the gate that reported it — the evidence
+  // `AssetSource` cannot hold, because its `(sourceKind, externalId)` key is
+  // unique on the DEVICE serial and a second claiming gate therefore overwrites
+  // the first instead of colliding with it. Accumulated in memory and flushed
+  // once below rather than written per device: at 2000 managed devices a round
+  // trip inside these loops would add 2000 sequential awaits to the run.
+  const controllerClaims: ControllerClaimInput[] = [];
+  const noteControllerClaim = (
+    assetId: string,
+    deviceSerial: string | null | undefined,
+    sourceKind: "fortiswitch" | "fortiap",
+    controllerDevice: string | null | undefined,
+    controllerSerial: string | null | undefined,
+  ): void => {
+    if (!deviceSerial || !controllerDevice) return;
+    controllerClaims.push({
+      assetId,
+      deviceSerial,
+      sourceKind,
+      controllerDevice,
+      controllerSerial: controllerSerial || null,
+      integrationId,
+    });
+  };
+
   for (const sw of result.fortiSwitches || []) {
     const swStatus = sw.state === "Unauthorized" ? "storage" : "active";
     const swJoinDate = sw.joinTime && Number.isFinite(sw.joinTime) && sw.joinTime > 0
@@ -3984,7 +4037,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // DIFFERENT non-empty serial (RMA'd replacement hardware inheriting
       // the old unit's address). Serial-less orphan adoption still binds.
       if (existingAsset && sw.serial && existingAsset.serialNumber
-          && String(existingAsset.serialNumber).toUpperCase() !== sw.serial.toUpperCase()) {
+          && normalizeSerialKey(existingAsset.serialNumber) !== normalizeSerialKey(sw.serial)) {
         existingAsset = null;
       }
 
@@ -4028,6 +4081,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             const observed = buildFortiswitchObservedBlob(sw, syncedAt);
             await upsertFortinetInfraAssetSource("fortiswitch", existingAsset.id, integrationId, sw.serial, observed, syncedAt, syncedAt, integrationName, infraPriorObserved(existingAsset.id, "fortiswitch", sw.serial));
             applyInfraSourceInMemory(existingAsset.id, "fortiswitch", sw.serial, observed, syncedAt, syncedAt);
+            noteControllerClaim(existingAsset.id, sw.serial, "fortiswitch", sw.device, sw.deviceSerial);
           } catch (err: any) {
             syncLog("error", `Failed to upsert fortiswitch AssetSource for ${sw.name}: ${err?.message || "Unknown error"}`);
           }
@@ -4177,6 +4231,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           try {
             await upsertFortinetInfraAssetSource("fortiswitch", newAsset.id, integrationId, sw.serial, swObserved, swSyncedAt, swSyncedAt, integrationName);
             applyInfraSourceInMemory(newAsset.id, "fortiswitch", sw.serial, swObserved, swSyncedAt, swSyncedAt);
+            noteControllerClaim(newAsset.id, sw.serial, "fortiswitch", sw.device, sw.deviceSerial);
           } catch (err: any) {
             syncLog("error", `Created FortiSwitch asset ${sw.name} but failed to upsert AssetSource row: ${err?.message || "Unknown error"}`);
           }
@@ -4278,7 +4333,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
       // serial at one site, one decommission Event every run).
       // Serial-less matches (orphan fortigate-endpoint adoption) still bind.
       if (existingAsset && ap.serial && existingAsset.serialNumber
-          && String(existingAsset.serialNumber).toUpperCase() !== ap.serial.toUpperCase()) {
+          && normalizeSerialKey(existingAsset.serialNumber) !== normalizeSerialKey(ap.serial)) {
         existingAsset = null;
       }
 
@@ -4336,6 +4391,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             const observed = buildFortiapObservedBlob(ap, syncedAt);
             await upsertFortinetInfraAssetSource("fortiap", existingAsset.id, integrationId, ap.serial, observed, syncedAt, syncedAt, integrationName, infraPriorObserved(existingAsset.id, "fortiap", ap.serial));
             applyInfraSourceInMemory(existingAsset.id, "fortiap", ap.serial, observed, syncedAt, syncedAt);
+            noteControllerClaim(existingAsset.id, ap.serial, "fortiap", ap.device, ap.deviceSerial);
           } catch (err: any) {
             syncLog("error", `Failed to upsert fortiap AssetSource for ${ap.name}: ${err?.message || "Unknown error"}`);
           }
@@ -4447,6 +4503,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           try {
             await upsertFortinetInfraAssetSource("fortiap", newAsset.id, integrationId, ap.serial, apObserved, apSyncedAt, apSyncedAt, integrationName);
             applyInfraSourceInMemory(newAsset.id, "fortiap", ap.serial, apObserved, apSyncedAt, apSyncedAt);
+            noteControllerClaim(newAsset.id, ap.serial, "fortiap", ap.device, ap.deviceSerial);
           } catch (err: any) {
             syncLog("error", `Created FortiAP asset ${ap.name} but failed to upsert AssetSource row: ${err?.message || "Unknown error"}`);
           }
@@ -4697,6 +4754,20 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     }
     if (vipNames.length > 0) {
       syncLog("info", `VIP sync: created ${vipNames.length} VIP reservation(s)`);
+    }
+  }
+
+  // Flush this pass's controller claims (business rule 83). Best-effort and
+  // never fatal: the claims are evidence for a REPORT, and losing a pass of
+  // them costs the sweep some freshness, never the inventory this run wrote.
+  if (controllerClaims.length) {
+    try {
+      const written = await recordControllerClaims(controllerClaims);
+      if (verboseLogging) {
+        syncLog("info", `Recorded ${written} controller claim(s) for managed switches/APs`);
+      }
+    } catch (err: any) {
+      syncLog("error", `Failed to record controller claims: ${err?.message || "Unknown error"}`);
     }
   }
 
@@ -5476,8 +5547,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // name regardless of which pathway carried it, instead of whichever pathway
   // (or gate) happened to iterate last. Only strictly-fresher evidence takes
   // over, so a remembered-but-offline (but still local-attributed) inventory
-  // row can't out-name a currently-held lease.
-  const bestGateClaimMsByAsset = new Map<string, number>();
+  // row can't out-name a currently-held lease. Lives on the run-scoped
+  // `claims` state so it also spans the per-gate syncs of an FMG run.
+  const bestGateClaimMsByAsset = claims.bestGateClaimMsByAsset;
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 6 — Associate DHCP MACs with assets & cross-update reservations
@@ -5536,7 +5608,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // take ipAddress / ipSource / learnedLocation — and the fortigate-endpoint
     // source blob's gate — from the FRESHEST sighting, not from whichever
     // entry iterates last. See utils/dhcpClaimFreshness.ts for the ranking.
-    const bestIpClaimByAsset = new Map<string, DhcpClaimScore>();
+    // Run-scoped, so the gates of an FMG run — which each get their own call
+    // to this function — compete in one set rather than one set apiece.
+    const bestIpClaimByAsset = claims.bestIpClaimByAsset;
 
     for (const entry of result.dhcpEntries) {
       if (!entry.macAddress || !entry.ipAddress) continue;
@@ -5884,8 +5958,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // Phase 6 rule applied to inventory-only MACs: several gates can report
     // the same client (the site it left keeps a remembered-but-offline row),
     // and without ranking the LAST row iterated wrote the IP. The gate whose
-    // per-client last_seen is freshest speaks for the address.
-    const bestInvIpSeenByAsset = new Map<string, number>();
+    // per-client last_seen is freshest speaks for the address. Run-scoped for
+    // the same reason as the Phase 6 map above.
+    const bestInvIpSeenByAsset = claims.bestInvIpSeenByAsset;
 
     // Deferred I/O for the update path (see the note at the write site).
     // deviceInventory is every DHCP client across every gate — routinely the
@@ -7740,13 +7815,18 @@ async function syncArcDevices(
   }
 
   // Uniqueness guard, not just normalization. `normalizeHardwareSerial`
-  // rejects vendor placeholders, but it CANNOT reject our own agent's
-  // Windows fallback: when SystemSerialNumber is empty the agent reports
-  // `SystemSKU`, a MODEL sku shared by every machine of that model, and
-  // that's a perfectly well-formed string. So any serial claimed by two
-  // different assets is discarded — a key that's ambiguous in the data is
-  // not an identity, whatever it looks like. Without this, one empty-serial
-  // model line would collapse into a single asset.
+  // rejects vendor placeholders, but a value can be well-formed and still
+  // not be an identity. The motivating case was our own agent: on Windows it
+  // used to report `SystemSKU` — a MODEL sku shared by every machine of that
+  // model — because the registry publishes no serial and the collector had
+  // nowhere else to look. Agent 0.20.1 reads the real SMBIOS table instead,
+  // but this guard is NOT retired with it: assets stamped by an older agent
+  // keep the SKU until it upgrades and reports again, cloned VMs duplicate a
+  // template's serial, and a placeholder this list has not met behaves the
+  // same way. So any serial claimed by two different assets is discarded — a
+  // key that's ambiguous in the data is not an identity, whatever it looks
+  // like. Without this, one empty-serial model line would collapse into a
+  // single asset.
   const { index: assetBySerial, ambiguous: ambiguousSerials } = indexUniqueBy(serialCandidates);
   if (ambiguousSerials.size > 0) {
     syncLog("info", `Serial match: ignoring ${ambiguousSerials.size} hardware serial(s) reported by more than one asset `

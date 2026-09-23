@@ -152,6 +152,19 @@ const (
 // not a minute multiple, or give two loops the same phase, and the drift
 // comes back on a period nobody will think to look for. pacing_test.go
 // walks a simulated hour rather than trusting that reasoning.
+//
+// WHAT THE PHASES CANNOT DO — and it is worth knowing before leaning on
+// them again. They stagger when a pass STARTS. They say nothing about how
+// long it runs. On a single-vCPU VM every pass takes far longer than this
+// table assumes, so a collector that started in its own slot is often still
+// running seconds later, inside somebody else's. That is survivable for
+// everything here except a MEASUREMENT: the host CPU reading used to be a
+// 1-second window at phase 8, and a processConnections sweep from phase 57
+// only had to overrun by 11 seconds to land in it and report the agent's own
+// work as the host's load. The fix was to delete the window (see
+// collectors/cputimes.go), not to move the phase — no arrangement of this
+// table can hold a one-second hole open on a host where passes overrun.
+// Never put a timing-sensitive measurement back behind a phase offset.
 
 // loopPhaseSec is the deterministic per-loop offset, in seconds, applied to
 // a loop's first fire and therefore to its ticker phase for the life of the
@@ -176,7 +189,7 @@ var loopPhaseSec = map[string]int{
 	"responseTime":       0,  // owns zero; everything else is measured around it
 	"command":            2,  // 20 s poll, one cheap GET
 	"heartbeat":          4,
-	"telemetry":          8,  // blocks ~1 s sampling CPU
+	"telemetry":          8,  // cheap now: counter read + push, no sample window
 	"systemInfo":         13, // full host enumeration
 	"interfaces":         18,
 	"storage":            22,
@@ -556,9 +569,10 @@ func heartbeatLoop(ctx context.Context, cfg *config.Config, client *transport.Cl
 
 // telemetryLoop pushes a CPU+memory+temperatures sample on its own
 // cadence (default 60 s, configurable via telemetry_interval_sec in
-// agent.conf). The collector blocks ~1 s during CPU sampling so the
-// returned percentage reflects a real delta; running on a separate
-// goroutine keeps it from delaying the response-time loop.
+// agent.conf). The CPU figure covers the whole gap between two passes —
+// the collector reads cumulative counters and never blocks — so THIS
+// LOOP'S CADENCE IS THE AVERAGING WINDOW: lengthen telemetry_interval_sec
+// and the chart smooths out, shorten it and it sharpens.
 func telemetryLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
 	runLoop(ctx, "telemetry", intervalOr(cfg.TelemetryIntervalSec, defaultTelemetryIntervalSec), true, func() {
 		pushTelemetryOne(client)

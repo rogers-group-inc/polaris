@@ -23,12 +23,14 @@
  *      "To Be Filled By O.E.M.", "System Serial Number", "Default string",
  *      "None", "Not Specified", "0123456789" or all-zeros. Thousands of
  *      unrelated machines report the identical string.
- *   2. **Our own agent's SKU fallback.** On Windows, when
- *      HKLM\SYSTEM\HardwareConfig\Current\SystemSerialNumber is empty the
- *      agent falls back to `SystemSKU` from the BIOS key — which is a MODEL
- *      SKU, not a per-machine serial. Every machine of that model reports
- *      the same value. (See readPlatformDMI in
- *      agent/internal/collectors/systeminfo_windows.go.)
+ *   2. **Our own agent's SKU fallback — FIXED in agent 0.20.1, but still
+ *      in the data.** Windows publishes no serial in the registry at all, and
+ *      the collector used to fall back to `SystemSKU` from the BIOS key, which
+ *      is a MODEL SKU: every machine of that model reported the same value.
+ *      The collector now reads the real SMBIOS table (see readPlatformDMI in
+ *      agent/internal/collectors/systeminfo_windows.go), but agents in the
+ *      field upgrade on their own schedule and assets stamped by an older one
+ *      keep the SKU until that agent next reports. Treat this as live.
  *   3. **Virtualization.** Some hypervisors and cloning workflows leave
  *      duplicate serials across a template's descendants.
  *
@@ -41,41 +43,16 @@
  * Pure — no DB, no I/O.
  */
 
+import { PLACEHOLDER_SERIALS, MIN_SERIAL_LENGTH } from "./serialNumber.js";
+
 /**
- * Serial values that are placeholders rather than identities. Compared
- * case-insensitively against the whitespace-collapsed value.
- *
- * Kept as exact matches rather than substrings on purpose: a real serial
- * could legitimately contain "none" or "default" as a fragment, and a
- * substring rule would silently discard valid identities.
+ * The placeholder list and the length floor are shared with the projection and
+ * the rule 83 conflict sweep (utils/serialNumber.ts) — three private copies of
+ * "what is not a serial" is how they drift apart. What stays local is the
+ * stricter NORMALIZATION below: this file builds a MATCH KEY, so it also folds
+ * case and internal whitespace and rejects values with no alphanumeric content,
+ * none of which the other two callers need.
  */
-const JUNK_SERIALS: ReadonlySet<string> = new Set([
-  "to be filled by o.e.m.",
-  "to be filled by oem",
-  "tobefilledbyoem",
-  "system serial number",
-  "default string",
-  "not specified",
-  "not applicable",
-  "not available",
-  "no asset tag",
-  "none",
-  "n/a",
-  "na",
-  "null",
-  "unknown",
-  "invalid",
-  "chassis serial number",
-  "base board serial number",
-  "0123456789",
-  "1234567890",
-  "123456789",
-  "0",
-]);
-
-/** Shortest string we'll accept as a real serial. */
-const MIN_SERIAL_LENGTH = 4;
-
 /**
  * Normalize a hardware serial for use as a match key, or return null when
  * the value is not usable as an identity.
@@ -97,7 +74,7 @@ export function normalizeHardwareSerial(raw: unknown): string | null {
   const collapsed = raw.trim().replace(/\s+/g, " ");
   if (!collapsed) return null;
 
-  if (JUNK_SERIALS.has(collapsed.toLowerCase())) return null;
+  if (PLACEHOLDER_SERIALS.has(collapsed.toLowerCase())) return null;
   if (collapsed.length < MIN_SERIAL_LENGTH) return null;
 
   // Must carry at least one alphanumeric character — a serial of "----" or

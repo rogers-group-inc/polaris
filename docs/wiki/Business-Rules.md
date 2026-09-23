@@ -880,3 +880,189 @@ its upgrade failed is exactly what you want to hear about.
 
 See [Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)
 and [Polaris Agent](Polaris-Agent#upgrading).
+
+### Rule 80a
+
+**A silence is granted for when the event happened, not for when something got
+round to reading it.**
+
+Rule 80 shipped and operators were still paged by their own agent upgrades. The
+maintenance window was being taken correctly every time — you can see it in the
+asset's own event list:
+
+```
+10:30:47  agent.upgrade_kickoff     0.19.0 -> 0.20.0
+10:30:47  maintenance.entered       Polaris Agent upgrade
+10:30:49  agent.disconnected        WARNING
+10:30:49  agent.connected
+10:30:49  maintenance.exited
+```
+
+The device really was in maintenance when the disconnect was recorded. But
+**automations that watch events are evaluated once a minute**, against a
+backlog — and they used to ask "is this device in maintenance?" rather than
+"was it in maintenance when this happened?". By the time the automation looked,
+the two-second window had been shut for most of a minute, the device was back
+to active, and the alert went out.
+
+The consequence was general, not specific to agents: **any maintenance window
+shorter than a minute suppressed nothing at all.** A short scheduled window, or
+releasing a device from maintenance shortly after something happened to it,
+leaked the same way. An agent upgrade just made it happen every single time,
+because the window is only about two seconds wide.
+
+Event automations now check the device's maintenance **history** at the moment
+the event was recorded. In practice:
+
+- **An event that happened inside a maintenance window stays silent**, however
+  briefly that window was open and however long ago it closed.
+- **An event just outside one still alerts.** A device that drops again ten
+  seconds after its upgrade finished is a real outage and you will hear about
+  it.
+- **A failed upgrade still alerts.** Polaris ends the maintenance window
+  *before* recording the failure, deliberately, so an agent that is down
+  because its upgrade failed is never covered by the silence its own upgrade
+  was granted.
+- **Recovery still clears.** The counterpart event that closes an alert is
+  never suppressed — otherwise an alert raised before a window could be left
+  with nothing able to clear it.
+
+One limit worth knowing: this covers maintenance windows. A device silenced by
+[dependency suppression](Dependency-Suppression) that recovers within the same
+minute can still produce an alert, because Polaris keeps no history of when
+suppression started and stopped the way it does for windows.
+
+See [Maintenance Windows](Maintenance-Windows) and
+[Automation Triggers](Automation-Triggers).
+
+### Rule 82
+
+**A measurement of the host must not be dominated by the measurer, and a
+scheduling offset is not a way to protect one.**
+
+The [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures) used to report
+host CPU by measuring **one second out of every sixty**. On a host with cores to
+spare that is just an imprecise way to describe a minute. On a **single-vCPU VM**
+it was actively wrong: if one of the agent's own collections was still running
+when that one-second window opened, it held the only core, and the sample
+reported close to 100% CPU for a host that was otherwise idle.
+
+The error was not random, which is what made it worth a rule. The same
+collections overrun on the same hosts every minute, so those hosts read high the
+same way every time, and nothing on the chart said so.
+
+Spreading the collections across the minute — which Polaris already does, and
+which fixed an [earlier problem](Polaris-Agent#the-collections-are-spread-across-the-minute)
+of the same family — could not fix this one. **An offset controls when a
+collection starts, not how long it runs**, and on the small hosts where this
+matters everything runs long. One collection only had to overrun by 11 seconds
+to land on the reading.
+
+So the sampling window was removed rather than moved. The agent now reads the
+operating system's running CPU counters and reports the difference since its
+previous sample, which means:
+
+- **The measured span is the whole interval between samples** — by default 60
+  seconds. Nothing goes unmeasured, and the agent's own work can only ever
+  count for what it actually costs.
+- **The chart is flatter, and CPU thresholds fire on a sustained average**
+  rather than on whichever second happened to be sampled. If you tuned a CPU
+  threshold before agent 0.20.0, re-check it.
+- **The sample interval is the smoothing.** Shorten `telemetry_interval_sec` on
+  a host you want a sharper chart for; that shortens the averaging window too.
+
+This applies to host CPU. Per-program CPU still takes a brief sample, because a
+single program's percentage is measured against elapsed time rather than against
+the machine — a collection competing with it makes that number read *low*, not
+high.
+
+An agent already installed keeps its old behaviour until it is upgraded.
+
+See [Polaris Agent](Polaris-Agent#what-the-cpu-number-measures).
+
+### Rule 83
+
+**A serial belongs to one device and one owner; two claimants is a report,
+never a silent winner.**
+
+A serial number is meant to settle arguments, and two situations can make it the
+argument instead. Polaris now reports both on the
+[Conflicts](Conflict-Resolution) page.
+
+**One device, two FortiGates.** A FortiSwitch or FortiAP is discovered through
+the gate that manages it. If two gates both carry it on their managed roster —
+because the device was moved and nobody removed it from the old gate's
+configuration, or because two integrations cover overlapping equipment — then
+**whichever integration ran discovery most recently owned the record**, and the
+next run of the other one took it back. That decided the device's parent for
+[dependency suppression](Dependency-Suppression), where it appeared on the
+[Device Map](Device-Map), which region tags it carried, and which gate a
+description sync was addressed to. None of it was visible: the record simply
+said something different depending on which run was last.
+
+The card names both gates and, for each, when it last reported the device. That
+last column is the one that tells the two explanations apart, because a gate
+that has genuinely lost the device stops reporting it.
+
+**Polaris changes nothing on the devices, and picks no winner.** A completed
+move and a forgotten roster entry look identical for as long as both gates keep
+answering, and only you know which happened — the fix is on the FortiGates
+either way. So there is no "accept": remove the device from the gate that no
+longer owns it, and **the card closes itself** once that gate has stopped
+reporting it for two days. A stale entry keeps being reported, so it keeps the
+card.
+
+**One serial, two records.** The other case is two assets carrying the same
+serial — usually one device that two integrations both found and nothing
+cross-linked, or a record that outlived a re-enrolment. Here there is nothing to
+weigh up: a serial identifies one unit, so the card's action is a merge, either
+one-click from the row you want to keep or through the full comparison first.
+Merging needs full read-write on Assets, because it deletes a record.
+
+Serials that identify nothing are ignored rather than reported: the placeholders
+some hardware ships (`To Be Filled By O.E.M.`, `Default string`, `System Serial
+Number`, and a serial that is one character repeated), and any serial shared by
+more than eight assets — past that count the serial is the problem, not the
+assets. If two genuinely different units do report one serial, Reject the card
+and that pair will not come back.
+
+Those placeholders are also refused at the point a serial would be recorded,
+not just here — see [Rule 84](#rule-84).
+
+See [Conflict Resolution](Conflict-Resolution) and
+[Integration: Fortinet](Integration-Fortinet).
+
+### Rule 84
+
+**A serial that identifies nothing is refused when it would be recorded, not
+when something later reads it.**
+
+Hardware is supposed to carry a serial number programmed at the factory.
+Plenty of it does not, and reports a placeholder instead — `To Be Filled By
+O.E.M.`, `Default string`, `System Serial Number`, a row of zeroes. Every unit
+of that model reports the same one.
+
+Polaris refuses those values wherever a serial would be recorded, rather than
+storing them and filtering them later. Three things follow, and they are what
+you will actually see:
+
+- **An asset shows no serial rather than a fake one.** An empty Serial Number
+  field means nothing that saw this device could tell you — not that the value
+  was lost.
+- **Polaris falls through to the next source.** A device known to both an agent
+  and Intune, where the agent can only read a placeholder, shows Intune's
+  serial. The agent normally outranks Intune for this field; it does not get to
+  win it with a value that identifies nothing.
+- **A stored placeholder is cleared once nothing can replace it**, and the
+  change is written to Events as `asset.serial.cleared`. This is why a serial
+  can disappear from a Windows asset after you upgrade its agent — see
+  [Polaris Agent](Polaris-Agent#host-identity--hostname-os-make-model-serial).
+  It was never that machine's serial.
+
+Serials are still checked for uniqueness on top of this. A value can be
+well-formed and still not identify anything — a cloned VM inherits its
+template's serial, and a machine whose agent has not been upgraded yet keeps
+whatever it reported before. A serial two different assets both claim is not
+used to match them.
+
+See [Polaris Agent](Polaris-Agent) and [Conflict Resolution](Conflict-Resolution).
