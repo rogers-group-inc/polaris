@@ -240,6 +240,47 @@
   --md-warning:                 #c05a00;
   --md-error:                   #9e1a14;
 }
+/* Nightfall — indigo ground, sky-blue accent: the desktop's nightfall hues
+   (styles.css). Without this block the phone painted the neutral Material
+   greys of :root, which read as grey beside the desktop's blues.
+   Not a straight copy of the daylight mapping above: that table sends
+   --color-bg-secondary (the darkest ground) to cont-high, which is right
+   when "higher" means darker and inverts every raised surface in a dark
+   palette. The container ladder keeps :root's lightness order and takes its
+   hues from the desktop set — lowest ← --color-bg-secondary, surface ←
+   --color-bg-primary, low ← --color-surface, high ← --color-bg-elevated —
+   with cont and highest interpolated on the same hue. Text, accent and
+   status colours are the desktop tokens as they stand. */
+[data-theme="nightfall"] {
+  --md-primary:                 #4bbcee;
+  --md-on-primary:              #00293d;
+  --md-primary-container:       #0f4d6e;
+  --md-on-primary-container:    #cdeeff;
+  --md-secondary:               #b4bce6;
+  --md-on-secondary:            #1f2547;
+  --md-secondary-container:     #343c6c;
+  --md-on-secondary-container:  #dde2ff;
+  --md-error:                   #f71341;
+  --md-on-error:                #ffffff;
+  --md-error-container:         #5c0a1d;
+  --md-on-error-container:      #ffd9df;
+
+  --md-surface:                 #141427;
+  --md-surface-cont-lowest:     #0d0d1c;
+  --md-surface-cont-low:        #181c39;
+  --md-surface-cont:            #1d2244;
+  --md-surface-cont-high:       #22284d;
+  --md-surface-cont-highest:    #2b3260;
+  --md-on-surface:              #e4e7f6;
+  --md-on-surface-variant:      #9aa0c6;
+  --md-outline:                 #6f759e;
+  --md-outline-variant:         #353d6e;
+  --md-inverse-surface:         #e4e7f6;
+  --md-inverse-on-surface:      #1f2547;
+
+  --md-success:                 #3ddc97;
+  --md-warning:                 #f2c14e;
+}
 
 * { box-sizing: border-box; }
 

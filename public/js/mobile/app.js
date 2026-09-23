@@ -229,7 +229,7 @@ window.PolarisTheme = {
     // and only affects the launch splash, so a light-mode user still gets a dark
     // splash — cosmetic and unavoidable.
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", t.family === "dark" ? "#1d2024" : "#eef0f7");
+    if (meta) meta.setAttribute("content", t.family === "dark" ? "#1d2244" : "#eef0f7");
   },
   // One tap, one step — but the step can have waypoints. Lands only on a
   // selectable theme; any transit position between here and there is faded
