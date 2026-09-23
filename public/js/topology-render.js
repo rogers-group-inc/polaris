@@ -637,6 +637,32 @@
           "line-outline-width": 2,
         },
       },
+      // Fan-out links (stamped by markFanOutEdges from the column solver's
+      // grid): a link between two nodes two-plus columns apart on different
+      // rows routes orthogonally — along the shallow end's row, a turn in
+      // the gutter one and a half columns along (data(fanOutTurn), signed so
+      // it is measured from the shallow end), then along the deep end's
+      // row. One rule per screen axis because the phone transposes the grid
+      // (depth → y). Geometry only — color/dash still come from the type
+      // rules above. The inter-group rule below wins where both apply.
+      {
+        selector: 'edge[isFanOut = 1][fanOutDir = "horizontal"]',
+        style: {
+          "curve-style": "taxi",
+          "taxi-direction": "horizontal",
+          "taxi-turn": "data(fanOutTurn)",
+          "taxi-turn-min-distance": 12,
+        },
+      },
+      {
+        selector: 'edge[isFanOut = 1][fanOutDir = "vertical"]',
+        style: {
+          "curve-style": "taxi",
+          "taxi-direction": "vertical",
+          "taxi-turn": "data(fanOutTurn)",
+          "taxi-turn-min-distance": 12,
+        },
+      },
       // Cross-group links (stamped by markInterGroupEdges) route ORTHOGONALLY
       // so they travel the gutters between location-group boxes instead of
       // slicing diagonally through them. taxiTurn staggers each source's
@@ -1497,6 +1523,74 @@
     return TOPOLOGY_NODE_WEIGHT[role] != null ? TOPOLOGY_NODE_WEIGHT[role] : 4;
   }
 
+  // ── Fan-out edge model ─────────────────────────────────────────────────
+  // An edge between two positioned nodes in DIFFERENT columns (two or more
+  // apart) AND different rows is drawn orthogonally, not as a diagonal: it
+  // leaves the SHALLOWER endpoint (nearer the firewall — smaller |depth|)
+  // along that endpoint's own row, turns in the gutter one and a half
+  // columns toward the deeper endpoint (nothing ever sits on a half column),
+  // and runs along the DEEPER endpoint's row the rest of the way. The lane
+  // solver reserves exactly the cells this shape crosses — the leaf-column
+  // cell on the shallow row, and the corridor cells on the deep row when the
+  // endpoints are four or more columns apart — and markFanOutEdges stamps
+  // the matching taxi geometry onto the rendered edges, so a switch's links
+  // to its child switches no longer slice through the AP column between
+  // them and its APs can sit directly beneath it. Same-row edges are straight
+  // lines either way and adjacent-column edges cross no column, so neither
+  // is a fan-out edge.
+  var FAN_OUT_TURN_COLS = 1.5;
+  function isFanOutGeometry(aDepth, aLane, bDepth, bLane) {
+    return Math.abs(aDepth - bDepth) >= 2 && aLane !== bLane;
+  }
+  // True when endpoint A is the shallow end (ties → A, so an edge stored
+  // parent → child keeps the parent as the shallow end).
+  function fanOutShallowFirst(aDepth, bDepth) {
+    return Math.abs(aDepth) <= Math.abs(bDepth);
+  }
+  // The row a fan-out edge occupies where it crosses integer column `col`,
+  // or null when it doesn't strictly pass through that column.
+  function fanOutLaneAt(shallowDepth, shallowLane, deepDepth, deepLane, col) {
+    var lo = Math.min(shallowDepth, deepDepth);
+    var hi = Math.max(shallowDepth, deepDepth);
+    if (col <= lo || col >= hi) return null;
+    var step = deepDepth > shallowDepth ? 1 : -1;
+    return col === shallowDepth + step ? shallowLane : deepLane;
+  }
+  // Integer columns the deep-row run crosses strictly between the turn
+  // gutter and the deep endpoint — empty when the endpoints are two apart.
+  function fanOutCorridorCols(shallowDepth, deepDepth) {
+    var step = deepDepth > shallowDepth ? 1 : -1;
+    var cols = [];
+    for (var c = shallowDepth + 2 * step; c !== deepDepth; c += step) cols.push(c);
+    return cols;
+  }
+  // Stamp the fan-out taxi geometry onto a Cytoscape instance's edges from
+  // the solver's { id: { depth, lane } } grid. `colSpacing` is the caller's
+  // px per column and `orientation` which screen axis depth maps to —
+  // "horizontal" (desktop: depth → x) or "vertical" (phone: depth → y). The
+  // turn is signed so it is always measured from the SHALLOW end: positive
+  // px from the source when the source is shallow, negative (Cytoscape's
+  // "from the target" form) otherwise. Cross-group edges keep their own
+  // routing (markInterGroupEdges / routeInterGroupEdges) and are skipped;
+  // every other edge is re-stamped so a re-layout can clear a stale flag.
+  function markFanOutEdges(cy, columns, opts) {
+    if (!cy || !columns) return;
+    var spacing = (opts && opts.colSpacing) || 0;
+    var orientation = (opts && opts.orientation) === "vertical" ? "vertical" : "horizontal";
+    cy.edges().forEach(function (e) {
+      if (e.data("isInterGroup")) return;
+      var s = columns[e.data("source")];
+      var t = columns[e.data("target")];
+      if (!s || !t || !isFanOutGeometry(s.depth, s.lane, t.depth, t.lane)) {
+        if (e.data("isFanOut")) e.data({ isFanOut: 0 });
+        return;
+      }
+      var sourceShallow = fanOutShallowFirst(s.depth, t.depth);
+      var turn = FAN_OUT_TURN_COLS * spacing * (sourceShallow ? 1 : -1);
+      e.data({ isFanOut: 1, fanOutDir: orientation, fanOutTurn: turn });
+    });
+  }
+
   // Compute a column ("depth") + within-column ordinal ("lane") for every node
   // in a /topology element set, used by both the desktop and mobile surfaces to
   // position nodes deterministically instead of letting dagre auto-rank them.
@@ -1633,21 +1727,31 @@
       // the pair lands on the same column.
       if (d.isMclag) return;
       // Suppress a mesh/bridge leaf's bogus wired uplink: a non-mesh/bridge
-      // edge joining the leaf to an infra node (FG/switch). Keep the mesh and
-      // bridge edges themselves and the leaf's downstream client edges
-      // (target is a wireless-station node).
+      // edge from an infra node (FG/switch) INTO the leaf. Only the
+      // leaf-as-TARGET direction is bogus — the payload draws uplinks
+      // parent → child, and buildTopologyElements drops the same edge by
+      // the same test. An edge the leaf is the SOURCE of is its own
+      // downstream link (a bridged switch's wired FortiAP, a switch chained
+      // behind it) and must stay: dropping those too left every AP behind a
+      // bridged switch with no path to the firewall, so they fell into the
+      // orphan column and the stray rows at the bottom of the canvas, a
+      // dozen rows away from the switch they hang off.
       if (!d.isMesh && !d.isBridge) {
-        var srcLeaf = meshLeaf[d.source] && TOPOLOGY_INFRA_ROLES[roleById[d.target]];
-        var tgtLeaf = meshLeaf[d.target] && TOPOLOGY_INFRA_ROLES[roleById[d.source]];
-        if (srcLeaf || tgtLeaf) return;
+        if (meshLeaf[d.target] && TOPOLOGY_INFRA_ROLES[roleById[d.source]]) return;
       }
       adj[d.source].push(d.target);
       adj[d.target].push(d.source);
-      // Physical proof of a real link: interface-inferred, LLDP, OR a
+      // Physical proof of a real link: interface-inferred, LLDP, a
       // controller edge flagged verifiedUplink (the FG↔switch interface edge
-      // deduped into it). Mesh is wireless backhaul, deliberately NOT physical
-      // proof of a switch's wired uplink.
-      if (d.isIface || d.isLldp || d.isVerifiedUplink) {
+      // deduped into it), AND the mesh / bridge edges — a mesh backhaul is
+      // the controller naming the leaf's parent AP outright and a bridge is
+      // an LLDP-detected cable on the AP's LAN port, so both are confirmed
+      // links whose downstream side is placed via the AP. Letting
+      // verification flow through them keeps a switch chained behind a
+      // bridged switch in the verified tree; before, its only path ran
+      // through unverified nodes and it was exiled as a FortiLink fallback.
+      // (A plain controller edge is still the one thing that proves nothing.)
+      if (d.isIface || d.isLldp || d.isVerifiedUplink || d.isMesh || d.isBridge) {
         (physicalAdj[d.source] = physicalAdj[d.source] || []).push(d.target);
         (physicalAdj[d.target] = physicalAdj[d.target] || []).push(d.source);
       }
@@ -1909,32 +2013,56 @@
     function leafBlockStart(chain, i, L) {
       return i + 1 < chain.length ? L + 1 : L;
     }
-    function footprintFits(chain, L) {
+    // Every cell a chain claims at row L, as [col, lane] pairs: each member's
+    // own cell; its planned leaf block one column right; the SPINE-EDGE cell
+    // — (member's column + 1, L) — for every member whose chain continues,
+    // because the member's outgoing links (the spine, and every fan-out edge
+    // to a non-spine child) all leave along row L through the leaf column
+    // before turning (see the fan-out edge model); and, for the chain's
+    // root, the CORRIDOR cells its own fan-out edge from `parentCol` runs
+    // through along row L once past the turn gutter (non-empty only when the
+    // root sits four or more columns from its parent — a mesh-root AP whose
+    // weight ranks it a column past its sibling switches, say). Without the
+    // spine-edge cell a sibling placed one row below an earlier sibling's
+    // last planned AP ran its spine straight through that AP's cell, and the
+    // leaf pass then slid the whole AP block down past the conflict — the
+    // switch's APs ended up rows away from it.
+    function footprintCells(chain, L, parentCol) {
+      var cells = [];
       for (var i = 0; i < chain.length; i++) {
         var m = chain[i];
         var c = depth[m];
-        if (cellTaken(c, L)) return false;
+        cells.push([c, L]);
         var n = leafChildCount[m] || 0;
         var b = leafBlockStart(chain, i, L);
-        for (var k = 0; k < n; k++) {
-          if (cellTaken(c + 1, b + k)) return false;
-        }
+        for (var k = 0; k < n; k++) cells.push([c + 1, b + k]);
+        if (i + 1 < chain.length) cells.push([c + 1, L]);
+      }
+      var rootCol = depth[chain[0]];
+      if (parentCol != null && Math.abs(rootCol - parentCol) >= 4) {
+        fanOutCorridorCols(parentCol, rootCol).forEach(function (cc) { cells.push([cc, L]); });
+      }
+      return cells;
+    }
+    function footprintFits(chain, L, parentCol) {
+      var cells = footprintCells(chain, L, parentCol);
+      for (var i = 0; i < cells.length; i++) {
+        if (cellTaken(cells[i][0], cells[i][1])) return false;
       }
       return true;
     }
     function placeAnchorSubtree(id, fallbackRegion, startLane) {
       if (lane[id] != null) return; // safety — pred tree visits each anchor once
       var chain = spineChainOf(id, fallbackRegion);
+      // The corridor is only modelled inside one region: an exile root's
+      // "parent" is a verified node across the always-empty column -1.
+      var parent = pred[id];
+      var parentCol = parent != null && lane[parent] != null &&
+        !!inFallbackRegion[parent] === fallbackRegion ? depth[parent] : null;
       var L = startLane;
-      while (!footprintFits(chain, L)) L++;
-      for (var ci = 0; ci < chain.length; ci++) {
-        var m = chain[ci];
-        lane[m] = L;
-        reserveCell(depth[m], L);
-        var n = leafChildCount[m] || 0;
-        var b = leafBlockStart(chain, ci, L);
-        for (var k = 0; k < n; k++) reserveCell(depth[m] + 1, b + k);
-      }
+      while (!footprintFits(chain, L, parentCol)) L++;
+      footprintCells(chain, L, parentCol).forEach(function (cell) { reserveCell(cell[0], cell[1]); });
+      for (var ci = 0; ci < chain.length; ci++) lane[chain[ci]] = L;
       // Non-spine children of every chain member, left-to-right so the
       // earliest columns' children get the rows closest to the chain. Each
       // scans downward from just below its parent's row.
@@ -1981,14 +2109,23 @@
     nodeIds.forEach(function (id) {
       if (lane[id] != null) (occupied[depth[id]] = occupied[depth[id]] || {})[lane[id]] = true;
     });
-    // Interpolated lane of an edge where it crosses integer column `col`, or
-    // null when the edge doesn't strictly pass through that column (or an
-    // endpoint isn't positioned yet).
+    // Lane of an edge where it crosses integer column `col`, or null when
+    // the edge doesn't strictly pass through that column (or an endpoint
+    // isn't positioned yet). A fan-out edge (two-plus columns apart, rows
+    // differ) is drawn orthogonally and occupies the shallow row in the
+    // first column and the deep row after the turn — the same model
+    // markFanOutEdges renders and the anchor footprint reserved. Anything
+    // else is a straight line, interpolated.
     function edgeLaneAt(s, t, col) {
       var ds = depth[s], dt = depth[t];
       if (lane[s] == null || lane[t] == null || ds == null || dt == null) return null;
       if (ds === dt) return null;
       if (col <= Math.min(ds, dt) || col >= Math.max(ds, dt)) return null;
+      if (isFanOutGeometry(ds, lane[s], dt, lane[t])) {
+        return fanOutShallowFirst(ds, dt)
+          ? fanOutLaneAt(ds, lane[s], dt, lane[t], col)
+          : fanOutLaneAt(dt, lane[t], ds, lane[s], col);
+      }
       return lane[s] + ((col - ds) / (dt - ds)) * (lane[t] - lane[s]);
     }
     // `insideBuilding`: when the leaf being placed belongs to a b: building
@@ -2220,6 +2357,7 @@
     topologyLegendSpec: topologyLegendSpec,
     computeTopologyColumns: computeTopologyColumns,
     computeGroupedLayout: computeGroupedLayout,
+    markFanOutEdges: markFanOutEdges,
     topologyNodeWeight: topologyNodeWeight,
     computeLocationGroups: computeLocationGroups,
     renderLocationGroups: renderLocationGroups,

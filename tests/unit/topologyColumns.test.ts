@@ -17,6 +17,8 @@ type Cols = Record<string, { depth: number; lane: number }>;
 type El = { data: Record<string, unknown> };
 
 let computeTopologyColumns: (els: El[]) => Cols | null;
+type FanOutOpts = { colSpacing: number; orientation?: string };
+let markFanOutEdges: (cy: unknown, columns: Cols | null, opts: FanOutOpts) => void;
 
 beforeAll(() => {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -26,6 +28,7 @@ beforeAll(() => {
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
   computeTopologyColumns = sandbox.window.PolarisTopologyRender.computeTopologyColumns;
+  markFanOutEdges = sandbox.window.PolarisTopologyRender.markFanOutEdges;
 });
 
 // Helpers to build a /topology element set.
@@ -716,11 +719,14 @@ describe("computeTopologyColumns — location-code row clustering", () => {
     expect(computeTopologyColumns(els)).toEqual(computeTopologyColumns(els));
   });
 
-  it("ignores foreign pass-through edges inside a building: first leaf lands on its parent's row", () => {
-    // swW (b:warehouse) has one AP. A foreign chain's edge (swA→swB2, neither
-    // in the building) crosses the AP's column exactly at swW's row — without
-    // codes that pushes the AP down; with the building code the pass-through
-    // is ignored and the AP shares its parent's row.
+  it("a foreign fan-out edge no longer crosses the leaf column at an intermediate row: first leaf lands on its parent's row", () => {
+    // swW has one AP. A foreign chain's edge swA(2,0)→swB2(4,2) used to be a
+    // diagonal crossing the AP's column (3) at lane 1 — exactly swW's row —
+    // so without a building code the AP was pushed down (the b: code made
+    // the leaf pass ignore foreign pass-throughs). Under the fan-out model
+    // that edge runs along row 0 through column 3 and turns in the gutter,
+    // so it occupies (3,0) and never (3,1): the AP shares its parent's row
+    // in BOTH variants, and the building code changes nothing here.
     const build = (withCode: boolean) => {
       const els = [
         node("fg", "fortigate"),
@@ -740,13 +746,196 @@ describe("computeTopologyColumns — location-code row clustering", () => {
       return computeTopologyColumns(els)!;
     };
     const coded = build(true);
-    // Sanity: the foreign edge swA(2,0)→swB2(4,2) crosses col 3 at lane 1 —
-    // exactly the parent's row — in both variants.
+    // Sanity: the shape still puts swW on row 1 and swB2 on row 2, so the
+    // old diagonal WOULD have crossed (3,1).
     expect(coded.swW.lane).toBe(1);
     expect(coded.swB2.lane).toBe(2);
     expect(coded.apW.lane).toBe(coded.swW.lane); // same row as its parent
     const plain = build(false);
     expect(plain.swW.lane).toBe(1);
-    expect(plain.apW.lane).toBeGreaterThan(plain.swW.lane); // legacy dodge preserved
+    expect(plain.swB2.lane).toBe(2);
+    expect(plain.apW.lane).toBe(plain.swW.lane); // no dodge needed any more
+  });
+});
+
+describe("computeTopologyColumns — fan-out edge model", () => {
+  it("keeps a bridged switch's downstream AP beside it instead of orphaning it", () => {
+    // Mirrors the DRIVERS/EMPLOYEE buildings: a switch bridged behind a mesh
+    // leaf AP carries its own wired FortiAP. The solver used to drop EVERY
+    // non-mesh edge touching a bridge leaf, so the AP had no path to the
+    // firewall and fell into the orphan column's stray rows a dozen lanes
+    // below its switch. Only the parent → leaf uplink is bogus.
+    const cols = computeTopologyColumns([
+      node("fg", "fortigate"),
+      node("sw", "fortiswitch"),
+      node("apRoot", "fortiap"),
+      node("swBridge", "fortiswitch"),
+      node("apBehind", "fortiap"),
+      edge("fg", "sw"),
+      edge("sw", "apRoot"),
+      bridgeEdge("apRoot", "swBridge"),
+      controllerEdge("fg", "swBridge"), // bogus FortiLink — still suppressed
+      edge("swBridge", "apBehind"), // the switch's OWN wired AP — must survive
+    ])!;
+    expect(cols.swBridge.depth).toBe(6);
+    expect(cols.apBehind.depth).toBe(cols.swBridge.depth + 1); // leaf column right of its switch
+    expect(cols.apBehind.lane).toBe(cols.swBridge.lane); // on its switch's row, not a stray row
+  });
+
+  it("keeps a switch chained behind a bridged switch in the verified tree", () => {
+    const cols = computeTopologyColumns([
+      node("fg", "fortigate"),
+      node("sw", "fortiswitch"),
+      node("apRoot", "fortiap"),
+      node("swBridge", "fortiswitch"),
+      node("swBehind", "fortiswitch"),
+      node("apBehind", "fortiap"),
+      edge("fg", "sw"),
+      edge("sw", "apRoot"),
+      bridgeEdge("apRoot", "swBridge"),
+      controllerEdge("fg", "swBridge"),
+      edge("swBridge", "swBehind"),
+      edge("swBridge", "apBehind"),
+    ])!;
+    expect(cols.swBehind.depth).toBe(cols.swBridge.depth + 2); // next anchor column, not orphaned
+    expect(cols.swBehind.lane).toBe(cols.swBridge.lane); // continues the row (spine)
+    expect(cols.apBehind.depth).toBe(cols.swBridge.depth + 1);
+    expect(cols.apBehind.lane).toBe(cols.swBridge.lane + 1); // one below: the spine edge owns the row
+  });
+
+  it("reserves the spine-edge cell so a sibling's AP block sits directly beneath it", () => {
+    // Mirrors QC-LAB / ASP-TOWER: two non-spine sibling switches under one
+    // parent, each with a child switch (so its spine continues) and an AP
+    // stack. The lower sibling's spine edge used to run through the row the
+    // upper sibling's last AP was planned for, and the leaf pass then slid
+    // the whole AP block rows away from its switch.
+    const els = [
+      node("fg", "fortigate"),
+      node("p", "fortiswitch"),
+      node("s", "fortiswitch"),
+      node("s2", "fortiswitch"),
+      node("s3", "fortiswitch"),
+      node("a", "fortiswitch"),
+      node("aChild", "fortiswitch"),
+      node("b", "fortiswitch"),
+      node("bChild", "fortiswitch"),
+      edge("fg", "p"),
+      edge("p", "s"),
+      edge("s", "s2"),
+      edge("s2", "s3"), // tallest chain → s holds the spine
+      edge("p", "a"),
+      edge("a", "aChild"),
+      edge("p", "b"),
+      edge("b", "bChild"),
+    ];
+    const apsBySwitch: Record<string, string[]> = { a: ["a1", "a2", "a3"], b: ["b1", "b2"] };
+    for (const [sw, aps] of Object.entries(apsBySwitch)) {
+      for (const ap of aps) {
+        els.push(node(ap, "fortiap"));
+        els.push(edge(sw, ap));
+      }
+    }
+    const cols = computeTopologyColumns(els)!;
+    expect(cols.a.depth).toBe(4);
+    expect(cols.b.depth).toBe(4);
+    const aLanes = apsBySwitch.a.map((x) => cols[x].lane).sort((x, y) => x - y);
+    const bLanes = apsBySwitch.b.map((x) => cols[x].lane).sort((x, y) => x - y);
+    // Each block starts one row below its switch (the spine edge owns the
+    // switch's own row in the leaf column) and runs contiguously.
+    expect(aLanes).toEqual([cols.a.lane + 1, cols.a.lane + 2, cols.a.lane + 3]);
+    expect(bLanes).toEqual([cols.b.lane + 1, cols.b.lane + 2]);
+    // b sits below a's whole block, and its spine row is not an AP row.
+    expect(cols.b.lane).toBeGreaterThan(aLanes[aLanes.length - 1]);
+    expect(aLanes).not.toContain(cols.b.lane);
+    expect(cols.bChild.lane).toBe(cols.b.lane);
+  });
+
+  it("reserves the corridor of a child four columns out so its edge runs through no node", () => {
+    // p's children: switch s (col 4, three APs in col 5) and mesh-root AP r
+    // (weight 3 ranks it in col 6, four columns from p). r's fan-out edge
+    // turns in the gutter at 3.5 and runs along r's row through columns 4
+    // and 5 — so r may not take a row where s's APs sit.
+    const cols = computeTopologyColumns([
+      node("fg", "fortigate"),
+      node("p", "fortiswitch"),
+      node("s", "fortiswitch"),
+      node("s1", "fortiap"),
+      node("s2", "fortiap"),
+      node("s3", "fortiap"),
+      node("r", "fortiap"),
+      node("rl", "fortiap"),
+      edge("fg", "p"),
+      edge("p", "s"),
+      edge("s", "s1"),
+      edge("s", "s2"),
+      edge("s", "s3"),
+      edge("p", "r"),
+      meshEdge("r", "rl"),
+    ])!;
+    expect(cols.p.depth).toBe(2);
+    expect(cols.s.depth).toBe(4);
+    expect(cols.r.depth).toBe(6);
+    const sApLanes = ["s1", "s2", "s3"].map((x) => cols[x].lane);
+    expect(sApLanes.sort((x, y) => x - y)).toEqual([0, 1, 2]);
+    expect(cols.r.lane).toBe(3); // first row whose corridor cells (4,L),(5,L) are free
+    expect(sApLanes).not.toContain(cols.r.lane);
+    expect(cols.rl.lane).toBe(cols.r.lane);
+  });
+
+  // A minimal stand-in for the Cytoscape edge collection markFanOutEdges reads
+  // and stamps: data(key) reads, data({...}) merges.
+  const fakeCy = (edges: Record<string, unknown>[]) => {
+    const store = edges.map((d) => {
+      const data: Record<string, unknown> = { ...d };
+      return {
+        data(arg?: string | Record<string, unknown>) {
+          if (typeof arg === "string") return data[arg];
+          if (arg) Object.assign(data, arg);
+          return data;
+        },
+      };
+    });
+    return { edges: () => ({ forEach: (fn: (e: unknown) => void) => store.forEach(fn) }), store };
+  };
+
+  it("markFanOutEdges stamps orthogonal geometry on two-plus-column edges between different rows", () => {
+    const columns: Cols = {
+      fg: { depth: 0, lane: 0 },
+      swA: { depth: 2, lane: 0 },
+      swB: { depth: 2, lane: 3 },
+      leafA: { depth: 3, lane: 0 },
+      swC: { depth: 4, lane: 3 },
+    };
+    const cy = fakeCy([
+      { source: "fg", target: "swB" },              // Δ2, rows differ, source shallow → +turn
+      { source: "swC", target: "fg" },              // Δ4, stored deep → shallow → −turn (from target)
+      { source: "fg", target: "swA" },              // same row → straight, not stamped
+      { source: "swA", target: "leafA" },           // adjacent columns → not stamped
+      { source: "fg", target: "swB", isInterGroup: 1 }, // cross-group → left to its own router
+      { source: "swB", target: "ghost" },           // endpoint not in the grid → skipped
+      { source: "fg", target: "swA", isFanOut: 1, fanOutTurn: 999 }, // stale flag → cleared
+    ]);
+    markFanOutEdges(cy, columns, { colSpacing: 130, orientation: "horizontal" });
+    const d = (i: number) => cy.store[i].data() as Record<string, unknown>;
+    expect(d(0)).toMatchObject({ isFanOut: 1, fanOutDir: "horizontal", fanOutTurn: 195 });
+    expect(d(1)).toMatchObject({ isFanOut: 1, fanOutDir: "horizontal", fanOutTurn: -195 });
+    expect(d(2).isFanOut).toBeUndefined();
+    expect(d(3).isFanOut).toBeUndefined();
+    expect(d(4).isFanOut).toBeUndefined();
+    expect(d(5).isFanOut).toBeUndefined();
+    expect(d(6).isFanOut).toBe(0);
+  });
+
+  it("markFanOutEdges follows the caller's axis and spacing (phone: depth → y)", () => {
+    const columns: Cols = { fg: { depth: 0, lane: 0 }, sw: { depth: 2, lane: 1 } };
+    const cy = fakeCy([{ source: "fg", target: "sw" }]);
+    markFanOutEdges(cy, columns, { colSpacing: 110, orientation: "vertical" });
+    expect(cy.store[0].data()).toMatchObject({ isFanOut: 1, fanOutDir: "vertical", fanOutTurn: 165 });
+  });
+
+  it("markFanOutEdges is a no-op without a grid", () => {
+    const cy = fakeCy([{ source: "fg", target: "sw" }]);
+    markFanOutEdges(cy, null, { colSpacing: 130 });
+    expect((cy.store[0].data() as Record<string, unknown>).isFanOut).toBeUndefined();
   });
 });
