@@ -33,11 +33,13 @@ import { resolveMonitorSettings, type ResolvedMonitorSettings } from "./monitori
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import type { RuleScope } from "./notificationTypes.js";
 
-/** The five cadences a metric can ride. */
-export type CadenceStream = "responseTime" | "cpuMemory" | "temperature" | "systemInfo" | "storage";
+/** The six cadences a metric can ride. `connectivity` is the one that does NOT
+ *  resolve through the monitor-settings hierarchy: it is the intervalSec of the
+ *  connectivity checks the matched agent hosts run. */
+export type CadenceStream = "responseTime" | "cpuMemory" | "temperature" | "systemInfo" | "storage" | "connectivity";
 
 /** Which resolved settings fields carry each stream's cadence + collector timeout. */
-const STREAM_FIELDS: Record<CadenceStream, { interval: keyof ResolvedMonitorSettings; timeout: keyof ResolvedMonitorSettings }> = {
+const STREAM_FIELDS: Record<Exclude<CadenceStream, "connectivity">, { interval: keyof ResolvedMonitorSettings; timeout: keyof ResolvedMonitorSettings }> = {
   responseTime: { interval: "intervalSeconds",            timeout: "probeTimeoutMs" },
   cpuMemory:    { interval: "cpuMemoryIntervalSeconds",   timeout: "cpuMemoryTimeoutMs" },
   temperature:  { interval: "temperatureIntervalSeconds", timeout: "temperatureTimeoutMs" },
@@ -98,6 +100,16 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ipsecStatus: "systemInfo",
   customWidgetValue: "systemInfo",
   customStateValue: "systemInfo",
+  // Agent-run connectivity checks — each check's own intervalSec. Without
+  // these entries a `forPolls` hold would be converted at the probe cadence.
+  connLatencyMs: "connectivity",
+  connHttpStatus: "connectivity",
+  connOk: "connectivity",
+  connFailurePct: "connectivity",
+  connTlsDaysLeft: "connectivity",
+  // Traceroutes run every Nth check run, so a hold counted in polls over this
+  // metric counts traceroutes; the caption still reports the check interval.
+  connHopCount: "connectivity",
 };
 
 /**
@@ -156,11 +168,29 @@ function modalOf(values: number[]): number | null {
  */
 export async function resolveScopeCadence(scope: RuleScope, metric: string | null | undefined): Promise<ScopeCadence> {
   const stream = streamForMetric(metric);
-  const fields = STREAM_FIELDS[stream];
   const ids = await loadScopeAssetIds(scope, { monitoredOnly: true });
   if (!ids.length) {
     return { stream, mode: 0, min: 0, max: 0, timeoutMs: 0, assetCount: 0 };
   }
+  if (stream === "connectivity") {
+    // One interval per (host, enabled check) pair the scope covers, so a check
+    // run from 400 hosts outweighs one run from 3 — the same "modal across the
+    // matched devices" the monitor streams report.
+    const pairs = await prisma.connectivityCheckSource.findMany({
+      where: { assetId: { in: ids }, check: { enabled: true } },
+      select: { assetId: true, check: { select: { intervalSec: true, timeoutMs: true } } },
+    });
+    const s = summarizeIntervals(pairs.map((p) => p.check.intervalSec));
+    return {
+      stream,
+      mode: s?.mode ?? 0,
+      min: s?.min ?? 0,
+      max: s?.max ?? 0,
+      timeoutMs: modalOf(pairs.map((p) => p.check.timeoutMs)) ?? 0,
+      assetCount: new Set(pairs.map((p) => p.assetId)).size,
+    };
+  }
+  const fields = STREAM_FIELDS[stream];
   const assets = await prisma.asset.findMany({
     where: { id: { in: ids } },
     select: {

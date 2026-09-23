@@ -458,6 +458,16 @@ export async function listChecks() {
   }));
 }
 
+/** The id → name/kind registry the automation builder renders conn* sentences
+ *  and the checkId picker from (GET /automations/schema). No sources, no
+ *  results — the builder needs names, and it is read on every wizard open. */
+export async function listCheckCatalog() {
+  return prisma.connectivityCheck.findMany({
+    select: { id: true, name: true, kind: true, target: true, enabled: true },
+    orderBy: { name: "asc" },
+  });
+}
+
 export async function getCheck(id: string) {
   const check = await prisma.connectivityCheck.findUnique({ where: { id } });
   if (!check) throw new AppError(404, "Connectivity check not found");

@@ -141,7 +141,7 @@ interface DimensionSource {
   /** Builds a value→display-name lookup, for dimensions whose stored value is an
    *  opaque id. Called once per request (not per value) so the implementation can
    *  index a registry up front. */
-  labelOf?: () => (value: string) => string | undefined;
+  labelOf?: () => ((value: string) => string | undefined) | Promise<(value: string) => string | undefined>;
 }
 
 /**
@@ -378,6 +378,27 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
         },
       })).map((r) => ({ value: r.rowLabel, assetId: r.assetId })),
   },
+  // Which agent-run connectivity check (conn* metrics). Strict like
+  // stateProbeId — an exact registry id, so free text could only be a typo —
+  // and labelled by the check's name. Pairs come from MEMBERSHIP
+  // (connectivity_check_sources), not the samples: the pin-set reasoning — a
+  // host is a source the moment it is reconciled, before its first result,
+  // and the membership is exactly what the engine's readings can come from.
+  checkId: {
+    noun: "connectivity checks",
+    strict: true,
+    candidateWhere: { managedAgent: { is: { installStatus: "active" } } },
+    labelOf: async () => {
+      const rows = await prisma.connectivityCheck.findMany({ select: { id: true, name: true, kind: true } });
+      const byId = new Map(rows.map((r) => [r.id, `${r.name} (${r.kind.toUpperCase()})`]));
+      return (value: string) => byId.get(value);
+    },
+    pairs: async (ids) =>
+      (await prisma.connectivityCheckSource.findMany({
+        where: { assetId: { in: ids } },
+        select: { assetId: true, checkId: true },
+      })).map((r) => ({ value: r.checkId, assetId: r.assetId })),
+  },
 };
 
 /** Dimensions this service can populate — the wizard reads it off /schema so it
@@ -526,7 +547,7 @@ export async function listDimensionValues(
   }
 
   // Built once per request, not per value.
-  const labelOf = source.labelOf?.();
+  const labelOf = source.labelOf ? await source.labelOf() : undefined;
 
   const ids = sorted.slice(0, ASSET_SAMPLE_CAP);
   const sampledAssets = exhaustive ? scopedIds.length : ids.length;

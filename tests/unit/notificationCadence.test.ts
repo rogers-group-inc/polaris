@@ -36,9 +36,18 @@ describe("streamForMetric", () => {
     expect(streamForMetric("")).toBe("responseTime");
   });
 
-  it("names only streams the settings resolver actually carries", () => {
-    const allowed = new Set(["responseTime", "cpuMemory", "temperature", "systemInfo", "storage"]);
+  it("names only streams the settings resolver actually carries (plus the connectivity checks' own interval)", () => {
+    // `connectivity` is the one stream that does not resolve through the
+    // monitor-settings hierarchy — resolveScopeCadence reads each check's
+    // intervalSec for it instead.
+    const allowed = new Set(["responseTime", "cpuMemory", "temperature", "systemInfo", "storage", "connectivity"]);
     for (const stream of Object.values(METRIC_STREAM)) expect(allowed.has(stream)).toBe(true);
+  });
+
+  it("maps every conn* metric to the connectivity stream (else holds convert at the probe cadence)", () => {
+    for (const m of ["connLatencyMs", "connHttpStatus", "connOk", "connFailurePct", "connHopCount", "connTlsDaysLeft"]) {
+      expect(streamForMetric(m)).toBe("connectivity");
+    }
   });
 
   it("states the Polaris host's own fixed sampling tick", () => {

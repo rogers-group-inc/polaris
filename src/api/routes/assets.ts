@@ -1706,7 +1706,9 @@ router.get("/:id/metric-thresholds", requirePermission("assets", "read"), async 
     if (!asset) throw new AppError(404, "Asset not found");
     const sensorName = req.query.sensorName ? String(req.query.sensorName) : undefined;
     const sensorClass = req.query.sensorClass ? String(req.query.sensorClass) : undefined;
-    const dimension = sensorName || sensorClass ? { sensorName, sensorClass } : undefined;
+    // Connectivity charts are one check's series (conn* metrics).
+    const checkId = req.query.checkId ? String(req.query.checkId) : undefined;
+    const dimension = sensorName || sensorClass || checkId ? { sensorName, sensorClass, checkId } : undefined;
     res.json({ metric, tiers: await getMetricSeverityTiers(id, metric, dimension) });
   } catch (err) {
     next(err);

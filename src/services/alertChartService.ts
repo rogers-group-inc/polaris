@@ -151,6 +151,23 @@ export function isSdwanScopedAlert(metric: string | null | undefined): boolean {
   return !!metric && SDWAN_SCOPED_METRICS.has(metric);
 }
 
+/**
+ * Metrics whose alert is about a PATH FROM an agent host to some target — the
+ * agent-run connectivity checks. The PORT_SCOPED_METRICS argument again: the
+ * host is healthy (it is the one reporting), so its CPU, memory and response
+ * time are the story of a working workstation printed under "Connectivity
+ * latency for Intranet is 2400 ms". Those device charts are dropped and, until
+ * a connectivity sparkline exists, nothing takes their place; the Connectivity
+ * tab the email links to carries the latency, availability and path.
+ */
+const CONNECTIVITY_SCOPED_METRICS: ReadonlySet<string> = new Set([
+  "connLatencyMs", "connHttpStatus", "connOk", "connFailurePct", "connHopCount", "connTlsDaysLeft",
+]);
+
+export function isConnectivityScopedAlert(metric: string | null | undefined): boolean {
+  return !!metric && CONNECTIVITY_SCOPED_METRICS.has(metric);
+}
+
 /** The SD-WAN health-check charts. The default body asks for all three, so a
  *  failover email shows every side of the SLA rather than whichever one the
  *  automation happened to watch; they all read one loaded `SdwanSeries`. */
@@ -1246,6 +1263,8 @@ export async function buildAlertCharts(
   // chart token render away and `pruneEmptyChartSection` drop the "Last hour"
   // heading with them, and it skips all four sample queries.
   if (isPortScopedAlert(opts?.metric)) return out;
+  // Same for a connectivity-check alert (see CONNECTIVITY_SCOPED_METRICS).
+  if (isConnectivityScopedAlert(opts?.metric)) return out;
   // A sensor chart with no sensor has nothing to draw. Dropping it here (rather
   // than rendering "no data") is what keeps the token invisible on the ~all
   // alerts that aren't about a hardware sensor.

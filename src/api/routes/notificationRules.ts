@@ -28,6 +28,7 @@ import { listDimensionValues, dimensionPickerMeta } from "../../services/notific
 import { resolveScopeCadence } from "../../services/notificationCadenceService.js";
 import { listRecipientUsers } from "../../services/notificationRecipientService.js";
 import { listStateProbes } from "../../services/manufacturerProfileService.js";
+import { listCheckCatalog } from "../../services/connectivityCheckService.js";
 import { runTestDelivery } from "../../services/automationTestService.js";
 
 export const notificationRulesRouter = Router();
@@ -52,6 +53,9 @@ notificationRulesRouter.get("/schema", requirePermission("automationManagement",
       ...buildSchemaCatalog(),
       dimensionPickers: dimensionPickerMeta(),
       stateProbes: listStateProbes(),
+      // Same reason as stateProbes: a conn* condition's `checkId` is an id, and
+      // the builder's sentences must name the check, never the id.
+      connectivityChecks: await listCheckCatalog(),
     });
   } catch (err) { next(err); }
 });
