@@ -277,7 +277,8 @@ outlived a re-enrolment.
 
 **Polaris usually merges these for you.** Because a shared real serial leaves
 no room for doubt — it is one device — a background pass absorbs these groups
-automatically, every 30 minutes, keeping whichever record has the stronger
+automatically, every 30 minutes — the same merge the card's buttons perform, so both
+records' sources and any agent enrolment are kept — into whichever record has the stronger
 provenance. So you will rarely see this card, and one that *does* appear is a
 group the automatic pass declined: a serial shared by more assets than any one
 device could have, or a merge that failed. The verbs below are for those.
@@ -285,7 +286,7 @@ device could have, or a merge that failed. The verbs below are for those.
 | Verb | Does |
 |---|---|
 | **Merge into this** | keeps the row you clicked, absorbs and **deletes** the others |
-| **Review & merge…** | opens the full [comparison](Conflict-Resolution#merging-assets-by-hand) first |
+| **Review & merge…** | opens the full [comparison](Conflict-Resolution#merging-assets-by-hand) first; the card closes as soon as that merge completes |
 | **Reject** | they really are different units; the same set will not re-raise |
 
 Merging needs **full read-write on Assets** — it deletes a record. There is no
@@ -352,8 +353,8 @@ merge*.
 
 **Merging requires Assets full read-write.** A merge edits one record and
 deletes another, so it takes the same level as deploying the agent, on every
-path: the modal, the Duplicate IP card's *Merge into this* and *Review & merge*
-buttons, and the API. Reassigning an address from the card needs only Assets
+path: the modal, the Duplicate IP and Duplicate Serial cards' *Merge into this* and
+*Review & merge* buttons, and the API. Reassigning an address from the card needs only Assets
 write — it deletes nothing.
 
 Per-field winners are pre-selected from the

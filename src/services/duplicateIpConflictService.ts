@@ -769,6 +769,23 @@ export async function reconcileDuplicateIpForAddresses(
   return out;
 }
 
+/**
+ * Move every pending duplicate-ip conflict filed on `fromAssetId` onto
+ * `toAssetId`. A merge made outside the card (the asset Merge modal, the card's
+ * own "Review & merge...", the automatic serial merge) must call this BEFORE
+ * `mergeAssets`: deleting the absorbed asset cascades to conflicts pointing at
+ * it, so a card filed on that asset would vanish unresolved and unaudited
+ * instead of being closed by the reconcile that follows the merge.
+ * `mergeDuplicateIpAssets` does the same for its own conflict row.
+ */
+export async function repointDuplicateIpConflicts(fromAssetId: string, toAssetId: string): Promise<number> {
+  const moved = await prisma.conflict.updateMany({
+    where: { ...DUPLICATE_IP_CONFLICT_WHERE, status: "pending", assetId: fromAssetId },
+    data: { assetId: toAssetId },
+  });
+  return moved.count;
+}
+
 // ─── Reconcile (the job's entry point) ───────────────────────────────────────
 
 export interface DuplicateIpReconcileResult {
