@@ -512,6 +512,28 @@ That last row is the whole point. A role on that rung could edit every identity 
 
 Two neighbours deliberately stayed put. **IdP group mappings** remain on `users=fullwrite`: a mapping decides which ROLE an IdP group receives, which is granting authority rather than configuring authentication, and it is already the documented path to admin outside the last-admin guard — it belongs where the escalation guards can see it. The **login-page source-IP restriction** remains on `serverSettingsSystem`: it governs who can reach a page over the network rather than how Polaris decides who someone is, and it lives under the `/server-settings` mount whose floor is that key in any case.
 
+### The manufacturer alias fold — 2026-09-23
+
+Migration `20260923010000_fold_manufacturer_aliases`. The inverse of the `authentication` split: not one key carrying two jobs, but **one job spread across two keys**. `manufacturerAliases` is folded into `manufacturerProfiles`, and the catalogue goes from 33 keys to 32.
+
+An alias ("Fortinet, Inc." → "Fortinet") rewrites `Asset.manufacturer` on every matching row when it is saved, and `Asset.manufacturer` is what selects the device's manufacturer profile — its CPU, memory and temperature OIDs and its widgets. So a role that could edit aliases but only read profiles was already choosing which profile applied to a vendor's whole fleet; it just did it indirectly. No split of the two describes an act anyone could want to delegate separately. They had also drifted apart for no reason anyone could name: until the 2026-09-22 sweep every non-admin built-in held profiles at `read` and aliases at `none`.
+
+The routes keep their URL, `/api/v1/manufacturer-aliases`. Only the gate changed: `manufacturerProfiles=read` on the mount to list, `write` on POST / PUT / DELETE.
+
+**Seeding takes the lower of the two levels.** Two keys becoming one cannot be access-neutral for a role holding them apart, so the choice is between some roles gaining and some losing. It follows the `authentication` rule — nobody gains anything they could not already do:
+
+| Stored profiles / aliases | Folded `manufacturerProfiles` |
+|---|---|
+| equal (every built-in: admin `write`/`write`, the other four `read`/`read`) | unchanged |
+| `write` / `read` | `read` — loses profile editing |
+| `read` / `write` | `read` — loses alias editing |
+| either at `none` | `none` |
+| no stored `manufacturerAliases` | the profiles level, untouched — an absent key is not a statement that the role holds `none` |
+
+Only a custom role an operator deliberately set apart lands in the middle rows, and granting `manufacturerProfiles=write` gives the capability back as a decision.
+
+**A trap that only a real database showed.** The migration defines `pg_temp.perm_rank`, as the hygiene migration does. `prisma migrate deploy` applies every pending migration in ONE session, and a `pg_temp` function lives for the session, not the file — so on any install reaching both migrations in the same update, a plain `CREATE FUNCTION` fails with 42723 ("function already exists") and the update stops there. Reading the SQL, and running it on its own in `psql`, both look fine. It must be `CREATE OR REPLACE`, and any later migration reusing a `pg_temp` helper must be too. `tests/unit/manufacturerAliasesFoldLockstep.test.ts` pins that, the lower-of-two comparison, the single statement, and every gate.
+
 **A second invariant falls out of the same sweep: `readonly` is the FLOOR for every built-in role.** Nothing that exists to do more than look at Polaris should reach less of it than the look-only role does, and `networkadmin` and `assetsadmin` were both below that floor on three keys. The built-ins were corrected upward at the same time — `networkadmin` could run a Discovery but not adopt what answered (adopting chains `assets=write`), and `assetsadmin` could switch on SNMP monitoring for an asset but not create the credential monitoring needs. One exception is deliberate and must not be tidied away: `user` holds `networkScan=none` where `readonly` holds `read`, because that role exists for address-space self-service and an active sweep is IDS-visible.
 
 None of it took a capability away. Every stored `fullwrite` on a shortened key folds to that key's surviving top rung, which is the level the grant always actually delivered, and the runtime clamps the same way on read and on write — so a session snapshot stamped before the deploy resolves correctly without a re-login.

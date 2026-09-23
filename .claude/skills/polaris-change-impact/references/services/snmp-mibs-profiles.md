@@ -10,7 +10,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** None (consumed by routes and jobs).
 
-**Used by:** `src/api/routes/manufacturerAliases.ts — admin CRUD endpoints`, `src/jobs/normalizeManufacturers.ts — startup seeding and backfill`, `src/db.ts — Prisma extension normalizer hook`.
+**Used by:** `src/api/routes/manufacturerAliases.ts — CRUD endpoints (gated on `manufacturerProfiles`, rule 43(f))`, `src/jobs/normalizeManufacturers.ts — startup seeding and backfill`, `src/db.ts — Prisma extension normalizer hook`.
 
 **Invariants:**
 - In-memory map (`setAliasMap()` in `manufacturerNormalize.ts`) must be refreshed after every mutation.

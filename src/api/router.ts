@@ -240,7 +240,9 @@ router.use("/application-map", applicationMapRouter);
 router.use("/weather", weatherRouter);
 router.use("/conflicts", conflictsRouter);
 router.use("/credentials", credentialsRouter);
-router.use("/manufacturer-aliases", requirePermission("manufacturerAliases", "read"), manufacturerAliasesRouter);
+// The alias map rides manufacturerProfiles: an alias decides which profile a
+// device matches, so it is the same grant (business rule 43(f)).
+router.use("/manufacturer-aliases", requirePermission("manufacturerProfiles", "read"), manufacturerAliasesRouter);
 // monitor-settings: reads open to any auth caller (asset-modal tier badges
 // need them); writes guarded per-route by requirePermission(assetMonitorSettings, write).
 router.use("/monitor-settings", monitorSettingsRouter);

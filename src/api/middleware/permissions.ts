@@ -134,8 +134,12 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "networkScan", label: "Network Discovery", description: "Active sweeps of operator-supplied IP ranges. Read-Write = run and manage your own; Full Read-Write = anyone's.", hasOwnershipDimension: true },
   { key: "assetMonitorSettings", label: "Asset Monitor Settings", description: "Monitor cadence and retention overrides per asset, class, integration or manual. Full Read-Write = outage simulation." },
   { key: "mibDatabase", label: "MIB Database", description: "Upload, browse and walk SNMP MIB modules.", levels: UP_TO_WRITE },
-  { key: "manufacturerProfiles", label: "Manufacturer Profiles", description: "Per-vendor telemetry profiles: CPU / memory / temperature OIDs and custom widgets.", levels: UP_TO_WRITE },
-  { key: "manufacturerAliases", label: "Manufacturer Aliases", description: "Vendor-name normalization map.", levels: UP_TO_WRITE },
+  // Also gates the manufacturer ALIAS map (`/manufacturer-aliases`), which had
+  // its own key until 2026-09-23. An alias rewrites Asset.manufacturer across
+  // the fleet, and that value is what picks a device's profile — so editing an
+  // alias IS editing which profile applies, and the two could not sensibly be
+  // granted apart (business rule 43(f)).
+  { key: "manufacturerProfiles", label: "Manufacturer Profiles", description: "Per-vendor telemetry profiles (CPU / memory / temperature OIDs, custom widgets) and the vendor-name alias map that decides which profile a device gets.", levels: UP_TO_WRITE },
   { key: "credentials", label: "Credentials", description: "Stored SNMP / WinRM / SSH / REST / HTTP probe credentials. Read-Only lists them masked; Read-Write = your own rows.", hasOwnershipDimension: true },
   { key: "integrations", label: "Integrations", description: "The source integrations and their discovery runs. Full Read-Write also aborts a discovery in flight." },
   { key: "discoveryConflicts", label: "Discovery Conflicts", description: "Accept / reject / merge the reservation and asset conflicts discovery raises.", levels: UP_TO_WRITE },

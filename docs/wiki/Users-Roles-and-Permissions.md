@@ -8,7 +8,7 @@ Roles**, **Group Mappings**, **Authentication**.
 ## The model
 
 Every route declares a **function key** plus a required **level**. A role is a
-matrix over the 33 keys:
+matrix over the 32 keys:
 
 ```
 none  <  read  <  write  <  fullwrite
@@ -44,7 +44,7 @@ decision the operator did not really make.
 | Ladder | Keys | Why |
 |---|---|---|
 | `none \| read` | `assetsProbe` | A probe dials the device and writes nothing in Polaris, so Read *is* the whole grant |
-| `none \| read \| write` | 19 keys — see the tables below | Full Read-Write was never routed. It means something only where it lifts an ownership filter or reserves a more dangerous act |
+| `none \| read \| write` | 18 keys — see the tables below | Full Read-Write was never routed. It means something only where it lifts an ownership filter or reserves a more dangerous act |
 | `none \| write` | `serverSettingsData` | Nothing on the key is merely viewable. Its reads sit on the System key's floor, and everything it gates changes the database or hands over a copy of it |
 | all four | the 5 ownership keys and 7 named exceptions | Marked in the tables below |
 
@@ -62,7 +62,7 @@ silently revoke.
 
 ---
 
-## The 33 function keys
+## The 32 function keys
 
 **Top rung** names the highest level the key offers. Where that is Full
 Read-Write, the last column says what it buys over Read-Write — because that is
@@ -96,10 +96,16 @@ the only thing that justifies the rung existing.
 | Key | Top rung | |
 |---|---|---|
 | `mibDatabase` | Read-Write | upload / browse / walk SNMP MIBs |
-| `manufacturerProfiles` | Read-Write | per-vendor telemetry profiles — CPU/memory/temperature OIDs, custom widgets |
-| `manufacturerAliases` | Read-Write | vendor-name normalisation |
+| `manufacturerProfiles` | Read-Write | per-vendor telemetry profiles — CPU/memory/temperature OIDs, custom widgets — **and the manufacturer alias map**, which decides which profile a device gets |
 | `credentials` | Full RW | stored SNMP / WinRM / SSH / REST / HTTP credentials — **ownership** |
 | `deviceIcons` | Read-Write | operator-uploaded topology icons |
+
+> `manufacturerAliases` was **folded into `manufacturerProfiles`** on
+> 2026-09-23. An alias rewrites the manufacturer on every matching asset, and
+> that is what picks the device's profile — so editing aliases always meant
+> editing which profile applies. Each role kept the **lower** of its two old
+> levels; the built-in roles held both at the same level and did not change.
+> See [Rule 43](Business-Rules#rule-43).
 
 ### Discovery
 
