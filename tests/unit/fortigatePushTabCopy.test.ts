@@ -171,7 +171,7 @@ describe("description sync asks for System Read-Write on every direct transport"
 
   it("FMG bypass-direct points at the per-device token, not the General tab", () => {
     const html = forms.descriptionSyncFormHTML(true, false, "fortimanager");
-    expect(html).toContain("per-device API token on the Settings tab");
+    expect(html).toContain("per-device API token on the Monitoring tab (FortiGate subtab)");
     expect(html).toContain("central-management mirror only");
   });
 

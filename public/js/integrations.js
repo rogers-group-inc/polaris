@@ -936,7 +936,7 @@ setInterval(function () {
 // DHCP Push tab body. Renders the master toggle plus mode-aware guidance:
 // when useProxy is on the call lands on the FortiGate via FMG's REST proxy
 // in real time; when it's off it goes direct to the FortiGate's REST API
-// using fortigateApiUser/fortigateApiToken on the Settings tab. The toggle
+// using fortigateApiUser/fortigateApiToken on the Monitoring tab (FortiGate subtab). The toggle
 // gates both halves of the Polaris → FortiGate DHCP write path:
 //   1. Manual reservation creates → POST /cmdb/system.dhcp/server/<id>/
 //      reserved-address. Verified on read-back; failures abort the create.
@@ -968,7 +968,7 @@ function reservationPushFormHTML(pushReservations, useProxy, arpPresenceSweep, a
   var modeBody = isStandalone
     ? "DHCP writes go straight to this FortiGate's REST API using the API token on the General tab. Each call lands on the running config in real time."
     : (useProxy === false)
-      ? "DHCP writes go to each FortiGate's REST API using the per-device API token configured on the Settings tab. FortiManager is bypassed entirely. Each call lands on the running config in real time."
+      ? "DHCP writes go to each FortiGate's REST API using the per-device API token on the Monitoring tab (FortiGate subtab). FortiManager is bypassed entirely. Each call lands on the running config in real time."
       : "DHCP writes go through FortiManager's <code>/sys/proxy/json</code> endpoint, which forwards the call to the target FortiGate using FortiManager's stored device credentials. Each call lands on the running config in real time; FortiManager will see the change on its next config sync.";
   var permsHtml = isStandalone
     ? _fortigateAccessProfileHTML(
@@ -986,7 +986,7 @@ function reservationPushFormHTML(pushReservations, useProxy, arpPresenceSweep, a
         '<li style="margin-left:1.2rem"><strong>Install Policy Package or Device Configuration</strong> &rarr; None &nbsp;<span style="color:var(--color-text-tertiary)">&larr; Polaris never triggers installs</span></li>' +
       '</ul>' +
       calloutHTML("warning", "Blast radius", "FortiManager admin profiles do not have a per-object permission for DHCP reservations. <strong>Manage Device Configurations</strong> grants write access to every CMDB tree on every FortiGate in this ADOM. A compromised Polaris API token could in principle modify other device-level config &mdash; interfaces, routing, other DHCP scopes &mdash; not just the reservations Polaris pushes. Treat the API token as a privileged credential and rotate on the same cadence as your other admin secrets.") +
-      calloutHTML("tip", "Tighter scope alternative", "For tighter scope, switch to direct mode (uncheck <em>Query each FortiGate directly (bypass FortiManager proxy)</em> on the Settings tab) and configure a per-FortiGate REST API admin with <strong>Network &rarr; Custom &rarr; Configuration</strong> set to Read/Write. This scopes write access to one FortiGate's network-configuration bucket instead of every CMDB tree on every device in the ADOM."));
+      calloutHTML("tip", "Tighter scope alternative", "For tighter scope, switch to direct mode (tick <em>Direct Polling</em> on the Monitoring tab&rsquo;s FortiGate subtab) and configure a per-FortiGate REST API admin with <strong>Network &rarr; Custom &rarr; Configuration</strong> set to Read/Write. This scopes write access to one FortiGate's network-configuration bucket instead of every CMDB tree on every device in the ADOM."));
   return '<section style="margin-bottom:1.5rem">' +
       '<h4 style="margin:0 0 0.25rem 0">DHCP Push</h4>' +
       '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">When enabled, two DHCP writes flow from Polaris back to the originating FortiGate on subnets discovered by this integration.</p>' +
@@ -1465,7 +1465,7 @@ function _fortigateAccessProfileHTML(noun, grants, verifyPath, fleet) {
   var rows = "";
   for (var i = 0; i < grants.length; i++) rows += '<li>' + grants[i] + '</li>';
   var intro = fleet
-    ? 'Polaris writes ' + noun + ' straight to each FortiGate\'s REST API using the per-device API token on the Settings tab &mdash; FortiManager is not in the path. That REST API admin, on every managed FortiGate, needs an access profile granting:'
+    ? 'Polaris writes ' + noun + ' straight to each FortiGate\'s REST API using the per-device API token on the Monitoring tab (FortiGate subtab) &mdash; FortiManager is not in the path. That REST API admin, on every managed FortiGate, needs an access profile granting:'
     : 'Polaris writes ' + noun + ' straight to this FortiGate\'s REST API using the API token on the General tab. That token\'s REST API admin needs an access profile granting:';
   var verifyWhere = fleet
     ? ' to one of the FortiGates, authenticated with that token. '
@@ -1504,7 +1504,7 @@ function quarantinePushFormHTML(pushQuarantine, useProxy, type) {
   var modeBody = isStandalone
     ? "Quarantine entries are written straight to this FortiGate's REST API using the API token on the General tab."
     : (useProxy === false)
-      ? "Quarantine entries are written to each FortiGate's REST API using the per-device API token configured on the Settings tab."
+      ? "Quarantine entries are written to each FortiGate's REST API using the per-device API token on the Monitoring tab (FortiGate subtab)."
       : "Quarantine entries are written through FortiManager's <code>/sys/proxy/json</code> endpoint, which forwards the call to the target FortiGate using FortiManager's stored device credentials.";
   var permsHtml = isStandalone
     ? _fortigateAccessProfileHTML(
@@ -1579,7 +1579,7 @@ function descriptionSyncFormHTML(syncDescriptions, useProxy, type) {
   var modeBody = isStandalone
     ? "Description writes go straight to this FortiGate's REST API using the API token on the General tab."
     : (useProxy === false)
-      ? "Description writes go to each FortiGate's REST API using the per-device API token configured on the Settings tab. FortiManager is bypassed entirely."
+      ? "Description writes go to each FortiGate's REST API using the per-device API token on the Monitoring tab (FortiGate subtab). FortiManager is bypassed entirely."
       : "Description writes go through FortiManager's <code>/sys/proxy/json</code> endpoint, which forwards the call to the target FortiGate using FortiManager's stored device credentials.";
   // Not FMG copy — Polaris-is-primary holds on every transport — so this rides
   // both branches, naming only the devices this integration writes to.
