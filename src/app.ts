@@ -643,7 +643,12 @@ type PagePermission =
   | { key: string; level: "read" | "write" }
   | { anyOf: { key: string; level: "read" | "write" }[] };
 const pageRequiredPermission: Record<string, PagePermission> = {
-  "/users.html":           { key: "users",                level: "read" },
+  // The Authentication settings live on this page (a modal off its header), so
+  // a role granted `authentication` alone must be able to reach it — otherwise
+  // the key would be ungrantable in practice without also handing over the
+  // user list. The page's own sections each gate themselves; an authentication
+  // -only caller gets the Authentication button and an empty user table.
+  "/users.html":           { anyOf: [{ key: "users", level: "read" }, { key: "authentication", level: "read" }] },
   "/integrations.html":    { key: "integrations",         level: "read" },
   // /notifications.html stays gated forever — already-delivered web-push
   // payloads deep-link to it (Automations rename, 2026-07). Both pages gate on

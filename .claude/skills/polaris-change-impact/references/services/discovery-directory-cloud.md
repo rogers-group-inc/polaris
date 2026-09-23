@@ -119,7 +119,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - Tests: `tests/unit/intunePublish.test.ts` (20) + `tests/unit/graphRequest.test.ts` (14, the transport).
-- Route gate is chained at **fullwrite on BOTH** `serverSettingsSystem` and `integrations` — `integrations:write` is the blanket gate on that whole router and must not confer tenant writes.
+- Route gate is chained: `serverSettingsSystem:write` (that key's top rung) **AND** `integrations:fullwrite` — `integrations:write` is the blanket gate on that whole router and must not confer tenant writes.
 
 ---
 

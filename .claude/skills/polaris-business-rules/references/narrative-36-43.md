@@ -490,7 +490,27 @@ Part (b) above found a key with two rungs nothing could ask for. It was not one 
 
 Two more levels moved for the same reason part (a) moved agent deployment — the level did not match the act. **Downloading a backup is not a read**: the archive is the entire database, and it sat at `serverSettingsData=read`, one rung below backup and restore, which made "may look at the Data tab" and "may walk off with the database" the same grant. It is now `write`, and because every other read on that tab rides the mount's `serverSettingsSystem=read` floor, the key has no `read` rung left at all — it is the catalogue's only `none | write` ladder. And the **asset auto-decommission thresholds** moved off `events` onto `assetMonitorSettings`: the `events` key gates the audit log and where it is archived to, so someone trusted to configure syslog export was thereby deciding when devices leave the inventory. Its only UI, the Asset Monitoring Settings modal, already rides the key it now names.
 
-One level is knowingly left wrong, and is flagged in that test rather than fixed here: `serverSettingsSystem=write` gates **only** the identity providers while `fullwrite` gates the other ~54 routes on the tab — so repointing every login at a different IdP sits a rung below changing the logo. The fix is to lift the providers onto an `authentication` key of their own, not to shorten this ladder.
+One level was knowingly left wrong, flagged in that test rather than fixed in the sweep: `serverSettingsSystem=write` gated **only** the identity providers while `fullwrite` gated the other ~54 routes on the tab — so repointing every login at a different IdP sat a rung below changing the logo. It is fixed in the change below.
+
+### The `authentication` key — 2026-09-23
+
+Migration `20260923000000_authentication_function_key`. The System key was not carrying a dead rung; it was **divided in the wrong place**, which is the other way a level can fail to describe an act. Two jobs were sharing one key and neither could be delegated without the other: you could not hand someone branding and NTP without also handing them the login path, and you could not hand someone the login path without handing them read of every server setting there is.
+
+The four providers' settings and test routes, the passkey policy and the password policy moved to **`authentication`** (`none | read | write` — read views the configuration, write changes it and dials the identity provider). That emptied the System key's `write` rung, so its ~54 `fullwrite` gates came down onto `write`, and it stopped being the test's named exception.
+
+**The seeding is the part to be careful with, and it is derived rather than chosen.** A new key normally encodes a policy decision about who should get a new capability. This one moves an existing capability, so the only defensible seed is the one that leaves everybody where they were:
+
+| Old `serverSettingsSystem` | New `authentication` | |
+|---|---|---|
+| `fullwrite` | `write` | unchanged — it reached all of this already |
+| `read` | `read` | unchanged — it could read the passkey settings |
+| `write` | **`read`** | the one tightening |
+
+That last row is the whole point. A role on that rung could edit every identity provider, and an admin granting it was almost certainly delegating "some server settings", not the install's login path. It keeps sight of the configuration and loses the ability to repoint it. No built-in role sits there — only a custom role someone set deliberately — and an admin who wants the capability back grants `authentication=write`, which is now a decision instead of a side effect.
+
+**The two statements are order-dependent in a way that fails silently.** Seeding reads `serverSettingsSystem`; folding rewrites it. Run the fold first and every admin-equivalent role looks like a plain `write` holder, gets seeded `authentication=read`, and the install quietly loses the ability to configure its own logins — with no error anywhere, on every install at once. `tests/unit/authenticationRbacLockstep.test.ts` pins the ordering and every arm of the derivation for that reason.
+
+Two neighbours deliberately stayed put. **IdP group mappings** remain on `users=fullwrite`: a mapping decides which ROLE an IdP group receives, which is granting authority rather than configuring authentication, and it is already the documented path to admin outside the last-admin guard — it belongs where the escalation guards can see it. The **login-page source-IP restriction** remains on `serverSettingsSystem`: it governs who can reach a page over the network rather than how Polaris decides who someone is, and it lives under the `/server-settings` mount whose floor is that key in any case.
 
 **A second invariant falls out of the same sweep: `readonly` is the FLOOR for every built-in role.** Nothing that exists to do more than look at Polaris should reach less of it than the look-only role does, and `networkadmin` and `assetsadmin` were both below that floor on three keys. The built-ins were corrected upward at the same time — `networkadmin` could run a Discovery but not adopt what answered (adopting chains `assets=write`), and `assetsadmin` could switch on SNMP monitoring for an asset but not create the credential monitoring needs. One exception is deliberate and must not be tidied away: `user` holds `networkScan=none` where `readonly` holds `read`, because that role exists for address-space self-service and an active sweep is IDS-visible.
 

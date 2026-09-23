@@ -328,6 +328,14 @@ longer a read, and the asset auto-decommission thresholds moved off the audit-lo
 onto monitor settings. See
 [Users, roles and permissions](Users-Roles-and-Permissions#short-ladders).
 
+A level can also be *divided* in the wrong place. On 2026-09-23 the identity
+providers, passkey policy and password policy moved out of Server Settings —
+System onto a key of their own, **Authentication**, because repointing every
+login at a different provider had been a lesser grant than changing the logo,
+and neither job could be delegated without the other. One kind of custom role
+is narrowed by this. See
+[Who may change how people log in](Users-Roles-and-Permissions#who-may-change-how-people-log-in).
+
 ### Rule 44
 **A quiet window withholds the reminder, not the alert — and the reminder that
 follows says how long.** Held, never skipped. The hold is closed by the **send**,

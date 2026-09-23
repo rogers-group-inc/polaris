@@ -126,7 +126,7 @@ haRouter.post("/advisories", requirePermission("serverSettingsSystem", "read"), 
   }
 });
 
-haRouter.post("/enable", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+haRouter.post("/enable", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const body = EnableSchema.parse(req.body);
     const actor = requestActor(req) ?? "unknown";
@@ -150,7 +150,7 @@ haRouter.post("/enable", requirePermission("serverSettingsSystem", "fullwrite"),
   }
 });
 
-haRouter.post("/disable", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+haRouter.post("/disable", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const actor = requestActor(req) ?? "unknown";
     const cfg = await disableHa(actor);
@@ -173,7 +173,7 @@ haRouter.post("/disable", requirePermission("serverSettingsSystem", "fullwrite")
  * One call rather than two because the raw token exists only in this response:
  * storing it to serve a later download would defeat hashing it.
  */
-haRouter.post("/tokens", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+haRouter.post("/tokens", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const { role } = TokenSchema.parse(req.body);
     const actor = requestActor(req) ?? "unknown";
@@ -200,7 +200,7 @@ haRouter.post("/tokens", requirePermission("serverSettingsSystem", "fullwrite"),
   }
 });
 
-haRouter.post("/enrollments/:id/approve", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+haRouter.post("/enrollments/:id/approve", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const id = String(req.params.id);
     const actor = requestActor(req) ?? "unknown";
@@ -219,7 +219,7 @@ haRouter.post("/enrollments/:id/approve", requirePermission("serverSettingsSyste
   }
 });
 
-haRouter.post("/enrollments/:id/reject", requirePermission("serverSettingsSystem", "fullwrite"), async (req, res, next) => {
+haRouter.post("/enrollments/:id/reject", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
     const id = String(req.params.id);
     const actor = requestActor(req) ?? "unknown";
@@ -239,7 +239,7 @@ haRouter.post("/enrollments/:id/reject", requirePermission("serverSettingsSystem
 });
 
 /** The teardown script. Returned as JSON so one route feeds preview and download. */
-haRouter.get("/teardown-script", requirePermission("serverSettingsSystem", "fullwrite"), async (_req, res, next) => {
+haRouter.get("/teardown-script", requirePermission("serverSettingsSystem", "write"), async (_req, res, next) => {
   try {
     res.json(await renderTeardownScript());
   } catch (err) {

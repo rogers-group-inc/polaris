@@ -123,15 +123,12 @@ describe("no dead top rung", () => {
     users: "IdP group-mapping CRUD (the /group-mappings mount)",
     roles: "admin-equivalence, together with users=fullwrite",
     savedDashboards: "deleting someone else's dashboard",
-    // The odd one out, and knowingly so: `write` on this key gates ONLY the
-    // identity-provider settings (SAML / OIDC / LDAP / App Proxy) and their
-    // test buttons, while fullwrite gates the other ~54 routes — TLS, HA,
-    // tags, DNS, NTP, branding, capacity, the agent fleet. So the rung is
-    // load-bearing, but it is dividing the key in the wrong place: pointing
-    // every login at a different IdP sits one rung BELOW changing the logo.
-    // The fix is to lift the providers onto an `authentication` key of their
-    // own, not to shorten this ladder.
-    serverSettingsSystem: "everything on the System tab except the login providers, which sit at write",
+    // `serverSettingsSystem` was here until 2026-09-23, excused on the grounds
+    // that its `write` rung really did gate something — the identity providers
+    // — while `fullwrite` gated the rest of the System tab. That was the key
+    // divided in the wrong place, not a rung that had earned its keep, and the
+    // providers have since moved to `authentication`. The key now tops out at
+    // write like any other.
   };
 
   it("only an ownership key or a named exception offers Full Read-Write", () => {
@@ -161,6 +158,24 @@ describe("no dead top rung", () => {
     expect(levelsFor("serverSettingsData")).toEqual(["none", "write"]);
     expect(keySupportsLevel("serverSettingsData", "read")).toBe(false);
     expect(clampLevelToKey("serverSettingsData", "read")).toBe("none");
+  });
+
+  it("serverSettingsSystem tops out at write, its providers having left", () => {
+    // The 2026-09-23 split emptied this key's `write` rung by moving the
+    // identity providers to `authentication`, so its ~54 `fullwrite` routes
+    // came down onto `write`. A `fullwrite` reappearing here means someone
+    // re-divided the key instead of adding one.
+    expect(levelsFor("serverSettingsSystem")).toEqual(["none", "read", "write"]);
+    expect(keySupportsLevel("serverSettingsSystem", "fullwrite")).toBe(false);
+  });
+
+  it("authentication is its own key, none|read|write", () => {
+    const def = FUNCTION_KEYS.find(f => f.key === "authentication");
+    expect(def).toBeDefined();
+    expect(levelsFor("authentication")).toEqual(["none", "read", "write"]);
+    // Not an ownership key: there is one set of login providers per install,
+    // so there are no "your own" rows for a fourth rung to unlock.
+    expect(def?.hasOwnershipDimension).toBeUndefined();
   });
 
   it("processControl is gone from the catalogue", () => {

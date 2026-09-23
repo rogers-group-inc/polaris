@@ -581,6 +581,14 @@ async function initAuthSettingsButton() {
   var btn = document.getElementById("btn-auth-settings");
   if (!btn) return;
 
+  // Gated on the `authentication` key since the 2026-09-23 split. Until then
+  // this button showed for every caller who could reach the Users page and the
+  // modal's seven reads each fell back to their shipped defaults on 403 — so an
+  // operator without the grant was shown a complete, editable-looking
+  // Authentication dialog describing a configuration that was not theirs and
+  // whose Save could only fail.
+  if (typeof permAtLeast === "function" && !permAtLeast("authentication", "read")) return;
+
   btn.style.display = "";
   btn.addEventListener("click", openAuthSettingsModal);
 }
@@ -2047,7 +2055,7 @@ function collectRegionPicker(idPrefix) {
 // Parallel dimension to region tags, and the same interaction: every tag in
 // the registry renders as a toggleable pill in its own color, click selects.
 // Typing a name that isn't in the registry creates it there when the caller
-// may (serverSettingsSystem fullwrite) and otherwise attaches it to this
+// may (serverSettingsSystem write) and otherwise attaches it to this
 // assignment alone. Used in the role slide-over, the per-user tag modal, and
 // the Group Mappings slide-over.
 
@@ -2107,7 +2115,7 @@ function tagCategoryFor(name) {
 // to this assignment alone and the hint says so, instead of the click landing
 // on a 403.
 function canCreateRegistryTags() {
-  return _tagCatalogLoaded && typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "fullwrite");
+  return _tagCatalogLoaded && typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
 }
 
 function otherTagChipHtml(t) {

@@ -949,7 +949,7 @@ router.post("/azure/logout", requireAuth, async (req, res) => {
 });
 
 // POST /api/v1/auth/azure/test — validate SAML config (admin only)
-router.post("/azure/test", requireAuth, requirePermission("serverSettingsSystem", "write"), async (_req, res, next) => {
+router.post("/azure/test", requireAuth, requirePermission("authentication", "write"), async (_req, res, next) => {
   try {
     const settings = await getSsoSettings();
     const results: { certificate: any; idpLoginUrl: any } = {
@@ -1041,7 +1041,7 @@ router.post("/azure/test", requireAuth, requirePermission("serverSettingsSystem"
 });
 
 // GET /api/v1/auth/azure/settings — admin only
-router.get("/azure/settings", requireAuth, requirePermission("serverSettingsSystem", "write"), async (_req, res, next) => {
+router.get("/azure/settings", requireAuth, requirePermission("authentication", "read"), async (_req, res, next) => {
   try {
     const settings = await getSsoSettings();
     res.json(settings);
@@ -1051,7 +1051,7 @@ router.get("/azure/settings", requireAuth, requirePermission("serverSettingsSyst
 });
 
 // PUT /api/v1/auth/azure/settings — admin only
-router.put("/azure/settings", requireAuth, requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+router.put("/azure/settings", requireAuth, requirePermission("authentication", "write"), async (req, res, next) => {
   try {
     // Lockout guard for "Skip login page". Hiding the local login page means
     // every unauthenticated visitor is bounced straight to SSO — if SSO isn't
@@ -1153,14 +1153,14 @@ router.get("/oidc/callback", ssoCallbackLimiter, async (req, res) => {
 });
 
 // GET /api/v1/auth/oidc/settings — admin only (secret masked, redirect URI derived)
-router.get("/oidc/settings", requireAuth, requirePermission("serverSettingsSystem", "write"), async (_req, res, next) => {
+router.get("/oidc/settings", requireAuth, requirePermission("authentication", "read"), async (_req, res, next) => {
   try {
     res.json(await getOidcSettingsForUi());
   } catch (err) { next(err); }
 });
 
 // PUT /api/v1/auth/oidc/settings — admin only
-router.put("/oidc/settings", requireAuth, requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+router.put("/oidc/settings", requireAuth, requirePermission("authentication", "write"), async (req, res, next) => {
   try {
     await updateOidcSettings(req.body);
     res.json(await getOidcSettingsForUi());
@@ -1168,7 +1168,7 @@ router.put("/oidc/settings", requireAuth, requirePermission("serverSettingsSyste
 });
 
 // POST /api/v1/auth/oidc/test — run discovery + report endpoints (admin only)
-router.post("/oidc/test", requireAuth, requirePermission("serverSettingsSystem", "write"), async (_req, res, next) => {
+router.post("/oidc/test", requireAuth, requirePermission("authentication", "write"), async (_req, res, next) => {
   try {
     res.json(await testOidcConnection());
   } catch (err) { next(err); }
@@ -1176,13 +1176,13 @@ router.post("/oidc/test", requireAuth, requirePermission("serverSettingsSystem",
 
 // ─── LDAP Settings ──────────────────────────────────────────────────────────
 
-router.get("/ldap/settings", requireAuth, requirePermission("serverSettingsSystem", "write"), async (_req, res, next) => {
+router.get("/ldap/settings", requireAuth, requirePermission("authentication", "read"), async (_req, res, next) => {
   try {
     res.json(await getLdapSettingsMasked());
   } catch (err) { next(err); }
 });
 
-router.put("/ldap/settings", requireAuth, requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+router.put("/ldap/settings", requireAuth, requirePermission("authentication", "write"), async (req, res, next) => {
   try {
     await updateLdapSettings(req.body);
     res.json(await getLdapSettingsMasked());
@@ -1190,7 +1190,7 @@ router.put("/ldap/settings", requireAuth, requirePermission("serverSettingsSyste
 });
 
 // POST /api/v1/auth/ldap/test — service-account bind + base DN check (admin only)
-router.post("/ldap/test", requireAuth, requirePermission("serverSettingsSystem", "write"), async (_req, res, next) => {
+router.post("/ldap/test", requireAuth, requirePermission("authentication", "write"), async (_req, res, next) => {
   try {
     res.json(await testLdapConnection());
   } catch (err) { next(err); }
@@ -1278,14 +1278,14 @@ router.get("/entra-proxy/login", entraProxyLoginLimiter, async (req, res) => {
 });
 
 // GET /api/v1/auth/entra-proxy/settings — admin only (no secrets to mask)
-router.get("/entra-proxy/settings", requireAuth, requirePermission("serverSettingsSystem", "write"), async (_req, res, next) => {
+router.get("/entra-proxy/settings", requireAuth, requirePermission("authentication", "read"), async (_req, res, next) => {
   try {
     res.json(await getEntraProxySettings());
   } catch (err) { next(err); }
 });
 
 // PUT /api/v1/auth/entra-proxy/settings — admin only
-router.put("/entra-proxy/settings", requireAuth, requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+router.put("/entra-proxy/settings", requireAuth, requirePermission("authentication", "write"), async (req, res, next) => {
   try {
     const input = EntraProxySettingsSchema.partial().parse(req.body ?? {});
     res.json(await updateEntraProxySettings(input));
@@ -1294,7 +1294,7 @@ router.put("/entra-proxy/settings", requireAuth, requirePermission("serverSettin
 
 // POST /api/v1/auth/entra-proxy/test — report how THIS request looks to the
 // trust gate (request IP, trusted?, which identity header NAMES are present).
-router.post("/entra-proxy/test", requireAuth, requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+router.post("/entra-proxy/test", requireAuth, requirePermission("authentication", "write"), async (req, res, next) => {
   try {
     res.json(await testEntraProxyRequest(req));
   } catch (err) { next(err); }
@@ -1692,7 +1692,7 @@ const PasswordPolicySchema = z.object({
 router.put(
   "/password-policy",
   requireAuth,
-  requirePermission("serverSettingsSystem", "fullwrite"),
+  requirePermission("authentication", "write"),
   async (req, res, next) => {
     try {
       const input = PasswordPolicySchema.parse(req.body ?? {});
@@ -1722,7 +1722,7 @@ router.put(
 // GET /api/v1/auth/passkey-settings — the admin view (mode + RP ID + what this
 // request's origin actually resolves to, which is the thing an operator behind
 // a proxy needs to see before trusting the feature).
-router.get("/passkey-settings", requireAuth, requirePermission("serverSettingsSystem", "read"), async (req, res, next) => {
+router.get("/passkey-settings", requireAuth, requirePermission("authentication", "read"), async (req, res, next) => {
   try {
     const [settings, availability] = await Promise.all([getPasskeySettings(), getPasskeyAvailability(req)]);
     res.json({ settings, availability });
@@ -1741,7 +1741,7 @@ const PasskeySettingsSchema = z.object({
 router.put(
   "/passkey-settings",
   requireAuth,
-  requirePermission("serverSettingsSystem", "fullwrite"),
+  requirePermission("authentication", "write"),
   async (req, res, next) => {
     try {
       const input = PasskeySettingsSchema.parse(req.body ?? {});
