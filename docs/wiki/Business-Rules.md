@@ -336,6 +336,13 @@ and neither job could be delegated without the other. One kind of custom role
 is narrowed by this. See
 [Who may change how people log in](Users-Roles-and-Permissions#who-may-change-how-people-log-in).
 
+The opposite mistake also happens: one act split across two keys. The
+manufacturer alias map had a key of its own, but an alias decides which
+**manufacturer profile** a device gets, so it could never really be granted
+apart from the profiles. On 2026-09-23 it was folded into **Manufacturer
+Profiles**. A custom role that held the two at different levels kept the
+lower one; no built-in role changed.
+
 ### Rule 44
 **A quiet window withholds the reminder, not the alert — and the reminder that
 follows says how long.** Held, never skipped. The hold is closed by the **send**,

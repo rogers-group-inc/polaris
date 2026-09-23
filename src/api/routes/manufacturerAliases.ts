@@ -1,7 +1,10 @@
 /**
  * src/api/routes/manufacturerAliases.ts
  *
- * Admin-only CRUD for the manufacturer alias map. Edits propagate to existing
+ * CRUD for the manufacturer alias map, gated on manufacturerProfiles — read to
+ * list (the mount in router.ts carries that floor), write to change. An alias
+ * decides which profile a device matches, so the two are one grant (business
+ * rule 43(f)). Edits propagate to existing
  * Asset.manufacturer / MibFile.manufacturer rows on save (the service runs the
  * backfill in the background after each create/update).
  */
@@ -30,7 +33,7 @@ router.get("/", async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post("/", requirePermission("manufacturerAliases", "write"), async (req, res, next) => {
+router.post("/", requirePermission("manufacturerProfiles", "write"), async (req, res, next) => {
   try {
     const input = CreateSchema.parse(req.body);
     const saved = await aliasService.createAlias(input);
@@ -46,7 +49,7 @@ router.post("/", requirePermission("manufacturerAliases", "write"), async (req, 
   } catch (err) { next(err); }
 });
 
-router.put("/:id", requirePermission("manufacturerAliases", "write"), async (req, res, next) => {
+router.put("/:id", requirePermission("manufacturerProfiles", "write"), async (req, res, next) => {
   try {
     const input = UpdateSchema.parse(req.body);
     const saved = await aliasService.updateAlias(req.params.id as string, input);
@@ -62,7 +65,7 @@ router.put("/:id", requirePermission("manufacturerAliases", "write"), async (req
   } catch (err) { next(err); }
 });
 
-router.delete("/:id", requirePermission("manufacturerAliases", "write"), async (req, res, next) => {
+router.delete("/:id", requirePermission("manufacturerProfiles", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const all = await aliasService.listAliases();

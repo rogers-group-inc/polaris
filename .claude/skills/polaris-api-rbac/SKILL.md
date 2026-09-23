@@ -1,6 +1,6 @@
 ---
 name: polaris-api-rbac
-description: "Polaris REST API under /api/v1 and its permission model: every route file and mount, Zod schema placement, the 33 function keys, requirePermission levels (none/read/write/fullwrite), shorter ladders, the ownership dimension, built-in roles, session role snapshots, role-bound bearer tokens, SSO/OIDC/LDAP/SAML/Entra App Proxy login, passkey/WebAuthn ceremony endpoints and the four registrations each one needs, group mappings, CSRF, rate limits, last-admin guard. Load when adding or changing an endpoint or route gate, adding a permission key, debugging a 401/403, asking who can do X, minting tokens, anything about login, SSO or passkeys, or touching src/api/."
+description: "Polaris REST API under /api/v1 and its permission model: every route file and mount, Zod schema placement, the 32 function keys, requirePermission levels (none/read/write/fullwrite), shorter ladders, the ownership dimension, built-in roles, session role snapshots, role-bound bearer tokens, SSO/OIDC/LDAP/SAML/Entra App Proxy login, passkey/WebAuthn ceremony endpoints and the four registrations each one needs, group mappings, CSRF, rate limits, last-admin guard. Load when adding or changing an endpoint or route gate, adding a permission key, debugging a 401/403, asking who can do X, minting tokens, anything about login, SSO or passkeys, or touching src/api/."
 ---
 
 # Polaris API and RBAC
@@ -17,7 +17,7 @@ dimension for `subnets` / `reservations` / `contacts` / `credentials` / `network
 | You need… | Read |
 |---|---|
 | the route-group overview as CLAUDE.md summarized it (which mount, which gate, the load-bearing quirks per group) | [references/routes-overview.md](references/routes-overview.md) |
-| the RBAC model: dynamic roles, the 33-key catalogue, level ladders, ownership, session snapshot + cache invalidation, region/other tags, SSO/LDAP/App Proxy login, bearer tokens, last-admin guard, rate limits, the stale-Secure-cookie trap | [references/auth-rbac.md](references/auth-rbac.md) |
+| the RBAC model: dynamic roles, the 32-key catalogue, level ladders, ownership, session snapshot + cache invalidation, region/other tags, SSO/LDAP/App Proxy login, bearer tokens, last-admin guard, rate limits, the stale-Secure-cookie trap | [references/auth-rbac.md](references/auth-rbac.md) |
 | per-endpoint bodies/shapes/gates — auth, TOTP, blocks, subnets, reservations, utilization, dashboard, user dashboard, table tabs, saved dashboards/filters, users, roles, group mappings, API tokens, credentials | [references/endpoints-ipam-identity.md](references/endpoints-ipam-identity.md) |
 | `/assets` (~95 routes: CRUD, monitor history, quarantine, system-info, ARP, ip-context, upstream, agent install, pins, SNMP walk) | [references/endpoints-assets.md](references/endpoints-assets.md) |
 | asset types + matching, monitor settings, conflicts, search, events, manufacturer aliases | [references/endpoints-assets-adjacent.md](references/endpoints-assets-adjacent.md) |
