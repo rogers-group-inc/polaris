@@ -341,6 +341,14 @@
     // Run the layout now that the layoutstop listener is attached. preset
     // (location-coded / firewall-rooted sites) is synchronous; dagre (no
     // firewall root) is async — either way the handler above catches it.
+    // Fan-out links route orthogonally (see map.js) — the phone maps depth
+    // to y, so the taxi runs vertically and turns 1.5 depth steps along.
+    if (columns) {
+      window.PolarisTopologyRender.markFanOutEdges(_cy, columns, {
+        colSpacing: DEPTH_SPACING,
+        orientation: "vertical",
+      });
+    }
     _cy.layout(layoutConfig).run();
   }
 
