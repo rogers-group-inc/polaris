@@ -328,6 +328,14 @@ Charts carry:
   resolver**, so the shading cannot disagree with what actually fires.
 - **Grey, not red, for a suppressed miss** — a failure the upstream explains is
   drawn grey ([rule 38b](Business-Rules#rule-38)). Same dive, no accusation.
+- **Outages on CPU / memory / storage / interface charts** — those streams
+  record nothing for a missed poll, so the chart borrows the response-time
+  probe's record: wherever every probe failed, the line dives to the baseline
+  and climbs back out, at every range from 1h to 30d. A hole in the line with
+  no probe failure behind it — the device answered pings but a CPU poll failed
+  — is bridged, not dived: Polaris has no evidence of an outage there. A
+  window the series kept reporting through (a Polaris Agent host that pushed
+  readings while the probe could not reach it) is not dived either.
 
 The colour of **Down** is not fixed: it is drawn in the covering automation's
 own severity ([rule 36](Business-Rules#rule-36)). Red is what `critical` looks

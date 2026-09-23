@@ -428,8 +428,8 @@ function _failureDotsSVG(pts) {
 }
 
 // Median sampling cadence of a time-ordered series, in ms. Needs >= 3
-// timestamps to have a meaningful middle. Sizes the collision guard in
-// _outageMarkers below.
+// timestamps to have a meaningful middle. Sizes the hole test in
+// _seriesReportedThrough below.
 function _medianCadenceMs(timestampsMs) {
   if (!timestampsMs || timestampsMs.length < 3) return 0;
   var dts = [];
@@ -473,31 +473,68 @@ function _medianCadenceMs(timestampsMs) {
 // changes. Markers come back as { t, dep } objects rather than bare timestamps
 // for exactly that reason.
 //
-// `sampleTimesMs` is the series' OWN good timestamps, and a marker landing on
-// top of real data is dropped: the Polaris Agent pushes on its own schedule
-// and is not gated on monitorStatus, so an agent host can keep reporting CPU
-// straight through an outage of the server-side probe transport. Diving a line
-// that has data would misreport the data we are actually holding.
+// `sampleTimesMs` is the series' OWN good timestamps, and a window the series
+// kept reporting through is dropped: the Polaris Agent pushes on its own
+// schedule and is not gated on monitorStatus, so an agent host can keep
+// reporting CPU straight through an outage of the server-side probe transport.
+// Diving a line that has data would misreport the data we are actually holding.
+// See _seriesReportedThrough for what "kept reporting" means.
 function _outageMarkers(outages, sampleTimesMs) {
   if (!outages || !outages.length) return [];
   var times = (sampleTimesMs || []).slice().sort(function (a, b) { return a - b; });
-  var guardMs = _medianCadenceMs(times) / 2;
+  var cadenceMs = _medianCadenceMs(times);
   var markers = [];
   outages.forEach(function (o) {
     var from = +new Date(o.from);
     var to   = +new Date(o.to);
     var dep  = o.kind === "dependency";
     if (!isFinite(from) || !isFinite(to)) return;
-    // Skip the WHOLE window when the series has data anywhere in it (padded by
-    // the guard), not merely at its edges. Dropping just the end markers would
-    // still leave any interior samples in place, and the line would dive at the
-    // window's start, climb back for each of them, and dive again — a zigzag
-    // that claims an outage and shows readings through it at the same time.
-    if (guardMs > 0 && times.some(function (t) { return t > from - guardMs && t < to + guardMs; })) return;
+    // Skip the WHOLE window, not merely its edges. Dropping just the end
+    // markers would still leave any interior samples in place, and the line
+    // would dive at the window's start, climb back for each of them, and dive
+    // again — a zigzag that claims an outage and shows readings through it at
+    // the same time.
+    if (_seriesReportedThrough(times, cadenceMs, from, to)) return;
     markers.push({ t: from, dep: dep });
     if (to > from) markers.push({ t: to, dep: dep });
   });
   return markers.sort(function (a, b) { return a.t - b.t; });
+}
+
+// Did the series keep reporting through the outage [from, to]? Two pieces of
+// evidence, either one enough:
+//
+//   • a sample strictly INSIDE the window — the agent case, where the host
+//     pushed readings while the probe transport could not reach it;
+//   • NO HOLE around the window — the last sample at or before `from` and the
+//     first at or after `to` sit no further apart than the series' normal
+//     cadence (1.5x, for jitter). That is a blip shorter than the series'
+//     own interval whose neighbouring polls both succeeded: nothing is missing.
+//
+// This replaced a guard that padded the window by half the cadence on each
+// side and discarded it when ANY sample fell in the padding. The last good
+// poll before a device drops and the first one after it recovers land right
+// next to the outage's edges almost every time — telemetry runs every 5-10
+// minutes against a probe every minute — so that guard threw away most real
+// outages and the line bridged straight across them. On the hourly and daily
+// tiers the padding grew to 30 minutes and 12 hours and swallowed nearly
+// every window, which is why wider ranges showed no misses at all.
+//
+// The hole test is the old gap heuristic used only as a VETO: a hole never
+// creates a marker (only the probe's record does), it can only prove there
+// was no hole to mark. `to` on a rollup tier is the END of the last failed
+// bucket, i.e. the next bucket's start, so the neighbour lookups are
+// inclusive and the interior test is strict.
+function _seriesReportedThrough(times, cadenceMs, from, to) {
+  var prev = null, next = null;
+  for (var i = 0; i < times.length; i++) {
+    var t = times[i];
+    if (t > from && t < to) return true;
+    if (t <= from) prev = t;
+    if (t >= to && next === null) next = t;
+  }
+  if (!(cadenceMs > 0) || prev === null || next === null) return false;
+  return next - prev <= cadenceMs * 1.5;
 }
 
 // The three things every chart does with those markers, kept together so a new
