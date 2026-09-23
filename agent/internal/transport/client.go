@@ -478,6 +478,97 @@ type ConfigResponse struct {
 	// Empty slice means "field not present" — older Phase 1 servers don't
 	// emit this and the agent should leave its existing pin set untouched.
 	CertFingerprints []string `json:"certFingerprints,omitempty"`
+	// Agent-run connectivity checks this host is a source of (server ≥ the
+	// connectivity release; empty below agent 0.21.0 or when the host runs
+	// none). The list IS the enable signal — empty means the loop idles.
+	ConnectivityChecks []ConnectivityCheckDef `json:"connectivityChecks,omitempty"`
+}
+
+// ─── Connectivity checks ───────────────────────────────────────────────────
+//
+// Hand-mirrored by the server: AgentCheckDef in
+// src/services/connectivityCheckService.ts (the definition) and
+// ConnectivitySampleSchema / ConnectivityTracerouteSchema in
+// src/api/routes/agents.ts (the two sample streams). Rename a field here and
+// the other side silently reads its zero value.
+
+// ConnectivityBodyExpect is connectivityChecks[].expectBody.
+type ConnectivityBodyExpect struct {
+	Mode          string `json:"mode"` // contains | regex | exact
+	Value         string `json:"value"`
+	CaseSensitive bool   `json:"caseSensitive"`
+}
+
+// ConnectivityTracerouteDef is connectivityChecks[].traceroute. Zeros take the
+// defaults (every 5th run, 30 hops, 3 probes, 1000 ms per probe).
+type ConnectivityTracerouteDef struct {
+	Enabled        bool `json:"enabled"`
+	EveryNRuns     int  `json:"everyNRuns"`
+	MaxHops        int  `json:"maxHops"`
+	ProbesPerHop   int  `json:"probesPerHop"`
+	ProbeTimeoutMs int  `json:"probeTimeoutMs"`
+}
+
+// ConnectivityCheckDef is one connectivityChecks[] entry from GET /agents/config.
+type ConnectivityCheckDef struct {
+	ID              string                    `json:"id"`
+	Name            string                    `json:"name"`
+	Kind            string                    `json:"kind"`   // http | https | tcp | icmp
+	Target          string                    `json:"target"` // URL (http/https), host:port (tcp), host (icmp)
+	IntervalSec     int                       `json:"intervalSec"`
+	TimeoutMs       int                       `json:"timeoutMs"`
+	ExpectStatus    string                    `json:"expectStatus"` // "" → any 2xx
+	ExpectBody      *ConnectivityBodyExpect   `json:"expectBody"`
+	VerifyTLS       bool                      `json:"verifyTls"`
+	KeepBodyExcerpt bool                      `json:"keepBodyExcerpt"`
+	Traceroute      ConnectivityTracerouteDef `json:"traceroute"`
+	// sha256 of the definition server-side; rides inside the agent's own
+	// definition hash, so an edit re-baselines the check.
+	Revision string `json:"revision"`
+}
+
+// ConnectivitySample is one row of stream "connectivity" — one check run.
+// Pointer fields are optional on the wire: "not measured" must never be sent
+// as 0 (a 0 ms latency or a status of 0 is a reading, and a wrong one).
+type ConnectivitySample struct {
+	CheckID       string   `json:"checkId"`
+	Timestamp     string   `json:"timestamp"` // RFC3339Nano UTC, run start
+	OK            bool     `json:"ok"`
+	LatencyMs     *float64 `json:"latencyMs,omitempty"`
+	DNSMs         *float64 `json:"dnsMs,omitempty"`
+	ConnectMs     *float64 `json:"connectMs,omitempty"`
+	TLSMs         *float64 `json:"tlsMs,omitempty"`
+	TTFBMs        *float64 `json:"ttfbMs,omitempty"`
+	HTTPStatus    *int     `json:"httpStatus,omitempty"`
+	BodyMatched   *bool    `json:"bodyMatched,omitempty"`
+	BodySha256    string   `json:"bodySha256,omitempty"`
+	BodyBytes     *int     `json:"bodyBytes,omitempty"`
+	BodyExcerpt   string   `json:"bodyExcerpt,omitempty"`
+	Error         string   `json:"error,omitempty"`
+	ResolvedIP    string   `json:"resolvedIp,omitempty"`
+	TLSNotAfter   string   `json:"tlsNotAfter,omitempty"`
+	TLSIssuer     string   `json:"tlsIssuer,omitempty"`
+	TracerouteRan bool     `json:"tracerouteRan"`
+}
+
+// ConnectivityHop is one TTL of a traceroute. IP "" = no reply at that TTL;
+// RttMs has one entry per probe, -1 for a probe that timed out.
+type ConnectivityHop struct {
+	TTL   int       `json:"ttl"`
+	IP    string    `json:"ip"`
+	Rdns  string    `json:"rdns,omitempty"`
+	RttMs []float64 `json:"rttMs"`
+}
+
+// ConnectivityTraceroute is one row of stream "connectivityTraceroute".
+type ConnectivityTraceroute struct {
+	CheckID       string            `json:"checkId"`
+	Timestamp     string            `json:"timestamp"`
+	DestinationIP string            `json:"destinationIp"`
+	Complete      bool              `json:"complete"`
+	Reason        string            `json:"reason"` // scheduled | transition
+	Note          string            `json:"note,omitempty"`
+	Hops          []ConnectivityHop `json:"hops"`
 }
 
 // FetchConfig pulls the resolved cadences + which streams are agent-mode.
