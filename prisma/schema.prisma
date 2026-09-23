@@ -3960,7 +3960,8 @@ model ManufacturerProfile {
 // null defaultMibId = built-in seed scope. `defaultType` is "scalar" or
 // "table" and is what `collectTelemetrySnmp` uses to decide between GET .0
 // and walk-the-subtree. `defaultTransform` is the optional value-transform
-// applied after the SNMP value lands (Celsius↔Fahrenheit, bytes→MB, etc.).
+// applied after the SNMP value lands — on a metric row, only what
+// METRIC_ROW_TRANSFORMS allows (tenths_to_units on a scalar temperature row).
 model ManufacturerProfileMetric {
   id               String              @id @default(uuid())
   profileId        String
@@ -3995,11 +3996,12 @@ model ManufacturerProfileMetric {
   // metrics whose symbol comes from a built-in seed instead of "seed".
   defaultMibStdKey String?
   defaultType      String              @default("scalar") // "scalar" | "double_scalar" | "table"
-  // Unary transforms (TransformKind, e.g. celsius_to_fahrenheit, bytes_to_gb)
-  // when defaultType="scalar"; binary combiners (CombinerKind, e.g.
-  // a_over_b_as_percent) when defaultType="double_scalar"; null on
-  // defaultType="table". Validated against the registries in
-  // src/utils/symbolTransforms.ts at the service layer.
+  // A unary transform (TransformKind) when defaultType="scalar" — restricted
+  // per metric key to METRIC_ROW_TRANSFORMS, the ones a collector applies
+  // (today tenths_to_units on temperature); binary combiners (CombinerKind,
+  // e.g. a_over_b_as_percent) when defaultType="double_scalar"; null on
+  // defaultType="table". Validated against src/utils/symbolTransforms.ts at
+  // the service layer.
   defaultTransform String?
   // Second OID for the double_scalar shape. Populated when defaultType=
   // "double_scalar"; the combiner in defaultTransform is applied as

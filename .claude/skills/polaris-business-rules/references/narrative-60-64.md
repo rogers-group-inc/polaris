@@ -865,6 +865,15 @@ it — Polaris stores, rolls up and ALERTS in Celsius, and converts at render on
 silently re-point every temperature automation's threshold and step each sensor's
 history mid-series.
 
+**Resolved 2026-09-23.** The scaling half was built and the conversion half removed:
+`tenths_to_units` on a scalar temperature row is applied by the hardware-sensor
+collector's profile-scalar path, and Celsius↔Fahrenheit is gone from the registry.
+A metric row now accepts only the transforms in `utils/symbolTransforms.ts →
+METRIC_ROW_TRANSFORMS` (400 otherwise); the profile page hides the Transform select
+where that list is empty; the resolver filters a stored value through the same list
+so a legacy row can never start converting; and migration
+`20260923020000_metric_row_transforms_applied_only` cleared every inert value.
+
 ---
 
 ---

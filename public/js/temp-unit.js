@@ -6,9 +6,10 @@
  * source of truth, and the automation engine compares thresholds against the
  * stored number. So an operator who wants Fahrenheit gets it at RENDER time
  * only: nothing here touches a sample, a rollup, a threshold, or an automation.
- * (The Manufacturer Profiles `celsius_to_fahrenheit` transform is the other,
- * WRONG lever for this — it would rewrite stored values, silently re-point every
- * temperature automation's threshold, and step each sensor's history mid-series.)
+ * (Converting before storage is the WRONG lever — it would rewrite stored values,
+ * silently re-point every temperature automation's threshold, and step each
+ * sensor's history mid-series. The Manufacturer Profiles Celsius↔Fahrenheit
+ * transform that invited it was removed 2026-09-23.)
  *
  * The preference is install-wide: `branding.temperatureUnit` ("c" | "f"), which
  * app.js already fetches and mirrors into localStorage. Reading it from that

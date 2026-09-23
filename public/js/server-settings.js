@@ -4170,6 +4170,12 @@ var _mfgProfileTransforms = [];
 // based on the row's current Type (double_scalar → combiners; everything
 // else → unary transforms).
 var _mfgProfileCombiners = [];
+// metricKey → the unary transform kinds a SCALAR metric row of that key may
+// carry (METRIC_ROW_TRANSFORMS on the backend). _mfgProfileTransforms is the
+// custom-widget list; a metric row offers only this subset, and renders no
+// Transform select at all when its metric has none — a transform no
+// collector applies must not be offered.
+var _mfgMetricTransforms = {};
 var _mfgProfileDetail = {};         // profileId → full profile (lazy)
 var _mfgProfileExpanded = {};       // profileId → bool
 var _mfgProfileMetricEdit = {};     // composite key "id:metricKey" → bool (edit-in-progress)
@@ -4369,6 +4375,7 @@ async function loadIdentificationTab() {
     _mfgProfiles = profilePayload.profiles || [];
     _mfgProfileTransforms = profilePayload.transforms || [];
     _mfgProfileCombiners = profilePayload.combiners || [];
+    _mfgMetricTransforms = profilePayload.metricTransforms || {};
     _placeholderMac = results[9] || null;
     _assetTypes = (results[10] || {}).types || [];
     if (results[11]) _assetTypeMatchSchema = results[11];
@@ -7133,6 +7140,7 @@ async function loadCredentialsTab() {
       _mfgProfiles = profilePayload.profiles || [];
       _mfgProfileTransforms = profilePayload.transforms || [];
       _mfgProfileCombiners = profilePayload.combiners || [];
+      _mfgMetricTransforms = profilePayload.metricTransforms || {};
     } else {
       // Assets-admin: MIB Database card only. Credentials list + Manufacturer
       // Profiles stay admin-only — gated below in renderCredentialsTab().
@@ -8898,7 +8906,7 @@ function renderProfileDetail(detail) {
         '<td>' + renderTypeSelect(editType, "mfg-edit-type") + '</td>' +
         '<td>' + _symbolCellEditHTML(editType, editMibId, m.defaultSymbol, m.defaultSymbolB, "mfg-edit-sym") +
           _mfgExtraEditHTML(m.metricKey, "mfg-edit", { aggregate: m.defaultAggregate, label: m.defaultLabel, parsePattern: m.defaultParsePattern, parseTemplate: m.defaultParseTemplate }) + '</td>' +
-        '<td>' + renderTransformSelect(m.defaultTransform, "mfg-edit-transform", editType) + '</td>' +
+        '<td>' + renderTransformSelect(m.defaultTransform, "mfg-edit-transform", editType, m.metricKey) + '</td>' +
         '<td><button class="btn btn-sm btn-primary mfg-metric-save">Save</button> ' +
           '<button class="btn btn-sm mfg-metric-cancel">Cancel</button></td>';
     } else {
@@ -8949,7 +8957,7 @@ function renderProfileDetail(detail) {
       '<td>' + renderTypeSelect(newType, "mfg-new-override-type") + '</td>' +
       '<td>' + _symbolCellEditHTML(newType, newMibId, "", "", "mfg-new-override-sym") +
         _mfgExtraEditHTML(m.metricKey, "mfg-new-override", {}) + '</td>' +
-      '<td>' + renderTransformSelect(null, "mfg-new-override-transform", newType) + '</td>' +
+      '<td>' + renderTransformSelect(null, "mfg-new-override-transform", newType, m.metricKey) + '</td>' +
       '<td><button class="btn btn-sm mfg-override-add">Add</button></td>' +
     '</tr>';
   });
@@ -9431,7 +9439,7 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
       '<td>' + renderTypeSelect(oEditType, "mfg-edit-override-type") + '</td>' +
       '<td>' + _symbolCellEditHTML(oEditType, oMibId, o.symbol, o.symbolB, "mfg-edit-override-sym") +
         _mfgExtraEditHTML(metricKey, "mfg-edit-override", { aggregate: o.aggregate, label: o.label, parsePattern: o.parsePattern, parseTemplate: o.parseTemplate }) + '</td>' +
-      '<td>' + renderTransformSelect(o.transform, "mfg-edit-override-transform", oEditType) + '</td>' +
+      '<td>' + renderTransformSelect(o.transform, "mfg-edit-override-transform", oEditType, metricKey) + '</td>' +
       '<td><button class="btn btn-sm btn-primary mfg-override-save">Save</button> ' +
         '<button class="btn btn-sm mfg-override-cancel">Cancel</button></td>' +
     '</tr>';
@@ -9823,8 +9831,20 @@ function renderWidgetTypeSelect(current, cls) {
 // Transform / Combiner select. `type` decides which list to render:
 //   "double_scalar" → binary combiners (CombinerKind on the backend)
 //   anything else   → unary transforms (TransformKind)
-function renderTransformSelect(current, cls, type) {
+// `metricKey` is passed by metric rows and overrides, never by widgets: it
+// narrows the unary list to what that metric's collector applies
+// (_mfgMetricTransforms), and a metric with nothing applicable gets a plain
+// "—" instead of a select. With no select in the row the save handlers read
+// an empty value, so saving also clears a stale transform.
+function renderTransformSelect(current, cls, type, metricKey) {
   var list = type === "double_scalar" ? _mfgProfileCombiners : _mfgProfileTransforms;
+  if (metricKey && type !== "double_scalar") {
+    var allowed = type === "scalar" ? (_mfgMetricTransforms[metricKey] || []) : [];
+    list = list.filter(function (t) { return allowed.indexOf(t.kind) !== -1; });
+    if (!list.length) {
+      return '<span class="' + cls + '-none" style="font-size:0.78rem;color:var(--color-text-tertiary)">—</span>';
+    }
+  }
   var html = '<select class="' + cls + '" style="font-size:0.78rem">' +
     '<option value="">— none —</option>';
   list.forEach(function (t) {
