@@ -134,8 +134,12 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "networkScan", label: "Network Discovery", description: "Active sweeps of operator-supplied IP ranges. Read-Write = run and manage your own; Full Read-Write = anyone's.", hasOwnershipDimension: true },
   { key: "assetMonitorSettings", label: "Asset Monitor Settings", description: "Monitor cadence and retention overrides per asset, class, integration or manual. Full Read-Write = outage simulation." },
   { key: "mibDatabase", label: "MIB Database", description: "Upload, browse and walk SNMP MIB modules.", levels: UP_TO_WRITE },
-  { key: "manufacturerProfiles", label: "Manufacturer Profiles", description: "Per-vendor telemetry profiles: CPU / memory / temperature OIDs and custom widgets.", levels: UP_TO_WRITE },
-  { key: "manufacturerAliases", label: "Manufacturer Aliases", description: "Vendor-name normalization map.", levels: UP_TO_WRITE },
+  // Also gates the manufacturer ALIAS map (`/manufacturer-aliases`), which had
+  // its own key until 2026-09-23. An alias rewrites Asset.manufacturer across
+  // the fleet, and that value is what picks a device's profile — so editing an
+  // alias IS editing which profile applies, and the two could not sensibly be
+  // granted apart (business rule 43(f)).
+  { key: "manufacturerProfiles", label: "Manufacturer Profiles", description: "Per-vendor telemetry profiles (CPU / memory / temperature OIDs, custom widgets) and the vendor-name alias map that decides which profile a device gets.", levels: UP_TO_WRITE },
   { key: "credentials", label: "Credentials", description: "Stored SNMP / WinRM / SSH / REST / HTTP probe credentials. Read-Only lists them masked; Read-Write = your own rows.", hasOwnershipDimension: true },
   { key: "integrations", label: "Integrations", description: "The source integrations and their discovery runs. Full Read-Write also aborts a discovery in flight." },
   { key: "discoveryConflicts", label: "Discovery Conflicts", description: "Accept / reject / merge the reservation and asset conflicts discovery raises.", levels: UP_TO_WRITE },
@@ -153,8 +157,27 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "apiTokens", label: "API Tokens", description: "Long-lived bearer tokens for external callers such as a SIEM.", levels: UP_TO_WRITE },
   { key: "users", label: "Users", description: "User accounts, role assignment, TOTP and passkey reset. Full Read-Write also manages IdP group mappings." },
   { key: "roles", label: "Roles", description: "This permission matrix itself. Full Read-Write, together with Users Full Read-Write, is admin-equivalent." },
+  // Split out of `serverSettingsSystem` on 2026-09-23 (migration
+  // 20260923000000_authentication_function_key). Every route it gates used to
+  // sit on that key's `write` rung while the other ~54 — TLS, HA, tags, DNS,
+  // NTP, branding, capacity, the agent fleet — sat on `fullwrite`, so
+  // repointing every login at a different identity provider was a LESSER
+  // grant than changing the logo. It is its own key rather than a rung of
+  // that one because "who may say how people prove who they are" is a
+  // different job from "who may administer the server", and it is the job an
+  // operator is most likely to want to delegate narrowly or withhold
+  // entirely.
+  //
+  // Deliberately NOT here: IdP GROUP MAPPINGS (`users=fullwrite`). A mapping
+  // decides which ROLE an IdP group receives, which is granting authority,
+  // not configuring authentication — it is already the documented path to
+  // admin outside the last-admin guard. And NOT the login-page source-IP
+  // restriction (`serverSettingsSystem`), which is network-level reachability
+  // of a page rather than a statement about identity, and lives under the
+  // /server-settings mount whose floor is that key anyway.
+  { key: "authentication", label: "Authentication", description: "How operators sign in: the SAML / OIDC / LDAP / App Proxy providers, passkey policy and password policy.", levels: UP_TO_WRITE },
   { key: "savedDashboards", label: "Saved Dashboards", description: "Named dashboard canvases. Read-Only keeps your own private ones; Read-Write publishes one to everyone." },
-  { key: "serverSettingsSystem", label: "Server Settings — System", description: "HTTPS, branding, DNS, NTP, certificates, tags, capacity, HA, the agent fleet and the login providers." },
+  { key: "serverSettingsSystem", label: "Server Settings — System", description: "HTTPS, branding, DNS, NTP, certificates, tags, capacity, HA and the agent fleet.", levels: UP_TO_WRITE },
   { key: "serverSettingsData", label: "Server Settings — Data", description: "Database backup, restore and download, queue mode, security tokens, restart, in-app updates.", levels: WRITE_ONLY },
 ] as const;
 

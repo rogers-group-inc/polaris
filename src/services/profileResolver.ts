@@ -40,6 +40,7 @@ import {
   type ProfileFull,
 } from "./manufacturerProfileService.js";
 import { applyModelParse } from "../utils/modelParse.js";
+import { clampRegexSubject } from "../utils/regexSafety.js";
 import { normalizeAssetTypeName } from "../utils/assetTypes.js";
 
 /** Manufacturer → cached profile. Injected so tests run without a database. */
@@ -107,7 +108,7 @@ export function resolveDbMetric(metric: MetricRow | undefined, model: string | n
     // pre-swap resolver does not read; `pickDbProfile` does. Skip, don't match.
     if (!o.modelPattern) continue;
     try {
-      if (new RegExp(o.modelPattern, "i").test(modelStr)) return pickFromOverride(o);
+      if (new RegExp(o.modelPattern, "i").test(clampRegexSubject(modelStr))) return pickFromOverride(o);
     } catch { /* malformed regex; skip — write-path validates so this is defensive only */ }
   }
   if (metric.defaultSymbol || metric.defaultSymbolB) return pickFromRowDefaults(metric);
@@ -317,7 +318,12 @@ export function findDbProfile(
   const keyed = lookup(subject.manufacturer);
   if (keyed) return keyed;
 
-  const haystack = [subject.manufacturer, subject.os, subject.mibModule].filter(Boolean).join(" ").trim();
+  // Device-supplied SNMP text, matched against an operator's regex once per
+  // asset per poll — clamped so subject length can never be the thing that
+  // makes a pattern expensive. See utils/regexSafety.ts.
+  const haystack = clampRegexSubject(
+    [subject.manufacturer, subject.os, subject.mibModule].filter(Boolean).join(" ").trim(),
+  );
   if (!haystack) return null;
   for (const p of list()) {
     if (!p.matchPattern) continue;
@@ -371,7 +377,7 @@ export function resolveScopedMetric(
 function matchesModel(o: MetricOverrideRow, modelHaystack: string): boolean {
   if (!o.modelPattern) return false;
   const re = compiled(o.modelPattern);
-  return !!re && re.test(modelHaystack);
+  return !!re && re.test(clampRegexSubject(modelHaystack));
 }
 
 /**

@@ -875,17 +875,18 @@ function getAlertsFormData() {
         });
       });
 
-      // Duplicate-IP "Review & merge" — the same merge engine the row verb
-      // uses, reached through the full comparison modal so the operator sees
-      // polling history, sources and dependency edges and picks per-field
-      // winners before confirming. The modal lives in asset-merge-modal.js,
-      // which this page loads for exactly this button.
+      // Duplicate-IP / duplicate-serial "Review & merge" — the same merge
+      // engine the row verb uses, reached through the full comparison modal so
+      // the operator sees polling history, sources and dependency edges and
+      // picks per-field winners before confirming. The modal lives in
+      // asset-merge-modal.js, which this page loads for exactly this button.
       //
-      // It merges ASSETS, not the conflict, so the duplicate-IP sweep is what
-      // closes the card: with one claimant left the address is no longer a
-      // collision and the next pass auto-resolves it (`system:auto-resolved`).
-      // Reloading the queue here is therefore a refresh, not a resolution —
-      // the card can legitimately still be listed until that pass runs.
+      // It merges ASSETS, not the conflict. POST /assets/:id/merge settles the
+      // card it resolved before it responds: the duplicate-serial card is
+      // closed (awaited — so the reload below no longer lists it), the
+      // duplicate-ip card is re-evaluated fire-and-forget, so a duplicate-ip
+      // card can still show for a moment until that reconcile lands. The
+      // sweeps remain the backstop for both.
       body.querySelectorAll("[data-dupip-review], [data-dupserial-review]").forEach(function (el) {
         el.addEventListener("click", function () {
           var thisId = el.getAttribute("data-asset-id");

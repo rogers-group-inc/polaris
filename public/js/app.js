@@ -4503,12 +4503,12 @@ function _tagChipStyle(color, checked) {
     : 'background:' + c + '11;border-color:' + c + '40;color:' + c + '99';
 }
 
-// Creating a registry tag is gated fullwrite on serverSettingsSystem; a failed
+// Creating a registry tag is gated write (the top rung) on serverSettingsSystem; a failed
 // catalogue read also means we can't offer it (we'd be adding to a list we
 // couldn't show).
 function _canCreateRegistryTags() {
   if (_tagCache.failed) return false;
-  return typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "fullwrite");
+  return typeof permAtLeast === "function" && permAtLeast("serverSettingsSystem", "write");
 }
 
 /**

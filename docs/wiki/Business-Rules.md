@@ -168,8 +168,11 @@ everyone it names is on the same To line, so each reader can see who else is
 already on it. Nothing about the reader splits that message — not their
 timezone (times are the Polaris server's, and the footer names the zone) and
 not their permissions (a reader who cannot acknowledge gets the button and is
-refused, with a reason, on the acknowledge page). See
-[Actions](Automation-Actions#acknowledgement).
+refused, with a reason, on the acknowledge page). An alert outside a reader's
+regions reads as **not found** rather than forbidden — except to an
+administrator, whom region scope never narrows on alerts. See
+[Actions](Automation-Actions#acknowledgement) and
+[region scope](Users-Roles-and-Permissions#tags-and-region-scope).
 
 ### Rule 26
 **A generated MAC is a placeholder until the network proves otherwise.** The
@@ -328,6 +331,21 @@ the act: **downloading a backup is the whole database leaving the host**, so it 
 longer a read, and the asset auto-decommission thresholds moved off the audit-log key
 onto monitor settings. See
 [Users, roles and permissions](Users-Roles-and-Permissions#short-ladders).
+
+A level can also be *divided* in the wrong place. On 2026-09-23 the identity
+providers, passkey policy and password policy moved out of Server Settings —
+System onto a key of their own, **Authentication**, because repointing every
+login at a different provider had been a lesser grant than changing the logo,
+and neither job could be delegated without the other. One kind of custom role
+is narrowed by this. See
+[Who may change how people log in](Users-Roles-and-Permissions#who-may-change-how-people-log-in).
+
+The opposite mistake also happens: one act split across two keys. The
+manufacturer alias map had a key of its own, but an alias decides which
+**manufacturer profile** a device gets, so it could never really be granted
+apart from the profiles. On 2026-09-23 it was folded into **Manufacturer
+Profiles**. A custom role that held the two at different levels kept the
+lower one; no built-in role changed.
 
 ### Rule 44
 **A quiet window withholds the reminder, not the alert — and the reminder that

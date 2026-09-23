@@ -88,7 +88,7 @@ build auto-prune + boot-time auto-build are layered on top.
   loop and the manifest write; phase `"signing"`, steps `sign / windows-<arch>`. **FAIL-OPEN:** a failure emits `agent.build.sign_failed` (warning) + stamps the failure Setting but the build completes and ships unsigned — never blocks agent rollout.
   A fully-signed build (or disabling signing) clears the stamp. Routes:
   `GET/PUT /server-settings/agents/signing` (PUT =
-  `serverSettingsSystem:fullwrite`) + `POST .../signing/test`
+  `serverSettingsSystem:write`) + `POST .../signing/test`
   (token-fetch dry run); the alert feed is
   `GET /assets/agent-signing-alert` gated `assets:write` (the
   agent-deploy permission — deliberately NOT under /server-settings,
