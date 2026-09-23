@@ -34,6 +34,7 @@ import { ALERT_SEVERITY_RANK } from "../../src/utils/alertSeverity.js";
 
 const ALERTS_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "alerts.js"), "utf-8");
 const TAB_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "assets-tab.js"), "utf-8");
+const LIST_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "list-controls.js"), "utf-8");
 
 const g = globalThis as any;
 
@@ -101,6 +102,8 @@ function mount(assets: any[], opts: { alerts?: string; alertRows?: AlertRow[] } 
 
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(ALERTS_SRC)();
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function(LIST_SRC)();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(TAB_SRC)();
   const spec = g.PolarisAssetsTab.spec;

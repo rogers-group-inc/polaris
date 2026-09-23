@@ -335,7 +335,7 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
         // authProvider, regionTags: {user, role, effective} }. Translate to
         // the shape the rest of the mobile bundle expects — role becomes the
         // role NAME string for back-compat with existing role-name checks in
-        // reservations-tab.js / subnet-detail.js / more-tab.js. Permissions +
+        // reservation-actions.js / subnet-detail.js / more-tab.js. Permissions +
         // effective regions are passed through under explicit keys so future
         // surfaces (e.g. region-filtered reservation list) can read them.
         if (data && data.authenticated) {
@@ -633,6 +633,16 @@ if (!document.documentElement.hasAttribute("data-theme-strip-wired")) {
   // ─── Route handler ─────────────────────────────────────────────────────
   function routeChanged(route) {
     if (!currentUser) return;
+
+    // Retired routes. The Reservations tab and More → Networks both became
+    // the Networks tab; an installed PWA keeps its home-screen shortcut
+    // (#reservations) until the manifest is re-read, and bookmarks keep
+    // theirs forever, so both land on the tab rather than bouncing to Search.
+    if (route && (route.name === "reservations"
+        || (route.name === "more" && route.parts && route.parts[0] === "subnets"))) {
+      PolarisRouter.go("networks", { replace: true });
+      return;
+    }
 
     var topbar = document.getElementById("topbar-slot");
     var body = document.getElementById("app-body");

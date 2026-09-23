@@ -41,6 +41,8 @@
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
     <symbol id="i-search" viewBox="0 0 24 24"><path d="M9.5 3a6.5 6.5 0 1 0 4.23 11.43l4.92 4.92 1.42-1.42-4.92-4.92A6.5 6.5 0 0 0 9.5 3Zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Z"/></symbol>
+    <!-- Funnel: a list's own filter field, so it never reads as a second copy of the app-wide search bar above it. -->
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7.2V19l-4-2v-4.8L4 5Zm4.3 2 3.7 4.4V15.8l0 0V11.4L15.7 7H8.3Z"/></symbol>
     <symbol id="i-map" viewBox="0 0 24 24"><path d="M15 21l-6-2.1L4.65 20.6a.75.75 0 0 1-1.05-.69V5.43a.75.75 0 0 1 .47-.69L9 3l6 2.1 4.35-1.71a.75.75 0 0 1 1.05.69v14.49a.75.75 0 0 1-.47.69L15 21Zm-1-2.45V6.85L10 5.45v11.7l4 1.4Z"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 5h18v2H3V5Zm0 6h18v2H3v-2Zm0 6h18v2H3v-2Z"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Zm6-6V11a6 6 0 1 0-12 0v5l-2 2v1h16v-1l-2-2Z"/></symbol>
@@ -121,11 +123,19 @@
 <script src="/js/mobile/charts.js"></script>
 <script src="/js/mobile/map-tab.js"></script>
 <script src="/js/mobile/alerts.js"></script>
+<!-- Filter field + "Sort & filter" sheet for the Assets and Networks lists. -->
+<script src="/js/mobile/list-controls.js"></script>
 <script src="/js/mobile/assets-tab.js"></script>
 <script src="/js/mobile/asset-detail.js"></script>
-<script src="/js/mobile/reservations-tab.js"></script>
+<script src="/js/mobile/reservation-actions.js"></script>
 <script src="/js/mobile/more-tab.js"></script>
 <script src="/js/mobile/subnet-detail.js"></script>
+<!-- The desktop's table sorter, loaded for ONE function: TableSF's _ipNum is
+     the IPv4 + IPv6 address order the desktop Network column sorts by, and
+     the Networks tab reuses it rather than carrying a second copy. The file
+     only declares at load time — nothing in it runs until a table is built. -->
+<script src="/js/table-sf.js"></script>
+<script src="/js/mobile/networks-tab.js"></script>
 <script src="/js/topology-render.js"></script>
 <script src="/js/mobile/topology-tab.js"></script>
 <script src="/js/mobile/tabs.js"></script>

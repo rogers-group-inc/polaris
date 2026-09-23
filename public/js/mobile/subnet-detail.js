@@ -1,33 +1,32 @@
-// public/js/mobile/subnet-detail.js — Subnet detail + Reserve sheet.
+// public/js/mobile/subnet-detail.js — Network IP sheet + Reserve sheet.
 //
-// Phase 8 deliverable. Two pieces:
-//   1. Subnet detail screen (#subnet/<id>): info hero + paged IP list with
-//      reservation status. Tapping a reserved row navigates to the linked
-//      asset; tapping a free row opens the Reserve sheet pre-filled with
-//      that IP.
+// Two pieces:
+//   1. Network sheet (`PolarisNetworkSheet.open(id)`): a slide-up panel over
+//      the Networks tab carrying the network's hero + its IP list with
+//      reservation status. Reserved rows tap-expand inline (Edit / Release /
+//      Reserve-to-gate / Open asset); tapping a free row opens the Reserve
+//      sheet pre-filled with that IP. This used to be a page of its own
+//      (#subnet/<id>); the route still exists for search hits and old links,
+//      and now opens the Networks tab with this sheet on top, so there is one
+//      way to look at a network, not two.
 //   2. Reserve sheet (modal): IP / hostname / MAC (required when
 //      `pushEligible`) / notes + collapsible "more fields" for projectRef /
 //      expiresAt. POST /reservations on submit. Notes flow into the FortiOS
 //      reserved-address description on push-eligible subnets — operator typing
 //      here shows up on the FortiGate's reservation comment field.
 //
-// Role gates: readonly users see the list but no Reserve FAB and tapping
-// a free IP shows a snackbar instead of the sheet. user / assetsadmin /
-// networkadmin / admin can reserve. The mobile UI doesn't expose
-// ownership-edit guarding yet; release happens on desktop.
+// Stacking: the network sheet sits BELOW the asset detail sheet (890 vs 900)
+// so "Open asset" lands on top of it, and below the generic .sheet (1000) so
+// the Reserve / Edit sheets it opens stack over it. It is anchored above the
+// navbar like the asset sheet, and closes itself on any route change — a tap
+// on another tab must not leave a network hanging over it.
+//
+// Role gates: readonly users see the list but no Reserve button, and tapping
+// a free IP shows a snackbar instead of the sheet. Any role with
+// reservations:write can reserve.
 
 (function () {
   var IP_PAGE_SIZE = 256;
-
-  // Per-subnet state cache so navigating back from a quick reserve doesn't
-  // refetch the IP list.
-  var _mounts = Object.create(null);
-  function mountState(id) {
-    if (!_mounts[id]) {
-      _mounts[id] = { subnet: null, ips: [], page: 1, totalIps: 0, loading: false, ipv6: false, expandedIp: null };
-    }
-    return _mounts[id];
-  }
 
   // Can the user create reservations? Gate on the permission matrix
   // (reservations >= write), NOT the role name — custom/renamed roles
@@ -42,127 +41,157 @@
     return permAtLeast(user, "reservations", "write");
   }
 
-  // ─── Top-level renderers ───────────────────────────────────────────────
-  function renderTopbar(ctx) {
-    return ''
-      + '<div class="m3-topbar">'
-      + '  <div class="leading">'
-      + '    <button class="icon-btn" id="subnet-back-btn" aria-label="Back"><svg viewBox="0 0 24 24"><use href="#i-back"/></svg></button>'
-      + '  </div>'
-      + '  <div class="title" id="subnet-topbar-title">Network</div>'
-      + '  <div class="trailing"></div>'
-      + '</div>';
-  }
+  // The one open network sheet's state. `seq` drops a response that lands
+  // after the sheet was closed or re-opened on another network.
+  var _open = null;
+  var _seq = 0;
 
-  function render(body, ctx) {
-    var id = (ctx.route && ctx.route.parts && ctx.route.parts[0]) || "";
-    if (!id) {
-      body.innerHTML = '<div class="empty-state" style="padding-top:64px;"><div class="ttl">Network id missing</div></div>';
-      return;
-    }
-    var st = mountState(id);
-    body.innerHTML = ''
-      + '<div id="subnet-host"><div class="loading-screen"><div class="spinner"></div></div></div>'
-      + (canWrite(ctx.user)
-        ? '<button class="fab-ext" id="subnet-fab" style="position:fixed;right:16px;bottom:calc(var(--navbar-h) + 16px);z-index:30;display:none;"><svg viewBox="0 0 24 24"><use href="#i-add"/></svg>Reserve</button>'
-        : '');
+  // ─── Network sheet ─────────────────────────────────────────────────────
+  function openNetworkSheet(id, user, opts) {
+    if (!id) return;
+    closeNetworkSheet();
+    opts = opts || {};
+    var st = { id: id, subnet: null, ips: [], page: 1, totalIps: 0, ipv6: false, expandedIp: null, user: user, onChanged: opts.onChanged };
+    _open = st;
+    var mySeq = ++_seq;
 
-    var back = document.getElementById("subnet-back-btn");
-    if (back) back.addEventListener("click", function () {
-      if (window.history.length > 1) window.history.back();
-      else PolarisRouter.go("more/subnets", { replace: true });
-    });
+    var scrim = document.createElement("div");
+    scrim.className = "scrim network-scrim";
+    scrim.id = "network-sheet-scrim";
 
-    loadSubnet(id, st, ctx.user);
-  }
+    var sheet = document.createElement("div");
+    sheet.className = "sheet network-sheet";
+    sheet.id = "network-sheet";
+    sheet.setAttribute("role", "dialog");
+    sheet.setAttribute("aria-label", "Network");
+    sheet.innerHTML = ''
+      + '<div class="sheet-handle"></div>'
+      + '<div class="network-sheet-head">'
+      + '  <h3 class="sheet-title" id="network-sheet-title">' + escapeHtml(opts.title || "Network") + '</h3>'
+      + '  <div class="network-sheet-actions" id="network-sheet-actions"></div>'
+      + '  <button class="icon-btn" id="network-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
+      + '</div>'
+      + '<div id="subnet-host"><div class="loading-screen" style="padding:32px 0;"><div class="spinner"></div></div></div>';
 
-  function loadSubnet(id, st, user) {
+    document.body.appendChild(scrim);
+    document.body.appendChild(sheet);
+
+    scrim.addEventListener("click", closeNetworkSheet);
+    document.getElementById("network-sheet-close").addEventListener("click", closeNetworkSheet);
+    PolarisTabs.attachSwipeToDismiss(sheet, closeNetworkSheet);
+    window.addEventListener("hashchange", closeNetworkSheet);
+
     api.subnets.ips(id, { page: 1, pageSize: IP_PAGE_SIZE }).then(function (resp) {
-      st.subnet = resp.subnet;
-      st.ips = resp.ips || [];
-      st.page = resp.page || 1;
-      st.totalIps = resp.totalIps || st.ips.length;
-      st.ipv6 = !!resp.ipv6;
-      var topbar = document.getElementById("subnet-topbar-title");
-      if (topbar) topbar.textContent = st.subnet.name || st.subnet.cidr || "Network";
-
-      renderShell(st, user);
-      mountRefreshButton(id, st, user);
-
-      var fab = document.getElementById("subnet-fab");
-      if (fab) {
-        fab.style.display = "";
-        fab.addEventListener("click", function () { openReserveSheet(id, st, user, null); });
-      }
+      if (mySeq !== _seq) return;
+      applyIpsResponse(st, resp);
+      renderShell(st);
+      mountSheetActions(st);
     }).catch(function (err) {
+      if (mySeq !== _seq) return;
       var host = document.getElementById("subnet-host");
       if (host) host.innerHTML = errorState(err && err.message ? err.message : "Failed to load network");
     });
   }
 
+  function closeNetworkSheet() {
+    window.removeEventListener("hashchange", closeNetworkSheet);
+    _seq++;
+    _open = null;
+    var s = document.getElementById("network-sheet");
+    var sc = document.getElementById("network-sheet-scrim");
+    if (s) s.remove();
+    if (sc) sc.remove();
+  }
 
-  // The refresh button lives in the topbar trailing slot. Only shown for
-  // FortiGate-discovered subnets (`fortigateDevice` non-empty) AND callers
-  // who can write — matches the backend's `requireUserOrAbove` guard on
-  // POST /subnets/:id/refresh. Tap reconciles that single scope's CMDB
-  // reservations + live leases against Polaris, then re-fetches the IP list
-  // so the operator sees the result without leaving the page.
-  function mountRefreshButton(id, st, user) {
-    var topbar = document.querySelector("#subnet-topbar-title");
-    if (!topbar) return;
-    var trailing = topbar.parentElement && topbar.parentElement.querySelector(".trailing");
-    if (!trailing) return;
-    trailing.innerHTML = "";
-    if (!st.subnet || !st.subnet.fortigateDevice || !canWrite(user)) return;
+  function applyIpsResponse(st, resp) {
+    st.subnet = resp.subnet;
+    st.ips = resp.ips || [];
+    st.page = resp.page || 1;
+    st.totalIps = resp.totalIps || st.ips.length;
+    st.ipv6 = !!resp.ipv6;
+    var title = document.getElementById("network-sheet-title");
+    if (title && st.subnet) title.textContent = st.subnet.name || st.subnet.cidr || "Network";
+  }
 
-    var btn = document.createElement("button");
-    btn.className = "icon-btn";
-    btn.id = "subnet-refresh-btn";
-    btn.setAttribute("aria-label", "Refresh from " + (st.subnet.fortigateDevice || "FortiGate"));
-    btn.title = "Refresh from " + (st.subnet.fortigateDevice || "FortiGate");
-    btn.innerHTML = '<svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>';
-    trailing.appendChild(btn);
+  // Header verbs: Reserve (reservations:write) and, for FortiGate-discovered
+  // networks, Refresh from the gate — the `fortigateDevice` + write pairing
+  // matches the backend's guard on POST /subnets/:id/refresh. Refresh
+  // reconciles that one scope's CMDB reservations + live leases against
+  // Polaris, then re-fetches the IP list so the result shows without closing.
+  function mountSheetActions(st) {
+    var slot = document.getElementById("network-sheet-actions");
+    if (!slot) return;
+    slot.innerHTML = "";
+    var user = st.user;
+    if (!st.subnet || !canWrite(user)) return;
 
-    btn.addEventListener("click", function () {
-      if (btn.disabled) return;
-      btn.disabled = true;
-      btn.classList.add("spinning");
-      api.subnets.refresh(id).then(function (r) {
-        var parts = [];
-        if (r.created)  parts.push(r.created + " created");
-        if (r.updated)  parts.push(r.updated + " updated");
-        if (r.released) parts.push(r.released + " released");
-        if (r.skipped)  parts.push(r.skipped + " skipped");
-        var summary = parts.length ? parts.join(", ") : "no changes";
-        PolarisTabs.showSnackbar("Refreshed " + (st.subnet.fortigateDevice || "FortiGate") + " — " + summary);
-        return api.subnets.ips(id, { page: 1, pageSize: IP_PAGE_SIZE }).then(function (resp) {
-          st.subnet = resp.subnet;
-          st.ips = resp.ips || [];
-          st.totalIps = resp.totalIps || st.ips.length;
-          renderShell(st, user);
-          mountRefreshButton(id, st, user);
+    if (st.subnet.fortigateDevice) {
+      var btn = document.createElement("button");
+      btn.className = "icon-btn";
+      btn.id = "subnet-refresh-btn";
+      btn.setAttribute("aria-label", "Refresh from " + st.subnet.fortigateDevice);
+      btn.title = "Refresh from " + st.subnet.fortigateDevice;
+      btn.innerHTML = '<svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>';
+      slot.appendChild(btn);
+      btn.addEventListener("click", function () {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        btn.classList.add("spinning");
+        refreshFromGate(st).finally(function () {
+          btn.disabled = false;
+          btn.classList.remove("spinning");
         });
-      }).catch(function (err) {
-        PolarisTabs.showSnackbar(err && err.message ? err.message : "Refresh failed", { error: true });
-      }).finally(function () {
-        btn.disabled = false;
-        btn.classList.remove("spinning");
       });
+    }
+
+    var reserve = document.createElement("button");
+    reserve.className = "btn btn-tonal";
+    reserve.id = "subnet-reserve-btn";
+    reserve.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" style="fill:currentColor;"><use href="#i-add"/></svg>Reserve';
+    slot.appendChild(reserve);
+    reserve.addEventListener("click", function () { openReserveSheet(st.id, st, user, null); });
+  }
+
+  function refreshFromGate(st) {
+    var gate = (st.subnet && st.subnet.fortigateDevice) || "FortiGate";
+    return api.subnets.refresh(st.id).then(function (r) {
+      var parts = [];
+      if (r.created)  parts.push(r.created + " created");
+      if (r.updated)  parts.push(r.updated + " updated");
+      if (r.released) parts.push(r.released + " released");
+      if (r.skipped)  parts.push(r.skipped + " skipped");
+      var summary = parts.length ? parts.join(", ") : "no changes";
+      PolarisTabs.showSnackbar("Refreshed " + gate + " — " + summary);
+      return api.subnets.ips(st.id, { page: 1, pageSize: IP_PAGE_SIZE }).then(function (resp) {
+        if (_open !== st) return;
+        applyIpsResponse(st, resp);
+        renderShell(st);
+        mountSheetActions(st);
+        notifyChanged(st);
+      });
+    }).catch(function (err) {
+      PolarisTabs.showSnackbar(err && err.message ? err.message : "Refresh failed", { error: true });
     });
+  }
+
+  // The Networks list behind the sheet shows each network's reservation
+  // count and utilization, so a change made in the sheet tells it to re-pull.
+  function notifyChanged(st) {
+    if (typeof st.onChanged === "function") { try { st.onChanged(); } catch (_) {} }
   }
 
   function errorState(msg) {
     return ''
-      + '<div class="empty-state" style="padding-top:48px;">'
+      + '<div class="empty-state" style="padding-top:32px;">'
       + '  <div class="icon" style="background:var(--md-error-container);color:var(--md-on-error-container);"><svg viewBox="0 0 24 24"><use href="#i-warn"/></svg></div>'
       + '  <div class="ttl">Couldn’t load network</div>'
       + '  <div class="desc">' + escapeHtml(msg) + '</div>'
       + '</div>';
   }
 
-  function renderShell(st, user) {
+  function renderShell(st) {
     var host = document.getElementById("subnet-host");
-    if (!host) return;
+    if (!host || !st.subnet) return;
     var s = st.subnet;
     var heroBits = [];
     heroBits.push('<span class="mono">' + escapeHtml(s.cidr) + '</span>');
@@ -178,29 +207,25 @@
     var paged = st.ips.length < st.totalIps;
 
     host.innerHTML = ''
-      + '<div class="asset-hero">'
-      + '  <div class="hero-name">' + escapeHtml(s.name || s.cidr) + '</div>'
-      + '  <div class="hero-sub">' + heroBits.join(" · ") + '</div>'
-      + '  ' + pushBadge
-      + '</div>'
-      + '<div class="section-head">IPs<span class="count">' + reservedCount + ' reserved · ' + (st.totalIps + (paged ? "+" : "")) + ' total</span></div>'
+      + '<div class="network-sheet-sub">' + heroBits.join(" · ") + '</div>'
+      + pushBadge
+      + '<div class="section-head" style="padding-left:0;padding-right:0;">IPs<span class="count">' + reservedCount + ' reserved · ' + (st.totalIps + (paged ? "+" : "")) + ' total</span></div>'
       + '<div id="subnet-ip-list"></div>'
-      + (paged ? '<div style="text-align:center;padding:12px 0 24px;color:var(--md-on-surface-variant);font-size:12px;">Showing first ' + st.ips.length + ' addresses — open network on desktop for full pagination.</div>' : '');
+      + (paged ? '<div style="text-align:center;padding:12px 0 8px;color:var(--md-on-surface-variant);font-size:12px;">Showing first ' + st.ips.length + ' addresses — open network on desktop for full pagination.</div>' : '');
 
-    renderIpList(st, user);
+    renderIpList(st);
   }
 
-  // Reserved rows tap-expand inline (same pattern as the Reservations
-  // tab) so the operator can see full reservation details and act on
-  // them — Edit / Free / Reserve-to-gate / Open asset — without having
-  // to leave the Networks page. Free rows keep the original behavior:
-  // tap goes straight to the Reserve sheet (creating a reservation is
-  // the only thing you can do with a free row, so an extra expand
-  // click would just be in the way).
-  function renderIpList(st, user) {
+  // Reserved rows tap-expand inline so the operator can see full reservation
+  // details and act on them — Edit / Release / Reserve-to-gate / Open asset.
+  // Free rows go straight to the Reserve sheet (creating a reservation is the
+  // only thing you can do with a free row, so an extra expand tap would just
+  // be in the way).
+  function renderIpList(st) {
     var host = document.getElementById("subnet-ip-list");
     if (!host) return;
-    var subnetId = (PolarisRouter.current().parts || [])[0] || "";
+    var user = st.user;
+    var subnetId = st.id;
 
     var html = "";
     st.ips.forEach(function (ip, idx) {
@@ -213,9 +238,8 @@
 
       var sub = "";
       if (reserved) {
-        // Same subtitle ordering as the Reservations tab: MAC first
-        // (because it's the most discriminating identifier on a DHCP
-        // network), hostname second.
+        // MAC first (the most discriminating identifier on a DHCP network),
+        // hostname second.
         var bits = [];
         if (r.macAddress) bits.push('<span class="mono">' + escapeHtml(r.macAddress) + '</span>');
         if (r.hostname) bits.push(escapeHtml(r.hostname));
@@ -254,7 +278,7 @@
     if (!r) return '';
     var pushEligible = !!(st.subnet && st.subnet.pushEligible);
 
-    // Row carries the subnetId (implied by the page) onto the
+    // Row carries the subnetId (implied by the sheet) onto the
     // reservation object so the shared action helpers can find it.
     var rowForActions = Object.assign({}, r, { ipAddress: ip.address, subnetId: subnetId, pushEligible: pushEligible });
 
@@ -270,6 +294,9 @@
     var actions = window.PolarisReservationActions || {};
     var canCreate = actions.canCreate ? actions.canCreate(user) : false;
     var canModify = actions.canModify ? actions.canModify(user, rowForActions) : false;
+    // VIPs and interface addresses belong to the device's config — the
+    // server refuses Edit and Release on them (409), so neither is offered.
+    var deviceOwned = actions.isDeviceOwned ? actions.isDeviceOwned(r) : false;
 
     var buttons = [];
     var isLease = r.sourceType === "dhcp_lease";
@@ -284,7 +311,7 @@
       var reserveTitle = pushEligible ? "Reserve on Gate" : "Reserve in Polaris";
       buttons.push('<button class="btn ' + reserveCls + '" data-act="reserve" data-ip="' + escapeHtml(ip.address) + '" title="' + reserveTitle + '">Reserve</button>');
     }
-    if (canModify) {
+    if (canModify && !deviceOwned) {
       buttons.push('<button class="btn btn-tonal" data-act="edit" data-ip="' + escapeHtml(ip.address) + '">Edit</button>');
       // No Release for infra rows, matching the desktop panel: discovery
       // re-creates the managed device's row next cycle, so it reads as a
@@ -303,7 +330,7 @@
       : '';
 
     return ''
-      + '<div class="reservation-expand" style="background:var(--md-surface-cont-low);padding:12px 16px 16px;border-radius:0 0 var(--shape-md) var(--shape-md);">'
+      + '<div class="reservation-expand" style="background:var(--md-surface-cont);padding:12px 16px 16px;border-radius:0 0 var(--shape-md) var(--shape-md);">'
       +   detailRows.join('')
       +   btnBar
       + '</div>';
@@ -360,9 +387,8 @@
         var reserved = row.dataset.reserved === "1";
         var type = row.dataset.type;
         if (reserved) {
-          // Toggle expansion (same as Reservations tab).
           st.expandedIp = (st.expandedIp === ip) ? null : ip;
-          renderIpList(st, user);
+          renderIpList(st);
           return;
         }
         if (type !== "host") {
@@ -579,66 +605,54 @@
 
   function reloadList(subnetId, st, user) {
     api.subnets.ips(subnetId, { page: 1, pageSize: IP_PAGE_SIZE }).then(function (resp) {
+      if (_open !== st) return;
       st.ips = resp.ips || [];
       st.totalIps = resp.totalIps || st.ips.length;
-      renderIpList(st, user);
+      renderShell(st);
+      notifyChanged(st);
     }).catch(function () { /* ignore */ });
   }
 
   // escapeHtml is the canonical global from api.js (loaded first on every page).
 
-  // Pull-to-refresh — for FortiGate-discovered subnets that the caller can
-  // write to, this fires the same single-scope refresh as the topbar
-  // button (reconciles CMDB reservations + leases against the FortiGate),
-  // then re-pulls IPs. For other subnets it just re-pulls the IP list.
-  // Either way returns a promise so the PTR puck spins until done.
-  function refreshFromPtr(ctx) {
-    var id = (ctx && ctx.route && ctx.route.parts && ctx.route.parts[0]) || "";
-    if (!id) return null;
-    var st = mountState(id);
-    var user = ctx && ctx.user;
-    var canRefreshFromGate = st.subnet && st.subnet.fortigateDevice && canWrite(user);
-    var prePull = canRefreshFromGate
-      ? api.subnets.refresh(id).then(function (r) {
-          var parts = [];
-          if (r.created)  parts.push(r.created + " created");
-          if (r.updated)  parts.push(r.updated + " updated");
-          if (r.released) parts.push(r.released + " released");
-          if (r.skipped)  parts.push(r.skipped + " skipped");
-          var summary = parts.length ? parts.join(", ") : "no changes";
-          PolarisTabs.showSnackbar("Refreshed " + (st.subnet.fortigateDevice || "FortiGate") + " — " + summary);
-        }, function (err) {
-          PolarisTabs.showSnackbar(err && err.message ? err.message : "Refresh failed", { error: true });
-        })
-      : Promise.resolve();
-    return prePull.then(function () {
-      return api.subnets.ips(id, { page: 1, pageSize: IP_PAGE_SIZE }).then(function (resp) {
-        st.subnet = resp.subnet;
-        st.ips = resp.ips || [];
-        st.totalIps = resp.totalIps || st.ips.length;
-        renderShell(st, user);
-        mountRefreshButton(id, st, user);
-      });
-    }).catch(function (err) {
-      PolarisTabs.showSnackbar(err && err.message ? err.message : "Reload failed", { error: true });
-    });
-  }
-
+  // ─── #subnet/<id> ───────────────────────────────────────────────────────
+  // Search hits (networks, IPs, reservations) and old bookmarks still link
+  // here. The network is no longer a page: the route swaps itself for the
+  // Networks tab and opens this network's sheet on top, so a search hit and
+  // a tap in the list land on the same surface. `replace` keeps Back from
+  // bouncing through the shim.
   window.PolarisSubnetDetail = {
     spec: {
-      parentTab: null,
-      renderTopbar: renderTopbar,
-      render: render,
-      onPullToRefresh: refreshFromPtr,
+      parentTab: "networks",
+      renderTopbar: function () { return ""; },
+      render: function (body, ctx) {
+        var id = (ctx && ctx.route && ctx.route.parts && ctx.route.parts[0]) || "";
+        body.innerHTML = '<div class="loading-screen"><div class="spinner"></div></div>';
+        // Deferred one tick: app.js finishes mounting THIS route (topbar,
+        // pull-to-refresh) after render() returns, and a synchronous redirect
+        // would have that tail tear down the Networks tab's pull-to-refresh
+        // the redirect had just installed.
+        setTimeout(function () {
+          PolarisRouter.go("networks", { replace: true });
+          if (!id) return;
+          if (window.PolarisNetworksTab && PolarisNetworksTab.openNetwork) PolarisNetworksTab.openNetwork(id);
+          else openNetworkSheet(id, ctx && ctx.user);
+        }, 0);
+      },
     },
   };
 
+  window.PolarisNetworkSheet = {
+    open: openNetworkSheet,
+    close: closeNetworkSheet,
+  };
+
   // ─── Cross-tab reserve-sheet entry point ───────────────────────────────
-  // Used by the Reservations tab to promote a DHCP lease into a Polaris-
-  // pushed manual reservation without navigating to the subnet detail page.
-  // Loads a minimal subnet shell (so we know pushEligible + fortigateDevice
-  // for the form's required-MAC + comment-field hints) then opens the same
-  // reserve sheet the subnet detail page uses.
+  // Used by the reservation verbs (reservation-actions.js) to promote a DHCP
+  // lease into a Polaris-pushed manual reservation. Loads a minimal subnet
+  // shell (so we know pushEligible + fortigateDevice for the form's
+  // required-MAC + comment-field hints) then opens the same reserve sheet the
+  // network sheet uses.
   window.PolarisReserveSheet = {
     open: function (subnetId, user, prefill, opts) {
       if (!subnetId) return;

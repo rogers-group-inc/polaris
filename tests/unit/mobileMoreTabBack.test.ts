@@ -3,7 +3,8 @@
  *
  * The back chevron on every More sub-page.
  *
- * All five were inert. On blocks / subnets / events the `wireBack()` call sat
+ * All five were inert (the Networks sub-page has since become the Networks
+ * tab). On blocks / subnets / events the `wireBack()` call sat
  * AFTER the `return api…` that kicks off the fetch — unreachable dead code that
  * reads as wired at a glance — and alerts and install never called it at all.
  * Nothing caught it: `no-unreachable` would have, but `npm run lint` is scoped
@@ -25,7 +26,7 @@ const SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "more-tab
 const g = globalThis as any;
 
 /** Every sub-page registered by more-tab.js, with a stub for the fetch it makes. */
-const SUB_PAGES = ["blocks", "subnets", "events", "alerts", "install"] as const;
+const SUB_PAGES = ["blocks", "events", "alerts", "install"] as const;
 
 let routed: string[] = [];
 let resolvers: Array<() => void> = [];

@@ -4,7 +4,7 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 
 ## Mobile bottom sheet
 
-**What it is:** A modal slide-up panel anchored to the bottom of the viewport on the mobile SPA. Dismissed by tapping the scrim, tapping the X button, or swiping the sheet down. Used for the Device Map site detail, asset interface drilldown, reservation edit + create-by-IP, subnet reserve, topology node detail, the per-asset alerts sheet, and the full asset detail screen.
+**What it is:** A modal slide-up panel anchored to the bottom of the viewport on the mobile SPA. Dismissed by tapping the scrim, tapping the X button, or swiping the sheet down. Used for the Device Map site detail, asset interface drilldown, reservation edit + create-by-IP, subnet reserve, topology node detail, the per-asset alerts sheet, the full asset detail screen, a list's "Sort & filter" picker, and the **network IP sheet** (`PolarisNetworkSheet` in [public/js/mobile/subnet-detail.js](public/js/mobile/subnet-detail.js)) — a network's addresses opened over the Networks tab instead of on a page of their own. That last one is the pattern for a sheet OTHER sheets stack on: it sits at z-index 890/891, under the asset sheet (900) so its "Open asset" lands on top and under the generic `.sheet` (1000) so the Reserve / Edit sheets it opens stack over it; it is anchored above the navbar like the asset sheet so the tabs stay reachable, and it closes itself on `hashchange` so a tab tap never leaves it hanging over another tab.
 
 **Canonical implementation:** `openSiteSheet()` in [public/js/mobile/map-tab.js](public/js/mobile/map-tab.js) + matching `closeSiteSheet()` — use this for the common two-state (open/dismiss) sheet.
 
@@ -47,7 +47,27 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 **When adding a new instance:**
 - Define `onPullToRefresh(ctx)` on the tab or detail spec. Return the Promise from the same data-load function the topbar Refresh button uses (or equivalent) — don't fork a separate refresh path.
 - The spec's render-time DOM must still be present when the promise resolves; loaders that target `getElementById` should be safe because the user can't navigate away during the PTR gesture without releasing first.
-- Whenever the refresh action has variant behavior depending on user role / route parts (e.g. subnet detail's gate-side refresh vs. plain re-pull, or More's per-sub-page dispatch), branch inside `onPullToRefresh` rather than inside the install wiring. Use `enablesPullToRefresh` only for "no PTR at all on this route."
+- Whenever the refresh action has variant behavior depending on user role / route parts (e.g. More's per-sub-page dispatch), branch inside `onPullToRefresh` rather than inside the install wiring. Use `enablesPullToRefresh` only for "no PTR at all on this route."
+- **A route that redirects must redirect a tick late.** `routeChanged` installs PTR for a spec AFTER that spec's `render()` returns, so a `render()` that synchronously `PolarisRouter.go`es elsewhere has its own (absent) PTR installed over the destination's — silently releasing it. The `#subnet/<id>` shim in subnet-detail.js defers its redirect with `setTimeout(…, 0)` for exactly this.
+
+---
+
+## Mobile list toolbar (filter + sort)
+
+**What it is:** The row above a list tab's chips: a filter field and a sort chip, and behind the chip a "Sort & filter" bottom sheet carrying the sort column, its direction, and any filter the chip row has no room for. On the Assets and Networks tabs.
+
+**Canonical implementation:** `window.PolarisListControls` in [public/js/mobile/list-controls.js](public/js/mobile/list-controls.js) — `toolbarHTML` / `wireToolbar` / `updateSortChip` / `openSortSheet` / `loadPrefs` / `savePrefs`. Consumers: [public/js/mobile/assets-tab.js](public/js/mobile/assets-tab.js) (server-side) and [public/js/mobile/networks-tab.js](public/js/mobile/networks-tab.js) (client-side).
+
+**Key conventions:**
+- **The module draws and reports; the tab does the work.** Where the work runs is decided by the list, not the control: a PAGED list (Assets) must sort and filter server-side, because a client sort only orders the pages already loaded; a list that is loaded whole (Networks, the same `limit: 10000` the desktop page fetches) sorts in the browser.
+- **A server-side sort offers only keys the route accepts.** Assets' sort keys are the route's `ASSET_SORT_COLUMNS` and its status values `monitorClause`'s cases; `tests/unit/mobileAssetsSortFilter.test.ts` reads both out of `src/api/routes/assets.ts` and fails on a key the server would 400.
+- **Reuse the desktop's comparators.** Network order is `TableSF.prototype._ipNum` — mobile.html loads table-sf.js for that one function rather than carrying a fourth IP comparator.
+- **Choices apply as they are tapped.** The sheet is a picker, not a form: no Apply button to forget. Tapping the selected column again flips its direction; a new column takes its own `defaultDir` (Utilization and Last seen start descending).
+- **A filter hidden in the sheet is named on the chip** (`Name · Down`, chip `selected`) — a list narrowed by something the operator can't see reads as missing data.
+- **Sort / direction / sheet filters persist per viewer; the filter TEXT does not** — a stale term hiding rows on the next visit reads the same way. Storage is guarded; blocked storage falls back to the defaults.
+- **The field is a funnel (`#i-filter`), never the magnifier.** The app-wide search bar sits directly above it on every page; two magnifiers read as the same control twice.
+
+**When adding a new instance:** call `toolbarHTML({id, placeholder, value, sortLabel, dir, active})` in `render()`, `wireToolbar(id, {onFilter, onSort})` after it, and `openSortSheet` from `onSort`. Give it its own `polaris-mobile-<list>-list` prefs key and validate what `loadPrefs` hands back against the current option list, since a saved key can outlive the option it named.
 
 ---
 
