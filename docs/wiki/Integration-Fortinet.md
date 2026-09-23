@@ -88,7 +88,7 @@ resolved method needs them.
 | **`pushQuarantine`** | quarantining an asset pushes MAC address-group entries to every gate that has sighted it within the sighting window | address-group write access |
 | **`autoReserveFortinetInfra`** | each cycle pins the address a managed switch or AP **already holds by lease**. Occupancy does not change | `pushReservations` |
 | **`adoptDiscoveredMac`** | replaces a synthetic **placeholder** MAC with the real one and re-pushes. Only ever overwrites a MAC matching the placeholder prefix | `pushReservations` |
-| **`syncDescriptions`** | writes Polaris descriptions back to the devices | device-config write on the FMG admin profile |
+| **`syncDescriptions`** | writes Polaris descriptions back to the devices | proxy mode: device-config write on the FMG admin profile. Direct mode and standalone FortiGate: **System → Read-Write** on the gate's REST API access profile (plus Network → Configuration, and WiFi & Switch Controller when the gate manages switches / APs) |
 | **`pullSdwan`** | pulls SD-WAN health-check metrics and rule member selection | — |
 | **`arpPresenceSweep`** | fires one datagram at every reserved IP so the gate ARP-resolves it | — |
 
@@ -104,6 +104,14 @@ A non-empty Polaris value **always wins** — pushed on save, re-asserted by eve
 reconcile, device-side edits overwritten. An **empty** Polaris field adopts the
 device value. There is no conflict state. Under FMG central management, pushes
 are additionally mirrored into FMG's database.
+
+When the writes go **direct to the gate** (FMG bypassing the proxy, or a
+standalone FortiGate), the access profile must grant **System → Read-Write**.
+The FortiGate alias lives in `system/global`, which FortiOS puts in the System
+group rather than Network. Without it the alias write is refused, but interface
+descriptions still sync, so the feature can look like it partly works. System
+Read-Write also covers administrators and global settings, so treat that token
+as an admin-grade credential.
 
 **`arpPresenceSweep` is IDS-visible.** It also requires Polaris→subnet routing
 and a permitting policy to have any effect; where the packet cannot reach, the

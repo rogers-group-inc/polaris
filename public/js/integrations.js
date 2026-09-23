@@ -1457,15 +1457,24 @@ function _readDirectorySyncConfig() {
 // with one read from the integration's Query API tab instead of being
 // discovered as a failed push. Shared by all three tabs so a fourth caller
 // can't reintroduce a two-transport assumption.
-function _fortigateAccessProfileHTML(noun, grants, verifyPath) {
+//
+// `fleet` = FMG "bypass the proxy" direct mode: the same FortiOS grant, but on
+// every managed gate's REST API admin (the per-device token on the Settings
+// tab) rather than one gate's General-tab token.
+function _fortigateAccessProfileHTML(noun, grants, verifyPath, fleet) {
   var rows = "";
   for (var i = 0; i < grants.length; i++) rows += '<li>' + grants[i] + '</li>';
+  var intro = fleet
+    ? 'Polaris writes ' + noun + ' straight to each FortiGate\'s REST API using the per-device API token on the Settings tab &mdash; FortiManager is not in the path. That REST API admin, on every managed FortiGate, needs an access profile granting:'
+    : 'Polaris writes ' + noun + ' straight to this FortiGate\'s REST API using the API token on the General tab. That token\'s REST API admin needs an access profile granting:';
+  var verifyWhere = fleet
+    ? ' to one of the FortiGates, authenticated with that token. '
+    : ' from this integration\'s Query API tab. ';
   return '<h4 style="margin:0 0 0.25rem 0">Required FortiGate Access Profile</h4>' +
-    '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">Polaris writes ' + noun +
-      ' straight to this FortiGate\'s REST API using the API token on the General tab. That token\'s REST API admin needs an access profile granting:</p>' +
+    '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">' + intro + '</p>' +
     '<ul style="margin:0 0 0.75rem 1.2rem;padding:0;font-size:0.85rem">' + rows + '</ul>' +
     calloutHTML("tip", "Verify the grant before you need it",
-      'Send <code>GET ' + escapeHtml(verifyPath) + '</code> from this integration\'s Query API tab. ' +
+      'Send <code>GET ' + escapeHtml(verifyPath) + '</code>' + verifyWhere +
       '<strong>200</strong> means the profile and the vdom are both right; <strong>403</strong> means the profile ' +
       'does not cover this tree, or the Polaris host sits outside the admin\'s <em>trusthost</em>; ' +
       '<strong>404</strong> means this FortiOS build does not expose it. Add <code>action=schema</code> as a ' +
@@ -1579,25 +1588,36 @@ function descriptionSyncFormHTML(syncDescriptions, useProxy, type) {
   // is no such database without a FortiManager.
   var fmgMirrorBullet = isStandalone ? "" :
         '<li><strong>FMG central management.</strong> When this ADOM centrally manages FortiAPs or FortiSwitches (detected at each discovery; shown on the integration card), pushes for that class are also mirrored into FortiManager\'s AP Manager / FortiSwitch Manager database so a later install doesn\'t revert them. Polaris never triggers an install.</li>';
-  var permsHtml = isStandalone
-    ? _fortigateAccessProfileHTML(
-        "descriptions",
-        [
-          '<strong>Network</strong> &rarr; Custom &rarr; <strong>Configuration</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; interface descriptions and the FortiGate alias</span>',
-          '<strong>WiFi &amp; Switch Controller</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; only if this gate manages FortiSwitches / FortiAPs</span>',
-        ],
-        "/api/v2/cmdb/system/interface",
-      ) + overwriteCallout
-    : ('<h4 style="margin:0 0 0.25rem 0">Required FortiManager Admin Profile</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">The following permission changes are needed on the FortiManager admin profile Polaris uses:</p>' +
+  // Direct writes (standalone, or FMG bypassing the proxy) are authorized by
+  // the FortiOS access profile on the gate. The FortiGate alias lives in
+  // system/global, which FortiOS files under the System group, not Network —
+  // without System Read-Write the alias PUT is refused while interface
+  // descriptions (Network) still go through, so the feature looks half-working.
+  var fgtGrants = [
+    '<strong>System</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; the FortiGate alias (<code>system/global</code>) &mdash; required, description sync fails without it</span>',
+    '<strong>Network</strong> &rarr; Custom &rarr; <strong>Configuration</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; interface descriptions</span>',
+    '<strong>WiFi &amp; Switch Controller</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; only if this gate manages FortiSwitches / FortiAPs</span>',
+  ];
+  var systemGroupCallout = calloutHTML("warning", "System Read-Write is broad", "The System group also covers administrators, access profiles and global settings. FortiOS has no narrower grant that reaches the alias, so treat this token as an admin-grade credential.");
+  var fmgProfileHtml = function (heading, intro) {
+    return '<h4 style="margin:0 0 0.25rem 0">' + heading + '</h4>' +
+      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">' + intro + '</p>' +
       '<ul style="margin:0 0 0.75rem 1.2rem;padding:0;font-size:0.85rem">' +
       '<li><strong>Device Manager</strong> &rarr; Read-Write</li>' +
       '<li style="margin-left:1.2rem"><strong>Manage Device Configurations</strong> &rarr; Read-Write</li>' +
       '<li>All other Device Manager sub-items &mdash; leave at Read-Only or None</li>' +
       '</ul>' +
-      calloutHTML("warning", "Blast radius", "FortiManager admin profiles do not have a per-object permission for descriptions. <strong>Manage Device Configurations</strong> grants write access to every CMDB tree on every FortiGate in this ADOM. Treat the API token as a privileged credential and rotate on the same cadence as your other admin secrets.") +
-      
-      overwriteCallout);
+      calloutHTML("warning", "Blast radius", "FortiManager admin profiles do not have a per-object permission for descriptions. <strong>Manage Device Configurations</strong> grants write access to every CMDB tree on every FortiGate in this ADOM. Treat the API token as a privileged credential and rotate on the same cadence as your other admin secrets.");
+  };
+  var permsHtml = isStandalone
+    ? _fortigateAccessProfileHTML("descriptions", fgtGrants, "/api/v2/cmdb/system/global") + systemGroupCallout + overwriteCallout
+    : (useProxy === false)
+      // Direct mode: the device writes never touch FortiManager, but the
+      // central-management mirror is still an FMG JSON-RPC call.
+      ? _fortigateAccessProfileHTML("descriptions", fgtGrants, "/api/v2/cmdb/system/global", true) + systemGroupCallout +
+        fmgProfileHtml("Required FortiManager Admin Profile (central-management mirror only)", "Only needed when this ADOM centrally manages FortiAPs or FortiSwitches: Polaris mirrors those pushes into FortiManager's own database over its API, which needs these permissions on the FortiManager admin profile Polaris uses:") +
+        overwriteCallout
+      : fmgProfileHtml("Required FortiManager Admin Profile", "The following permission changes are needed on the FortiManager admin profile Polaris uses:") + overwriteCallout;
   return '<section style="margin-bottom:1.5rem">' +
       '<h4 style="margin:0 0 0.25rem 0">Description Sync</h4>' +
       '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)"><strong style="color:var(--color-text-primary)">Polaris is primary.</strong> A value in Polaris always wins: it pushes to the device on save and re-asserts on every discovery cycle — device-side edits are overwritten (every change is audited). An empty Polaris field adopts the device\'s value instead.</p>' +
