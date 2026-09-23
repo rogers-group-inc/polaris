@@ -130,7 +130,7 @@ the only thing that justifies the rung existing.
 | `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge · **Full RW** = clear |
 | `automationManagement` | Read-Write | automations and delivery channels |
 | `automationScripts` | Read-Write | **RCE-equivalent** — see [Automation scripts](Automation-Scripts) |
-| `connectivityChecks` | Read-Write | [agent-run connectivity checks](Connectivity-Checks). Read-Write tells every matching Polaris Agent to send traffic to a destination on a schedule. Seeded from each role's `automationManagement` level; enough on its own to open the Automations page (its Connectivity tab only) |
+| `connectivityChecks` | Read-Write | [agent-run connectivity checks](Connectivity-Checks). Read-Write tells every matching Polaris Agent to send traffic to a destination on a schedule. Gates the **Connections** page (sidebar, under Application Map). Seeded from each role's `automationManagement` level |
 | `maintenanceManagement` | Read-Write | maintenance windows; Read-Write is schedule CRUD |
 | `contacts` | Full RW | the address book — **ownership** |
 

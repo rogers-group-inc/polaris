@@ -23551,7 +23551,7 @@ function _assetConnectivityTabHTML(a, payload) {
       "</tr>";
   }).join("");
   var manage = (typeof permAtLeast === "function" && permAtLeast("connectivityChecks", "read"))
-    ? '<a href="/automations.html#tab=connectivity" class="btn btn-sm btn-secondary">Manage checks</a>' : "";
+    ? '<a href="/connections.html" class="btn btn-sm btn-secondary">Manage checks</a>' : "";
   return '<div data-shot-section="connChecks">' +
       '<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">' +
         '<p class="hint" style="margin:0">Checks the Polaris Agent on this host runs. They describe the path from this host — never its own Up / Down.</p>' +

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polaris — Connections</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-light.png">
+  <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-dark.png" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main" id="conn-page">
+      <div class="page-header">
+        <h2>Connections</h2>
+        <div class="page-header-actions">
+          <button class="btn btn-primary" id="btn-add-check" style="display:none">+ Add check</button>
+          <button class="btn btn-secondary" id="btn-refresh-checks">Refresh</button>
+        </div>
+      </div>
+
+      <!-- Agent-run connectivity checks (connectivity-checks.js). Gated by the
+           connectivityChecks key: read = the list + Results, write = the verbs.
+           A check says WHAT to measure and FROM which agent hosts; SLAs are set
+           by automations on its conn* metrics (business rule 85). -->
+      <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
+        Checks the <strong>Polaris Agent</strong> runs from the hosts you choose: an HTTP / HTTPS request, a TCP connect or a ping, with a traceroute of the path. Results appear on each host's <strong>Connectivity</strong> tab. To be alerted, create an <a href="/automations.html">automation</a> on the <em>Connectivity</em> metrics (latency, failure rate, HTTP status…) — a check has no threshold of its own, and never changes the host's own Up / Down status.
+      </p>
+      <div id="conn-pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
+      <div class="table-wrapper table-wrapper-sticky">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:200px" data-col-id="name" data-sf-key="name" data-sf-type="string">Name</th>
+              <th style="width:80px" data-col-no-resize="true" data-col-id="kind" data-sf-key="kind" data-sf-type="string" data-sf-options="http|https|tcp|icmp">Kind</th>
+              <th style="width:260px" data-col-id="target" data-sf-key="target" data-sf-type="string">Target</th>
+              <th style="width:110px" data-col-no-resize="true" data-col-id="interval" data-sf-key="intervalSec" data-sf-type="number" data-sf-nofilter="true">Interval</th>
+              <th style="width:90px" data-col-no-resize="true" data-col-id="sources" data-sf-key="sourceCount" data-sf-type="number" data-sf-nofilter="true">Hosts</th>
+              <th style="width:170px" data-col-id="result" data-sf-key="failCount" data-sf-type="number" data-sf-nofilter="true">Result</th>
+              <th style="width:150px" data-col-id="lastRun" data-sf-key="lastRunAt" data-sf-type="date">Last run</th>
+              <th style="width:110px" data-col-no-resize="true" data-col-id="traceroute" data-sf-key="tracerouteEnabled" data-sf-type="string" data-sf-options="true=On|false=Off">Traceroute</th>
+              <th style="width:110px" data-col-no-resize="true" data-col-id="enabled" data-sf-key="enabled" data-sf-type="string" data-sf-options="true=Enabled|false=Disabled">Enabled</th>
+              <th data-col-id="createdBy" data-sf-key="createdBy" data-sf-type="string">Created by</th>
+            </tr>
+          </thead>
+          <tbody id="conn-tbody">
+            <tr><td colspan="10" class="empty-state">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination" id="conn-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+    </main>
+  </div>
+
+  <!-- assets.js + its UI deps power the canonical asset details slide-in
+       (openViewModal) the Results view opens on a host's Connectivity tab —
+       the same stack appmap.html loads. Each file's page-init self-guards on
+       its own page DOM. -->
+  <script src="/js/vendor/jspdf.umd.min.js"></script>
+  <script src="/js/vendor/jspdf.plugin.autotable.min.js"></script>
+  <script src="/js/vendor/html-to-image.min.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/brand-logo.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/table-sf.js"></script>
+  <script src="/js/favorites.js"></script>
+  <script src="/js/monitor-states.js"></script>
+  <script src="/js/monitor-down-after.js"></script>
+  <script src="/js/integrations.js"></script>
+  <script src="/js/temp-unit.js"></script>
+  <script src="/js/chart-severity.js"></script>
+  <script src="/js/assets.js"></script>
+  <script src="/js/recurrence-editor.js"></script>
+  <script src="/js/assets-maintenance.js"></script>
+  <script src="/js/push.js"></script>
+  <script src="/js/password-self.js"></script>
+  <script src="/js/totp-self.js"></script>
+  <script src="/js/webauthn.js"></script>
+  <script src="/js/passkeys-self.js"></script>
+  <script src="/js/condition-builder.js"></script>
+  <script src="/js/automations-address-book.js"></script>
+  <script src="/js/automations-wizard.js"></script>
+  <script src="/js/automations-portability.js"></script>
+  <script src="/js/connectivity-checks.js"></script>
+</body>
+</html>

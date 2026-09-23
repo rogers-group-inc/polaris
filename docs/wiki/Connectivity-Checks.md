@@ -11,7 +11,7 @@ server. Each matching host runs the check on its own schedule and reports:
 - a **traceroute** of the path the traffic took, with each hop matched to the
   device Polaris monitors at that address.
 
-Checks live on **Automations → Connectivity**. Results appear on each host's
+Checks live on the **Connections** page (sidebar, under Application Map). Results appear on each host's
 **Connectivity** tab and on the check's **Results** view.
 
 > A check measures the path from a host. It **never changes that host's own

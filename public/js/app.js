@@ -564,12 +564,13 @@ const NAV_ITEMS = [
   { href: "/",                label: "Dashboard",    icon: "grid" },
   { href: "/map.html",        label: "Device Map",   icon: "mapPin", perm: ["deviceMap", "read"] },
   { href: "/appmap.html",     label: "Application Map", icon: "share2", perm: ["applicationMap", "read"] },
+  // Agent-run connectivity checks. Gate in lockstep with pageRequiredPermission
+  // in src/app.ts.
+  { href: "/connections.html", label: "Connections", icon: "globe", perm: ["connectivityChecks", "read"] },
   { href: "/ipam.html",       label: "IPAM",         icon: "layers", anyPerm: [["ipBlocks", "read"], ["subnets", "read"]] },
   { href: "/assets.html",         label: "Assets",       icon: "monitor", perm: ["assets", "read"] },
   { href: "/events.html",         label: "Events",       icon: "activity", perm: ["events", "read"] },
-  // anyPerm in lockstep with pageRequiredPermission in src/app.ts: the
-  // Connectivity tab (connectivityChecks) lives on this page too.
-  { href: "/automations.html", label: "Automations", icon: "zap", anyPerm: [["automationManagement", "read"], ["connectivityChecks", "read"]] },
+  { href: "/automations.html", label: "Automations", icon: "zap", perm: ["automationManagement", "read"] },
   // Was gated on canManageNetworks() (subnets:fullwrite) — the wrong key
   // entirely: a role granted integrations couldn't see the page, and a role
   // granted IP space but not integrations saw it and 403'd. No built-in role
@@ -1134,6 +1135,7 @@ const ICONS = {
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
   key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L21 2"/><path d="M17 6l3 3"/><path d="M14 9l3 3"/></svg>',
+  globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
   share2: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
   zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
   help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',

@@ -13,6 +13,7 @@
 - [Assets](Assets)
 - [Device Map](Device-Map)
 - [Application Map](Application-Map)
+- [Connections](Connectivity-Checks)
 - [Events](Events)
 - [Automations](Automations)
 - [Integrations](Integrations)

@@ -194,7 +194,7 @@ router.use("/notification-rules", deprecatedAlias("/api/v1/automations"), notifi
 // Maintenance schedules (Assets page → Maintenance modal); per-route gates
 // on the maintenanceManagement function key.
 router.use("/maintenance-schedules", maintenanceSchedulesRouter);
-// Agent-run connectivity checks (Automations → Connectivity tab); per-route
+// Agent-run connectivity checks (Connections page (/connections.html)); per-route
 // gates on the connectivityChecks function key.
 router.use("/connectivity-checks", connectivityChecksRouter);
 // Address book (Automations → Address Book tab + the recipient picker's

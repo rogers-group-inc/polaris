@@ -1075,7 +1075,7 @@ const api = {
     runs:    (params)=> request("GET", "/automations/scripts/runs" + toQuery(params)),
     run:     (id)    => request("GET", `/automations/scripts/runs/${id}`),
   },
-  // Agent-run connectivity checks (Automations → Connectivity tab). Gated by the
+  // Agent-run connectivity checks (Connections page (/connections.html)). Gated by the
   // connectivityChecks function key.
   connectivityChecks: {
     list:           ()      => request("GET", "/connectivity-checks"),

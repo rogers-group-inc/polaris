@@ -1,5 +1,5 @@
 /**
- * public/js/connectivity-checks.js — Automations → Connectivity tab.
+ * public/js/connectivity-checks.js — Connections page (/connections.html).
  *
  * Agent-run connectivity checks: an HTTP / HTTPS / TCP / ICMP check (+ an
  * optional traceroute) the Polaris Agent runs from every host the check's
@@ -655,6 +655,26 @@
     document.getElementById("conn-res-close").addEventListener("click", closeModal);
     var editBtn = document.getElementById("conn-res-edit");
     if (editBtn) editBtn.addEventListener("click", function () { clearInterval(timer); openCheckModal(check); });
+  }
+
+  // ─── Page boot (/connections.html) ──────────────────────────────────────
+  // Permissions resolve asynchronously via /auth/me (userReady); reading them
+  // at load would see an empty matrix and hide the add button.
+  function bootPage() {
+    if (!document.getElementById("conn-page")) return;
+    var add = document.getElementById("btn-add-check");
+    if (add) {
+      add.style.display = canEdit() ? "" : "none";
+      if (!add._wired) { add._wired = true; add.addEventListener("click", function () { openCheckModal(null); }); }
+    }
+    var refresh = document.getElementById("btn-refresh-checks");
+    if (refresh && !refresh._wired) { refresh._wired = true; refresh.addEventListener("click", loadTab); }
+    loadTab();
+  }
+  if (typeof document !== "undefined" && document.getElementById) {
+    if (typeof userReady !== "undefined" && userReady && userReady.then) userReady.then(bootPage);
+    else if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bootPage);
+    else bootPage();
   }
 
   window.PolarisConnectivityChecks = {

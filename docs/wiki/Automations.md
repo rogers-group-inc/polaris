@@ -23,14 +23,13 @@ Polaris a monitoring tool rather than an inventory.
 
 ## The page
 
-Five tabs:
+Four tabs:
 
 | Tab | Holds |
 |---|---|
 | **Automations** | the list, with an enable toggle per row |
 | **Delivery** | the [delivery-channel registry](Delivery-Channels) |
 | **Scripts** | the [script registry](Automation-Scripts) |
-| **Connectivity** | [agent-run connectivity checks](Connectivity-Checks) — needs the *Connectivity Checks* permission, which on its own is enough to open this page |
 | **Address Book** | [contacts and the directory](Address-Book) |
 
 ### The list

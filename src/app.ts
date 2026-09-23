@@ -623,7 +623,7 @@ app.use((req, res, next) => {
 });
 
 // Protect dashboard pages — redirect unauthenticated users to login
-const protectedPages = ["/", "/index.html", "/ipam.html", "/blocks.html", "/subnets.html", "/reservations.html", "/users.html", "/integrations.html", "/assets.html", "/events.html", "/notifications.html", "/automations.html", "/server-settings.html", "/map.html", "/appmap.html", "/alert-ack.html"];
+const protectedPages = ["/", "/index.html", "/ipam.html", "/blocks.html", "/subnets.html", "/reservations.html", "/users.html", "/integrations.html", "/assets.html", "/events.html", "/notifications.html", "/automations.html", "/server-settings.html", "/map.html", "/appmap.html", "/connections.html", "/alert-ack.html"];
 
 // Page-level gating — each protected page requires at least `read` on the
 // matching function key. Maps to the same matrix the API guards use, so
@@ -656,10 +656,10 @@ const pageRequiredPermission: Record<string, PagePermission> = {
   // viewer following an old deep link bounces to "/", where the Active Alerts
   // widget lives).
   "/notifications.html":   { key: "automationManagement", level: "read" },
-  // The Connectivity tab lives on this page, so a role granted
-  // connectivityChecks alone must be able to reach it; the page hides every
-  // other tab from such a caller (automations.js applyPermGatedUI).
-  "/automations.html":     { anyOf: [{ key: "automationManagement", level: "read" }, { key: "connectivityChecks", level: "read" }] },
+  "/automations.html":     { key: "automationManagement", level: "read" },
+  // Agent-run connectivity checks. Its own page (sidebar: under Application
+  // Map), gated on its own key — in lockstep with the NAV_ITEMS entry.
+  "/connections.html":     { key: "connectivityChecks",   level: "read" },
   // `credentials=write` joins the floor with the ownership dimension on that
   // key (2026-09-04): a role granted "add credentials, edit your own" has to
   // be able to REACH the Credentials tab, and it lives on this page. The page

@@ -1,6 +1,6 @@
 /**
  * src/api/routes/connectivityChecks.ts — agent-run connectivity checks
- * (Automations → Connectivity tab).
+ * (Connections page (/connections.html)).
  *
  * Mounted at /api/v1/connectivity-checks.
  *   GET    /                  connectivityChecks:read   (list + per-check pass/fail summary)

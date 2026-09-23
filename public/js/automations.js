@@ -35,8 +35,6 @@ var _rulesPage = 1;
   var canEditScripts = false;
   var canReadContacts = false;
   var canEditContacts = false;
-  var canReadChecks = false;
-  var canEditChecks = false;
 
   function applyPermGatedUI() {
     canManage = permAtLeast("automationManagement", "read");
@@ -56,10 +54,6 @@ var _rulesPage = 1;
     if (sb) sb.style.display = canReadScripts ? "" : "none";
     var cb = document.getElementById("auto-tab-contacts-btn");
     if (cb) cb.style.display = canReadContacts ? "" : "none";
-    canReadChecks = permAtLeast("connectivityChecks", "read");
-    canEditChecks = permAtLeast("connectivityChecks", "write");
-    var cnb = document.getElementById("auto-tab-connectivity-btn");
-    if (cnb) cnb.style.display = canReadChecks ? "" : "none";
     var activeKey = (document.querySelector("#auto-tabs .page-tab.active") || {}).getAttribute
       ? document.querySelector("#auto-tabs .page-tab.active").getAttribute("data-tab") : "manage";
     var nr = document.getElementById("btn-new-rule");
@@ -76,14 +70,6 @@ var _rulesPage = 1;
     if (asBtn) {
       asBtn.style.display = canEditScripts && activeKey === "scripts" ? "" : "none";
       if (canEditScripts && !asBtn._wired) { asBtn._wired = true; asBtn.addEventListener("click", function () { openScriptModal(null); }); }
-    }
-    var ckBtn = document.getElementById("btn-add-check");
-    if (ckBtn) {
-      ckBtn.style.display = canEditChecks && activeKey === "connectivity" ? "" : "none";
-      if (canEditChecks && !ckBtn._wired) {
-        ckBtn._wired = true;
-        ckBtn.addEventListener("click", function () { window.PolarisConnectivityChecks.openCheckModal(null); });
-      }
     }
     var acBtn2 = document.getElementById("btn-add-contact");
     if (acBtn2) {
@@ -120,12 +106,9 @@ var _rulesPage = 1;
       if (asBtn2 && canEditScripts) asBtn2.style.display = key === "scripts" ? "" : "none";
       var acBtn3 = document.getElementById("btn-add-contact");
       if (acBtn3 && canEditContacts) acBtn3.style.display = key === "contacts" ? "" : "none";
-      var ckBtn2 = document.getElementById("btn-add-check");
-      if (ckBtn2 && canEditChecks) ckBtn2.style.display = key === "connectivity" ? "" : "none";
       if (key === "manage" && !_rulesSF) initRulesTab();
       if (key === "delivery") loadChannelsTab();
       if (key === "scripts") loadScriptsTab();
-      if (key === "connectivity") window.PolarisConnectivityChecks.loadTab();
       if (key === "contacts") window.PolarisAddressBook.renderTab();
     });
   });
@@ -136,34 +119,14 @@ var _rulesPage = 1;
     if (key === "delivery") loadChannelsTab();
     else if (key === "scripts") loadScriptsTab();
     else if (key === "contacts") window.PolarisAddressBook.renderTab();
-    else if (key === "connectivity") window.PolarisConnectivityChecks.loadTab();
     else loadRules();
   });
-
-  // `#tab=<key>` opens a tab directly (the asset Connectivity tab's "Manage
-  // checks" link, the screenshot pipeline). Only a visible tab can be opened.
-  function openHashTab() {
-    var hash = typeof location !== "undefined" ? location.hash : "";
-    var m = /(?:^#|&)tab=([a-z]+)/.exec(hash || "");
-    if (!m) return false;
-    var btn = document.querySelector('#auto-tabs .page-tab[data-tab="' + m[1] + '"]');
-    if (!btn || btn.style.display === "none") return false;
-    btn.click();
-    return true;
-  }
 
   // Apply permission-gated UI (tab visibility, header buttons) once /auth/me
   // has populated the permission matrix, then boot the default (Automations) tab.
   function bootPage() {
     applyPermGatedUI();
-    if (openHashTab()) return;
     if (canManage && !_rulesSF) initRulesTab();
-    // A role granted connectivityChecks alone reaches this page (the page gate
-    // is anyOf) with the Automations tab hidden — land it on its own tab.
-    if (!canManage && canReadChecks) {
-      var cbtn = document.getElementById("auto-tab-connectivity-btn");
-      if (cbtn) cbtn.click();
-    }
   }
   if (typeof userReady !== "undefined" && userReady && userReady.then) {
     userReady.then(bootPage);

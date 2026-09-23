@@ -46,9 +46,10 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | Assets | `assets.html` | `assets:read` |
 | IPAM | `ipam.html` (+ `blocks.html` / `subnets.html`) | `anyOf` `ipBlocks:read` / `subnets:read` |
 | Integrations | `integrations.html` | `integrations:read` |
-| Automations | `automations.html` | `anyOf` `automationManagement:read` / `connectivityChecks:read` (the Connectivity tab alone for the latter) |
+| Automations | `automations.html` | `automationManagement:read` |
 | Device Map | `map.html` | `deviceMap:read` |
 | Application Map | `appmap.html` | `applicationMap:read` |
+| Connections | `connections.html` | `connectivityChecks:read` (agent-run connectivity checks; sidebar entry directly under Application Map) |
 | Events | `events.html` | `events:read` |
 | Users | `users.html` | `users:read` |
 | Server Settings | `server-settings.html` | `serverSettingsSystem:read` floor |
