@@ -126,6 +126,13 @@ record that had just been deleted — until the next sweep auto-resolved it. An 
 reads that as a merge that did not happen. The merge route now settles the card itself,
 as `accepted` in the operator's name, because the merge was the resolution.
 
+The automatic merge takes the same door. It first shipped through the placeholder-ghost
+executor the hostname pass uses, which lets the delete cascade the absorbed record's
+sources and agent enrolment — harmless for a DHCP-learned ghost, destructive for the
+records this rule is about, which are usually two real identities of one machine (a
+directory record beside an agent). A merge that removes one of the two things it was
+reconciling is not a merge.
+
 The one genuine innocent explanation is that the serial is not a serial. Whiteboxes and
 hypervisors ship SMBIOS defaults — `To Be Filled By O.E.M.`, `Default string`, `System
 Serial Number`, `0123456789` — and a fleet of them would otherwise arrive as one

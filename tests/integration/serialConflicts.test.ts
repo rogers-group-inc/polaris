@@ -27,7 +27,9 @@ import {
   SERIAL_CLAIM_COLLISION_REASON,
   DUPLICATE_SERIAL_COLLISION_REASON,
   CLAIM_FRESH_DAYS,
+  absorbDuplicateSerialGroup,
 } from "../../src/services/duplicateSerialConflictService.js";
+import { DUPLICATE_IP_COLLISION_REASON } from "../../src/services/duplicateIpConflictService.js";
 
 const d = dbDescribe;
 const HOST_PREFIX = "serialconf-test-";
@@ -308,6 +310,94 @@ d("duplicate-serial", () => {
       expect(await pendingDuplicateSerialConflicts()).toHaveLength(0);
     });
   }
+
+  // The automatic serial merge (mergeDuplicateHostnameAssets' serial pass)
+  // used the hostname pass's placeholder-ghost executor, whose delete
+  // cascaded the ghost's AssetSource rows and its ManagedAgent. A duplicate-
+  // serial pair is usually two AUTHORITATIVE records, so that stripped a
+  // directory identity and unenrolled the agent.
+  it("the automatic merge keeps the absorbed record's sources and agent enrolment, and closes the card", async () => {
+    const { a, b } = await makeTwoRecords();
+    await prisma.assetSource.createMany({
+      data: [
+        { assetId: a, sourceKind: "entra", externalId: `${HOST_PREFIX}entra-a`, observed: {}, inferred: false },
+        { assetId: b, sourceKind: "polaris-agent", externalId: `${HOST_PREFIX}agent-b`, observed: {}, inferred: false },
+      ],
+    });
+    await prisma.managedAgent.create({
+      data: {
+        assetId: b,
+        osPlatform: "windows",
+        arch: "amd64",
+        installStatus: "active",
+        installedBy: "test",
+        serverCertFingerprint: "sha256:" + "e".repeat(64),
+        additionalServerCertFingerprints: [],
+        bearerPrefix: "serialconf",
+        bearerHash: "not-a-real-hash",
+      },
+    });
+    await reconcileSerialConflicts();
+    const [conflict] = await pendingDuplicateSerialConflicts();
+    // File the card on the record being absorbed — the cascade case.
+    await prisma.conflict.update({ where: { id: conflict.id }, data: { assetId: b } });
+
+    const out = await absorbDuplicateSerialGroup(
+      { id: a, hostname: `${HOST_PREFIX}dup-a` },
+      [{ id: b, ipAddress: null }],
+      "system:duplicate-serial-merge",
+    );
+    expect(out.absorbedIds).toEqual([b]);
+    // ≥ 1, not 1: asset creation may stamp its own placeholder source row too.
+    expect(out.movedSources).toBeGreaterThanOrEqual(1);
+    expect(out.movedManagedAgent).toBe(true);
+
+    expect(await prisma.asset.findUnique({ where: { id: b } })).toBeNull();
+    const agentSource = await prisma.assetSource.findFirst({ where: { externalId: `${HOST_PREFIX}agent-b` } });
+    expect(agentSource?.assetId).toBe(a);
+    const agent = await prisma.managedAgent.findFirst({ where: { bearerPrefix: "serialconf" } });
+    expect(agent?.assetId).toBe(a);
+
+    const after = await prisma.conflict.findUnique({ where: { id: conflict.id } });
+    expect(after?.status).toBe("accepted");
+    expect(after?.resolvedBy).toBe("system:duplicate-serial-merge");
+    expect(after?.assetId).toBe(a);
+  });
+
+  // Rule 40(i)'s half of the same gap: the modal merge re-evaluated only the
+  // survivor's address, and never moved a duplicate-ip card off the asset it
+  // was about to delete, so a card filed there cascaded away unaudited.
+  it("a modal merge closes a duplicate-ip card filed on the absorbed asset instead of deleting it", async () => {
+    const ip = "10.231.77.9";
+    const a = await prisma.asset.create({
+      data: { hostname: `${HOST_PREFIX}ip-a`, assetType: "server", status: "active", ipAddress: ip },
+    });
+    const b = await prisma.asset.create({
+      data: { hostname: `${HOST_PREFIX}ip-b`, assetType: "server", status: "active", ipAddress: ip },
+    });
+    const members = [a, b].map((x) => ({ assetId: x.id, hostname: x.hostname, ipAddress: ip }));
+    const card = await prisma.conflict.create({
+      data: {
+        entityType: "asset",
+        assetId: b.id,
+        conflictFields: ["ipAddress"],
+        proposedAssetFields: { collisionReason: DUPLICATE_IP_COLLISION_REASON, ipAddress: ip, hostname: b.hostname, members } as any,
+        existingAssetSnapshot: { ipAddress: ip, members } as any,
+      },
+    });
+    const { agent, csrf } = await authedAgent(app);
+
+    const res = await agent
+      .post(`/api/v1/assets/${a.id}/merge`)
+      .set("X-CSRF-Token", csrf)
+      .send({ otherAssetId: b.id, survivor: "this" });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.conflict.findUnique({ where: { id: card.id } });
+    expect(after).not.toBeNull();
+    expect(after?.status).not.toBe("pending");
+    expect(after?.assetId).toBe(a.id);
+  });
 
   it("does not raise for a placeholder serial", async () => {
     await prisma.asset.createMany({

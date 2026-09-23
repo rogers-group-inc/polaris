@@ -13,6 +13,7 @@ import { requirePermission, hasPermission } from "../middleware/permissions.js";
 import {
   checkIpForIncomingClaim,
   reconcileDuplicateIpForAddresses,
+  repointDuplicateIpConflicts,
   type WriteTimeIpConflict,
 } from "../../services/duplicateIpConflictService.js";
 import {
@@ -5326,15 +5327,16 @@ router.post("/:id/merge", requirePermission("assets", "fullwrite"), async (req, 
 
     const [survivorBefore, absorbedBefore] = await Promise.all([
       prisma.asset.findUnique({ where: { id: canonicalId }, select: { id: true, hostname: true } }),
-      prisma.asset.findUnique({ where: { id: ghostId }, select: { id: true, hostname: true } }),
+      prisma.asset.findUnique({ where: { id: ghostId }, select: { id: true, hostname: true, ipAddress: true } }),
     ]);
     if (!survivorBefore) throw new AppError(404, "Survivor asset not found");
     if (!absorbedBefore) throw new AppError(404, "Absorbed asset not found");
 
-    // A duplicate-serial card filed on the asset about to be deleted would
-    // cascade away with it — unresolved and unaudited. Move it first so the
-    // settle below can close it properly (business rule 83).
+    // A duplicate-serial or duplicate-ip card filed on the asset about to be
+    // deleted would cascade away with it — unresolved and unaudited. Move both
+    // first so the settle below can close them properly (rules 83 and 40(i)).
     await repointDuplicateSerialConflicts(ghostId, canonicalId);
+    await repointDuplicateIpConflicts(ghostId, canonicalId);
 
     const result = await mergeAssets({
       canonicalId,
@@ -5374,20 +5376,26 @@ router.post("/:id/merge", requirePermission("assets", "fullwrite"), async (req, 
       },
     });
 
-    // A merge changes who claims the survivor's address — usually from two
-    // rows to one. Re-evaluate it so a duplicate-ip card this merge just
-    // resolved closes now instead of on the sweep's next tick (rule 40(i)).
-    // Fire-and-forget: the merge is done and the sweep is the backstop.
-    prisma.asset
-      .findUnique({ where: { id: result.survivorId }, select: { ipAddress: true } })
-      .then((s) => reconcileDuplicateIpForAddresses([s?.ipAddress]))
-      .catch(() => {});
-
-    // Same for a duplicate-serial card, but AWAITED: the card's own
-    // "Review & merge..." opens this modal and reloads the conflict queue on
-    // success, and a card that is still listed after the merge it asked for
-    // reads as a merge that did not happen. A failure here must not fail a
-    // merge that already committed — the sweep stays the backstop.
+    // Settle the conflict cards this merge resolved, AWAITED: both cards'
+    // "Review & merge..." open this modal and reload the conflict queue on
+    // success, and a card still listed after the merge it asked for reads as a
+    // merge that did not happen. A failure here must not fail a merge that
+    // already committed — the sweeps stay the backstop.
+    //
+    // Duplicate-ip (rule 40(i)): re-evaluate the survivor's address AND the
+    // absorbed asset's old one — when the survivor kept a different address,
+    // the card being resolved is about the absorbed row's, which checking only
+    // the survivor would never look at.
+    try {
+      const survivorAfter = await prisma.asset.findUnique({
+        where: { id: result.survivorId },
+        select: { ipAddress: true },
+      });
+      await reconcileDuplicateIpForAddresses([survivorAfter?.ipAddress, absorbedBefore.ipAddress]);
+    } catch (err) {
+      logger.warn({ err, survivorId: result.survivorId }, "Duplicate-ip conflict reconcile after merge failed");
+    }
+    // Duplicate-serial (rule 83).
     try {
       await settleDuplicateSerialConflictsAfterMerge({
         survivorAssetId: result.survivorId,

@@ -65,6 +65,7 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { mergeAssets } from "./assetMergeService.js";
+import { reconcileDuplicateIpForAddresses, repointDuplicateIpConflicts } from "./duplicateIpConflictService.js";
 import { isUsableSerial } from "../utils/serialNumber.js";
 import {
   buildInfraParentIndex,
@@ -1123,6 +1124,75 @@ async function settleDuplicateSerialConflict(
     },
   });
   return { resolved: false, remaining: stillGrouped.members.length };
+}
+
+// ─── The automatic merge (the mergeDuplicateHostnameAssets serial pass) ─────
+
+export interface DuplicateSerialAbsorbResult {
+  absorbedIds: string[];
+  movedSources: number;
+  movedManagedAgent: boolean;
+}
+
+/**
+ * Absorb every `ghost` into `canonical` for the automatic serial merge. The
+ * job decides WHICH groups and which survivor (`decideDuplicateSerialGroup`);
+ * this is the executor, kept here so it is testable without importing a
+ * self-scheduling job module.
+ *
+ * Merges through the OPERATOR engine (`mergeAssets`), never the hostname
+ * pass's `mergeDuplicateHostnameGhost`. That executor was written for
+ * placeholder ghosts and lets the delete cascade take the ghost's AssetSource
+ * rows and its ManagedAgent. A duplicate-serial group is usually two
+ * AUTHORITATIVE records — Entra/Intune beside a Polaris Agent — so cascading
+ * would silently strip a directory identity off the device and unenrol its
+ * agent. `mergeAssets` re-binds the sources, moves the agent enrolment when the
+ * survivor has none, and carries dependency edges and monitoring: the same
+ * absorb an operator clicking "Merge into this" gets.
+ *
+ * Conflict cards: a duplicate-serial or duplicate-ip card filed on a ghost is
+ * re-pointed at the survivor before that ghost's delete (the cascade would drop
+ * it unaudited), and both flavours are settled after the group — best-effort,
+ * because the merges have committed and the sweeps are the backstop.
+ *
+ * A merge failure throws after the ghosts already absorbed; the caller logs and
+ * the next cycle re-groups whatever is left.
+ */
+export async function absorbDuplicateSerialGroup(
+  canonical: { id: string; hostname: string | null },
+  ghosts: Array<{ id: string; ipAddress: string | null }>,
+  actor: string,
+): Promise<DuplicateSerialAbsorbResult> {
+  const out: DuplicateSerialAbsorbResult = { absorbedIds: [], movedSources: 0, movedManagedAgent: false };
+  const survivorLabel = canonical.hostname || canonical.id;
+
+  for (const ghost of ghosts) {
+    await repointDuplicateSerialConflicts(ghost.id, canonical.id);
+    await repointDuplicateIpConflicts(ghost.id, canonical.id);
+    const merged = await mergeAssets({ canonicalId: canonical.id, ghostId: ghost.id });
+    out.absorbedIds.push(merged.absorbedId);
+    out.movedSources += merged.movedSources;
+    out.movedManagedAgent = out.movedManagedAgent || merged.movedManagedAgent;
+  }
+
+  try {
+    for (const absorbedAssetId of out.absorbedIds) {
+      await settleDuplicateSerialConflictsAfterMerge({
+        survivorAssetId: canonical.id,
+        absorbedAssetId,
+        survivorLabel,
+        actor,
+      });
+    }
+    const survivorAfter = await prisma.asset.findUnique({
+      where: { id: canonical.id },
+      select: { ipAddress: true },
+    });
+    await reconcileDuplicateIpForAddresses([survivorAfter?.ipAddress, ...ghosts.map((g) => g.ipAddress)]);
+  } catch (err) {
+    logger.warn({ err, canonicalId: canonical.id }, "Duplicate-serial merge: conflict settle failed");
+  }
+  return out;
 }
 
 // ─── A merge made somewhere other than the card ─────────────────────────────

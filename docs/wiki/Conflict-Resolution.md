@@ -277,7 +277,8 @@ outlived a re-enrolment.
 
 **Polaris usually merges these for you.** Because a shared real serial leaves
 no room for doubt — it is one device — a background pass absorbs these groups
-automatically, every 30 minutes, keeping whichever record has the stronger
+automatically, every 30 minutes — the same merge the card's buttons perform, so both
+records' sources and any agent enrolment are kept — into whichever record has the stronger
 provenance. So you will rarely see this card, and one that *does* appear is a
 group the automatic pass declined: a serial shared by more assets than any one
 device could have, or a merge that failed. The verbs below are for those.
