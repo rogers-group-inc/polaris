@@ -1533,7 +1533,7 @@ function describeDashScope(s: { ipScope: string; allowedCidrs: string[] }): stri
 // Optional restriction on who may reach the local login form + the password
 // endpoints (gate mounted in src/app.ts; see loginAccessService for why the
 // LDAP path is covered and every SSO path is not). Reads ride the blanket
-// serverSettingsSystem read gate; the PUT is fullwrite-gated because a bad
+// serverSettingsSystem read gate; the PUT is write-gated (the key's top rung) because a bad
 // save can lock every operator out of the SSO-outage recovery path.
 
 const LoginAccessSchema = z.object({
@@ -2210,7 +2210,7 @@ router.put("/agents/windows-ssh", requirePermission("serverSettingsSystem", "wri
   } catch (err) { next(err); }
 });
 
-// Chained gate. serverSettingsSystem:fullwrite matches its sibling agent
+// Chained gate. serverSettingsSystem:write matches its sibling agent
 // routes, but this one CREATES AND MUTATES A CREDENTIAL, so it also demands
 // credentials:write — otherwise a custom role with system settings but no
 // credential access could mint a fleet-wide admin key. Same chaining shape as
@@ -2839,7 +2839,7 @@ router.post("/agents/signing/test", requirePermission("serverSettingsSystem", "w
 // access on the Polaris host — which matters most on RENEWAL, an operation that
 // otherwise recurs on the certificate's schedule forever.
 //
-// The permission is the same `serverSettingsSystem=fullwrite` that already
+// The permission is the same `serverSettingsSystem=write` that already
 // gates the signing config, and that IS the right bar: a caller who can point
 // keystorePath at any file the service user can read is already choosing what
 // signs the fleet's agents. This only adds the ability to put the file there.

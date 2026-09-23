@@ -257,9 +257,9 @@ router.use("/server-settings/mibs", mibsRouter);
 // have manufacturerProfiles=read but not serverSettingsSystem.
 router.use("/server-settings/manufacturer-profiles", manufacturerProfilesRouter);
 // nginx GUI surface mounted BEFORE /server-settings so the proxy-mode gate
-// and explicit per-route serverSettingsSystem guards (read on GET, fullwrite
+// and explicit per-route serverSettingsSystem guards (read on GET, write
 // on PUT/apply/rotate/adopt) apply. Apply + rotate are high-blast-radius —
-// they can lock out the operator from the UI if mis-set — so fullwrite is
+// they can lock out the operator from the UI if mis-set — so write (the top rung) is
 // the right floor regardless of the blanket gate's read level.
 router.use("/server-settings/proxy", proxySettingsRouter);
 // The tag REGISTRY's picker-shaped read, declared above the blanket
@@ -281,7 +281,7 @@ router.get("/server-settings/tags/catalog", async (_req, res, next) => {
 });
 // Blanket /server-settings gate: serverSettingsSystem read floor for the
 // whole surface. Mutating routes inside additionally carry per-route
-// requirePermission escalations (serverSettingsSystem fullwrite for the
+// requirePermission escalations (serverSettingsSystem write for the
 // system cards, serverSettingsData read/fullwrite for backup download /
 // backup-restore / queue-mode / security tokens / restart / updates) —
 // so a Data-scoped role still needs serverSettingsSystem read to reach

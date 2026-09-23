@@ -2055,7 +2055,7 @@ function collectRegionPicker(idPrefix) {
 // Parallel dimension to region tags, and the same interaction: every tag in
 // the registry renders as a toggleable pill in its own color, click selects.
 // Typing a name that isn't in the registry creates it there when the caller
-// may (serverSettingsSystem fullwrite) and otherwise attaches it to this
+// may (serverSettingsSystem write) and otherwise attaches it to this
 // assignment alone. Used in the role slide-over, the per-user tag modal, and
 // the Group Mappings slide-over.
 

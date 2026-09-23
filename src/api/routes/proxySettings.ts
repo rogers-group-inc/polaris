@@ -9,7 +9,7 @@
  *
  * Permission model: read operations need serverSettingsSystem=read;
  * mutating operations (PUT, POST /apply, POST /adopt-managed-mode,
- * POST /cert/rotate) need serverSettingsSystem=fullwrite — these are
+ * POST /cert/rotate) need serverSettingsSystem=write (its top rung) — these are
  * high-blast-radius operations that can lock out the operator from the
  * very UI they'd use to fix it.
  */
