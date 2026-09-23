@@ -42,6 +42,19 @@ import {
 import { applyModelParse } from "../utils/modelParse.js";
 import { clampRegexSubject } from "../utils/regexSafety.js";
 import { normalizeAssetTypeName } from "../utils/assetTypes.js";
+import { metricRowTransforms, type TransformKind } from "../utils/symbolTransforms.js";
+
+/**
+ * The unary transform the temperature collector should apply for this pick,
+ * or undefined. Filtered through `metricRowTransforms` rather than trusted:
+ * a row stored before the write path narrowed (a Celsius→Fahrenheit value,
+ * or any transform on a table row) must not start doing something now that
+ * the collector reads the field.
+ */
+function temperatureTransform(pick: DbMetricPick): TransformKind | undefined {
+  const allowed = metricRowTransforms("temperature", pick.type);
+  return allowed.find((k) => k === pick.transform);
+}
 
 /** Manufacturer → cached profile. Injected so tests run without a database. */
 export type ProfileLookup = (manufacturer: string | null | undefined) => ProfileFull | null;
@@ -216,7 +229,12 @@ export function pickVendorProfileMerged(
     // table (e.g. fgHwSensorTable) instead of a single scalar GET — the
     // operator-facing "Hardware Sensors" metric. `scalar` keeps the
     // single-reading path (FortiAP fapTemperature).
-    merged.temperature = { symbol: tempPick.symbol, mode: tempPick.type === "table" ? "table" : "scalar" };
+    const transform = temperatureTransform(tempPick);
+    merged.temperature = {
+      symbol: tempPick.symbol,
+      mode: tempPick.type === "table" ? "table" : "scalar",
+      ...(transform ? { transform } : {}),
+    };
   }
   if (diskPick) {
     // The operator-facing "Storage" metric. It feeds the vendor disk fallback
@@ -491,10 +509,12 @@ export function pickDbProfile(
   }
 
   if (tempPick?.symbol) {
+    const transform = temperatureTransform(tempPick);
     out.temperature = {
       symbol: tempPick.symbol,
       mode: tempPick.type === "table" ? "table" : "scalar",
       ...(tempPick.label ? { sensorName: tempPick.label } : {}),
+      ...(transform ? { transform } : {}),
     };
   }
 

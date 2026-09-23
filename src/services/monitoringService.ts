@@ -7642,12 +7642,14 @@ async function collectHardwareSensorsSnmpCore(
 
   // 3. Profile-driven scalar symbol. Used by vendors whose hardware publishes a
   //    single Celsius scalar rather than a sensor table — currently the FortiAP
-  //    (fapTemperature @ 12356.120.3.44).
+  //    (fapTemperature @ 12356.120.3.44). The row's transform scales a raw
+  //    integer into °C first (tenths_to_units for a DISPLAY-HINT "d-1"
+  //    sensor); the resolver only ever passes one METRIC_ROW_TRANSFORMS allows.
   if (profile?.temperature?.mode === "scalar") {
     const tempOid = resolveOidSync(profile.temperature.symbol, scope ?? {});
     if (tempOid) {
       const v = await snmpGetScalar(session, tempOid).catch(() => null);
-      const n = snmpVbToNumber(v);
+      const n = applyTransform(snmpVbToNumber(v), profile.temperature.transform);
       if (n != null && Number.isFinite(n)) {
         out.push({
           sensorName:  profile.temperature.sensorName ?? "System",

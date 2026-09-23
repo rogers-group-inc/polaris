@@ -151,6 +151,15 @@ vendors, and where to get each MIB, are in the install guide's *"A vendor's SNMP
 CPU / memory / storage is empty"* section — and the shipped Cisco profile is a
 worked example to copy, which is half of why it ships.
 
+**The Transform column only appears where Polaris applies it.** Today that is a
+scalar **Temperature** row, which offers **Tenths → Units** for a sensor that
+reports tenths of a degree (MikroTik's temperature objects report 315 for
+31.5 °C). Other metric rows show "—" instead of a dropdown. Double-scalar rows
+still offer their combiner, because it says which two readings the row's
+symbols are. Custom widgets offer the full list. There is no Celsius ↔
+Fahrenheit transform: Polaris always stores and alerts in Celsius, and the
+install's temperature-unit setting converts only what you see.
+
 **Both shipped pieces are yours to delete.** Removing a shipped MIB leaves its
 profile's rows reading *unresolved* and names the module to re-upload; removing a
 shipped profile falls back to the generic MIBs. Either way the device keeps being

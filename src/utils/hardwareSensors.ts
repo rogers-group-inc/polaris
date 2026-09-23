@@ -295,10 +295,10 @@ export function isCelsiusUnit(unit: string | null | undefined): boolean {
 /**
  * Display-only C→F for a server-rendered surface (today: the last-hour sensor
  * chart in an alert email). Storage, rollups and automation THRESHOLDS stay
- * Celsius — this converts at render, exactly like the browser does. Do not
- * reach for the Manufacturer-Profiles `celsius_to_fahrenheit` transform for
- * this: that rewrites stored values and would silently re-point every
- * temperature automation's threshold.
+ * Celsius — this converts at render, exactly like the browser does. Never
+ * convert before storage instead: that would silently re-point every
+ * temperature automation's threshold (the reason the Manufacturer Profiles
+ * Celsius↔Fahrenheit transform was removed, 2026-09-23).
  */
 export function convertSensorForDisplay(
   value: number | null | undefined,

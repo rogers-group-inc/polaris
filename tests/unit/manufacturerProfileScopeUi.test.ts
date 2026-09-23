@@ -217,3 +217,46 @@ describe("the row facts that used to live in the hardcoded constant", () => {
     }
   });
 });
+
+describe("the Transform select offers only what a collector applies", () => {
+  // The 2026-09-16 failure: metric rows offered the whole unary registry and
+  // no collector applied any of it. A metric row now offers the subset the
+  // server names in `metricTransforms`, and no select at all when it is empty.
+  beforeEach(() => {
+    const s = sb as unknown as Record<string, unknown>;
+    s._mfgProfileTransforms = [
+      { kind: "bytes_to_mb", label: "Bytes → MB" },
+      { kind: "tenths_to_units", label: "Tenths → Units (DISPLAY-HINT d-1)" },
+    ];
+    s._mfgProfileCombiners = [{ kind: "a_over_b_as_percent", label: "a / b × 100" }];
+    s._mfgMetricTransforms = { temperature: ["tenths_to_units"] };
+  });
+  const render = (...a: unknown[]) =>
+    (sb as unknown as { renderTransformSelect: (...x: unknown[]) => string }).renderTransformSelect(...a);
+
+  it("renders no select on a metric with nothing applicable", () => {
+    const html = sb.renderProfileDetail(detail([{ metricKey: "cpu" }]));
+    expect(html).not.toContain('<select class="mfg-new-override-transform"');
+    expect(html).toContain("mfg-new-override-transform-none");
+  });
+
+  it("offers only tenths_to_units on a scalar temperature row", () => {
+    const html = render(null, "mfg-new-override-transform", "scalar", "temperature");
+    expect(html).toContain('value="tenths_to_units"');
+    expect(html).not.toContain('value="bytes_to_mb"');
+  });
+
+  it("offers nothing on a temperature TABLE row — the sensor-table walk takes no transform", () => {
+    expect(render(null, "mfg-edit-transform", "table", "temperature")).not.toContain("<select");
+  });
+
+  it("keeps the combiners on a double-scalar row — the collectors read them", () => {
+    expect(render(null, "mfg-edit-transform", "double_scalar", "memory")).toContain('value="a_over_b_as_percent"');
+  });
+
+  it("keeps the whole list for a custom widget, which does apply every transform", () => {
+    const html = render(null, "mfg-widget-transform");
+    expect(html).toContain('value="bytes_to_mb"');
+    expect(html).toContain('value="tenths_to_units"');
+  });
+});
