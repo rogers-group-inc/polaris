@@ -656,7 +656,10 @@ const pageRequiredPermission: Record<string, PagePermission> = {
   // viewer following an old deep link bounces to "/", where the Active Alerts
   // widget lives).
   "/notifications.html":   { key: "automationManagement", level: "read" },
-  "/automations.html":     { key: "automationManagement", level: "read" },
+  // The Connectivity tab lives on this page, so a role granted
+  // connectivityChecks alone must be able to reach it; the page hides every
+  // other tab from such a caller (automations.js applyPermGatedUI).
+  "/automations.html":     { anyOf: [{ key: "automationManagement", level: "read" }, { key: "connectivityChecks", level: "read" }] },
   // `credentials=write` joins the floor with the ownership dimension on that
   // key (2026-09-04): a role granted "add credentials, edit your own" has to
   // be able to REACH the Credentials tab, and it lives on this page. The page
@@ -1202,6 +1205,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/reconcileTagAssignments.js",
       "./jobs/reconcileAppMapAutoMap.js",
       "./jobs/reconcileDnsResolvedReservations.js",
+      // Connectivity-check membership: re-resolves each check's Sources
+      // filter as agents enroll / leave and hosts change. Scheduler role only
+      // — one fleet pass.
+      "./jobs/reconcileConnectivitySources.js",
       "./jobs/runSampleRollup.js",
       "./jobs/reclaimBloatedChunks.js",
       "./jobs/autoBuildAgents.js",

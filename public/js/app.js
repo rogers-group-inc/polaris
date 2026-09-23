@@ -567,7 +567,9 @@ const NAV_ITEMS = [
   { href: "/ipam.html",       label: "IPAM",         icon: "layers", anyPerm: [["ipBlocks", "read"], ["subnets", "read"]] },
   { href: "/assets.html",         label: "Assets",       icon: "monitor", perm: ["assets", "read"] },
   { href: "/events.html",         label: "Events",       icon: "activity", perm: ["events", "read"] },
-  { href: "/automations.html", label: "Automations", icon: "zap", perm: ["automationManagement", "read"] },
+  // anyPerm in lockstep with pageRequiredPermission in src/app.ts: the
+  // Connectivity tab (connectivityChecks) lives on this page too.
+  { href: "/automations.html", label: "Automations", icon: "zap", anyPerm: [["automationManagement", "read"], ["connectivityChecks", "read"]] },
   // Was gated on canManageNetworks() (subnets:fullwrite) — the wrong key
   // entirely: a role granted integrations couldn't see the page, and a role
   // granted IP space but not integrations saw it and 403'd. No built-in role

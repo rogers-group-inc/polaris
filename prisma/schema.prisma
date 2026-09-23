@@ -1228,6 +1228,9 @@ model Asset {
   dependencyParents  AssetDependencyParent[]  @relation("AssetDependencyChild")
   dependencyChildren AssetDependencyParent[]  @relation("AssetDependencyParent")
   managedAgent       ManagedAgent?
+  // Connectivity checks this agent host runs (materialized membership; see
+  // ConnectivityCheckSource).
+  connectivitySources ConnectivityCheckSource[]
   maintenanceWindows AssetMaintenanceWindow[]
   maintenanceHolds   MaintenanceHold[]
   topologyLayouts    TopologyLayout[]
@@ -3223,6 +3226,193 @@ model AssetPerfSlaSampleDaily {
   @@index([assetId, bucketStart])
   @@index([assetId, healthCheck, link, bucketStart])
   @@map("asset_perf_sla_samples_daily")
+}
+
+// ─── Agent-run connectivity checks ──────────────────────────────────────────
+// An operator-defined reachability check (HTTP/HTTPS/TCP/ICMP + optional
+// traceroute) that the Polaris Agent on every matching host runs on its own
+// cadence. The check carries NO threshold — the SLA lives in the automation
+// that watches its conn* metrics. Results never move Asset.monitorStatus.
+model ConnectivityCheck {
+  id               String   @id @default(uuid())
+  name             String   @unique
+  description      String?
+  enabled          Boolean  @default(true)
+  // "http" | "https" | "tcp" | "icmp"
+  kind             String
+  // URL for http/https, host:port for tcp, host for icmp.
+  target           String
+  intervalSec      Int      @default(60)
+  timeoutMs        Int      @default(5000)
+  // http/https only: { acceptedStatuses: string[], bodyMatch?: { mode, pattern,
+  // caseSensitive }, verifyTls }.
+  http             Json?
+  // { enabled, everyNRuns, maxHops, probesPerHop }
+  traceroute       Json
+  keepBodyExcerpt  Boolean  @default(false)
+  // Which agent hosts run it: an automation-shaped scope (RuleScope), implicitly
+  // AND'd with "Polaris Agent installed and active", plus explicit pins.
+  scope            Json
+  assetIds         String[] @default([])
+  // sha256 of exactly the definition the agent receives — folded into both
+  // config ETags so an edit reaches running agents.
+  definitionSha256 String
+  createdBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  lastReconciledAt DateTime?
+
+  sources ConnectivityCheckSource[]
+
+  @@map("connectivity_checks")
+}
+
+// Materialized (check × agent host) membership, rebuilt by
+// reconcileConnectivityCheckSources. Also carries the latest result so the
+// fleet view, the asset tab and path-change detection read this small table
+// instead of the sample hypertable.
+model ConnectivityCheckSource {
+  id                    String            @id @default(uuid())
+  checkId               String
+  check                 ConnectivityCheck @relation(fields: [checkId], references: [id], onDelete: Cascade)
+  assetId               String
+  asset                 Asset             @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  // true = pinned by ConnectivityCheck.assetIds (kept even when the filter no longer matches).
+  explicit              Boolean           @default(false)
+  lastOk                Boolean?
+  lastSampleAt          DateTime?
+  lastLatencyMs         Float?
+  lastHttpStatus        Int?
+  lastError             String?
+  lastResolvedIp        String?
+  lastFailAt            DateTime?
+  lastHopCount          Int?
+  lastTracerouteComplete Boolean?
+  lastPathHash          String?
+  lastTracerouteAt      DateTime?
+  lastPathChangeEventAt DateTime?
+  createdAt             DateTime          @default(now())
+
+  @@unique([checkId, assetId])
+  @@index([assetId])
+  @@map("connectivity_check_sources")
+}
+
+// One agent host's result for one connectivity check run. Hypertable, NO FK
+// (sample-table rule: never cascade into compressed chunks). checkId is not a
+// FK either (the AssetStateSample.probeId precedent).
+model AssetConnectivitySample {
+  id          String    @default(uuid())
+  assetId     String
+  timestamp   DateTime  @default(now())
+  checkId     String
+  ok          Boolean
+  // Whole run (DNS → body read). Null when nothing connected.
+  latencyMs   Float?
+  dnsMs       Float?
+  connectMs   Float?
+  tlsMs       Float?
+  ttfbMs      Float?
+  httpStatus  Int?
+  bodyMatched Boolean?
+  bodySha256  String?
+  bodyBytes   Int?
+  // ≤4 KB, stored only when the run failed or the check keeps excerpts
+  // (enforced at ingest, never trusted from the wire).
+  bodyExcerpt String?   @db.Text
+  error       String?
+  resolvedIp  String?
+  tlsNotAfter DateTime?
+  tlsIssuer   String?
+  hopCount    Int?
+  // Always "fast" (rollups filter on it).
+  cadence     String?
+
+  @@id([id, timestamp])
+  @@index([assetId, timestamp])
+  @@index([assetId, checkId, timestamp])
+  @@index([checkId, timestamp])
+  @@map("asset_connectivity_samples")
+}
+
+model AssetConnectivitySampleHourly {
+  id                 String   @default(uuid())
+  assetId            String
+  bucketStart        DateTime
+  checkId            String
+  sampleCount        Int
+  okCount            Int      @default(0)
+  failCount          Int      @default(0)
+  avgLatencyMs       Float?
+  minLatencyMs       Float?
+  maxLatencyMs       Float?
+  avgDnsMs           Float?
+  avgConnectMs       Float?
+  avgTlsMs           Float?
+  avgTtfbMs          Float?
+  avgHopCount        Float?
+  maxHopCount        Int?
+  // Most frequent HTTP status in the bucket (null for tcp/icmp).
+  modeHttpStatus     Int?
+  lastBucketSampleAt DateTime
+
+  @@id([id, bucketStart])
+  @@unique([bucketStart, assetId, checkId])
+  @@index([assetId, bucketStart])
+  @@index([assetId, checkId, bucketStart])
+  @@map("asset_connectivity_samples_hourly")
+}
+
+model AssetConnectivitySampleDaily {
+  id                 String   @default(uuid())
+  assetId            String
+  bucketStart        DateTime
+  checkId            String
+  sampleCount        Int
+  okCount            Int      @default(0)
+  failCount          Int      @default(0)
+  avgLatencyMs       Float?
+  minLatencyMs       Float?
+  maxLatencyMs       Float?
+  avgDnsMs           Float?
+  avgConnectMs       Float?
+  avgTlsMs           Float?
+  avgTtfbMs          Float?
+  avgHopCount        Float?
+  maxHopCount        Int?
+  modeHttpStatus     Int?
+  lastBucketSampleAt DateTime
+
+  @@id([id, bucketStart])
+  @@unique([bucketStart, assetId, checkId])
+  @@index([assetId, bucketStart])
+  @@index([assetId, checkId, bucketStart])
+  @@map("asset_connectivity_samples_daily")
+}
+
+// A traceroute an agent ran for a connectivity check. Standalone hypertable
+// (no rollups — a path snapshot has no meaningful average), pruned on the flat
+// `connectivityTraceroutes` retention window. Hops were resolved to assets and
+// subnets at WRITE time: [{ttl, ip|null, rdns?, rttMs[], assetId?, hostname?,
+// monitorStatus?, subnetCidr?, interfaceName?}].
+model AssetConnectivityTraceroute {
+  id            String   @default(uuid())
+  assetId       String
+  timestamp     DateTime @default(now())
+  checkId       String
+  destinationIp String?
+  complete      Boolean
+  hopCount      Int
+  hops          Json
+  // sha256 over the hop IP sequence ("*" for silent hops); RTTs excluded.
+  pathHash      String
+  // "scheduled" | "transition"
+  reason        String   @default("scheduled")
+  note          String?
+
+  @@id([id, timestamp])
+  @@index([assetId, checkId, timestamp])
+  @@map("asset_connectivity_traceroutes")
 }
 
 model AssetIpHistory {

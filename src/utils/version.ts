@@ -156,3 +156,20 @@ export function getAgentSourceDir(): string | null {
   if (!versionFile) return null;
   return dirname(versionFile);
 }
+
+/** Dotted-numeric version compare: is `version` >= `min`? Non-numeric
+ *  segments compare as 0; null/empty is never enough. Pure — unit-tested.
+ *  Every server-side "only agents that understand X" gate reads this
+ *  (script runs, connectivity checks). */
+export function versionAtLeast(version: string | null | undefined, min: string): boolean {
+  if (!version) return false;
+  const parse = (v: string) => v.trim().replace(/^v/i, "").split(".").map((p) => parseInt(p, 10) || 0);
+  const a = parse(version);
+  const b = parse(min);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}

@@ -208,4 +208,34 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:** if another enqueue path (beyond script runs) starts creating `AgentCommand` rows, call `publishCommandWake` there too, or that path silently falls back to the poll latency.
 
+**Also owns `publishConfigRefresh` + `CFG_REFRESH_CHANNEL` (`polaris_agent_cfg_refresh`)** — the sibling "this agent's config changed, refetch it" signal. Payload is a comma-joined list of managedAgentIds (chunked at 150 to stay under pg_notify's 8000-byte cap). `agentChannelService`'s wake listener LISTENs on both channels and dispatches by `msg.channel` to `refreshConfig`. Same best-effort contract: the heartbeat's `configEtag` is the guaranteed floor.
+
+---
+
+## services/connectivityCheckService.ts
+
+**What it owns:** Agent-run connectivity checks — the `ConnectivityCheck` definition (HTTP / HTTPS / TCP / ICMP + optional traceroute), its validation, audited CRUD, and the materialized `ConnectivityCheckSource` membership (check × agent host, plus each pair's latest result). Also the agent-facing definition shape and its ETag fold.
+
+**Public API:** `CHECK_KINDS`, `BODY_MATCH_MODES`, `MIN/MAX_INTERVAL_SEC`, `MIN/MAX_TIMEOUT_MS`, `MAX_ENABLED_CHECKS` (50), `MAX_CHECKS_PER_AGENT` (20), `MIN_AGENT_CONNECTIVITY_VERSION` (0.21.0), `DEFAULT_TRACEROUTE`, `normalizeTraceroute`, `splitHostPort`, `targetHostOf`, `assertTargetHostAllowed`, `normalizeCheckInput`, `definitionSha256`, `toAgentCheckDef`, `listChecks`, `getCheck`, `createCheck`, `updateCheck`, `setCheckEnabled`, `deleteCheck`, `reconcileConnectivityCheckSources`, `agentOnline`, `previewSources`, `listCheckResults`, `getAssetChecks`, `agentConfigChecks`, `connectivityEtagFold`; types `ConnectivityCheckInput`, `NormalizedCheck`, `AgentCheckDef`, `CheckHttpConfig`, `CheckTracerouteConfig`, `ReconcileResult`.
+
+**Cross-service deps:** `prisma`, `eventLogService.logEvent`, `agentCommandWake.publishConfigRefresh`, `notificationEngine.loadScopeAssetIds` (the scope resolver the engine itself uses — so a check's Sources can never disagree with an automation's Devices step), `notificationTypes.scopeIsUnconstrained`, `utils/netGuard.isBlockedOutboundHost`, `utils/httpCheck` (`parseStatusSpec`, `agentRegexProblem`), `utils/version.versionAtLeast`, `agentInstallService.AGENT_SERVER_URL_SETTING_KEY`.
+
+**Used by:** `src/api/routes/connectivityChecks.ts` (CRUD / preview / results / filter-schema), `src/jobs/reconcileConnectivitySources.ts` (5-minute full reconcile).
+
+**Invariants:**
+- **A check carries no threshold.** The SLA — what latency is a breach, how many failures page someone — lives in the automation that watches the `conn*` metrics, the split business rule 36 makes for "down". Never add a threshold column here.
+- **Membership ignores `monitored`.** Whether a result may ALERT is business rule 37's question, asked by the engine at fire time. `loadScopeAssetIds` is called WITHOUT `monitoredOnly`.
+- **`{}` / an empty tree means "nothing chosen"** here (a pins-only check), NOT "any device" — that legacy reading belongs to event automations (business rule 46). `{allAssets:true}` short-circuits to every active agent without loading the fleet.
+- **Target refusal is at save, on the LITERAL host**: loopback / link-local / unspecified / multicast (netGuard), IPv6 literals (v1 is IPv4-only), URL userinfo, and Polaris's own names/addresses. The agent refuses the same ranges again AFTER resolution. Rule 33's netGuard exemption (the vendor HTTP check aims at the device's own address) does NOT carry over.
+- **Body-match regex must be RE2-compatible** (`agentRegexProblem`) — the agent is Go; a JS-only pattern would save and then fail every run on every agent.
+- **`definitionSha256` covers exactly what the agent receives** (`agentDefCore`), key-sorted at every level. A description/name-only edit must not change it; any field the agent reads must. It is what both config ETags fold.
+- **Reconcile is set-based**: one active-agent query, one source query, then `createMany` / `deleteMany` / `updateMany` in one `$transaction` — never a query per host. Agents whose membership changed (or every member, when the definition changed) are nudged via `publishConfigRefresh`.
+- **Disabled checks keep their sources** (the fleet view shows their last results); `agentConfigChecks` filters on `enabled`.
+- **`MAX_CHECKS_PER_AGENT` is enforced in `agentConfigChecks`** (oldest checks win, deterministically) and REPORTED by `reportOverCap` as a `connectivity_check.agent_over_cap` Event when a host newly exceeds it — never a silent truncation. The in-memory set dedupes it across the 5-minute ticks.
+- **`agentConfigChecks` returns `[]` below `MIN_AGENT_CONNECTIVITY_VERSION`.**
+- **A target/kind edit clears `lastPathHash` / `lastOk`** on every source so the first new traceroute is a baseline, not a "path changed" Event about a different destination.
+- Delete cascades sources only; samples and traceroutes age out on retention (a row DELETE in a compressed chunk decompresses it).
+
+**When changing this:** a field the agent reads → `agentDefCore` + `transport.ConnectivityCheckDef` in `agent/internal/transport/client.go` + an `agent/VERSION` bump, in lockstep. A new kind → `CHECK_KINDS`, `targetHostOf`, the route's Zod enum, the agent's `ValidateCheckDef` + runner, and the modal. A new membership signal → the 5-minute job catches it; a write path that changes membership should reconcile inline.
+
 ---

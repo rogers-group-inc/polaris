@@ -151,6 +151,14 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "alerts", label: "Alerts", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges; Full Read-Write clears." },
   { key: "automationManagement", label: "Automations", description: "Automations and their delivery channels. Read-Write = create / edit / delete both.", levels: UP_TO_WRITE },
   { key: "automationScripts", label: "Automation Scripts", description: "The script registry and script actions. Read-Write is remote code execution on the Polaris host and agent hosts.", levels: UP_TO_WRITE },
+  // Its own key rather than a rung of `automationManagement` for the reason
+  // `networkScan` is its own key: a check directs every matching Polaris Agent
+  // to send traffic at an operator-chosen destination on a schedule, which is
+  // a capability an admin may want to withhold from someone who may still edit
+  // automations. Not RCE (the agent runs a fixed, validated probe), so not
+  // `automationScripts`. Seeded from automationManagement by migration
+  // 20260923030000_connectivity_checks.
+  { key: "connectivityChecks", label: "Connectivity Checks", description: "Agent-run reachability checks (HTTP / HTTPS / TCP / ICMP + traceroute). Read-Write directs every matching agent to send traffic at the target.", levels: UP_TO_WRITE },
   { key: "maintenanceManagement", label: "Maintenance Schedules", description: "Maintenance windows that pause monitoring and alerts, including per-asset maintenance mode. Read-Write = schedule CRUD.", levels: UP_TO_WRITE },
   { key: "contacts", label: "Address Book", description: "The address book alerts route to, each entry optionally owning devices. Read-Write = your own rows.", hasOwnershipDimension: true },
   { key: "staleReservations", label: "Stale Reservations", description: "Snooze, ignore and un-ignore stale DHCP reservation alerts, and set the staleness threshold.", levels: UP_TO_WRITE },
