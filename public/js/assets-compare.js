@@ -780,11 +780,6 @@ function _renderCompareChart(container, spec) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var yMin = 0, yMax;
   if (spec.pct) { yMax = 100; }
@@ -801,14 +796,7 @@ function _renderCompareChart(container, spec) {
       '<line x1="' + padL + '" y1="' + ty + '" x2="' + (W - padR) + '" y2="' + ty + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (ty + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _cmpFmtY(tv, unit) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   // clipId is built BEFORE the series loop because it seeds the per-render
   // gradient id prefix the failure-aware renderer needs — several cards share
