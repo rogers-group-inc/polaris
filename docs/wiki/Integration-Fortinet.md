@@ -123,6 +123,16 @@ It **never writes to the device**. Where FortiOS will not expose the runtime
 selected route over REST, the value is *inferred* and labelled as such in the
 UI.
 
+SD-WAN has its own polling pass, separate from the interface scrape. The SD-WAN
+tab's **Polling Interval (seconds)** field — `sdwanIntervalSeconds`, 60 to
+86400, default **60** — sets how often each REST-polled FortiGate is asked for
+its health-check readings and rule selection. It is the same field on the
+FortiManager and standalone FortiGate integrations. SLA charts and SD-WAN
+alerts therefore move once a minute by default, and an SD-WAN automation
+"sustained for N polls" means N reads at this interval. Only gates whose
+interfaces are polled over FortiOS REST are asked. A gate moved to SNMP gets no
+SD-WAN reads, and managed switches and APs have no SD-WAN.
+
 Also on the Monitoring tab: **`excludeFortilinkLldp`**, which stops internal
 FortiGate↔FortiSwitch links appearing in the LLDP Neighbor column, and
 **`switchManagementInterface`**, the interface name read for a managed switch's

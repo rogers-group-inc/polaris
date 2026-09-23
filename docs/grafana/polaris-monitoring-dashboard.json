@@ -2481,7 +2481,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Configured worker count per cadence queue, stamped once at boot. Tune via POLARIS_MONITOR_PROBE_WORKERS / POLARIS_MONITOR_FAST_WORKERS / POLARIS_MONITOR_HEAVY_WORKERS / POLARIS_MONITOR_FLOATING_WORKERS / POLARIS_MONITOR_LLDP_WORKERS / POLARIS_MONITOR_STORAGE_WORKERS.",
+      "description": "Configured worker count per cadence queue, stamped once at boot. Tune via POLARIS_MONITOR_PROBE_WORKERS / POLARIS_MONITOR_FAST_WORKERS / POLARIS_MONITOR_HEAVY_WORKERS / POLARIS_MONITOR_FLOATING_WORKERS / POLARIS_MONITOR_LLDP_WORKERS / POLARIS_MONITOR_STORAGE_WORKERS / POLARIS_MONITOR_SDWAN_WORKERS.",
       "fieldConfig": {
         "defaults": {
           "color": {

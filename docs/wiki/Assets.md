@@ -466,11 +466,16 @@ method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the
 reading is older than one cadence, exactly as on the snapshot tabs above. Each
 states its **own** age rather than the device's last poll: the rules table and
 the health-check metrics are separate reads on the same pass, and one can land
-while the other fails. A section that has never been collected says so instead
-of showing nothing.
+while the other fails. A failed rules read keeps the rules table as it was
+rather than emptying it. A section that has never been collected says so
+instead of showing nothing.
 
-There is no Refresh button here — SD-WAN is read on the system-info pass, and
-the tab is showing you what that pass last brought back.
+SD-WAN has its own polling pass, separate from interfaces: every 60 seconds by
+default, set per integration by the SD-WAN tab's **Polling Interval** (see
+[Integration-Fortinet](Integration-Fortinet)). There is no Refresh button on
+this tab. An on-demand poll (the mobile asset sheet's refresh, or
+`POST /assets/:id/probe-now` over the [API](API)) re-reads SD-WAN along with the
+probe; the snapshot tabs' **Refresh** (which re-reads system info) does not.
 
 ### Sources
 

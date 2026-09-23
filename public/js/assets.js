@@ -14779,7 +14779,8 @@ function _sdwanMembersTableHTML(members) {
 // Provenance + freshness strip carried by all three SD-WAN sections.
 //
 // Every section on this tab is a SNAPSHOT of what the gate last answered, and
-// each is a separate write on the system-info pass: a rules scrape can land
+// each is a separate write on the SD-WAN pass (its own cadence, default 60s —
+// not the system-info pass it rode until 2026-09): a rules scrape can land
 // while the perf-SLA one fails, and vice versa. So each states its OWN stamp
 // rather than the asset's lastSystemInfoAt — otherwise an empty members table
 // reads "this gate has no WAN members" when it means "not answered since
@@ -14936,16 +14937,15 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
     // Same header builder as the two tables above, so all three sections state
     // provenance and age the same way. The stamp is the perf-SLA stream's own
     // newest sample — the very `collectedAt` the members table states, both
-    // reading that one table — falling back to the asset's pass stamp only when
-    // the endpoint returned none. It used to read lastSystemInfoAt
-    // unconditionally, which reports a pass whose SD-WAN leg failed as a
-    // successful SD-WAN scrape. _wireSdwanTab upgrades the badge to
-    // authoritative provenance.
+    // reading that one table. No fallback: it used to fall back to the asset's
+    // lastSystemInfoAt, but SD-WAN has its own pass since 2026-09, so that
+    // stamp says nothing about SD-WAN — no sample means "never collected".
+    // _wireSdwanTab upgrades the badge to authoritative provenance.
     html +=
       '<section>' +
         _sdwanSectionHeaderHTML(
           a, "Performance SLA",
-          meta.membersAt || a.lastSystemInfoAt || null, meta.membersPollSec, "never collected",
+          meta.membersAt || null, meta.membersPollSec, "never collected",
           '<select id="sdwan-perfsla-select" class="form-input" style="padding:2px 6px;font-size:0.82rem">' + options + '</select>',
           rangeBtns
         ) +

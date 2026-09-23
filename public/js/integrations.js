@@ -1109,18 +1109,25 @@ function _readAdoptDiscoveredMacToggle() {
   return !!el.checked;
 }
 
-// SD-WAN tab body. Single master toggle (config.pullSdwan). When enabled, each
-// system-info pass for FortiGates owned by this integration also pulls SD-WAN
-// Performance SLA health-check metrics + service-rule member selection, which
+// SD-WAN tab body. Master toggle (config.pullSdwan) plus the stream's own
+// polling interval (config.sdwanIntervalSeconds, default 60s). When enabled,
+// FortiGates owned by this integration are polled for SD-WAN Performance SLA
+// health-check metrics + service-rule member selection on that interval, which
 // surface on the asset's SD-WAN tab. FortiOS-only; read-only on the device.
-function sdwanFormHTML(pullSdwan) {
+var SDWAN_INTERVAL_DEFAULT = 60;
+function sdwanFormHTML(pullSdwan, intervalSec) {
   var checked = pullSdwan === true ? "checked" : "";
+  var interval = Number(intervalSec) >= 60 ? Math.floor(Number(intervalSec)) : SDWAN_INTERVAL_DEFAULT;
   return '<section style="margin-bottom:1.5rem">' +
       sectionHeading("SD-WAN Monitoring") +
-      '<p class="hint" style="margin:0 0 0.75rem 0">When enabled, Polaris pulls SD-WAN data from each FortiGate on its system-info polling cadence and shows it on the asset\'s <strong>SD-WAN</strong> tab. Read-only &mdash; nothing is written back to the device.</p>' +
+      '<p class="hint" style="margin:0 0 0.75rem 0">When enabled, Polaris polls each FortiGate for SD-WAN data on the interval below and shows it on the asset\'s <strong>SD-WAN</strong> tab. Read-only &mdash; nothing is written back to the device.</p>' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
         '<input type="checkbox" id="f-pullSdwan" ' + checked + ' style="width:auto">' +
         '<label for="f-pullSdwan" style="margin:0">Pull SD-WAN Performance SLA + rule selection</label>' +
+      '</div>' +
+      '<div class="form-group"><label for="f-sdwanInterval">Polling Interval</label>' +
+        '<div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-sdwanInterval" value="' + interval + '" min="60" max="86400" step="1" style="width:100px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">seconds</span></div>' +
+        '<p class="hint">How often each FortiGate is asked for its SD-WAN health-checks and rule selection (60&ndash;86400 seconds; default 60). Independent of the interface polling interval. A shorter interval also shortens SD-WAN alert holds counted in polls.</p>' +
       '</div>' +
       '<ul class="hint" style="margin:0.25rem 0 0 1.2rem;padding:0">' +
         '<li><strong>Performance SLA health-checks.</strong> Per WAN-member latency, jitter and packet-loss from <code>/api/v2/monitor/virtual-wan/health-check</code>, charted over time.</li>' +
@@ -1140,6 +1147,17 @@ function _readPullSdwanToggle() {
   var el = document.getElementById("f-pullSdwan");
   if (!el) return undefined;
   return !!el.checked;
+}
+
+// Read the SD-WAN polling interval. undefined when the tab didn't render; an
+// out-of-range or blank entry is clamped to 60..86400 (blank = the default)
+// rather than refused, matching how the monitor reads the stored value.
+function _readSdwanInterval() {
+  var el = document.getElementById("f-sdwanInterval");
+  if (!el) return undefined;
+  var n = Math.floor(Number(el.value));
+  if (!isFinite(n) || n <= 0) return SDWAN_INTERVAL_DEFAULT;
+  return Math.max(60, Math.min(86400, n));
 }
 
 // ─── Script Publishing tab (Entra ID) ──────────────────────────────────────
@@ -5538,7 +5556,7 @@ function _integrationTabs(ctx) {
         key: "description-sync", label: "Description Sync",
         html: descriptionSyncFormHTML(config.syncDescriptions === true, pushUseProxy, type),
       },
-      { key: "sdwan", label: "SD‑WAN", html: sdwanFormHTML(config.pullSdwan === true) },
+      { key: "sdwan", label: "SD‑WAN", html: sdwanFormHTML(config.pullSdwan === true, config.sdwanIntervalSeconds) },
       {
         // Carries the pull-from-SNMP and push-geocoded-coords toggles that used
         // to sit inside Monitoring → FortiGate. DOM ids preserved so the save
@@ -5788,6 +5806,8 @@ async function _createIntegration(type, tested) {
     if (syncDescriptionsNew !== undefined) createConfig.syncDescriptions = syncDescriptionsNew;
     var sdwanToggleNew = _readPullSdwanToggle();
     if (sdwanToggleNew !== undefined) createConfig.pullSdwan = sdwanToggleNew;
+    var sdwanIntervalNew = _readSdwanInterval();
+    if (sdwanIntervalNew !== undefined) createConfig.sdwanIntervalSeconds = sdwanIntervalNew;
     var excludeFortilinkLldpNew = _readExcludeFortilinkLldpToggle();
     if (excludeFortilinkLldpNew !== undefined) createConfig.excludeFortilinkLldp = excludeFortilinkLldpNew;
   }
@@ -6220,6 +6240,8 @@ async function _saveIntegration(id, intg, formGetter) {
         if (syncDescriptionsEdit !== undefined) editConfig.syncDescriptions = syncDescriptionsEdit;
         var sdwanToggle = _readPullSdwanToggle();
         if (sdwanToggle !== undefined) editConfig.pullSdwan = sdwanToggle;
+        var sdwanInterval = _readSdwanInterval();
+        if (sdwanInterval !== undefined) editConfig.sdwanIntervalSeconds = sdwanInterval;
         var excludeFortilinkLldpEdit = _readExcludeFortilinkLldpToggle();
         if (excludeFortilinkLldpEdit !== undefined) editConfig.excludeFortilinkLldp = excludeFortilinkLldpEdit;
       }

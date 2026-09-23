@@ -62,6 +62,8 @@ import {
   collectTelemetry, recordTelemetryResult,
   collectHardwareSensors, recordHardwareSensorResult,
   collectSystemInfo, recordSystemInfoResult,
+  runSdwanFor,
+  resolveSdwanPollIntervalForAsset,
   snmpWalkRaw,
   resolveMonitorSettings,
   resolveMonitorSettingsWithProvenance,
@@ -1944,7 +1946,13 @@ router.post("/:id/probe-now", requirePermission("assetsProbe", "read"), async (r
     const tr_p:    Promise<TelResult>  = collectTelemetry(id).catch((err: any): TelResult  => ({ supported: true, error: err?.message || "Telemetry collection failed" }));
     const hwR_p:   Promise<HwResult>   = collectHardwareSensors(id).catch((err: any): HwResult => ({ supported: true, error: err?.message || "Hardware sensor collection failed" }));
     const sr_p:    Promise<SysResult>  = collectSystemInfo(id).catch((err: any): SysResult  => ({ supported: true, error: err?.message || "System info collection failed" }));
+    // SD-WAN left the system-info pass for its own cadence (2026-09), so a Poll
+    // Now that should still refresh the SD-WAN tab asks for it explicitly. The
+    // runner applies its own eligibility (integration pulls SD-WAN, REST gate)
+    // and is a silent no-op everywhere else, so it stays out of the summary.
+    const sdwan_p = runSdwanFor(id, { transport: "rest_api", assetType: "unknown" }).catch(() => "crash" as const);
     const [tr, hwR, sr] = [await tr_p, await hwR_p, await sr_p];
+    await sdwan_p;
     await Promise.all([
       recordTelemetryResult(id, tr),
       recordHardwareSensorResult(id, hwR),
@@ -3389,15 +3397,17 @@ router.get("/:id/perf-sla-links", requirePermission("assets", "read"), async (re
 //
 // Carries the same freshness pair the ARP/MAC tabs do — `collectedAt` (the
 // newest perf-SLA sample, i.e. the scrape stamp) and `pollIntervalSec` — so the
-// table can state its own age and turn amber past its own cadence. No discovery
-// fallback: only the system-info pass writes perf-SLA samples, so an unmonitored
-// gate reports null rather than borrowing its integration's 12h sweep.
+// table can state its own age and turn amber past its own cadence. The cadence
+// is the SD-WAN stream's own (integration sdwanIntervalSeconds, default 60s) —
+// not the system-info one it rode until 2026-09. Only that cadence writes
+// perf-SLA samples, so an unpolled gate reports null rather than borrowing its
+// integration's 12h discovery sweep.
 router.get("/:id/sdwan-members", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const [result, pollIntervalSec] = await Promise.all([
       readSdwanMembers(id),
-      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+      resolveSdwanPollIntervalForAsset(id),
     ]);
     res.json({ ...result, pollIntervalSec });
   } catch (err) { next(err); }
@@ -3449,7 +3459,8 @@ router.get("/:id/sdwan-rules", requirePermission("assets", "read"), async (req, 
     });
     const [rows, pollIntervalSec] = await Promise.all([
       rowsP,
-      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+      // The SD-WAN stream's own cadence, not the system-info one.
+      resolveSdwanPollIntervalForAsset(id),
     ]);
     // One stamp for the whole table: persistSdwanRules delete-replaces every
     // rule in one transaction, so the newest updatedAt IS the scrape time.
