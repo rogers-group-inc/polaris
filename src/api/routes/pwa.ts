@@ -32,11 +32,11 @@ export const pwaRouter = Router();
 /**
  * The theme color must equal the <meta name="theme-color"> in mobile.html, or
  * Android's task-switcher chrome flickers against the app bar.
- * Background is --md-surface (dark) — the actual first-paint color, so the
+ * Background is --md-surface (nightfall) — the actual first-paint color, so the
  * launch splash doesn't pop when it hands off to the app.
  */
-const THEME_COLOR = "#1d2024";
-const BACKGROUND_COLOR = "#111418";
+const THEME_COLOR = "#1d2244";
+const BACKGROUND_COLOR = "#141427";
 
 /** Android home-screen labels clip around here. */
 const SHORT_NAME_MAX = 12;

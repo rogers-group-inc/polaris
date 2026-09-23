@@ -43,8 +43,8 @@ describe("buildManifest", () => {
     expect(m.orientation).toBe("portrait");
     // Must equal mobile.html's <meta name="theme-color"> or Android's
     // task-switcher chrome flickers.
-    expect(m.theme_color).toBe("#1d2024");
-    expect(m.background_color).toBe("#111418");
+    expect(m.theme_color).toBe("#1d2244");
+    expect(m.background_color).toBe("#141427");
   });
 
   it("takes name, short_name and description from branding", () => {
