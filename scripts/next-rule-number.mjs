@@ -21,7 +21,14 @@ const SKILL = ".claude/skills/polaris-business-rules";
 const git = (...args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
 
 function ruleNumbersIn(text, kind) {
-  const re = kind === "invariant" ? /^(\d+)a?\. \*\*/gm : kind === "narrative" ? /^## Rule (\d+)a?\b/gm : /^\| (\d+)a? \|/gm;
+  if (kind === "index") {
+    // | N | title | invariants-file | narrative-file |  — a row whose file cell is "—" is a
+    // placeholder (a deliberate gap, or a number an in-flight worktree holds) and claims nothing.
+    return [...text.matchAll(/^\| (\d+)a? \| (?:\\\||[^|])* \| ([^|]+) \|/gm)]
+      .filter((m) => m[2].trim() !== "—")
+      .map((m) => Number(m[1]));
+  }
+  const re = kind === "invariant" ? /^(\d+)a?\. \*\*/gm : /^## Rule (\d+)a?\b/gm;
   return [...text.matchAll(re)].map((m) => Number(m[1]));
 }
 
