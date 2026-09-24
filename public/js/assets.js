@@ -1049,7 +1049,7 @@ function _buildAssetsQuery() {
 
   // Operator-aware text columns. Param name == column key, except _server→server.
   var textCols = ["hostname", "ipAddress", "serialNumber", "assetTag", "manufacturer",
-    "model", "os", "macAddress", "assignedTo", "purchaseOrder", "dnsName", "description"];
+    "model", "os", "macAddress", "assignedTo", "purchaseOrder", "dnsName", "description", "tags"];
   textCols.forEach(function (key) { _pushAssetText(params, key, filters[key]); });
   _pushAssetText(params, "server", filters._server);
 
@@ -1167,7 +1167,7 @@ async function fetchAssetsPage() {
     _assetsData = all.map(_mapAsset);
     renderAssetsPage();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="22" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="23" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
   }
 }
 
@@ -1725,8 +1725,8 @@ function renderAssetsPage() {
   if (_assetsData.length === 0) {
     var hasFilters = _assetsSF && _assetsSF._filters && Object.keys(_assetsSF._filters).length > 0;
     tbody.innerHTML = hasFilters
-      ? '<tr><td colspan="22" class="empty-state">No results match the current filters.</td></tr>'
-      : '<tr><td colspan="22" class="empty-state">No assets found. Add one to get started.</td></tr>';
+      ? '<tr><td colspan="23" class="empty-state">No results match the current filters.</td></tr>'
+      : '<tr><td colspan="23" class="empty-state">No assets found. Add one to get started.</td></tr>';
     _renderAssetsPageControls();
     _assetsUpdateSelectAll();
     return;
@@ -1756,6 +1756,7 @@ function renderAssetsPage() {
       '<td>' + assetMonitoredViaCell(a) + '</td>' +
       '<td>' + escapeHtml(a.location || a.learnedLocation || "-") + '</td>' +
       '<td>' + escapeHtml(a.description || "-") + '</td>' +
+      '<td>' + escapeHtml((a.tags || []).join(", ") || "-") + '</td>' +
       '<td>' + _copyableCell(a.assetTag) + '</td>' +
       '<td>' + escapeHtml(a.manufacturer || "-") + '</td>' +
       '<td>' + escapeHtml(a.model || "-") + '</td>' +

@@ -55,6 +55,7 @@ import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
 import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
+import { buildTagFilter, findAssetIdsByTagSubstring, pageAssetIdsByTags, tagFilterNeedsLookup } from "../../services/assetTagListService.js";
 import { shapeMacRows, selectPrimaryMac, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter, TEXT_FILTER_OPS } from "../../utils/prismaTextFilter.js";
@@ -521,6 +522,9 @@ const ASSET_SORT_COLUMNS: Record<string, string> = {
   longitude: "longitude",
   lastSeen: "lastSeen",
   createdAt: "createdAt",
+  // String[] — Prisma cannot order by it; the list handler routes this key
+  // through pageAssetIdsByTags instead of buildAssetOrderBy.
+  tags: "tags",
 };
 
 // Operator-aware text-filter columns (column key → Asset column). Every one is
@@ -641,6 +645,8 @@ const ASSET_LIST_SELECT = {
   statusChangedBy: true,
   location: true,
   learnedLocation: true,
+  // Tags list column (sort + filter: assetTagListService).
+  tags: true,
   // Latitude / Longitude list columns (hidden by default) — the geographic pin
   // that places a firewall on the Device Map.
   latitude: true,
@@ -731,6 +737,19 @@ interface DiscoveredHostnameMatches {
 
 const NO_DISCOVERED_MATCHES: DiscoveredHostnameMatches = { hostnameIds: null, searchIds: null };
 
+/**
+ * Ids matching the Tags column's term (contains / not_contains), or null when
+ * the tags filter carries no term. Resolved before buildAssetListWhere for the
+ * same reason as the discovered-hostname ids: a substring inside a String[] is
+ * not expressible as a Prisma where.
+ */
+async function resolveTagMatches(raw: Record<string, unknown>): Promise<string[] | null> {
+  const value = typeof raw["tags"] === "string" ? (raw["tags"] as string) : undefined;
+  const op = typeof raw["tagsOp"] === "string" ? (raw["tagsOp"] as string) : undefined;
+  if (!tagFilterNeedsLookup(value, op)) return null;
+  return findAssetIdsByTagSubstring(value as string);
+}
+
 async function resolveDiscoveredHostnameMatches(
   q: z.infer<typeof AssetListQuerySchema>,
   raw: Record<string, unknown>,
@@ -766,6 +785,7 @@ function buildAssetListWhere(
   raw: Record<string, unknown>,
   sessionUsername: string | undefined,
   discovered: DiscoveredHostnameMatches = NO_DISCOVERED_MATCHES,
+  tagIds: string[] | null = null,
 ): Record<string, unknown> {
   const where: Record<string, unknown> = {};
   const and: Record<string, unknown>[] = [];
@@ -820,6 +840,14 @@ function buildAssetListWhere(
   const serverOp = typeof raw["serverOp"] === "string" ? (raw["serverOp"] as string) : undefined;
   if (serverVal != null || serverOp != null) {
     const frag = buildServerFilter(serverVal, serverOp);
+    if (frag) and.push(frag);
+  }
+
+  // Tags column (Asset.tags is a String[]; see assetTagListService).
+  const tagsVal = typeof raw["tags"] === "string" ? (raw["tags"] as string) : undefined;
+  const tagsOp = typeof raw["tagsOp"] === "string" ? (raw["tagsOp"] as string) : undefined;
+  if (tagsVal != null || tagsOp != null) {
+    const frag = buildTagFilter(tagsVal, tagsOp, tagIds ?? []);
     if (frag) and.push(frag);
   }
 
@@ -1014,9 +1042,12 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     const limit = Math.min(q.limit ?? ASSET_LIST_DEFAULT_LIMIT, ASSET_LIST_MAX_LIMIT);
     const offset = q.offset ?? 0;
 
-    const discovered = await resolveDiscoveredHostnameMatches(q, req.query as Record<string, unknown>);
-    const where = buildAssetListWhere(q, req.query as Record<string, unknown>, requestActor(req), discovered);
-    const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
+    const raw = req.query as Record<string, unknown>;
+    const [discovered, tagIds] = await Promise.all([
+      resolveDiscoveredHostnameMatches(q, raw),
+      resolveTagMatches(raw),
+    ]);
+    const where = buildAssetListWhere(q, raw, requestActor(req), discovered, tagIds);
 
     let favoriteIds = csvToArray(q.favoriteIds);
     if (favoriteIds && favoriteIds.length > ASSET_FAVORITES_MAX) {
@@ -1026,7 +1057,18 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     let assets: Array<Record<string, unknown>>;
     let total: number;
 
-    if (favoriteIds && favoriteIds.length) {
+    if (q.sortBy === "tags") {
+      // Tags sort: order the matching ids in memory (favorites first), then
+      // load the page's rows and put them back in that order.
+      const page = await pageAssetIdsByTags(where, q.sortDir ?? "asc", offset, limit, favoriteIds);
+      total = page.total;
+      const rows = page.ids.length
+        ? await prisma.asset.findMany({ where: { id: { in: page.ids } }, select: ASSET_LIST_SELECT })
+        : [];
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      assets = page.ids.map((id) => byId.get(id)).filter((r): r is (typeof rows)[number] => r != null);
+    } else if (favoriteIds && favoriteIds.length) {
+      const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
       // Two-bucket ordering: favorites (matching the active filters, sorted)
       // occupy virtual positions [0, favTotal); non-favorites follow. The
       // requested window may straddle the boundary, so query each bucket with
@@ -1049,6 +1091,7 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
       }
       assets = [...favPart, ...nonFavPart];
     } else {
+      const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
       const [rows, totalCount] = await Promise.all([
         prisma.asset.findMany({ where, orderBy, skip: offset, take: limit, select: ASSET_LIST_SELECT }),
         prisma.asset.count({ where }),
