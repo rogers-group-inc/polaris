@@ -471,6 +471,13 @@ health check). One member legend above the Performance SLA charts drives all
 three: click a member to hide or show it, double-click to show only that
 member, and **Show all** brings everything back.
 
+Each member's **Health Check Status** strip covers the **last 30 minutes**, one
+segment per SD-WAN poll. A segment is **green** when the FortiGate reported the
+member alive in every health check it belongs to at that poll, and **red** when
+any of those health checks reported it dead. There is no amber state: missing
+the SLA targets for latency, jitter or loss does not turn a segment red — the
+Performance SLA charts show that. A poll that never ran leaves no segment.
+
 Each section states **where its data came from and how old it is** — the polling
 method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the
 reading is older than one cadence, exactly as on the snapshot tabs above. Each
