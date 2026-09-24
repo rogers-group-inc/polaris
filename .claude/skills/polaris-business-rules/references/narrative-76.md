@@ -49,6 +49,12 @@ remediation cycle. And the **detection half still judges no firewall** — it is
 a server address was configured, so both settled states would read as drift half the time, which
 is the boundary business rule 72 drew and this rule does not cross.
 
+**Amended 2026-09-24:** detection is now told. `getOnboardingScript` passes `polarisServerIp` to
+both builders, and detection asserts whichever of the two settled states that setting produces.
+An endpoint onboarded before the remediation reached it had passed detection with Windows' rule
+still Private-only, on a DomainAuthenticated network, so it was never remediated and never
+reachable. The reasoning and the exact checks are in business rule 72's dated section.
+
 What is NOT in scope here is who may use SSH once it is reachable. The script never writes
 `sshd_config`: stock Windows OpenSSH has no `AllowUsers`/`AllowGroups` and password
 authentication on, so every account the endpoint lets log on can authenticate. The account on

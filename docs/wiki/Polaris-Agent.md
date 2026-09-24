@@ -184,8 +184,22 @@ What the remediation script does about it depends on **Polaris server address**:
 
 **Public is deliberately never added.** Reachable-from-Domain is the problem
 being solved; an any-source TCP/22 rule on the profile a laptop picks up in an
-airport is not. Both paths are idempotent, and the detection script does not
-judge the firewall — it is not told which of the two shapes to expect.
+airport is not. Both paths are idempotent.
+
+**The detection script checks the firewall too**, against whichever of the two
+states the same **Polaris server address** produces:
+
+| Server address | Detection reports "needs remediation" when |
+|---|---|
+| **set** | `Polaris SSH (TCP 22)` is missing, disabled, not on every profile, or allows a different address; or `OpenSSH-Server-In-TCP` is still enabled |
+| **blank** | `OpenSSH-Server-In-TCP` does not cover the Domain profile. Whether it is enabled is not checked, because the remediation never turns back on a rule you turned off |
+
+Before this check, a machine set up some other way (by hand, or by an older
+script) passed detection and was never remediated. On a domain network that
+meant sshd was listening and nothing could reach it, and the first sign was an
+agent install timing out while waiting for the SSH handshake. Detection and
+remediation are built from the same saved address, so change the address and
+re-publish **both**.
 
 > **The script does not decide who may use SSH.** It never writes `sshd_config`,
 > so stock Windows OpenSSH rules apply: no `AllowUsers`/`AllowGroups`, and

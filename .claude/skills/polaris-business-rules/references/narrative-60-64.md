@@ -1242,6 +1242,42 @@ before naming an account was publishing one that could not tell them anything.
 
 See [Polaris-Agent](Polaris-Agent) for the card and the scripts it generates.
 
+### 2026-09-24 — the firewall comes in, because the boundary was drawn on a premise that was ours to fix
+
+An agent install timed out waiting for the SSH handshake on a Windows 11 IoT Enterprise LTSC
+endpoint (26100). OpenSSH 9.5 was installed, sshd was running and listening on 22, the account
+and the key were both in place, and the Intune Remediation reported **Without issues**. The
+endpoint's active profile was **DomainAuthenticated**, and Windows' own OpenSSH rule covered
+Private alone (rule 76). It had been onboarded before the Polaris remediation reached it, so
+detection passed on its first run and remediation, which is the only half that settles the
+firewall, never ran. Nothing in Intune could show the machine was unreachable. The agent
+install was the first place it surfaced.
+
+The section above kept the firewall out for two stated reasons, and on inspection neither
+survives. "With no `polarisServerIp` there is no rule to find" is true of the POLARIS rule, but
+that mode still settles something: remediation widens Windows' rule to Domain, which detection
+can check. And "the detection builder is not told which of the two shapes to expect" was a fact
+about a function signature, not about the problem: the same `getOnboardingScript` call that
+renders remediation from `polarisServerIp` could always hand it to detection too.
+
+So the boundary moves and the principle does not. Detection now asserts the firewall state
+remediation settles for the SAME setting, and nothing wider:
+
+- **With an address:** the `Polaris SSH (TCP 22)` rule exists once, is enabled, is on every
+  profile, and allows that address; and no built-in `OpenSSH-Server-In-*` rule is still enabled.
+  The address is compared as a network (`ConvertTo-PolarisNetwork`), because Windows can store a
+  CIDR in mask form and a text comparison would never match: that would be the loop this rule
+  exists to forbid.
+- **Without one:** every built-in rule covers Domain (or Any). Whether it is ENABLED is not
+  judged, because remediation never re-enables a rule an operator turned off, and demanding it
+  would loop. With no built-in rule at all there is nothing remediation could change, so that
+  passes.
+
+The second edge still holds, and it is exactly what drew these lines: assert nothing the
+remediation cannot go and fix. Both builders must be passed the same `polarisServerIp`. A
+detection script published with a different address from its remediation disagrees with it,
+which is why the card renders both halves from one saved setting.
+
 ---
 
 ### Rule 72 — the invariant as stated in full until 2026-09-22
