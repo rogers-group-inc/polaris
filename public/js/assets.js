@@ -2416,8 +2416,10 @@ function bulkMaintenanceSelectedAssets() {
 // One modal collects the SSH / WinRM credentials + arch; the server resolves
 // OS platform + transport per asset (Windows → WinRM with SSH fallback,
 // everything else → SSH) and reports ineligible assets back as skips
-// (existing agent, hypervisor, Fortinet source, unreachable, no matching
-// credential). Backend: POST /assets/bulk-agent-install (agentInstallService.
+// (agent in any state but "failed", hypervisor, Fortinet source, unreachable,
+// no matching credential). An asset whose agent install FAILED is retried in
+// place with this batch's credentials — the per-asset Retry, folded into the
+// bulk verb. Backend: POST /assets/bulk-agent-install (agentInstallService.
 // bulkInstallAgents) — installs run in a bounded server-side pool; progress
 // shows per-asset on each System tab exactly like a manual install.
 function openBulkAgentDeployModal() {
@@ -2452,7 +2454,8 @@ function openBulkAgentDeployModal() {
       '<p style="color:var(--color-text-secondary)">Install the Polaris Agent on the <strong>' + ids.length +
         '</strong> selected asset' + (ids.length === 1 ? '' : 's') + '. Each asset\'s OS is inferred from its ' +
         'discovered OS field: Windows hosts use the WinRM credential (SSH as fallback), everything else uses the SSH credential. ' +
-        'Assets that already have an agent, hypervisors, Fortinet-discovered devices, and assets with no reachable address are skipped automatically.</p>' +
+        'An asset whose last agent install <strong>failed</strong> is retried with the credentials chosen here. ' +
+        'Assets with an agent in any other state, hypervisors, Fortinet-discovered devices, and assets with no reachable address are skipped automatically.</p>' +
       '<div class="form-group" style="margin-top:0.75rem">' +
         '<label for="bulk-agent-cred-ssh">SSH credential (Linux / macOS, Windows fallback)</label>' +
         '<select id="bulk-agent-cred-ssh">' + credOptions(sshOpts, "— None (skip SSH-only hosts) —") + '</select>' +
@@ -2528,11 +2531,16 @@ function openBulkAgentDeployModal() {
 }
 
 // Replace the deploy modal's content with the outcome summary: how many
-// installs kicked off + a per-asset table of skips with the server's reason.
+// installs kicked off (naming how many of those were retries of a failed
+// install) + a per-asset table of skips with the server's reason.
 function _renderBulkAgentDeployResult(r) {
+  var retried = r.retried || 0;
+  var retriedNote = retried > 0
+    ? ' (' + retried + ' of them ' + (retried === 1 ? 'a retry' : 'retries') + ' of a failed install)'
+    : '';
   var kickedLine = r.kicked > 0
     ? '<p style="margin:0 0 0.75rem"><strong>' + r.kicked + '</strong> install' + (r.kicked === 1 ? '' : 's') +
-      ' started — progress shows on each asset\'s System tab as the pool works through them.</p>'
+      ' started' + retriedNote + ' — progress shows on each asset\'s System tab as the pool works through them.</p>'
     : '<p style="margin:0 0 0.75rem">No installs were started.</p>';
   var skippedHTML = '';
   if (r.skipped && r.skipped.length) {

@@ -6204,9 +6204,11 @@ router.post("/bulk-quarantine/release", requirePermission("assetsQuarantine", "w
 // every selected asset at once (assets-page bulk bar "Deploy Agent"). OS
 // platform + transport are resolved per asset the way discovery auto-deploy
 // does (inferAgentPlatform: Windows → WinRM credential with SSH fallback,
-// everything else → SSH); ineligible assets (existing agent, hypervisor,
-// Fortinet source, unreachable, no matching credential) come back as skipped
-// with a reason instead of failing the batch. Remote installs run in a
+// everything else → SSH); ineligible assets (agent in any state but "failed",
+// hypervisor, Fortinet source, unreachable, no matching credential) come back
+// as skipped with a reason instead of failing the batch. An asset whose agent
+// install FAILED is retried in place (the /:id/agent/retry reset, with this
+// batch's credentials) and counted in `retried`. Remote installs run in a
 // bounded background pool — the response returns immediately and the UI
 // watches per-asset installStatus.
 const BulkAgentInstallSchema = z.object({

@@ -83,7 +83,7 @@ Select rows to raise the bulk bar:
 |---|---|---|
 | **Compare** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; with more than ten selected the button greys out in yellow |
 | **Merge** | Assets **full read-write**, exactly **two** selected | opens the merge modal with the target pre-selected |
-| **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, and ineligible assets come back as skips **with reasons** |
+| **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
 
 A selection past the 500-id cap is refused **with the count**, rather than

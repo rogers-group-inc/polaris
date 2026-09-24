@@ -532,7 +532,10 @@ export interface BulkInstallInput {
 
 export interface BulkInstallResult {
   requested: number;
+  /** Installs handed to the pool — fresh rows AND retried failed ones. */
   kicked:    number;
+  /** Of `kicked`, how many were a retry of an install that had failed. */
+  retried:   number;
   skipped:   Array<{ assetId: string; hostname: string | null; reason: string }>;
 }
 
@@ -540,20 +543,39 @@ export interface BulkInstallResult {
  * Operator-initiated bulk agent install — the assets-page bulk bar's "Deploy
  * Agent" action. Applies the same eligibility rules as the manual
  * POST /assets/:id/agent/install route per asset (source-kind compatibility,
- * no hypervisors, no existing ManagedAgent row, reachable host) but resolves
- * OS platform + transport automatically the way discovery auto-deploy does:
- * inferAgentPlatform(asset.os), Windows → WinRM credential (SSH fallback),
- * linux/darwin → SSH credential. Ineligible assets are reported back as
- * skipped with a reason — never an error for the whole batch.
+ * no hypervisors, reachable host) but resolves OS platform + transport
+ * automatically the way discovery auto-deploy does: inferAgentPlatform(asset.os),
+ * Windows → WinRM credential (SSH fallback), linux/darwin → SSH credential.
+ * Ineligible assets are reported back as skipped with a reason — never an
+ * error for the whole batch.
  *
- * ManagedAgent rows are created synchronously (the UI immediately shows
- * "pending" on every kicked asset); the remote installs then run in a
+ * An asset whose agent row is `installStatus="failed"` is RETRIED, not
+ * skipped — the same reset the per-asset POST /assets/:id/agent/retry route
+ * performs, folded into the batch. Before this, a selection that included a
+ * host whose first install had died (host asleep, WinRM off, wrong password)
+ * came back "agent already installed (status=failed)", and the operator had
+ * to open every such asset and press Retry by hand — the one case where
+ * "deploy the agent to these" most obviously means "try again". The retry
+ * keeps the row's identity (`osPlatform`, `arch` — the host has not changed,
+ * and a wrong guess there is corrected through reinstall / force-remove) and
+ * takes this batch's policy (credential + transport re-picked for that
+ * platform, install-script variant, privilege tier). When the batch's
+ * credentials do not cover the row's platform, the credential the failed
+ * install was started with is reused if it still exists, exactly as the
+ * per-asset Retry does; otherwise the asset is skipped with that reason.
+ * Like the per-asset retry, no maintenance hold is taken (rule 80): a failed
+ * install left no running agent to disconnect. Rows in any other state —
+ * in-flight, active, upgrade_failed, uninstall_failed, revoked — stay skipped:
+ * those have work running on the host or an agent to preserve.
+ *
+ * ManagedAgent rows are created / reset synchronously (the UI immediately
+ * shows "pending" on every kicked asset); the remote installs then run in a
  * background pool of BULK_INSTALL_POOL so a large selection can't fan out
  * hundreds of simultaneous SSH/SFTP sessions. Per-row failures land as
  * installStatus="failed" + installError via the normal state machine.
  *
- * Scale note: one findMany bounded by the route's ids cap + one create per
- * eligible asset. A one-shot operator action, not a ticking job.
+ * Scale note: one findMany bounded by the route's ids cap + one create or
+ * update per eligible asset. A one-shot operator action, not a ticking job.
  */
 export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkInstallResult> {
   const arch = input.arch ?? "amd64";
@@ -604,7 +626,12 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
     where: { id: { in: input.assetIds } },
     select: {
       id: true, hostname: true, dnsName: true, ipAddress: true, os: true, assetType: true,
-      managedAgent: { select: { installStatus: true } },
+      managedAgent: {
+        select: {
+          id: true, installStatus: true, osPlatform: true, arch: true,
+          installCredentialId: true, installTransport: true,
+        },
+      },
       discoveredByIntegration: { select: { type: true } },
     },
   });
@@ -612,18 +639,83 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
 
   const skipped: BulkInstallResult["skipped"] = [];
   const queue: Array<{ managedAgentId: string; credentialId: string }> = [];
+  let retried = 0;
 
   for (const assetId of input.assetIds) {
     const a = byId.get(assetId);
     if (!a) { skipped.push({ assetId, hostname: null, reason: "asset not found" }); continue; }
     const skip = (reason: string) => skipped.push({ assetId, hostname: a.hostname, reason });
 
-    if (a.managedAgent) { skip(`agent already installed (status=${a.managedAgent.installStatus})`); continue; }
+    const failedRow = a.managedAgent?.installStatus === "failed" ? a.managedAgent : null;
+    if (a.managedAgent && !failedRow) { skip(`agent already installed (status=${a.managedAgent.installStatus})`); continue; }
     const sourceKind = assetSourceKindFromIntegrationType(a.discoveredByIntegration?.type ?? null);
     if (!isPollingMethodCompatible(sourceKind, "agent")) { skip(`Polaris Agent is not compatible with ${sourceKind} sources`); continue; }
     if (a.assetType === "hypervisor") { skip("agent cannot be installed on a hypervisor (ESXi) host"); continue; }
     const host = a.ipAddress || a.dnsName || a.hostname || "";
     if (!host) { skip("no IP / DNS / hostname to reach the device"); continue; }
+
+    if (failedRow) {
+      // ── Retry of a failed install (see the doc comment) ──
+      const osPlatform = failedRow.osPlatform as AgentOsPlatform;
+      const rowArch = failedRow.arch;
+      let target = pickTransportAndCredential(osPlatform, deployCfg);
+      if ("skip" in target) {
+        // The batch's credentials do not cover this platform: fall back to the
+        // credential the failed install was started with, as the per-asset
+        // Retry does — a transient failure (host asleep) is worth one more go
+        // with the same key. A deleted credential leaves nothing to retry with.
+        const priorId = failedRow.installCredentialId;
+        const prior = priorId ? await getCredential(priorId).catch(() => null) : null;
+        if (!prior) {
+          skip(`last install failed and cannot be retried: ${target.skip}, and the credential it was started with ` +
+               (priorId ? "no longer exists" : "is not on file"));
+          continue;
+        }
+        target = {
+          osPlatform,
+          transport:    (failedRow.installTransport === "winrm" ? "winrm" : "ssh"),
+          credentialId: prior.id,
+        };
+      }
+      if (!manifest.binaries[`${osPlatform}-${rowArch}`]) { skip(`no agent binary built for ${osPlatform}-${rowArch}`); continue; }
+
+      try {
+        // Same reset as POST /:id/agent/retry, plus this batch's policy. The
+        // runner refreshes the cert pin itself, but stamping it here keeps the
+        // row honest between the reset and the pool reaching it.
+        await prisma.managedAgent.update({
+          where: { id: failedRow.id },
+          data: {
+            installStatus:         "pending",
+            installError:          null,
+            installedBy:           actor,
+            serverCertFingerprint: fingerprint,
+            installCredentialId:   target.credentialId,
+            installTransport:      target.transport,
+            installScriptId:       input.scriptIds?.[osPlatform] ?? null,
+            privilegeTier:         osPlatform === "linux" ? normalizePrivilegeTier(input.privilegeTier) : "unprivileged",
+          },
+        });
+        queue.push({ managedAgentId: failedRow.id, credentialId: target.credentialId });
+        retried++;
+        await logEvent({
+          action:       "agent.install_retry",
+          resourceType: "asset",
+          resourceId:   a.id,
+          resourceName: a.hostname || host,
+          actor,
+          level:        "info",
+          message:      `Polaris Agent install retried (bulk, ${osPlatform}/${rowArch}, ${target.transport})`,
+          details:      { managedAgentId: failedRow.id, credentialId: target.credentialId, transport: target.transport, bulk: true },
+        }).catch(() => {});
+      } catch (err: any) {
+        // The row vanished (force-removed between findMany and update) or the
+        // update failed — a skip, not a batch error.
+        skip(err?.message || "failed to reset the failed agent record");
+        logger.warn({ err, assetId: a.id, managedAgentId: failedRow.id }, "bulk agent install retry reset failed");
+      }
+      continue;
+    }
 
     const osPlatform = inferAgentPlatform(a.os);
     const target = pickTransportAndCredential(osPlatform, deployCfg);
@@ -678,7 +770,7 @@ export async function bulkInstallAgents(input: BulkInstallInput): Promise<BulkIn
     });
   }
 
-  return { requested: input.assetIds.length, kicked: queue.length, skipped };
+  return { requested: input.assetIds.length, kicked: queue.length, retried, skipped };
 }
 
 // ─── Install runner ───────────────────────────────────────────────────
