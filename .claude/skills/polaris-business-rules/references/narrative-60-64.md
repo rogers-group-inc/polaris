@@ -1122,6 +1122,19 @@ reported in place:
   have never been vacuumed or analyzed"** with the `vacuumdb --analyze-in-stages` to run — those
   relations report zero pages whatever they hold, so every figure on the card understates until it
   is run. This is the normal state right after a restore or a major-version upgrade.
+- **2026-09-24 — the warning has to weigh what it warns about.** A week after prod's PG17
+  `pg_upgrade` the card still warned "13 relations … missing from every size on this card". They
+  were 27 TimescaleDB relations holding ~4 MB between them: mostly the truncated shell every chunk
+  compression leaves behind (the heap is emptied into `_compressed`, nothing writes to it again,
+  so autovacuum's change threshold is never crossed and it is never analyzed) plus small
+  compressed halves. That state is permanent on a healthy TimescaleDB install, so a count-only
+  warning was a false alarm that would never clear — which trains an operator to ignore the one
+  that matters after a restore. So empty heaps are no longer counted (zero pages is the truth for
+  them), the bytes the rest hide are measured (`neverAnalyzedMissingBytes`, a stat() per fork,
+  paid only when at most 200 relations are un-analyzed — above that it is `null` and the card
+  keeps the loud warning), and the card escalates to a warning only above 64 MB or 1% of the
+  database. The remedy it names is `vacuumdb --analyze-only`, with the reason autovacuum will not
+  get there on its own.
 
 `capacityService` already applied this principle to filesystems: a volume it cannot measure is
 reported as degraded rather than dropped from the list, after an unmeasured `/var` filled to 100%

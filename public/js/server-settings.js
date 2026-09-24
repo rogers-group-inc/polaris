@@ -2107,14 +2107,39 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
       'Check the server log for <span class="mono">dbSize.chunk_aware_sizing_failed</span>.' +
       '</p>';
   }
+  // Weighed by the bytes they hide, not the count: every TimescaleDB chunk
+  // compression leaves a small un-analyzed relation behind, so a count alone
+  // warned permanently on a healthy install. Material = over 64 MB or 1% of
+  // the database; below that it is a plain hint, not a warning.
   if (acct && acct.neverAnalyzedRelations > 0) {
-    sizingWarnings +=
-      '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
-      escapeHtml(formatNumber(acct.neverAnalyzedRelations)) +
-      ' relation(s) have never been vacuumed or analyzed, so they report zero pages and are missing from ' +
-      'every size on this card. Run <span class="mono">vacuumdb --analyze-in-stages</span> (expected right ' +
-      'after a restore or a PostgreSQL major-version upgrade).' +
-      '</p>';
+    var naCount = escapeHtml(formatNumber(acct.neverAnalyzedRelations));
+    var naMissing = acct.neverAnalyzedMissingBytes;
+    var naTotal = (dbInfo && dbInfo.sizeBytes) || 0;
+    var naMaterial = naMissing == null || naMissing > Math.max(64 * 1024 * 1024, naTotal * 0.01);
+    var naFix =
+      'Autovacuum only analyzes a relation after enough writes, so one nothing writes to stays this way ' +
+      'until <span class="mono">vacuumdb --analyze-only</span> runs against the database.';
+    if (naMissing == null) {
+      sizingWarnings +=
+        '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
+        naCount + ' relations have never been vacuumed or analyzed — too many to size individually — so ' +
+        'every size on this card may be substantially understated. This is expected right after a restore ' +
+        'or a PostgreSQL major-version upgrade. ' + naFix +
+        '</p>';
+    } else if (naMaterial) {
+      sizingWarnings +=
+        '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
+        naCount + ' relation(s) that have never been analyzed hold about ' +
+        escapeHtml(_capacityFormatBytes(naMissing)) + ' that no size on this card includes. ' + naFix +
+        '</p>';
+    } else {
+      sizingWarnings +=
+        '<p class="hint" style="margin-top:0.5rem">' +
+        naCount + ' small relation(s), about ' + escapeHtml(_capacityFormatBytes(naMissing)) +
+        ', are not yet analyzed and are left out of the sizes above — normal for recently compressed ' +
+        'TimescaleDB chunks, and too small to matter.' +
+        '</p>';
+    }
   }
 
   // TimescaleDB three-state: not installed / installed but no hypertables / enabled

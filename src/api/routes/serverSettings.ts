@@ -279,6 +279,9 @@ router.get("/database", async (_req, res, next) => {
           unattributedBytes: Math.max(0, breakdown.polarisBytes - tablesBytes),
         },
         neverAnalyzedRelations: breakdown.neverAnalyzedRelations,
+        // Bytes those relations hold that no figure above counts; null when
+        // there were too many to measure (post-restore / post-upgrade).
+        neverAnalyzedMissingBytes: breakdown.neverAnalyzedMissingBytes,
       },
       activeConnections,
       maxConnections,
