@@ -678,6 +678,8 @@ const api = {
     getSourcePriority:    ()    => request("GET",  "/assets/source-priority"),
     updateSourcePriority: (body) => request("PUT",  "/assets/source-priority", body),
     bulkMonitor:          (body) => request("POST", "/assets/bulk-monitor", body),
+    // Bulk-bar Tags: mode is "add" | "remove" | "replace".
+    bulkTags:             (ids, mode, tags) => request("POST", "/assets/bulk-tags", { ids, mode, tags }),
     // Mass Pinning section (Assets → Settings): device-filter vocabulary, matched
     // inventory (mode:"count"|"full"), and the bulk pin/unpin apply.
     // Add Asset form's IP cross-reference: the containing network, the lease /

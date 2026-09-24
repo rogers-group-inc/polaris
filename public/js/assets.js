@@ -766,6 +766,8 @@ document.addEventListener("DOMContentLoaded", async function () {
   if (bAgent) bAgent.addEventListener("click", openBulkAgentDeployModal);
   var bMaint = document.getElementById("assets-bulk-maint-btn");
   if (bMaint) bMaint.addEventListener("click", bulkMaintenanceSelectedAssets);
+  var bTags = document.getElementById("assets-bulk-tags-btn");
+  if (bTags) bTags.addEventListener("click", openBulkTagsModal);
   _wireBulkBarDropdowns();
   var bQuarantine   = document.getElementById("assets-bulk-quarantine-btn");
   var bUnquarantine = document.getElementById("assets-bulk-unquarantine-btn");
@@ -1807,7 +1809,7 @@ function _assetsUpdateBulkBar() {
   if (el) el.textContent = count === 0 ? "No assets selected" : (count + " selected");
   // Disable every bulk action while nothing is selected.
   ["assets-bulk-deselect-btn", "assets-bulk-type-btn", "assets-bulk-state-btn",
-   "assets-bulk-monitor-btn", "assets-bulk-delete-btn",
+   "assets-bulk-monitor-btn", "assets-bulk-tags-btn", "assets-bulk-delete-btn",
    "assets-bulk-merge-btn", "assets-bulk-agent-btn",
    "assets-bulk-maint-btn",
    "assets-bulk-quarantine-btn", "assets-bulk-unquarantine-btn"
@@ -2786,6 +2788,92 @@ async function bulkChangeState(nextStatus) {
   loadAssets();
 }
 
+// Bulk-bar Tags: pick tags from the registry picker (the edit form's
+// tagFieldHTML) and one of three modes. Add is the default because a
+// selection usually mixes assets whose tags differ. The work happens server-
+// side (POST /assets/bulk-tags) — the selection spans pages, so the browser
+// doesn't hold most rows' current tags. Replace keeps region: and discovery
+// breadcrumb tags; the hint says so (assetBulkTagService).
+var BULK_TAG_MODE_HINTS = {
+  add:     "The selected tags are added to every asset. Tags an asset already has are kept.",
+  remove:  "The selected tags are removed from every asset that has them. Other tags are kept.",
+  replace: "Every asset ends up with exactly the selected tags — all other tags are removed, except Device Map region tags and discovery breadcrumbs (prev-entra:, prev-ad:). Selecting no tags clears them.",
+};
+
+async function openBulkTagsModal() {
+  var ids = Array.from(_assetsSelected);
+  if (!ids.length) return;
+  await _ensureTagCache();
+  var n = ids.length + " asset" + (ids.length === 1 ? "" : "s");
+
+  function modeRadio(value, label, checked) {
+    return '<label style="display:flex;align-items:center;gap:0.35rem;font-weight:normal;cursor:pointer">' +
+      '<input type="radio" name="bulk-tags-mode" value="' + value + '"' + (checked ? " checked" : "") + '> ' + label +
+    '</label>';
+  }
+  var body =
+    '<div class="form-group">' +
+      '<label>Action</label>' +
+      '<div style="display:flex;gap:1rem;align-items:center;padding:0.25rem 0">' +
+        modeRadio("add", "Add tags", true) +
+        modeRadio("remove", "Remove tags", false) +
+        modeRadio("replace", "Replace all tags", false) +
+      '</div>' +
+      '<p class="hint" id="bulk-tags-mode-hint">' + escapeHtml(BULK_TAG_MODE_HINTS.add) + '</p>' +
+    '</div>' +
+    tagFieldHTML([]);
+  var footer =
+    '<button class="btn btn-secondary" id="bulk-tags-cancel">Cancel</button>' +
+    '<button class="btn btn-primary" id="bulk-tags-go">Add Tags</button>';
+  openModal("Tags — " + n, body, footer);
+  wireTagPicker();
+
+  var goLabels = { add: "Add Tags", remove: "Remove Tags", replace: "Replace Tags" };
+  function currentMode() {
+    var r = document.querySelector('input[name="bulk-tags-mode"]:checked');
+    return r ? r.value : "add";
+  }
+  document.querySelectorAll('input[name="bulk-tags-mode"]').forEach(function (r) {
+    r.addEventListener("change", function () {
+      var mode = currentMode();
+      document.getElementById("bulk-tags-mode-hint").textContent = BULK_TAG_MODE_HINTS[mode];
+      document.getElementById("bulk-tags-go").textContent = goLabels[mode];
+      // Creating a registry tag to then remove it from assets makes no sense.
+      var addRow = document.getElementById("f-tags-add-row");
+      if (addRow) addRow.style.display = mode === "remove" ? "none" : "flex";
+    });
+  });
+  document.getElementById("bulk-tags-cancel").onclick = closeModal;
+  document.getElementById("bulk-tags-go").onclick = async function () {
+    var mode = currentMode();
+    var tags = getTagFieldValue();
+    if (!tags.length && mode !== "replace") {
+      showToast("Select at least one tag", "error");
+      return;
+    }
+    if (mode === "replace") {
+      var what = tags.length ? "exactly " + tags.join(", ") : "no tags";
+      var ok = await showConfirm("Replace the tags on " + n + " with " + what + "? Their other tags are removed (region tags and discovery breadcrumbs are kept).");
+      if (!ok) return;
+    }
+    var btn = document.getElementById("bulk-tags-go");
+    btn.disabled = true;
+    try {
+      var r = await api.assets.bulkTags(ids, mode, tags);
+      var msg = (mode === "add" ? "Added tags to " : mode === "remove" ? "Removed tags from " : "Replaced tags on ") +
+        r.updated + " asset" + (r.updated === 1 ? "" : "s");
+      if (r.unchanged) msg += " (" + r.unchanged + " already matched)";
+      showToast(msg);
+      closeModal();
+      _assetsSelected.clear();
+      loadAssets();
+    } catch (e) {
+      showToast((e && e.message) || "Tag update failed", "error");
+      btn.disabled = false;
+    }
+  };
+}
+
 async function bulkDeleteAssets() {
   var ids = Array.from(_assetsSelected);
   if (!ids.length) return;
@@ -2806,8 +2894,8 @@ async function bulkDeleteAssets() {
 }
 
 // Bulk-bar Edit: the edit modal is single-asset, so this only acts when exactly
-// one row is selected (the button hides otherwise). Tags are edited there like
-// any other field — the old bulk tag-mode modal was retired in favor of it.
+// one row is selected (the button hides otherwise). Multi-asset tag edits go
+// through the bulk bar's Tags button (openBulkTagsModal) instead.
 function bulkEditSelectedAsset() {
   var ids = Array.from(_assetsSelected);
   if (ids.length !== 1) return;

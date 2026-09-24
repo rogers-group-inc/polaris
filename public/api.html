@@ -505,6 +505,21 @@
         </div>
 
         <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /assets/bulk-tags
+            <span class="gate">assets:write</span></div>
+          <p>Add, remove or replace tags on many devices at once:
+            <code>{ ids: [uuid, …], mode: "add" | "remove" | "replace", tags: [string, …] }</code>
+            → <code>{ updated, unchanged, notFound: [uuid, …], tags }</code>.
+            <code>add</code> keeps each device's own tags and appends the new ones;
+            <code>remove</code> strips them from the devices that carry them;
+            <code>replace</code> leaves each device with exactly <code>tags</code>, except that
+            <code>region:</code>, <code>prev-entra:</code> and <code>prev-ad:</code> tags are kept.
+            Unknown ids come back in <code>notFound</code> with HTTP 200. An empty <code>tags</code>
+            is a <code>400</code> for add and remove (replace with none clears), as is adding a
+            <code>region:</code> tag that names no map region.</p>
+        </div>
+
+        <div class="endpoint">
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /assets/:id
             <span class="gate">assets:write</span></div>
           <p><code>204</code>. <code>409</code> for a quarantined device &mdash; release it first.</p>

@@ -49,6 +49,7 @@ import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
 import { manualCoordPatchError } from "../../utils/geo.js";
 import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../services/mapRegionService.js";
+import { bulkEditAssetTags } from "../../services/assetBulkTagService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
@@ -1274,6 +1275,35 @@ router.post("/bulk-monitor", requirePermission("assets", "write"), async (req, r
       details: errors.length ? { errors } : undefined,
     });
     res.json({ updated: updatedCount, errors });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v1/assets/bulk-tags — add / remove / replace tags on a set of
+// assets (Assets page bulk bar "Tags"). Body: { ids, mode, tags }. Same gate
+// as PUT /:id, which is the single-asset tag write. Semantics — including the
+// managed prefixes a replace keeps — live in assetBulkTagService.
+const BulkTagsSchema = z.object({
+  ids:  z.array(z.string().uuid()).min(1).max(10000),
+  mode: z.enum(["add", "remove", "replace"]),
+  tags: z.array(z.string().max(128)).max(200),
+});
+
+router.post("/bulk-tags", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const body = BulkTagsSchema.parse(req.body);
+    const result = await bulkEditAssetTags(body);
+    const verb = body.mode === "add" ? "Added" : body.mode === "remove" ? "Removed" : "Replaced";
+    const tagList = result.tags.length ? result.tags.join(", ") : "(none)";
+    logEvent({
+      action: "asset.bulk_tags",
+      resourceType: "asset",
+      actor: requestActor(req),
+      message: `${verb} tags [${tagList}] on ${result.updated} asset(s)` +
+        (result.unchanged ? `; ${result.unchanged} already matched` : "") +
+        (result.notFound.length ? `; ${result.notFound.length} not found` : ""),
+      details: { mode: body.mode, tags: result.tags, updated: result.updated, unchanged: result.unchanged, notFound: result.notFound },
+    });
+    res.json(result);
   } catch (err) { next(err); }
 });
 
