@@ -217,6 +217,12 @@ the subject fragment away when they are.
 `{asset.os}` `{asset.osVersion}` `{asset.department}` `{asset.assignedTo}`
 `{asset.tags}` `{asset.connectedSwitch}` `{asset.connectedAp}` `{asset.link}`
 
+> `{asset.link}` — the default email's **Open device** button — is one address
+> for every reader. Opened on a phone it lands on the mobile app's device
+> screen; anywhere else, on the desktop assets page. It is empty when
+> `POLARIS_PUBLIC_URL` is unset, because an email cannot resolve a relative
+> link.
+
 **Follow-up**
 `{escalation.tier}` `{escalation.elapsed}` `{escalation.policy}`
 `{repeat.attempt}` `{repeat.elapsed}` `{repeat.quiet}` `{repeat.policy}`

@@ -10,7 +10,11 @@ unauthenticated NOC wallboard.
 ![The Polaris mobile web app: a scoped search screen with a bottom tab bar.](https://raw.githubusercontent.com/rogers-group-inc/polaris/main/docs/img/screenshots/mobile-noon-mobile.png)
 
 An installable **PWA** with push notifications. Phones hitting `/` are
-redirected to it; `?desktop=1` escapes.
+redirected to it; `?desktop=1` escapes. The **Open device** link in an alert
+email or push (and the `{asset.link}` token) lands here too when opened on a
+phone — the link is one address for everyone, and Polaris picks the phone app
+or the desktop page when it is opened. Add `?desktop=1` to that link to force
+the desktop page.
 
 The tab bar is **Search · Device Map · Assets · Networks · More**.
 
