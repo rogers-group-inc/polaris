@@ -24,7 +24,9 @@ a per-block advisory lock, and backed by a unique index. A create that bypasses
 the lock re-opens the race in [rule 20a](#rule-20).
 
 ### Rule 2
-**A network must be contained within its parent block.**
+**A network must be contained within its parent block.** A new network is
+placed in the most specific block that contains it — **+ Add Network** never
+asks for one — and is refused if no block contains it.
 
 ### Rule 3
 **No duplicate IP reservations** — one *active* reservation per address per

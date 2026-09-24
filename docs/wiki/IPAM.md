@@ -99,6 +99,16 @@ cannot both win.
 | **Auto-Allocate Next** | ask for "the next free /N in this block" and get it |
 | **Exclusions** | manage the excluded-CIDR registry |
 
+**+ Add Network never asks for a block.** The network is placed in the **most
+specific** block whose range contains its CIDR — with a `10.0.0.0/8` block and
+a `10.90.0.0/16` block, `10.90.4.0/24` lands in the /16 and `10.91.0.0/24` in
+the /8. The dialog's **Block** field shows the choice as you type and cannot be
+edited; if no block contains the CIDR it says so, and saving is refused until a
+covering block exists. The same holds for **Add Network** in a block's panel: a
+CIDR that falls inside a narrower block nested in that one lands in the
+narrower block. To put a network somewhere else afterwards, use
+[Move to block…](#moving-a-network-to-another-block).
+
 Auto-allocation is **IPv4 only**. An allocator treats an
 [excluded range](#exclusions) as *taken space*, not as a refusal — asking for
 "any free /24" steps over an exclusion rather than 409-ing on it.

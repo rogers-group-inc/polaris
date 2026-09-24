@@ -49,6 +49,7 @@ import {
   isValidIpAddress,
   cidrContains,
   cidrOverlaps,
+  mostSpecificContaining,
   findNextAvailableSubnet,
   detectIpVersion,
   enumerateSubnetIps,
@@ -220,7 +221,12 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
 }
 
 export interface CreateSubnetInput {
-  blockId: string;
+  /**
+   * Omit to place the network in the most specific block containing its CIDR
+   * (`resolveBlockForCidr`) — what the Add Network dialog does. When given, it
+   * is honoured and validated as before (API callers that name a block).
+   */
+  blockId?: string;
   cidr: string;
   name: string;
   purpose?: string;
@@ -360,6 +366,22 @@ export async function getSubnet(id: string) {
   return subnet;
 }
 
+// ─── Block resolution ─────────────────────────────────────────────────────────
+
+/**
+ * The most specific block whose range contains `cidr` (same IP version), or
+ * null when none does. Blocks may nest (a /8 holding a site /16), and a new
+ * network belongs to the narrowest of them. An invalid CIDR resolves to null.
+ */
+export async function resolveBlockForCidr(cidr: string) {
+  if (!isValidCidr(cidr)) return null;
+  const normalized = normalizeCidr(cidr);
+  const blocks = await prisma.ipBlock.findMany({
+    where: { ipVersion: detectIpVersion(normalized) },
+  });
+  return mostSpecificContaining(blocks, normalized);
+}
+
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 export async function createSubnet(input: CreateSubnetInput) {
@@ -368,9 +390,16 @@ export async function createSubnet(input: CreateSubnetInput) {
 
   const normalizedCidr = normalizeCidr(input.cidr);
 
-  // Load parent block
-  const block = await prisma.ipBlock.findUnique({ where: { id: input.blockId } });
-  if (!block) throw new AppError(404, `IP Block ${input.blockId} not found`);
+  // Load parent block — the named one, or the most specific one containing the CIDR
+  let block;
+  if (input.blockId) {
+    block = await prisma.ipBlock.findUnique({ where: { id: input.blockId } });
+    if (!block) throw new AppError(404, `IP Block ${input.blockId} not found`);
+  } else {
+    block = await resolveBlockForCidr(normalizedCidr);
+    if (!block)
+      throw new AppError(400, `No IP block contains ${normalizedCidr} — create a block that covers it first`);
+  }
 
   // Subnet must be within the parent block
   if (!cidrContains(block.cidr, normalizedCidr))
@@ -392,7 +421,7 @@ export async function createSubnet(input: CreateSubnetInput) {
   // concurrent requests both pass (see the overlap-invariant note at the top
   // of this file). It throws 409 on overlap or on the unique-index violation.
   const created = await createSubnetRowChecked({
-    blockId: input.blockId,
+    blockId: block.id,
     cidr: normalizedCidr,
     name: input.name,
     purpose: input.purpose,
@@ -411,7 +440,8 @@ export async function createSubnet(input: CreateSubnetInput) {
       ? `Subnet "${input.name}" (${created.cidr}) auto-allocated`
       : `Subnet "${input.name}" (${input.cidr}) created`,
   });
-  return created;
+  // `block` says where the network landed — the caller may not have named one.
+  return { ...created, block: { id: block.id, name: block.name, cidr: block.cidr } };
 }
 
 // ─── Auto-allocate next available ────────────────────────────────────────────

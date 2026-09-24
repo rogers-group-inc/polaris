@@ -808,12 +808,16 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /subnets
             <span class="gate">subnets:write</span></div>
-          <p>Body: <code>{ blockId, cidr, name, purpose?, vlan? (1–4094), tags? }</code>.
+          <p>Body: <code>{ blockId?, cidr, name, purpose?, vlan? (1–4094), tags? }</code>.
+            Omit <code>blockId</code> and the network is placed in the most specific block whose
+            range contains the CIDR; name one and it is used as given. The response carries
+            <code>block: { id, name, cidr }</code> — where it landed.
             <code>201</code>; <code>409</code> on overlap or duplicate; <code>400</code> when the
-            CIDR is invalid, outside the block, or the wrong IP version.</p>
+            CIDR is invalid, outside the block, the wrong IP version, or (no
+            <code>blockId</code>) inside no block at all.</p>
           <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"blockId":"'$BLOCK_ID'","cidr":"10.20.30.0/24","name":"branch-30","vlan":30}' \
+  -d '{"cidr":"10.20.30.0/24","name":"branch-30","vlan":30}' \
   "<span class="js-base-url">/api/v1</span>/subnets"</code></pre>
         </div>
         <div class="endpoint">
@@ -852,6 +856,13 @@
           <p>Re-pull one discovered network's addresses from its FortiGate now:
             <code>{ lastDiscoveredAt, created, updated, released, skipped }</code>.
             <code>400</code> for manually-created networks or non-Fortinet integrations.</p>
+        </div>
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /subnets/resolve-block?cidr=
+            <span class="gate">subnets:read</span></div>
+          <p>The block a new network with this CIDR would be placed in:
+            <code>{ block: { id, name, cidr } }</code>, or <code>{ block: null }</code> when no
+            block contains it (or the CIDR is invalid).</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /subnets/:id/move-targets

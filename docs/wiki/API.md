@@ -239,7 +239,8 @@ POST   /blocks              PUT /blocks/:id      DELETE /blocks/:id
 ```
 GET    /subnets                    GET /subnets/:id
 GET    /subnets/:id/ips
-POST   /subnets
+POST   /subnets                    blockId optional — omitted = most specific containing block
+GET    /subnets/resolve-block?cidr= which block that would be
 POST   /subnets/next-available     allocate the next free /N
 POST   /subnets/bulk-allocate      anchor-aligned, all-or-nothing
 PUT    /subnets/:id                DELETE /subnets/:id

@@ -102,7 +102,7 @@ function _renderBlockPanelHeader(block) {
   var addBtn = document.getElementById("block-panel-add-btn");
   if (addBtn) {
     addBtn.addEventListener("click", function () {
-      _openBlockPanelAddSubnet(_blockPanelBlockId);
+      _openBlockPanelAddSubnet();
     });
   }
 }
@@ -194,10 +194,14 @@ function _renderBlockPanelFooter(subnets) {
 
 // ─── Subnet modals ──────────────────────────────────────────────────────────
 
-async function _openBlockPanelAddSubnet(blockId) {
+// Opened from a block's panel, but the network still lands in the most specific
+// block containing its CIDR — which may be a narrower block nested inside this
+// one. The read-only Block field says where before the operator saves.
+async function _openBlockPanelAddSubnet() {
   await _ensureTagCache();
   var body =
     '<div class="form-group"><label>CIDR *</label><input type="text" id="f-cidr" placeholder="e.g. 10.0.3.0/24"></div>' +
+    '<div class="form-group"><label>Block</label><input type="text" id="f-block-resolved" disabled class="field-locked" placeholder="Set from the CIDR"></div>' +
     '<div class="form-group"><label>Name *</label><input type="text" id="f-name" placeholder="e.g. API Servers"></div>' +
     '<div class="form-group"><label>Purpose</label><textarea id="f-purpose" placeholder="What is this network for?"></textarea></div>' +
     '<div class="form-group"><label>VLAN</label><input type="number" id="f-vlan" min="1" max="4094" placeholder="1-4094"></div>' +
@@ -206,14 +210,14 @@ async function _openBlockPanelAddSubnet(blockId) {
     '<button class="btn btn-primary" id="btn-save">Create Network</button>';
   openModal("Add Network", body, footer);
   wireTagPicker();
+  wireResolvedBlockField("f-cidr", "f-block-resolved");
 
   document.getElementById("btn-save").addEventListener("click", async function () {
     var btn = this;
     btn.disabled = true;
     try {
       var vlan = document.getElementById("f-vlan").value;
-      await api.subnets.create({
-        blockId: blockId,
+      var created = await api.subnets.create({
         cidr: document.getElementById("f-cidr").value.trim(),
         name: document.getElementById("f-name").value.trim(),
         purpose: document.getElementById("f-purpose").value.trim() || undefined,
@@ -221,7 +225,7 @@ async function _openBlockPanelAddSubnet(blockId) {
         tags: getTagFieldValue(),
       });
       closeModal();
-      showToast("Network created");
+      showToast(created && created.block ? "Network created in " + created.block.name : "Network created");
       _blockPanelDirty = true;
       _fetchBlockSubnets();
     } catch (err) {

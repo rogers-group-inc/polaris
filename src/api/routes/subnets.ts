@@ -16,7 +16,9 @@ const router = Router();
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
 const CreateSubnetSchema = z.object({
-  blockId:     z.string().uuid(),
+  // Optional: omitted, the network lands in the most specific block containing
+  // its CIDR (subnetService.resolveBlockForCidr). The Add Network dialog omits it.
+  blockId:     z.string().uuid().optional(),
   cidr:        z.string().min(1, "CIDR is required"),
   name:        z.string().min(1, "Subnet name is required"),
   purpose:     z.string().optional(),          // description / what it's for
@@ -222,6 +224,20 @@ router.delete("/exclusions/:id", requirePermission("subnets", "fullwrite"), asyn
 // replacement gate's identical address space from ever being recorded. These
 // two reads are the review surface; they MUST stay declared before `/:id`, or
 // `/subnets/archived` is captured as a subnet id.
+
+// GET /subnets/resolve-block?cidr= — the block a new network with this CIDR
+// would be placed in (the most specific containing block), or `{ block: null }`.
+// Feeds the Add Network dialog's read-only Block field. MUST stay declared
+// before `GET /subnets/:id`, or "resolve-block" is captured as a subnet id.
+router.get("/resolve-block", requirePermission("subnets", "read"), async (req, res, next) => {
+  try {
+    const cidr = typeof req.query.cidr === "string" ? req.query.cidr.trim() : "";
+    const block = cidr ? await subnetService.resolveBlockForCidr(cidr) : null;
+    res.json({ block: block ? { id: block.id, name: block.name, cidr: block.cidr } : null });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /subnets/archived?cidr=&blockId=&fortigateSerial=&limit=&offset=
 router.get("/archived", requirePermission("subnets", "read"), async (req, res, next) => {

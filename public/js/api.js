@@ -440,6 +440,9 @@ const api = {
     refresh:       (id)     => request("POST", `/subnets/${id}/refresh`),
     update:        (id, b)  => request("PUT", `/subnets/${id}`, b),
     delete:        (id)     => request("DELETE", `/subnets/${id}`),
+    // The block a new network with this CIDR lands in (the most specific
+    // containing block) — { block: { id, name, cidr } | null }.
+    resolveBlock:  (cidr)   => request("GET", "/subnets/resolve-block" + toQuery({ cidr })),
     // Re-parent a network onto another block. moveTargets lists the blocks
     // whose range can hold it, each flagged with the sibling that would overlap.
     moveTargets:   (id)     => request("GET", `/subnets/${id}/move-targets`),
