@@ -160,6 +160,15 @@ describe("buildWindowsOnboardingScript", () => {
     expect(script).not.toContain(".ssh\\authorized_keys'");
   });
 
+  it("reports the sshd binary and SCM error, then exits 1, when sshd will not start", () => {
+    const script = buildWindowsOnboardingScript(BASE);
+    const idx = script.indexOf("Start-Service -Name sshd");
+    const block = script.slice(idx, idx + 600);
+    expect(block).toContain("error: sshd failed to start - ");
+    expect(block).toContain("Get-PolarisSshdDiagnostics");
+    expect(block).toContain("exit 1");
+  });
+
   it("appends rather than overwrites, so other keys in the file survive", () => {
     const script = buildWindowsOnboardingScript(BASE);
     expect(script).toContain("Add-Content");
@@ -367,6 +376,27 @@ describe("buildWindowsOnboardingDetectionScript", () => {
     // one stale ACE; without the fallback every such device loops forever.
     const script = buildWindowsOnboardingDetectionScript(DETECT);
     expect(script).toContain("WinNT://./");
+  });
+
+  it("names the sshd binary and SCM error when sshd is not running", () => {
+    // A capability that reads Installed can carry a years-stale sshd.exe that
+    // times out on start; a bare "not running" gave an operator nothing to go on.
+    const script = buildWindowsOnboardingDetectionScript(DETECT);
+    expect(script).toContain("remediate: sshd not running (' + (Get-PolarisSshdDiagnostics) + ')'");
+  });
+
+  it("shares the sshd diagnostics helper with the remediation script", () => {
+    const detect = buildWindowsOnboardingDetectionScript(DETECT);
+    const remediate = buildWindowsOnboardingScript(BASE);
+    const fn = "function Get-PolarisSshdDiagnostics";
+    const extract = (s: string) => {
+      const start = s.indexOf(fn);
+      return s.slice(start, s.indexOf("\n}", start) + 2);
+    };
+    expect(detect).toContain(fn);
+    expect(extract(detect)).toBe(extract(remediate));
+    expect(extract(detect)).toContain("VersionInfo.ProductVersion");
+    expect(extract(detect)).toContain("'Service Control Manager'");
   });
 
   it("still does not check the firewall", () => {

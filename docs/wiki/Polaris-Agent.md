@@ -128,6 +128,29 @@ meaningless on Linux.
 what makes rollout self-healing** — a plain platform script runs once per device
 and never retries.
 
+#### When sshd is installed but will not start
+
+The remediation installs OpenSSH Server only when Windows reports it missing.
+It never checks the version, and it never reinstalls. A machine can report
+OpenSSH Server as **Installed** while its `sshd.exe` is years out of date. The
+service then times out on start (error 1053), and the script stops before it
+reaches the account and key steps.
+
+When that happens, both scripts name the cause in the Intune output columns:
+
+| Script | Output |
+|---|---|
+| Detection | `remediate: sshd not running (sshd.exe OpenSSH_7.7p1 for Windows; last SCM event 7009 at …: A timeout was reached …)` |
+| Remediation | `error: sshd failed to start - …`, then the same version and Service Control Manager event, and exit 1 |
+
+An `sshd.exe` version far older than a healthy machine on the same Windows
+build means a stale install. Remove and reinstall the capability on that
+endpoint (`Remove-WindowsCapability`, then `Add-WindowsCapability`, with a
+reboot between them if Windows asks for one). The next remediation run then
+finishes on its own. A current version together with a timeout points instead
+at something stopping `sshd.exe`, such as endpoint security or application
+control.
+
 Platform differences that matter:
 
 - **Windows** — the key goes in `administrators_authorized_keys` with the
