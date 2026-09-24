@@ -34,6 +34,14 @@
 // Performance SLA section (per-member latency / jitter / packet-loss charts
 // over a selectable health-check + range). See openSdwanSheet.
 //
+// Below it, one current-state table button per device class — "View ARP
+// Table" on a firewall, "View MAC Table" on a switch, "View Wireless" on a
+// monitored access point (the desktop's ARP Table / MAC Table / Wireless
+// tabs). Each opens a stacked sheet read-only: ARP with a range + filter,
+// MAC grouped by port, Wireless as radio → SSID → client. A matched device in
+// any of them opens that asset. See openArpSheet / openMacSheet /
+// openWirelessSheet.
+//
 // Out of scope for v1 (desktop-only):
 //   - Per-interface throughput + errors charts
 //   - Per-interface comments editor
@@ -260,6 +268,7 @@
     // Tear down any stacked child sheets first so they don't orphan over the
     // backdrop once the asset sheet is gone.
     closeSdwanSheet();
+    closeTableSheet();
     closeInterfaceSheet();
     var s = document.getElementById("asset-sheet");
     var sc = document.getElementById("asset-sheet-scrim");
@@ -415,6 +424,7 @@
       loadSightings(id, st);
       loadIpHistory(id, st);
       loadSdwanGate(id, st, asset);
+      wireTableButtons(id, asset);
       loadAlerts(id, asset);
     }).catch(function (err) {
       if (_openId !== id) return;
@@ -498,6 +508,11 @@
       + '  <div id="asset-sdwan-btn-wrap" style="margin-top:12px;display:none;">'
       + '    <button class="btn btn-tonal btn-block" id="asset-sdwan-btn"><svg viewBox="0 0 24 24"><use href="#i-router"/></svg>View SD-WAN</button>'
       + '  </div>'
+      // Current-state table buttons — one per device class, the same classes
+      // the desktop gives the ARP Table / MAC Table / Wireless tabs to. Shown
+      // from the asset type alone (no prefetch): the sheet itself explains an
+      // empty table, which is the answer the operator tapped for.
+      + tableButtonsHtml(asset)
       // Quarantine action — rendered synchronously from the asset row (status +
       // MACs + type are all present). Empty string when the caller lacks the
       // assetsQuarantine:write permission or the asset isn't eligible; the wrap
@@ -1491,6 +1506,532 @@
       if (jitEl)  jitEl.innerHTML  = '';
       if (lossEl) lossEl.innerHTML = '';
       if (statsEl) statsEl.textContent = "—";
+    });
+  }
+
+  // ─── Current-state tables (ARP / MAC / Wireless) ───────────────────────
+  // One button per device class, mirroring which assets get the desktop's
+  // ARP Table / MAC Table / Wireless tabs: every firewall, every switch, and
+  // monitored access points. All three endpoints sit behind assets:read — the
+  // gate the asset sheet itself already needed — so no permission check here.
+  var TABLE_BUTTONS = [
+    { key: "arp",      label: "View ARP Table", icon: "i-list",        applies: function (a) { return a.assetType === "firewall"; } },
+    { key: "mac",      label: "View MAC Table", icon: "i-switch-icon", applies: function (a) { return a.assetType === "switch"; } },
+    { key: "wireless", label: "View Wireless",  icon: "i-wifi",        applies: function (a) { return a.assetType === "access_point" && !!a.monitored; } },
+  ];
+
+  function tableButtonsHtml(asset) {
+    return TABLE_BUTTONS.filter(function (b) { return b.applies(asset); }).map(function (b) {
+      return ''
+        + '  <div style="margin-top:12px;">'
+        + '    <button class="btn btn-tonal btn-block" id="asset-' + b.key + '-btn"><svg viewBox="0 0 24 24"><use href="#' + b.icon + '"/></svg>' + escapeHtml(b.label) + '</button>'
+        + '  </div>';
+    }).join("");
+  }
+
+  function wireTableButtons(id, asset) {
+    var openers = { arp: openArpSheet, mac: openMacSheet, wireless: openWirelessSheet };
+    TABLE_BUTTONS.forEach(function (b) {
+      var btn = document.getElementById("asset-" + b.key + "-btn");
+      if (btn) btn.onclick = function () { openers[b.key](id, asset); };
+    });
+  }
+
+  // The open table sheet: which asset + which table, and a token bumped on
+  // every (re)load so a late response for a closed or re-ranged sheet bails.
+  var _tableSheet = null;
+
+  // Shared shell — the generic stacked .sheet (same shape as openSdwanSheet):
+  // handle, title row with a Reload + Close button, a controls slot, a
+  // freshness/count line and the body the loader renders into.
+  function openTableSheet(key, assetId, title, onReload) {
+    closeTableSheet();
+    _tableSheet = { key: key, assetId: assetId, token: 0 };
+
+    var scrim = document.createElement("div");
+    scrim.className = "scrim";
+    scrim.id = "table-sheet-scrim";
+    var sheet = document.createElement("div");
+    sheet.className = "sheet";
+    sheet.id = "table-sheet";
+    sheet.innerHTML = ''
+      + '<div class="sheet-handle"></div>'
+      + '<div style="display:flex;align-items:center;gap:4px;margin-bottom:8px;">'
+      + '  <h3 class="sheet-title" style="margin:0;flex:1;min-width:0;">' + escapeHtml(title) + '</h3>'
+      + '  <button class="icon-btn" id="table-sheet-reload" aria-label="Reload"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
+      + '  <button class="icon-btn" id="table-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
+      + '</div>'
+      + '<div id="table-sheet-controls"></div>'
+      + '<div id="table-sheet-meta" class="muted" style="font-size:12px;margin-bottom:8px;"></div>'
+      + '<div id="table-sheet-body"><div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div></div>';
+    document.body.appendChild(scrim);
+    document.body.appendChild(sheet);
+
+    scrim.addEventListener("click", closeTableSheet);
+    document.getElementById("table-sheet-close").addEventListener("click", closeTableSheet);
+    document.getElementById("table-sheet-reload").addEventListener("click", onReload);
+    PolarisTabs.attachSwipeToDismiss(sheet, closeTableSheet);
+
+    // One delegated listener for the whole body: group headers expand and
+    // collapse in place, and a matched device swaps the asset sheet to it.
+    sheet.addEventListener("click", function (e) {
+      var link = e.target.closest("[data-open-asset]");
+      if (link) {
+        e.preventDefault();
+        var target = link.getAttribute("data-open-asset");
+        closeTableSheet();
+        open(target);
+        return;
+      }
+      var head = e.target.closest(".tbl-group-head");
+      if (head) {
+        var grp = head.parentNode;
+        var body = grp.querySelector(".tbl-group-body");
+        var isOpen = !body.hidden;
+        body.hidden = isOpen;
+        var use = head.querySelector("use");
+        if (use) use.setAttribute("href", isOpen ? "#i-chev-right" : "#i-chev-down");
+      }
+    });
+    return sheet;
+  }
+
+  function closeTableSheet() {
+    _tableSheet = null;
+    var s = document.getElementById("table-sheet");
+    var sc = document.getElementById("table-sheet-scrim");
+    if (s) s.remove();
+    if (sc) sc.remove();
+  }
+
+  // Start a load: returns a guard that says whether the response still
+  // belongs on screen, and paints the spinner.
+  function beginTableLoad(key, assetId) {
+    if (!_tableSheet || _tableSheet.key !== key || _tableSheet.assetId !== assetId) return null;
+    var token = ++_tableSheet.token;
+    var body = document.getElementById("table-sheet-body");
+    if (body) body.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
+    return function current() {
+      return !!_tableSheet && _tableSheet.key === key && _tableSheet.assetId === assetId && _tableSheet.token === token;
+    };
+  }
+
+  function tableMsg(text) {
+    return '<div class="muted" style="font-size:13px;padding:8px 0 16px;">' + text + '</div>';
+  }
+
+  // The matched-device cell shared by all three tables.
+  function matchedDeviceHtml(m) {
+    if (!m || !m.id) return "";
+    return '<a href="#" data-open-asset="' + escapeHtml(m.id) + '" style="color:var(--md-primary);text-decoration:none;">'
+      + escapeHtml(m.hostname || m.ipAddress || m.id) + '</a>';
+  }
+
+  // A collapsible group: tappable header (chevron + mono key + summary),
+  // body of list rows.
+  function tableGroupHtml(key, summary, rowsHtml, expanded) {
+    return ''
+      + '<div class="tbl-group">'
+      + '  <div class="tbl-group-head" role="button" style="display:flex;align-items:center;gap:6px;padding:10px 0;cursor:pointer;border-top:1px solid var(--md-outline-variant, var(--md-outline));">'
+      + '    <svg viewBox="0 0 24 24" style="width:18px;height:18px;flex:none;fill:currentColor;"><use href="#' + (expanded ? "i-chev-down" : "i-chev-right") + '"/></svg>'
+      + '    <span class="mono" style="font-weight:600;">' + escapeHtml(key) + '</span>'
+      + '    <span class="muted" style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + summary + '</span>'
+      + '  </div>'
+      + '  <div class="tbl-group-body"' + (expanded ? '' : ' hidden') + '>' + rowsHtml + '</div>'
+      + '</div>';
+  }
+
+  function tableRowHtml(headline, supporting) {
+    return ''
+      + '<div class="list-item two-line" style="padding-left:24px;padding-right:0;min-height:0;">'
+      + '  <div class="content">'
+      + '    <div class="headline mono" style="font-size:14px;">' + headline + '</div>'
+      + (supporting ? '    <div class="supporting">' + supporting + '</div>' : '')
+      + '  </div>'
+      + '</div>';
+  }
+
+  // Group rows by a key, resolved keys first in natural order (port7 before
+  // port32) — the desktop tables' ordering.
+  function groupRows(rows, keyOf) {
+    var byKey = {};
+    rows.forEach(function (r) {
+      var k = keyOf(r);
+      (byKey[k.key] = byKey[k.key] || { key: k.key, resolved: k.resolved, entries: [] }).entries.push(r);
+    });
+    return Object.keys(byKey).map(function (k) { return byKey[k]; }).sort(function (a, b) {
+      if (a.resolved !== b.resolved) return a.resolved ? -1 : 1;
+      return a.key.localeCompare(b.key, undefined, { numeric: true, sensitivity: "base" });
+    });
+  }
+
+  function filterInputHtml(id, placeholder, value) {
+    return '<input type="search" id="' + id + '" placeholder="' + escapeHtml(placeholder) + '" value="' + escapeHtml(value || "") + '" autocomplete="off" '
+      + 'style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--md-outline);background:var(--md-surface-cont-high);color:var(--md-on-surface);font-size:14px;margin-bottom:8px;">';
+  }
+
+  function wireFilterInput(id, onChange) {
+    var box = document.getElementById(id);
+    if (!box) return;
+    var t = null;
+    box.addEventListener("input", function () {
+      clearTimeout(t);
+      t = setTimeout(function () { onChange(box.value.trim().toLowerCase()); }, 150);
+    });
+  }
+
+  // Groups start collapsed on a big table (a core gate's cache runs into the
+  // thousands); a filter, or a table that fits on a screen, opens them all.
+  function groupsStartExpanded(groups, filter) {
+    if (filter) return true;
+    if (groups.length === 1) return true;
+    var n = groups.reduce(function (s, g) { return s + g.entries.length; }, 0);
+    return n <= 40;
+  }
+
+  // ─── ARP Table sheet ───────────────────────────────────────────────────
+  // The gate's layer-3 neighbour cache, interface-first like the desktop
+  // tab, with its range selector (Current = the last read; the rest = held
+  // at any point in the window) and one filter box over IP / MAC /
+  // interface / hostname.
+  var ARP_RANGES = [
+    { id: "current", label: "Current" },
+    { id: "1h",      label: "Last hour" },
+    { id: "12h",     label: "Last 12 hours" },
+    { id: "24h",     label: "Last 24 hours" },
+    { id: "7d",      label: "Last 7 days" },
+    { id: "30d",     label: "Last 30 days" },
+  ];
+  var ARP_RANGE_DAYS = { current: 0, "1h": 1 / 24, "12h": 0.5, "24h": 1, "7d": 7, "30d": 30 };
+  var _arpRange = Object.create(null);   // per asset, for the SPA lifetime
+
+  function arpAgeLabel(sec) {
+    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
+    if (sec < 60) return Math.round(sec) + "s";
+    if (sec < 3600) return Math.floor(sec / 60) + "m";
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    return h + "h " + String(m).padStart(2, "0") + "m";
+  }
+
+  function cadenceLabel(sec) {
+    if (typeof sec !== "number" || !isFinite(sec) || sec <= 0) return null;
+    if (sec < 60) return sec + "s";
+    if (sec < 3600) return Math.round(sec / 60) + "m";
+    return Math.round(sec / 3600) + "h";
+  }
+
+  function openArpSheet(assetId) {
+    openTableSheet("arp", assetId, "ARP Table", function () { loadArpSheet(assetId); });
+    loadArpSheet(assetId);
+  }
+
+  function loadArpSheet(assetId) {
+    var current = beginTableLoad("arp", assetId);
+    if (!current) return;
+    var range = _arpRange[assetId] || "current";
+    api.assets.arpTable(assetId, range).then(function (data) {
+      if (!current()) return;
+      var entries = (data && data.entries) || [];
+      var retentionDays = (data && typeof data.retentionDays === "number") ? data.retentionDays : null;
+      var controls = document.getElementById("table-sheet-controls");
+      var meta = document.getElementById("table-sheet-meta");
+      var body = document.getElementById("table-sheet-body");
+      if (!body) return;
+
+      var opts = ARP_RANGES.map(function (r) {
+        var beyond = retentionDays != null && retentionDays >= 0 && ARP_RANGE_DAYS[r.id] > retentionDays;
+        return '<option value="' + r.id + '"' + (r.id === range ? " selected" : "") + (beyond ? " disabled" : "") + '>'
+          + escapeHtml(r.label) + (beyond ? " (beyond retention)" : "") + '</option>';
+      }).join("");
+      var filter = "";
+      if (controls) {
+        controls.innerHTML = ''
+          + '<select id="arp-range-select" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--md-outline);background:var(--md-surface-cont-high);color:var(--md-on-surface);font-size:14px;margin-bottom:8px;">' + opts + '</select>'
+          + (entries.length ? filterInputHtml("arp-filter", "Filter by IP, MAC, interface or hostname", "") : '');
+        var sel = document.getElementById("arp-range-select");
+        if (sel) sel.addEventListener("change", function () {
+          _arpRange[assetId] = sel.value;
+          loadArpSheet(assetId);
+        });
+        wireFilterInput("arp-filter", function (f) { filter = f; renderBody(); });
+      }
+
+      // The desktop tab's disclaimer, compressed: a read is a snapshot of a
+      // cache that ages out in minutes, so absence here proves little.
+      var cad = cadenceLabel(data && data.pollIntervalSec);
+      var metaBits = [];
+      metaBits.push(data && data.collectedAt ? "read " + escapeHtml(formatTimeAgo(data.collectedAt)) : "never read");
+      metaBits.push(cad ? "every " + escapeHtml(cad) : "on discovery only");
+      var metaHead = metaBits.join(" · ");
+      var metaNote = '<br><span style="opacity:.8;">Each read is a snapshot and a FortiGate ages entries out in about 1–5 minutes, so short-lived entries can be missing.</span>';
+
+      if (!entries.length) {
+        if (meta) meta.innerHTML = metaHead + metaNote;
+        body.innerHTML = tableMsg(range === "current"
+          ? "No ARP entries. Either this device holds no neighbours, or Polaris has never had a successful read from it."
+          : "No ARP entries seen in this window.");
+        return;
+      }
+
+      // On a historical range the rows are not one instant, so each carries
+      // its own last-seen; on Current it would only repeat the header.
+      var showLastSeen = range !== "current";
+
+      function matches(e) {
+        if (!filter) return true;
+        var hay = [e.ipAddress, e.macAddress, e.ifName || "", e.matchedAsset ? (e.matchedAsset.hostname || "") : ""].join(" ").toLowerCase();
+        return hay.indexOf(filter) !== -1;
+      }
+
+      function renderBody() {
+        if (!current()) return;
+        var shown = entries.filter(matches);
+        var matched = shown.filter(function (e) { return !!e.matchedAsset; }).length;
+        if (meta) meta.innerHTML = metaHead + " · " + shown.length + (filter ? " of " + entries.length : "")
+          + " entr" + (shown.length === 1 ? "y" : "ies") + " · " + matched + " matched" + metaNote;
+        var groups = groupRows(shown, function (e) {
+          return { key: e.ifName || "(no interface reported)", resolved: !!e.ifName };
+        });
+        if (!groups.length) { body.innerHTML = tableMsg("No entries match that filter."); return; }
+        var expanded = groupsStartExpanded(groups, filter);
+        body.innerHTML = groups.map(function (g) {
+          var rows = g.entries.map(function (e) {
+            var sub = ['<span class="mono">' + escapeHtml(e.macAddress || "—") + '</span>'];
+            var age = arpAgeLabel(e.ageSec);
+            if (age) sub.push("age " + escapeHtml(age));
+            if (showLastSeen && e.lastSeen) sub.push("seen " + escapeHtml(formatTimeAgo(e.lastSeen)));
+            var dev = matchedDeviceHtml(e.matchedAsset);
+            if (dev) sub.push(dev);
+            return tableRowHtml(escapeHtml(e.ipAddress), sub.join(" · "));
+          }).join("");
+          return tableGroupHtml(g.key, "· " + g.entries.length + " entr" + (g.entries.length === 1 ? "y" : "ies"), rows, expanded);
+        }).join("");
+      }
+      renderBody();
+    }).catch(function (err) {
+      if (!current()) return;
+      var body = document.getElementById("table-sheet-body");
+      if (body) body.innerHTML = tableMsg("Couldn’t load the ARP table: " + escapeHtml(err && err.message ? err.message : "error"));
+    });
+  }
+
+  // ─── MAC Table sheet ───────────────────────────────────────────────────
+  // The switch's forwarding database, port-first like the desktop tab: the
+  // port is the group, its learned-MAC count says access port vs uplink, and
+  // entries on unresolved trunk / LAG pseudo-ports are hidden behind a toggle
+  // rather than swamping the real ports.
+  function openMacSheet(assetId) {
+    openTableSheet("mac", assetId, "MAC Table", function () { loadMacSheet(assetId); });
+    loadMacSheet(assetId);
+  }
+
+  function loadMacSheet(assetId) {
+    var current = beginTableLoad("mac", assetId);
+    if (!current) return;
+    api.assets.macTable(assetId).then(function (data) {
+      if (!current()) return;
+      var entries = (data && data.entries) || [];
+      var controls = document.getElementById("table-sheet-controls");
+      var meta = document.getElementById("table-sheet-meta");
+      var body = document.getElementById("table-sheet-body");
+      if (!body) return;
+
+      var cad = cadenceLabel(data && data.pollIntervalSec);
+      var metaHead = (data && data.collectedAt ? "read " + escapeHtml(formatTimeAgo(data.collectedAt)) : "no entries recorded yet")
+        + " · " + (cad ? "every " + escapeHtml(cad) : "not polled");
+
+      if (!entries.length) {
+        if (controls) controls.innerHTML = "";
+        if (meta) meta.innerHTML = metaHead;
+        var lastPass = data && data.lastSystemInfoAt;
+        body.innerHTML = tableMsg("No forwarding-database entries. This is collected over SNMP on the system-info cadence; a switch polled via its parent FortiGate reports none."
+          + (lastPass
+              ? " The last system-info pass ran " + escapeHtml(formatTimeAgo(lastPass)) + " and returned none."
+              : " No system-info pass has completed against this switch yet."));
+        return;
+      }
+
+      var attributed   = entries.filter(function (e) { return !!e.ifName; });
+      var unattributed = entries.filter(function (e) { return !e.ifName; });
+      var showUnattributed = false;
+      var filter = "";
+
+      if (controls) {
+        controls.innerHTML = filterInputHtml("mac-filter", "Filter by MAC, port, VLAN or hostname", "");
+        wireFilterInput("mac-filter", function (f) { filter = f; renderBody(); });
+      }
+
+      function matches(e) {
+        if (!filter) return true;
+        var hay = [e.macAddress, e.ifName || "", e.vlanId != null ? "vlan " + e.vlanId : "",
+          e.matchedAsset ? (e.matchedAsset.hostname || "") : ""].join(" ").toLowerCase();
+        return hay.indexOf(filter) !== -1;
+      }
+
+      function renderBody() {
+        if (!current()) return;
+        var pool = showUnattributed ? attributed.concat(unattributed) : attributed;
+        var shown = pool.filter(matches);
+        var groups = groupRows(shown, function (e) {
+          return { key: e.ifName || ("base port " + (e.basePort != null ? e.basePort : "?")), resolved: !!e.ifName };
+        });
+        if (meta) meta.innerHTML = metaHead + " · " + shown.length + " entr" + (shown.length === 1 ? "y" : "ies")
+          + " on " + groups.length + " port" + (groups.length === 1 ? "" : "s");
+        var note = !unattributed.length ? "" :
+          '<div class="muted" style="font-size:12px;margin-bottom:8px;">' + unattributed.length + ' entr' + (unattributed.length === 1 ? "y" : "ies")
+          + ' on ports Polaris could not resolve (trunk / LAG pseudo-ports). '
+          + '<a href="#" id="mac-unattributed-toggle" style="color:var(--md-primary);">' + (showUnattributed ? "Hide" : "Show") + '</a></div>';
+        if (!groups.length) {
+          body.innerHTML = note + tableMsg(filter ? "No entries match that filter." : "No entries on a resolved port.");
+        } else {
+          var expanded = groupsStartExpanded(groups, filter);
+          body.innerHTML = note + groups.map(function (g) {
+            // Only learned rows say what is reachable through the port — self
+            // is the bridge's own address and mgmt a static entry.
+            var learned = g.entries.filter(function (e) { return e.status === "learned"; }).length;
+            var reads = !g.resolved ? "unresolved port"
+              : learned === 0 ? ""
+              : learned === 1 ? "access port"
+              : "uplink / trunk";
+            var summary = "· " + g.entries.length + " MAC" + (g.entries.length === 1 ? "" : "s") + (reads ? " · " + escapeHtml(reads) : "");
+            var rows = g.entries.map(function (e) {
+              var sub = [];
+              if (e.vlanId != null) sub.push("VLAN " + escapeHtml(String(e.vlanId)));
+              if (e.status) sub.push(escapeHtml(e.status));
+              var dev = matchedDeviceHtml(e.matchedAsset);
+              if (dev) sub.push(dev);
+              return tableRowHtml(escapeHtml(e.macAddress), sub.join(" · "));
+            }).join("");
+            return tableGroupHtml(g.key, summary, rows, expanded);
+          }).join("");
+        }
+        var tog = document.getElementById("mac-unattributed-toggle");
+        if (tog) tog.addEventListener("click", function (e) {
+          e.preventDefault();
+          showUnattributed = !showUnattributed;
+          renderBody();
+        });
+      }
+      renderBody();
+    }).catch(function (err) {
+      if (!current()) return;
+      var body = document.getElementById("table-sheet-body");
+      if (body) body.innerHTML = tableMsg("Couldn’t load the MAC table: " + escapeHtml(err && err.message ? err.message : "error"));
+    });
+  }
+
+  // ─── Wireless sheet ────────────────────────────────────────────────────
+  // The AP's radios → the SSIDs each broadcasts → the clients on each, from
+  // /system-info's apRadios + wirelessStations (the desktop Wireless tab's
+  // source). Stations file under their SSID by BSSID first, then by
+  // (radio, SSID name); anything unfiled is SHOWN under its own heading so
+  // the tree never disagrees with the client count. An AP with no radio
+  // inventory falls back to a flat client list.
+  function wirelessBandLabel(band) {
+    if (band === "2.4GHz") return "2.4 GHz";
+    if (band === "5GHz")   return "5 GHz";
+    if (band === "6GHz")   return "6 GHz";
+    return "";
+  }
+
+  function buildWirelessTree(radios, stations) {
+    var byBssid = {}, byRadioSsid = {};
+    var nodes = radios.map(function (r) {
+      var vapNodes = (r.vaps || []).map(function (v) {
+        var node = { vap: v, stations: [] };
+        if (v.bssid) byBssid[String(v.bssid).toUpperCase()] = node;
+        if (v.ssid)  byRadioSsid[r.radioIndex + "\u0000" + String(v.ssid).toLowerCase()] = node;
+        return node;
+      });
+      return { radio: r, vaps: vapNodes };
+    });
+    var unplaced = [];
+    stations.forEach(function (s) {
+      var node = s.bssid ? byBssid[String(s.bssid).toUpperCase()] : null;
+      if (!node && s.radioId != null && s.ssid) node = byRadioSsid[s.radioId + "\u0000" + String(s.ssid).toLowerCase()];
+      if (node) node.stations.push(s); else unplaced.push(s);
+    });
+    return { radios: nodes, unplaced: unplaced };
+  }
+
+  function wirelessStationRow(s) {
+    var sub = [];
+    if (s.staIpAddr) sub.push('<span class="mono">' + escapeHtml(s.staIpAddr) + '</span>');
+    if (s.signalStrength != null) sub.push(escapeHtml(s.signalStrength + " dBm"));
+    var band = wirelessBandLabel(s.band);
+    if (band) sub.push(escapeHtml(band));
+    var dev = matchedDeviceHtml(s.matchedAsset);
+    sub.push(dev || '<span class="muted">not in inventory</span>');
+    return tableRowHtml(escapeHtml(s.staMacAddr || "—"), sub.join(" · "));
+  }
+
+  function openWirelessSheet(assetId) {
+    openTableSheet("wireless", assetId, "Wireless", function () { loadWirelessSheet(assetId, true); });
+    loadWirelessSheet(assetId, false);
+  }
+
+  function loadWirelessSheet(assetId, refetch) {
+    var current = beginTableLoad("wireless", assetId);
+    if (!current) return;
+    // loadSystemInfo already fetched this snapshot for the sheet's sensor and
+    // interface sections — reuse it on open; Reload fetches a fresh one.
+    var cached = !refetch && _systemInfoCache[assetId];
+    var p = cached ? Promise.resolve(cached) : api.assets.systemInfo(assetId);
+    p.then(function (si) {
+      if (!current()) return;
+      if (!cached) _systemInfoCache[assetId] = si;
+      var stations = (si && si.wirelessStations) || [];
+      var radios = (si && si.apRadios) || [];
+      var meta = document.getElementById("table-sheet-meta");
+      var body = document.getElementById("table-sheet-body");
+      if (!body) return;
+      var controls = document.getElementById("table-sheet-controls");
+      if (controls) controls.innerHTML = "";
+      var lastAt = (si && si.lastSystemInfoAt) || null;
+      if (meta) meta.innerHTML = (lastAt ? "read " + escapeHtml(formatTimeAgo(lastAt)) : "never collected")
+        + " · " + radios.length + " radio" + (radios.length === 1 ? "" : "s")
+        + " · " + stations.length + " client" + (stations.length === 1 ? "" : "s");
+
+      if (!radios.length) {
+        body.innerHTML = stations.length
+          ? stations.map(wirelessStationRow).join('<div class="list-divider"></div>')
+          : tableMsg("No radios or wireless clients reported for this AP.");
+        return;
+      }
+
+      var tree = buildWirelessTree(radios, stations);
+      var html = tree.radios.map(function (rn) {
+        var r = rn.radio;
+        // Counted from the clients filed below, not the controller's tally —
+        // the two disagree mid-roam and a number next to a list must match it.
+        var clients = rn.vaps.reduce(function (n, vn) { return n + vn.stations.length; }, 0);
+        var bits = [];
+        var band = wirelessBandLabel(r.band);
+        if (band) bits.push(band);
+        if (r.channel != null) bits.push("ch " + r.channel + (r.bandwidthMhz != null ? " · " + r.bandwidthMhz + " MHz" : ""));
+        bits.push(clients + (clients === 1 ? " client" : " clients"));
+        var inner = rn.vaps.length ? rn.vaps.map(function (vn) {
+          var v = vn.vap;
+          var ssidBits = [vn.stations.length + (vn.stations.length === 1 ? " client" : " clients")];
+          if (v.vlanId != null) ssidBits.push("VLAN " + v.vlanId);
+          return ''
+            + '<div style="padding:6px 0 2px 24px;font-weight:500;">' + escapeHtml(v.ssid || v.vapName || "(SSID)")
+            + ' <span class="muted" style="font-weight:400;font-size:12px;">· ' + escapeHtml(ssidBits.join(" · ")) + '</span></div>'
+            + vn.stations.map(wirelessStationRow).join("");
+        }).join("") : '<div class="muted" style="padding:4px 0 8px 24px;font-size:13px;">No SSIDs reported for this radio.</div>';
+        return tableGroupHtml("Radio " + r.radioIndex, "· " + escapeHtml(bits.join(" · ")), inner, true);
+      }).join("");
+      if (tree.unplaced.length) {
+        html += tableGroupHtml("Not matched to an SSID",
+          "· " + tree.unplaced.length + " of " + stations.length,
+          tree.unplaced.map(wirelessStationRow).join(""), true);
+      }
+      body.innerHTML = html;
+    }).catch(function (err) {
+      if (!current()) return;
+      var body = document.getElementById("table-sheet-body");
+      if (body) body.innerHTML = tableMsg("Couldn’t load wireless data: " + escapeHtml(err && err.message ? err.message : "error"));
     });
   }
 

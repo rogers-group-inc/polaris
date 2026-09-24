@@ -43,6 +43,20 @@ FortiGate **VIP** or **interface address** belongs to the device's own config
 and offers no Edit or Release. The **+ Reserve** button on the Networks tab
 takes any address and finds its network for you.
 
+**Tapping an asset opens its detail sheet.** Under the status pill, a device
+with a table to read carries a button for it, below **View SD-WAN** on a
+firewall that reports SD-WAN:
+
+| Device | Button | What it shows |
+|---|---|---|
+| Firewall | **View ARP Table** | the neighbour cache by interface, with the same **Current / Last hour … Last 30 days** range as the desktop tab (ranges past retention are greyed) and a filter over IP, MAC, interface and hostname |
+| Switch | **View MAC Table** | the forwarding database by port, each port marked access port or uplink / trunk; entries on trunk / LAG pseudo-ports are hidden until you tap **Show** |
+| Monitored access point | **View Wireless** | each radio (band, channel, width), the SSIDs it broadcasts, and the clients on each. Clients that match no broadcast SSID are listed under their own heading, not dropped |
+
+A client or neighbour Polaris matched to a known device links to it, and tapping
+it opens that asset. The sheets are read-only; the reload button re-reads what
+Polaris has stored, not the device itself.
+
 Networks replaced the old **Reservations** tab: a reservation is now seen and
 changed in its network. An old home-screen shortcut or bookmark to Reservations
 opens Networks.
