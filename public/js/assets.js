@@ -1816,13 +1816,21 @@ function _assetsUpdateBulkBar() {
   // Compare needs at least two assets to overlay, so it stays VISIBLE and greys
   // out below two — a button that only appears once the right number of rows is
   // ticked is a verb nobody discovers. Available to any role that can view
-  // assets — comparing telemetry is read-only.
+  // assets — comparing telemetry is read-only. Above _CMP_MAX_ASSETS it greys
+  // out too, but dim YELLOW rather than plain grey, so "too many" reads apart
+  // from "not enough" (red is taken by Delete).
   var bCompare = document.getElementById("assets-bulk-compare-btn");
   if (bCompare) {
-    bCompare.disabled = count < 2;
+    var cmpMax = typeof _CMP_MAX_ASSETS === "number" ? _CMP_MAX_ASSETS : 10;
+    var overCap = count > cmpMax;
+    bCompare.disabled = count < 2 || overCap;
+    bCompare.classList.toggle("btn-warning", overCap);
+    bCompare.classList.toggle("btn-secondary", !overCap);
     bCompare.title = count < 2
       ? "Select two or more assets to compare their telemetry"
-      : "Compare telemetry of the selected assets";
+      : overCap
+        ? "Compare supports up to " + cmpMax + " assets — " + count + " selected"
+        : "Compare telemetry of the selected assets";
   }
 
   // Edit opens the single-asset edit modal, so it stays visible but greys out

@@ -95,8 +95,11 @@ function openCompareModal() {
     showToast("Select at least two assets on this page to compare", "error");
     return;
   }
-  var capped = false;
-  if (selected.length > _CMP_MAX_ASSETS) { selected = selected.slice(0, _CMP_MAX_ASSETS); capped = true; }
+  // Hard cap, matching the Compare button that greys out (dim yellow) above it.
+  if (selected.length > _CMP_MAX_ASSETS) {
+    showToast("Compare supports up to " + _CMP_MAX_ASSETS + " assets — deselect some and try again", "error");
+    return;
+  }
 
   var metricRows = _CMP_METRICS.map(function (m) {
     var checked = (m.key === "response" || m.key === "cpu" || m.key === "memory") ? " checked" : "";
@@ -114,7 +117,6 @@ function openCompareModal() {
       '<div>' +
         '<div style="font-weight:600;margin-bottom:4px">Assets (' + selected.length + ')</div>' +
         '<div style="font-size:0.82rem;color:var(--color-text-secondary)">' + assetList + '</div>' +
-        (capped ? '<div style="font-size:0.78rem;color:var(--color-warning,#e0a800);margin-top:4px">Comparing the first ' + _CMP_MAX_ASSETS + ' selected assets (capped for readability).</div>' : '') +
       '</div>' +
       '<div>' +
         '<div style="font-weight:600;margin-bottom:4px">Metrics</div>' +
