@@ -242,6 +242,38 @@ function Get-PolarisSshCapability {
   return (Get-WindowsCapability -Online -Name 'OpenSSH.Server*' | Select-Object -First 1)
 }
 
+function Get-PolarisSshdDiagnostics {
+  # One line for the Intune output column: the sshd.exe the service runs and
+  # the newest Service Control Manager error naming it. "Cannot start service
+  # sshd" alone names no cause; "OpenSSH_7.7p1" plus a 7009 timeout does — a
+  # capability can read Installed while its files are years stale. Never
+  # throws: it only decorates a failure that is already being reported.
+  $parts = @()
+  try {
+    $exe = Join-Path $env:WINDIR 'System32\\OpenSSH\\sshd.exe'
+    $svcPath = (Get-CimInstance -ClassName Win32_Service -Filter "Name='sshd'" -ErrorAction Stop).PathName
+    if ($svcPath -and $svcPath -match '^\\s*"?([^"]+?\\.exe)') { $exe = $Matches[1] }
+    $parts += ('sshd.exe ' + (Get-Item -LiteralPath $exe -ErrorAction Stop).VersionInfo.ProductVersion)
+  } catch {
+    $parts += 'sshd.exe version unknown'
+  }
+  try {
+    $evt = Get-WinEvent -FilterHashtable @{
+             LogName = 'System'; ProviderName = 'Service Control Manager'
+             Id = 7000, 7009, 7011, 7023, 7024, 7031, 7034; StartTime = (Get-Date).AddDays(-7)
+           } -MaxEvents 200 -ErrorAction Stop |
+           Where-Object { $_.Message -match 'sshd|OpenSSH' } | Select-Object -First 1
+    if ($evt) {
+      $msg = ($evt.Message -replace '\\s+', ' ').Trim()
+      if ($msg.Length -gt 300) { $msg = $msg.Substring(0, 300) + '...' }
+      $parts += ('last SCM event ' + $evt.Id + ' at ' + $evt.TimeCreated.ToString('s') + ': ' + $msg)
+    }
+  } catch {
+    # No matching event (Get-WinEvent throws on an empty result) or no access.
+  }
+  return ($parts -join '; ')
+}
+
 function Get-PolarisAdminGroupName {
   # By SID: "Administrators" is localized and does not resolve on a German or
   # French install.
@@ -333,7 +365,16 @@ if ($cap.State -ne 'Installed') {
 
 Set-Service -Name sshd -StartupType Automatic
 if ((Get-Service -Name sshd).Status -ne 'Running') {
-  Start-Service -Name sshd
+  try {
+    Start-Service -Name sshd
+  } catch {
+    # Start-Service says only "cannot be started". The capability check above
+    # passes for a stale or blocked sshd.exe, so name the binary and the SCM
+    # event here — it is the one place this failure is ever explained.
+    Write-Host ('error: sshd failed to start - ' + $_.Exception.Message)
+    Write-Host ('error: ' + (Get-PolarisSshdDiagnostics))
+    exit 1
+  }
   Write-Host 'Started sshd'
 } else {
   Write-Host 'sshd already running'
@@ -621,7 +662,7 @@ try {
     exit 1
   }
   if ($svc.Status -ne 'Running') {
-    Write-Host 'remediate: sshd not running'
+    Write-Host ('remediate: sshd not running (' + (Get-PolarisSshdDiagnostics) + ')')
     exit 1
   }
 
