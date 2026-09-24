@@ -499,6 +499,7 @@ export async function getOnboardingScript(
           publicKey: state.publicKey,
           username: acct.username,
           accountMode: acct.accountMode,
+          polarisServerIp: state.polarisServerIp || undefined,
         }),
       }
     : {

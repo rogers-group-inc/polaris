@@ -645,6 +645,8 @@ $PolarisUser      = __USERNAME__
 
 __PS_HELPERS__
 
+__DETECT_HELPERS__
+
 try {
   $cap = Get-PolarisSshCapability
   if (-not $cap) {
@@ -698,6 +700,8 @@ try {
     exit 1
   }
 
+__DETECT_FIREWALL_BLOCK__
+
   Write-Host ('ok: Polaris SSH onboarding present (' + $PolarisUser + ' is a local administrator)')
   exit 0
 } catch {
@@ -705,6 +709,91 @@ try {
   exit 1
 }
 `.trim();
+
+/**
+ * Detection's firewall check when a server address is configured: the exact
+ * state FIREWALL_PS settles (business rules 72, 76). The Polaris rule is
+ * present, enabled, on every profile and allows the configured address, and
+ * no built-in OpenSSH rule is still enabled beside it.
+ *
+ * The address is compared as a NETWORK, not as text. Windows stores a CIDR in
+ * mask form (10.0.0.0/255.255.255.0), so a string comparison against the
+ * configured "10.0.0.0/24" would never match, and the pair would loop forever
+ * against every endpoint on a CIDR-scoped install.
+ */
+const DETECT_FIREWALL_PS = `
+  # Firewall: the state remediation settles when a server address is set.
+  $fwRules = @(Get-NetFirewallRule -DisplayName __FW_NAME__ -ErrorAction SilentlyContinue)
+  if ($fwRules.Count -eq 0) {
+    Write-Host ('remediate: firewall rule ' + __FW_NAME__ + ' missing')
+    exit 1
+  }
+  $fwRule = $fwRules[0]
+  if ($fwRules.Count -gt 1 -or $fwRule.Enabled -ne 'True' -or [string]$fwRule.Profile -ne 'Any') {
+    Write-Host ('remediate: firewall rule ' + __FW_NAME__ + ' is not the single enabled every-profile rule remediation writes')
+    exit 1
+  }
+  $want = ConvertTo-PolarisNetwork -Address __SERVER_IP__
+  $have = @(($fwRule | Get-NetFirewallAddressFilter).RemoteAddress)
+  if ($have.Count -ne 1 -or (ConvertTo-PolarisNetwork -Address ([string]$have[0])) -ne $want) {
+    Write-Host ('remediate: firewall rule ' + __FW_NAME__ + ' allows ' + ($have -join ', ') + ', not ' + __SERVER_IP__)
+    exit 1
+  }
+  foreach ($rule in @(Get-NetFirewallRule -Name __BUILTIN_FW_NAME__ -ErrorAction SilentlyContinue)) {
+    if ($rule.Enabled -eq 'True') {
+      Write-Host ('remediate: built-in rule ' + $rule.Name + ' still allows TCP/22 from any source')
+      exit 1
+    }
+  }
+`;
+
+/**
+ * Parses 'a.b.c.d', 'a.b.c.d/nn' and 'a.b.c.d/m.m.m.m' into one comparable
+ * 'network/prefix' string. Emitted into detection only when a server address
+ * is set. Throws on anything else (Any, a range), which detection's catch
+ * reports as needing remediation, and remediation replaces the rule with one
+ * this parses.
+ */
+const CONVERT_NETWORK_PS = `
+function ConvertTo-PolarisNetwork {
+  param([string] $Address)
+  $parts = $Address.Trim().Split('/')
+  $prefix = 32
+  if ($parts.Count -gt 1) {
+    if ($parts[1] -match '^\\d+$') {
+      $prefix = [int]$parts[1]
+    } else {
+      $prefix = 0
+      foreach ($b in [System.Net.IPAddress]::Parse($parts[1]).GetAddressBytes()) {
+        $prefix += ([Convert]::ToString($b, 2) -replace '0', '').Length
+      }
+    }
+  }
+  $bytes = [System.Net.IPAddress]::Parse($parts[0]).GetAddressBytes()
+  [Array]::Reverse($bytes)
+  $value = [uint64][BitConverter]::ToUInt32($bytes, 0)
+  $mask = ([uint64]4294967295 -shl (32 - $prefix)) -band [uint64]4294967295
+  return ('' + ($value -band $mask) + '/' + $prefix)
+}
+`.trim();
+
+/**
+ * Detection's firewall check with no server address: the state NO_FIREWALL_PS
+ * settles. Every built-in OpenSSH rule covers the Domain profile. Enabled is
+ * deliberately not judged, because remediation never enables a rule an
+ * operator turned off, and demanding it would loop. With no built-in rule
+ * there is nothing remediation could change, so that passes too.
+ */
+const DETECT_NO_FIREWALL_PS = `
+  # Firewall: the state remediation settles with no server address.
+  foreach ($rule in @(Get-NetFirewallRule -Name __BUILTIN_FW_NAME__ -ErrorAction SilentlyContinue)) {
+    $ruleProfile = [string]$rule.Profile
+    if (-not ($ruleProfile -eq 'Any' -or $ruleProfile -match 'Domain')) {
+      Write-Host ('remediate: built-in rule ' + $rule.Name + ' does not cover the Domain profile (' + $ruleProfile + ')')
+      exit 1
+    }
+  }
+`;
 
 /**
  * Build the detection half of the pair. Checks the account and its
@@ -716,24 +805,40 @@ try {
  *
  * Both modes are checked, because both are satisfiable: create mode provisions
  * the account, and existing mode now FAILS LOUDLY when the named account is
- * absent instead of authorizing a key for nobody. What stays out is the
- * firewall — with no server IP configured there is no Polaris rule to find, so
- * checking it would be the one loop the pair cannot break out of. The same
- * argument now covers Windows' built-in OpenSSH rule: remediation disables it
- * when a server IP is set and widens it to Domain when one is not, and this
- * builder is not told which, so either state would read as drift half the time.
+ * absent instead of authorizing a key for nobody.
+ *
+ * The firewall is checked too, against the state remediation settles for the
+ * SAME `polarisServerIp` (business rules 72, 76): with an address, the scoped
+ * Polaris rule and no built-in rule enabled beside it; without one, the
+ * built-in rule covering Domain. It was left out while this builder was not
+ * told which of the two to expect. An endpoint onboarded by some other route
+ * then passed detection forever and was never remediated, which on a Domain
+ * network means sshd listening and nothing able to reach it. Pass the same
+ * `polarisServerIp` to both builders, or the pair disagrees.
  */
 export function buildWindowsOnboardingDetectionScript(opts: {
   publicKey: string;
   username: string;
   accountMode: SshOnboardingAccountMode;
+  polarisServerIp?: string;
 }): string {
   const publicKey = assertValidPublicKey(opts.publicKey);
   const username = assertValidUsername(opts.username, opts.accountMode);
+  const serverIp = assertValidServerIp(opts.polarisServerIp);
+  const firewallCheck = (serverIp
+    ? DETECT_FIREWALL_PS
+        .replace(/__FW_NAME__/g, psLiteral(FIREWALL_RULE_NAME))
+        .replace(/__SERVER_IP__/g, psLiteral(serverIp))
+    : DETECT_NO_FIREWALL_PS
+  ).replace(/__BUILTIN_FW_NAME__/g, psLiteral(OPENSSH_BUILTIN_RULE_NAME));
   return WINDOWS_DETECTION_PS
     .replace(/__PUBLIC_KEY__/g, psLiteral(publicKey))
     .replace(/__USERNAME__/g, psLiteral(username))
     .replace(/__PS_HELPERS__/g, POLARIS_PS_HELPERS)
+    // Function replacers: CONVERT_NETWORK_PS holds '^\d+$', and a string
+    // replacement would read its $' as "the text after the match".
+    .replace(/__DETECT_HELPERS__/g, () => (serverIp ? CONVERT_NETWORK_PS : ""))
+    .replace(/__DETECT_FIREWALL_BLOCK__/g, () => firewallCheck.replace(/^\n+|\n+$/g, ""))
     .replace(/__SID_ADMINS__/g, psLiteral(SID_ADMINISTRATORS));
 }
 

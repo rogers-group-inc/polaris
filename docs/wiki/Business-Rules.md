@@ -649,9 +649,15 @@ carrying on to authorize a key for an account that does not exist. It verifies
 without changing anything — choosing an existing account is not asking Polaris
 to create one or to promote it.
 
-The firewall rule is deliberately not checked. If you did not give Polaris a
-server address there is no rule to look for, and a check nothing can satisfy
-would make the pair remediate forever.
+On Windows, detection also checks the firewall, but only for the state the
+remediation itself sets up with the same server address (see
+[Rule 76](Business-Rules#rule-76)). With an address, it checks for the Polaris
+rule scoped to that address and for Windows' own rule being off. Without one, it
+checks that Windows' own rule covers the Domain profile. It never demands
+anything the remediation would not do, because a check nothing can satisfy would
+make the pair remediate forever. (Until 2026-09 the firewall was not checked at
+all, so a machine set up by hand could stay unreachable on a domain network
+while reporting healthy.)
 
 One consequence you will see: both scripts now refuse to download until you have
 named the account on the **SSH Deployment** card. Before, the Windows detection
@@ -752,8 +758,9 @@ whether you filled in **Polaris server address**:
 **Public is never added**, on either path: being unreachable on your own domain
 network is the problem being solved, and an any-source rule on the profile a
 laptop picks up in an airport is not part of it. Both paths are safe to re-run,
-and the detection script does not judge the firewall — it cannot know which of
-the two shapes to expect.
+and the detection script checks for whichever of the two shapes the same server
+address produces, so a machine left on Private-only is remediated rather than
+reported healthy.
 
 See [Polaris Agent](Polaris-Agent#the-windows-firewall-rule-and-the-one-windows-writes-for-itself).
 
