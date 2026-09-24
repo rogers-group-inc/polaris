@@ -14823,7 +14823,7 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
       '<div data-shot-section="sdwanMembers" data-shot-label="SD-WAN Members">' +
       '<section style="margin-bottom:1.25rem">' +
         _sdwanSectionHeaderHTML(a, "SD-WAN Members", meta.membersAt, meta.membersPollSec, "never collected") +
-        '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">WAN members (interfaces + overlays) with per-health-check status. The Health Check Status strip shows recent up/down per scrape; IP / link / bytes come from the latest interface poll.</p>' +
+        '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">WAN members (interfaces + overlays) with per-health-check status. The Health Check Status strip shows up/down per scrape over the last 30 minutes; IP / link / bytes come from the latest interface poll.</p>' +
         _sdwanMembersTableHTML(members) +
       '</section>' +
       ((rules.length || links.length) ? '<hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--color-border)">' : '') +

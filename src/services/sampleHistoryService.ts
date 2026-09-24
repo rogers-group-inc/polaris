@@ -1118,6 +1118,9 @@ export async function readPollingHistorySummary(assetId: string): Promise<Pollin
 
 // ─── SD-WAN members (per-interface health-check summary) ─────────────────────
 
+/** How far back the SD-WAN Members table's Health Check Status strip reaches. */
+export const SDWAN_STATUS_STRIP_MINUTES = 30;
+
 export interface SdwanMemberHealthCheck {
   healthCheck: string;
   state:       string;        // "up" | "down"
@@ -1143,7 +1146,8 @@ export interface SdwanMemberRow {
  * Aggregates the perfSla stream by WAN member (a member can appear in several
  * health-checks) and joins the latest interface sample for IP / link / byte
  * counters. `recent` powers the green/red health-check status strip — one entry
- * per scrape over the last ~90 min, `up` = up in every health-check at that time.
+ * per scrape over the last SDWAN_STATUS_STRIP_MINUTES (30), `up` = up in every
+ * health-check at that time.
  * Reads the `perfSla` (+ `interfaces`) retention entities; current values come
  * from the latest rows, the strip from recent detail samples.
  *
@@ -1178,12 +1182,18 @@ export async function readSdwanMembers(
   }
 
   // B: recent per-(member, scrape) aggregated up/down for the status strip.
+  // The window alone bounds the strip: the SD-WAN cadence floors at 60s, so 30
+  // minutes is at most ~30 segments (plus any Poll Now reads). It used to be 90
+  // minutes cut to the newest 48 readings — which, once SD-WAN moved to its own
+  // 60s cadence, meant the strip spanned "the last 48 minutes", a figure nobody
+  // chose.
   const recentRows = await prisma.$queryRawUnsafe<Array<{ link: string; timestamp: Date; up: boolean }>>(
     `SELECT "link", "timestamp", bool_and("state" = 'up') AS up
      FROM "asset_perf_sla_samples"
-     WHERE "assetId" = $1 AND "timestamp" > now() - interval '90 minutes'
+     WHERE "assetId" = $1 AND "timestamp" > now() - make_interval(mins => $2::int)
      GROUP BY "link", "timestamp" ORDER BY "link", "timestamp" ASC`,
     assetId,
+    SDWAN_STATUS_STRIP_MINUTES,
   );
 
   // C: current interface state per member ifName (IP / speed / link state /
@@ -1217,7 +1227,7 @@ export async function readSdwanMembers(
   const members: SdwanMemberRow[] = links.map((link) => {
     const hcs = hcByLink.get(link) ?? [];
     const iface = ifaceByName.get(link) ?? null;
-    const recent = (recentByLink.get(link) ?? []).slice(-48);
+    const recent = recentByLink.get(link) ?? [];
     return {
       link,
       zone:         zoneByLink.get(link) ?? null,
