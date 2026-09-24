@@ -62,6 +62,7 @@ import { startMetricsOnlyServer } from "./utils/metricsServer.js";
 import { recordDbConnectionMode, setDbPoolRoleCapacity } from "./metrics.js";
 import { startFmgActivityHeartbeat } from "./services/fmgActivityService.js";
 import { rememberLoginTarget } from "./utils/loginRedirect.js";
+import { isPhoneUserAgent, resolveAssetOpenTarget } from "./utils/assetOpenLink.js";
 
 // Fail-fast environment validation runs BEFORE any listener binds, before
 // pg-boss init, before sample buffers start. Throws on misconfiguration
@@ -604,22 +605,41 @@ app.use(async (req, res, next) => {
 // the desktop UI directly when they need to. The `?desktop=1` query param
 // is the escape hatch the mobile app uses on its "Desktop view" link.
 //
-// `Mobile` covers Chrome/Firefox on phones (including every Android phone
-// browser — Android phone UAs always carry the `Mobile` token, which is
-// also why the old `Android.*Mobile` alternative was redundant and a
-// polynomial-ReDoS hazard on attacker-supplied UA strings), and
-// `iPhone`/`iPod` covers Safari on iPhone. iPad is intentionally excluded —
-// modern iPad Safari requests desktop layouts by default, and the desktop
-// UI works fine on a tablet-class screen.
-const PHONE_UA_REGEX = /(Mobile|iPhone|iPod)/i;
+// The phone-class test itself (`Mobile` / `iPhone` / `iPod`, iPad excluded —
+// the reasoning is on PHONE_UA_REGEX) lives in utils/assetOpenLink.ts, shared
+// with the asset landing route below so "is this a phone" has one answer.
 app.use((req, res, next) => {
   if (req.path !== "/" && req.path !== "/index.html") return next();
   if (req.query.desktop === "1") return next();
-  const ua = req.get("user-agent") || "";
-  if (PHONE_UA_REGEX.test(ua)) {
+  if (isPhoneUserAgent(req.get("user-agent"))) {
     return res.redirect("/mobile.html");
   }
   return next();
+});
+
+// Asset landing route — the surface-neutral device link an alert email, the
+// `{asset.link}` token and a web push's "Open device" button carry. The link
+// is composed once for every reader (business rule 25), so it cannot name a
+// front end; this hop picks one per request from the user-agent: a phone goes
+// to the mobile SPA's asset detail, anything else to the desktop assets page.
+// Before this route the email embedded the desktop URL, and the redirect
+// above — which only watches "/" — let it render the full desktop page on a
+// phone. `?desktop=1` is honoured for the same reason it is above. The two
+// targets carry their own login gates (protectedPages for the desktop page,
+// the SPA's in-app login, which keeps the hash, for the phone), so this needs
+// none — a gate here would cost the phone reader its fragment across sign-in.
+// UA-dependent, so never cacheable; an id that is not a UUID falls through to
+// the static handler's 404 rather than redirecting anywhere.
+app.get("/assets/:id", (req, res, next) => {
+  const target = resolveAssetOpenTarget({
+    id: req.params.id,
+    userAgent: req.get("user-agent"),
+    desktop: req.query.desktop,
+  });
+  if (!target) return next();
+  res.set("Cache-Control", "no-store");
+  res.set("Vary", "User-Agent");
+  return res.redirect(target);
 });
 
 // Protect dashboard pages — redirect unauthenticated users to login
