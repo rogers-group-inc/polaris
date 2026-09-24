@@ -312,6 +312,15 @@ The storage and interface collectors run under a 30-second guard, because
 an unresponsive NIC — without it the whole push loop freezes while the heartbeat
 keeps running and the agent looks connected.
 
+### When the host stops reporting
+
+A dead host sends nothing, so Polaris treats the agent's silence as the missed
+poll. Once an agent that finished deploying has been silent for two polling
+intervals, each further miss counts toward your down-detection automation, and
+the asset goes **Down** and raises **Asset down** just as a host that stopped
+answering pings would. Restarts and updates of Polaris itself, and agent
+upgrades, do not count. See [rule 86](Business-Rules#rule-86).
+
 ### Host identity — hostname, OS, make, model, serial
 
 Alongside the telemetry streams the agent reports what the machine *is*:
@@ -557,4 +566,5 @@ separate **Unmap everywhere** action does the actual strip.
 | TLS handshake fails after a certificate rotation | the pin. Stage the new pin **before** rotating |
 | Samples stop but the heartbeat continues | a hung filesystem or NIC in a collector — the 30 s guard bounds this on current builds |
 | Upgrade silently skips a host | check for `agent.upgrade_skipped` Events; on older builds this was completely silent |
+| An agent host is powered off but the asset still reads Up | whether an automation covers it (no automation means **Passive**, [rule 36](Business-Rules#rule-36)); whether the agent is revoked or not yet **active**; and, with a single agent, whether Polaris just restarted. The agent gets a full window from boot ([rule 86](Business-Rules#rule-86)) |
 | `agent.disconnected` alerts never clear | the counterpart reset — an event automation should clear on `agent.connected`, scoped to the same subject ([rule 32e](Business-Rules#rule-32)) |

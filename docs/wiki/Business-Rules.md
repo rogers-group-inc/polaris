@@ -1080,3 +1080,40 @@ whatever it reported before. A serial two different assets both claim is not
 used to match them.
 
 See [Polaris Agent](Polaris-Agent) and [Conflict Resolution](Conflict-Resolution).
+
+### Rule 86
+
+**An agent that deployed and went quiet has missed its poll, unless Polaris is
+the one that stopped listening.**
+
+Nothing polls a host that is monitored by the Polaris Agent. The agent sends its
+own response-time readings, so a host that dies, crashes, loses its network or
+has its agent stopped simply stops sending. Polaris now counts that silence as a
+missed poll.
+
+Once an agent that finished deploying has not been heard from for **two polling
+intervals** (and never less than one interval plus a minute), each poll it
+misses is recorded exactly like a failed ping. The asset turns **Warning**, then
+**Down** when your down-detection automation's missed-poll count is reached, and
+**Asset down** fires. At the default 60-second interval with three missed polls,
+that is about four minutes from the last reading. The chart shows the outage as
+a dive, and the asset recovers on the agent's next real reading.
+
+What does **not** count:
+
+- **An agent that has not finished deploying**: still installing, failed,
+  uninstalling, or revoked. Polaris does not expect to hear from it.
+- **An agent upgrade, reinstall or uninstall.** The asset is in a maintenance
+  hold for that ([rule 80](Business-Rules#rule-80)).
+- **Polaris being down.** After a restart or an update, every agent gets a full
+  window to reconnect before its silence counts. If *no* agent anywhere is
+  reporting, Polaris assumes it is the one not receiving (a stopped web service
+  or proxy, say) and records nothing. This check needs at least two agents. With
+  a single agent the two cases look the same, and Polaris alerts rather than
+  staying silent.
+
+The warning-level **Agent disconnected** automation still fires as well. It
+describes the agent's connection; **Asset down** describes the host.
+
+See [Polaris Agent](Polaris-Agent#when-the-host-stops-reporting) and
+[Monitor States](Monitor-States).

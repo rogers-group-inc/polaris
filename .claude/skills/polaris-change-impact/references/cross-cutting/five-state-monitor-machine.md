@@ -40,6 +40,7 @@
 - monitorStatusChangedAt is stamped on EVERY transition (any-to-any), independent of the Event audit trail. The column is the source for the Dashboard's "how long has this been warning/down" duration. Backfill from the Event log seeds it from the latest monitor.status_changed Event still within the 7-day window; older outages render "—".
 - Heavy cadences (telemetry/systemInfo/fastFiltered/sdwan) are suppressed when monitorStatus ≠ "up" OR dependencySuppressed. The probe runs at 2× cadence when dependencySuppressed AND responseTimePolling !== "disabled".
 - Response-time probe runs in every state; it's the cheap path that detects recovery.
+- An agent-mode asset's misses come from the AGENT'S SILENCE, not from a probe (business rule 86). Its answers arrive only as pushed samples. When the enrolled agent makes no bearer call for `silenceWindowMs(interval)`, each due tick records one `agentSilent` failure, so the bucket fills at the configured cadence exactly as ICMP's would. Before this, a dead agent host never produced a miss and froze at `up`.
 
 **When changing this:**
 - Verify every state assignment matches the rules above (no bypass paths).

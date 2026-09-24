@@ -182,6 +182,7 @@ import { matchTrunkPeer, parseTrunkPortMap, trunkMemberMap, type TrunkPortEntry 
 import { joinStateRows } from "../utils/stateProbes.js";
 import { enqueueProbePatch, getPendingProbePatch } from "./probePatchBuffer.js";
 import { recoveryPollsFor, resolveDownDetection } from "./downDetectionService.js";
+import { AGENT_REPORTING_STATUSES, judgeAgentSilence } from "../utils/agentSilence.js";
 import {
   isConfigStatusEdge,
   monitorStatusFor,
@@ -243,6 +244,14 @@ export interface ProbeResult {
    * returns before `recordProbeResult` when it sees this.
    */
   duplicate?: boolean;
+  /**
+   * "The agent should have reported by now and has not." Set by `probeAsset`
+   * on an agent-mode asset whose enrolled agent has been silent past its
+   * window (business rule 86, `judgeAgentSilence`). It is the ONE synthetic
+   * agent-mode result `recordProbeResult` lets through: a real failed reading,
+   * so the covering automation's missedPolls can call a dead host down.
+   */
+  agentSilent?: boolean;
   /**
    * The device's raw sysDescr, when the probe was asked to carry it.
    *
@@ -1968,6 +1977,44 @@ async function collectIpsecOnlyFortinetSafe(
   }
 }
 
+// ─── Agent silence (business rule 86) ──────────────────────────────────────
+//
+// The silence clock for an agent-mode asset never starts before this process
+// was listening: its boot, or the last time the whole fleet was seen dark
+// (Polaris could not receive, so nobody's silence counted). See
+// src/utils/agentSilence.ts for the verdict itself.
+let agentListeningSince = new Date();
+
+// Freshest lastSeenAt across every agent expected to report, plus how many
+// there are. One aggregate over ManagedAgent, cached briefly: a silence check
+// only runs on an OVERDUE agent-mode asset, but at 2000 agents a dead site can
+// make hundreds of them due in one tick, and they all ask the same question.
+const AGENT_FLEET_CACHE_MS = 10_000;
+let agentFleetCache: { at: number; value: { freshestLastSeenAt: Date | null; reportingAgents: number } } | null = null;
+
+async function agentFleetLiveness(): Promise<{ freshestLastSeenAt: Date | null; reportingAgents: number }> {
+  const nowMs = Date.now();
+  if (agentFleetCache && nowMs - agentFleetCache.at < AGENT_FLEET_CACHE_MS) return agentFleetCache.value;
+  const agg = await prisma.managedAgent.aggregate({
+    where: {
+      installStatus: { in: [...AGENT_REPORTING_STATUSES] },
+      bearerHash: { not: null },
+      bearerRevokedAt: null,
+    },
+    _max: { lastSeenAt: true },
+    _count: { _all: true },
+  });
+  const value = { freshestLastSeenAt: agg._max.lastSeenAt ?? null, reportingAgents: agg._count._all };
+  agentFleetCache = { at: nowMs, value };
+  return value;
+}
+
+/** Test seam: reset the rule 86 process state (boot instant + fleet cache). */
+export function __resetAgentSilenceStateForTests(listeningSince: Date = new Date()): void {
+  agentListeningSince = listeningSince;
+  agentFleetCache = null;
+}
+
 // ─── Probe entry point ──────────────────────────────────────────────────────
 
 /**
@@ -1994,7 +2041,15 @@ export async function probeAsset(
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
-      include: { monitorCredential: true, responseTimeCredential: true, discoveredByIntegration: true },
+      include: {
+        monitorCredential: true,
+        responseTimeCredential: true,
+        discoveredByIntegration: true,
+        // Rule 86: the agent-mode branch below judges silence from these.
+        managedAgent: {
+          select: { installStatus: true, bearerHash: true, bearerRevokedAt: true, bearerIssuedAt: true, lastSeenAt: true },
+        },
+      },
     });
     if (!asset) return finish(start, false, "Asset not found");
     // Surface the loaded asset to the caller so `recordProbeResult` can
@@ -2048,11 +2103,40 @@ export async function probeAsset(
 
     // Agent owns its own probe cadence and pushes samples directly via
     // POST /api/v1/agents/samples. The hot monitor loop must not call out
-    // to the host; on-demand /probe-now is handled by agentChannelService
-    // over the WebSocket. Return a synthetic success so the probeTotal
-    // counter increments under transport="agent" but no DB write happens
-    // (recordProbeResult below early-returns for agent-mode assets).
-    if (polling === "agent") return finish(start, true);
+    // to the host. While the agent is reporting, return a synthetic success
+    // so the probeTotal counter increments under transport="agent" but no DB
+    // write happens (recordProbeResult below early-returns for agent-mode
+    // assets).
+    //
+    // What the agent cannot push is its own death: a dead host sends nothing,
+    // so nothing ever moved its status. Business rule 86 — once an enrolled
+    // agent has been silent past its window, THIS is the missed poll, returned
+    // as a real failure (`agentSilent`) that recordProbeResult lets through.
+    // A fleet-wide silence is Polaris failing to receive, not the hosts dying:
+    // skipped (no reading), and it restarts every agent's silence clock.
+    if (polling === "agent") {
+      const now = new Date();
+      const verdict = judgeAgentSilence({
+        agent: asset.managedAgent,
+        intervalSeconds: effective.intervalSeconds,
+        now,
+        listeningSince: agentListeningSince,
+        fleet: asset.managedAgent ? await agentFleetLiveness() : { freshestLastSeenAt: null, reportingAgents: 0 },
+      });
+      if (verdict.kind === "fleetDark") {
+        agentListeningSince = now;
+        return { success: false, responseTimeMs: 0, skipped: true };
+      }
+      if (verdict.kind === "silent") {
+        return {
+          success: false,
+          responseTimeMs: 0,
+          agentSilent: true,
+          error: `Polaris Agent has not reported since ${verdict.since.toISOString()}`,
+        };
+      }
+      return finish(start, true);
+    }
 
     const integration  = asset.discoveredByIntegration ?? null;
     const sourceKind   = assetSourceKindFromIntegrationType(integration?.type ?? null);
@@ -11405,7 +11489,12 @@ export async function recordProbeResult(
   // an AssetMonitorSample row — it would clobber the agent's real signal.
   // The /samples inbound handler calls this function with opts.fromAgent
   // so the agent's real samples DO drive the state machine.
-  if (effective.responseTimePolling === "agent" && !opts?.fromAgent) return;
+  //
+  // The one exception is `agentSilent` (business rule 86): the agent should
+  // have pushed by now and has not, so the missing push IS the miss. It runs
+  // the full path below — failed sample, bucket, status, cadence stamp — so
+  // the covering automation's missedPolls calls a dead host down.
+  if (effective.responseTimePolling === "agent" && !opts?.fromAgent && !result.agentSilent) return;
 
   // WHO decides this device is down: the covering down-detection automation,
   // most-specific-wins (business rule 18's ladder). null = no automation covers

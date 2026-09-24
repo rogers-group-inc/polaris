@@ -48,7 +48,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11; 20a, 23, 26, 41, 42, 69, 77 |
 | touch what the IP panel's Status column SAYS about an address, a FortiGate VIP or virtual server, `vipInfo`, or whether an address can be reserved at all | 23 first (the two-facts split), then 77 (the third fact and the composed pill) |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | 9, 10; 12, 16, 36, 37 |
-| touch probes, `monitorStatus`, the failure bucket, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 66, 67, 78 — the state machine itself is `polaris-change-impact` → cross-cutting/five-state-monitor-machine.md |
+| touch probes, `monitorStatus`, the failure bucket, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 66, 67, 78, 86 — the state machine itself is `polaris-change-impact` → cross-cutting/five-state-monitor-machine.md |
 | touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 65, 66, 67, 78 |
 | touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 78 (the one opt-out from it) |
 | touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it forbids splitting a send), then 56 and 60 |
@@ -62,6 +62,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | touch SSH — host keys, the onboarding scripts, the endpoint firewall rule | 21, 72, 76 |
 | touch login, sessions, permissions, roles | 31, 34, 43 (grant levels) and 48 (who may grant them), 61, 62, 63, 64 |
 | touch Polaris Agent install, upgrade, its stored credential, or a figure it reports | 43a, 49, 80, 82, 84 |
+| touch what happens when an agent host stops reporting — a dead host, `ManagedAgent.lastSeenAt`, an agent-monitored asset stuck `up` | 86 (the silence is the miss), 80 (a hold Polaris takes during its own agent operations) |
 | touch a column a rule calls dormant (`cooldownSec`, `failureThreshold`, `awaitingRecoveryConfirm`, `recoveryStartedAt`, `consecutiveSuccesses`) | `polaris-domain-model` → references/dormant-columns.md, then the rule it names |
 | add or retire a rule | the section below |
 
@@ -94,13 +95,13 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 - [references/narrative-36-43.md](references/narrative-36-43.md) — narrative, rules 36–43
 - [references/narrative-44-48.md](references/narrative-44-48.md) — narrative, rules 44–59 (split 2026-09-09 when 36–43 passed 100 KB)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — narrative, rules 60–74 (split 2026-09-15; rules 76, 77 and 79 moved out to their own files 2026-09-22 to keep it under the ceiling)
-- one file per rule from here on: [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md)
+- one file per rule from here on: [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-86.md](references/narrative-86.md)
 
 ## Rules 1–11
 
 One-line invariants, in [references/invariants-01-11.md](references/invariants-01-11.md): no overlapping subnets (1), subnet within block (2), no duplicate reservations (3), deletion protection (4), CIDR normalization (5), `sourceType` tracking (6), conflict detection (7), event retention (8), `acquiredAt ≤ lastSeen` (9), the four unmonitorable statuses (10), DNS-resolved reservations (11).
 
-## Rules 12–84 (index)
+## Rules 12–86 (index)
 
 Pairs that are two halves of one concern are marked; each keeps its own number because code cites both.
 
@@ -180,6 +181,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 82 | A measurement of the host must not be dominated by the measurer, and a scheduling offset is not a way to protect one | invariants-30-43 | narrative-82 |
 | 83 | A serial belongs to one device and one owner; two claimants is a report, never a silent winner | invariants-30-43 | narrative-83 |
 | 84 | A value that cannot identify a device is refused where it would be WRITTEN, not where a sweep would read it | invariants-30-43 | narrative-84 |
+| 86 | An agent that deployed and went quiet has missed its poll — unless Polaris is the one that stopped listening | invariants-30-43 | narrative-86 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain, and the dormant
 columns they retired), `polaris-change-impact` (who else reads or writes the fields a rule
