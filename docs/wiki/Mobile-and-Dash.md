@@ -21,9 +21,14 @@ chip opens a *Sort & filter* sheet; a choice applies as soon as you tap it, and
 tapping the selected column again flips its direction. Your sort (and on Assets,
 the status filter) is remembered on that phone; the filter text is not.
 
+On Assets you can pick **several statuses at once** — Down and Missed together,
+say — and the list shows assets in any of them. The statuses you pick move to the
+front of the row, right after **Any**, in the order you picked them. Tap one
+again to drop it, or tap **Any** to clear them all.
+
 | | Filter | Sort by | Extra filter |
 |---|---|---|---|
-| **Assets** | hostname, DNS name, IP, MAC, asset tag, assigned-to | Recently added, Name, IP address, Status, Type, Last seen | monitor **Status** (Down, Missed, Dep. Down, …) — named on the sort chip while it applies |
+| **Assets** | hostname, DNS name, IP, MAC, asset tag, assigned-to | Recently added, Name, IP address, Status, Type, Last seen | monitor **Status** (Down, Missed, Dep. Down, …), one or several — named on the sort chip while it applies |
 | **Networks** | name, network, purpose, VLAN, FortiGate, block, tags — every word must match | Name, Network (address order), Utilization, Reservations, VLAN | the **All / Available / Reserved / Deprecated** chips |
 
 **Tapping a network opens its addresses in a sheet over the list**, so your

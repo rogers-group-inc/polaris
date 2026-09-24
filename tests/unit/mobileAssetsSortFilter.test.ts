@@ -11,7 +11,11 @@
  *     ASSET_SORT_COLUMNS is a 400 from the server);
  *   - "Recently added" is the server default — no sortBy at all;
  *   - the topbar's old magnifier (which only jumped to the Search tab) is gone;
- *   - a status filter hidden in the sheet is named on the chip.
+ *   - a status filter hidden in the sheet is named on the chip;
+ *   - the status filter is multi-select: several picks ride `monitor` as one
+ *     CSV (the route ORs it), the picked chips move to the front of the row in
+ *     pick order, "Any" clears the pick, and a saved single-status pick from
+ *     before the filter went multi still loads.
  *
  * @vitest-environment happy-dom
  */
@@ -160,6 +164,106 @@ describe("mobile Assets tab sort + filter", () => {
     const values = [...TAB_SRC.matchAll(/\{ value: "([^"]+)",\s+label:/g)].map((m) => m[1]);
     expect(values.length).toBeGreaterThan(3);
     for (const v of values) expect(monitorBlock, `monitor value ${v}`).toContain(`case "${v}"`);
+  });
+
+  function statusChipOrder(): string[] {
+    return [...document.querySelectorAll('#list-sort-sheet [data-filter="monitor"]')]
+      .map((b) => b.getAttribute("data-value") || "");
+  }
+
+  it("picks several statuses at once and sends them as one CSV", async () => {
+    mount();
+    await flush();
+    tapSort();
+    sheetButton('[data-filter="monitor"][data-value="Down"]').click();
+    await flush();
+    sheetButton('[data-filter="monitor"][data-value="Missed"]').click();
+    await flush();
+    expect(requests[requests.length - 1]).toMatchObject({ monitor: "Down,Missed", offset: 0 });
+    const selected = [...document.querySelectorAll('#list-sort-sheet [data-filter="monitor"].selected')]
+      .map((b) => b.getAttribute("data-value"));
+    expect(selected).toEqual(["Down", "Missed"]);
+    // "Any" is no longer selected while something is picked.
+    expect(sheetButton('[data-filter="monitor"][data-value=""]').classList.contains("selected")).toBe(false);
+    // A second tap removes one pick and keeps the other.
+    sheetButton('[data-filter="monitor"][data-value="Down"]').click();
+    await flush();
+    expect(requests[requests.length - 1].monitor).toBe("Missed");
+  });
+
+  it("moves picked statuses to the front of the row, in the order they were picked", async () => {
+    mount();
+    await flush();
+    tapSort();
+    const listed = statusChipOrder();
+    expect(listed[0]).toBe("");
+    sheetButton('[data-filter="monitor"][data-value="Unmonitored"]').click();
+    sheetButton('[data-filter="monitor"][data-value="Recovering"]').click();
+    await flush();
+    const order = statusChipOrder();
+    // Any stays first, then the picks in pick order, then the rest as listed.
+    expect(order.slice(0, 3)).toEqual(["", "Unmonitored", "Recovering"]);
+    expect(order.slice(3)).toEqual(listed.filter((v) => v !== "" && v !== "Unmonitored" && v !== "Recovering"));
+    expect(order.length).toBe(listed.length);
+    // Un-picking one returns it to its listed place.
+    sheetButton('[data-filter="monitor"][data-value="Unmonitored"]').click();
+    await flush();
+    const after = statusChipOrder();
+    expect(after.slice(0, 2)).toEqual(["", "Recovering"]);
+    expect(after.slice(2)).toEqual(listed.filter((v) => v !== "" && v !== "Recovering"));
+  });
+
+  it("clears every pick with Any", async () => {
+    mount();
+    await flush();
+    tapSort();
+    sheetButton('[data-filter="monitor"][data-value="Down"]').click();
+    sheetButton('[data-filter="monitor"][data-value="Up"]').click();
+    await flush();
+    sheetButton('[data-filter="monitor"][data-value=""]').click();
+    await flush();
+    expect(requests[requests.length - 1].monitor).toBeUndefined();
+    expect(sheetButton('[data-filter="monitor"][data-value=""]').classList.contains("selected")).toBe(true);
+    const chip = document.getElementById("assets-sort")!;
+    expect(chip.classList.contains("selected")).toBe(false);
+  });
+
+  it("names up to two picks on the chip and counts more", async () => {
+    mount();
+    await flush();
+    tapSort();
+    const chip = () => document.getElementById("assets-sort")!.textContent || "";
+    sheetButton('[data-filter="monitor"][data-value="Down"]').click();
+    sheetButton('[data-filter="monitor"][data-value="Missed"]').click();
+    await flush();
+    expect(chip()).toContain("Down, Missed");
+    sheetButton('[data-filter="monitor"][data-value="Recovering"]').click();
+    await flush();
+    expect(chip()).toContain("3 statuses");
+  });
+
+  it("remembers a multi-status pick, and reads a saved single-status pick from before", async () => {
+    localStorage.setItem("polaris-mobile-assets-list", JSON.stringify({ sortKey: "", sortDir: "desc", monitor: "Down" }));
+    mount();
+    await flush();
+    expect(requests[0].monitor).toBe("Down");
+    tapSort();
+    sheetButton('[data-filter="monitor"][data-value="Up"]').click();
+    await flush();
+    expect(requests[requests.length - 1].monitor).toBe("Down,Up");
+    // A fresh module (next app boot) reads the saved pick back as an array.
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(TAB_SRC)();
+    g.PolarisAssetsTab.spec.render(document.getElementById("app-body")!);
+    await flush();
+    expect(requests[requests.length - 1].monitor).toBe("Down,Up");
+  });
+
+  it("drops a saved status the sheet no longer offers, keeping the rest", async () => {
+    localStorage.setItem("polaris-mobile-assets-list", JSON.stringify({ sortKey: "", sortDir: "desc", monitor: ["Gone", "Up", "Down", "Up"] }));
+    mount();
+    await flush();
+    expect(requests[0].monitor).toBe("Up,Down");
   });
 
   it("survives blocked storage — the defaults stand", async () => {
