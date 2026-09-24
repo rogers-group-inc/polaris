@@ -8,7 +8,7 @@ knows about a device is reachable from here.
 | Gate | Grants |
 |---|---|
 | `assets:read` | see the page |
-| `assets:write` | edit rows, bulk-monitor, mass-pin |
+| `assets:write` | edit rows, bulk-monitor, bulk tags, mass-pin |
 | `assets:fullwrite` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), delete others' saved filters |
 
 Agent deployment sits at `fullwrite` on purpose ([rule 43](Business-Rules#rule-43)):
@@ -85,6 +85,14 @@ Select rows to raise the bulk bar:
 | **Merge** | Assets **full read-write**, exactly **two** selected | opens the merge modal with the target pre-selected |
 | **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
+| **Tags** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
+
+**Replace keeps two kinds of tag** on every asset: Device Map `region:` tags
+and the discovery breadcrumbs `prev-entra:` / `prev-ad:`. Wiping region tags
+across a large selection would silently drop those devices out of every
+region-scoped user's and alert rule's view. To take a region tag off, pick it
+and use **Remove**. Replace with nothing picked clears every other tag, and asks
+first.
 
 A selection past the 500-id cap is refused **with the count**, rather than
 400-ing after you have filled in the form.

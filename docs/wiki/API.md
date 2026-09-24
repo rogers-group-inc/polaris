@@ -111,6 +111,7 @@ GET    /assets/ip-check?ip=…                is this address already in use?
 POST   /assets                              create a device
 PUT    /assets/:id                          update + the monitoring surface
 POST   /assets/bulk-monitor                 flip monitoring on many at once
+POST   /assets/bulk-tags                    add / remove / replace tags on many at once
 DELETE /assets/:id
 GET    /credentials                         stored credentials, secrets masked
 ```

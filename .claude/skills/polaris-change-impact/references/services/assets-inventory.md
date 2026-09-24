@@ -21,6 +21,26 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetBulkTagService.ts
+
+**What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
+
+**Public API:** `bulkEditAssetTags({ ids, mode, tags })` → `{ updated, unchanged, notFound, tags }`; the pure `computeBulkTags(mode, existing, tags)` and `normalizeBulkTags(tags)`; `REPLACE_PRESERVED_PREFIXES`; `BulkTagMode`.
+
+**Cross-service deps:** `mapRegionService.assertAddedRegionTagsNameARegion` (the PUT's `region:` guard, asked once per batch); `utils/chunk.ts → chunkArray`; `prisma.asset` (`select: { id, tags }` read, per-row `update` in 50-row `$transaction`s).
+
+**Used by:** `src/api/routes/assets.ts → POST /assets/bulk-tags` — the only caller; writes the `asset.bulk_tags` Event.
+
+**Invariants:**
+- Replace never strips `region:`, `prev-entra:` or `prev-ad:` tags (case-insensitive prefix). Remove does strip one the caller names.
+- Add / remove with an empty tag list is a 400; replace with an empty list is legal (clears everything but the preserved namespaces).
+- Only rows whose tag array changes are written — a repeat call is silent.
+- Writes go through the extended client (not `updateMany` / raw SQL), so db.ts's asset-source shadow write fires on every changed row.
+
+**When changing this:** a new managed tag prefix (see [asset-tag-mutators](../cross-cutting/asset-tag-mutators.md)) decides whether a bulk replace may strip it — add it to `REPLACE_PRESERVED_PREFIXES` and to the modal hint in `openBulkTagsModal` if not. Scale: one `findMany` over the selection and ≤ N/50 transactions; at 2000 selected that is 40 transactions of 50 single-row updates.
+
+---
+
 ## services/tagAssignmentService.ts
 
 **What it owns:** Filter-based tag auto-assignment ("managed sync"). Both device-filter contracts on `Tag` — the CURRENT `assetCondition` condition tree (the automations / address-book shape) and the LEGACY flat `criteria` blob it superseded — the asset-matching engines behind each, and the diff-based reconcile that keeps every filter-bearing tag synced onto matching assets via the `TagAutoAssignment` provenance table. Strictly an asset-tagging service — it never writes block/subnet tags.
