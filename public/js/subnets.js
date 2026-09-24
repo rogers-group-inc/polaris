@@ -149,7 +149,7 @@ if (!window.__polarisIpamTabs) {
 }
 
 // Loads the block list into `cachedBlocks` — still needed by blockSelectHTML
-// (create / auto-allocate modals) and by the hash deep-link block translation.
+// (the auto-allocate modal) and by the hash deep-link block translation.
 // Block filtering itself now lives in the Block column header filter (TableSF).
 async function loadBlockOptions() {
   try {
@@ -280,8 +280,10 @@ function renderSubnetsPage() {
 
 async function openSubnetCreateModal() {
   await _ensureTagCache();
-  var body = '<div class="form-group"><label>Block *</label>' + blockSelectHTML("f-blockId", true) + '</div>' +
-    '<div class="form-group"><label>CIDR *</label><input type="text" id="f-cidr" placeholder="e.g. 10.0.3.0/24"></div>' +
+  // No block picker: the server places the network in the most specific block
+  // containing its CIDR, and the read-only Block field shows which one.
+  var body = '<div class="form-group"><label>CIDR *</label><input type="text" id="f-cidr" placeholder="e.g. 10.0.3.0/24"></div>' +
+    '<div class="form-group"><label>Block</label><input type="text" id="f-block-resolved" disabled class="field-locked" placeholder="Set from the CIDR"></div>' +
     '<div class="form-group"><label>Name *</label><input type="text" id="f-name" placeholder="e.g. API Servers"></div>' +
     '<div class="form-group"><label>Purpose</label><textarea id="f-purpose" placeholder="What is this network for?"></textarea></div>' +
     '<div class="form-group"><label>VLAN</label><input type="number" id="f-vlan" min="1" max="4094" placeholder="1-4094"></div>' +
@@ -289,6 +291,7 @@ async function openSubnetCreateModal() {
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="btn-save">Create Network</button>';
   openModal("Add Network", body, footer);
   wireTagPicker();
+  wireResolvedBlockField("f-cidr", "f-block-resolved");
 
   document.getElementById("btn-save").addEventListener("click", async function () {
     var btn = this;
@@ -296,16 +299,15 @@ async function openSubnetCreateModal() {
     try {
       var vlan = document.getElementById("f-vlan").value;
       var input = {
-        blockId: val("f-blockId"),
         cidr: val("f-cidr"),
         name: val("f-name"),
         purpose: val("f-purpose") || undefined,
         vlan: vlan ? parseInt(vlan, 10) : undefined,
         tags: getTagFieldValue(),
       };
-      await api.subnets.create(input);
+      var created = await api.subnets.create(input);
       closeModal();
-      showToast("Network created");
+      showToast(created && created.block ? "Network created in " + created.block.name : "Network created");
       loadSubnets();
     } catch (err) {
       showToast(err.message, "error");

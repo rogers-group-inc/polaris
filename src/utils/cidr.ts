@@ -265,6 +265,25 @@ export function cidrOverlaps(a: string, b: string): boolean {
 }
 
 /**
+ * The narrowest candidate whose CIDR contains `inner`, or null when none does —
+ * where a new network is placed when no block is named. Every candidate that
+ * contains `inner` also overlaps every other one that does, and two CIDRs that
+ * overlap are nested, so the containing set is a chain and the narrowest is the
+ * one contained by all the others: no prefix-length arithmetic needed.
+ */
+export function mostSpecificContaining<T extends { cidr: string }>(
+  candidates: readonly T[],
+  inner: string,
+): T | null {
+  let best: T | null = null;
+  for (const c of candidates) {
+    if (!cidrContains(c.cidr, inner)) continue;
+    if (!best || cidrContains(best.cidr, c.cidr)) best = c;
+  }
+  return best;
+}
+
+/**
  * Return true if the given IP address is within the CIDR range.
  */
 export function ipInCidr(ip: string, cidr: string): boolean {

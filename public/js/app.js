@@ -509,6 +509,39 @@ function isUserOrAbove() { return permAtLeast("subnets", "write") || permAtLeast
 function canReviewConflicts() { return permAtLeast("discoveryConflicts", "write"); }
 function canReserveIps() { return permAtLeast("reservations", "write"); }
 function canCreateNetworks() { return permAtLeast("subnets", "write"); }
+// Add Network dialogs: the operator never picks a block — the server places a
+// new network in the most specific block containing its CIDR. This fills a
+// read-only Block field from the typed CIDR (debounced; the containment math
+// stays server-side in src/utils/cidr.ts), so the operator sees where it will
+// land before saving. A stale reply (the CIDR changed while it was in flight)
+// is dropped rather than painted over the newer answer. The field is a
+// preview only; the create response's `block` is what the server chose.
+function wireResolvedBlockField(cidrInputId, blockFieldId) {
+  var input = document.getElementById(cidrInputId);
+  var field = document.getElementById(blockFieldId);
+  if (!input || !field) return;
+  var timer = null;
+  var seq = 0;
+  function show(text) { field.value = text; }
+  input.addEventListener("input", function () {
+    clearTimeout(timer);
+    var cidr = input.value.trim();
+    if (!cidr) { seq++; show(""); return; }
+    timer = setTimeout(async function () {
+      var mine = ++seq;
+      try {
+        var out = await api.subnets.resolveBlock(cidr);
+        if (mine !== seq) return;
+        show(out && out.block
+          ? out.block.name + " (" + out.block.cidr + ")"
+          : (cidr.indexOf("/") < 0 ? "" : "No block contains this network"));
+      } catch (_) {
+        if (mine === seq) show("");
+      }
+    }, 250);
+  });
+}
+
 function canEditSubnet(subnet) {
   if (permAtLeast("subnets", "fullwrite")) return true;
   if (!permAtLeast("subnets", "write")) return false;

@@ -101,6 +101,60 @@ d("POST /api/v1/subnets", () => {
   });
 });
 
+// ─── Placement: no block named ──────────────────────────────────────────────
+
+d("POST /api/v1/subnets without a blockId", () => {
+  it("places the network in the most specific block containing it and says which", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    const site = await createBlock(agent, csrf, "Site", "10.90.0.0/16");
+    const resp = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ cidr: "10.90.4.0/24", name: "Floor 4" });
+    expect(resp.status).toBe(201);
+    expect(resp.body.blockId).toBe(site.id);
+    expect(resp.body.block).toEqual({ id: site.id, name: "Site", cidr: "10.90.0.0/16" });
+  });
+
+  it("falls back to the wider block for a CIDR outside every nested one", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const corp = await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    await createBlock(agent, csrf, "Site", "10.90.0.0/16");
+    const resp = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ cidr: "10.91.0.0/24", name: "Elsewhere" });
+    expect(resp.status).toBe(201);
+    expect(resp.body.blockId).toBe(corp.id);
+  });
+
+  it("400s when no block contains the network", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    const resp = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ cidr: "172.16.0.0/24", name: "Nowhere" });
+    expect(resp.status).toBe(400);
+    expect(resp.body.error).toMatch(/No IP block contains 172\.16\.0\.0\/24/);
+  });
+
+  it("still honours an explicit blockId", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const corp = await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    await createBlock(agent, csrf, "Site", "10.90.0.0/16");
+    const resp = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: corp.id, cidr: "10.90.5.0/24", name: "Pinned" });
+    expect(resp.status).toBe(201);
+    expect(resp.body.blockId).toBe(corp.id);
+  });
+
+  it("GET /subnets/resolve-block previews the same answer, and null for no match", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await createBlock(agent, csrf, "Corp", "10.0.0.0/8");
+    const site = await createBlock(agent, csrf, "Site", "10.90.0.0/16");
+    const hit = await agent.get("/api/v1/subnets/resolve-block?cidr=" + encodeURIComponent("10.90.7.9/24"));
+    expect(hit.status).toBe(200);
+    expect(hit.body.block).toEqual({ id: site.id, name: "Site", cidr: "10.90.0.0/16" });
+    const miss = await agent.get("/api/v1/subnets/resolve-block?cidr=" + encodeURIComponent("172.16.0.0/24"));
+    expect(miss.body).toEqual({ block: null });
+    const junk = await agent.get("/api/v1/subnets/resolve-block?cidr=not-a-cidr");
+    expect(junk.status).toBe(200);
+    expect(junk.body).toEqual({ block: null });
+  });
+});
+
 // ─── POST /api/v1/subnets/next-available ──────────────────────────────────────
 
 d("POST /api/v1/subnets/next-available", () => {
