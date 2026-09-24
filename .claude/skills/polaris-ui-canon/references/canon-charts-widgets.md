@@ -78,6 +78,7 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 - Transpose: `_cpuCoreSeries(samples)` — per-sample vectors into one series per index.
 - Palette: `_cpuCoreColor(i, n)` between `_CPU_CORE_HUE_START` / `_CPU_CORE_HUE_END`.
 - Legend + toggles: `_cpuLegendHTML()` / `_wireCpuLegend()`, chips built by the shared `_seriesChipHTML()`.
+- Second consumer: the SD-WAN tab's **Performance SLA** section (`_renderPerfSlaLegend()`) — ONE member legend for the latency, jitter and packet-loss charts, placed between the section header and the stats line, same chips and gestures (click, double-click isolate, `Show all`). Its hidden set is `_sdwanTabState.hiddenMembers` rather than a container dataset because three containers share it; it resets when the health-check changes. The chart SVGs (`_renderPerfSlaMultiChart()`) draw no legend, so their screenshots name the shown members in the stats header line instead (`_perfSlaShotStats()`).
 
 **Key conventions:**
 - **A switched-off chip has to stay readable, because it is the only route back.** The strikethrough carries the state, not the dimming — `_seriesChipHTML` measured 1.84:1 on morning / 2.01 noon / 2.17 nightfall at `opacity:0.4`, against 6.1-8.5:1 for a live chip. That is under the floor for non-text UI, on a click target. It renders at 0.8 now (3.93-4.99:1) and only the swatch fades far, that being decoration — though not to nothing, since the colour is how the operator finds the series again.

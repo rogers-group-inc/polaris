@@ -459,7 +459,9 @@ toggle on its integration. Three sections: **SD-WAN Members** (the WAN members
 and overlays, grouped by zone, with per-health-check state), **SD-WAN Rules**
 (the service rules in the gate's own priority order, selected member
 highlighted) and **Performance SLA** (latency, jitter and packet-loss charts per
-health check).
+health check). One member legend above the Performance SLA charts drives all
+three: click a member to hide or show it, double-click to show only that
+member, and **Show all** brings everything back.
 
 Each section states **where its data came from and how old it is** — the polling
 method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the
