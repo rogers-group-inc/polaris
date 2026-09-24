@@ -14965,6 +14965,9 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
           '<select id="sdwan-perfsla-select" class="form-input" style="padding:2px 6px;font-size:0.82rem">' + options + '</select>',
           rangeBtns
         ) +
+        // ONE legend for all three charts, above the stats line — hiding a
+        // member hides it on latency, jitter and loss together.
+        '<div id="sdwan-perfsla-legend"></div>' +
         '<div id="sdwan-perfsla-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
         '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Latency (ms)</h5>' +
         '<div id="sdwan-latency-chart" class="sdwan-chart-box"></div>' +
@@ -15066,8 +15069,10 @@ async function _loadPerfSlaForHealthCheck(assetId, hcName, members, range) {
   var jitEl  = document.getElementById("sdwan-jitter-chart");
   var lossEl = document.getElementById("sdwan-loss-chart");
   var stats  = document.getElementById("sdwan-perfsla-stats");
+  var legendEl = document.getElementById("sdwan-perfsla-legend");
   if (!latEl || !members || !members.length) return;
   latEl.textContent = jitEl.textContent = lossEl.textContent = "Loading samples…";
+  if (legendEl) legendEl.innerHTML = "";
   if (stats) stats.textContent = "Loading…";
   var opts = (typeof range === "string" || !range) ? { range: range || "24h" } : range;
   // Stash the active selection on each chart container (canonical convention)
@@ -15131,12 +15136,14 @@ function _renderPerfSlaStats(container, series, data, subject) {
   _renderChartStats(container, total, parts);
 }
 
-// Re-render all three Performance SLA charts from the stashed state (honors the
-// current per-member hidden set). Called on initial load + on legend toggle.
+// Re-render the shared legend and all three Performance SLA charts from the
+// stashed state (honors the current per-member hidden set). Called on initial
+// load + on legend toggle.
 function _renderAllPerfSlaCharts() {
   var st = _sdwanTabState;
   if (!st || !st.perfSla) return;
   var ps = st.perfSla;
+  _renderPerfSlaLegend(document.getElementById("sdwan-perfsla-legend"), ps.series);
   var latEl  = document.getElementById("sdwan-latency-chart");
   var jitEl  = document.getElementById("sdwan-jitter-chart");
   var lossEl = document.getElementById("sdwan-loss-chart");
@@ -15145,21 +15152,81 @@ function _renderAllPerfSlaCharts() {
   if (lossEl) _renderPerfSlaMultiChart(lossEl, ps.series, "packetLoss", { label: "Packet loss", unit: "%", threshold: ps.thr.packetLossThreshold }, ps.copts);
 }
 
-// Toggle one member's visibility across all three Performance SLA charts.
-function _togglePerfSlaMember(label) {
-  var st = _sdwanTabState;
-  if (!st) return;
-  if (!st.hiddenMembers) st.hiddenMembers = new Set();
-  if (st.hiddenMembers.has(label)) st.hiddenMembers.delete(label);
-  else st.hiddenMembers.add(label);
-  _renderAllPerfSlaCharts();
+// The one member legend above the stats line, driving all three charts. Same
+// chips and gestures as the CPU chart's legend (_cpuLegendHTML /
+// _wireCpuLegend): click to hide or show a member, double-click to show ONLY
+// that member, "Show all" once anything is off. A member with no samples in
+// the range gets no chip — there is nothing of it on any chart to toggle.
+function _renderPerfSlaLegend(el, series) {
+  if (!el) return;
+  var hidden = (_sdwanTabState && _sdwanTabState.hiddenMembers) || new Set();
+  var withData = series.filter(function (s) { return s.samples && s.samples.length; });
+  if (!withData.length) { el.innerHTML = ""; return; }
+  var chips = withData.map(function (s) {
+    return _seriesChipHTML(s.label, s.label, s.color, !hidden.has(s.label),
+      "Click to hide " + s.label + " · double-click to show only this member", "sdwan-legend-chip");
+  }).join("");
+  if (hidden.size) {
+    chips += '<span class="sdwan-legend-all" title="Show every member again"' +
+      ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
+  }
+  el.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin:0.25rem 0 0.35rem">' +
+    chips + '</div>';
+  // A double-click also fires two clicks — defer the single-click toggle just
+  // past the double-click window (as _wireCpuLegend does) so an isolate does
+  // not first hide the member it was aimed at.
+  var clickTimer = null;
+  el.querySelectorAll(".sdwan-legend-chip").forEach(function (chip) {
+    var key = chip.getAttribute("data-series");
+    chip.addEventListener("click", function () {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      clickTimer = setTimeout(function () {
+        clickTimer = null;
+        var st = _sdwanTabState;
+        if (!st) return;
+        if (!st.hiddenMembers) st.hiddenMembers = new Set();
+        if (st.hiddenMembers.has(key)) st.hiddenMembers.delete(key);
+        else st.hiddenMembers.add(key);
+        _renderAllPerfSlaCharts();
+      }, 220);
+    });
+    chip.addEventListener("dblclick", function () {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      var st = _sdwanTabState;
+      if (!st) return;
+      st.hiddenMembers = new Set(withData.map(function (s) { return s.label; }).filter(function (l) { return l !== key; }));
+      _renderAllPerfSlaCharts();
+    });
+  });
+  var all = el.querySelector(".sdwan-legend-all");
+  if (all) {
+    all.addEventListener("click", function () {
+      if (_sdwanTabState) _sdwanTabState.hiddenMembers = new Set();
+      _renderAllPerfSlaCharts();
+    });
+  }
 }
 
-// Multi-series gauge chart: one polyline per member (`series[].samples`), a
-// clickable per-member color legend (click to hide/show on every chart), and
-// the shared dashed SLA threshold line. The hidden set lives on
-// `_sdwanTabState.hiddenMembers` so it persists across resize re-renders and is
-// shared by all three charts.
+// Screenshot stats line for a Performance SLA chart. The legend lives outside
+// the chart SVG now, so the capture names the members it shows in the header
+// instead — otherwise the lines in a copied image are anonymous.
+function _perfSlaShotStats() {
+  var base = _statsSummaryFrom("sdwan-perfsla-stats")();
+  var st = _sdwanTabState;
+  if (!st || !st.perfSla) return base;
+  var hidden = st.hiddenMembers || new Set();
+  var shown = st.perfSla.series.filter(function (s) { return s.samples && s.samples.length && !hidden.has(s.label); })
+    .map(function (s) { return s.label; });
+  if (!shown.length) return base;
+  var line = "Members: " + shown.join(", ");
+  return base ? base + " · " + line : line;
+}
+
+// Multi-series gauge chart: one polyline per visible member
+// (`series[].samples`) and the shared dashed SLA threshold line. The legend is
+// NOT drawn here — _renderPerfSlaLegend draws one for all three charts. The
+// hidden set lives on `_sdwanTabState.hiddenMembers` so it persists across
+// resize re-renders and is shared by all three charts.
 function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   opts = opts || {};
   meta = meta || {};
@@ -15176,7 +15243,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   var hidden = (_sdwanTabState && _sdwanTabState.hiddenMembers) || new Set();
   var visible = drawn.filter(function (s) { return !hidden.has(s.label); });
   var W = container.clientWidth || 600, H = 160;
-  var padL = 52, padR = 10, padT = 10, padB = 40; // extra bottom pad for legend
+  var padL = 52, padR = 10, padT = 10, padB = 24; // legend is HTML above the stats line
   var innerW = W - padL - padR, innerH = H - padT - padB;
   var allTs = [];
   drawn.forEach(function (s) { s.values.forEach(function (e) { allTs.push({ timestamp: e.ts }); }); });
@@ -15218,23 +15285,6 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + (Math.round(v * 100) / 100) + '</text>';
   }
   var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
-  // Legend row beneath the x-axis — one clickable swatch+label per member.
-  // Click toggles that member's visibility on every chart; hidden members grey
-  // out + strike through. Each item is a <g class="sdwan-legend-item"> with a
-  // transparent hit rect so the whole chip is the click target.
-  var legendY = padT + innerH + 30;
-  var lx = padL;
-  var legend = '<g font-size="10">' + drawn.map(function (s) {
-    var isHidden = hidden.has(s.label);
-    var w = 16 + s.label.length * 6.5;
-    var item = '<g class="sdwan-legend-item" data-member="' + escapeHtml(s.label) + '" style="cursor:pointer" opacity="' + (isHidden ? "0.4" : "1") + '">' +
-      '<rect x="' + lx + '" y="' + (legendY - 11) + '" width="' + w + '" height="14" fill="transparent"/>' +
-      '<rect x="' + lx + '" y="' + (legendY - 7) + '" width="10" height="6" fill="' + s.color + '"/>' +
-      '<text x="' + (lx + 14) + '" y="' + legendY + '" fill="currentColor"' + (isHidden ? ' text-decoration="line-through"' : '') + '>' + escapeHtml(s.label) + '</text>' +
-      '</g>';
-    lx += w + 8;
-    return item;
-  }).join("") + '</g>';
   var clipId = _chartClipId("sdwanGauge");
   container.innerHTML =
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
@@ -15246,7 +15296,6 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
         thresholdLine +
         seriesSvg +
       '</g>' +
-      legend +
     '</svg>' + CHART_TOOLTIP_HTML;
   container.style.position = "relative";
   container.style.alignItems = "stretch";
@@ -15257,11 +15306,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<div>' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
       '<div>' + escapeHtml(meta.label || metricKey) + ': ' + escapeHtml(target.getAttribute("data-v")) + ' ' + escapeHtml(meta.unit || "") + '</div>';
   });
-  _addChartScreenshotButton(container, "SD-WAN " + (meta.label || metricKey), { yAxis: (meta.label || "") + " (" + (meta.unit || "") + ")", subject: opts.subject, getStats: _statsSummaryFrom("sdwan-perfsla-stats") });
-  // Clickable legend → toggle the member across all three charts.
-  container.querySelectorAll(".sdwan-legend-item").forEach(function (g) {
-    g.addEventListener("click", function () { _togglePerfSlaMember(g.getAttribute("data-member")); });
-  });
+  _addChartScreenshotButton(container, "SD-WAN " + (meta.label || metricKey), { yAxis: (meta.label || "") + " (" + (meta.unit || "") + ")", subject: opts.subject, getStats: _perfSlaShotStats });
   _observeChartResize(container, function (c) { _renderPerfSlaMultiChart(c, series, metricKey, meta, opts); });
 }
 
