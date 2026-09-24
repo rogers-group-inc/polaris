@@ -615,10 +615,12 @@ cannot disagree with it.
 Sizes are read from PostgreSQL's catalog rather than by measuring the data
 directory, which is what keeps the tab instant on a large install — so a figure
 is accurate as of the last `VACUUM`/`ANALYZE`, and the card says so when that
-matters. **"N relations have never been vacuumed or analyzed"** means those
-relations report zero pages whatever they hold and every size shown is
-understated: run `vacuumdb --analyze-in-stages`, which is owed after a restore
-or a PostgreSQL major-version upgrade. **"Hypertable sizing is degraded"** means
+matters. Relations that have never been analyzed report zero pages whatever
+they hold, so the card names how many there are **and how many bytes they
+hide**, and warns only when that is material (over 64 MB or 1% of the
+database) — a few small compressed chunks are normal and get a plain note. The
+fix is `vacuumdb --analyze-only`, which is owed after a restore or a PostgreSQL
+major-version upgrade. **"Hypertable sizing is degraded"** means
 Polaris could not read TimescaleDB's chunk catalog, so the sample tables are
 listed at their parent size — near zero — and their real bytes appear under
 *Unattributed*. Neither condition is left to be inferred from a number that

@@ -204,11 +204,24 @@ directory, which keeps the tab instant on a large install. The trade-off is
 freshness: a figure is accurate as of the last `VACUUM`/`ANALYZE`. Two
 conditions are called out in place rather than left to guess at:
 
-- **"N relations have never been vacuumed or analyzed"** — those relations
-  report zero pages whatever they hold, so every size on the card is
-  understated. This is the normal state immediately after a restore or a
-  PostgreSQL major-version upgrade, which does not carry statistics across. Run
-  `vacuumdb --analyze-in-stages` and reload.
+- **Relations that have never been analyzed** report zero pages whatever they
+  hold, so the sizes leave them out. Autovacuum only analyzes a relation after
+  enough writes, so one nothing writes to — an old compressed TimescaleDB
+  chunk after a PostgreSQL major-version upgrade, say — stays that way until
+  you run `vacuumdb --analyze-only` against the database. The card says how
+  much is missing and how loudly according to how much it is:
+  - **"N relation(s) that have never been analyzed hold about X"** (a
+    warning) — more than 64 MB, or 1% of the database, is left out. Run the
+    `vacuumdb` above and reload.
+  - **"N small relation(s), about X, are not yet analyzed"** (a plain note) —
+    normal on any TimescaleDB install, since every chunk compression leaves a
+    small one behind. Nothing to do.
+  - **"N relations have never been vacuumed or analyzed — too many to size
+    individually"** — the state right after a restore or a major-version
+    upgrade, which does not carry statistics across. Every size may be well
+    short; run the `vacuumdb` above.
+
+  Empty tables are not counted: zero pages is the truth for them.
 - **"Hypertable sizing is degraded"** — Polaris could not read TimescaleDB's
   chunk catalog, so every sample table is listed at its parent size, which is
   near zero, and its real bytes show up under *Unattributed*. The sizes are
