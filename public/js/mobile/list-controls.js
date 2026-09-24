@@ -18,13 +18,21 @@
 (function () {
   function loadPrefs(key, defaults) {
     var out = Object.assign({}, defaults);
+    Object.keys(out).forEach(function (k) { if (Array.isArray(out[k])) out[k] = out[k].slice(); });
     try {
       var raw = localStorage.getItem(key);
       if (raw) {
         var saved = JSON.parse(raw);
         if (saved && typeof saved === "object") {
           Object.keys(defaults).forEach(function (k) {
-            if (typeof saved[k] === typeof defaults[k]) out[k] = saved[k];
+            if (Array.isArray(defaults[k])) {
+              // A multi filter. A lone string is the single-pick shape it had
+              // before it went multi — carry it over as a one-item pick.
+              if (Array.isArray(saved[k])) out[k] = saved[k].filter(function (v) { return typeof v === "string"; });
+              else if (typeof saved[k] === "string" && saved[k]) out[k] = [saved[k]];
+            } else if (typeof saved[k] === typeof defaults[k]) {
+              out[k] = saved[k];
+            }
           });
         }
       }
@@ -108,16 +116,25 @@
    * `opts`: {
    *   sortOptions: [{ key, label, defaultDir }],
    *   sortKey, sortDir,
-   *   filters: [{ key, label, options: [{ value, label }], value }]   (optional)
+   *   filters: [{ key, label, options: [{ value, label }], value, multi }]   (optional)
    *   onApply({ sortKey, sortDir, filters: { <key>: value } })
    * }
    * Choices apply as they are tapped — the sheet is a picker, not a form,
    * so there is no Apply button to forget.
+   *
+   * A filter with `multi: true` holds an ARRAY of values: each tap toggles one
+   * membership, and the selected chips are drawn first, in the order they
+   * were picked, ahead of the rest in their listed order — so what narrows
+   * the list is always the first thing read. An option whose value is ""
+   * ("Any") is the clear button: it reads selected while nothing is picked and
+   * empties the pick when tapped.
    */
   function openSortSheet(opts) {
     closeSortSheet();
     var state = { sortKey: opts.sortKey, sortDir: opts.sortDir, filters: {} };
-    (opts.filters || []).forEach(function (f) { state.filters[f.key] = f.value; });
+    (opts.filters || []).forEach(function (f) {
+      state.filters[f.key] = f.multi ? (Array.isArray(f.value) ? f.value.slice() : []) : f.value;
+    });
 
     var scrim = document.createElement("div");
     scrim.className = "scrim";
@@ -157,8 +174,8 @@
       (opts.filters || []).forEach(function (f) {
         html += '<div class="section-head" style="padding-left:0;padding-right:0;">' + escapeHtml(f.label) + '</div>'
           + '<div class="chip-row wrap" style="padding-left:0;padding-right:0;">';
-        f.options.forEach(function (o) {
-          var sel = state.filters[f.key] === o.value;
+        orderedOptions(f, state.filters[f.key]).forEach(function (o) {
+          var sel = isSelected(f, state.filters[f.key], o.value);
           html += '<button type="button" class="chip' + (sel ? ' selected' : '') + '" data-filter="' + escapeHtml(f.key) + '" data-value="' + escapeHtml(o.value) + '">'
             + (sel ? '<svg viewBox="0 0 24 24"><use href="#i-check"/></svg>' : '') + escapeHtml(o.label) + '</button>';
         });
@@ -197,7 +214,14 @@
       }
       var f = t.closest("[data-filter]");
       if (f) {
-        state.filters[f.getAttribute("data-filter")] = f.getAttribute("data-value");
+        var fkey = f.getAttribute("data-filter");
+        var fval = f.getAttribute("data-value");
+        var spec = (opts.filters || []).find(function (x) { return x.key === fkey; });
+        if (spec && spec.multi) {
+          state.filters[fkey] = toggleValue(state.filters[fkey], fval);
+        } else {
+          state.filters[fkey] = fval;
+        }
         paint(); apply();
       }
     });
@@ -205,6 +229,40 @@
     scrim.addEventListener("click", closeSortSheet);
     PolarisTabs.attachSwipeToDismiss(sheet, closeSortSheet);
     paint();
+  }
+
+  /** Whether option `value` is selected under filter `f`'s current pick. */
+  function isSelected(f, current, value) {
+    if (!f.multi) return current === value;
+    var arr = Array.isArray(current) ? current : [];
+    if (value === "") return arr.length === 0;      // "Any" reads selected while nothing is picked
+    return arr.indexOf(value) !== -1;
+  }
+
+  /**
+   * A multi filter's options with the picked ones first, in pick order, then
+   * the rest as listed. The "" (Any) option stays first whatever is picked, so
+   * the clear button never moves. A single-value filter keeps its listed order.
+   */
+  function orderedOptions(f, current) {
+    if (!f.multi) return f.options;
+    var arr = Array.isArray(current) ? current : [];
+    var byValue = {};
+    f.options.forEach(function (o) { byValue[o.value] = o; });
+    var out = [];
+    f.options.forEach(function (o) { if (o.value === "") out.push(o); });
+    arr.forEach(function (v) { if (v !== "" && byValue[v]) out.push(byValue[v]); });
+    f.options.forEach(function (o) { if (o.value !== "" && arr.indexOf(o.value) === -1) out.push(o); });
+    return out;
+  }
+
+  /** Toggle `value` in a multi filter's pick; "" (Any) clears it. */
+  function toggleValue(current, value) {
+    var arr = Array.isArray(current) ? current.slice() : [];
+    if (value === "") return [];
+    var i = arr.indexOf(value);
+    if (i === -1) arr.push(value); else arr.splice(i, 1);
+    return arr;
   }
 
   function closeSortSheet() {
@@ -224,5 +282,8 @@
     updateSortChip: updateSortChip,
     openSortSheet: openSortSheet,
     closeSortSheet: closeSortSheet,
+    // Exposed for tests and any caller wanting the same picked-first order.
+    orderedOptions: orderedOptions,
+    toggleValue: toggleValue,
   };
 })();
