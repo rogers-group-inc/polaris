@@ -21,12 +21,17 @@ serial — describes.
 ## The list
 
 **Columns:** Hostname · IP Address · Serial Number · Type · State · **Status** ·
-**Sources** · Description · Asset Tag · Manufacturer · Model · OS / Firmware ·
+**Sources** · Description · Tags · Asset Tag · Manufacturer · Model · OS / Firmware ·
 MAC Address · Assigned To · Purchase Order · DNS Name · Latitude · Longitude ·
 Last Seen.
 
 Columns are sortable, inline-filterable, resizable and hideable. **Column order
 is per view tab; widths and visibility are per screen.**
+
+**Tags** lists the asset's tags. Its filter matches any single tag containing
+the text (case doesn't matter), so `prod` finds `Production`; **Is empty** finds
+untagged assets. Sorting orders by each asset's alphabetically-first tag, and
+untagged assets sit at the bottom whichever way you sort.
 
 ### Two columns worth explaining
 
