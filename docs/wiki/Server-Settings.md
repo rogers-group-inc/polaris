@@ -138,11 +138,27 @@ Images are up to 100 MiB and live on the host under `data/firmware` (outside
 the database backup, like the agent binaries; a Docker install keeps them in
 the state volume). An nginx-fronted install needs the shipped config's
 firmware location block, or the upload is rejected at the edge with a 413.
-An install whose nginx is managed from the **Web Server** tab receives it on
-the next update. One that never adopted management, or whose nginx file was
-edited by hand since, is left alone by the updater: adopt on the Web Server
-tab to render the current config. A load balancer in front of nginx has its
-own request-body limit, which must allow 100 MiB as well.
+An update installs it only on an install whose nginx is managed from the
+**Web Server** tab and has not been edited by hand since.
+
+**Known problem on systemd installs (the split-role layout):** neither the
+update nor the Web Server tab's **Save & Apply** can currently rewrite nginx
+there, and Save & Apply shows *Internal server error*. Until that is fixed, add
+the location by hand as root: back up `/etc/nginx/conf.d/polaris.conf`, paste
+this inside the `server { }` block after `location / { … }`, then run
+`nginx -t && systemctl reload nginx`.
+
+```
+  location = /api/v1/server-settings/firmware/images {
+    client_max_body_size 100m;
+    proxy_request_buffering off;
+    proxy_pass http://127.0.0.1:3000;
+  }
+```
+
+Use the same address and port as your file's own `location /` block. A load
+balancer in front of nginx has its own request-body limit, which must allow
+100 MiB as well.
 
 ### Device logins
 
