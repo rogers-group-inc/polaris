@@ -40,6 +40,14 @@ interface FakeSwitchState {
   afterRebootVersion: { osVersion: string; build: string };
   /** ms the switch stays down once it drops. */
   downForMs: number;
+  /**
+   * "classic": 302 → / with APSCOOKIE on success, 302 → /login and no cookie
+   * on a bad password (the fortiupgrade captures). "fsw766": FortiSwitchOS
+   * 7.6.6 as seen on prod — a GOOD password answers 302 → /login with a quoted
+   * APSCOOKIE_<n> and an ssession cookie, and a BAD one still hands out an
+   * ssession cookie, so neither the redirect nor "a cookie was set" decides.
+   */
+  loginStyle: "classic" | "fsw766";
 }
 
 function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -78,12 +86,23 @@ function makeFakeSwitch(state: FakeSwitchState): Server {
     if (state.down) { req.socket.destroy(); return; }
     const url = new URL(req.url ?? "/", "http://x");
     const cookie = req.headers.cookie ?? "";
-    const authed = /APSCOOKIE=ok/.test(cookie);
+    const authed = /APSCOOKIE=ok/.test(cookie) || /APSCOOKIE_3895079917="Era%3D0%26Payload%3Dgood[^"]*"/.test(cookie);
     state.calls.push(`${req.method} ${url.pathname}`);
 
     if (req.method === "POST" && url.pathname === "/login") {
       const f = parseForm((await readBody(req)).toString());
-      if (f.username === "admin" && f.password === state.password) {
+      const good = f.username === "admin" && f.password === state.password;
+      if (state.loginStyle === "fsw766") {
+        res.writeHead(302, {
+          "set-cookie": good
+            ? [
+                'APSCOOKIE_3895079917="Era%3D0%26Payload%3Dgood%2BNK1F%0A%26AuthHash%3DEUSc%3D%0A"; path=/; HttpOnly; SameSite=Strict; Secure',
+                "ssession=Nu0igICn-authed; Path=/; secure; HttpOnly; SameSite=Strict",
+              ]
+            : ["ssession=Nu0igICn-anonymous; Path=/; secure; HttpOnly; SameSite=Strict"],
+          location: "/login",
+        });
+      } else if (good) {
         res.writeHead(302, { "set-cookie": "APSCOOKIE=ok; path=/; Domain=127.0.0.1", location: "/" });
       } else {
         res.writeHead(302, { location: "/login" });
@@ -149,6 +168,7 @@ function freshState(): FakeSwitchState {
     progressPolls: 0, compat: { downgrade: "false", check_signature: "true", inc_adminpw: "true", inc_snmppw: "true" },
     uploads: [], calls: [], dropOnDeploy: true, uploadStatus: "success", pollsBeforeDown: 3,
     afterRebootVersion: { osVersion: "7.6.8", build: "1164" }, downForMs: 1500,
+    loginStyle: "classic",
   };
 }
 
@@ -221,6 +241,17 @@ describe("FortiSwitch HTTPS engine — the happy path", () => {
     expect((c.progress[0] as { erase: number }).erase).toBe(100);
   });
 
+  it("FortiSwitchOS 7.6.6: a GOOD password answers 302 → /login with its session cookies, and the upgrade runs", async () => {
+    // Prod, 2026-09-25: this exact shape was read as "rejected the username or
+    // password" because the redirect target was treated as the verdict.
+    state.loginStyle = "fsw766";
+    const c = ctx();
+    const res = await upgradeFortiSwitch(c);
+    expect(res.outcome, JSON.stringify({ res, logs: c.logs })).toBe("upgraded");
+    expect(res.verifiedVersion).toBe("7.6.8 build1164");
+    expect(state.uploads).toHaveLength(1);
+  });
+
   it("does not treat a dropped socket on deploy as a failure, and a 200 there is equally fine", async () => {
     state.dropOnDeploy = false;
     const res = await upgradeFortiSwitch(ctx());
@@ -243,10 +274,18 @@ describe("FortiSwitch HTTPS engine — refusals", () => {
     expect(state.uploads).toHaveLength(0);
   });
 
-  it("names a bad password", async () => {
+  it("names a bad password, and what the switch answered", async () => {
     const res = await upgradeFortiSwitch(ctx({ credential: { username: "admin", password: "wrong" } }));
     expect(res.outcome).toBe("failed");
-    expect(res.error).toMatch(/rejected the username or password/);
+    expect(res.error).toMatch(/rejected the username or password — the login set no session cookie \(HTTP 302 → \/login\)/);
+  });
+
+  it("FortiSwitchOS 7.6.6: a bad password still gets a cookie, so the session probe is what refuses it", async () => {
+    state.loginStyle = "fsw766";
+    const res = await upgradeFortiSwitch(ctx({ credential: { username: "admin", password: "wrong" } }));
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/rejected the username or password — the login answered HTTP 302 → \/login and a page that needs a session answered HTTP 302 → \/login/);
+    expect(state.uploads).toHaveLength(0);
   });
 
   it("says the web UI is unreachable when nothing listens", async () => {

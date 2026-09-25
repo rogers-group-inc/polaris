@@ -171,6 +171,24 @@ releases at once: a flash that went wrong is an incident. An unmonitored device 
 so nothing is waited for. Pinned by the "keeps the maintenance window open" block in
 `tests/unit/firmwareUpgradeGates.test.ts`.
 
+### Follow-on (2026-09-25): a switch login is judged by the session, never the redirect
+
+The first prod FortiSwitch run failed at sign-in with "the switch rejected the username or
+password" while the same credentials worked in a browser and in the fortiupgrade CLI. A curl
+of the engine's exact request showed why: FortiSwitchOS 7.6.6 (`Server: PRODUCT/7.7.7`)
+answers a GOOD password with `302 Location: /login`, setting a quoted `APSCOOKIE_<n>`
+(carrying an `AuthHash`) and an `ssession` cookie. The port had added a check fortiupgrade
+never had — "a redirect to /login is a refusal" — and that check is right for every OTHER
+request (an expired session is sent to the login form) and wrong for the login itself.
+`fortiswitchHttps.ts → switchLogin` now matches fortiupgrade: a session cookie must be set,
+then a page that needs a session (`GET /`) must not bounce to the form; and a refusal quotes
+what the switch answered ("the login answered HTTP 302 → /login and a page that needs a
+session answered HTTP 302 → /login") so the next firmware's quirk is readable from the run
+log. A bad password on 7.6.6 still gets an anonymous `ssession`, which is why "a cookie was
+set" alone is not the verdict either. Pinned by the `fsw766` cases in
+`tests/unit/fortiswitchHttpsEngine.test.ts`; the happy case fails against the old code with
+the prod message.
+
 ### What is deliberately not here
 
 The bulk / fleet run fortiupgrade's scheduler performs (deepest-first ordering, concurrency);
