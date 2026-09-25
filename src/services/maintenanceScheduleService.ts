@@ -90,9 +90,13 @@ const HISTORY_RETENTION_DAYS = 400;
  * same reason.
  */
 export const MAINTENANCE_HOLD_KINDS = {
-  "agent-upgrade":   "Polaris Agent upgrade",
-  "agent-reinstall": "Polaris Agent reinstall",
-  "agent-uninstall": "Polaris Agent uninstall",
+  "agent-upgrade":    "Polaris Agent upgrade",
+  "agent-reinstall":  "Polaris Agent reinstall",
+  "agent-uninstall":  "Polaris Agent uninstall",
+  // A firmware flash on a switch or access point (business rule 87): the
+  // device reboots, and everything behind a switch goes dark with it — a hold
+  // window has no schedule row, so it suppresses dependents (rule 38).
+  "firmware-upgrade": "Firmware upgrade",
 } as const;
 
 export type MaintenanceHoldKind = keyof typeof MAINTENANCE_HOLD_KINDS;
@@ -110,10 +114,18 @@ export type MaintenanceHoldKind = keyof typeof MAINTENANCE_HOLD_KINDS;
  * of why.
  */
 const HOLD_TTL_MINUTES: Record<MaintenanceHoldKind, number> = {
-  "agent-upgrade":   20,
-  "agent-reinstall": 30,
-  "agent-uninstall": 20,
+  "agent-upgrade":    20,
+  "agent-reinstall":  30,
+  "agent-uninstall":  20,
+  // A FortiSwitch flash is ~15 min (erase, write, verify) and the reboot up
+  // to another 15 before the UI answers again; verify retries ride after.
+  "firmware-upgrade": 45,
 };
+
+/** Exposed for the tests that pin each kind's cap. */
+export function holdTtlMinutes(kind: MaintenanceHoldKind): number {
+  return HOLD_TTL_MINUTES[kind];
+}
 
 // ─── Input validation ────────────────────────────────────────────────────────
 

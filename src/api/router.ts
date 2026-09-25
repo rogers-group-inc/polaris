@@ -26,6 +26,7 @@ import serverSettingsRouter from "./routes/serverSettings.js";
 import proxySettingsRouter from "./routes/proxySettings.js";
 import mibsRouter from "./routes/mibs.js";
 import manufacturerProfilesRouter from "./routes/manufacturerProfiles.js";
+import { firmwareRouter, firmwareAssetRouter } from "./routes/firmware.js";
 import deviceIconsRouter from "./routes/deviceIcons.js";
 import searchRouter from "./routes/search.js";
 import mapRouter from "./routes/map.js";
@@ -168,6 +169,11 @@ router.use("/integrations", requirePermission("integrations", "read"), integrati
 // in the default role matrix). Custom-type CRUD lives here; the eight
 // built-ins are seeded as isProtected=true and reject rename/delete.
 router.use("/asset-types", assetTypesRouter);
+// The per-asset firmware upgrade surface (business rule 87) mounted BEFORE
+// /assets so "firmware-upgrade" is never read as a sub-resource of the assets
+// router. Gated on the `firmware` key per route: read for availability and
+// run history, fullwrite to start a flash.
+router.use("/assets/:id/firmware-upgrade", firmwareAssetRouter);
 router.use("/assets", assetsRouter);
 router.use("/log-flag-rules", logFlagRulesRouter);
 router.use("/events", eventsRouter);
@@ -258,6 +264,11 @@ router.use("/server-settings/mibs", mibsRouter);
 // write on edits). Mounted before the blanket so reads reach roles that
 // have manufacturerProfiles=read but not serverSettingsSystem.
 router.use("/server-settings/manufacturer-profiles", manufacturerProfilesRouter);
+// Same precedent for the firmware repository (business rule 87): its own
+// `firmware` key per route (read on the tree / images / bindings / runs,
+// write on uploads, deletes and bindings), mounted before the blanket so a
+// role holding only `firmware` reaches the Repository tab.
+router.use("/server-settings/firmware", firmwareRouter);
 // nginx GUI surface mounted BEFORE /server-settings so the proxy-mode gate
 // and explicit per-route serverSettingsSystem guards (read on GET, write
 // on PUT/apply/rotate/adopt) apply. Apply + rotate are high-blast-radius —

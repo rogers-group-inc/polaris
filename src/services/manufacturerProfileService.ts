@@ -26,6 +26,7 @@ import { isKnownAssetType, normalizeAssetTypeName } from "../utils/assetTypes.js
 import { validateModelParse } from "../utils/modelParse.js";
 import { findUnsafeRegexConstruct } from "../utils/regexSafety.js";
 import { validateHttpCheckDefinition } from "./credentialService.js";
+import { isDeviceLoginCredential, type HttpAuthConfig } from "../utils/httpCheck.js";
 import { logger } from "../utils/logger.js";
 import {
   normalizeStateMap,
@@ -288,10 +289,18 @@ async function httpFieldsForWrite(
     // Verified at save so a mistyped or deleted id fails in the form rather
     // than once per asset per interval, which is the same reasoning behind
     // compiling the regex here.
-    const cred = await prisma.credential.findUnique({ where: { id: credId }, select: { id: true, type: true } });
+    const cred = await prisma.credential.findUnique({ where: { id: credId }, select: { id: true, type: true, config: true } });
     if (!cred) throw new AppError(400, "The selected HTTP credential no longer exists");
     if (cred.type !== "http") {
       throw new AppError(400, "An HTTP check widget needs an HTTP-typed credential");
+    }
+    // A device admin login (authMode "form") is a switch or AP's web-UI
+    // password, held for the firmware repository (business rule 87). It is not
+    // an HTTP auth scheme: a check has no login form to post it to, and the
+    // only thing the probe could do with it is guess Basic and send the
+    // device's admin password in a header to whatever answered.
+    if (isDeviceLoginCredential((cred.config ?? {}) as HttpAuthConfig)) {
+      throw new AppError(400, "A device admin login (form) credential cannot authenticate an HTTP check — pick a bearer, basic or digest credential");
     }
   }
   return { httpCheck: check, credentialId: credId };

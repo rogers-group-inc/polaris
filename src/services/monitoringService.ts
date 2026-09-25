@@ -4361,7 +4361,11 @@ export async function probeHttp(
 
   // Bearer and Basic are computable up front. Digest is not — its response hash
   // is keyed on a server-issued nonce, so the first request goes out bare and
-  // the challenge comes back on the 401.
+  // the challenge comes back on the 401. "form" (a device admin login held for
+  // the firmware repository, business rule 87) deliberately falls through to
+  // NO header: it is not an HTTP auth scheme, the widget writer refuses it at
+  // save time, and guessing Basic would post the device's admin password to
+  // whatever answered.
   let preAuth: string | null = null;
   if (authMode === "bearer" && typeof authCfg.apiToken === "string" && authCfg.apiToken) {
     preAuth = "Bearer " + authCfg.apiToken;

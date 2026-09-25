@@ -465,6 +465,10 @@ model Credential {
   // credential doesn't block a stuck agent install — operator falls
   // back to DELETE /assets/:id/agent?force=true in that case.
   managedAgents                   ManagedAgent[]             @relation("AgentInstallCredential")
+  // Back-relation for the firmware repository's device-admin bindings
+  // (business rule 87). SetNull on delete: a binding whose credential is gone
+  // is SKIPPED by resolution and falls through to the next scope.
+  firmwareBindings                FirmwareCredentialBinding[] @relation("FirmwareBindingCredential")
 
   @@index([type])
   @@index([createdBy])
@@ -1237,6 +1241,7 @@ model Asset {
   managedAgent       ManagedAgent?
   maintenanceWindows AssetMaintenanceWindow[]
   maintenanceHolds   MaintenanceHold[]
+  firmwareUpgradeRuns FirmwareUpgradeRun[]
   topologyLayouts    TopologyLayout[]
   processConnections AssetProcessConnection[]
 
@@ -5380,9 +5385,10 @@ model MaintenanceSchedule {
 model MaintenanceHold {
   id        String   @id @default(uuid())
   assetId   String
-  // "agent-upgrade" | "agent-reinstall" | "agent-uninstall". Part of the
-  // uniqueness so two different operations on one asset cannot lose each
-  // other's hold, and re-running the same one extends rather than stacks.
+  // "agent-upgrade" | "agent-reinstall" | "agent-uninstall" |
+  // "firmware-upgrade" (business rule 87). Part of the uniqueness so two
+  // different operations on one asset cannot lose each other's hold, and
+  // re-running the same one extends rather than stacks.
   kind      String
   // Snapshotted onto the window's scheduleName for the chart band and the
   // asset's Maintenance tab — "Polaris Agent upgrade", not a kind slug.
@@ -5396,6 +5402,96 @@ model MaintenanceHold {
   @@unique([assetId, kind])
   @@index([expiresAt])
   @@map("maintenance_holds")
+}
+
+// ─── Firmware repository (business rule 87) ───────────────────────────────────
+// Server Settings → Repository: firmware images for switches and access points,
+// filed under a manufacturer › device type › model node, with a device-admin
+// login bound at whichever of those three scopes fits, and one run row per
+// flash. Matching is by PLATFORM (the image header's serial-prefix token), the
+// model node is only where the operator files the image.
+
+// One uploaded `.out`. The bytes live on disk under FIRMWARE_DIR (data/firmware,
+// never the public uploads dir); the row carries identity and placement.
+// A model node holds at most one `primary` and one `backup` image — the two
+// partial unique indexes in migration 20260925000000 are what enforce the
+// two-image cap, since Prisma cannot express a partial unique.
+model FirmwareImage {
+  id           String   @id @default(uuid())
+  manufacturer String   // alias-canonicalised, the same spelling Asset.manufacturer carries
+  assetType    String   // "switch" | "access_point" — CHECK in the migration; not the whole registry
+  model        String   // tree placement only (an FMG-discovered switch may carry the literal "FortiSwitch")
+  platform     String?  // header token, e.g. S108FF / FP231K — the SERIAL PREFIX it fits; null = unrecognised, never offered
+  versionMajor Int?
+  versionMinor Int?
+  versionPatch Int?
+  build        Int?
+  versionLabel String   // "7.6.8 build1164", or "7 build1164" from a filename-only parse
+  parsedFrom   String   // "header" | "filename"
+  role         String   @default("primary") // "primary" | "backup" — the new upload is primary, the displaced primary becomes backup ("swapping" only inside the make-primary transaction)
+  filename     String   // original upload name
+  sizeBytes    Int      // ≤ 104857600 (the FortiSwitch upload endpoint's own ceiling)
+  sha256       String   @unique
+  storagePath  String   // relative to FIRMWARE_DIR: "<id>.out"
+  notes        String?  @db.Text
+  uploadedBy   String?
+  uploadedAt   DateTime @default(now())
+
+  runs FirmwareUpgradeRun[]
+
+  @@index([manufacturer, assetType, platform]) // the per-asset candidate lookup
+  @@index([manufacturer, assetType, model])    // the tree
+  @@map("firmware_images")
+}
+
+// Which device-admin login (an `http` Credential in authMode "form") an
+// upgrade signs in with. Three scopes — manufacturer-wide (assetType null),
+// device type (model null), model — and the most specific one with a live
+// credential wins. `model` requires `assetType` (CHECK); one row per scope
+// (three partial unique indexes). Prisma cannot express either.
+model FirmwareCredentialBinding {
+  id           String      @id @default(uuid())
+  manufacturer String
+  assetType    String?     // null = manufacturer-wide
+  model        String?     // non-null only with assetType
+  credentialId String?
+  credential   Credential? @relation("FirmwareBindingCredential", fields: [credentialId], references: [id], onDelete: SetNull)
+  createdBy    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([manufacturer, assetType, model])
+  @@map("firmware_credential_bindings")
+}
+
+// One flash. Identity is snapshotted (platform, versions) so history survives
+// the image being rotated out. At most one queued/running row per asset
+// (partial unique index in the migration) — the concurrency guard's last line.
+model FirmwareUpgradeRun {
+  id              String         @id @default(uuid())
+  assetId         String
+  asset           Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  imageId         String?
+  image           FirmwareImage? @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  platform        String
+  fromVersion     String?
+  toVersion       String
+  engine          String         // "fortiswitch-https" | "fortiap-https"
+  status          String         @default("queued") // queued | running | succeeded | failed | unverified
+  stage           String?        // preflight | staging | compat | deploying | rebooting | verifying
+  progress        Json?          // { erase, write, verify, restart, curStep, totStep, lastMsgAt }
+  log             Json           @default("[]") // [{ t, level, msg }], capped at 500 lines
+  result          String?        // upgraded | already-current | failed | unverified
+  error           String?        @db.Text
+  verifiedVersion String?        // what the device reported after it came back; NEVER written onto Asset.osVersion
+  startedBy       String
+  heartbeatAt     DateTime?
+  startedAt       DateTime       @default(now())
+  finishedAt      DateTime?
+
+  @@index([assetId, startedAt])
+  @@index([status])
+  @@map("firmware_upgrade_runs")
 }
 
 // One realized maintenance window per (asset, holder), where a holder is a
