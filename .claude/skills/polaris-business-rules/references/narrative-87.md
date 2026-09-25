@@ -189,6 +189,21 @@ set" alone is not the verdict either. Pinned by the `fsw766` cases in
 `tests/unit/fortiswitchHttpsEngine.test.ts`; the happy case fails against the old code with
 the prod message.
 
+### Follow-on (2026-09-25): flash progress is a fraction, not a percent
+
+The same prod switch (S124FF, 7.6.6 → 7.6.8) then flashed with the card reading "Erasing
+flash 1%" four minutes in, a sliver on "Writing image 0%", "step 6 of 40", and "Verifying
+image" never lighting before the card jumped to Rebooting. The switch reports each stage as
+a **0..1 fraction** — erase an exact 1 once done, the others long decimals — which
+fortiupgrade's capture had recorded and the port had not: a finished erase drew as 1%, and
+because the card marks the next row active only at 100, write and verify never became active
+at all. `fortiswitchHttps.ts → switchStatus` now converts to percent (clamped, one decimal)
+at the one place the device is read, so `FirmwareProgress` stays a percent everywhere else.
+The step counter is dropped from the card: fortiupgrade saw it pinned at 6/40 for a whole
+nine-minute flash, and so did prod. The fake switch in `fortiswitchHttpsEngine.test.ts` and
+`scripts/mock-firmware-devices.mjs` now report fractions and a pinned 6/40 like the real one;
+the happy-path test fails against the old engine (`expected 1 to be 100`).
+
 ### What is deliberately not here
 
 The bulk / fleet run fortiupgrade's scheduler performs (deepest-first ordering, concurrency);

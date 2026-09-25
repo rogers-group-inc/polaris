@@ -6645,7 +6645,9 @@ function _fwProgressHTML(run) {
   // The device answered its web UI; the maintenance window stays open until
   // Polaris's own monitoring probe answers too (the runner's last stage).
   if (idx >= order.indexOf("recovering")) rows += _fwStageRow("Waiting for monitoring to answer", null, "is-active");
-  var step = (typeof p.curStep === "number" && typeof p.totStep === "number") ? ' · step ' + p.curStep + ' of ' + p.totStep : '';
+  // No "step N of M": the switch's counter sat at 6/40 for an entire flash on
+  // prod (and in fortiupgrade's capture) — it only ever misled.
+  var step = '';
   return '<div id="asset-fw-progress">' +
     '<div style="font-size:0.85rem;margin:0.3rem 0 0.5rem">Stage: <strong>' + escapeHtml(_FW_STAGE_LABELS[stage] || stage || "starting") + '</strong>' + escapeHtml(step) +
       (run && run.startedAt ? ' <span style="color:var(--color-text-tertiary)">· started ' + escapeHtml(timeAgo(run.startedAt)) + '</span>' : '') + '</div>' +

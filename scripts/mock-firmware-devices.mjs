@@ -137,13 +137,15 @@ function fortiSwitch(dev) {
           req.socket.destroy();
           return;
         }
+        // A real switch reports each stage as a 0..1 FRACTION — erase an exact
+        // 1 once done, the others long decimals — and pins cur_step/tot_step
+        // at 6/40 the whole time. Mimic both.
         const frac = t / SWITCH_FLASH_MS;
-        const erase = Math.min(100, Math.round(frac * 300));
-        const write = Math.min(100, Math.max(0, Math.round((frac - 0.33) * 300)));
-        const verify = Math.min(100, Math.max(0, Math.round((frac - 0.66) * 300)));
-        const step = erase < 100 ? 1 : write < 100 ? 2 : 3;
+        const erase = frac >= 0.33 ? 1 : frac / 0.33;
+        const write = Math.min(1, Math.max(0, (frac - 0.33) / 0.33));
+        const verify = Math.min(1, Math.max(0, (frac - 0.66) / 0.34));
         res.writeHead(200, { "content-type": "application/json" });
-        return res.end(JSON.stringify({ msg: "Upgrade is done successfully!", status: 0, erase_progress: erase, write_progress: write, verify_progress: verify, restart_progress: 0, cur_step: step, tot_step: 4 }));
+        return res.end(JSON.stringify({ msg: "Upgrade is done successfully!", status: 0, erase_progress: erase, write_progress: write, verify_progress: verify, restart_progress: 0, cur_step: 6, tot_step: 40 }));
       }
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify({ os_version: dev.osVersion, build: dev.build, serial_number: dev.serial, model: dev.model, hostname: dev.hostname, admin_timeout: 5, msg: "", status: 0 }));
