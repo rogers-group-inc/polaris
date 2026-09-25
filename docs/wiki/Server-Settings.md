@@ -115,7 +115,9 @@ device.
 
 **A model keeps two images.** Uploading a new one makes it the **primary**;
 the current primary becomes the **backup**; the previous backup is removed.
-**Make primary** swaps the two. Deleting the primary promotes the backup. The
+**Make primary** swaps the two (the rows stay primary-first, so the promoted row
+highlights for a moment and the toast names the new backup). Deleting the
+primary promotes the backup. The
 same bytes cannot be filed twice, and an image a device is flashing right now
 cannot be removed by anything.
 

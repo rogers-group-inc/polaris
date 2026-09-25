@@ -4137,6 +4137,8 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 .fw-role-pill.is-primary { border-color: var(--color-success); color: var(--color-success); }
 .fw-role-pill.is-backup { color: var(--color-text-tertiary); }
+.fw-images tr.fw-row-flash { animation: fw-row-flash 2.4s ease-out; }
+@keyframes fw-row-flash { from { background: color-mix(in srgb, var(--color-success) 22%, transparent); } to { background: transparent; } }
 .fw-engine-pill { color: var(--color-text-tertiary); }
 .fw-images td { font-size: 0.82rem; }
 .fw-images .fw-file { font-family: var(--font-mono); font-size: 0.76rem; }

@@ -487,8 +487,18 @@
   async function promoteImage(id, label) {
     try {
       await api.serverSettings.promoteFirmwareImage(id);
-      toast(label + " is now the primary image", "success");
       await reload();
+      // Rows are drawn primary-first, so a swap moves only the two version
+      // strings — every pill and verb stays put and the redraw is easy to
+      // miss. Flag the promoted row and say who became the backup.
+      var row = document.querySelector('tr[data-image-id="' + id + '"]');
+      var demoted = null;
+      if (row) {
+        row.classList.add("fw-row-flash");
+        var backupVerb = row.parentNode ? row.parentNode.querySelector(".fw-image-promote") : null;
+        demoted = backupVerb ? backupVerb.getAttribute("data-label") : null;
+      }
+      toast(label + " is now the primary image" + (demoted ? "; " + demoted + " is the backup" : ""), "success");
     } catch (err) { toast(err && err.message ? err.message : "Failed", "error"); }
   }
 
