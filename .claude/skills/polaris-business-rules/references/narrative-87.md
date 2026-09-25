@@ -151,6 +151,26 @@ its own marker, informational, `!= current`, scoped to switches + access points,
 Anchor is `lastSystemInfoAt` (falling back to the probe tick) because that pass and discovery
 are what refresh `osVersion`; `METRIC_STREAM` says `systemInfo` for the same reason.
 
+### Follow-on (2026-09-25): the hold outlives the engine until monitoring answers
+
+The first real run on prod (a FortiAP 234F, 7.4.6 → 7.6.5) confirmed the new version and
+released its hold, and the next two SNMP polls then missed — the response-time chart shows
+the shaded window ending and two zero readings just outside it. Nothing was wrong: the
+engine proves the device back over its **web UI** (the old session refused, a fresh login
+reading the version), and the AP's HTTPS came up minutes before its SNMP agent, which is
+what Polaris's monitoring polls. Releasing on "the engine is done" was releasing on the
+wrong service. `firmwareUpgradeService.ts → holdUntilMonitorAnswers` now keeps the hold
+open after an `upgraded` or `unverified` outcome until the first successful
+`AssetMonitorSample` recorded after the engine finished — the signal the status machine and
+every automation actually read — with the run in a visible `recovering` stage ("Waiting for
+monitoring to answer"). It reads the sample table rather than asking the monitor, because on
+a split-role host another process writes it. Capped at `recoveryWaitMs` (10 min) so a device
+that never answers is judged normally rather than silenced, and the hold's own `expiresAt` is
+pushed past the cap so the 45-minute TTL cannot lapse mid-wait. A `failed` run still
+releases at once: a flash that went wrong is an incident. An unmonitored device has no hold,
+so nothing is waited for. Pinned by the "keeps the maintenance window open" block in
+`tests/unit/firmwareUpgradeGates.test.ts`.
+
 ### What is deliberately not here
 
 The bulk / fleet run fortiupgrade's scheduler performs (deepest-first ordering, concurrency);
