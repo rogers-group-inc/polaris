@@ -4140,6 +4140,24 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .fw-images tr.fw-row-flash { animation: fw-row-flash 2.4s ease-out; }
 @keyframes fw-row-flash { from { background: color-mix(in srgb, var(--color-success) 22%, transparent); } to { background: transparent; } }
 .fw-engine-pill { color: var(--color-text-tertiary); }
+/* A node's "N assets" is a button that opens the device-list slide-in. It
+   reads as the meta text it replaced until hovered, so the header stays calm. */
+.fw-asset-count {
+  background: none; border: 0; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px;
+}
+.fw-asset-count:hover, .fw-asset-count:focus-visible { color: var(--color-accent); text-decoration-style: solid; }
+.fw-asset-row {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.5rem 0.6rem; margin-bottom: 0.4rem; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: 0.35rem; background: var(--color-surface);
+}
+.fw-asset-row:hover, .fw-asset-row:focus-visible { border-color: var(--color-accent); }
+.fw-asset-row-main { flex: 1; min-width: 0; }
+.fw-asset-row-name { font-weight: 500; color: var(--color-accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fw-asset-row-sub { font-size: 0.78rem; color: var(--color-text-secondary); margin-top: 0.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fw-asset-row-fw { display: flex; flex-direction: column; align-items: flex-end; gap: 0.2rem; flex-shrink: 0; }
+.fw-asset-row-version { font-family: var(--font-mono); font-size: 0.74rem; color: var(--color-text-secondary); }
 .fw-images td { font-size: 0.82rem; }
 .fw-images .fw-file { font-family: var(--font-mono); font-size: 0.76rem; }
 .fw-binding-editor {

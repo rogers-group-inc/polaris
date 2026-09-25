@@ -1213,6 +1213,7 @@ const api = {
     // is one read; images are filed under a model node; a binding names the
     // device-admin login at a manufacturer, device-type or model scope.
     getFirmwareTree:      ()     => request("GET",    "/server-settings/firmware/tree"),
+    listFirmwareNodeAssets: (params) => request("GET", "/server-settings/firmware/assets" + toQuery(params)),
     uploadFirmwareImage:  (file, fields, onProgress) => {
       const formData = new FormData();
       // Text fields BEFORE the file so multer has the scoping fields when it

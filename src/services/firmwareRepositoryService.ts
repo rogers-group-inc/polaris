@@ -32,6 +32,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { prisma } from "../db.js";
+import type { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 import { FIRMWARE_DIR, FIRMWARE_INCOMING_DIR } from "../utils/paths.js";
@@ -839,6 +840,65 @@ export async function findUpgradeCandidates(asset: { manufacturer: string | null
     reason: "ok",
     primary: toRow(primary as ImageRecord),
     backup: backup ? toRow(backup as ImageRecord) : null,
+  };
+}
+
+/** The device-list slide-in's cap. A manufacturer node on a large fleet can
+ *  hold a couple of thousand switches and APs; the list is for finding one,
+ *  and `total` still reports the true count. */
+export const FIRMWARE_NODE_ASSET_LIMIT = 2000;
+
+export type FirmwareNodeAsset = {
+  id: string; hostname: string | null; ipAddress: string | null; assetType: string; model: string | null;
+  serialNumber: string | null; osVersion: string | null; status: string; monitored: boolean; monitorStatus: string | null;
+  /** How this device stands against its platform's primary image; null = the Repository cannot place it. */
+  firmwareVsPrimary: FirmwareVsPrimary | null;
+};
+
+/**
+ * The devices behind one Repository tree node — a manufacturer, a device type
+ * under it, or a model under that — for the node's asset-count slide-in.
+ *
+ * Counts EXACTLY what `getFirmwareTree` counts, or the list disagrees with the
+ * number the operator clicked: switches and access points only, not
+ * decommissioned, the stored manufacturer string, and the tree's "(no model)"
+ * node meaning a null or blank model — asked for with `noModel`, never with an
+ * empty `model`, which a query string drops on the way (the list would widen to
+ * the whole device type without a word). Two queries (count + a capped,
+ * tightly-selected findMany) and one for the primaries, compared in memory.
+ */
+export async function listAssetsForNode(input: { manufacturer: string; assetType?: string | null; model?: string | null; noModel?: boolean }): Promise<{ total: number; limit: number; assets: FirmwareNodeAsset[] }> {
+  const types = input.assetType ? [input.assetType] : [...FIRMWARE_ASSET_TYPES];
+  const where: Prisma.AssetWhereInput = {
+    manufacturer: input.manufacturer,
+    assetType: { in: types },
+    status: { not: "decommissioned" },
+  };
+  if (input.assetType) {
+    if (input.noModel) where.OR = [{ model: null }, { model: "" }];
+    else if (input.model) where.model = input.model;
+  }
+  const [total, rows, primaries] = await Promise.all([
+    prisma.asset.count({ where }),
+    prisma.asset.findMany({
+      where,
+      orderBy: [{ hostname: "asc" }, { ipAddress: "asc" }],
+      take: FIRMWARE_NODE_ASSET_LIMIT,
+      select: {
+        id: true, hostname: true, ipAddress: true, assetType: true, model: true, serialNumber: true,
+        osVersion: true, status: true, monitored: true, monitorStatus: true, manufacturer: true,
+      },
+    }),
+    loadPrimaryFirmwareImages(),
+  ]);
+  return {
+    total,
+    limit: FIRMWARE_NODE_ASSET_LIMIT,
+    assets: rows.map((r) => ({
+      id: r.id, hostname: r.hostname, ipAddress: r.ipAddress, assetType: r.assetType, model: r.model,
+      serialNumber: r.serialNumber, osVersion: r.osVersion, status: r.status, monitored: r.monitored, monitorStatus: r.monitorStatus,
+      firmwareVsPrimary: firmwareVsPrimary(r, primaries),
+    })),
   };
 }
 
