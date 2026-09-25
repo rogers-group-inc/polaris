@@ -682,7 +682,9 @@ const pageRequiredPermission: Record<string, PagePermission> = {
   // be able to REACH the Credentials tab, and it lives on this page. The page
   // JS already hides every other tab from a non-admin, so this widens the
   // door to exactly the tab the grant is about.
-  "/server-settings.html": { anyOf: [{ key: "serverSettingsSystem", level: "read" }, { key: "credentials", level: "write" }] },
+  // `firmware=read` joins it for the same reason (2026-09-25): the Repository
+  // tab lives here and is the whole point of that grant (business rule 87).
+  "/server-settings.html": { anyOf: [{ key: "serverSettingsSystem", level: "read" }, { key: "credentials", level: "write" }, { key: "firmware", level: "read" }] },
   "/appmap.html":          { key: "applicationMap",       level: "read" },
   // Added 2026-08 alongside the deviceMap=read floor on the /map API mount.
   // Without it a deviceMap=none role could still load the page shell (the nav
@@ -1161,6 +1163,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // while collecting nothing. Not marker-guarded — the answer changes as
       // collectors land and as operators edit settings. See its header.
       "./jobs/auditPollingCapability.js",
+      // Not marker-guarded: a firmware upgrade run this process was driving
+      // when it died can never finish — mark it failed and release its hold.
+      // Web / all role only, which is where the runs execute. See its header.
+      "./jobs/failOrphanedFirmwareRuns.js",
     ]) await importJob(p);
   }
 

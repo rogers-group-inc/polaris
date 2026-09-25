@@ -323,6 +323,50 @@ agent over a stored SSH or WinRM credential
 `assets:fullwrite`; at `assets:read` the card still shows what is installed,
 without the buttons.
 
+#### Firmware
+
+Under the agent card, a **switch or access point** gets a **Firmware** card
+([rule 87](Business-Rules#rule-87)) — the answer to whether the
+[Repository](Server-Settings#repository) holds something newer for this
+device. It is one of:
+
+- **Not supported** — no upgrade engine for this manufacturer (Fortinet only,
+  over HTTPS to the device's own web UI). Images can still be stored.
+- **No image** — nothing in the repository for this device's platform, with a
+  link to the Repository.
+- **Current** — nothing newer than what it runs.
+- **No login bound** — an image is available but no device login is bound at
+  the model, device-type or manufacturer level.
+- **Blocked** — an image is available but the device is down, warning,
+  recovering, behind a parent that is down, or has no address.
+- **Upgrade available** — the running version, the image on offer (its
+  version, platform and which model node it came from), the login that will be
+  used and where it is inherited from.
+
+**Upgrade firmware to …** needs `firmware:fullwrite`; at read the facts stay
+and the button is withheld. It opens an **approval dialog** naming the device
+(host, serial, running version, login) and the exact image — version, build,
+platform, file name, SHA-256, where it is filed, who uploaded it — and, when
+the model's backup image is also newer than the device, lets you choose that
+instead. Nothing is pushed until you tick that you checked the version and
+platform and click **Approve and upgrade**.
+
+While it runs the card shows the stage and, on a switch, the erase / write /
+verify percentages, then *Rebooting* and *Verifying new version*. The device
+is in a maintenance window for the duration
+([Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)),
+so everything behind a switch is suppressed with it. Polaris does not offer a
+cancel — a flash mid-write must finish — and **you must not power-cycle the
+device while it is writing.**
+
+A run ends *succeeded* (the device came back reporting the image's version),
+*unverified* (it came back but Polaris could not confirm the version — check
+it on the device) or *failed* (the transcript says at which stage). The
+asset's OS/firmware field is not rewritten by the run: the next discovery
+reads the new version, and until it does the card says *Flashed*. **Run
+history** lists every attempt with a **View log**. No bulk upgrade exists; it
+is this device, from this card. The phone shows no Firmware card.
+
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose
 discovery sweep can decommission it — with the parent FortiGate appended for a

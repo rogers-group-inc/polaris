@@ -1,6 +1,63 @@
-# Services — Polaris Agent install, build, channel, commands
+# Services — Polaris Agent install, build, channel, commands; the firmware repository
 
-Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol.
+Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol. The two firmware services sit here because `firmwareUpgradeService` copies `agentInstallService.startUpgrade`'s shape — synchronous refusals, a row, a kickoff Event, a rule-80 hold, a `setImmediate` runner on the web process.
+
+## services/firmwareRepositoryService.ts
+
+**What it owns:** The firmware repository (Server Settings → Repository; business rule 87): the manufacturer › device type (`switch` / `access_point` only) › model TREE, the IMAGES filed under a model node (two per node — primary + backup — with the rotation an upload performs), the device-admin login BINDINGS at the three scopes, and the per-asset CANDIDATE lookup. Bytes on disk under `FIRMWARE_DIR`; identity from the image header, never the model string.
+
+**Public API:** `FIRMWARE_ASSET_TYPES`, `FIRMWARE_MAX_IMAGE_BYTES`, `isFirmwareAssetType`, `getFirmwareTree`, `listImages`, `getImage`, `registerUploadedImage`, `setPrimaryImage`, `deleteImage`, `purgeModelImages`, `resolveImagePath`, `ensureFirmwareDirs`, `listBindings`, `upsertBinding`, `deleteBinding`, `resolveFirmwareCredential`, `findUpgradeCandidates`, `listRecentRuns`; the row / node / candidate types.
+
+**Cross-service deps:** `prisma` (asset groupBy + a tight-select serial scan, firmwareImage, firmwareCredentialBinding, firmwareUpgradeRun.count); `utils/firmwareVersion` (header/filename parse, compare, `platformFromSerial`); `utils/manufacturerNormalize.normalizeManufacturer`; `utils/paths` (`FIRMWARE_DIR`, `FIRMWARE_INCOMING_DIR`); `credentialService.getCredential({ revealSecrets: true })` (the ONE place a device password is read); `utils/httpCheck.isDeviceLoginCredential`; `firmwareEngines/index` (`engineFor`, `engineKindForType`); `assetTypeService.listAssetTypes` (labels); `eventLogService.logEvent`.
+
+**Used by:**
+- `src/api/routes/firmware.ts` — every repository route.
+- `src/services/firmwareUpgradeService.ts` — `findUpgradeCandidates`, `resolveFirmwareCredential`, `resolveImagePath`, `getImage`.
+- `public/js/server-settings-firmware.js` — the tab, through the routes.
+
+**Invariants:**
+- **Matching is by platform, filing is by model.** An asset is offered an image only when `image.platform === platformFromSerial(asset.serialNumber)` (rule 87); the model node decides nothing about eligibility. A filename-only image has `platform: null` and is never offered.
+- **A node holds one primary and one backup**, and the DATABASE enforces it (two partial unique indexes). `registerUploadedImage` rotates in ONE transaction and refuses whole (409) when a queued/running run references the backup it would remove. `setPrimaryImage` steps through the transient `swapping` role because the partial indexes are checked per statement. `deleteImage` on the primary promotes the backup so a node never has a backup alone.
+- **Only a PRIMARY is offered unasked.** `findUpgradeCandidates` returns the strictly-newer primary for the platform (the asset's own model node preferred, else newest) and names the SAME node's backup only when it too is strictly newer. Zero queries when `engineFor` is null.
+- **Resolution is model › type › manufacturer, most specific LIVE row wins.** A binding whose credential was deleted (`credentialId` null) or whose credential is no longer a `form` login is SKIPPED, never a shadow — the rule-49 posture. Secrets are revealed only with `{ revealSecrets: true }`, which only `startFirmwareUpgrade` asks for.
+- **The same bytes are filed once** (`sha256 @unique` → 409 naming the node); the temp file is removed on every failure path; the final rename is same-filesystem (the incoming dir sits under FIRMWARE_DIR).
+- Never writes Asset. Never opens a socket to a device.
+
+**When changing this:**
+- Adding a device type: `FIRMWARE_ASSET_TYPES`, the two CHECK constraints in migration `20260925000000`, `engineKindForType`, the tree's type order, the wiki's "switches and access points only".
+- Changing the two-image cap: the partial unique indexes AND `registerUploadedImage`'s rotation AND the tab's copy ("A model keeps two images") move together; `tests/unit/firmwareImageRotation.test.ts` pins every transition.
+- Any new offer path must go through `findUpgradeCandidates` — the platform + strictly-newer gate lives there once.
+- Scale: the tree is two `groupBy`s + one small `findMany` + one tight-select serial scan (only when the tab opens); never add a per-asset query.
+
+## services/firmwareUpgradeService.ts
+
+**What it owns:** One asset, one flash (business rule 87): what the asset card is told (`getUpgradeAvailability`), the SYNCHRONOUS gates and the kickoff (`startFirmwareUpgrade`), the runner that drives an engine and keeps the run row current, the reads, and the boot sweep for runs a restart orphaned. Copies `agentInstallService.startUpgrade`'s shape.
+
+**Public API:** `getUpgradeAvailability`, `startFirmwareUpgrade`, `getRun`, `listRunsForAsset`, `failOrphanedFirmwareRuns`; `UpgradeAvailability` / `UpgradeAvailabilityState` / `RunSummary` / `StartUpgradeInput`.
+
+**Cross-service deps:** `firmwareRepositoryService` (candidates, credential, image path); `firmwareEngines/index` (`engineFor`, `engineByKind`) and `firmwareEngines/types` (`DEFAULT_FIRMWARE_TIMEOUTS`); `maintenanceScheduleService.openMaintenanceHold` / `releaseMaintenanceHold` (kind `firmware-upgrade`, rule 80); `connectionPathService.resolveConnectionPath` + `prisma.assetMclagPeer` (the topology gate); `utils/assetInvariants.UNMONITORABLE_STATUSES` (rule 10); `eventLogService.logEvent`; a dynamic import of `discovery/assetDiscoveryScope.resolveDiscoveryScopeForAsset` + `discovery/discoveryEngine.triggerDiscovery` (the scoped rediscover on success); `node:fs/promises.stat`.
+
+**Used by:**
+- `src/api/routes/firmware.ts` — `firmwareAssetRouter` (`GET /`, `POST /`, `GET /runs`) and `GET /server-settings/firmware/runs/:id`.
+- `src/jobs/failOrphanedFirmwareRuns.ts` — the boot sweep.
+- `public/js/assets.js` — the Firmware card, through the routes (`_startFirmwarePoll` polls the run).
+
+**Invariants:**
+- **The gates are synchronous and ordered** (engine → address → platform → candidates → the REQUIRED approved `imageId` must be the offered primary or the eligible backup → health → login → one live run per asset, none on a connection-path ancestor/descendant or MCLAG peer → the image file exists), each an `AppError` answered to the click; the partial unique index on `(assetId) WHERE status IN (queued, running)` answers the race (P2002 → 409). `tests/unit/firmwareUpgradeGates.test.ts` pins the order.
+- **`maintenance` is allowed; unmonitored is allowed** (the hold no-ops, as it does for an agent upgrade). Down / warning / recovering / dependency-suppressed / unmonitorable are refused.
+- **The hold is taken BEFORE the runner is scheduled** and released in the runner's `finally` BEFORE the terminal Event (the `failUpgrade` ordering, rule 80a), by `failOrphanedFirmwareRuns` at boot, and by the reconcile's 45-minute expiry as the backstop.
+- **Never writes `Asset.osVersion`.** Projection owns it (asset-source-projection); the run records `verifiedVersion` and requests a scoped rediscover, and `getUpgradeAvailability` reports `pending-discovery` until the record catches up so the button does not re-offer a flash that happened.
+- **The plaintext password exists only inside the runner's engine context** — never in a log line, the run `log`, or an Event's `details` (only `credentialId` / name / scope).
+- **The server owns the card's vocabulary**: `state` and `reason` are what the card draws; a new state is added here, not inferred from a sentence client-side.
+- Runs execute on the web process (the image is on its disk; pg-boss is optional). A restart mid-flash orphans the run; the sweep names it rather than hides it. Row writes are throttled to one per 5 s; nothing here touches the monitor ticks.
+
+**When changing this:**
+- A new blocker: add it to `healthBlockers` (so availability and start agree), to the gates test, and to the wiki's list.
+- A new engine: `firmwareEngines/index.ts` `engineFor` + `engineKindForType`, the run row's `engine` vocabulary, the file map, and the docs' "Fortinet only" sentence.
+- A new terminal outcome: `finish`, the Event table (`firmware.upgrade_*`), the card's `_fwRunResultHTML`, and `dropHold` ordering.
+- If a queue ever replaces `setImmediate`, the image must travel with the job (it lives on the web host's disk) and the boot sweep's "this process was driving it" premise changes.
+
+---
 
 ## services/serviceInventoryService.ts
 

@@ -5296,6 +5296,15 @@ async function openViewModal(id, opts) {
       return api.assets.customWidgets(asset.id).catch(function (err) { console.warn("Failed to load custom widgets", err); return null; });
     });
 
+    // Firmware upgrade availability (business rule 87) — switches and access
+    // points only, and only for a role that may see the Repository. Errors
+    // become a card line rather than a failed wave.
+    var firmwareP = assetP.then(function (asset) {
+      if (!_assetFirmwareEligible(asset)) return null;
+      if (!(typeof permAtLeast === "function" && permAtLeast("firmware", "read"))) return null;
+      return api.assets.firmwareUpgrade(asset.id).catch(function (err) { return { error: (err && err.message) || "request failed" }; });
+    });
+
     // SD-WAN trio — FortiGate firewalls discovered via FortiManager/FortiGate
     // with the pullSdwan toggle on. Prefetched for the same reason as Custom
     // MIB: the tab only shows when the device actually reported data.
@@ -5357,9 +5366,11 @@ async function openViewModal(id, opts) {
       canProbeAssets() ? _ensureCredentials() : Promise.resolve(null),
       customWidgetsP,
       sdwanP,
+      firmwareP,
     ]);
 
     var a = wave[0];
+    var firmwareAvail = wave[12];
     if (wave[1]) _monitorSettingsCache = wave[1];
     var sources             = wave[3] || [];
     var dependencies        = wave[4];
@@ -5383,13 +5394,21 @@ async function openViewModal(id, opts) {
     var monitoringHTML = assetMonitoringViewHTML(a);
     var agentSubpanelHTML = assetAgentSubpanelHTML(a, managedAgent);
     var agentMountHTML = '<div data-shot-section="agent" data-shot-label="Polaris Agent"><div id="asset-agent-panel-mount"></div></div>';
+    // The Firmware card sits directly under the Polaris Agent card: the same
+    // "Polaris acts on this device and shows polled progress" surface. Only a
+    // switch / access point gets the mount at all.
+    var firmwareMountHTML = _assetFirmwareEligible(a)
+      ? '<div data-shot-section="firmware" data-shot-label="Firmware"><div id="asset-firmware-panel-mount"></div></div>'
+      : '';
     var systemHTML     = a.monitored
       ? monitoringHTML +
         '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
         agentMountHTML +
+        firmwareMountHTML +
         assetSystemViewHTML(a)
       : monitoringHTML +
-        agentMountHTML; // unmonitored assets still see the panel when an agent is mid-install
+        agentMountHTML + // unmonitored assets still see the panel when an agent is mid-install
+        firmwareMountHTML;
     var tabs = [
       { key: "general", label: "General", html: generalHTML },
       { key: "system",  label: "System",  html: systemHTML },
@@ -5568,7 +5587,7 @@ async function openViewModal(id, opts) {
     if (!isInfraProc) _wireAssetServicesTab(a);
     if (permAtLeast("events", "read")) _wireAssetEventsTab(a.id);
     if (permAtLeast("alerts", "read")) _loadAssetNotificationsTab(a.id);
-    _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML);
+    _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail);
     _wireHoverTriggersIn(bodyEl);
     bodyEl.addEventListener("click", _handleCopyClick);
     document.getElementById("btn-asset-copy").addEventListener("click", _copyAssetDetails);
@@ -5704,7 +5723,7 @@ function _assetGeneralTabHTML(a) {
 
 // Async section mounts on the General/System tabs: dependency tree, directory
 // activity, last-seen firewall, MCLAG peers, virtualization, agent sub-panel.
-function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML) {
+function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail) {
     // Mount the dependency tree into its placeholder div on the General tab.
     var depMount = document.getElementById("asset-dep-tree-mount-" + a.id);
     if (depMount) {
@@ -5846,6 +5865,8 @@ function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, manag
       agentMount.innerHTML = agentSubpanelHTML;
       _wireAgentSubpanel(a, managedAgent);
     }
+    // Firmware card (switch / AP only; the mount exists only for those).
+    _rerenderFirmwarePanel(a, firmwareAvail);
 }
 
 // Footer Refresh button + the Events-tab Export dropdown.
@@ -6526,6 +6547,334 @@ function _rerenderAgentSubpanel(a, agent) {
   if (!mount) return;
   mount.innerHTML = assetAgentSubpanelHTML(a, agent);
   _wireAgentSubpanel(a, agent);
+}
+
+// ─── Firmware card (business rule 87) ────────────────────────────────────────
+// A card on the System tab under the Polaris Agent card, for switches and
+// access points: what the Repository can offer this device, the approval
+// dialog that names the exact image before anything is pushed, live progress
+// polled from the run row while a flash is in flight, and the run history.
+// The server owns every state word and reason (`fw.state`, `fw.reason`); the
+// card never regexes a sentence to decide what to draw.
+
+function _assetFirmwareEligible(a) {
+  return !!a && (a.assetType === "switch" || a.assetType === "access_point");
+}
+
+var _FW_STAGE_LABELS = {
+  preflight:  "Signing in",
+  staging:    "Uploading image",
+  compat:     "Checking compatibility",
+  deploying:  "Deploying",
+  rebooting:  "Rebooting",
+  verifying:  "Verifying new version",
+};
+
+function _fwBadge(text, color) {
+  return '<span style="font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,0.06);color:' + color + '">' + escapeHtml(text) + '</span>';
+}
+
+function _fwImageLine(img) {
+  if (!img) return "";
+  return '<strong>' + escapeHtml(img.versionLabel) + '</strong>' +
+    (img.platform ? ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(img.platform) + ')</span>' : '');
+}
+
+function _fwRunResultHTML(run) {
+  if (!run) return "";
+  var when = run.finishedAt ? timeAgo(run.finishedAt) : (run.startedAt ? timeAgo(run.startedAt) : "");
+  if (run.status === "succeeded") {
+    return '<div style="font-size:0.85rem;color:var(--color-success);margin:0.4rem 0">' +
+      (run.result === "already-current" ? "Already at " : "Upgraded to ") + escapeHtml(run.verifiedVersion || run.toVersion) + ', ' + escapeHtml(when) + '</div>';
+  }
+  if (run.status === "unverified") {
+    return '<div style="font-size:0.85rem;color:var(--color-warning);margin:0.4rem 0">The device rebooted but Polaris couldn’t confirm the version — check it on the device. ' +
+      (run.error ? '<span style="color:var(--color-text-secondary)">' + escapeHtml(run.error) + '</span>' : '') + '</div>';
+  }
+  if (run.status === "failed") {
+    return '<div style="margin:0.5rem 0;padding:0.5rem 0.75rem;background:rgba(255,80,80,0.08);' +
+      'border-left:3px solid var(--color-danger);border-radius:4px;font-family:monospace;font-size:0.8rem;' +
+      'color:var(--color-danger);white-space:pre-wrap;word-break:break-word">' +
+      'Upgrade to ' + escapeHtml(run.toVersion) + ' failed' + (run.stage ? ' at ' + escapeHtml(_FW_STAGE_LABELS[run.stage] || run.stage).toLowerCase() : '') + ': ' +
+      escapeHtml(run.error || "unknown error") + '</div>';
+  }
+  return "";
+}
+
+function _fwStageRow(label, pct, state) {
+  var cls = "fw-stage" + (state ? " " + state : "");
+  var bar = pct === null
+    ? '<span class="fw-progress' + (state === "is-active" ? " is-indeterminate" : "") + '"><span class="fw-progress-fill"></span></span>'
+    : '<span class="fw-progress"><span class="fw-progress-fill" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></span>';
+  return '<div class="' + cls + '"><span class="fw-stage-label">' + escapeHtml(label) + '</span>' + bar +
+    '<span class="fw-stage-pct">' + (pct === null ? '' : Math.round(pct) + '%') + '</span></div>';
+}
+
+function _fwProgressHTML(run) {
+  var p = (run && run.progress) || {};
+  var stage = run && run.stage;
+  var order = ["preflight", "staging", "compat", "deploying", "rebooting", "verifying"];
+  var idx = order.indexOf(stage);
+  var rows = "";
+  // The switch reports percentages for erase / write / verify while deploying.
+  var hasPct = typeof p.erase === "number" || typeof p.write === "number" || typeof p.verify === "number";
+  if (hasPct) {
+    var eraseDone = (p.erase || 0) >= 100;
+    var writeDone = (p.write || 0) >= 100;
+    rows += _fwStageRow("Erasing flash", p.erase || 0, eraseDone ? "is-done" : "is-active");
+    rows += _fwStageRow("Writing image", p.write || 0, writeDone ? "is-done" : (eraseDone ? "is-active" : ""));
+    rows += _fwStageRow("Verifying image", p.verify || 0, (p.verify || 0) >= 100 ? "is-done" : (writeDone ? "is-active" : ""));
+  }
+  if (idx >= order.indexOf("rebooting")) rows += _fwStageRow("Rebooting", null, stage === "rebooting" ? "is-active" : "is-done");
+  if (idx >= order.indexOf("verifying")) rows += _fwStageRow("Verifying new version", null, "is-active");
+  var step = (typeof p.curStep === "number" && typeof p.totStep === "number") ? ' · step ' + p.curStep + ' of ' + p.totStep : '';
+  return '<div id="asset-fw-progress">' +
+    '<div style="font-size:0.85rem;margin:0.3rem 0 0.5rem">Stage: <strong>' + escapeHtml(_FW_STAGE_LABELS[stage] || stage || "starting") + '</strong>' + escapeHtml(step) +
+      (run && run.startedAt ? ' <span style="color:var(--color-text-tertiary)">· started ' + escapeHtml(timeAgo(run.startedAt)) + '</span>' : '') + '</div>' +
+    rows +
+    '<p class="hint" style="margin:0.5rem 0 0">Do not power-cycle the device while it is flashing. Polaris holds its alerts until the run finishes.</p>' +
+  '</div>';
+}
+
+function _fwRunHistoryHTML(a) {
+  return '<div style="margin-top:0.6rem">' +
+    '<button type="button" class="btn btn-link btn-sm" id="btn-fw-history" style="padding:0">Run history ▸</button>' +
+    '<div id="asset-fw-history" style="display:none;margin-top:0.4rem"></div>' +
+  '</div>';
+}
+
+function assetFirmwarePanelHTML(a, fw) {
+  if (!fw || !_assetFirmwareEligible(a)) return "";
+  var badge = "";
+  var body = "";
+  var canFlash = typeof permAtLeast === "function" && permAtLeast("firmware", "fullwrite");
+  var repoLink = (typeof permAtLeast === "function" && permAtLeast("firmware", "read"))
+    ? ' <a href="/server-settings.html?tab=firmware">Open the Repository</a>'
+    : '';
+  if (fw.error) {
+    body = '<p style="color:var(--color-text-tertiary);font-size:0.85rem;margin:0">Couldn’t read upgrade status: ' + escapeHtml(fw.error) + '</p>';
+  } else if (fw.state === "running" && fw.activeRun) {
+    badge = _fwBadge("Upgrading", "var(--color-warning)");
+    body = '<div style="font-size:0.85rem">' + escapeHtml(fw.activeRun.fromVersion || fw.current || "?") + ' → ' + escapeHtml(fw.activeRun.toVersion) + '</div>' + _fwProgressHTML(fw.activeRun);
+  } else if (fw.state === "unsupported") {
+    badge = _fwBadge("Not supported", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "up-to-date") {
+    badge = _fwBadge("Current", "var(--color-success)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">Running ' + escapeHtml(fw.current || "?") + '. ' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "pending-discovery") {
+    badge = _fwBadge("Flashed", "var(--color-success)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "no-image" || fw.state === "no-serial" || fw.state === "no-version") {
+    badge = _fwBadge("No image", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + repoLink + '</p>';
+  } else if (fw.state === "no-credential") {
+    badge = _fwBadge("No login bound", "var(--color-warning)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + repoLink + '</p>';
+  } else if (fw.state === "blocked") {
+    badge = _fwBadge("Blocked", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "available" && fw.image) {
+    badge = _fwBadge("Upgrade available", "var(--color-accent)");
+    body =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem 1.25rem;margin:0.5rem 0;font-size:0.85rem">' +
+        '<div>Current: <strong>' + escapeHtml(fw.current || "?") + '</strong></div>' +
+        '<div>Available: ' + _fwImageLine(fw.image) + '</div>' +
+        '<div>Model image: <strong>' + escapeHtml(fw.image.model) + '</strong> · ' + escapeHtml(fw.image.role) + '</div>' +
+        '<div>Login: <strong>' + escapeHtml(fw.credential ? fw.credential.credentialName : "—") + '</strong>' +
+          (fw.credential ? ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(fw.credential.scope) + ' binding)</span>' : '') + '</div>' +
+        (fw.backupImage ? '<div style="grid-column:1 / -1;color:var(--color-text-secondary)">Also eligible: ' + _fwImageLine(fw.backupImage) + ' (the model’s backup)</div>' : '') +
+      '</div>' +
+      (canFlash
+        ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem"><button type="button" class="btn btn-primary" id="btn-fw-upgrade">Upgrade firmware to ' + escapeHtml(fw.image.versionLabel) + '…</button></div>'
+        : '<p class="hint" style="margin:0">Starting an upgrade needs Full Read-Write on Firmware Repository — ask an administrator.</p>');
+  }
+  if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
+  return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
+      '<h4 style="margin:0;display:flex;align-items:baseline;gap:0.5rem">Firmware ' + badge + '</h4>' +
+    '</div>' +
+    body +
+    (fw.error ? '' : _fwRunHistoryHTML(a)) +
+  '</div>';
+}
+
+function _fwApprovalBlockHTML(img, checked, withRadio) {
+  var id = "fw-approve-" + img.id;
+  return '<label class="fw-approve-block' + (checked ? " is-selected" : "") + '" for="' + id + '" style="display:block;cursor:' + (withRadio ? "pointer" : "default") + '">' +
+    (withRadio
+      ? '<input type="radio" name="fw-approve-image" id="' + id + '" value="' + escapeHtml(img.id) + '" data-version="' + escapeHtml(img.versionLabel) + '"' + (checked ? " checked" : "") + '> '
+      : '<input type="radio" name="fw-approve-image" id="' + id + '" value="' + escapeHtml(img.id) + '" data-version="' + escapeHtml(img.versionLabel) + '" checked style="display:none">') +
+    '<strong>' + escapeHtml(img.versionLabel) + '</strong> · ' + escapeHtml(img.role === "backup" ? "the model’s backup image" : "the model’s primary image") +
+    '<dl>' +
+      '<dt>Platform</dt><dd>' + escapeHtml(img.platform || "unknown") + '</dd>' +
+      '<dt>File</dt><dd>' + escapeHtml(img.filename) + ' (' + escapeHtml(typeof formatBytes === "function" ? formatBytes(img.sizeBytes) : img.sizeBytes + " bytes") + ')</dd>' +
+      '<dt>SHA-256</dt><dd><code>' + escapeHtml(img.sha256) + '</code></dd>' +
+      '<dt>Filed under</dt><dd>' + escapeHtml(img.manufacturer) + ' › ' + escapeHtml(img.assetType === "access_point" ? "access point" : img.assetType) + ' › ' + escapeHtml(img.model) + '</dd>' +
+      '<dt>Uploaded</dt><dd>' + escapeHtml(img.uploadedBy || "—") + (img.uploadedAt ? ', ' + escapeHtml(new Date(img.uploadedAt).toLocaleString()) : '') + '</dd>' +
+    '</dl>' +
+  '</label>';
+}
+
+/** The approval dialog's body — pure, so the DOM test can render it. */
+function _fwApprovalModalHTML(a, fw) {
+  var withRadio = !!fw.backupImage;
+  return '<div class="fw-approve-block">' +
+      '<strong>Device</strong>' +
+      '<dl>' +
+        '<dt>Host</dt><dd>' + escapeHtml(a.hostname || "—") + (a.ipAddress ? ' (' + escapeHtml(a.ipAddress) + ')' : '') + '</dd>' +
+        '<dt>Serial</dt><dd>' + escapeHtml(a.serialNumber || "—") + '</dd>' +
+        '<dt>Running</dt><dd>' + escapeHtml(fw.current || "unknown") + '</dd>' +
+        '<dt>Login</dt><dd>' + escapeHtml(fw.credential ? fw.credential.credentialName : "—") + (fw.credential ? ' (' + escapeHtml(fw.credential.scope) + ' binding)' : '') + '</dd>' +
+      '</dl>' +
+    '</div>' +
+    '<p style="font-size:0.85rem;margin:0 0 0.4rem"><strong>Firmware to push</strong>' +
+      (withRadio ? ' <span style="color:var(--color-text-secondary)">— the primary image is offered by default; the backup is this model’s previous image.</span>' : '') + '</p>' +
+    _fwApprovalBlockHTML(fw.image, true, withRadio) +
+    (withRadio ? _fwApprovalBlockHTML(fw.backupImage, false, true) : '') +
+    '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
+      'The device reboots during the upgrade and will be unreachable for a few minutes — everything behind a switch goes with it. ' +
+      'Polaris holds its alerts for this device while it works on it. A flash that fails partway can leave a device unbootable; do not power-cycle it while it is writing.' +
+    '</div>' +
+    '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:pointer">' +
+      '<input type="checkbox" id="fw-approve-ack"> I have checked the version and platform above' +
+    '</label>';
+}
+
+function _fwSelectedApproval() {
+  var r = document.querySelector('input[name="fw-approve-image"]:checked');
+  return r ? { imageId: r.value, version: r.getAttribute("data-version") } : null;
+}
+
+function _openFirmwareApprovalModal(a, fw) {
+  var footer =
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" id="btn-fw-approve" disabled>Approve and upgrade to ' + escapeHtml(fw.image.versionLabel) + '</button>';
+  openModal("Approve firmware upgrade — " + (a.hostname || a.ipAddress || "device"), _fwApprovalModalHTML(a, fw), footer);
+  var ack = document.getElementById("fw-approve-ack");
+  var btn = document.getElementById("btn-fw-approve");
+  function sync() {
+    var sel = _fwSelectedApproval();
+    btn.disabled = !(ack && ack.checked && sel);
+    if (sel) btn.textContent = "Approve and upgrade to " + sel.version;
+    document.querySelectorAll(".fw-approve-block").forEach(function (b) {
+      var r = b.querySelector('input[name="fw-approve-image"]');
+      if (r) b.classList.toggle("is-selected", r.checked);
+    });
+  }
+  if (ack) ack.addEventListener("change", sync);
+  document.querySelectorAll('input[name="fw-approve-image"]').forEach(function (r) { r.addEventListener("change", sync); });
+  btn.addEventListener("click", function () {
+    var sel = _fwSelectedApproval();
+    if (!sel) return;
+    btn.disabled = true;
+    api.assets.startFirmwareUpgrade(a.id, { imageId: sel.imageId }).then(function () {
+      closeModal();
+      showToast("Upgrade started", "success");
+      return api.assets.firmwareUpgrade(a.id).then(function (next) { _rerenderFirmwarePanel(a, next); });
+    }).catch(function (err) {
+      btn.disabled = false;
+      showToast((err && err.message) || "Could not start the upgrade", "error");
+    });
+  });
+  sync();
+}
+
+async function _loadFirmwareHistory(a) {
+  var box = document.getElementById("asset-fw-history");
+  if (!box) return;
+  box.innerHTML = '<p class="hint" style="margin:0">Loading…</p>';
+  try {
+    var res = await api.assets.firmwareUpgradeRuns(a.id);
+    var runs = (res && res.runs) || [];
+    if (runs.length === 0) { box.innerHTML = '<p class="hint" style="margin:0">No upgrade runs for this device.</p>'; return; }
+    var rows = runs.map(function (r) {
+      var dur = (r.startedAt && r.finishedAt) ? Math.round((new Date(r.finishedAt) - new Date(r.startedAt)) / 1000) + " s" : "";
+      var color = r.status === "succeeded" ? "var(--color-success)" : r.status === "failed" ? "var(--color-danger)" : r.status === "unverified" ? "var(--color-warning)" : "var(--color-text-secondary)";
+      return '<tr>' +
+        '<td title="' + escapeHtml(r.startedAt ? new Date(r.startedAt).toLocaleString() : "") + '">' + escapeHtml(r.startedAt ? timeAgo(r.startedAt) : "") + '</td>' +
+        '<td>' + escapeHtml(r.fromVersion || "?") + ' → ' + escapeHtml(r.toVersion) + '</td>' +
+        '<td><span style="color:' + color + '">' + escapeHtml(r.status) + '</span></td>' +
+        '<td>' + escapeHtml(dur) + '</td>' +
+        '<td style="text-align:right"><button type="button" class="btn btn-sm btn-secondary fw-history-view" data-id="' + escapeHtml(r.id) + '">View log</button></td>' +
+      '</tr>';
+    }).join("");
+    box.innerHTML = '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>Started</th><th>Version</th><th>Result</th><th>Duration</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    box.querySelectorAll(".fw-history-view").forEach(function (b) {
+      b.addEventListener("click", function () { _openFwRunLogModal(b.getAttribute("data-id")); });
+    });
+  } catch (err) {
+    box.innerHTML = '<p class="hint" style="margin:0;color:var(--color-danger)">' + escapeHtml((err && err.message) || "Could not load run history") + '</p>';
+  }
+}
+
+async function _openFwRunLogModal(runId) {
+  try {
+    var res = await api.serverSettings.getFirmwareRun(runId);
+    var run = res.run;
+    var lines = (run.log || []).map(function (l) { return "[" + l.t + "] " + (l.level || "info").toUpperCase() + " " + l.msg; }).join("\n");
+    openModal("Firmware upgrade — " + run.toVersion,
+      '<p style="margin-bottom:0.5rem"><strong>' + escapeHtml(run.status) + '</strong>' + (run.error ? ' — ' + escapeHtml(run.error) : '') + '</p>' +
+      '<pre style="max-height:60vh;overflow:auto;font-size:0.76rem;white-space:pre-wrap">' + escapeHtml(lines || "(no log lines)") + '</pre>',
+      '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+  } catch (err) {
+    showToast((err && err.message) || "Could not load the run", "error");
+  }
+}
+
+function _wireFirmwarePanel(a, fw) {
+  var up = document.getElementById("btn-fw-upgrade");
+  if (up) up.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw); });
+  var hist = document.getElementById("btn-fw-history");
+  if (hist) {
+    hist.addEventListener("click", function () {
+      var box = document.getElementById("asset-fw-history");
+      if (!box) return;
+      var open = box.style.display !== "none";
+      box.style.display = open ? "none" : "";
+      hist.textContent = open ? "Run history ▸" : "Run history ▾";
+      if (!open && !box.__loaded) { box.__loaded = true; _loadFirmwareHistory(a); }
+    });
+  }
+  if (fw && fw.activeRun && fw.activeRun.id) _startFirmwarePoll(a, fw.activeRun.id);
+}
+
+function _rerenderFirmwarePanel(a, fw) {
+  var mount = document.getElementById("asset-firmware-panel-mount");
+  if (!mount) return;
+  mount.innerHTML = assetFirmwarePanelHTML(a, fw);
+  _wireFirmwarePanel(a, fw);
+}
+
+// One poll per (asset, run): the sentinel is the panel itself — the tick
+// bails when it is gone or shows another asset, exactly like _startAgentPoll.
+var _fwPollKey = null;
+
+function _startFirmwarePoll(a, runId) {
+  var key = a.id + ":" + runId;
+  if (_fwPollKey === key) return;
+  _fwPollKey = key;
+  var tick = function () {
+    var panel = document.getElementById("asset-firmware-panel");
+    if (!panel || panel.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }
+    api.serverSettings.getFirmwareRun(runId).then(function (res) {
+      var run = res && res.run;
+      var panel2 = document.getElementById("asset-firmware-panel");
+      if (!panel2 || panel2.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }
+      if (run && (run.status === "queued" || run.status === "running")) {
+        var box = document.getElementById("asset-fw-progress");
+        if (box) box.outerHTML = _fwProgressHTML(run);
+        setTimeout(tick, 3000);
+        return;
+      }
+      _fwPollKey = null;
+      // Terminal: re-read availability and redraw the whole card.
+      api.assets.firmwareUpgrade(a.id).then(function (next) { _rerenderFirmwarePanel(a, next); }).catch(function () { /* next open re-reads */ });
+    }).catch(function () {
+      setTimeout(tick, 5000);
+    });
+  };
+  setTimeout(tick, 3000);
 }
 
 function _openInstallAgentModal(a) {

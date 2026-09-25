@@ -1,13 +1,15 @@
 # Server Settings
 
-Nine tabs at the bottom of the sidebar. Most of it is gated on
-`serverSettingsSystem` or `serverSettingsData`; the **Credentials** tab has its
-own key, so a role holding only `credentials` sees that tab and nothing else.
+Ten tabs at the bottom of the sidebar. Most of it is gated on
+`serverSettingsSystem` or `serverSettingsData`; the **Credentials** and
+**Repository** tabs have their own keys, so a role holding only `credentials`
+or only `firmware` sees that tab and nothing else.
 
 | Tab | Gate | Holds |
 |---|---|---|
 | **Identification** | `serverSettingsSystem` | what this install calls itself |
 | **Credentials** | `credentials` | stored SNMP / SSH / WinRM / REST / HTTP secrets |
+| **Repository** | `firmware` | firmware images for switches and access points, and the device logins that apply them |
 | **Customization** | `serverSettingsSystem` | branding, logo, units |
 | **Time & NTP** | `serverSettingsSystem` | server clock and timezone |
 | **Web Server** | `serverSettingsSystem` | HTTPS, nginx, Dash wallboard |
@@ -64,6 +66,101 @@ bypasses the extension entirely.**
 
 The key is `POLARIS_SECRET_KEY` in `.env`. **Losing it loses every stored
 secret.**
+
+### Device admin logins
+
+An HTTP credential in **Device admin login (form)** mode is the username and
+password a switch or access point's *own* web UI takes. It is not an HTTP
+authentication scheme: an HTTP-check widget will not accept it, and nothing
+ever turns it into a header. Its one consumer is the [Repository](#repository),
+which posts it to the device's login page when it upgrades firmware. Test
+Connection on one of these says so instead of probing — the upgrade engine
+signing in is what proves it.
+
+---
+
+## Repository
+
+Firmware images for the **switches and access points** in the inventory
+([rule 87](Business-Rules#rule-87)). Gated on the `firmware` key: **Read** sees
+the tab and which devices have an upgrade waiting, **Read-Write** manages the
+repository, **Full Read-Write** — on the asset itself, never here — starts an
+upgrade.
+
+### The tree
+
+Manufacturer › device type (Switch, Access Point) › model, built from the
+assets Polaris has. It is not a list you maintain: a model appears because a
+device carries it. Each node shows how many assets sit under it, which device
+login applies and where that login is inherited from.
+
+**Only Fortinet devices can be upgraded, over HTTPS to the device's own web
+UI.** A device-type node for another manufacturer says *No upgrade engine*;
+you may still store images under it, and its assets show no upgrade action.
+A FortiGate-managed FortiAP usually has its local web UI disabled, and an
+upgrade attempt will report the device as unreachable — that is the AP, not
+the repository.
+
+### Images
+
+Expand a model and upload its `.out` file. Polaris reads the image's own
+header — the **platform** (which is the first six characters of the serial
+numbers it fits, e.g. `S108FF`), the version and the build — and files the
+image under the model you chose. If no asset under that model carries the
+image's platform, the upload is accepted with a warning that says which
+platforms those assets do carry: the model is where you filed it, the platform
+is what a device is actually matched on. An image whose header cannot be read
+(only the file name says `v7-build1164`) is stored but never offered to any
+device.
+
+**A model keeps two images.** Uploading a new one makes it the **primary**;
+the current primary becomes the **backup**; the previous backup is removed.
+**Make primary** swaps the two: the rows keep their order (newest version on top),
+so the Primary pill and the button jump rows, the promoted row highlights for a moment,
+and the toast names the new backup. Deleting the
+primary promotes the backup. The
+same bytes cannot be filed twice, and an image a device is flashing right now
+cannot be removed by anything.
+
+**Which devices differ from the primary** is also an automation field:
+`firmwareVsPrimary` reads `current`, `older` or `newer` for every switch and
+access point the Repository can place, and the baseline automation **Firmware
+differs from repository primary** (informational) raises one in-app alert per
+device that is not on the primary, clearing on its own once it is upgraded or
+the primary is changed. See
+[Automation triggers](Automation-Triggers#firmwarevsprimary--what-the-repository-would-push).
+
+A model with images but **no assets carrying it any more** is flagged amber
+and opened for you, with **Delete firmware for this model** — the images are
+still on disk, and the flag is the only thing telling you so.
+
+Images are up to 100 MiB and live on the host under `data/firmware` (outside
+the database backup, like the agent binaries; a Docker install keeps them in
+the state volume). An nginx-fronted install needs the shipped config's
+firmware location block, or the upload is rejected at the edge with a 413 —
+managed-mode installs receive it on the next update.
+
+### Device logins
+
+**Set login…** on a manufacturer, a device type or a model binds an HTTP
+credential in *Device admin login (form)* mode there. The most specific level
+wins: a model's own login beats the device type's, which beats the
+manufacturer's, and every node says which one applies to it and where it came
+from. A binding whose credential has since been deleted is skipped, not
+inherited — the next level up applies. A device with no login at any level
+cannot start an upgrade, and its card says so.
+
+### Recent upgrade runs
+
+Every flash, fleet-wide, with its result and a **View log** that shows the
+run's transcript — sign-in, upload, the switch's erase / write / verify
+progress, reboot, verification. That transcript is what to read when a run
+ends *unverified* or *failed*.
+
+**Before the first fleet use, bench-test one switch and one access point on
+hardware you can afford to lose, with a console cable attached.** The upgrade
+procedure was transcribed from a tool whose own author had not yet validated
+it on real devices. A flash that fails partway can leave a device unbootable.
 
 ---
 

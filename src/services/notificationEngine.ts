@@ -26,6 +26,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logEvent } from "./eventLogService.js";
+import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareRepositoryService.js";
 import { triggerSummary } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent } from "./alertChartService.js";
@@ -244,6 +245,11 @@ interface ScopeAssetRow extends ScopeAsset {
   // field, not decoration — see the resolver.
   fortilinkStatus: string | null;
   fortilinkCheckedAt: Date | null;
+  // Read by the firmwareVsPrimary resolver (business rule 87) alongside
+  // manufacturer / model / assetType — the four facts the Repository matches
+  // an image on.
+  serialNumber?: string | null;
+  osVersion?: string | null;
   // Read by the device-identifier dimension filters (applyDeviceFilters).
   macAddress?: string | null;
   // Read by every interface resolver — state trio AND counter metrics — for
@@ -331,6 +337,9 @@ const SCOPE_SELECT = {
   // state field can be read off the scope row like the other Asset-column
   // fields instead of needing a query of its own.
   fortilinkStatus: true, fortilinkCheckedAt: true,
+  // Business rule 87 — the firmwareVsPrimary field compares off the scope row
+  // too: serial prefix = platform, osVersion = what the device runs.
+  serialNumber: true, osVersion: true,
   // condition-tree evaluation reads these (manufacturer/model/os); small
   // string columns, still a tight select at 2000 assets. macAddress feeds the
   // device-identifier dimension filters (applyDeviceFilters) alongside
@@ -1376,6 +1385,27 @@ async function resolveAssetStateReadings(
       return assets
         .filter((a) => a.fortilinkStatus != null)
         .map((a) => ({ ...mk(a, "", "", a.fortilinkStatus), readingAt: a.fortilinkCheckedAt ?? null }));
+    }
+    case "firmwareVsPrimary": {
+      // Business rule 87. Same posture as fortilinkStatus: a device the
+      // Repository cannot place — not a switch / AP, no usable serial, no
+      // readable version, no primary image for its platform — produces NO
+      // READING, so `!= current` is true only of devices that really differ.
+      //
+      // Scale: ONE findMany over the image table (≤ 2 rows per model node)
+      // per evaluation, then an in-memory comparison per asset — never a
+      // query per asset. The anchor is the system-info pass, which is what
+      // refreshes osVersion; the probe tick says nothing about firmware.
+      const primaries = await loadPrimaryFirmwareImages();
+      const out: Reading[] = [];
+      for (const a of assets) {
+        const v = firmwareVsPrimary(
+          { assetType: a.assetType, manufacturer: a.manufacturer ?? null, model: a.model ?? null, serialNumber: a.serialNumber ?? null, osVersion: a.osVersion ?? null },
+          primaries,
+        );
+        if (v) out.push({ ...mk(a, "", "", v), readingAt: a.lastSystemInfoAt ?? probeAt(a) });
+      }
+      return out;
     }
     case "ifOperStatus": case "ifAdminStatus": case "ifIpAddress": case "poeStatus": {
       const col = INTERFACE_STATE_COLUMN[trigger.field];

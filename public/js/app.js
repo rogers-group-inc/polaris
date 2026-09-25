@@ -1227,7 +1227,7 @@ function renderNav() {
       <div id="update-status" class="query-status update-status" style="display:none"></div>
       <div id="query-status" class="query-status" style="display:none"></div>
       <div id="capacity-critical-alert" class="capacity-critical-alert" style="display:none"></div>
-      ${(isAdmin() || canManageAssets() || permAtLeast("credentials", "write")) ? `<div style="padding:0.5rem 0.5rem 0;border-top:1px solid var(--color-border-light)">
+      ${(isAdmin() || canManageAssets() || permAtLeast("credentials", "write") || permAtLeast("firmware", "read")) ? `<div style="padding:0.5rem 0.5rem 0;border-top:1px solid var(--color-border-light)">
         <a href="/server-settings.html" class="sidebar-bottom-link${current === '/server-settings.html' ? ' active' : ''}">${ICONS.settings}<span>Server Settings</span></a>
       </div>` : ''}
       <!-- The theme band sits here, below Server Settings and above the

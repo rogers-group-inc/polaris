@@ -107,6 +107,9 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ipsecStatus: "systemInfo",
   customWidgetValue: "systemInfo",
   customStateValue: "systemInfo",
+  // Firmware vs the Repository primary (business rule 87): osVersion is refreshed by
+  // discovery and the system-info pass, never by the probe tick.
+  firmwareVsPrimary: "systemInfo",
 };
 
 /**

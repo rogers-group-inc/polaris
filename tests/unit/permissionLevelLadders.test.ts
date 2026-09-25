@@ -123,6 +123,7 @@ describe("no dead top rung", () => {
     users: "IdP group-mapping CRUD (the /group-mappings mount)",
     roles: "admin-equivalence, together with users=fullwrite",
     savedDashboards: "deleting someone else's dashboard",
+    firmware: "starting a firmware upgrade (POST /assets/:id/firmware-upgrade) — the flash reboots a switch or access point (business rule 87)",
     // `serverSettingsSystem` was here until 2026-09-23, excused on the grounds
     // that its `write` rung really did gate something — the identity providers
     // — while `fullwrite` gated the rest of the System tab. That was the key

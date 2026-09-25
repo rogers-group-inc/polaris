@@ -59,3 +59,14 @@ export const SIGNING_DIR = resolve(STATE_DIR, "data", "signing");
 // data/ across self-updates so an in-progress agent install isn't broken
 // when Polaris itself upgrades.
 export const AGENT_BIN_DIR = resolve(STATE_DIR, "data", "agents");
+
+/**
+ * Firmware images the repository holds for switches and access points
+ * (Server Settings → Repository, business rule 87). One `<imageId>.out` per
+ * row; uploads land in `.incoming/` first so the final rename is on one
+ * filesystem and atomic. Under `data/` like the agent binaries — never
+ * `UPLOADS_DIR`, which is served at /uploads — and outside the pg_dump backup,
+ * so it travels with the host exactly as `data/agents` does.
+ */
+export const FIRMWARE_DIR = resolve(STATE_DIR, "data", "firmware");
+export const FIRMWARE_INCOMING_DIR = resolve(FIRMWARE_DIR, ".incoming");

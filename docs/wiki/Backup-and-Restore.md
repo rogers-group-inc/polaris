@@ -37,6 +37,11 @@ Two things to understand about that:
   employee roster is in every backup** — names, addresses, titles, departments,
   phone numbers. That is stated where you enable it, and it is worth
   re-considering at backup-retention time.
+- **Firmware images are not in it.** The [Repository](Server-Settings#repository)
+  keeps them on the host under `data/firmware`, beside the agent binaries in
+  `data/agents`; the database holds only their records. A restore onto a new
+  host brings the rows back with a *File missing* flag until the images are
+  copied over or uploaded again.
 
 ---
 

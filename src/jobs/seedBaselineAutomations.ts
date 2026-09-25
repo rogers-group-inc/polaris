@@ -60,6 +60,7 @@
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV6PlatformLifecycleSeededAt'; -- platform end-of-life
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV7ResponseTimeWindowAt'; -- response-time count windows
  *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV8CapacityResetEventAt'; -- capacity all-clear reset
+ *   DELETE FROM "settings" WHERE key = 'seedBaselineAutomationsV9FirmwareDriftSeededAt'; -- firmware vs Repository primary
  * then restart. (This resurrects that ENTIRE set, including rules you deleted.
  * For V3 that means re-deriving the thresholds from the settings tiers, which
  * are dormant but still stored — and it will NOT re-retire an Asset down rule
@@ -89,6 +90,7 @@ const MARKER_KEY_V5 = "seedBaselineAutomationsV5LossCeilingSeededAt";
 const MARKER_KEY_V6 = "seedBaselineAutomationsV6PlatformLifecycleSeededAt";
 const MARKER_KEY_V7 = "seedBaselineAutomationsV7ResponseTimeWindowAt";
 const MARKER_KEY_V8 = "seedBaselineAutomationsV8CapacityResetEventAt";
+const MARKER_KEY_V9 = "seedBaselineAutomationsV9FirmwareDriftSeededAt";
 /** The window every migrated response-time rule lands on (business rule 67). */
 const RESPONSE_TIME_WINDOW_POLLS = 10;
 
@@ -129,6 +131,35 @@ const PLATFORM_LIFECYCLE_RULES: Record<string, unknown>[] = [
     reset: { mode: "event", resetEvent: { actionPattern: "platform.lifecycle_recovered" } },
     cooldownSec: 604800,
     messageTemplate: "{value}",
+  },
+];
+
+/**
+ * Firmware vs the Repository primary (business rule 87). Its own set + marker
+ * for the V6 reason: an append to an older set would reach new installs only.
+ *
+ * Informational by design — it is a to-do list, not a fault. The field reads
+ * `older` OR `newer` (an operator who made an older image primary has a fleet
+ * that differs from it), so the rule says `!= current` and the message carries
+ * the word. Scoped to the two device types the Repository files images for;
+ * the resolver produces no reading for anything it cannot place, so a fleet-
+ * wide scope would be equivalent, but the narrower one reads honestly in the
+ * builder. Auto reset: the alert clears on the next evaluation after the
+ * device is flashed or the primary is changed to match.
+ */
+const FIRMWARE_DRIFT_RULES: Record<string, unknown>[] = [
+  {
+    name: "Firmware differs from repository primary",
+    description:
+      "Fires when a switch or access point runs a firmware version other than the primary image the Repository holds for its platform " +
+      "(Server Settings → Repository) — older, or newer than the image selected as primary. Clears on its own once the device is upgraded " +
+      "or the primary is changed to match. A device the Repository cannot place (no image for its platform, no readable serial or version) " +
+      "is never judged. Baseline example — edit or delete freely.",
+    severity: "informational",
+    trigger: { type: "asset_state", field: "firmwareVsPrimary", operator: "!=", value: "current" },
+    scope: { assetTypes: ["switch", "access_point"] },
+    reset: { mode: "auto" },
+    messageTemplate: "{asset} runs firmware {value} than the Repository's primary image",
   },
 ];
 
@@ -982,19 +1013,23 @@ export async function seedBaselineAutomations(): Promise<{ created: number; skip
   // V6 is its own set with its own marker so installs that stamped V2 long ago
   // still receive the platform end-of-life rule.
   const v6 = await seedRuleSet(MARKER_KEY_V6, PLATFORM_LIFECYCLE_RULES);
+  // V9 likewise: its own marker so every existing install receives the
+  // firmware-drift rule once, and never again after the operator edits or
+  // deletes it.
+  const v9 = await seedRuleSet(MARKER_KEY_V9, FIRMWARE_DRIFT_RULES);
   // V8 runs after V2 so a fresh install's capacity rule is already seeded on
   // the recovery event and this finds nothing to do; it exists for installs
   // that stamped V2 (and V4) while capacity wrote one verb for both directions
   // and the rule could only clear on a clock.
   const v8 = await migrateCapacityResetV8();
   return {
-    created: v1.created + v2.created + v3.created + v6.created,
-    skipped: v1.skipped && v2.skipped && v3.skipped && v4.skipped && v5.skipped && v6.skipped && v7.skipped && v8.skipped,
+    created: v1.created + v2.created + v3.created + v6.created + v9.created,
+    skipped: v1.skipped && v2.skipped && v3.skipped && v4.skipped && v5.skipped && v6.skipped && v7.skipped && v8.skipped && v9.skipped,
   };
 }
 
 /** Exported for the seed unit test (glob-vs-fixture pinning). */
-export { BASELINE_RULES, EVENT_BASELINE_RULES, PLATFORM_LIFECYCLE_RULES };
+export { BASELINE_RULES, EVENT_BASELINE_RULES, PLATFORM_LIFECYCLE_RULES, FIRMWARE_DRIFT_RULES };
 
 (async () => {
   try {

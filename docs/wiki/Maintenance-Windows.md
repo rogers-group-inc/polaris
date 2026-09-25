@@ -210,11 +210,11 @@ open when the operation starts and end when the agent reconnects.
 
 | | |
 |---|---|
-| **Which operations** | agent upgrade, reinstall, uninstall. A first install and a retry take no window — there is no agent running to disconnect, and silencing the host would hide a real problem |
-| **What you see** | the device reads **maintenance** while it runs, and its Maintenance tab names the operation ("Polaris Agent upgrade") and the time it ends by |
-| **When it ends** | when the agent reconnects — not when the installer finishes, because the disconnect can be noticed up to a minute later. An uninstall ends when the uninstall does |
+| **Which operations** | agent upgrade, reinstall, uninstall, and a **firmware upgrade** of a switch or access point ([Assets](Assets#firmware)). A first install and a retry take no window — there is no agent running to disconnect, and silencing the host would hide a real problem |
+| **What you see** | the device reads **maintenance** while it runs, and its Maintenance tab names the operation ("Polaris Agent upgrade", "Firmware upgrade") and the time it ends by. A firmware window suppresses everything behind the switch, exactly as a scheduled window with *mark dependents down* does — a rebooting switch takes them with it |
+| **When it ends** | when the agent reconnects — not when the installer finishes, because the disconnect can be noticed up to a minute later. An uninstall ends when the uninstall does. A firmware upgrade ends when the run does, whatever its result |
 | **If the operation fails** | it ends immediately. An agent that is down because its upgrade failed is a real problem and you should hear about it |
-| **If nothing ends it** | it expires on its own — 20 minutes for an upgrade or uninstall, 30 for a reinstall. A device in maintenance is not being watched, so this can never be left open by a crash |
+| **If nothing ends it** | it expires on its own — 20 minutes for an agent upgrade or uninstall, 30 for a reinstall, 45 for a firmware upgrade (a switch flash is about fifteen minutes and the reboot up to another fifteen). A device in maintenance is not being watched, so this can never be left open by a crash |
 
 These windows are usually **very short** — an agent upgrade can open and close
 one inside two seconds. That is shorter than the interval event automations run

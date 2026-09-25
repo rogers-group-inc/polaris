@@ -343,10 +343,13 @@ function validateHttpConfig(config: Record<string, unknown>): void {
   if (authMode === "bearer" && !(typeof config.apiToken === "string" && config.apiToken.length > 0)) {
     throw new AppError(400, "HTTP credential bearer auth needs an API token");
   }
-  if ((authMode === "basic" || authMode === "digest") && !(hasUser && hasPass)) {
+  // "form" is the device admin login the firmware repository posts to a
+  // switch or AP's own login page (business rule 87) — the same two carriers
+  // as basic / digest, and the same requirement that both be present.
+  if ((authMode === "basic" || authMode === "digest" || authMode === "form") && !(hasUser && hasPass)) {
     // Named per mode: "basic auth needs..." on a digest credential sends the
     // operator looking for a field that isn't the one they got wrong.
-    throw new AppError(400, `HTTP credential ${authMode} auth needs both a username and a password`);
+    throw new AppError(400, `HTTP credential ${authMode} ${authMode === "form" ? "login" : "auth"} needs both a username and a password`);
   }
 
   // Drop the carriers this mode does not send, and every field left over from
@@ -357,7 +360,7 @@ function validateHttpConfig(config: Record<string, unknown>): void {
   // merge, so a client-side clear would preserve the very credential it appears
   // to delete.
   if (authMode !== "bearer") delete config.apiToken;
-  if (authMode !== "basic" && authMode !== "digest") {
+  if (authMode !== "basic" && authMode !== "digest" && authMode !== "form") {
     delete config.username;
     delete config.password;
   }
