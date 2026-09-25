@@ -295,6 +295,53 @@ function _csrfHeaders(extra) {
   return headers;
 }
 
+// A multipart upload that REPORTS PROGRESS. `fetch` cannot: it has no upload
+// progress event, and every other upload on the page (MIB, logo, restore) is
+// small enough to live with a static "Uploading…" span. A firmware image is
+// up to 100 MiB over whatever link the operator is on, so the Repository tab
+// drives one XMLHttpRequest and draws a bar from `upload.onprogress`.
+// Everything else matches `request`: CSRF header, the 401 redirect, JSON
+// bodies resolved or rejected on `error`, and a proxy's HTML error page
+// turned into a sentence by `_proxyErrorMessage` (a 413 here is the sign an
+// nginx-fronted install is missing the firmware location block).
+function _uploadWithProgress(path, formData, onProgress) {
+  return new Promise(function (resolve, reject) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", API_BASE + path);
+    var headers = _csrfHeaders();
+    Object.keys(headers).forEach(function (k) { xhr.setRequestHeader(k, headers[k]); });
+    if (xhr.upload && typeof onProgress === "function") {
+      xhr.upload.onprogress = function (e) {
+        onProgress(e.lengthComputable ? e.loaded / e.total : null);
+      };
+    }
+    xhr.onload = function () {
+      if (xhr.status === 401) { window.location.href = "/login.html"; return; }
+      var text = xhr.responseText || "";
+      var data = null;
+      if (text) { try { data = JSON.parse(text); } catch (_e) { data = null; } }
+      if (data === null && text) {
+        var perr = new Error(xhr.status >= 200 && xhr.status < 300
+          ? "Server returned a non-JSON response (" + xhr.status + ")"
+          : _proxyErrorMessage(xhr.status, text));
+        perr.status = xhr.status;
+        reject(perr);
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        var err = new Error((data && data.error) || ("Upload failed (" + xhr.status + ")"));
+        err.status = xhr.status;
+        err.data = data;
+        reject(err);
+        return;
+      }
+      resolve(data);
+    };
+    xhr.onerror = function () { reject(new Error("Network error during upload")); };
+    xhr.send(formData);
+  });
+}
+
 // One-shot guard so the stale-Secure-cookie alert only fires once per page
 // load — otherwise a page that fires off several mutations on init would
 // stack alerts on top of each other.
@@ -885,6 +932,12 @@ const api = {
     // assets:read (the facts are stamped on IPAM reservations).
     vips:                 (id) => request("GET", `/assets/${id}/vips`),
     virtualization:       (id) => request("GET", `/assets/${id}/virtualization`),
+    // Firmware upgrade (business rule 87): what the Repository can offer this
+    // switch / AP, the start (fullwrite; `imageId` is the image the operator
+    // approved by name), and the asset's run history.
+    firmwareUpgrade:      (id)       => request("GET",  `/assets/${id}/firmware-upgrade`),
+    startFirmwareUpgrade: (id, body) => request("POST", `/assets/${id}/firmware-upgrade`, body),
+    firmwareUpgradeRuns:  (id)       => request("GET",  `/assets/${id}/firmware-upgrade/runs`),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
     // Agent API surface"). `agent.get` returns 404 when no agent is
     // installed yet; the caller should treat that as "no install" rather
@@ -1126,6 +1179,27 @@ const api = {
     // Polaris Agent — Build button + inventory on Maintenance tab.
     agentInventory:    ()        => request("GET",    "/server-settings/agents/inventory"),
     agentBuildStart:   ()        => request("POST",   "/server-settings/agents/build"),
+    // Firmware repository — the Repository tab (business rule 87). The tree
+    // is one read; images are filed under a model node; a binding names the
+    // device-admin login at a manufacturer, device-type or model scope.
+    getFirmwareTree:      ()     => request("GET",    "/server-settings/firmware/tree"),
+    uploadFirmwareImage:  (file, fields, onProgress) => {
+      const formData = new FormData();
+      // Text fields BEFORE the file so multer has the scoping fields when it
+      // opens the stream.
+      formData.append("manufacturer", fields.manufacturer);
+      formData.append("assetType", fields.assetType);
+      formData.append("model", fields.model);
+      if (fields.notes) formData.append("notes", fields.notes);
+      formData.append("file", file);
+      return _uploadWithProgress("/server-settings/firmware/images", formData, onProgress);
+    },
+    deleteFirmwareImage:  (id)   => request("DELETE", `/server-settings/firmware/images/${encodeURIComponent(id)}`),
+    promoteFirmwareImage: (id)   => request("POST",   `/server-settings/firmware/images/${encodeURIComponent(id)}/make-primary`),
+    purgeFirmwareModel:   (body) => request("POST",   "/server-settings/firmware/models/purge", body),
+    setFirmwareBinding:   (body) => request("PUT",    "/server-settings/firmware/bindings", body),
+    listFirmwareRuns:     (params) => request("GET",  "/server-settings/firmware/runs" + toQuery(params)),
+    getFirmwareRun:       (id)   => request("GET",    `/server-settings/firmware/runs/${encodeURIComponent(id)}`),
     agentBuildCurrent: ()        => request("GET",    "/server-settings/agents/build/current"),
     agentBuildStatus:  (id)      => request("GET",    `/server-settings/agents/build/${id}`),
     agentBuildCancel:  (id)      => request("DELETE", `/server-settings/agents/build/${id}`),
