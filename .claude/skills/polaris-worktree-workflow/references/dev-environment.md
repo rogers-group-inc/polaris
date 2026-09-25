@@ -51,7 +51,11 @@ fired alerts, and a monitor status other than "Pending" on every asset — run t
 ordered chain (`mock:compare` → `mock:notifications` → `mock:demo`, the last one being the
 presentation pass) under "Demo data and documentation screenshots" in `DEVELOPMENT.md`.
 That section also covers `scripts/capture-screenshots.mjs`, which shoots the docs images
-off such a stack.
+off such a stack, and "Mock switches and access points for the firmware repository" —
+`scripts/seed-firmware-mock.ts` + `scripts/mock-firmware-devices.mjs`, both run INSIDE the
+app container (`podman exec`), which put three Fortinet devices on loopback aliases, a
+device-login credential and firmware images in place so an upgrade can be clicked through
+end to end (business rule 87).
 
 ## Run the full test suite against it
 
