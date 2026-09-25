@@ -186,3 +186,16 @@ describe("the approval dialog", () => {
     expect(text(host)).toContain("7.6.5 build1105 · the model’s backup image");
   });
 });
+
+describe("the handoff from openViewModal to the async-sections mount", () => {
+  // The availability is read in openViewModal but rendered from
+  // _mountAssetViewAsyncSections; the first browser open of a mock AP threw
+  // "firmwareAvail is not defined" because the helper never received it.
+  it("_mountAssetViewAsyncSections takes firmwareAvail as a parameter and the caller passes it", () => {
+    const mountSrc = fnSrc("_mountAssetViewAsyncSections");
+    expect(mountSrc.split("\n")[0]).toContain("firmwareAvail)");
+    expect(mountSrc).toContain("_rerenderFirmwarePanel(a, firmwareAvail)");
+    const call = assetsLines.find((l) => l.includes("_mountAssetViewAsyncSections(a,"));
+    expect(call).toContain("firmwareAvail);");
+  });
+});
