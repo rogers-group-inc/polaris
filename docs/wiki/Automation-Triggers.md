@@ -84,7 +84,9 @@ Three things it does that no other metric does
 - **A reading at or above the rule's `ignoreAtOrAbove` ceiling is not a
   reading** — default 100, so an untouched rule is unchanged and only a total
   outage is suppressed. Polaris opts its own baseline rule out at **90**.
-  Lower it if you do not want an alert trailing every outage.
+  Lower it if you do not want an alert trailing every outage. This box is
+  offered for packet loss only — a path check's failure rate has no ceiling,
+  because 100 % there means every run to the target failed, which is the alert.
 
 And the failures of an outage are **excluded from the metric**: every maximal
 run of consecutive failures that reached `down` is dropped whole, onset

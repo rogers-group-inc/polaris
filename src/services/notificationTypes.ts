@@ -725,8 +725,9 @@ const assetMetricTrigger = z.object({
    * SATURATION CEILING: a reading at or above this produces no reading at all,
    * and clears any alert this rule already had on that asset.
    *
-   * Offered for the windowed-ratio metrics (packet loss), where the top of the
-   * scale stops describing the thing the metric is named after. 100% loss is an
+   * Offered for packet loss only (SATURATION_CEILING_METRICS), where the top of
+   * the scale stops describing the thing the metric is named after. Inert on
+   * every other metric — a path check's failure rate included. 100% loss is an
    * outage, which the down automation already owns; and since the loss anchor
    * was removed (business rule 29) a device coming back from a 55-minute outage
    * genuinely reads ~92% for the rest of the window, so an operator who does not
@@ -3655,6 +3656,17 @@ export function isAssetScopedTrigger(trigger: Trigger): boolean {
 export const WINDOWED_RATIO_METRICS = ["probeLossPct", "pathFailurePct"] as const;
 
 /**
+ * The windowed-ratio metrics the SATURATION CEILING (`ignoreAtOrAbove`) applies
+ * to — a narrower list than WINDOWED_RATIO_METRICS, on purpose. The ceiling
+ * exists because 100% packet loss is an OUTAGE, which the down automation
+ * already owns (business rule 29). A path check's failure rate has no such
+ * owner: the host is up and is the one reporting, so 100% is the headline case
+ * ("the ERP is unreachable from this site") and must fire (business rule 85).
+ * Exposed on /automations/schema as `saturationCeilingMetrics`.
+ */
+export const SATURATION_CEILING_METRICS = ["probeLossPct"] as const;
+
+/**
  * The probe-loss measurement window, resolved exactly the way the engine
  * measures it: the configured `windowSec` floored at the 5-minute minimum (a
  * ratio always needs a few probes behind it), defaulted to 15 minutes when the
@@ -3686,8 +3698,12 @@ export const DEFAULT_READING_CEILING_PCT = 100;
  */
 export function readingAtOrAboveCeiling(trigger: unknown, value: number | null): boolean {
   if (typeof value !== "number" || !Number.isFinite(value)) return false;
-  const t = trigger as { type?: string; ignoreAtOrAbove?: unknown } | null;
+  const t = trigger as { type?: string; metric?: unknown; ignoreAtOrAbove?: unknown } | null;
   if (!t || t.type !== "asset_metric") return false;
+  // Only the metrics whose top of scale IS someone else's alert. A stored
+  // ceiling on any other metric (an API write, or a rule saved before this
+  // list existed) is inert rather than silencing readings.
+  if (!(SATURATION_CEILING_METRICS as readonly string[]).includes(String(t.metric))) return false;
   const ceiling = typeof t.ignoreAtOrAbove === "number" && Number.isFinite(t.ignoreAtOrAbove)
     ? t.ignoreAtOrAbove
     : DEFAULT_READING_CEILING_PCT;
@@ -4232,6 +4248,9 @@ export function buildSchemaCatalog() {
     // The saturation ceiling the wizard prefills for those metrics, served
     // rather than hardcoded client-side so the two cannot drift.
     readingCeilingDefault: DEFAULT_READING_CEILING_PCT,
+    // ...and which of them the ceiling applies to at all (packet loss, not a
+    // path check's failure rate — see SATURATION_CEILING_METRICS).
+    saturationCeilingMetrics: SATURATION_CEILING_METRICS,
     // Per-metric state names, so a boolean metric with no probe behind it still
     // renders "is Alarm" rather than "is true".
     booleanMetricLabels: BOOLEAN_METRIC_LABELS,

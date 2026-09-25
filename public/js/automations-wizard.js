@@ -3096,7 +3096,8 @@ async function openAutomationWizard(existing, opts) {
           (dims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
         '</div>';
     }
-    return '<div class="scr-row"' + (ratio ? ' data-ratio="1"' : "") + ' style="margin:4px 0;padding:4px;border:1px solid var(--color-border);border-radius:6px">' + line1 + line2 + '</div>';
+    var ceiling = !isState && !!leaf && isCeilingMetric(leaf.metric);
+    return '<div class="scr-row"' + (ratio ? ' data-ratio="1"' : "") + (ceiling ? ' data-ceiling="1"' : "") + ' style="margin:4px 0;padding:4px;border:1px solid var(--color-border);border-radius:6px">' + line1 + line2 + '</div>';
   }
   function tgGroupHtml(group, depth, kind) {
     group = group || { op: "and", children: [] };
@@ -3495,7 +3496,7 @@ async function openAutomationWizard(existing, opts) {
    * syncDurationRequirement can toggle it live as the metric changes.
    */
   function ratioCeilingFieldHtml(tr) {
-    var ratio = triggerIsWindowedRatio(tr);
+    var ratio = triggerHasCeiling(tr);
     var stored = tr && typeof tr.ignoreAtOrAbove === "number" ? tr.ignoreAtOrAbove : null;
     var val = stored === null ? "" : String(stored);
     return '<div class="form-group aw-ratio-ceiling"' + (ratio ? "" : ' style="display:none"') + '>' +
@@ -4110,8 +4111,9 @@ async function openAutomationWizard(existing, opts) {
         setPollFieldSec(input, RATIO_WINDOW_MIN_SEC);
       }
     }
+    // The ceiling is packet loss's alone, not every ratio's (business rule 85).
     var ceilingWrap = panel.querySelector(".aw-ratio-ceiling");
-    if (ceilingWrap) ceilingWrap.style.display = ratio ? "" : "none";
+    if (ceilingWrap) ceilingWrap.style.display = root && root.querySelector('.scr-row[data-ceiling="1"]') ? "" : "none";
     // THE SECOND FIELD serves both windows that leave room for a hold beside
     // them: a ratio's History (the hold rides on top of the measurement) and a
     // count window (the hold counts recalculations of it). A TIME-windowed
@@ -4482,6 +4484,21 @@ async function openAutomationWizard(existing, opts) {
     if (tr.type === "composite") return (tgLeaves(tr) || []).some(tgLeafWindowedRatio);
     return tgLeafWindowedRatio(tr);
   }
+  /** The saturation ceiling ("ignore readings at or above") is packet loss's
+   *  alone — the server's `saturationCeilingMetrics`. A path check's failure
+   *  rate is a windowed ratio too, but 100% there is the alert, not an outage
+   *  some other automation owns (business rule 85). */
+  function isCeilingMetric(m) {
+    return (s.saturationCeilingMetrics || ["probeLossPct"]).indexOf(m) !== -1;
+  }
+  function tgLeafCeiling(leaf) {
+    return !!(leaf && leaf.type !== "asset_state" && isCeilingMetric(leaf.metric));
+  }
+  function triggerHasCeiling(tr) {
+    if (!tr) return false;
+    if (tr.type === "composite") return (tgLeaves(tr) || []).some(tgLeafCeiling);
+    return tgLeafCeiling(tr);
+  }
   /** True when this leaf measures over a period rather than reading the latest
    *  sample — the case that needs a window, and so needs the duration field.
    *  A windowed-ratio leaf always counts, whatever its (ignored) aggregation. */
@@ -4590,7 +4607,7 @@ async function openAutomationWizard(existing, opts) {
     (function walk(n) {
       if (!n) return;
       if (n.type === undefined && Array.isArray(n.children)) { n.children.forEach(walk); return; }
-      if (tgLeafWindowedRatio(n)) {
+      if (tgLeafCeiling(n)) {
         if (pct === null) delete n.ignoreAtOrAbove;
         else n.ignoreAtOrAbove = pct;
       } else if (n.type !== "asset_state") {

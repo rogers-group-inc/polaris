@@ -109,6 +109,27 @@ rather than in the Event table. The hash ignores RTTs and trailing silent hops, 
 route at a different latency, or timing out two TTLs later, is not a change. The first
 trace — and the first after the target is edited — is a baseline, never a change.
 
+### Why the failure rate takes no saturation ceiling (2026-09-25)
+
+`pathFailurePct` is a windowed ratio, and it was first wired through the same resolver shape
+as `probeLossPct` — including rule 29's `ignoreAtOrAbove` ceiling, which defaults to 100.
+For packet loss that ceiling is right: 100% loss IS an outage, the down automation owns it,
+and a loss alert beside the down alert is the duplicate rule 29 exists to stop. A path check
+has no such owner. The host is up and is the one reporting; every run to the target failing
+is the headline case ("the ERP is unreachable from this site"), and nothing else alerts on
+it. Under the inherited default a total outage of the target never fired, and a live
+failure-rate alert CLEARED (`system:reading-saturated`) as the rate climbed to 100%.
+
+So the ceiling is now scoped by metric, not by "is a windowed ratio":
+`SATURATION_CEILING_METRICS` (`notificationTypes.ts`, `["probeLossPct"]`) is what
+`readingAtOrAboveCeiling` checks, a stored `ignoreAtOrAbove` on any other metric is inert,
+the `pathFailurePct` resolver does not consult it, and the wizard offers and saves the
+"Ignore readings at or above" box only for a condition on a listed metric (the schema
+serves the list as `saturationCeilingMetrics`). `WINDOWED_RATIO_METRICS` keeps both metrics
+— History-as-window semantics are shared; the ceiling is not. Pinned by
+`tests/unit/pathFailureRateCeiling.test.ts`, `probeLossWindow.test.ts` and the wizard DOM
+test "offers the saturation ceiling on packet loss but not on a path check's failure rate".
+
 ### Alternatives rejected
 
 - **Scripts as triggers.** Scripts are RCE-equivalent and free-form; making their exit code a

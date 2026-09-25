@@ -1093,7 +1093,9 @@ matching host. Its result describes whether that host can reach the target, so:
   path-check metrics (latency, failure rate, HTTP status, pass / fail, hop
   count, TLS days remaining). Holds, severity bands, resets, maintenance
   windows and dependency suppression all work the same as for any other
-  automation.
+  automation. One difference from packet loss: the failure rate has no
+  "ignore readings at or above" ceiling, so a target that fails **every** run
+  alerts — the host is up and reporting, so no other automation covers it.
 - **Response bodies are not kept by default.** Every run stores a fingerprint
   (SHA-256) and the size of the body. Up to 4 KB of the body itself is kept
   only when a run fails, so you can see what came back, or when you turn on

@@ -1159,7 +1159,9 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
         const a = index.get(c.assetId);
         if (!a || c.total === 0) continue;
         const value = Math.round((c.failed / c.total) * 1000) / 10;
-        if (readingAtOrAboveCeiling(trigger, value)) { saturated?.add(a.id); continue; }
+        // No saturation ceiling here (business rule 85): 100% is every run
+        // failing while the host reports — the case an operator wrote this rule
+        // for — not an outage some other automation owns, as it is for loss.
         out.push({
           assetId: a.id, hostname: a.hostname, tags: a.tags,
           dimKey: c.checkId, dimLabel: names.get(c.checkId) ?? c.checkId,
