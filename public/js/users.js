@@ -72,7 +72,7 @@ document.addEventListener("DOMContentLoaded", async function () {
   loadRegionList();     // best-effort; used by the region pickers
   loadTagList();        // best-effort; used by the tag pickers
   initAuthSettingsButton();
-  document.getElementById("btn-add-user").addEventListener("click", openCreateModal);
+  document.getElementById("btn-add-user").addEventListener("click", openUserCreateModal);
   var btnAddRole = document.getElementById("btn-add-role");
   if (btnAddRole) btnAddRole.addEventListener("click", function () { openRoleSlideover(null); });
   var btnAddGm = document.getElementById("btn-add-group-mapping");
@@ -310,7 +310,7 @@ function _userMenuItems(u) {
     }
   }
   items.push({ separator: true });
-  items.push({ label: "Delete", danger: true, onSelect: function () { confirmDelete(u.id, u.username); } });
+  items.push({ label: "Delete", danger: true, onSelect: function () { confirmDeleteUser(u.id, u.username); } });
   return items;
 }
 
@@ -333,7 +333,7 @@ function roleSelectHtml(selectId, selectedId, defaultName) {
   return '<select id="' + selectId + '">' + opts + '</select>';
 }
 
-function openCreateModal() {
+function openUserCreateModal() {
   var body = '<div class="form-group"><label>Username *</label><input type="text" id="f-username" placeholder="e.g. jsmith"></div>' +
     '<div class="form-group"><label>Password *</label><input type="password" id="f-password" placeholder="Enter password">' + passwordChecksHTML("f-pw-checks") + '<p class="hint">The user can change this after first login.</p></div>' +
     '<div class="form-group"><label>Confirm Password *</label><input type="password" id="f-password-confirm" placeholder="Re-enter password">' + passwordMatchHTML("f-pw-match") + '</div>' +
@@ -508,7 +508,7 @@ function openResetPasswordModal(id, username) {
   });
 }
 
-async function confirmDelete(id, username) {
+async function confirmDeleteUser(id, username) {
   var ok = await showConfirm('Delete user "' + username + '"? This cannot be undone.');
   if (!ok) return;
   try {
@@ -1695,6 +1695,7 @@ async function openRoleSlideover(roleId) {
   if (typeof initSlideoverResize === "function") {
     initSlideoverResize(panel, "polaris.panel.width.role-permissions");
   }
+  raiseSlideover(overlay);   // DOM order is stacking order
   revealOverlay(overlay);
 
   overlay.addEventListener("click", function (e) {

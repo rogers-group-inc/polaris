@@ -127,7 +127,13 @@ already shows exactly the sites you may read.
 ## The topology graph
 
 Opens from a site. A Cytoscape graph of the gates, switches and APs at that
-site, with a column solver for layout and a dagre fallback.
+site, with a column solver for layout and a dagre fallback. The gate sits at
+the left and each switch one column further right than its uplink; a
+switch's APs stack directly beneath it in the column to its right, and a
+link that leaves a switch for a child switch on another row runs along the
+switch's row, turns in the gap between columns and runs along the child's
+row, so lines travel the gutters instead of cutting across other devices.
+Drag anything to override the layout; the positions are saved per site.
 
 | Control | |
 |---|---|

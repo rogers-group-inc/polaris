@@ -16,6 +16,7 @@
  */
 
 import { severityCss } from "./severityStyle.js";
+import { assetOpenPath } from "./assetOpenLink.js";
 
 export interface TemplateVariable {
   token: string;
@@ -68,7 +69,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{time.zone}", label: "Timezone", description: "The timezone every time in this email is rendered in, named in full — e.g. \"CDT (America/Chicago)\". The default email prints it in the footer so a reader in another zone converts rather than guesses", group: "notification" },
   { token: "{link}", label: "Link", description: "Notifications page URL (empty if POLARIS_PUBLIC_URL unset)", group: "notification" },
   { token: "{ack}", label: "Acknowledge link", description: "URL of this alert's acknowledge page in Polaris — the reader signs in (unless they already are), adds a note and acknowledges. The same link for every recipient; empty when POLARIS_PUBLIC_URL is unset", group: "notification" },
-  { token: "{asset.link}", label: "Open asset", description: "URL that opens this device in Polaris (empty if POLARIS_PUBLIC_URL unset)", group: "asset" },
+  { token: "{asset.link}", label: "Open asset", description: "URL that opens this device in Polaris — the phone app on a phone, the desktop page anywhere else (empty if POLARIS_PUBLIC_URL unset)", group: "asset" },
   { token: "{asset.connectedSwitch}", label: "Connected switch", description: "Switch/port the device was last seen on, e.g. FS-248E-01/port15", group: "asset" },
   { token: "{asset.connectedAp}", label: "Connected AP", description: "Access point the device was last seen on", group: "asset" },
   { token: "{trigger.summary}", label: "What fired", description: "The trigger in the builder's own words, with the observed value — e.g. \"Response time (median over 5 minutes) is 760 ms\"", group: "notification" },
@@ -670,9 +671,15 @@ export function followUpLine(ctx: Record<string, string>): string {
     .join(" ");
 }
 
-/** The device page's path for ONE asset. Shared by both callers. */
+/**
+ * The device link's path for ONE asset. Shared by both callers. NOT the
+ * desktop page: it is the `/assets/<id>` landing route in app.ts, which sends
+ * a phone to the mobile SPA and everything else to the desktop page — the
+ * link is composed once for every reader, so the choice has to wait for the
+ * request that follows it (utils/assetOpenLink.ts has the reasoning).
+ */
 function assetPath(assetId: string): string {
-  return `/assets.html#view=asset:${encodeURIComponent(assetId)}`;
+  return assetOpenPath(assetId);
 }
 
 /**

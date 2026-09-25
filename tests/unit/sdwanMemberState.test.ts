@@ -244,10 +244,12 @@ describe("sdwanMemberState vocabulary", () => {
     })).not.toThrow();
   });
 
-  it("counts a poll-based hold against the system-info stream, not the probe loop", () => {
-    // The SD-WAN collector rides system-info; defaulting to responseTime would
-    // convert "for 3 polls" at the 60s ICMP cadence and mislead the wizard.
-    expect(streamForMetric("sdwanMemberState")).toBe("systemInfo");
+  it("counts a poll-based hold against the SD-WAN stream, not the probe loop", () => {
+    // The SD-WAN collector has its own cadence (the integration's
+    // sdwanIntervalSeconds); defaulting to responseTime — or to the system-info
+    // pass it rode until 2026-09 — would convert "for 3 polls" at the wrong
+    // interval and mislead the wizard.
+    expect(streamForMetric("sdwanMemberState")).toBe("sdwan");
   });
 
   it("charts the health check rather than the gate's own graphs", () => {

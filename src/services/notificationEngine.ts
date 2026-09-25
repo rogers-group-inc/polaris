@@ -26,6 +26,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logEvent } from "./eventLogService.js";
+import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "./firmwareRepositoryService.js";
 import { triggerSummary } from "../utils/triggerSummary.js";
 import { eventSubjectLabel } from "../utils/alertSubject.js";
 import { sensorReadingDisplay, chartKeysForChangeEvent } from "./alertChartService.js";
@@ -244,6 +245,11 @@ interface ScopeAssetRow extends ScopeAsset {
   // field, not decoration — see the resolver.
   fortilinkStatus: string | null;
   fortilinkCheckedAt: Date | null;
+  // Read by the firmwareVsPrimary resolver (business rule 87) alongside
+  // manufacturer / model / assetType — the four facts the Repository matches
+  // an image on.
+  serialNumber?: string | null;
+  osVersion?: string | null;
   // Read by the device-identifier dimension filters (applyDeviceFilters).
   macAddress?: string | null;
   // Read by every interface resolver — state trio AND counter metrics — for
@@ -283,8 +289,8 @@ interface Reading {
   /**
    * When this reading was taken: the newest sample's timestamp for a series
    * source, that stream's poll anchor on the Asset for a current-state one
-   * (`lastMonitorAt` for the probe-backed fields, `lastSystemInfoAt` for the
-   * SD-WAN ones). The current-state path counts observations on the state row
+   * (`lastMonitorAt` for the probe-backed fields; the SD-WAN rule readings
+   * use the rule row's own `updatedAt`, written only by a successful read). The current-state path counts observations on the state row
    * and uses this to tell a NEW poll from the same one seen again.
    */
   readingAt?: Date | null;
@@ -331,6 +337,9 @@ const SCOPE_SELECT = {
   // state field can be read off the scope row like the other Asset-column
   // fields instead of needing a query of its own.
   fortilinkStatus: true, fortilinkCheckedAt: true,
+  // Business rule 87 — the firmwareVsPrimary field compares off the scope row
+  // too: serial prefix = platform, osVersion = what the device runs.
+  serialNumber: true, osVersion: true,
   // condition-tree evaluation reads these (manufacturer/model/os); small
   // string columns, still a tight select at 2000 assets. macAddress feeds the
   // device-identifier dimension filters (applyDeviceFilters) alongside
@@ -345,8 +354,9 @@ const SCOPE_SELECT = {
   // The poll anchors a CURRENT-STATE reading counts on: these fields have no
   // sample series, so "3 polls" can only mean three observations in which the
   // stream that produces them actually ran. lastMonitorAt is the probe (every
-  // Asset-column field, plus the windowed-ratio metrics), lastSystemInfoAt the
-  // scrape that rewrites the SD-WAN rule table.
+  // Asset-column field, plus the windowed-ratio metrics). The SD-WAN rule
+  // readings anchor on the rule rows' own updatedAt instead (see the
+  // sdwanRuleStatus case), which is written only by a successful SD-WAN read.
   lastMonitorAt: true, lastSystemInfoAt: true,
   // The gate every trigger path applies (assetCanTrigger): an automation only
   // ever fires about a device Polaris is actually polling. Kept in the select
@@ -1466,6 +1476,27 @@ async function resolveAssetStateReadings(
         .filter((a) => a.fortilinkStatus != null)
         .map((a) => ({ ...mk(a, "", "", a.fortilinkStatus), readingAt: a.fortilinkCheckedAt ?? null }));
     }
+    case "firmwareVsPrimary": {
+      // Business rule 87. Same posture as fortilinkStatus: a device the
+      // Repository cannot place — not a switch / AP, no usable serial, no
+      // readable version, no primary image for its platform — produces NO
+      // READING, so `!= current` is true only of devices that really differ.
+      //
+      // Scale: ONE findMany over the image table (≤ 2 rows per model node)
+      // per evaluation, then an in-memory comparison per asset — never a
+      // query per asset. The anchor is the system-info pass, which is what
+      // refreshes osVersion; the probe tick says nothing about firmware.
+      const primaries = await loadPrimaryFirmwareImages();
+      const out: Reading[] = [];
+      for (const a of assets) {
+        const v = firmwareVsPrimary(
+          { assetType: a.assetType, manufacturer: a.manufacturer ?? null, model: a.model ?? null, serialNumber: a.serialNumber ?? null, osVersion: a.osVersion ?? null },
+          primaries,
+        );
+        if (v) out.push({ ...mk(a, "", "", v), readingAt: a.lastSystemInfoAt ?? probeAt(a) });
+      }
+      return out;
+    }
     case "ifOperStatus": case "ifAdminStatus": case "ifIpAddress": case "poeStatus": {
       const col = INTERFACE_STATE_COLUMN[trigger.field];
       const since = new Date(Date.now() - lookbackMsFor(trigger));
@@ -1573,25 +1604,28 @@ async function resolveAssetStateReadings(
         return {
           ...mk(a, `${r.healthCheck}|${r.link}`, `${r.healthCheck} / ${r.link}`, r.state),
           series: g.slice(0, SERIES_CAP).map((x) => x.state),
-          // The SD-WAN collector rides the system-info cadence, not the monitor
-          // loop, so a forPolls hold counts health-check reads — anchoring on
-          // lastMonitorAt would count 60s ICMP ticks during which nothing
-          // asked the gate about its SLA.
+          // The SD-WAN collector runs on its own cadence (the integration's
+          // sdwanIntervalSeconds), not the monitor loop, so a forPolls hold
+          // counts health-check reads — anchoring on lastMonitorAt would count
+          // ICMP ticks during which nothing asked the gate about its SLA.
           readingAt: r.timestamp,
         };
       });
     }
     case "sdwanRuleStatus": case "sdwanSelectedMember": {
-      const rows = await prisma.assetSdwanRule.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, ruleName: true, status: true, selectedMember: true } });
+      const rows = await prisma.assetSdwanRule.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, ruleName: true, status: true, selectedMember: true, updatedAt: true } });
       const col = trigger.field === "sdwanRuleStatus" ? "status" : "selectedMember";
       // sdwanRulePattern narrows to the named rule(s) — without it every rule
       // on the gate is its own alerting dimension, which is the default.
       return rows.filter((r) => substringMatch(r.ruleName, df.sdwanRulePattern)).map((r) => {
         const a = index.get(r.assetId);
         if (!a) return null;
-        // Delete-replaced per scrape, so there is no history to count: the
-        // system-info anchor is what says a NEW reading happened.
-        return { ...mk(a, r.ruleName, r.ruleName, (r as any)[col]), readingAt: a.lastSystemInfoAt ?? null };
+        // Delete-replaced per SUCCESSFUL SD-WAN read (runSdwanFor), so there is
+        // no history to count: the row's own updatedAt is what says a NEW
+        // reading happened. Not Asset.lastSdwanAt — that is stamped on failed
+        // reads too, and a failed read re-observes nothing. (Until 2026-09 this
+        // was lastSystemInfoAt, when the rules rode the system-info pass.)
+        return { ...mk(a, r.ruleName, r.ruleName, (r as any)[col]), readingAt: r.updatedAt ?? null };
       }).filter(Boolean) as Reading[];
     }
     default: return [];

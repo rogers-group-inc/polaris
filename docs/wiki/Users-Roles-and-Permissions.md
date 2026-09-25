@@ -8,7 +8,7 @@ Roles**, **Group Mappings**, **Authentication**.
 ## The model
 
 Every route declares a **function key** plus a required **level**. A role is a
-matrix over the 33 keys:
+matrix over the 34 keys:
 
 ```
 none  <  read  <  write  <  fullwrite
@@ -62,7 +62,7 @@ silently revoke.
 
 ---
 
-## The 33 function keys
+## The 34 function keys
 
 **Top rung** names the highest level the key offers. Where that is Full
 Read-Write, the last column says what it buys over Read-Write — because that is
@@ -98,6 +98,7 @@ the only thing that justifies the rung existing.
 | `mibDatabase` | Read-Write | upload / browse / walk SNMP MIBs |
 | `manufacturerProfiles` | Read-Write | per-vendor telemetry profiles — CPU/memory/temperature OIDs, custom widgets — **and the manufacturer alias map**, which decides which profile a device gets |
 | `credentials` | Full RW | stored SNMP / WinRM / SSH / REST / HTTP credentials — **ownership** |
+| `firmware` | Full RW | the firmware repository for switches and access points. Read = see the Repository tab and which devices have an upgrade waiting; Read-Write = upload / delete images and bind device logins; **Full Read-Write = start an upgrade** — it reboots network hardware, so it is seeded only for admin-equivalent roles ([rule 87](Business-Rules#rule-87)) |
 | `deviceIcons` | Read-Write | operator-uploaded topology icons |
 
 > `manufacturerAliases` was **folded into `manufacturerProfiles`** on

@@ -288,8 +288,13 @@ function _polarisReadPollingDropdown(id) {
 }
 
 // Standard MIBs selectable without uploading anything. Kept in lockstep with
-// the _SNMP_STANDARD_MIBS array in assets.js (SNMP Walk tab).
-var _SNMP_STANDARD_MIBS = [
+// the _SNMP_STANDARD_MIBS array in assets.js (SNMP Walk tab). Named apart from
+// it because both files share the page's global scope, and assets.js can now
+// be loaded onto the Integrations page on demand (PolarisPanels, app.js) —
+// under the same name the later file silently replaced this list, vendor
+// entries and all. Same reason for openIntegrationCreateModal /
+// openIntegrationEditModal / confirmDeleteIntegration below.
+var _INTEGRATION_SNMP_MIBS = [
   { id: "std:system",         label: "System (RFC 1213)",              oid: "1.3.6.1.2.1.1"         },
   { id: "std:interfaces",     label: "Interfaces — ifTable (RFC 2863)", oid: "1.3.6.1.2.1.2"         },
   { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (RFC 2863)", oid: "1.3.6.1.2.1.31"        },
@@ -334,7 +339,7 @@ function _mibOptionsHTML(selectedId, autoName) {
   var autoLabel = "Automatic" + (autoName ? " (" + autoName + ")" : " (let Polaris choose)");
   var html = '<option value=""' + (sel === "" ? " selected" : "") + ">" + escapeHtml(autoLabel) + "</option>";
   html += '<optgroup label="Standard MIBs">';
-  _SNMP_STANDARD_MIBS.forEach(function (m) {
+  _INTEGRATION_SNMP_MIBS.forEach(function (m) {
     html += '<option value="' + escapeHtml(m.id) + '"' + (sel === m.id ? " selected" : "") + '>' + escapeHtml(m.label) + '</option>';
   });
   html += '</optgroup>';
@@ -628,8 +633,8 @@ function _discoverBtnHTML(id, name, discovery, disabled) {
   if (discovery) {
     var isSlow = discovery.slow || (discovery.slowDevices && discovery.slowDevices.length > 0);
     var style = isSlow
-      ? 'background:rgba(255,214,0,0.12);border:1px solid rgba(255,214,0,0.35);color:var(--color-warning)'
-      : 'background:rgba(79,195,247,0.1);border:1px solid rgba(79,195,247,0.25);color:var(--color-accent)';
+      ? 'background:color-mix(in srgb, var(--color-warning) 12%, transparent);border:1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);color:var(--color-warning)'
+      : 'background:color-mix(in srgb, var(--color-accent) 10%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);color:var(--color-accent)';
     // Scoped single-FortiGate re-discovery names the device so the card
     // makes clear this isn't a full sweep.
     var label = isSlow ? 'Discovering — slow'
@@ -844,8 +849,8 @@ async function loadIntegrations() {
             (intg.type === "activedirectory" ? '<button class="btn btn-sm btn-secondary" onclick="openAdApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             (intg.type === "vcenter" ? '<button class="btn btn-sm btn-secondary" onclick="openVcenterApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             '<button class="btn btn-sm btn-secondary" onclick="testConnection(\'' + intg.id + '\', this)">Test Connection</button>' +
-            '<button class="btn btn-sm btn-secondary" onclick="openEditModal(\'' + intg.id + '\')">Edit</button>' +
-            '<button class="btn btn-sm btn-danger" onclick="confirmDelete(\'' + intg.id + '\', \'' + escapeHtml(intg.name) + '\')">Delete</button>' +
+            '<button class="btn btn-sm btn-secondary" onclick="openIntegrationEditModal(\'' + intg.id + '\')">Edit</button>' +
+            '<button class="btn btn-sm btn-danger" onclick="confirmDeleteIntegration(\'' + intg.id + '\', \'' + escapeHtml(intg.name) + '\')">Delete</button>' +
           '</div>' +
         '</div>' +
         '<div class="integration-card-details">' +
@@ -936,7 +941,7 @@ setInterval(function () {
 // DHCP Push tab body. Renders the master toggle plus mode-aware guidance:
 // when useProxy is on the call lands on the FortiGate via FMG's REST proxy
 // in real time; when it's off it goes direct to the FortiGate's REST API
-// using fortigateApiUser/fortigateApiToken on the Settings tab. The toggle
+// using fortigateApiUser/fortigateApiToken on the Monitoring tab (FortiGate subtab). The toggle
 // gates both halves of the Polaris → FortiGate DHCP write path:
 //   1. Manual reservation creates → POST /cmdb/system.dhcp/server/<id>/
 //      reserved-address. Verified on read-back; failures abort the create.
@@ -968,7 +973,7 @@ function reservationPushFormHTML(pushReservations, useProxy, arpPresenceSweep, a
   var modeBody = isStandalone
     ? "DHCP writes go straight to this FortiGate's REST API using the API token on the General tab. Each call lands on the running config in real time."
     : (useProxy === false)
-      ? "DHCP writes go to each FortiGate's REST API using the per-device API token configured on the Settings tab. FortiManager is bypassed entirely. Each call lands on the running config in real time."
+      ? "DHCP writes go to each FortiGate's REST API using the per-device API token on the Monitoring tab (FortiGate subtab). FortiManager is bypassed entirely. Each call lands on the running config in real time."
       : "DHCP writes go through FortiManager's <code>/sys/proxy/json</code> endpoint, which forwards the call to the target FortiGate using FortiManager's stored device credentials. Each call lands on the running config in real time; FortiManager will see the change on its next config sync.";
   var permsHtml = isStandalone
     ? _fortigateAccessProfileHTML(
@@ -976,9 +981,9 @@ function reservationPushFormHTML(pushReservations, useProxy, arpPresenceSweep, a
         ['<strong>Network</strong> &rarr; Custom &rarr; <strong>Configuration</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; the group the <code>system.dhcp.server</code> configuration tree belongs to</span>'],
         "/api/v2/cmdb/system/dhcp/server",
       )
-    : ('<h4 style="margin:0 0 0.25rem 0">Required FortiManager Admin Profile</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">The following permission changes are needed on the FortiManager admin profile Polaris uses:</p>' +
-      '<ul style="margin:0 0 0.75rem 1.2rem;padding:0;font-size:0.85rem">' +
+    : (sectionHeading("Required FortiManager Admin Profile") +
+      '<p class="hint" style="margin:0 0 0.75rem 0">The following permission changes are needed on the FortiManager admin profile Polaris uses:</p>' +
+      '<ul class="hint" style="margin:0 0 0.75rem 1.2rem;padding:0">' +
         '<li><strong>Device Manager</strong> &rarr; Read-Write</li>' +
         '<li style="margin-left:1.2rem"><strong>Manage Device Configurations</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; the actual gate</span></li>' +
         '<li>All other Device Manager sub-items &mdash; leave at Read-Only or None</li>' +
@@ -986,10 +991,10 @@ function reservationPushFormHTML(pushReservations, useProxy, arpPresenceSweep, a
         '<li style="margin-left:1.2rem"><strong>Install Policy Package or Device Configuration</strong> &rarr; None &nbsp;<span style="color:var(--color-text-tertiary)">&larr; Polaris never triggers installs</span></li>' +
       '</ul>' +
       calloutHTML("warning", "Blast radius", "FortiManager admin profiles do not have a per-object permission for DHCP reservations. <strong>Manage Device Configurations</strong> grants write access to every CMDB tree on every FortiGate in this ADOM. A compromised Polaris API token could in principle modify other device-level config &mdash; interfaces, routing, other DHCP scopes &mdash; not just the reservations Polaris pushes. Treat the API token as a privileged credential and rotate on the same cadence as your other admin secrets.") +
-      calloutHTML("tip", "Tighter scope alternative", "For tighter scope, switch to direct mode (uncheck <em>Query each FortiGate directly (bypass FortiManager proxy)</em> on the Settings tab) and configure a per-FortiGate REST API admin with <strong>Network &rarr; Custom &rarr; Configuration</strong> set to Read/Write. This scopes write access to one FortiGate's network-configuration bucket instead of every CMDB tree on every device in the ADOM."));
+      calloutHTML("tip", "Tighter scope alternative", "For tighter scope, switch to direct mode (tick <em>Direct Polling</em> on the Monitoring tab&rsquo;s FortiGate subtab) and configure a per-FortiGate REST API admin with <strong>Network &rarr; Custom &rarr; Configuration</strong> set to Read/Write. This scopes write access to one FortiGate's network-configuration bucket instead of every CMDB tree on every device in the ADOM."));
   return '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">DHCP Push</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">When enabled, two DHCP writes flow from Polaris back to the originating FortiGate on subnets discovered by this integration.</p>' +
+      sectionHeading("DHCP Push") +
+      '<p class="hint" style="margin:0 0 0.75rem 0">When enabled, two DHCP writes flow from Polaris back to the originating FortiGate on subnets discovered by this integration.</p>' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
         '<input type="checkbox" id="f-pushReservations" ' + checked + ' onchange="syncAutoReserveInfraEnabled()" style="width:auto">' +
         '<label for="f-pushReservations" style="margin:0">Write Polaris DHCP changes back to FortiGate</label>' +
@@ -1023,20 +1028,20 @@ function reservationPushFormHTML(pushReservations, useProxy, arpPresenceSweep, a
       '</ul>' +
       calloutHTML("warning", "This writes DHCP configuration automatically", "Every other Polaris DHCP write is something an operator asked for on a specific IP. These two run on a schedule across the fleet. Enable them on one integration and check the result on a single gate before relying on them, and have someone who owns the network sign off &mdash; particularly for FortiLink pools, which the FortiGate manages itself.") +
     '</section>' +
-    '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
+    formDivider() +
     '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">Push Transport</h4>' +
-      '<p class="hint" style="margin:0 0 0.25rem 0;color:var(--color-text-tertiary)">Current setting: <strong style="color:var(--color-text-primary)">' + escapeHtml(modeLabel) + '</strong></p>' +
-      '<p class="hint" style="margin:0;color:var(--color-text-tertiary)">' + modeBody + '</p>' +
+      sectionHeading("Push Transport") +
+      '<p class="hint" style="margin:0 0 0.25rem 0">Current setting: <strong style="color:var(--color-text-primary)">' + escapeHtml(modeLabel) + '</strong></p>' +
+      '<p class="hint" style="margin:0">' + modeBody + '</p>' +
     '</section>' +
-    '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
+    formDivider() +
     '<section>' +
       permsHtml +
     '</section>' +
-    '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
+    formDivider() +
     '<section>' +
-      '<h4 style="margin:0 0 0.25rem 0">Stale Detection &mdash; ARP Presence Sweep</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">Improves stale-reservation detection for devices that never pull a lease (statically configured) or don\'t answer ping. Read-only on the device &mdash; nothing is written to the FortiGate.</p>' +
+      sectionHeading("Stale Detection — ARP Presence Sweep") +
+      '<p class="hint" style="margin:0 0 0.75rem 0">Improves stale-reservation detection for devices that never pull a lease (statically configured) or don\'t answer ping. Read-only on the device &mdash; nothing is written to the FortiGate.</p>' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
         '<input type="checkbox" id="f-arpPresenceSweep" ' + arpChecked + ' style="width:auto">' +
         '<label for="f-arpPresenceSweep" style="margin:0">Probe reserved IPs before reading the ARP table</label>' +
@@ -1109,28 +1114,35 @@ function _readAdoptDiscoveredMacToggle() {
   return !!el.checked;
 }
 
-// SD-WAN tab body. Single master toggle (config.pullSdwan). When enabled, each
-// system-info pass for FortiGates owned by this integration also pulls SD-WAN
-// Performance SLA health-check metrics + service-rule member selection, which
+// SD-WAN tab body. Master toggle (config.pullSdwan) plus the stream's own
+// polling interval (config.sdwanIntervalSeconds, default 60s). When enabled,
+// FortiGates owned by this integration are polled for SD-WAN Performance SLA
+// health-check metrics + service-rule member selection on that interval, which
 // surface on the asset's SD-WAN tab. FortiOS-only; read-only on the device.
-function sdwanFormHTML(pullSdwan) {
+var SDWAN_INTERVAL_DEFAULT = 60;
+function sdwanFormHTML(pullSdwan, intervalSec) {
   var checked = pullSdwan === true ? "checked" : "";
+  var interval = Number(intervalSec) >= 60 ? Math.floor(Number(intervalSec)) : SDWAN_INTERVAL_DEFAULT;
   return '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">SD-WAN Monitoring</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">When enabled, Polaris pulls SD-WAN data from each FortiGate on its system-info polling cadence and shows it on the asset\'s <strong>SD-WAN</strong> tab. Read-only &mdash; nothing is written back to the device.</p>' +
+      sectionHeading("SD-WAN Monitoring") +
+      '<p class="hint" style="margin:0 0 0.75rem 0">When enabled, Polaris polls each FortiGate for SD-WAN data on the interval below and shows it on the asset\'s <strong>SD-WAN</strong> tab. Read-only &mdash; nothing is written back to the device.</p>' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
         '<input type="checkbox" id="f-pullSdwan" ' + checked + ' style="width:auto">' +
         '<label for="f-pullSdwan" style="margin:0">Pull SD-WAN Performance SLA + rule selection</label>' +
+      '</div>' +
+      '<div class="form-group"><label for="f-sdwanInterval">Polling Interval</label>' +
+        '<div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-sdwanInterval" value="' + interval + '" min="60" max="86400" step="1" style="width:100px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">seconds</span></div>' +
+        '<p class="hint">How often each FortiGate is asked for its SD-WAN health-checks and rule selection (60&ndash;86400 seconds; default 60). Independent of the interface polling interval. A shorter interval also shortens SD-WAN alert holds counted in polls.</p>' +
       '</div>' +
       '<ul class="hint" style="margin:0.25rem 0 0 1.2rem;padding:0">' +
         '<li><strong>Performance SLA health-checks.</strong> Per WAN-member latency, jitter and packet-loss from <code>/api/v2/monitor/virtual-wan/health-check</code>, charted over time.</li>' +
         '<li><strong>SD-WAN rules.</strong> Each service rule\'s configured members (priority order) and which member is currently selected, from <code>/api/v2/cmdb/system/sdwan</code>, with a selection-history timeline. The active member is inferred from health-check state when FortiOS doesn\'t expose it directly.</li>' +
       '</ul>' +
     '</section>' +
-    '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
+    formDivider() +
     '<section>' +
-      '<h4 style="margin:0 0 0.25rem 0">Required Read Access</h4>' +
-      '<p class="hint" style="margin:0;color:var(--color-text-tertiary)">The API token needs read access to <strong>System &rarr; SD-WAN</strong> (CMDB) and the SD-WAN monitor endpoints. No write access is required &mdash; this stream never modifies device configuration. FortiGates without SD-WAN configured simply report no data and the tab stays hidden.</p>' +
+      sectionHeading("Required Read Access") +
+      '<p class="hint" style="margin:0">The API token needs read access to <strong>System &rarr; SD-WAN</strong> (CMDB) and the SD-WAN monitor endpoints. No write access is required &mdash; this stream never modifies device configuration. FortiGates without SD-WAN configured simply report no data and the tab stays hidden.</p>' +
     '</section>';
 }
 
@@ -1142,27 +1154,34 @@ function _readPullSdwanToggle() {
   return !!el.checked;
 }
 
+// Read the SD-WAN polling interval. undefined when the tab didn't render; an
+// out-of-range or blank entry is clamped to 60..86400 (blank = the default)
+// rather than refused, matching how the monitor reads the stored value.
+function _readSdwanInterval() {
+  var el = document.getElementById("f-sdwanInterval");
+  if (!el) return undefined;
+  var n = Math.floor(Number(el.value));
+  if (!isFinite(n) || n <= 0) return SDWAN_INTERVAL_DEFAULT;
+  return Math.max(60, Math.min(86400, n));
+}
+
 // ─── Script Publishing tab (Entra ID) ──────────────────────────────────────
 //
 // The one WRITE capability on this integration. Everything else Entra does is
 // read-only discovery, so the tab leads with what the operator has to change
 // in Azure and what it costs them — not with the checkbox.
 function scriptPublishingFormHTML(publishToIntune) {
-  var checked = publishToIntune === true ? "checked" : "";
   return '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">Publish deployment scripts to Intune</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">' +
+      sectionHeading("Publish deployment scripts to Intune") +
+      '<p class="hint" style="margin:0 0 0.75rem 0">' +
         'Lets Polaris upload the Windows SSH onboarding scripts (Integrations &rarr; Polaris Agent &rarr; ' +
         'SSH Deployment) to Intune as a <strong>Remediation</strong>, instead of you downloading them and ' +
         'creating the policy by hand. Re-publishing updates the same policy rather than creating a second one.' +
       '</p>' +
-      '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
-        '<input type="checkbox" id="f-publishToIntune" ' + checked + ' style="width:auto">' +
-        '<label for="f-publishToIntune" style="margin:0">Allow Polaris to publish scripts to Intune</label>' +
-      '</div>' +
-      '<div style="background:var(--color-bg-subtle,rgba(127,127,127,0.08));border-radius:6px;padding:0.75rem 1rem;margin-bottom:0.75rem">' +
-        '<p style="margin:0 0 0.4rem 0;font-weight:500;font-size:0.85rem">Required in Azure before this works</p>' +
-        '<ol style="margin:0;padding-left:1.2rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.6">' +
+      checkboxRow("f-publishToIntune", "Allow Polaris to publish scripts to Intune", publishToIntune === true) +
+      formDivider() +
+      sectionHeading("Required in Azure before this works") +
+        '<ol class="hint" style="margin:0 0 0.5rem 0;padding-left:1.2rem">' +
           '<li>Open this app registration in <strong>Entra ID &rarr; App registrations &rarr; API permissions</strong>.</li>' +
           '<li>Add the <strong>Microsoft Graph &rarr; Application permission</strong> ' +
             '<code>DeviceManagementScripts.ReadWrite.All</code> &mdash; this is the scope Graph ' +
@@ -1171,21 +1190,19 @@ function scriptPublishingFormHTML(publishToIntune) {
             'instead; if publishing fails, the 403 names the scope that tenant wants &mdash; add that one.</li>' +
           '<li><strong>Grant admin consent</strong> for the tenant &mdash; application permissions do not work without it.</li>' +
         '</ol>' +
-        '<p style="margin:0.5rem 0 0 0;font-size:0.82rem;color:var(--color-text-secondary)">' +
+        '<p class="hint" style="margin:0">' +
           'Discovery keeps working on the read permissions it already has; this is additive. ' +
           'A newly granted permission reaches Polaris on its next access token, which it caches for up to ' +
           'an hour &mdash; a publish that fails right after the grant is retried automatically on a fresh ' +
           'token, so try it once more before assuming the grant did not take.' +
         '</p>' +
-      '</div>' +
-      '<p class="hint" style="color:var(--color-warning,#d98c00);margin:0">' +
-        '<strong>What you are granting.</strong> This upgrades the credential from &ldquo;reads your device ' +
+      calloutHTML("warning", "What you are granting",
+        'This upgrades the credential from &ldquo;reads your device ' +
         'inventory&rdquo; to &ldquo;creates device-management policy across the tenant&rdquo;, and an application ' +
         'permission carries no user context &mdash; it acts tenant-wide. ' +
         '<strong>Polaris never assigns the policy.</strong> It is uploaded targeting nothing, because the script ' +
         'grants administrative SSH access to every device it eventually runs on; choosing those devices stays a ' +
-        'human decision you make in the Intune console after reading the script.' +
-      '</p>' +
+        'human decision you make in the Intune console after reading the script.') +
     '</section>';
 }
 
@@ -1205,21 +1222,17 @@ function _readPublishToIntuneToggle() {
 // the tab has to be explicit that enabling this means Polaris can run code as
 // root/SYSTEM on machines you pick.
 function arcScriptPublishingFormHTML(allowRunCommand) {
-  var checked = allowRunCommand === true ? "checked" : "";
   return '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">Run deployment scripts on Arc machines</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">' +
+      sectionHeading("Run deployment scripts on Arc machines") +
+      '<p class="hint" style="margin:0 0 0.75rem 0">' +
         'Lets Polaris run the SSH onboarding script (Integrations &rarr; Polaris Agent &rarr; SSH Deployment) ' +
         'directly on Arc-connected machines via <strong>Run Command</strong>. This is how Linux and Windows ' +
         'Server get onboarded &mdash; Intune deploys scripts to neither.' +
       '</p>' +
-      '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
-        '<input type="checkbox" id="f-allowRunCommand" ' + checked + ' style="width:auto">' +
-        '<label for="f-allowRunCommand" style="margin:0">Allow Polaris to run deployment scripts</label>' +
-      '</div>' +
-      '<div style="background:var(--color-bg-subtle,rgba(127,127,127,0.08));border-radius:6px;padding:0.75rem 1rem;margin-bottom:0.75rem">' +
-        '<p style="margin:0 0 0.4rem 0;font-weight:500;font-size:0.85rem">Required in Azure before this works</p>' +
-        '<ol style="margin:0;padding-left:1.2rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.6">' +
+      checkboxRow("f-allowRunCommand", "Allow Polaris to run deployment scripts", allowRunCommand === true) +
+      formDivider() +
+      sectionHeading("Required in Azure before this works") +
+        '<ol class="hint" style="margin:0 0 0.5rem 0;padding-left:1.2rem">' +
           '<li>Discovery needs only <strong>Reader</strong>. Running scripts additionally needs all three of ' +
             '<code>Microsoft.HybridCompute/machines/read</code>, ' +
             '<code>Microsoft.HybridCompute/machines/runCommands/write</code> and ' +
@@ -1236,18 +1249,16 @@ function arcScriptPublishingFormHTML(allowRunCommand) {
           '<li>Allow a few minutes for the assignment to propagate. A 403 immediately after assigning usually means ' +
             '&ldquo;not yet&rdquo;, not &ldquo;wrong role&rdquo; &mdash; re-check only if it persists.</li>' +
         '</ol>' +
-        '<p style="margin:0.5rem 0 0 0;font-size:0.82rem;color:var(--color-text-secondary)">' +
+        '<p class="hint" style="margin:0">' +
           'Note this is an <strong>Azure RBAC role assignment</strong>, not a Graph API permission &mdash; a ' +
           'different mechanism from the Entra/Intune side, and a common point of confusion.' +
         '</p>' +
-      '</div>' +
-      '<p class="hint" style="color:var(--color-warning,#d98c00);margin:0">' +
-        '<strong>A run command executes immediately.</strong> Unlike an Intune Remediation there is no unassigned ' +
+      calloutHTML("warning", "A run command executes immediately",
+        'Unlike an Intune Remediation there is no unassigned ' +
         'state to review first &mdash; creating one runs the script as root/SYSTEM on that machine. Polaris will ' +
         'only ever target machines you explicitly select, and asks for confirmation with the count, but the ' +
         'selection you make IS the review step. The script grants administrative SSH access to every machine it ' +
-        'runs on.' +
-      '</p>' +
+        'runs on.') +
     '</section>';
 }
 
@@ -1352,17 +1363,17 @@ function directoryFormHTML(integrationType, cfg) {
   );
 
   return '<section>' +
-      '<p class="hint" style="margin:0 0 0.85rem 0;color:var(--color-text-tertiary)">' +
+      '<p class="hint" style="margin:0 0 0.85rem 0">' +
         "How this directory feeds the Polaris address book. " + perms +
       '</p>' +
 
-      '<h4 style="margin:1rem 0 0.5rem">Look up people as you type</h4>' +
+      sectionHeading("Look up people as you type") +
       checkbox("f-enableDirectorySearch", "Search this directory from the address book",
         c.enableDirectorySearch === true,
         "Lets the automation recipient picker look up people, distribution lists and org contacts as an operator " +
         "types. Results are <strong>live and never stored</strong> — only an address someone actually picks is saved.") +
 
-      '<h4 style="margin:1.25rem 0 0.5rem">Keep the address book in step with the directory</h4>' +
+      sectionHeading("Keep the address book in step with the directory") +
       checkbox("f-enableDirectorySync", "Sync this directory into the address book",
         c.enableDirectorySync === true,
         "Runs at the end of every discovery for this integration. Adds a contact for each person who matches, " +
@@ -1457,15 +1468,24 @@ function _readDirectorySyncConfig() {
 // with one read from the integration's Query API tab instead of being
 // discovered as a failed push. Shared by all three tabs so a fourth caller
 // can't reintroduce a two-transport assumption.
-function _fortigateAccessProfileHTML(noun, grants, verifyPath) {
+//
+// `fleet` = FMG "bypass the proxy" direct mode: the same FortiOS grant, but on
+// every managed gate's REST API admin (the per-device token on the Settings
+// tab) rather than one gate's General-tab token.
+function _fortigateAccessProfileHTML(noun, grants, verifyPath, fleet) {
   var rows = "";
   for (var i = 0; i < grants.length; i++) rows += '<li>' + grants[i] + '</li>';
-  return '<h4 style="margin:0 0 0.25rem 0">Required FortiGate Access Profile</h4>' +
-    '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">Polaris writes ' + noun +
-      ' straight to this FortiGate\'s REST API using the API token on the General tab. That token\'s REST API admin needs an access profile granting:</p>' +
-    '<ul style="margin:0 0 0.75rem 1.2rem;padding:0;font-size:0.85rem">' + rows + '</ul>' +
+  var intro = fleet
+    ? 'Polaris writes ' + noun + ' straight to each FortiGate\'s REST API using the per-device API token on the Monitoring tab (FortiGate subtab) &mdash; FortiManager is not in the path. That REST API admin, on every managed FortiGate, needs an access profile granting:'
+    : 'Polaris writes ' + noun + ' straight to this FortiGate\'s REST API using the API token on the General tab. That token\'s REST API admin needs an access profile granting:';
+  var verifyWhere = fleet
+    ? ' to one of the FortiGates, authenticated with that token. '
+    : ' from this integration\'s Query API tab. ';
+  return sectionHeading("Required FortiGate Access Profile") +
+    '<p class="hint" style="margin:0 0 0.75rem 0">' + intro + '</p>' +
+    '<ul class="hint" style="margin:0 0 0.75rem 1.2rem;padding:0">' + rows + '</ul>' +
     calloutHTML("tip", "Verify the grant before you need it",
-      'Send <code>GET ' + escapeHtml(verifyPath) + '</code> from this integration\'s Query API tab. ' +
+      'Send <code>GET ' + escapeHtml(verifyPath) + '</code>' + verifyWhere +
       '<strong>200</strong> means the profile and the vdom are both right; <strong>403</strong> means the profile ' +
       'does not cover this tree, or the Polaris host sits outside the admin\'s <em>trusthost</em>; ' +
       '<strong>404</strong> means this FortiOS build does not expose it. Add <code>action=schema</code> as a ' +
@@ -1495,7 +1515,7 @@ function quarantinePushFormHTML(pushQuarantine, useProxy, type) {
   var modeBody = isStandalone
     ? "Quarantine entries are written straight to this FortiGate's REST API using the API token on the General tab."
     : (useProxy === false)
-      ? "Quarantine entries are written to each FortiGate's REST API using the per-device API token configured on the Settings tab."
+      ? "Quarantine entries are written to each FortiGate's REST API using the per-device API token on the Monitoring tab (FortiGate subtab)."
       : "Quarantine entries are written through FortiManager's <code>/sys/proxy/json</code> endpoint, which forwards the call to the target FortiGate using FortiManager's stored device credentials.";
   var permsHtml = isStandalone
     ? _fortigateAccessProfileHTML(
@@ -1503,29 +1523,29 @@ function quarantinePushFormHTML(pushQuarantine, useProxy, type) {
         ['<strong>WiFi &amp; Switch Controller</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; <code>user.quarantine</code> reports <code>access_group: wifi</code>, which is this group &mdash; not User &amp; Device, where the tree\'s name suggests it would live</span>'],
         "/api/v2/cmdb/user/quarantine/targets",
       )
-    : ('<h4 style="margin:0 0 0.25rem 0">Required FortiManager Admin Profile</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">The following permission changes are needed on the FortiManager admin profile Polaris uses:</p>' +
-      '<ul style="margin:0 0 0.75rem 1.2rem;padding:0;font-size:0.85rem">' +
+    : (sectionHeading("Required FortiManager Admin Profile") +
+      '<p class="hint" style="margin:0 0 0.75rem 0">The following permission changes are needed on the FortiManager admin profile Polaris uses:</p>' +
+      '<ul class="hint" style="margin:0 0 0.75rem 1.2rem;padding:0">' +
         '<li><strong>Device Manager</strong> &rarr; Read-Write</li>' +
         '<li style="margin-left:1.2rem"><strong>Manage Device Configurations</strong> &rarr; Read-Write</li>' +
         '<li>All other Device Manager sub-items &mdash; leave at Read-Only or None</li>' +
       '</ul>' +
       calloutHTML("warning", "Blast radius", "FortiManager admin profiles do not have a per-object permission for quarantine. <strong>Manage Device Configurations</strong> grants write access to every CMDB tree on every FortiGate in this ADOM. Treat the API token as a privileged credential and rotate on the same cadence as your other admin secrets."));
   return '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">Quarantine Push</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">When enabled, quarantining an asset writes its MAC addresses into the FortiGate&rsquo;s quarantine table (<code>user.quarantine</code>) on every device that has recently sighted it, with traffic dropping enabled &mdash; which is the part that actually blocks the device. Releasing quarantine removes the entry again. The gate&rsquo;s own quarantine entries are left untouched.</p>' +
+      sectionHeading("Quarantine Push") +
+      '<p class="hint" style="margin:0 0 0.75rem 0">When enabled, quarantining an asset writes its MAC addresses into the FortiGate&rsquo;s quarantine table (<code>user.quarantine</code>) on every device that has recently sighted it, with traffic dropping enabled &mdash; which is the part that actually blocks the device. Releasing quarantine removes the entry again. The gate&rsquo;s own quarantine entries are left untouched.</p>' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
         '<input type="checkbox" id="f-pushQuarantine" ' + checked + ' style="width:auto">' +
         '<label for="f-pushQuarantine" style="margin:0">Push asset quarantine entries from Polaris back to FortiGate</label>' +
       '</div>' +
     '</section>' +
-    '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
+    formDivider() +
     '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">Push Transport</h4>' +
-      '<p class="hint" style="margin:0 0 0.25rem 0;color:var(--color-text-tertiary)">Current setting: <strong style="color:var(--color-text-primary)">' + escapeHtml(modeLabel) + '</strong></p>' +
-      '<p class="hint" style="margin:0;color:var(--color-text-tertiary)">' + modeBody + '</p>' +
+      sectionHeading("Push Transport") +
+      '<p class="hint" style="margin:0 0 0.25rem 0">Current setting: <strong style="color:var(--color-text-primary)">' + escapeHtml(modeLabel) + '</strong></p>' +
+      '<p class="hint" style="margin:0">' + modeBody + '</p>' +
     '</section>' +
-    '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
+    formDivider() +
     '<section>' +
       permsHtml +
     '</section>';
@@ -1570,7 +1590,7 @@ function descriptionSyncFormHTML(syncDescriptions, useProxy, type) {
   var modeBody = isStandalone
     ? "Description writes go straight to this FortiGate's REST API using the API token on the General tab."
     : (useProxy === false)
-      ? "Description writes go to each FortiGate's REST API using the per-device API token configured on the Settings tab. FortiManager is bypassed entirely."
+      ? "Description writes go to each FortiGate's REST API using the per-device API token on the Monitoring tab (FortiGate subtab). FortiManager is bypassed entirely."
       : "Description writes go through FortiManager's <code>/sys/proxy/json</code> endpoint, which forwards the call to the target FortiGate using FortiManager's stored device credentials.";
   // Not FMG copy — Polaris-is-primary holds on every transport — so this rides
   // both branches, naming only the devices this integration writes to.
@@ -1579,28 +1599,40 @@ function descriptionSyncFormHTML(syncDescriptions, useProxy, type) {
   // is no such database without a FortiManager.
   var fmgMirrorBullet = isStandalone ? "" :
         '<li><strong>FMG central management.</strong> When this ADOM centrally manages FortiAPs or FortiSwitches (detected at each discovery; shown on the integration card), pushes for that class are also mirrored into FortiManager\'s AP Manager / FortiSwitch Manager database so a later install doesn\'t revert them. Polaris never triggers an install.</li>';
-  var permsHtml = isStandalone
-    ? _fortigateAccessProfileHTML(
-        "descriptions",
-        [
-          '<strong>Network</strong> &rarr; Custom &rarr; <strong>Configuration</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; interface descriptions and the FortiGate alias</span>',
-          '<strong>WiFi &amp; Switch Controller</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; only if this gate manages FortiSwitches / FortiAPs</span>',
-        ],
-        "/api/v2/cmdb/system/interface",
-      ) + overwriteCallout
-    : ('<h4 style="margin:0 0 0.25rem 0">Required FortiManager Admin Profile</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)">The following permission changes are needed on the FortiManager admin profile Polaris uses:</p>' +
-      '<ul style="margin:0 0 0.75rem 1.2rem;padding:0;font-size:0.85rem">' +
+  // Direct writes (standalone, or FMG bypassing the proxy) are authorized by
+  // the FortiOS access profile on the gate. The FortiGate alias lives in
+  // system/global, which FortiOS files under the System group, not Network —
+  // without System Read-Write the alias PUT is refused while interface
+  // descriptions (Network) still go through, so the feature looks half-working.
+  var fgtGrants = [
+    '<strong>System</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; the FortiGate alias (<code>system/global</code>) &mdash; required, description sync fails without it</span>',
+    '<strong>Network</strong> &rarr; Custom &rarr; <strong>Configuration</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; interface descriptions</span>',
+    '<strong>WiFi &amp; Switch Controller</strong> &rarr; Read-Write &nbsp;<span style="color:var(--color-text-tertiary)">&larr; only if this gate manages FortiSwitches / FortiAPs</span>',
+  ];
+  var systemGroupCallout = calloutHTML("warning", "System Read-Write is broad", "The System group also covers administrators, access profiles and global settings. FortiOS has no narrower grant that reaches the alias, so treat this token as an admin-grade credential.");
+  var fmgProfileHtml = function (heading, intro) {
+    return sectionHeading(heading) +
+      '<p class="hint" style="margin:0 0 0.75rem 0">' + intro + '</p>' +
+      '<ul class="hint" style="margin:0 0 0.75rem 1.2rem;padding:0">' +
       '<li><strong>Device Manager</strong> &rarr; Read-Write</li>' +
       '<li style="margin-left:1.2rem"><strong>Manage Device Configurations</strong> &rarr; Read-Write</li>' +
       '<li>All other Device Manager sub-items &mdash; leave at Read-Only or None</li>' +
       '</ul>' +
-      calloutHTML("warning", "Blast radius", "FortiManager admin profiles do not have a per-object permission for descriptions. <strong>Manage Device Configurations</strong> grants write access to every CMDB tree on every FortiGate in this ADOM. Treat the API token as a privileged credential and rotate on the same cadence as your other admin secrets.") +
-      
-      overwriteCallout);
+      calloutHTML("warning", "Blast radius", "FortiManager admin profiles do not have a per-object permission for descriptions. <strong>Manage Device Configurations</strong> grants write access to every CMDB tree on every FortiGate in this ADOM. Treat the API token as a privileged credential and rotate on the same cadence as your other admin secrets.");
+  };
+  var permsHtml = isStandalone
+    ? _fortigateAccessProfileHTML("descriptions", fgtGrants, "/api/v2/cmdb/system/global") + systemGroupCallout + overwriteCallout
+    : (useProxy === false)
+      // Direct mode: the device writes never touch FortiManager, but the
+      // central-management mirror is still an FMG JSON-RPC call.
+      ? _fortigateAccessProfileHTML("descriptions", fgtGrants, "/api/v2/cmdb/system/global", true) + systemGroupCallout +
+        formDivider() +
+        fmgProfileHtml("Required FortiManager Admin Profile (central-management mirror only)", "Only needed when this ADOM centrally manages FortiAPs or FortiSwitches: Polaris mirrors those pushes into FortiManager's own database over its API, which needs these permissions on the FortiManager admin profile Polaris uses:") +
+        overwriteCallout
+      : fmgProfileHtml("Required FortiManager Admin Profile", "The following permission changes are needed on the FortiManager admin profile Polaris uses:") + overwriteCallout;
   return '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">Description Sync</h4>' +
-      '<p class="hint" style="margin:0 0 0.75rem 0;color:var(--color-text-tertiary)"><strong style="color:var(--color-text-primary)">Polaris is primary.</strong> A value in Polaris always wins: it pushes to the device on save and re-asserts on every discovery cycle — device-side edits are overwritten (every change is audited). An empty Polaris field adopts the device\'s value instead.</p>' +
+      sectionHeading("Description Sync") +
+      '<p class="hint" style="margin:0 0 0.75rem 0"><strong style="color:var(--color-text-primary)">Polaris is primary.</strong> A value in Polaris always wins: it pushes to the device on save and re-asserts on every discovery cycle — device-side edits are overwritten (every change is audited). An empty Polaris field adopts the device\'s value instead.</p>' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
         '<input type="checkbox" id="f-syncDescriptions" ' + checked + ' style="width:auto" onchange="onSyncDescriptionsToggle(this)">' +
         '<label for="f-syncDescriptions" style="margin:0">Sync descriptions between Polaris and devices (Polaris is primary)</label>' +
@@ -1612,13 +1644,13 @@ function descriptionSyncFormHTML(syncDescriptions, useProxy, type) {
         fmgMirrorBullet +
       '</ul>' +
     '</section>' +
-    '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
+    formDivider() +
     '<section style="margin-bottom:1.5rem">' +
-      '<h4 style="margin:0 0 0.25rem 0">Push Transport</h4>' +
-      '<p class="hint" style="margin:0 0 0.25rem 0;color:var(--color-text-tertiary)">Current setting: <strong style="color:var(--color-text-primary)">' + escapeHtml(modeLabel) + '</strong></p>' +
-      '<p class="hint" style="margin:0;color:var(--color-text-tertiary)">' + modeBody + '</p>' +
+      sectionHeading("Push Transport") +
+      '<p class="hint" style="margin:0 0 0.25rem 0">Current setting: <strong style="color:var(--color-text-primary)">' + escapeHtml(modeLabel) + '</strong></p>' +
+      '<p class="hint" style="margin:0">' + modeBody + '</p>' +
     '</section>' +
-    '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
+    formDivider() +
     '<section>' +
       permsHtml +
     '</section>';
@@ -2190,9 +2222,9 @@ function _classSubtabBodyHTML(opts) {
   // revealed by _applyFortiosRestLocks so it tracks the live form state rather
   // than the state at render time.
   var restNote = (integrationType === "fortimanager")
-    ? '<div data-fortios-rest-note style="display:none;background:rgba(255,179,0,0.08);border:1px solid rgba(255,179,0,0.35);border-radius:var(--radius-md);padding:0.6rem 0.8rem;margin-bottom:0.75rem;font-size:0.85rem;line-height:1.5">' +
+    ? '<div data-fortios-rest-note style="display:none;background:color-mix(in srgb, var(--color-warning) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);border-radius:var(--radius-md);padding:0.6rem 0.8rem;margin-bottom:0.75rem;font-size:0.85rem;line-height:1.5">' +
         '<strong>REST API methods are locked.</strong> FortiManager proxy mode with no FortiGate API token cannot make a FortiOS call to the device, so these streams fall back to what the integration inherits. ' +
-        'Set a <em>FortiGate API Token</em> on the General tab (it applies in both transports), or enable <em>Direct Polling</em>. ' +
+        'Set a <em>FortiGate API Token</em> on the FortiGate subtab above (it applies in both transports), or enable <em>Direct Polling</em>. ' +
         'SNMP and ICMP are unaffected, and per-asset overrides still apply.' +
       '</div>'
     : "";
@@ -2256,7 +2288,7 @@ function _classAddAsMonitoredHTML(idPrefix, kindLabel, currentAddAsMonitored) {
   var enabled = currentAddAsMonitored === true;
   var btnClass = enabled ? "btn-danger" : "btn-primary";
   var btnLabel = enabled ? "Disable Auto-Monitoring" : "Enable Auto-Monitoring";
-  return '<div style="background:rgba(79,195,247,0.06);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
+  return '<div style="background:color-mix(in srgb, var(--color-accent) 6%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
       '<div class="form-group" style="display:flex;align-items:center;gap:12px;margin-bottom:0.4rem">' +
         // Hidden input preserves the existing save-path read pattern (_getCheckbox).
         '<input type="checkbox" id="' + idPrefix + 'addAsMonitored" ' + (enabled ? "checked" : "") + ' style="display:none">' +
@@ -2294,7 +2326,7 @@ function _classDirectPollHTML(idPrefix, kindLabel, credentials, currentEnabled, 
       '</div>';
   }
   return sectionHeading("Direct polling") +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
+    '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5;margin:0 0 0.6rem 0">Managed ' + escapeHtml(_kindPlural(kindLabel)) + ' in FortiLink mode usually keep their own management plane locked down. Polaris can\'t reach them through the controller FortiGate REST API, so direct polling only works when the matching protocol has been explicitly enabled on the ' + escapeHtml(kindLabel) + ' itself.</p>' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.6rem">' +
         '<input type="checkbox" id="' + idPrefix + 'enabled" ' + (currentEnabled ? "checked" : "") + ' style="width:auto">' +
@@ -2527,7 +2559,7 @@ function _autoMonitorInterfacesHTML(idPrefix, kindLabel, currentSelection, _defa
   '</div>';
 
   return sectionHeading("Auto-monitor interfaces") +
-    '<div style="background:rgba(79,195,247,0.06);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
+    '<div style="background:color-mix(in srgb, var(--color-accent) 6%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5;margin:0 0 0.2rem 0">Pin interfaces on every ' + escapeHtml(kindLabel) + ' discovered by this integration. Selected interfaces are added to each device\'s "Poll 1m" list and scraped on the response-time cadence (~60s). Operator-pinned interfaces on individual assets are preserved.</p>' +
       '<p class="hint" style="margin:0 0 0.6rem 0;font-size:0.78rem">Strictly additive — removing a selection here does <strong>not</strong> unpin interfaces already pinned on existing assets.</p>' +
       masterBox("names",    "By name",            "explicit ifNames from this integration's devices", !!byNames) +
@@ -2695,7 +2727,7 @@ function _autoMonitorStorageHTML(idPrefix, kindLabel, currentSelection, hasInteg
   '</div>';
 
   return sectionHeading("Auto-monitor storage") +
-    '<div style="background:rgba(79,195,247,0.06);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
+    '<div style="background:color-mix(in srgb, var(--color-accent) 6%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5;margin:0 0 0.2rem 0">Pin storage mounts on every ' + escapeHtml(kindLabel) + ' discovered by this integration. Selected mounts are re-walked on the fast cadence. Operator-pinned mounts on individual assets are preserved.</p>' +
       '<p class="hint" style="margin:0 0 0.6rem 0;font-size:0.78rem">Strictly additive — removing a selection here does <strong>not</strong> unpin mounts already pinned on existing assets.</p>' +
       masterBox("names",    "By mount name", "explicit mounts reported by agents",   !!byNames) +
@@ -2774,7 +2806,7 @@ function _agentDeployHTML(idPrefix, kindLabel, currentCfg, credentials) {
     ? '<p class="hint" style="margin:0 0 0.5rem 0">Enabling auto-deploy needs Full Read-Write on Assets — the same grant as installing the agent on a single device.</p>'
     : '';
   return sectionHeading("Agent auto-deploy") +
-    '<div style="background:rgba(255,193,7,0.06);border:1px solid rgba(255,193,7,0.3);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
+    '<div style="background:color-mix(in srgb, var(--color-warning) 6%, transparent);border:1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
         '<input type="checkbox" id="' + idPrefix + 'enabled" ' + (enabled ? "checked" : "") + lockToggle + ' style="width:auto">' +
         '<label for="' + idPrefix + 'enabled" style="margin:0;font-weight:500">Auto-deploy the Polaris Agent to discovered ' + escapeHtml(_kindPlural(kindLabel)) + '</label>' +
@@ -3412,7 +3444,7 @@ function _fortigateAddMonitoredHTML(idPrefix, currentAddAsMonitored) {
   var enabled = currentAddAsMonitored === true;
   var btnClass = enabled ? "btn-danger" : "btn-primary";
   var btnLabel = enabled ? "Disable Auto-Monitoring" : "Enable Auto-Monitoring";
-  return '<div style="background:rgba(79,195,247,0.06);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
+  return '<div style="background:color-mix(in srgb, var(--color-accent) 6%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
       '<div class="form-group" style="display:flex;align-items:center;gap:12px;margin-bottom:0.4rem">' +
         '<input type="checkbox" id="' + idPrefix + 'addAsMonitored" ' + (enabled ? "checked" : "") + ' style="display:none">' +
         '<button type="button" class="btn ' + btnClass + '" data-auto-monitor-toggle="' + idPrefix + 'addAsMonitored" style="min-width:200px">' + btnLabel + '</button>' +
@@ -3471,27 +3503,29 @@ function geographicLocationFormHTML(currentPullSnmpLocation, currentUseSnmpLocat
   var metavarBlock = "";
   if (isFmg) {
     metavarBlock =
-      '<div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--color-border)">' +
-        '<div style="font-weight:600;margin-bottom:0.25rem">FortiManager metavariable names</div>' +
+      formDivider() +
+      sectionHeading("FortiManager metavariable names") +
+      '<div>' +
         '<p class="hint" style="margin-top:0;margin-bottom:0.75rem">Names of the per-device FMG metavariables Polaris reads coordinates from and writes them back to. Leave Latitude / Longitude at the defaults unless your fleet uses a different naming scheme.</p>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">' +
           '<div class="form-group" style="margin:0">' +
-            '<label for="' + idPrefix + 'latitudeMetavar" style="font-weight:500">Latitude metavar</label>' +
+            '<label for="' + idPrefix + 'latitudeMetavar">Latitude metavar</label>' +
             '<input type="text" id="' + idPrefix + 'latitudeMetavar" value="' + escapeHtml(latMeta || "Latitude") + '" placeholder="Latitude">' +
           '</div>' +
           '<div class="form-group" style="margin:0">' +
-            '<label for="' + idPrefix + 'longitudeMetavar" style="font-weight:500">Longitude metavar</label>' +
+            '<label for="' + idPrefix + 'longitudeMetavar">Longitude metavar</label>' +
             '<input type="text" id="' + idPrefix + 'longitudeMetavar" value="' + escapeHtml(lngMeta || "Longitude") + '" placeholder="Longitude">' +
           '</div>' +
         '</div>' +
         '<div class="form-group" style="margin:0.75rem 0 0 0">' +
-          '<label for="' + idPrefix + 'addressMetavar" style="font-weight:500">Address metavar (optional)</label>' +
+          '<label for="' + idPrefix + 'addressMetavar">Address metavar (optional)</label>' +
           '<input type="text" id="' + idPrefix + 'addressMetavar" value="' + escapeHtml(addrMeta || "") + '" placeholder="Leave blank to use SNMP sysLocation" oninput="window._geoRecomputePush(\'' + idPrefix + '\')">' +
           '<p class="hint" style="margin-bottom:0">When set, Polaris reads this metavar\'s address string from each FortiGate and geocodes it <strong>instead of</strong> the SNMP sysLocation (SNMP is used only as a fallback when this metavar is empty). Use this if you don\'t want to pull sysLocation. Leave blank to rely on SNMP.</p>' +
         '</div>' +
       '</div>';
   }
-  return '<p style="font-size:0.9rem;color:var(--color-text-secondary);line-height:1.5;margin:0 0 1rem 0">' +
+  return sectionHeading("Location source") +
+    '<p class="hint" style="margin:0 0 0.75rem 0">' +
       'Polaris resolves each FortiGate\'s location to map coordinates and (optionally) writes the result ' +
       'back to the device so it shows up correctly on the Polaris Device Map. The location string comes from ' +
       'the SNMP <code>sysLocation</code> (read via REST API — no separate SNMP credential needed)' +
@@ -3504,19 +3538,21 @@ function geographicLocationFormHTML(currentPullSnmpLocation, currentUseSnmpLocat
       '<input type="checkbox" id="' + idPrefix + 'pullSnmpLocation" ' + (pull ? "checked" : "") +
       ' onchange="window._geoRecomputePush(\'' + idPrefix + '\')"' +
       ' style="width:auto">' +
-      '<label for="' + idPrefix + 'pullSnmpLocation" style="margin:0;font-weight:500">Pull SNMP sysLocation from each FortiGate</label>' +
+      '<label for="' + idPrefix + 'pullSnmpLocation" style="margin:0">Pull SNMP sysLocation from each FortiGate</label>' +
     '</div>' +
     '<p class="hint" style="margin-bottom:1rem">Each discovery cycle, Polaris fetches <code>sysLocation</code> for every FortiGate via the FortiOS REST API. The value shows on the asset\'s General tab and pre-fills its Location field.</p>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.4rem">' +
       '<input type="checkbox" id="' + idPrefix + 'useSnmpLocationCoords" ' + (useCoords ? "checked" : "") + (pull ? "" : " disabled") +
       ' onchange="window._geoRecomputePush(\'' + idPrefix + '\')"' +
       ' style="width:auto">' +
-      '<label for="' + idPrefix + 'useSnmpLocationCoords" style="margin:0;font-weight:500' + (pull ? "" : ";opacity:0.5") + '">Use sysLocation for map coordinates</label>' +
+      '<label for="' + idPrefix + 'useSnmpLocationCoords" style="margin:0' + (pull ? "" : ";opacity:0.5") + '">Use sysLocation for map coordinates</label>' +
     '</div>' +
     '<p class="hint" style="margin-bottom:1rem">Geocodes the pulled <code>sysLocation</code> through OpenStreetMap Nominatim and uses the result as the FortiGate\'s Device Map position. <strong>When enabled, these geocoded coordinates override the latitude/longitude learned from the FortiGate' + (isFmg ? ' / FortiManager (coordinate metavars and CMDB GUI coords)' : ' (CMDB GUI coords)') + '.</strong> Requires the sysLocation pull above.</p>' +
+    formDivider() +
+    sectionHeading("Write-back") +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.4rem">' +
       '<input type="checkbox" id="' + idPrefix + 'pushGeocodedCoords" ' + (push ? "checked" : "") + (pushEnabled ? "" : " disabled") + ' style="width:auto">' +
-      '<label for="' + idPrefix + 'pushGeocodedCoords" style="margin:0;font-weight:500' + (pushEnabled ? "" : ";opacity:0.5") + '">Write geocoded coordinates back to the FortiGate</label>' +
+      '<label for="' + idPrefix + 'pushGeocodedCoords" style="margin:0' + (pushEnabled ? "" : ";opacity:0.5") + '">Write geocoded coordinates back to the FortiGate</label>' +
     '</div>' +
     '<p class="hint" style="margin-bottom:0">When the geocoded coords differ from the FortiGate\'s current GUI values, update them on the device — ' +
       (isFmg
@@ -3855,7 +3891,7 @@ function monitorSettingsFormHTML(s, opts) {
   // nor storing it is any of those things.
 
   return '<section>' +
-      '<p class="hint" style="margin:0 0 0.85rem 0;color:var(--color-text-tertiary)">' +
+      '<p class="hint" style="margin:0 0 0.85rem 0">' +
         "Per-class polling, cadences, and credentials for assets discovered by this integration. " +
         "A class override (Assets page → Monitoring Settings) or a per-asset override on the asset itself takes priority." +
       '</p>' +
@@ -3879,13 +3915,13 @@ function monitorSettingsFormHTML(s, opts) {
 // comment at that block.
 function _fmgDirectModeBlockHTML(d) {
   return sectionHeading("Direct polling") +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
+    '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.75rem 0.9rem;margin-bottom:1rem">' +
       '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
         '<input type="checkbox" id="f-useDirect" ' + (d.useProxy === false ? "checked" : "") + ' style="width:auto" onchange="_fmgToggleDirectMode(this.checked)">' +
         '<label for="f-useDirect" style="margin:0;font-weight:500">Direct Polling</label>' +
       '</div>' +
       '<p style="font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5;margin:0 0 0.6rem 0">Bypass FortiManager proxy to directly poll discovered FortiGates. Some information is still gathered through FortiManager.</p>' +
-      '<div id="f-direct-mode-block" style="' + (d.useProxy === false ? "" : "display:none;") + 'border-top:1px solid rgba(79,195,247,0.2);padding-top:0.75rem;margin-top:0.25rem">' +
+      '<div id="f-direct-mode-block" style="' + (d.useProxy === false ? "" : "display:none;") + 'border-top:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);padding-top:0.75rem;margin-top:0.25rem">' +
         '<div class="form-group" style="margin-bottom:0"><label>Parallel FortiGate Queries</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-discoveryParallelism" value="' + (d.useProxy === false ? (d.discoveryParallelism || 5) : 1) + '" min="1" max="20" style="width:80px"><span id="f-parallelism-note" style="color:var(--color-text-tertiary);font-size:0.85rem">gates at once</span></div><p class="hint">Up to 20 FortiGates concurrently. Recommended when monitoring more than 10 FortiGates — proxy mode polls them one at a time.</p></div>' +
       '</div>' +
       // Credentials sit OUTSIDE #f-direct-mode-block on purpose. They are not
@@ -3896,7 +3932,7 @@ function _fmgDirectModeBlockHTML(d) {
       // CPU/memory, temperature and interface streams need, and those streams
       // failed with "FortiManager direct-mode API token not configured" on
       // every tick with no field on screen to fix it.
-      '<div style="border-top:1px solid rgba(79,195,247,0.2);padding-top:0.75rem;margin-top:0.75rem">' +
+      '<div style="border-top:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);padding-top:0.75rem;margin-top:0.75rem">' +
         '<div style="font-weight:500;margin-bottom:0.35rem">FortiGate REST credentials</div>' +
         '<p style="font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5;margin:0 0 0.6rem 0">Used by Direct Polling above, and by any monitoring stream set to REST API — including under FortiManager proxy. Leave blank if every stream uses ICMP or SNMP.</p>' +
         '<div class="form-group"><label>FortiGate API User</label><input type="text" id="f-fortigateApiUser" value="' + escapeHtml(d.fortigateApiUser || "") + '" placeholder="e.g. polaris-ro"><p class="hint">REST API admin username configured on each managed FortiGate</p></div>' +
@@ -3905,7 +3941,7 @@ function _fmgDirectModeBlockHTML(d) {
           '<input type="checkbox" id="f-fortigateVerifySsl" ' + (d.fortigateVerifySsl ? "checked" : "") + ' style="width:auto">' +
           '<label for="f-fortigateVerifySsl" style="margin:0">Verify SSL certificate on FortiGates</label>' +
         '</div>' +
-        '<p class="hint" style="color:var(--color-warning,#d98c00)">Leave enabled. Disabling lets a network attacker intercept the direct FortiGate REST connections and capture the API token. Disable only for FortiGates with self-signed certificates you cannot replace.</p>' +
+        '<p class="hint" style="color:var(--color-warning)">Leave enabled. Disabling lets a network attacker intercept the direct FortiGate REST connections and capture the API token. Disable only for FortiGates with self-signed certificates you cannot replace.</p>' +
       '</div>' +
     '</div>';
 }
@@ -4594,13 +4630,13 @@ function verboseLoggingFormHTML(defaults) {
     var remainingMs = expiresAt - Date.now();
     if (remainingMs > 0) {
       var remainingMin = Math.ceil(remainingMs / 60000);
-      expiryHint = " <span style=\"color:var(--color-warning,#ffb74d);font-size:0.78rem;font-weight:normal\">— auto-disables in " + remainingMin + " min</span>";
+      expiryHint = " <span style=\"color:var(--color-warning);font-size:0.78rem;font-weight:normal\">— auto-disables in " + remainingMin + " min</span>";
     } else {
       expiryHint = " <span style=\"color:var(--color-text-tertiary);font-size:0.78rem;font-weight:normal\">— auto-disabling shortly</span>";
     }
   }
 
-  return "<hr style=\"border:none;border-top:1px solid var(--color-border);margin:1.25rem 0\">" +
+  return formDivider() +
     "<p style=\"font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin-bottom:0.5rem\">Debug</p>" +
     "<div style=\"display:flex;align-items:flex-start;gap:0.55rem\">" +
       "<input type=\"checkbox\" id=\"f-verboseLogging\" " + checked + " style=\"margin-top:3px\">" +
@@ -4627,7 +4663,7 @@ function readVerboseLoggingFromForm() {
 function fortiManagerGeneralHTML(defaults) {
   var d = defaults || {};
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Production FortiManager"></div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">This integration is for <strong style="color:var(--color-text-primary)">on-premise FortiManager</strong> only (not FortiManager Cloud). Requires version <strong style="color:var(--color-text-primary)">7.4.7+</strong> or <strong style="color:var(--color-text-primary)">7.6.2+</strong>. Older versions do not support bearer token authentication.</div>' +
+    infoBox('This integration is for <strong style="color:var(--color-text-primary)">on-premise FortiManager</strong> only (not FortiManager Cloud). Requires version <strong style="color:var(--color-text-primary)">7.4.7+</strong> or <strong style="color:var(--color-text-primary)">7.6.2+</strong>. Older versions do not support bearer token authentication.') +
     formDivider() +
     sectionHeading("Connection Settings") +
     '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
@@ -4638,20 +4674,11 @@ function fortiManagerGeneralHTML(defaults) {
     '<div class="form-group"><label>API Token</label><input type="password" id="f-apiToken" value="' + (d.apiTokenPlaceholder ? "" : escapeHtml(d.apiToken || "")) + '" placeholder="' + (d.apiTokenPlaceholder || "Bearer token") + '"><p class="hint">Generate from FortiManager under System Settings &gt; Admin &gt; API Users</p></div>' +
     '<div class="form-group"><label>ADOM</label><input type="text" id="f-adom" value="' + escapeHtml(d.adom || "root") + '" placeholder="root"><p class="hint">Administrative Domain (leave as "root" for default)</p></div>' +
     '<div class="form-group"><label>Management Interface</label><input type="text" id="f-mgmtInterface" value="' + escapeHtml(d.mgmtInterface || "") + '" placeholder="e.g. port1, mgmt, loopback0"><p class="hint">Interface name used for FortiGate management traffic</p></div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-verifySsl" ' + (d.verifySsl ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-verifySsl" style="margin:0">Verify SSL certificate</label>' +
-    '</div>' +
-    '<p class="hint" style="color:var(--color-warning,#d98c00)">Leave enabled. Disabling certificate verification lets a network attacker on the path intercept this connection and capture the API credentials. Disable only for a device with a self-signed certificate you cannot replace.</p>' +
+    checkboxRow("f-verifySsl", "Verify SSL certificate", d.verifySsl) +
+    '<p class="hint" style="color:var(--color-warning)">Leave enabled. Disabling certificate verification lets a network attacker on the path intercept this connection and capture the API credentials. Disable only for a device with a self-signed certificate you cannot replace.</p>' +
     formDivider() +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-enabled" ' + (d.enabled !== false ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-enabled" style="margin:0">Enabled</label>' +
-    '</div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-autoDiscover" ' + (d.autoDiscover !== false ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-autoDiscover" style="margin:0">Enable auto-discovery</label>' +
-    '</div>' +
+    checkboxRow("f-enabled", "Enabled", d.enabled !== false) +
+    checkboxRow("f-autoDiscover", "Enable auto-discovery", d.autoDiscover !== false) +
     '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 12) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div><p class="hint">How often to automatically query for DHCP updates (1–24 hours)</p></div>' +
     verboseLoggingFormHTML(d);
 }
@@ -4774,7 +4801,7 @@ function getFormConfig() {
 function fortiGateGeneralHTML(defaults) {
   var d = defaults || {};
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Branch Office FortiGate"></div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">This integration connects <strong style="color:var(--color-text-primary)">directly to a standalone FortiGate</strong> (not managed by FortiManager). Requires an API administrator token created under <strong style="color:var(--color-text-primary)">System &gt; Administrators &gt; REST API Admin</strong>.</div>' +
+    infoBox('This integration connects <strong style="color:var(--color-text-primary)">directly to a standalone FortiGate</strong> (not managed by FortiManager). Requires an API administrator token created under <strong style="color:var(--color-text-primary)">System &gt; Administrators &gt; REST API Admin</strong>.') +
     formDivider() +
     sectionHeading("Connection Settings") +
     '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
@@ -4784,23 +4811,13 @@ function fortiGateGeneralHTML(defaults) {
     '<div class="form-group"><label>API User</label><input type="text" id="f-apiUser" value="' + escapeHtml(d.apiUser || "") + '" placeholder="e.g. api-admin"></div>' +
     '<div class="form-group"><label>API Token</label><input type="password" id="f-apiToken" value="' + (d.apiTokenPlaceholder ? "" : escapeHtml(d.apiToken || "")) + '" placeholder="' + (d.apiTokenPlaceholder || "Bearer token") + '"><p class="hint">Generate under System &gt; Administrators &gt; Create New &gt; REST API Admin</p></div>' +
     '<div class="form-group"><label>VDOM</label><input type="text" id="f-vdom" value="' + escapeHtml(d.vdom || "root") + '" placeholder="root"><p class="hint">Virtual Domain (leave as "root" for default)</p></div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-verifySsl" ' + (d.verifySsl ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-verifySsl" style="margin:0">Verify SSL certificate</label>' +
-    '</div>' +
-    '<p class="hint" style="color:var(--color-warning,#d98c00)">Leave enabled. Disabling certificate verification lets a network attacker on the path intercept this connection and capture the API credentials. Disable only for a device with a self-signed certificate you cannot replace.</p>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-enabled" ' + (d.enabled !== false ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-enabled" style="margin:0">Enabled</label>' +
-    '</div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-autoDiscover" ' + (d.autoDiscover !== false ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-autoDiscover" style="margin:0">Enable auto-discovery</label>' +
-    '</div>' +
-    '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 12) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div><p class="hint">How often to automatically query for DHCP updates (1–24 hours)</p></div>' +
-    formDivider() +
-    sectionHeading("FortiGate Settings") +
     '<div class="form-group"><label>Management Interface</label><input type="text" id="f-mgmtInterface" value="' + escapeHtml(d.mgmtInterface || "") + '" placeholder="e.g. port1, mgmt, loopback0"><p class="hint">Interface name used for FortiGate management traffic</p></div>' +
+    checkboxRow("f-verifySsl", "Verify SSL certificate", d.verifySsl) +
+    '<p class="hint" style="color:var(--color-warning)">Leave enabled. Disabling certificate verification lets a network attacker on the path intercept this connection and capture the API credentials. Disable only for a device with a self-signed certificate you cannot replace.</p>' +
+    formDivider() +
+    checkboxRow("f-enabled", "Enabled", d.enabled !== false) +
+    checkboxRow("f-autoDiscover", "Enable auto-discovery", d.autoDiscover !== false) +
+    '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 12) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div><p class="hint">How often to automatically query for DHCP updates (1–24 hours)</p></div>' +
     verboseLoggingFormHTML(d);
 }
 
@@ -4893,7 +4910,7 @@ function windowsServerFormHTML(defaults) {
   var sslChecked = d.useSsl ? "checked" : "";
   var enabledChecked = d.enabled !== false ? "checked" : "";
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. DC1 DHCP Server"></div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">Connects to <strong style="color:var(--color-text-primary)">Windows Server DHCP</strong> via WinRM (PowerShell remoting). Requires WinRM enabled on the target server (port <strong style="color:var(--color-text-primary)">5985</strong> HTTP or <strong style="color:var(--color-text-primary)">5986</strong> HTTPS).</div>' +
+    infoBox('Connects to <strong style="color:var(--color-text-primary)">Windows Server DHCP</strong> via WinRM (PowerShell remoting). Requires WinRM enabled on the target server (port <strong style="color:var(--color-text-primary)">5985</strong> HTTP or <strong style="color:var(--color-text-primary)">5986</strong> HTTPS).') +
     formDivider() +
     sectionHeading("Connection Settings") +
     '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
@@ -4944,7 +4961,7 @@ function entraIdFormHTML(defaults) {
   var enabledChecked = d.enabled !== false ? "checked" : "";
   var autoChecked = d.autoDiscover !== false ? "checked" : "";
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Corporate Entra ID"></div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">Connects to <strong style="color:var(--color-text-primary)">Microsoft Entra ID</strong> (Azure AD) via an app registration with client-credentials flow. Requires <strong style="color:var(--color-text-primary)">Device.Read.All</strong> (application); add <strong style="color:var(--color-text-primary)">DeviceManagementManagedDevices.Read.All</strong> if Intune sync is enabled, and <strong style="color:var(--color-text-primary)">User.Read.All</strong> + <strong style="color:var(--color-text-primary)">Group.Read.All</strong> + <strong style="color:var(--color-text-primary)">OrgContact.Read.All</strong> (or <strong style="color:var(--color-text-primary)">Directory.Read.All</strong>) if you enable address-book directory search on the Monitoring tab. Grant admin consent in the Azure portal.</div>' +
+    infoBox('Connects to <strong style="color:var(--color-text-primary)">Microsoft Entra ID</strong> (Azure AD) via an app registration with client-credentials flow. Requires <strong style="color:var(--color-text-primary)">Device.Read.All</strong> (application); add <strong style="color:var(--color-text-primary)">DeviceManagementManagedDevices.Read.All</strong> if Intune sync is enabled, and <strong style="color:var(--color-text-primary)">User.Read.All</strong> + <strong style="color:var(--color-text-primary)">Group.Read.All</strong> + <strong style="color:var(--color-text-primary)">OrgContact.Read.All</strong> (or <strong style="color:var(--color-text-primary)">Directory.Read.All</strong>) if you enable address-book directory search on the Directory tab. Grant admin consent in the Azure portal.') +
     formDivider() +
     sectionHeading("Connection Settings") +
     '<div class="form-group"><label>Tenant ID *</label><input type="text" id="f-tenantId" value="' + escapeHtml(d.tenantId || "") + '" placeholder="e.g. 00000000-0000-0000-0000-000000000000"><p class="hint">Directory (tenant) ID from Azure portal &gt; Entra ID &gt; Overview</p></div>' +
@@ -4954,16 +4971,13 @@ function entraIdFormHTML(defaults) {
       '<input type="checkbox" id="f-enableIntune" ' + intuneChecked + ' style="width:auto">' +
       '<label for="f-enableIntune" style="margin:0">Enable Intune device sync</label>' +
     '</div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, overlays richer data (serial, MAC, model, primary user, compliance) from <code>/deviceManagement/managedDevices</code> onto Entra devices. Requires an Intune license and the extra Graph permission above.</div>' +
+    '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, overlays richer data (serial, MAC, model, primary user, compliance) from <code>/deviceManagement/managedDevices</code> onto Entra devices. Requires an Intune license and the extra Graph permission above.</div>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-includeDisabled" ' + (includeDisabled ? "checked" : "") + ' style="width:auto">' +
       '<label for="f-includeDisabled" style="margin:0">Include disabled devices (as <em>disabled</em>)</label>' +
     '</div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-decommissionMissing" ' + (decommissionMissing ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-decommissionMissing" style="margin:0">Decommission devices that leave Entra ID</label>' +
-    '</div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, an asset <strong style="color:var(--color-text-primary)">this integration manages</strong> is set to <em>decommissioned</em> once its device record is deleted from the tenant or disabled there — other sources still describing it do not keep it active. Assets managed by another integration are never touched. A partial, cancelled or empty read, a change to the device filter, and any run that would decommission an implausibly large share of the fleet are all refused and logged instead.</div>' +
+    checkboxRow("f-decommissionMissing", "Decommission devices that leave Entra ID", decommissionMissing) +
+    '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, an asset <strong style="color:var(--color-text-primary)">this integration manages</strong> is set to <em>decommissioned</em> once its device record is deleted from the tenant or disabled there — other sources still describing it do not keep it active. Assets managed by another integration are never touched. A partial, cancelled or empty read, a change to the device filter, and any run that would decommission an implausibly large share of the fleet are all refused and logged instead.</div>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
       '<label for="f-enabled" style="margin:0">Enabled</label>' +
@@ -5018,22 +5032,16 @@ function activeDirectoryFormHTML(defaults) {
   var devNames = devMode === "include" ? (d.ouInclude || []) : (d.ouExclude || []);
   var defaultPort = useLdaps ? 636 : 389;
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Corp AD — DC01"></div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">Connects to an <strong style="color:var(--color-text-primary)">on-premise Active Directory</strong> domain controller via LDAP simple bind. Produces assets only. Hybrid-joined devices are cross-linked to the Entra ID integration via on-prem SID, so the same device never appears twice.</div>' +
+    infoBox('Connects to an <strong style="color:var(--color-text-primary)">on-premise Active Directory</strong> domain controller via LDAP simple bind. Produces assets only. Hybrid-joined devices are cross-linked to the Entra ID integration via on-prem SID, so the same device never appears twice.') +
     formDivider() +
     sectionHeading("Connection Settings") +
     '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
       '<div class="form-group"><label>Host / IP *</label><input type="text" id="f-host" value="' + escapeHtml(d.host || "") + '" placeholder="e.g. dc01.corp.local"></div>' +
       '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + (d.port || defaultPort) + '" min="1" max="65535" style="width:90px"></div>' +
     '</div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-useLdaps" ' + (useLdaps ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-useLdaps" style="margin:0">Use LDAPS (TLS)</label>' +
-    '</div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-verifyTls" ' + (verifyTls ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-verifyTls" style="margin:0">Verify TLS certificate</label>' +
-    '</div>' +
-    '<p class="hint" style="color:var(--color-warning,#d98c00)">Leave enabled. Disabling certificate verification lets a network attacker intercept the LDAPS connection and capture the bind credentials. Disable only for a domain controller with a self-signed certificate you cannot replace.</p>' +
+    checkboxRow("f-useLdaps", "Use LDAPS (TLS)", useLdaps) +
+    checkboxRow("f-verifyTls", "Verify TLS certificate", verifyTls) +
+    '<p class="hint" style="color:var(--color-warning)">Leave enabled. Disabling certificate verification lets a network attacker intercept the LDAPS connection and capture the bind credentials. Disable only for a domain controller with a self-signed certificate you cannot replace.</p>' +
     '<div class="form-group"><label>Bind DN *</label><input type="text" id="f-bindDn" value="' + escapeHtml(d.bindDn || "") + '" placeholder="e.g. CN=polaris-svc,OU=Service Accounts,DC=corp,DC=local"><p class="hint">Distinguished name of the bind account. A read-only domain user is sufficient.</p></div>' +
     '<div class="form-group"><label>Bind Password *</label><input type="password" id="f-bindPassword" value="' + (d.bindPasswordPlaceholder ? "" : escapeHtml(d.bindPassword || "")) + '" placeholder="' + (d.bindPasswordPlaceholder || "Password") + '"></div>' +
     '<div class="form-group"><label>Base DN *</label><input type="text" id="f-baseDn" value="' + escapeHtml(d.baseDn || "") + '" placeholder="e.g. DC=corp,DC=local"><p class="hint">Subtree to search for computer objects. Narrow this (e.g. <code>OU=Workstations,DC=corp,DC=local</code>) if you only want part of the directory.</p></div>' +
@@ -5047,11 +5055,8 @@ function activeDirectoryFormHTML(defaults) {
       '<input type="checkbox" id="f-includeDisabled" ' + (includeDisabled ? "checked" : "") + ' style="width:auto">' +
       '<label for="f-includeDisabled" style="margin:0">Include disabled computer accounts (as <em>disabled</em>)</label>' +
     '</div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-decommissionMissing" ' + (decommissionMissing ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-decommissionMissing" style="margin:0">Decommission computers that leave the directory</label>' +
-    '</div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, an asset <strong style="color:var(--color-text-primary)">this integration manages</strong> is set to <em>decommissioned</em> once its computer object is deleted from the directory or disabled there — other sources still describing it do not keep it active. Assets managed by another integration are never touched. A partial, cancelled or empty search, a change to the base DN scope or OU filter, and any run that would decommission an implausibly large share of the fleet are all refused and logged instead.</div>' +
+    checkboxRow("f-decommissionMissing", "Decommission computers that leave the directory", decommissionMissing) +
+    '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, an asset <strong style="color:var(--color-text-primary)">this integration manages</strong> is set to <em>decommissioned</em> once its computer object is deleted from the directory or disabled there — other sources still describing it do not keep it active. Assets managed by another integration are never touched. A partial, cancelled or empty search, a change to the base DN scope or OU filter, and any run that would decommission an implausibly large share of the fleet are all refused and logged instead.</div>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
       '<label for="f-enabled" style="margin:0">Enabled</label>' +
@@ -5135,10 +5140,10 @@ function azureArcFormHTML(defaults) {
   var tagLines = tagMode === "include" ? (d.tagInclude || []) : (d.tagExclude || []);
 
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Azure Arc — Production"></div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">Connects to <strong style="color:var(--color-text-primary)">Azure Arc</strong> through an Entra app registration using the client-credentials flow against <strong style="color:var(--color-text-primary)">Azure Resource Manager</strong>. Discovers Arc-enabled servers (<code>Microsoft.HybridCompute/machines</code>) as assets — no subnets or reservations. Machines merge with assets already discovered by Entra ID, Active Directory and vCenter. <strong style="color:var(--color-text-primary)">No Microsoft Graph permissions are needed</strong> — this is an ARM-only integration, which is the step most often carried over by mistake from an Entra ID setup.</div>' +
+    infoBox('Connects to <strong style="color:var(--color-text-primary)">Azure Arc</strong> through an Entra app registration using the client-credentials flow against <strong style="color:var(--color-text-primary)">Azure Resource Manager</strong>. Discovers Arc-enabled servers (<code>Microsoft.HybridCompute/machines</code>) as assets — no subnets or reservations. Machines merge with assets already discovered by Entra ID, Active Directory and vCenter. <strong style="color:var(--color-text-primary)">No Microsoft Graph permissions are needed</strong> — this is an ARM-only integration, which is the step most often carried over by mistake from an Entra ID setup.') +
     formDivider() +
     sectionHeading("Azure Setup") +
-    '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">Complete these in the Azure portal before testing the connection:</p>' +
+    '<p class="hint" style="margin:0 0 0.5rem 0">Complete these in the Azure portal before testing the connection:</p>' +
     '<ul style="margin:0 0 0.75rem 1.2rem;padding:0;font-size:0.85rem;line-height:1.6">' +
       '<li>Register an application under <strong>Entra ID &rarr; App registrations</strong>, and copy its <strong>Directory (tenant) ID</strong> and <strong>Application (client) ID</strong>.</li>' +
       '<li>Under <strong>Certificates &amp; secrets &rarr; New client secret</strong>, create a secret and copy the <strong>Value</strong> (not the Secret ID — the Value is shown only once). ' +
@@ -5166,16 +5171,10 @@ function azureArcFormHTML(defaults) {
       '<label for="f-useResourceGraph" style="margin:0">Query via Azure Resource Graph</label>' +
     '</div>' +
     '<p class="hint">One query covers every subscription instead of one call each — much lighter on a large tenant. Polaris falls back to a per-subscription list automatically if Resource Graph is unavailable. Resource Graph is an indexed snapshot that can trail Azure by a minute or two, which does not matter on a multi-hour discovery interval.</p>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-includeDisconnected" ' + (inclDisc ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-includeDisconnected" style="margin:0">Include disconnected machines</label>' +
-    '</div>' +
+    checkboxRow("f-includeDisconnected", "Include disconnected machines", inclDisc) +
     '<p class="hint">A <em>Disconnected</em> or <em>Expired</em> Arc agent means Azure stopped hearing from the host — a reachability signal, not a lifecycle one. Polaris keeps those machines as assets and tags them <code>arc-disconnected</code>; it never decommissions on this signal.</p>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-fetchNetworkProfile" ' + (netProfile ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-fetchNetworkProfile" style="margin:0">Fetch IP addresses for each machine</label>' +
-    '</div>' +
-    '<p class="hint" style="color:var(--color-warning,#d98c00)">Costs <strong>one extra Azure request per machine</strong> — on a large fleet that is thousands of calls per discovery run against a rate-limited API. Polaris caps the concurrency and stops the pass at a deadline (reporting what it skipped), but leave this off unless you actually need Arc-sourced IPs.</p>' +
+    checkboxRow("f-fetchNetworkProfile", "Fetch IP addresses for each machine", netProfile) +
+    '<p class="hint" style="color:var(--color-warning)">Costs <strong>one extra Azure request per machine</strong> — on a large fleet that is thousands of calls per discovery run against a rate-limited API. Polaris caps the concurrency and stops the pass at a deadline (reporting what it skipped), but leave this off unless you actually need Arc-sourced IPs.</p>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
       '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
       '<label for="f-enabled" style="margin:0">Enabled</label>' +
@@ -5187,22 +5186,13 @@ function azureArcFormHTML(defaults) {
     '<div class="form-group"><label>Auto-Discovery Interval</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-pollInterval" value="' + (d.pollInterval || 12) + '" min="1" max="24" style="width:80px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">hours</span></div><p class="hint">How often to re-query Azure Resource Manager for Arc machine updates (1–24 hours)</p></div>' +
     formDivider() +
     sectionHeading("Additional Arc Resources") +
-    '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">Each option below adds <strong>one</strong> extra Azure query per discovery run for the whole tenant &mdash; not one per machine. Neither creates new devices in Polaris; both attach detail to the Arc machines already discovered.</p>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-enableVmInstances" ' + (vmInst ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-enableVmInstances" style="margin:0">Collect Arc-enabled VMware / SCVMM placement</label>' +
-    '</div>' +
+    '<p class="hint" style="margin:0 0 0.5rem 0">Each option below adds <strong>one</strong> extra Azure query per discovery run for the whole tenant &mdash; not one per machine. Neither creates new devices in Polaris; both attach detail to the Arc machines already discovered.</p>' +
+    checkboxRow("f-enableVmInstances", "Collect Arc-enabled VMware / SCVMM placement", vmInst) +
     '<p class="hint">Records which virtualization platform each machine runs on, plus its vCenter/SCVMM identifiers. Also improves matching against an existing VMware vCenter integration: the reported <code>instanceUuid</code> is the exact key vCenter discovery uses, so machines merge onto their existing VM record instead of appearing twice.</p>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-enableSqlServer" ' + (sqlSrv ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-enableSqlServer" style="margin:0">Collect Arc-enabled SQL Server instances</label>' +
-    '</div>' +
+    checkboxRow("f-enableSqlServer", "Collect Arc-enabled SQL Server instances", sqlSrv) +
     '<p class="hint">Attaches each machine\'s SQL Server instances (edition, version, patch level, licence type) to that machine and tags it <code>arc-sql</code>. SQL instances are recorded as detail on the host &mdash; they never become separate devices.</p>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-enableKubernetes" ' + (k8s ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-enableKubernetes" style="margin:0">Discover Arc-enabled Kubernetes clusters</label>' +
-    '</div>' +
-    '<p class="hint" style="color:var(--color-warning,#d98c00)">Unlike the two options above, this one <strong>adds devices</strong>: each connected cluster becomes its own asset of type <em>Kubernetes Cluster</em>, with its own subtab on the Monitoring tab. A cluster is monitored as a single endpoint &mdash; no agent, no interfaces, no storage.</p>' +
+    checkboxRow("f-enableKubernetes", "Discover Arc-enabled Kubernetes clusters", k8s) +
+    '<p class="hint" style="color:var(--color-warning)">Unlike the two options above, this one <strong>adds devices</strong>: each connected cluster becomes its own asset of type <em>Kubernetes Cluster</em>, with its own subtab on the Monitoring tab. A cluster is monitored as a single endpoint &mdash; no agent, no interfaces, no storage.</p>' +
     calloutHTML("note", "Requires Resource Graph",
       "Both options are read through Azure Resource Graph, which is what keeps them to one query each. If <em>Query via Azure Resource Graph</em> above is off &mdash; or Resource Graph is unavailable in your tenant &mdash; the discovery run skips this enrichment and says so in its log rather than falling back to a far more expensive per-machine read.") +
     formDivider() +
@@ -5283,18 +5273,15 @@ function vcenterFormHTML(defaults) {
   var devMode = (d.vmInclude && d.vmInclude.length > 0) ? "include" : "exclude";
   var devNames = devMode === "include" ? (d.vmInclude || []) : (d.vmExclude || []);
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Production vCenter"></div>' +
-    '<div style="background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.2);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">Connects to a <strong style="color:var(--color-text-primary)">VMware vCenter</strong> server (7.0U2+) and discovers virtual machines, ESXi hosts, and datastores. VMs merge with assets discovered by other integrations (matched by vNIC MAC / hostname); vCenter data wins over every source except the Polaris Agent. VMs gain a clickable link to their running host and a vMotion-safe host dependency.</div>' +
+    infoBox('Connects to a <strong style="color:var(--color-text-primary)">VMware vCenter</strong> server (7.0U2+) and discovers virtual machines, ESXi hosts, and datastores. VMs merge with assets discovered by other integrations (matched by vNIC MAC / hostname); vCenter data wins over every source except the Polaris Agent. VMs gain a clickable link to their running host and a vMotion-safe host dependency.') +
     formDivider() +
     sectionHeading("Connection Settings") +
     '<div style="display:grid;grid-template-columns:1fr auto;gap:8px">' +
       '<div class="form-group"><label>Host / IP *</label><input type="text" id="f-host" value="' + escapeHtml(d.host || "") + '" placeholder="e.g. vcenter.corp.local"></div>' +
       '<div class="form-group"><label>Port</label><input type="number" id="f-port" value="' + (d.port || 443) + '" min="1" max="65535" style="width:90px"></div>' +
     '</div>' +
-    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
-      '<input type="checkbox" id="f-verifyTls" ' + (verifyTls ? "checked" : "") + ' style="width:auto">' +
-      '<label for="f-verifyTls" style="margin:0">Verify TLS certificate</label>' +
-    '</div>' +
-    '<p class="hint" style="color:var(--color-warning,#d98c00)">Leave enabled. Disabling certificate verification lets a network attacker intercept the connection and capture the vCenter credentials. Disable only for a vCenter with a self-signed certificate you cannot replace.</p>' +
+    checkboxRow("f-verifyTls", "Verify TLS certificate", verifyTls) +
+    '<p class="hint" style="color:var(--color-warning)">Leave enabled. Disabling certificate verification lets a network attacker intercept the connection and capture the vCenter credentials. Disable only for a vCenter with a self-signed certificate you cannot replace.</p>' +
     '<div class="form-group"><label>Username *</label><input type="text" id="f-username" value="' + escapeHtml(d.username || "") + '" placeholder="e.g. polaris-svc@vsphere.local"><p class="hint">A read-only vCenter account is sufficient — Polaris never writes to vCenter.</p></div>' +
     '<div class="form-group"><label>Password *</label><input type="password" id="f-password" value="' + (d.passwordPlaceholder ? "" : escapeHtml(d.password || "")) + '" placeholder="' + (d.passwordPlaceholder || "Password") + '"></div>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
@@ -5373,13 +5360,13 @@ function showTypePicker() {
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>';
   openModal("Add Integration", body, footer, { wide: true });
-  document.getElementById("pick-fmg").addEventListener("click", function () { closeModal(); openCreateModal("fortimanager"); });
-  document.getElementById("pick-fgt").addEventListener("click", function () { closeModal(); openCreateModal("fortigate"); });
-  document.getElementById("pick-win").addEventListener("click", function () { closeModal(); openCreateModal("windowsserver"); });
-  document.getElementById("pick-entra").addEventListener("click", function () { closeModal(); openCreateModal("entraid"); });
-  document.getElementById("pick-ad").addEventListener("click", function () { closeModal(); openCreateModal("activedirectory"); });
-  document.getElementById("pick-vc").addEventListener("click", function () { closeModal(); openCreateModal("vcenter"); });
-  document.getElementById("pick-arc").addEventListener("click", function () { closeModal(); openCreateModal("azurearc"); });
+  document.getElementById("pick-fmg").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("fortimanager"); });
+  document.getElementById("pick-fgt").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("fortigate"); });
+  document.getElementById("pick-win").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("windowsserver"); });
+  document.getElementById("pick-entra").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("entraid"); });
+  document.getElementById("pick-ad").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("activedirectory"); });
+  document.getElementById("pick-vc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("vcenter"); });
+  document.getElementById("pick-arc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("azurearc"); });
 }
 
 function _formHTMLForType(type, defaults) {
@@ -5574,7 +5561,7 @@ function _integrationTabs(ctx) {
         key: "description-sync", label: "Description Sync",
         html: descriptionSyncFormHTML(config.syncDescriptions === true, pushUseProxy, type),
       },
-      { key: "sdwan", label: "SD‑WAN", html: sdwanFormHTML(config.pullSdwan === true) },
+      { key: "sdwan", label: "SD‑WAN", html: sdwanFormHTML(config.pullSdwan === true, config.sdwanIntervalSeconds) },
       {
         // Carries the pull-from-SNMP and push-geocoded-coords toggles that used
         // to sit inside Monitoring → FortiGate. DOM ids preserved so the save
@@ -5663,7 +5650,7 @@ function _wireIntegrationModal(type, id) {
 }
 
 
-async function openCreateModal(type) {
+async function openIntegrationCreateModal(type) {
   type = type || "fortimanager";
   var isFmg = type === "fortimanager";
   var isFgt = type === "fortigate";
@@ -5824,6 +5811,8 @@ async function _createIntegration(type, tested) {
     if (syncDescriptionsNew !== undefined) createConfig.syncDescriptions = syncDescriptionsNew;
     var sdwanToggleNew = _readPullSdwanToggle();
     if (sdwanToggleNew !== undefined) createConfig.pullSdwan = sdwanToggleNew;
+    var sdwanIntervalNew = _readSdwanInterval();
+    if (sdwanIntervalNew !== undefined) createConfig.sdwanIntervalSeconds = sdwanIntervalNew;
     var excludeFortilinkLldpNew = _readExcludeFortilinkLldpToggle();
     if (excludeFortilinkLldpNew !== undefined) createConfig.excludeFortilinkLldp = excludeFortilinkLldpNew;
   }
@@ -5874,7 +5863,7 @@ async function _createIntegration(type, tested) {
 
 // Edit-modal orchestrator (split 2026-08): per-type form spec, tab assembly,
 // then the test-connection and save phases — bodies extracted verbatim.
-async function openEditModal(id) {
+async function openIntegrationEditModal(id) {
   try {
     var intg = await api.integrations.get(id);
     var config = intg.config || {};
@@ -6147,7 +6136,7 @@ function _intgEditFormSpec(intg, config) {
     // `defaults` rides along because _integrationTabs re-renders the FMG /
     // FortiGate General + Filters tabs from it and forwards the blob into the
     // Monitoring tab as `fmgDefaults`. It was function-local when this spec was
-    // split out of openEditModal, which left those call sites referencing a
+    // split out of openIntegrationEditModal, which left those call sites referencing a
     // free variable — a ReferenceError on every FMG / FortiGate edit.
     return { body: body, formGetter: formGetter, defaults: defaults };
 }
@@ -6256,6 +6245,8 @@ async function _saveIntegration(id, intg, formGetter) {
         if (syncDescriptionsEdit !== undefined) editConfig.syncDescriptions = syncDescriptionsEdit;
         var sdwanToggle = _readPullSdwanToggle();
         if (sdwanToggle !== undefined) editConfig.pullSdwan = sdwanToggle;
+        var sdwanInterval = _readSdwanInterval();
+        if (sdwanInterval !== undefined) editConfig.sdwanIntervalSeconds = sdwanInterval;
         var excludeFortilinkLldpEdit = _readExcludeFortilinkLldpToggle();
         if (excludeFortilinkLldpEdit !== undefined) editConfig.excludeFortilinkLldp = excludeFortilinkLldpEdit;
       }
@@ -6526,7 +6517,7 @@ async function abortIntegrationDiscovery(id, name) {
   try { await api.integrations.abortDiscover(id); } catch (_) {}
 }
 
-async function confirmDelete(id, name) {
+async function confirmDeleteIntegration(id, name) {
   var ok = await showConfirm('Delete integration "' + name + '"? This cannot be undone.');
   if (!ok) return;
   try {

@@ -8,7 +8,7 @@ knows about a device is reachable from here.
 | Gate | Grants |
 |---|---|
 | `assets:read` | see the page |
-| `assets:write` | edit rows, bulk-monitor, mass-pin |
+| `assets:write` | edit rows, bulk-monitor, bulk tags, mass-pin |
 | `assets:fullwrite` | **deploy the Polaris Agent** (install / retry / reinstall / upgrade / uninstall), delete others' saved filters |
 
 Agent deployment sits at `fullwrite` on purpose ([rule 43](Business-Rules#rule-43)):
@@ -21,12 +21,17 @@ serial — describes.
 ## The list
 
 **Columns:** Hostname · IP Address · Serial Number · Type · State · **Status** ·
-**Sources** · Description · Asset Tag · Manufacturer · Model · OS / Firmware ·
+**Sources** · Description · Tags · Asset Tag · Manufacturer · Model · OS / Firmware ·
 MAC Address · Assigned To · Purchase Order · DNS Name · Latitude · Longitude ·
 Last Seen.
 
 Columns are sortable, inline-filterable, resizable and hideable. **Column order
 is per view tab; widths and visibility are per screen.**
+
+**Tags** lists the asset's tags. Its filter matches any single tag containing
+the text (case doesn't matter), so `prod` finds `Production`; **Is empty** finds
+untagged assets. Sorting orders by each asset's alphabetically-first tag, and
+untagged assets sit at the bottom whichever way you sort.
 
 ### Two columns worth explaining
 
@@ -81,10 +86,18 @@ Select rows to raise the bulk bar:
 
 | Action | Needs | Does |
 |---|---|---|
-| **Compare** | `assets:read` | overlays telemetry charts for several devices, after a metric picker |
+| **Compare** | `assets:read` | overlays telemetry charts for two to ten devices, after a metric picker; with more than ten selected the button greys out in yellow |
 | **Merge** | Assets **full read-write**, exactly **two** selected | opens the merge modal with the target pre-selected |
-| **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, and ineligible assets come back as skips **with reasons** |
+| **Deploy Agent** | `assets:fullwrite` | one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried, and other ineligible assets come back as skips **with reasons** |
 | **Maintenance** | `maintenanceManagement` | opens the schedules modal with the selection pinned as explicit asset ids |
+| **Tags** | `assets:write` | pick tags, then **Add** them (each asset keeps its own tags), **Remove** them (from the assets that have them), or **Replace all tags** (each asset ends up with exactly the picked set) |
+
+**Replace keeps two kinds of tag** on every asset: Device Map `region:` tags
+and the discovery breadcrumbs `prev-entra:` / `prev-ad:`. Wiping region tags
+across a large selection would silently drop those devices out of every
+region-scoped user's and alert rule's view. To take a region tag off, pick it
+and use **Remove**. Replace with nothing picked clears every other tag, and asks
+first.
 
 A selection past the 500-id cap is refused **with the count**, rather than
 400-ing after you have filled in the form.
@@ -237,6 +250,14 @@ asset whose only remaining entries are ranges correctly shows no primary MAC.
 Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
 
+**An interface name opens the interface — or the network its address is in.**
+Click a name in the Interfaces table to open that interface's history panel.
+When the interface's address sits inside a network Polaris knows, the click
+offers **Open interface** or **Open network** instead; *Open network* slides
+that network's address table in over the asset, scrolled to the address. The
+choice appears only for roles that can read networks, and only when a network
+actually contains the address.
+
 **CPU & Memory is one chart, or two, depending on what is collecting it.**
 Two sources report CPU per core and memory as a composition, and on those the
 section splits into a CPU chart and a Memory chart:
@@ -302,6 +323,50 @@ agent over a stored SSH or WinRM credential
 `assets:fullwrite`; at `assets:read` the card still shows what is installed,
 without the buttons.
 
+#### Firmware
+
+Under the agent card, a **switch or access point** gets a **Firmware** card
+([rule 87](Business-Rules#rule-87)) — the answer to whether the
+[Repository](Server-Settings#repository) holds something newer for this
+device. It is one of:
+
+- **Not supported** — no upgrade engine for this manufacturer (Fortinet only,
+  over HTTPS to the device's own web UI). Images can still be stored.
+- **No image** — nothing in the repository for this device's platform, with a
+  link to the Repository.
+- **Current** — nothing newer than what it runs.
+- **No login bound** — an image is available but no device login is bound at
+  the model, device-type or manufacturer level.
+- **Blocked** — an image is available but the device is down, warning,
+  recovering, behind a parent that is down, or has no address.
+- **Upgrade available** — the running version, the image on offer (its
+  version, platform and which model node it came from), the login that will be
+  used and where it is inherited from.
+
+**Upgrade firmware to …** needs `firmware:fullwrite`; at read the facts stay
+and the button is withheld. It opens an **approval dialog** naming the device
+(host, serial, running version, login) and the exact image — version, build,
+platform, file name, SHA-256, where it is filed, who uploaded it — and, when
+the model's backup image is also newer than the device, lets you choose that
+instead. Nothing is pushed until you tick that you checked the version and
+platform and click **Approve and upgrade**.
+
+While it runs the card shows the stage and, on a switch, the erase / write /
+verify percentages, then *Rebooting* and *Verifying new version*. The device
+is in a maintenance window for the duration
+([Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)),
+so everything behind a switch is suppressed with it. Polaris does not offer a
+cancel — a flash mid-write must finish — and **you must not power-cycle the
+device while it is writing.**
+
+A run ends *succeeded* (the device came back reporting the image's version),
+*unverified* (it came back but Polaris could not confirm the version — check
+it on the device) or *failed* (the transcript says at which stage). The
+asset's OS/firmware field is not rewritten by the run: the next discovery
+reads the new version, and until it does the card says *Flashed*. **Run
+history** lists every attempt with a **View log**. No bulk upgrade exists; it
+is this device, from this card. The phone shows no Firmware card.
+
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose
 discovery sweep can decommission it — with the parent FortiGate appended for a
@@ -328,6 +393,14 @@ Charts carry:
   resolver**, so the shading cannot disagree with what actually fires.
 - **Grey, not red, for a suppressed miss** — a failure the upstream explains is
   drawn grey ([rule 38b](Business-Rules#rule-38)). Same dive, no accusation.
+- **Outages on CPU / memory / storage / interface charts** — those streams
+  record nothing for a missed poll, so the chart borrows the response-time
+  probe's record: wherever every probe failed, the line dives to the baseline
+  and climbs back out, at every range from 1h to 30d. A hole in the line with
+  no probe failure behind it — the device answered pings but a CPU poll failed
+  — is bridged, not dived: Polaris has no evidence of an outage there. A
+  window the series kept reporting through (a Polaris Agent host that pushed
+  readings while the probe could not reach it) is not dived either.
 
 The colour of **Down** is not fixed: it is drawn in the covering automation's
 own severity ([rule 36](Business-Rules#rule-36)). Red is what `critical` looks
@@ -451,18 +524,32 @@ toggle on its integration. Three sections: **SD-WAN Members** (the WAN members
 and overlays, grouped by zone, with per-health-check state), **SD-WAN Rules**
 (the service rules in the gate's own priority order, selected member
 highlighted) and **Performance SLA** (latency, jitter and packet-loss charts per
-health check).
+health check). One member legend above the Performance SLA charts drives all
+three: click a member to hide or show it, double-click to show only that
+member, and **Show all** brings everything back.
+
+Each member's **Health Check Status** strip covers the **last 30 minutes**, one
+segment per SD-WAN poll. A segment is **green** when the FortiGate reported the
+member alive in every health check it belongs to at that poll, and **red** when
+any of those health checks reported it dead. There is no amber state: missing
+the SLA targets for latency, jitter or loss does not turn a segment red — the
+Performance SLA charts show that. A poll that never ran leaves no segment.
 
 Each section states **where its data came from and how old it is** — the polling
 method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the
 reading is older than one cadence, exactly as on the snapshot tabs above. Each
 states its **own** age rather than the device's last poll: the rules table and
 the health-check metrics are separate reads on the same pass, and one can land
-while the other fails. A section that has never been collected says so instead
-of showing nothing.
+while the other fails. A failed rules read keeps the rules table as it was
+rather than emptying it. A section that has never been collected says so
+instead of showing nothing.
 
-There is no Refresh button here — SD-WAN is read on the system-info pass, and
-the tab is showing you what that pass last brought back.
+SD-WAN has its own polling pass, separate from interfaces: every 60 seconds by
+default, set per integration by the SD-WAN tab's **Polling Interval** (see
+[Integration-Fortinet](Integration-Fortinet)). There is no Refresh button on
+this tab. An on-demand poll (the mobile asset sheet's refresh, or
+`POST /assets/:id/probe-now` over the [API](API)) re-reads SD-WAN along with the
+probe; the snapshot tabs' **Refresh** (which re-reads system info) does not.
 
 ### Path Monitor (hosts with the Polaris Agent)
 

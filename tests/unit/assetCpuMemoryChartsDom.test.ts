@@ -131,6 +131,7 @@ function installStubs() {
     segments: `<polyline class="agg-line" data-n="${pts.length}" stroke="${color}"/>`,
   });
   g._dateChangeMarkers = () => "";
+  g._chartXTicksSVG = () => "";
   g._maintenanceBandLayer = () => "";
   g._stashChartGeometry = () => {};
   g._addChartScreenshotButton = () => {};

@@ -52,7 +52,9 @@ function loadForms(): Forms {
   };
   const stubs =
     'function calloutHTML(kind, title, body) { return "[callout " + kind + ": " + title + " | " + body + "]"; }\n' +
-    "function escapeHtml(s) { return String(s); }\n";
+    "function escapeHtml(s) { return String(s); }\n" +
+    'function sectionHeading(t) { return "<p data-section>" + t + "</p>"; }\n' +
+    'function formDivider() { return "<hr>"; }\n';
   const names = [
     "_fortigateAccessProfileHTML",
     "reservationPushFormHTML",
@@ -104,7 +106,7 @@ describe("standalone FortiGate push tabs never mention FortiManager", () => {
     expect(forms.reservationPushFormHTML(true, false, false, false, false, "fortigate")).toContain(
       "/api/v2/cmdb/system/dhcp/server",
     );
-    expect(forms.descriptionSyncFormHTML(true, false, "fortigate")).toContain("/api/v2/cmdb/system/interface");
+    expect(forms.descriptionSyncFormHTML(true, false, "fortigate")).toContain("/api/v2/cmdb/system/global");
   });
 
   it("keeps the Polaris-is-primary warning, which is not FMG copy", () => {
@@ -146,6 +148,39 @@ describe("the FortiManager copy is untouched", () => {
   it("keeps the FMG central-management bullet only where an FMG database exists", () => {
     expect(forms.descriptionSyncFormHTML(true, true, "fortimanager")).toContain("FMG central management");
     expect(forms.descriptionSyncFormHTML(true, false, "fortigate")).not.toContain("central management");
+  });
+});
+
+describe("description sync asks for System Read-Write on every direct transport", () => {
+  // The FortiGate alias is PUT to system/global, which FortiOS files under the
+  // System access-profile group, not Network. The tab used to ask only for
+  // Network → Configuration, so the alias write was refused while interface
+  // descriptions synced — and FMG's bypass-direct mode, whose device writes
+  // use each gate's own REST token, showed only the FMG admin profile.
+  const direct: Array<[string, () => string]> = [
+    ["standalone FortiGate", () => forms.descriptionSyncFormHTML(true, false, "fortigate")],
+    ["FMG bypass-direct", () => forms.descriptionSyncFormHTML(true, false, "fortimanager")],
+  ];
+  for (const [label, render] of direct) {
+    it(label + " names System → Read-Write and the tree it covers", () => {
+      const html = render();
+      expect(html).toContain("Required FortiGate Access Profile");
+      expect(html).toMatch(/<strong>System<\/strong> &rarr; Read-Write/);
+      expect(html).toContain("system/global");
+      expect(html).toContain("System Read-Write is broad");
+    });
+  }
+
+  it("FMG bypass-direct points at the per-device token, not the General tab", () => {
+    const html = forms.descriptionSyncFormHTML(true, false, "fortimanager");
+    expect(html).toContain("per-device API token on the Monitoring tab (FortiGate subtab)");
+    expect(html).toContain("central-management mirror only");
+  });
+
+  it("FMG proxy mode is authorized by FortiManager alone", () => {
+    const html = forms.descriptionSyncFormHTML(true, true, "fortimanager");
+    expect(html).not.toContain("Required FortiGate Access Profile");
+    expect(html).not.toContain("central-management mirror only");
   });
 });
 

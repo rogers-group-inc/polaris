@@ -428,8 +428,8 @@ function _failureDotsSVG(pts) {
 }
 
 // Median sampling cadence of a time-ordered series, in ms. Needs >= 3
-// timestamps to have a meaningful middle. Sizes the collision guard in
-// _outageMarkers below.
+// timestamps to have a meaningful middle. Sizes the hole test in
+// _seriesReportedThrough below.
 function _medianCadenceMs(timestampsMs) {
   if (!timestampsMs || timestampsMs.length < 3) return 0;
   var dts = [];
@@ -473,31 +473,68 @@ function _medianCadenceMs(timestampsMs) {
 // changes. Markers come back as { t, dep } objects rather than bare timestamps
 // for exactly that reason.
 //
-// `sampleTimesMs` is the series' OWN good timestamps, and a marker landing on
-// top of real data is dropped: the Polaris Agent pushes on its own schedule
-// and is not gated on monitorStatus, so an agent host can keep reporting CPU
-// straight through an outage of the server-side probe transport. Diving a line
-// that has data would misreport the data we are actually holding.
+// `sampleTimesMs` is the series' OWN good timestamps, and a window the series
+// kept reporting through is dropped: the Polaris Agent pushes on its own
+// schedule and is not gated on monitorStatus, so an agent host can keep
+// reporting CPU straight through an outage of the server-side probe transport.
+// Diving a line that has data would misreport the data we are actually holding.
+// See _seriesReportedThrough for what "kept reporting" means.
 function _outageMarkers(outages, sampleTimesMs) {
   if (!outages || !outages.length) return [];
   var times = (sampleTimesMs || []).slice().sort(function (a, b) { return a - b; });
-  var guardMs = _medianCadenceMs(times) / 2;
+  var cadenceMs = _medianCadenceMs(times);
   var markers = [];
   outages.forEach(function (o) {
     var from = +new Date(o.from);
     var to   = +new Date(o.to);
     var dep  = o.kind === "dependency";
     if (!isFinite(from) || !isFinite(to)) return;
-    // Skip the WHOLE window when the series has data anywhere in it (padded by
-    // the guard), not merely at its edges. Dropping just the end markers would
-    // still leave any interior samples in place, and the line would dive at the
-    // window's start, climb back for each of them, and dive again — a zigzag
-    // that claims an outage and shows readings through it at the same time.
-    if (guardMs > 0 && times.some(function (t) { return t > from - guardMs && t < to + guardMs; })) return;
+    // Skip the WHOLE window, not merely its edges. Dropping just the end
+    // markers would still leave any interior samples in place, and the line
+    // would dive at the window's start, climb back for each of them, and dive
+    // again — a zigzag that claims an outage and shows readings through it at
+    // the same time.
+    if (_seriesReportedThrough(times, cadenceMs, from, to)) return;
     markers.push({ t: from, dep: dep });
     if (to > from) markers.push({ t: to, dep: dep });
   });
   return markers.sort(function (a, b) { return a.t - b.t; });
+}
+
+// Did the series keep reporting through the outage [from, to]? Two pieces of
+// evidence, either one enough:
+//
+//   • a sample strictly INSIDE the window — the agent case, where the host
+//     pushed readings while the probe transport could not reach it;
+//   • NO HOLE around the window — the last sample at or before `from` and the
+//     first at or after `to` sit no further apart than the series' normal
+//     cadence (1.5x, for jitter). That is a blip shorter than the series'
+//     own interval whose neighbouring polls both succeeded: nothing is missing.
+//
+// This replaced a guard that padded the window by half the cadence on each
+// side and discarded it when ANY sample fell in the padding. The last good
+// poll before a device drops and the first one after it recovers land right
+// next to the outage's edges almost every time — telemetry runs every 5-10
+// minutes against a probe every minute — so that guard threw away most real
+// outages and the line bridged straight across them. On the hourly and daily
+// tiers the padding grew to 30 minutes and 12 hours and swallowed nearly
+// every window, which is why wider ranges showed no misses at all.
+//
+// The hole test is the old gap heuristic used only as a VETO: a hole never
+// creates a marker (only the probe's record does), it can only prove there
+// was no hole to mark. `to` on a rollup tier is the END of the last failed
+// bucket, i.e. the next bucket's start, so the neighbour lookups are
+// inclusive and the interior test is strict.
+function _seriesReportedThrough(times, cadenceMs, from, to) {
+  var prev = null, next = null;
+  for (var i = 0; i < times.length; i++) {
+    var t = times[i];
+    if (t > from && t < to) return true;
+    if (t <= from) prev = t;
+    if (t >= to && next === null) next = t;
+  }
+  if (!(cadenceMs > 0) || prev === null || next === null) return false;
+  return next - prev <= cadenceMs * 1.5;
 }
 
 // The three things every chart does with those markers, kept together so a new
@@ -729,6 +766,8 @@ document.addEventListener("DOMContentLoaded", async function () {
   if (bAgent) bAgent.addEventListener("click", openBulkAgentDeployModal);
   var bMaint = document.getElementById("assets-bulk-maint-btn");
   if (bMaint) bMaint.addEventListener("click", bulkMaintenanceSelectedAssets);
+  var bTags = document.getElementById("assets-bulk-tags-btn");
+  if (bTags) bTags.addEventListener("click", openBulkTagsModal);
   _wireBulkBarDropdowns();
   var bQuarantine   = document.getElementById("assets-bulk-quarantine-btn");
   var bUnquarantine = document.getElementById("assets-bulk-unquarantine-btn");
@@ -1010,7 +1049,7 @@ function _buildAssetsQuery() {
 
   // Operator-aware text columns. Param name == column key, except _server→server.
   var textCols = ["hostname", "ipAddress", "serialNumber", "assetTag", "manufacturer",
-    "model", "os", "macAddress", "assignedTo", "purchaseOrder", "dnsName", "description"];
+    "model", "os", "macAddress", "assignedTo", "purchaseOrder", "dnsName", "description", "tags"];
   textCols.forEach(function (key) { _pushAssetText(params, key, filters[key]); });
   _pushAssetText(params, "server", filters._server);
 
@@ -1128,7 +1167,7 @@ async function fetchAssetsPage() {
     _assetsData = all.map(_mapAsset);
     renderAssetsPage();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="22" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="23" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
   }
 }
 
@@ -1686,8 +1725,8 @@ function renderAssetsPage() {
   if (_assetsData.length === 0) {
     var hasFilters = _assetsSF && _assetsSF._filters && Object.keys(_assetsSF._filters).length > 0;
     tbody.innerHTML = hasFilters
-      ? '<tr><td colspan="22" class="empty-state">No results match the current filters.</td></tr>'
-      : '<tr><td colspan="22" class="empty-state">No assets found. Add one to get started.</td></tr>';
+      ? '<tr><td colspan="23" class="empty-state">No results match the current filters.</td></tr>'
+      : '<tr><td colspan="23" class="empty-state">No assets found. Add one to get started.</td></tr>';
     _renderAssetsPageControls();
     _assetsUpdateSelectAll();
     return;
@@ -1717,6 +1756,7 @@ function renderAssetsPage() {
       '<td>' + assetMonitoredViaCell(a) + '</td>' +
       '<td>' + escapeHtml(a.location || a.learnedLocation || "-") + '</td>' +
       '<td>' + escapeHtml(a.description || "-") + '</td>' +
+      '<td>' + escapeHtml((a.tags || []).join(", ") || "-") + '</td>' +
       '<td>' + _copyableCell(a.assetTag) + '</td>' +
       '<td>' + escapeHtml(a.manufacturer || "-") + '</td>' +
       '<td>' + escapeHtml(a.model || "-") + '</td>' +
@@ -1770,7 +1810,7 @@ function _assetsUpdateBulkBar() {
   if (el) el.textContent = count === 0 ? "No assets selected" : (count + " selected");
   // Disable every bulk action while nothing is selected.
   ["assets-bulk-deselect-btn", "assets-bulk-type-btn", "assets-bulk-state-btn",
-   "assets-bulk-monitor-btn", "assets-bulk-delete-btn",
+   "assets-bulk-monitor-btn", "assets-bulk-tags-btn", "assets-bulk-delete-btn",
    "assets-bulk-merge-btn", "assets-bulk-agent-btn",
    "assets-bulk-maint-btn",
    "assets-bulk-quarantine-btn", "assets-bulk-unquarantine-btn"
@@ -1779,13 +1819,21 @@ function _assetsUpdateBulkBar() {
   // Compare needs at least two assets to overlay, so it stays VISIBLE and greys
   // out below two — a button that only appears once the right number of rows is
   // ticked is a verb nobody discovers. Available to any role that can view
-  // assets — comparing telemetry is read-only.
+  // assets — comparing telemetry is read-only. Above _CMP_MAX_ASSETS it greys
+  // out too, but dim YELLOW rather than plain grey, so "too many" reads apart
+  // from "not enough" (red is taken by Delete).
   var bCompare = document.getElementById("assets-bulk-compare-btn");
   if (bCompare) {
-    bCompare.disabled = count < 2;
+    var cmpMax = typeof _CMP_MAX_ASSETS === "number" ? _CMP_MAX_ASSETS : 10;
+    var overCap = count > cmpMax;
+    bCompare.disabled = count < 2 || overCap;
+    bCompare.classList.toggle("btn-warning", overCap);
+    bCompare.classList.toggle("btn-secondary", !overCap);
     bCompare.title = count < 2
       ? "Select two or more assets to compare their telemetry"
-      : "Compare telemetry of the selected assets";
+      : overCap
+        ? "Compare supports up to " + cmpMax + " assets — " + count + " selected"
+        : "Compare telemetry of the selected assets";
   }
 
   // Edit opens the single-asset edit modal, so it stays visible but greys out
@@ -1917,11 +1965,13 @@ async function openLeasePanel(asset) {
   footerEl.innerHTML =
     openInNetworks +
     ' <button class="btn btn-sm btn-secondary" id="btn-lease-close">Close</button>';
+  raiseSlideover(document.getElementById("lease-panel-overlay"));   // DOM order is stacking order
   revealOverlay(document.getElementById("lease-panel-overlay"));
   document.getElementById("btn-lease-close").addEventListener("click", closeLeasePanel);
+  // The network slide-over, in place and scrolled to this address
+  // (PolarisPanels loads ip-panel.js here on demand).
   document.getElementById("btn-lease-open-networks").addEventListener("click", function () {
-    var hash = '#ip=' + encodeURIComponent(ctx.subnetId) + '@' + encodeURIComponent(asset.ipAddress);
-    window.location.href = '/subnets.html' + hash;
+    PolarisPanels.openNetwork(ctx.subnetId, { focusIp: asset.ipAddress, subnetCidr: ctx.subnetCidr || undefined });
   });
 
   if (!ctx.reservation || !ctx.reservation.id) {
@@ -2371,8 +2421,10 @@ function bulkMaintenanceSelectedAssets() {
 // One modal collects the SSH / WinRM credentials + arch; the server resolves
 // OS platform + transport per asset (Windows → WinRM with SSH fallback,
 // everything else → SSH) and reports ineligible assets back as skips
-// (existing agent, hypervisor, Fortinet source, unreachable, no matching
-// credential). Backend: POST /assets/bulk-agent-install (agentInstallService.
+// (agent in any state but "failed", hypervisor, Fortinet source, unreachable,
+// no matching credential). An asset whose agent install FAILED is retried in
+// place with this batch's credentials — the per-asset Retry, folded into the
+// bulk verb. Backend: POST /assets/bulk-agent-install (agentInstallService.
 // bulkInstallAgents) — installs run in a bounded server-side pool; progress
 // shows per-asset on each System tab exactly like a manual install.
 function openBulkAgentDeployModal() {
@@ -2407,7 +2459,8 @@ function openBulkAgentDeployModal() {
       '<p style="color:var(--color-text-secondary)">Install the Polaris Agent on the <strong>' + ids.length +
         '</strong> selected asset' + (ids.length === 1 ? '' : 's') + '. Each asset\'s OS is inferred from its ' +
         'discovered OS field: Windows hosts use the WinRM credential (SSH as fallback), everything else uses the SSH credential. ' +
-        'Assets that already have an agent, hypervisors, Fortinet-discovered devices, and assets with no reachable address are skipped automatically.</p>' +
+        'An asset whose last agent install <strong>failed</strong> is retried with the credentials chosen here. ' +
+        'Assets with an agent in any other state, hypervisors, Fortinet-discovered devices, and assets with no reachable address are skipped automatically.</p>' +
       '<div class="form-group" style="margin-top:0.75rem">' +
         '<label for="bulk-agent-cred-ssh">SSH credential (Linux / macOS, Windows fallback)</label>' +
         '<select id="bulk-agent-cred-ssh">' + credOptions(sshOpts, "— None (skip SSH-only hosts) —") + '</select>' +
@@ -2483,11 +2536,16 @@ function openBulkAgentDeployModal() {
 }
 
 // Replace the deploy modal's content with the outcome summary: how many
-// installs kicked off + a per-asset table of skips with the server's reason.
+// installs kicked off (naming how many of those were retries of a failed
+// install) + a per-asset table of skips with the server's reason.
 function _renderBulkAgentDeployResult(r) {
+  var retried = r.retried || 0;
+  var retriedNote = retried > 0
+    ? ' (' + retried + ' of them ' + (retried === 1 ? 'a retry' : 'retries') + ' of a failed install)'
+    : '';
   var kickedLine = r.kicked > 0
     ? '<p style="margin:0 0 0.75rem"><strong>' + r.kicked + '</strong> install' + (r.kicked === 1 ? '' : 's') +
-      ' started — progress shows on each asset\'s System tab as the pool works through them.</p>'
+      ' started' + retriedNote + ' — progress shows on each asset\'s System tab as the pool works through them.</p>'
     : '<p style="margin:0 0 0.75rem">No installs were started.</p>';
   var skippedHTML = '';
   if (r.skipped && r.skipped.length) {
@@ -2733,6 +2791,92 @@ async function bulkChangeState(nextStatus) {
   loadAssets();
 }
 
+// Bulk-bar Tags: pick tags from the registry picker (the edit form's
+// tagFieldHTML) and one of three modes. Add is the default because a
+// selection usually mixes assets whose tags differ. The work happens server-
+// side (POST /assets/bulk-tags) — the selection spans pages, so the browser
+// doesn't hold most rows' current tags. Replace keeps region: and discovery
+// breadcrumb tags; the hint says so (assetBulkTagService).
+var BULK_TAG_MODE_HINTS = {
+  add:     "The selected tags are added to every asset. Tags an asset already has are kept.",
+  remove:  "The selected tags are removed from every asset that has them. Other tags are kept.",
+  replace: "Every asset ends up with exactly the selected tags — all other tags are removed, except Device Map region tags and discovery breadcrumbs (prev-entra:, prev-ad:). Selecting no tags clears them.",
+};
+
+async function openBulkTagsModal() {
+  var ids = Array.from(_assetsSelected);
+  if (!ids.length) return;
+  await _ensureTagCache();
+  var n = ids.length + " asset" + (ids.length === 1 ? "" : "s");
+
+  function modeRadio(value, label, checked) {
+    return '<label style="display:flex;align-items:center;gap:0.35rem;font-weight:normal;cursor:pointer">' +
+      '<input type="radio" name="bulk-tags-mode" value="' + value + '"' + (checked ? " checked" : "") + '> ' + label +
+    '</label>';
+  }
+  var body =
+    '<div class="form-group">' +
+      '<label>Action</label>' +
+      '<div style="display:flex;gap:1rem;align-items:center;padding:0.25rem 0">' +
+        modeRadio("add", "Add tags", true) +
+        modeRadio("remove", "Remove tags", false) +
+        modeRadio("replace", "Replace all tags", false) +
+      '</div>' +
+      '<p class="hint" id="bulk-tags-mode-hint">' + escapeHtml(BULK_TAG_MODE_HINTS.add) + '</p>' +
+    '</div>' +
+    tagFieldHTML([]);
+  var footer =
+    '<button class="btn btn-secondary" id="bulk-tags-cancel">Cancel</button>' +
+    '<button class="btn btn-primary" id="bulk-tags-go">Add Tags</button>';
+  openModal("Tags — " + n, body, footer);
+  wireTagPicker();
+
+  var goLabels = { add: "Add Tags", remove: "Remove Tags", replace: "Replace Tags" };
+  function currentMode() {
+    var r = document.querySelector('input[name="bulk-tags-mode"]:checked');
+    return r ? r.value : "add";
+  }
+  document.querySelectorAll('input[name="bulk-tags-mode"]').forEach(function (r) {
+    r.addEventListener("change", function () {
+      var mode = currentMode();
+      document.getElementById("bulk-tags-mode-hint").textContent = BULK_TAG_MODE_HINTS[mode];
+      document.getElementById("bulk-tags-go").textContent = goLabels[mode];
+      // Creating a registry tag to then remove it from assets makes no sense.
+      var addRow = document.getElementById("f-tags-add-row");
+      if (addRow) addRow.style.display = mode === "remove" ? "none" : "flex";
+    });
+  });
+  document.getElementById("bulk-tags-cancel").onclick = closeModal;
+  document.getElementById("bulk-tags-go").onclick = async function () {
+    var mode = currentMode();
+    var tags = getTagFieldValue();
+    if (!tags.length && mode !== "replace") {
+      showToast("Select at least one tag", "error");
+      return;
+    }
+    if (mode === "replace") {
+      var what = tags.length ? "exactly " + tags.join(", ") : "no tags";
+      var ok = await showConfirm("Replace the tags on " + n + " with " + what + "? Their other tags are removed (region tags and discovery breadcrumbs are kept).");
+      if (!ok) return;
+    }
+    var btn = document.getElementById("bulk-tags-go");
+    btn.disabled = true;
+    try {
+      var r = await api.assets.bulkTags(ids, mode, tags);
+      var msg = (mode === "add" ? "Added tags to " : mode === "remove" ? "Removed tags from " : "Replaced tags on ") +
+        r.updated + " asset" + (r.updated === 1 ? "" : "s");
+      if (r.unchanged) msg += " (" + r.unchanged + " already matched)";
+      showToast(msg);
+      closeModal();
+      _assetsSelected.clear();
+      loadAssets();
+    } catch (e) {
+      showToast((e && e.message) || "Tag update failed", "error");
+      btn.disabled = false;
+    }
+  };
+}
+
 async function bulkDeleteAssets() {
   var ids = Array.from(_assetsSelected);
   if (!ids.length) return;
@@ -2753,8 +2897,8 @@ async function bulkDeleteAssets() {
 }
 
 // Bulk-bar Edit: the edit modal is single-asset, so this only acts when exactly
-// one row is selected (the button hides otherwise). Tags are edited there like
-// any other field — the old bulk tag-mode modal was retired in favor of it.
+// one row is selected (the button hides otherwise). Multi-asset tag edits go
+// through the bulk bar's Tags button (openBulkTagsModal) instead.
 function bulkEditSelectedAsset() {
   var ids = Array.from(_assetsSelected);
   if (ids.length !== 1) return;
@@ -5013,22 +5157,18 @@ function _ensureAssetPanelDOM() {
   // keeps Escape from closing the whole asset panel out from under an open
   // nested panel. Not a hard focus trap: the asset panel is a resizable side
   // panel meant to coexist with the page, so role="dialog" without aria-modal.
-  document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
-    if (!overlay.classList.contains("open")) return;
-    if (document.querySelector(".slideover-overlay.slideover-nested.open")) return;
-    if (document.getElementById("modal-overlay") && document.getElementById("modal-overlay").classList.contains("open")) return;
-    closeAssetPanel();
-  });
+  // wireSlideoverEscape (app.js) gates on isTopmostSlideover, which covers
+  // both the nested drilldowns and a network or block slide-over opened from
+  // inside this panel: every slide-over stacks by DOM order (raiseSlideover),
+  // so whichever was opened last owns the key.
+  wireSlideoverEscape(overlay, closeAssetPanel);
 
   // Alt+Left / Alt+Right walk the panel history, mirroring the browser chord.
   // Gated exactly like Escape above: only while the asset panel is the topmost
   // layer, so an open drilldown or a stacked modal keeps the keys for itself.
   document.addEventListener("keydown", function (e) {
     if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-    if (!overlay.classList.contains("open")) return;
-    if (document.querySelector(".slideover-overlay.slideover-nested.open")) return;
-    if (document.getElementById("modal-overlay") && document.getElementById("modal-overlay").classList.contains("open")) return;
+    if (!isTopmostSlideover(overlay)) return;
     e.preventDefault();
     _assetPanelGo(e.key === "ArrowLeft" ? -1 : 1);
   });
@@ -5113,6 +5253,9 @@ async function openViewModal(id, opts) {
   // Cleared alongside the footer so a walk to another asset can't leave the
   // previous device's Open HTTPS / Open SSH buttons on screen while it loads.
   if (actionsEl) actionsEl.innerHTML = "";
+  // A closed panel re-opened from inside another slide-over (an IP row in the
+  // network panel) has to paint over it — DOM order is stacking order.
+  raiseSlideover(document.getElementById("asset-panel-overlay"));
   requestAnimationFrame(function () {
     var ov = document.getElementById("asset-panel-overlay");
     ov.classList.add("open");
@@ -5151,6 +5294,15 @@ async function openViewModal(id, opts) {
     var customWidgetsP = assetP.then(function (asset) {
       if (!asset.manufacturer) return null;
       return api.assets.customWidgets(asset.id).catch(function (err) { console.warn("Failed to load custom widgets", err); return null; });
+    });
+
+    // Firmware upgrade availability (business rule 87) — switches and access
+    // points only, and only for a role that may see the Repository. Errors
+    // become a card line rather than a failed wave.
+    var firmwareP = assetP.then(function (asset) {
+      if (!_assetFirmwareEligible(asset)) return null;
+      if (!(typeof permAtLeast === "function" && permAtLeast("firmware", "read"))) return null;
+      return api.assets.firmwareUpgrade(asset.id).catch(function (err) { return { error: (err && err.message) || "request failed" }; });
     });
 
     // SD-WAN trio — FortiGate firewalls discovered via FortiManager/FortiGate
@@ -5214,12 +5366,14 @@ async function openViewModal(id, opts) {
       canProbeAssets() ? _ensureCredentials() : Promise.resolve(null),
       customWidgetsP,
       sdwanP,
+      firmwareP,
       // Path checks this host runs — prefetched so the tab is present
       // on first paint or absent, never flashing in and out.
       api.assets.pathChecks(id).catch(function () { return null; }),
     ]);
 
     var a = wave[0];
+    var firmwareAvail = wave[12];
     if (wave[1]) _monitorSettingsCache = wave[1];
     var sources             = wave[3] || [];
     var dependencies        = wave[4];
@@ -5232,7 +5386,7 @@ async function openViewModal(id, opts) {
     var sdwanLinks   = wave[11].links;
     var sdwanMembers = wave[11].members;
     var sdwanMeta    = wave[11].meta || {};
-    var pathPayload  = wave[12];
+    var pathPayload  = wave[13];
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -5244,13 +5398,21 @@ async function openViewModal(id, opts) {
     var monitoringHTML = assetMonitoringViewHTML(a);
     var agentSubpanelHTML = assetAgentSubpanelHTML(a, managedAgent);
     var agentMountHTML = '<div data-shot-section="agent" data-shot-label="Polaris Agent"><div id="asset-agent-panel-mount"></div></div>';
+    // The Firmware card sits directly under the Polaris Agent card: the same
+    // "Polaris acts on this device and shows polled progress" surface. Only a
+    // switch / access point gets the mount at all.
+    var firmwareMountHTML = _assetFirmwareEligible(a)
+      ? '<div data-shot-section="firmware" data-shot-label="Firmware"><div id="asset-firmware-panel-mount"></div></div>'
+      : '';
     var systemHTML     = a.monitored
       ? monitoringHTML +
         '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">' +
         agentMountHTML +
+        firmwareMountHTML +
         assetSystemViewHTML(a)
       : monitoringHTML +
-        agentMountHTML; // unmonitored assets still see the panel when an agent is mid-install
+        agentMountHTML + // unmonitored assets still see the panel when an agent is mid-install
+        firmwareMountHTML;
     var tabs = [
       { key: "general", label: "General", html: generalHTML },
       { key: "system",  label: "System",  html: systemHTML },
@@ -5434,7 +5596,7 @@ async function openViewModal(id, opts) {
     if (!isInfraProc) _wireAssetServicesTab(a);
     if (permAtLeast("events", "read")) _wireAssetEventsTab(a.id);
     if (permAtLeast("alerts", "read")) _loadAssetNotificationsTab(a.id);
-    _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML);
+    _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail);
     _wireHoverTriggersIn(bodyEl);
     bodyEl.addEventListener("click", _handleCopyClick);
     document.getElementById("btn-asset-copy").addEventListener("click", _copyAssetDetails);
@@ -5570,7 +5732,7 @@ function _assetGeneralTabHTML(a) {
 
 // Async section mounts on the General/System tabs: dependency tree, directory
 // activity, last-seen firewall, MCLAG peers, virtualization, agent sub-panel.
-function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML) {
+function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail) {
     // Mount the dependency tree into its placeholder div on the General tab.
     var depMount = document.getElementById("asset-dep-tree-mount-" + a.id);
     if (depMount) {
@@ -5712,6 +5874,8 @@ function _mountAssetViewAsyncSections(a, dependencies, sources, sightings, manag
       agentMount.innerHTML = agentSubpanelHTML;
       _wireAgentSubpanel(a, managedAgent);
     }
+    // Firmware card (switch / AP only; the mount exists only for those).
+    _rerenderFirmwarePanel(a, firmwareAvail);
 }
 
 // Footer Refresh button + the Events-tab Export dropdown.
@@ -6392,6 +6556,334 @@ function _rerenderAgentSubpanel(a, agent) {
   if (!mount) return;
   mount.innerHTML = assetAgentSubpanelHTML(a, agent);
   _wireAgentSubpanel(a, agent);
+}
+
+// ─── Firmware card (business rule 87) ────────────────────────────────────────
+// A card on the System tab under the Polaris Agent card, for switches and
+// access points: what the Repository can offer this device, the approval
+// dialog that names the exact image before anything is pushed, live progress
+// polled from the run row while a flash is in flight, and the run history.
+// The server owns every state word and reason (`fw.state`, `fw.reason`); the
+// card never regexes a sentence to decide what to draw.
+
+function _assetFirmwareEligible(a) {
+  return !!a && (a.assetType === "switch" || a.assetType === "access_point");
+}
+
+var _FW_STAGE_LABELS = {
+  preflight:  "Signing in",
+  staging:    "Uploading image",
+  compat:     "Checking compatibility",
+  deploying:  "Deploying",
+  rebooting:  "Rebooting",
+  verifying:  "Verifying new version",
+};
+
+function _fwBadge(text, color) {
+  return '<span style="font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,0.06);color:' + color + '">' + escapeHtml(text) + '</span>';
+}
+
+function _fwImageLine(img) {
+  if (!img) return "";
+  return '<strong>' + escapeHtml(img.versionLabel) + '</strong>' +
+    (img.platform ? ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(img.platform) + ')</span>' : '');
+}
+
+function _fwRunResultHTML(run) {
+  if (!run) return "";
+  var when = run.finishedAt ? timeAgo(run.finishedAt) : (run.startedAt ? timeAgo(run.startedAt) : "");
+  if (run.status === "succeeded") {
+    return '<div style="font-size:0.85rem;color:var(--color-success);margin:0.4rem 0">' +
+      (run.result === "already-current" ? "Already at " : "Upgraded to ") + escapeHtml(run.verifiedVersion || run.toVersion) + ', ' + escapeHtml(when) + '</div>';
+  }
+  if (run.status === "unverified") {
+    return '<div style="font-size:0.85rem;color:var(--color-warning);margin:0.4rem 0">The device rebooted but Polaris couldn’t confirm the version — check it on the device. ' +
+      (run.error ? '<span style="color:var(--color-text-secondary)">' + escapeHtml(run.error) + '</span>' : '') + '</div>';
+  }
+  if (run.status === "failed") {
+    return '<div style="margin:0.5rem 0;padding:0.5rem 0.75rem;background:rgba(255,80,80,0.08);' +
+      'border-left:3px solid var(--color-danger);border-radius:4px;font-family:monospace;font-size:0.8rem;' +
+      'color:var(--color-danger);white-space:pre-wrap;word-break:break-word">' +
+      'Upgrade to ' + escapeHtml(run.toVersion) + ' failed' + (run.stage ? ' at ' + escapeHtml(_FW_STAGE_LABELS[run.stage] || run.stage).toLowerCase() : '') + ': ' +
+      escapeHtml(run.error || "unknown error") + '</div>';
+  }
+  return "";
+}
+
+function _fwStageRow(label, pct, state) {
+  var cls = "fw-stage" + (state ? " " + state : "");
+  var bar = pct === null
+    ? '<span class="fw-progress' + (state === "is-active" ? " is-indeterminate" : "") + '"><span class="fw-progress-fill"></span></span>'
+    : '<span class="fw-progress"><span class="fw-progress-fill" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></span>';
+  return '<div class="' + cls + '"><span class="fw-stage-label">' + escapeHtml(label) + '</span>' + bar +
+    '<span class="fw-stage-pct">' + (pct === null ? '' : Math.round(pct) + '%') + '</span></div>';
+}
+
+function _fwProgressHTML(run) {
+  var p = (run && run.progress) || {};
+  var stage = run && run.stage;
+  var order = ["preflight", "staging", "compat", "deploying", "rebooting", "verifying"];
+  var idx = order.indexOf(stage);
+  var rows = "";
+  // The switch reports percentages for erase / write / verify while deploying.
+  var hasPct = typeof p.erase === "number" || typeof p.write === "number" || typeof p.verify === "number";
+  if (hasPct) {
+    var eraseDone = (p.erase || 0) >= 100;
+    var writeDone = (p.write || 0) >= 100;
+    rows += _fwStageRow("Erasing flash", p.erase || 0, eraseDone ? "is-done" : "is-active");
+    rows += _fwStageRow("Writing image", p.write || 0, writeDone ? "is-done" : (eraseDone ? "is-active" : ""));
+    rows += _fwStageRow("Verifying image", p.verify || 0, (p.verify || 0) >= 100 ? "is-done" : (writeDone ? "is-active" : ""));
+  }
+  if (idx >= order.indexOf("rebooting")) rows += _fwStageRow("Rebooting", null, stage === "rebooting" ? "is-active" : "is-done");
+  if (idx >= order.indexOf("verifying")) rows += _fwStageRow("Verifying new version", null, "is-active");
+  var step = (typeof p.curStep === "number" && typeof p.totStep === "number") ? ' · step ' + p.curStep + ' of ' + p.totStep : '';
+  return '<div id="asset-fw-progress">' +
+    '<div style="font-size:0.85rem;margin:0.3rem 0 0.5rem">Stage: <strong>' + escapeHtml(_FW_STAGE_LABELS[stage] || stage || "starting") + '</strong>' + escapeHtml(step) +
+      (run && run.startedAt ? ' <span style="color:var(--color-text-tertiary)">· started ' + escapeHtml(timeAgo(run.startedAt)) + '</span>' : '') + '</div>' +
+    rows +
+    '<p class="hint" style="margin:0.5rem 0 0">Do not power-cycle the device while it is flashing. Polaris holds its alerts until the run finishes.</p>' +
+  '</div>';
+}
+
+function _fwRunHistoryHTML(a) {
+  return '<div style="margin-top:0.6rem">' +
+    '<button type="button" class="btn btn-link btn-sm" id="btn-fw-history" style="padding:0">Run history ▸</button>' +
+    '<div id="asset-fw-history" style="display:none;margin-top:0.4rem"></div>' +
+  '</div>';
+}
+
+function assetFirmwarePanelHTML(a, fw) {
+  if (!fw || !_assetFirmwareEligible(a)) return "";
+  var badge = "";
+  var body = "";
+  var canFlash = typeof permAtLeast === "function" && permAtLeast("firmware", "fullwrite");
+  var repoLink = (typeof permAtLeast === "function" && permAtLeast("firmware", "read"))
+    ? ' <a href="/server-settings.html?tab=firmware">Open the Repository</a>'
+    : '';
+  if (fw.error) {
+    body = '<p style="color:var(--color-text-tertiary);font-size:0.85rem;margin:0">Couldn’t read upgrade status: ' + escapeHtml(fw.error) + '</p>';
+  } else if (fw.state === "running" && fw.activeRun) {
+    badge = _fwBadge("Upgrading", "var(--color-warning)");
+    body = '<div style="font-size:0.85rem">' + escapeHtml(fw.activeRun.fromVersion || fw.current || "?") + ' → ' + escapeHtml(fw.activeRun.toVersion) + '</div>' + _fwProgressHTML(fw.activeRun);
+  } else if (fw.state === "unsupported") {
+    badge = _fwBadge("Not supported", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "up-to-date") {
+    badge = _fwBadge("Current", "var(--color-success)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">Running ' + escapeHtml(fw.current || "?") + '. ' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "pending-discovery") {
+    badge = _fwBadge("Flashed", "var(--color-success)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "no-image" || fw.state === "no-serial" || fw.state === "no-version") {
+    badge = _fwBadge("No image", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + repoLink + '</p>';
+  } else if (fw.state === "no-credential") {
+    badge = _fwBadge("No login bound", "var(--color-warning)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + repoLink + '</p>';
+  } else if (fw.state === "blocked") {
+    badge = _fwBadge("Blocked", "var(--color-text-tertiary)");
+    body = '<p style="color:var(--color-text-secondary);font-size:0.85rem;margin:0">' + escapeHtml(fw.reason || "") + '</p>';
+  } else if (fw.state === "available" && fw.image) {
+    badge = _fwBadge("Upgrade available", "var(--color-accent)");
+    body =
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem 1.25rem;margin:0.5rem 0;font-size:0.85rem">' +
+        '<div>Current: <strong>' + escapeHtml(fw.current || "?") + '</strong></div>' +
+        '<div>Available: ' + _fwImageLine(fw.image) + '</div>' +
+        '<div>Model image: <strong>' + escapeHtml(fw.image.model) + '</strong> · ' + escapeHtml(fw.image.role) + '</div>' +
+        '<div>Login: <strong>' + escapeHtml(fw.credential ? fw.credential.credentialName : "—") + '</strong>' +
+          (fw.credential ? ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(fw.credential.scope) + ' binding)</span>' : '') + '</div>' +
+        (fw.backupImage ? '<div style="grid-column:1 / -1;color:var(--color-text-secondary)">Also eligible: ' + _fwImageLine(fw.backupImage) + ' (the model’s backup)</div>' : '') +
+      '</div>' +
+      (canFlash
+        ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem"><button type="button" class="btn btn-primary" id="btn-fw-upgrade">Upgrade firmware to ' + escapeHtml(fw.image.versionLabel) + '…</button></div>'
+        : '<p class="hint" style="margin:0">Starting an upgrade needs Full Read-Write on Firmware Repository — ask an administrator.</p>');
+  }
+  if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
+  return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">' +
+      '<h4 style="margin:0;display:flex;align-items:baseline;gap:0.5rem">Firmware ' + badge + '</h4>' +
+    '</div>' +
+    body +
+    (fw.error ? '' : _fwRunHistoryHTML(a)) +
+  '</div>';
+}
+
+function _fwApprovalBlockHTML(img, checked, withRadio) {
+  var id = "fw-approve-" + img.id;
+  return '<label class="fw-approve-block' + (checked ? " is-selected" : "") + '" for="' + id + '" style="display:block;cursor:' + (withRadio ? "pointer" : "default") + '">' +
+    (withRadio
+      ? '<input type="radio" name="fw-approve-image" id="' + id + '" value="' + escapeHtml(img.id) + '" data-version="' + escapeHtml(img.versionLabel) + '"' + (checked ? " checked" : "") + '> '
+      : '<input type="radio" name="fw-approve-image" id="' + id + '" value="' + escapeHtml(img.id) + '" data-version="' + escapeHtml(img.versionLabel) + '" checked style="display:none">') +
+    '<strong>' + escapeHtml(img.versionLabel) + '</strong> · ' + escapeHtml(img.role === "backup" ? "the model’s backup image" : "the model’s primary image") +
+    '<dl>' +
+      '<dt>Platform</dt><dd>' + escapeHtml(img.platform || "unknown") + '</dd>' +
+      '<dt>File</dt><dd>' + escapeHtml(img.filename) + ' (' + escapeHtml(typeof formatBytes === "function" ? formatBytes(img.sizeBytes) : img.sizeBytes + " bytes") + ')</dd>' +
+      '<dt>SHA-256</dt><dd><code>' + escapeHtml(img.sha256) + '</code></dd>' +
+      '<dt>Filed under</dt><dd>' + escapeHtml(img.manufacturer) + ' › ' + escapeHtml(img.assetType === "access_point" ? "access point" : img.assetType) + ' › ' + escapeHtml(img.model) + '</dd>' +
+      '<dt>Uploaded</dt><dd>' + escapeHtml(img.uploadedBy || "—") + (img.uploadedAt ? ', ' + escapeHtml(new Date(img.uploadedAt).toLocaleString()) : '') + '</dd>' +
+    '</dl>' +
+  '</label>';
+}
+
+/** The approval dialog's body — pure, so the DOM test can render it. */
+function _fwApprovalModalHTML(a, fw) {
+  var withRadio = !!fw.backupImage;
+  return '<div class="fw-approve-block">' +
+      '<strong>Device</strong>' +
+      '<dl>' +
+        '<dt>Host</dt><dd>' + escapeHtml(a.hostname || "—") + (a.ipAddress ? ' (' + escapeHtml(a.ipAddress) + ')' : '') + '</dd>' +
+        '<dt>Serial</dt><dd>' + escapeHtml(a.serialNumber || "—") + '</dd>' +
+        '<dt>Running</dt><dd>' + escapeHtml(fw.current || "unknown") + '</dd>' +
+        '<dt>Login</dt><dd>' + escapeHtml(fw.credential ? fw.credential.credentialName : "—") + (fw.credential ? ' (' + escapeHtml(fw.credential.scope) + ' binding)' : '') + '</dd>' +
+      '</dl>' +
+    '</div>' +
+    '<p style="font-size:0.85rem;margin:0 0 0.4rem"><strong>Firmware to push</strong>' +
+      (withRadio ? ' <span style="color:var(--color-text-secondary)">— the primary image is offered by default; the backup is this model’s previous image.</span>' : '') + '</p>' +
+    _fwApprovalBlockHTML(fw.image, true, withRadio) +
+    (withRadio ? _fwApprovalBlockHTML(fw.backupImage, false, true) : '') +
+    '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
+      'The device reboots during the upgrade and will be unreachable for a few minutes — everything behind a switch goes with it. ' +
+      'Polaris holds its alerts for this device while it works on it. A flash that fails partway can leave a device unbootable; do not power-cycle it while it is writing.' +
+    '</div>' +
+    '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:pointer">' +
+      '<input type="checkbox" id="fw-approve-ack"> I have checked the version and platform above' +
+    '</label>';
+}
+
+function _fwSelectedApproval() {
+  var r = document.querySelector('input[name="fw-approve-image"]:checked');
+  return r ? { imageId: r.value, version: r.getAttribute("data-version") } : null;
+}
+
+function _openFirmwareApprovalModal(a, fw) {
+  var footer =
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" id="btn-fw-approve" disabled>Approve and upgrade to ' + escapeHtml(fw.image.versionLabel) + '</button>';
+  openModal("Approve firmware upgrade — " + (a.hostname || a.ipAddress || "device"), _fwApprovalModalHTML(a, fw), footer);
+  var ack = document.getElementById("fw-approve-ack");
+  var btn = document.getElementById("btn-fw-approve");
+  function sync() {
+    var sel = _fwSelectedApproval();
+    btn.disabled = !(ack && ack.checked && sel);
+    if (sel) btn.textContent = "Approve and upgrade to " + sel.version;
+    document.querySelectorAll(".fw-approve-block").forEach(function (b) {
+      var r = b.querySelector('input[name="fw-approve-image"]');
+      if (r) b.classList.toggle("is-selected", r.checked);
+    });
+  }
+  if (ack) ack.addEventListener("change", sync);
+  document.querySelectorAll('input[name="fw-approve-image"]').forEach(function (r) { r.addEventListener("change", sync); });
+  btn.addEventListener("click", function () {
+    var sel = _fwSelectedApproval();
+    if (!sel) return;
+    btn.disabled = true;
+    api.assets.startFirmwareUpgrade(a.id, { imageId: sel.imageId }).then(function () {
+      closeModal();
+      showToast("Upgrade started", "success");
+      return api.assets.firmwareUpgrade(a.id).then(function (next) { _rerenderFirmwarePanel(a, next); });
+    }).catch(function (err) {
+      btn.disabled = false;
+      showToast((err && err.message) || "Could not start the upgrade", "error");
+    });
+  });
+  sync();
+}
+
+async function _loadFirmwareHistory(a) {
+  var box = document.getElementById("asset-fw-history");
+  if (!box) return;
+  box.innerHTML = '<p class="hint" style="margin:0">Loading…</p>';
+  try {
+    var res = await api.assets.firmwareUpgradeRuns(a.id);
+    var runs = (res && res.runs) || [];
+    if (runs.length === 0) { box.innerHTML = '<p class="hint" style="margin:0">No upgrade runs for this device.</p>'; return; }
+    var rows = runs.map(function (r) {
+      var dur = (r.startedAt && r.finishedAt) ? Math.round((new Date(r.finishedAt) - new Date(r.startedAt)) / 1000) + " s" : "";
+      var color = r.status === "succeeded" ? "var(--color-success)" : r.status === "failed" ? "var(--color-danger)" : r.status === "unverified" ? "var(--color-warning)" : "var(--color-text-secondary)";
+      return '<tr>' +
+        '<td title="' + escapeHtml(r.startedAt ? new Date(r.startedAt).toLocaleString() : "") + '">' + escapeHtml(r.startedAt ? timeAgo(r.startedAt) : "") + '</td>' +
+        '<td>' + escapeHtml(r.fromVersion || "?") + ' → ' + escapeHtml(r.toVersion) + '</td>' +
+        '<td><span style="color:' + color + '">' + escapeHtml(r.status) + '</span></td>' +
+        '<td>' + escapeHtml(dur) + '</td>' +
+        '<td style="text-align:right"><button type="button" class="btn btn-sm btn-secondary fw-history-view" data-id="' + escapeHtml(r.id) + '">View log</button></td>' +
+      '</tr>';
+    }).join("");
+    box.innerHTML = '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>Started</th><th>Version</th><th>Result</th><th>Duration</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    box.querySelectorAll(".fw-history-view").forEach(function (b) {
+      b.addEventListener("click", function () { _openFwRunLogModal(b.getAttribute("data-id")); });
+    });
+  } catch (err) {
+    box.innerHTML = '<p class="hint" style="margin:0;color:var(--color-danger)">' + escapeHtml((err && err.message) || "Could not load run history") + '</p>';
+  }
+}
+
+async function _openFwRunLogModal(runId) {
+  try {
+    var res = await api.serverSettings.getFirmwareRun(runId);
+    var run = res.run;
+    var lines = (run.log || []).map(function (l) { return "[" + l.t + "] " + (l.level || "info").toUpperCase() + " " + l.msg; }).join("\n");
+    openModal("Firmware upgrade — " + run.toVersion,
+      '<p style="margin-bottom:0.5rem"><strong>' + escapeHtml(run.status) + '</strong>' + (run.error ? ' — ' + escapeHtml(run.error) : '') + '</p>' +
+      '<pre style="max-height:60vh;overflow:auto;font-size:0.76rem;white-space:pre-wrap">' + escapeHtml(lines || "(no log lines)") + '</pre>',
+      '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+  } catch (err) {
+    showToast((err && err.message) || "Could not load the run", "error");
+  }
+}
+
+function _wireFirmwarePanel(a, fw) {
+  var up = document.getElementById("btn-fw-upgrade");
+  if (up) up.addEventListener("click", function () { _openFirmwareApprovalModal(a, fw); });
+  var hist = document.getElementById("btn-fw-history");
+  if (hist) {
+    hist.addEventListener("click", function () {
+      var box = document.getElementById("asset-fw-history");
+      if (!box) return;
+      var open = box.style.display !== "none";
+      box.style.display = open ? "none" : "";
+      hist.textContent = open ? "Run history ▸" : "Run history ▾";
+      if (!open && !box.__loaded) { box.__loaded = true; _loadFirmwareHistory(a); }
+    });
+  }
+  if (fw && fw.activeRun && fw.activeRun.id) _startFirmwarePoll(a, fw.activeRun.id);
+}
+
+function _rerenderFirmwarePanel(a, fw) {
+  var mount = document.getElementById("asset-firmware-panel-mount");
+  if (!mount) return;
+  mount.innerHTML = assetFirmwarePanelHTML(a, fw);
+  _wireFirmwarePanel(a, fw);
+}
+
+// One poll per (asset, run): the sentinel is the panel itself — the tick
+// bails when it is gone or shows another asset, exactly like _startAgentPoll.
+var _fwPollKey = null;
+
+function _startFirmwarePoll(a, runId) {
+  var key = a.id + ":" + runId;
+  if (_fwPollKey === key) return;
+  _fwPollKey = key;
+  var tick = function () {
+    var panel = document.getElementById("asset-firmware-panel");
+    if (!panel || panel.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }
+    api.serverSettings.getFirmwareRun(runId).then(function (res) {
+      var run = res && res.run;
+      var panel2 = document.getElementById("asset-firmware-panel");
+      if (!panel2 || panel2.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }
+      if (run && (run.status === "queued" || run.status === "running")) {
+        var box = document.getElementById("asset-fw-progress");
+        if (box) box.outerHTML = _fwProgressHTML(run);
+        setTimeout(tick, 3000);
+        return;
+      }
+      _fwPollKey = null;
+      // Terminal: re-read availability and redraw the whole card.
+      api.assets.firmwareUpgrade(a.id).then(function (next) { _rerenderFirmwarePanel(a, next); }).catch(function () { /* next open re-reads */ });
+    }).catch(function () {
+      setTimeout(tick, 5000);
+    });
+  };
+  setTimeout(tick, 3000);
 }
 
 function _openInstallAgentModal(a) {
@@ -8344,16 +8836,17 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       return;
     }
 
-    // Interface name click — opens the per-interface history panel. The
-    // already-loaded row rides along so the slide-over can surface
-    // current-state fields (VLAN config in particular) that the
-    // interface-history endpoint doesn't carry.
+    // Interface name click — opens the per-interface history panel, or, when
+    // the interface's address sits in a Polaris network, offers that network
+    // too (_openInterfaceOrNetwork). The already-loaded row rides along so the
+    // slide-over can surface current-state fields (VLAN config in particular)
+    // that the interface-history endpoint doesn't carry.
     var ifLink = t.closest(".asset-iface-link");
     if (ifLink) {
       e.preventDefault();
       var ifn = ifLink.getAttribute("data-ifname");
       var row = rows.find(function (r) { return r.ifName === ifn; }) || null;
-      openInterfaceDetailPanel(asset, ifn, row);
+      _openInterfaceOrNetwork(asset, ifn, row, ifLink);
       return;
     }
 
@@ -8373,6 +8866,58 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       var id = lldpLink.getAttribute("data-asset-id");
       if (id) openViewModal(id);
     }
+  });
+}
+
+// The address an interface row carries, in the form GET /assets/ip-context
+// takes: the first address when a row lists several, without a prefix length
+// or a mask ("10.4.12.1/24", "10.4.12.1 255.255.255.0"), and null for the
+// unconfigured placeholders a device reports (0.0.0.0, ::). Display parsing
+// only — the containment maths stays server-side.
+function _ifaceIpForLookup(raw) {
+  if (raw == null) return null;
+  var first = String(raw).trim().split(/[\s,;]+/)[0] || "";
+  first = first.split("/")[0];
+  if (!first) return null;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(first)) return first === "0.0.0.0" ? null : first;
+  if (first.indexOf(":") !== -1 && /^[0-9a-f:.]+$/i.test(first)) return first === "::" ? null : first;
+  return null;
+}
+
+// An interface name is a link to its history panel — and, when the address it
+// carries sits inside a Polaris network, a fork: the operator may want the
+// interface OR the network that address lives in (the network slide-over,
+// scrolled to that row). The fork is offered only when the network exists,
+// resolved on click through GET /assets/ip-context — one small request, only
+// for an interface that has an address, only for a viewer who can read
+// networks — so a table of 48 ports costs nothing to render, and an address in
+// no network opens the interface straight away, as before. The row menu
+// anchors on the name the operator clicked (showRowMenu, app.js); a lookup
+// that fails, or lands after the table re-rendered under it, opens the
+// interface rather than nothing.
+function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
+  var ip = _ifaceIpForLookup(row && row.ipAddress);
+  var canReadNetworks = typeof permAtLeast === "function" && permAtLeast("subnets", "read");
+  var canLookup = typeof api !== "undefined" && api.assets && typeof api.assets.ipContext === "function";
+  if (!ip || !canReadNetworks || !canLookup) {
+    openInterfaceDetailPanel(asset, ifName, row);
+    return;
+  }
+  api.assets.ipContext(ip).then(function (ctx) {
+    var subnet = ctx && ctx.subnet;
+    if (!subnet || !subnet.id || !anchor || !document.body.contains(anchor)) {
+      openInterfaceDetailPanel(asset, ifName, row);
+      return;
+    }
+    var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
+    showRowMenu(anchor, [
+      { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } },
+      { label: "Open network", title: ip + " is in " + where, onSelect: function () {
+        PolarisPanels.openNetwork(subnet.id, { focusIp: ip, subnetCidr: subnet.cidr });
+      } },
+    ], { label: ifName });
+  }, function () {
+    openInterfaceDetailPanel(asset, ifName, row);
   });
 }
 
@@ -9399,19 +9944,105 @@ function _formatNumber(n) {
 // window is supplied.
 // --- Shared chart scaffolding (2026-08 consolidation) ---
 // The byte-identical closures every SVG chart renderer used to re-declare:
-// zero-padded time parts, the span-aware X-tick label formatter, and the
-// linear time->x / value->y scales. Renderers keep their own paddings, tick
-// loops, and series drawing -- those genuinely differ per chart.
+// zero-padded time parts, the calendar-aligned X-axis ticks, and the linear
+// time->x / value->y scales. Renderers keep their own paddings, Y ticks, and
+// series drawing -- those genuinely differ per chart.
 // assets-compare.js (loaded after this file on assets.html) shares them.
 function _chartPad2(n) { return n < 10 ? "0" + n : String(n); }
-// Span-aware tick label: HH:MM inside one day, M/D beyond.
-function _chartTickFmt(t0, t1) {
-  var spanMs = t1 - t0, oneDayMs = 86400000;
-  return function (ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return _chartPad2(d.getHours()) + ":" + _chartPad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  };
+// X-axis ticks on CALENDAR boundaries, not on fifths of the window. The fifths
+// every chart used to draw landed at arbitrary instants (a 7-day window ticked
+// every 1.4 days: 9/17 18:36, 9/19 04:12 …), so a date-only label named a day
+// it sat in the middle of, skipped whole days (9/18 and 9/22 never appeared),
+// and never lined up with the dashed midnight lines _dateChangeMarkers draws.
+// Now the step is the smallest "nice" one that keeps labels ≥ ~80px apart, and
+// every tick is aligned to local time: a multiple of the step past local
+// midnight for sub-day steps, local midnight itself (via setDate, so DST cannot
+// drift it) for day steps — which puts a day tick exactly on its dashed line.
+// Returns [{ ts, label }], each strictly inside [t0, t1].
+var _CHART_TICK_STEPS_MS = [
+  60e3, 2 * 60e3, 5 * 60e3, 10 * 60e3, 15 * 60e3, 30 * 60e3,
+  3600e3, 2 * 3600e3, 3 * 3600e3, 6 * 3600e3, 12 * 3600e3,
+];
+var _CHART_TICK_STEPS_DAYS = [1, 2, 3, 7, 14, 30];
+function _chartTimeTicks(t0, t1, innerW) {
+  var span = t1 - t0;
+  if (!(span > 0)) return [];
+  var maxTicks = Math.max(2, Math.floor((innerW || 600) / 80));
+  var dayMs = 86400000;
+  var out = [];
+  var stepMs = null;
+  // HH:MM labels only while _dateChangeMarkers still names each midnight line
+  // (≤ 4 days); past that an hour label could belong to any of the days.
+  if (span <= 4 * dayMs) {
+    for (var i = 0; i < _CHART_TICK_STEPS_MS.length; i++) {
+      // +1: a window that starts ON a boundary holds one more tick than intervals.
+      if (Math.floor(span / _CHART_TICK_STEPS_MS[i]) + 1 <= maxTicks) { stepMs = _CHART_TICK_STEPS_MS[i]; break; }
+    }
+  }
+  if (stepMs != null) {
+    var mid = new Date(t0);
+    mid.setHours(0, 0, 0, 0);
+    var base = mid.getTime();
+    var ts = base + Math.ceil((t0 - base) / stepMs) * stepMs;
+    for (var guard = 0; ts <= t1 && guard < 200; guard++, ts += stepMs) {
+      var d = new Date(ts);
+      // A multi-day window names its midnights by date, not "00:00".
+      var atMidnight = d.getHours() === 0 && d.getMinutes() === 0;
+      out.push({
+        ts: ts,
+        label: atMidnight && span > dayMs
+          ? (d.getMonth() + 1) + "/" + d.getDate()
+          : _chartPad2(d.getHours()) + ":" + _chartPad2(d.getMinutes()),
+      });
+    }
+    return out;
+  }
+  var stepDays = _CHART_TICK_STEPS_DAYS[_CHART_TICK_STEPS_DAYS.length - 1];
+  for (var k = 0; k < _CHART_TICK_STEPS_DAYS.length; k++) {
+    if (Math.floor(span / (_CHART_TICK_STEPS_DAYS[k] * dayMs)) + 1 <= maxTicks) { stepDays = _CHART_TICK_STEPS_DAYS[k]; break; }
+  }
+  var day = new Date(t0);
+  day.setHours(0, 0, 0, 0);
+  if (day.getTime() < t0) day.setDate(day.getDate() + 1);
+  for (var g2 = 0; day.getTime() <= t1 && g2 < 200; g2++) {
+    out.push({ ts: day.getTime(), label: (day.getMonth() + 1) + "/" + day.getDate() });
+    day.setDate(day.getDate() + stepDays);
+  }
+  return out;
+}
+// The tick marks + labels for _chartTimeTicks, in the markup every renderer
+// used to inline. A label within half its width of either end of the plot is
+// anchored to that end instead of centred on it — a centred label on the last
+// tick overhung the 10px right padding and was clipped by the SVG edge.
+// `opts.dateLine` adds the M/D under the first tick and wherever the day
+// changes (the response-time chart on a ≤24h window, whose labels are HH:MM).
+function _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH, opts) {
+  opts = opts || {};
+  var ticks = _chartTimeTicks(t0, t1, innerW);
+  var right = padL + innerW;
+  var out = "";
+  var prevDay = null;
+  for (var i = 0; i < ticks.length; i++) {
+    var t = ticks[i];
+    var x = padL + ((t.ts - t0) / (t1 - t0)) * innerW;
+    var half = t.label.length * 3; // ~6px per glyph at font-size 10
+    var anchor = "middle";
+    if (x + half > right + 6) anchor = "end";
+    else if (x - half < padL - 6) anchor = "start";
+    out +=
+      '<line x1="' + x + '" y1="' + (padT + innerH) + '" x2="' + x + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
+      '<text x="' + x + '" y="' + (padT + innerH + 14) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor">' + t.label + '</text>';
+    if (opts.dateLine) {
+      var d = new Date(t.ts);
+      var key = d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+      if (key !== prevDay) {
+        out +=
+          '<text x="' + x + '" y="' + (padT + innerH + 26) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor" opacity="0.7">' + (d.getMonth() + 1) + "/" + d.getDate() + '</text>';
+        prevDay = key;
+      }
+    }
+  }
+  return out;
 }
 function _chartXScale(padL, innerW, t0, t1) {
   return function (ts) { return padL + ((new Date(ts).getTime() - t0) / (t1 - t0)) * innerW; };
@@ -9600,7 +10231,7 @@ function _ensureSensorPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "sensor-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="sensor-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -9619,6 +10250,7 @@ function _ensureSensorPanelDOM() {
     if (e.target === overlay) closeSensorPanel();
   });
   document.getElementById("sensor-panel-close").addEventListener("click", closeSensorPanel);
+  wireSlideoverEscape(overlay, closeSensorPanel);
   initSlideoverResize(document.getElementById("sensor-panel"), "polaris.panel.width.sensor");
 }
 
@@ -9640,6 +10272,7 @@ async function openSensorDetailPanel(asset, sensorName) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-sensor-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("sensor-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("sensor-panel-overlay").classList.add("open");
   });
@@ -9885,11 +10518,6 @@ function _renderSensorChart(container, samples, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var allC = samples.map(function (s) { return s.value; });
   var minC = Math.min.apply(null, allC);
@@ -9922,14 +10550,7 @@ function _renderSensorChart(container, samples, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 6) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _hwFmtNum(v) + unitTickSuffix + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   var titleY = 14;
   var xLabelY = padT + innerH + 38;
@@ -10803,11 +11424,6 @@ function _renderSystemChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var cpuValues = samples.map(function (s) { return { s: s, v: typeof s.cpuPct === "number" ? s.cpuPct : null }; })
                          .filter(function (e) { return typeof e.v === "number"; });
@@ -10884,14 +11500,7 @@ function _renderSystemChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var cpuColor = "var(--color-accent)";
   var memColor = "#f4a261";
   var legend =
@@ -11039,11 +11648,6 @@ function _renderCpuChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var cpuValues = samples.map(function (s) { return { s: s, v: typeof s.cpuPct === "number" ? s.cpuPct : null }; })
                          .filter(function (e) { return typeof e.v === "number"; });
@@ -11109,14 +11713,7 @@ function _renderCpuChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   var clipId = _chartClipId("cpu");
   var avgLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), _CPU_AVG_COLOR, clipId + "-avg");
@@ -11484,11 +12081,6 @@ function _renderMemoryChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var rows = samples.map(function (s) {
     var b = _memBandsFor(s);
@@ -11629,14 +12221,7 @@ function _renderMemoryChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBytes(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   function swatch(color, label, dashed) {
     return '<span style="display:inline-flex;align-items:center;gap:4px">' +
@@ -11789,11 +12374,6 @@ function _renderMemoryPctChart(container, data, asset, si) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, 0, 100);
   var baselineY = padT + innerH;
@@ -11816,14 +12396,7 @@ function _renderMemoryPctChart(container, data, asset, si) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v.toFixed(0) + '%</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var sorted = vals.slice().sort(function (a, b) { return new Date(a.s.timestamp).getTime() - new Date(b.s.timestamp).getTime(); });
   var hits = sorted.map(function (h, i) {
     var x = xFor(h.s.timestamp);
@@ -11901,11 +12474,6 @@ function _renderSessionsChart(container, data, asset) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   function fmtCount(n) {
     if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
     return String(Math.round(n));
@@ -11935,14 +12503,7 @@ function _renderSessionsChart(container, data, asset) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + fmtCount(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var color = "#2a9d8f";
   var clipId = _chartClipId("sessions");
   container.innerHTML =
@@ -12986,19 +13547,6 @@ function _renderMonitorChart(container, data, transitions) {
   var spanMs = t1 - t0;
   var oneDayMs = 24 * 60 * 60 * 1000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
-  function fmtDate(ts) {
-    var d = new Date(ts);
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
-  function dayKey(ts) {
-    var d = new Date(ts);
-    return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
-  }
 
   // Tier-aware sample classification. The detail tier carries a per-sample
   // `success` boolean; the rollup tiers (hourly/daily) instead carry
@@ -13149,25 +13697,7 @@ function _renderMonitorChart(container, data, transitions) {
   // date — render the date underneath the first tick and any tick whose day
   // differs from the previous one, so a window that crosses midnight is
   // unambiguous.
-  var xTicks = "";
-  var xTickCount = 5;
-  var dateLabelMode = spanMs <= oneDayMs;
-  var prevDayKey = null;
-  for (var j = 0; j <= xTickCount; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / xTickCount);
-    var xPos = padL + (j / xTickCount) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-    if (dateLabelMode) {
-      var k = dayKey(tsTick);
-      if (k !== prevDayKey) {
-        xTicks +=
-          '<text x="' + xPos + '" y="' + (padT + innerH + 26) + '" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.7">' + fmtDate(tsTick) + '</text>';
-        prevDayKey = k;
-      }
-    }
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH, { dateLine: spanMs <= oneDayMs });
 
   // Axis titles
   var yTitleX = 14;
@@ -13342,8 +13872,9 @@ function _ensureIfacePanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "iface-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  // Sit above the asset panel (z-index 999/1000) so the inner panel is on top.
-  overlay.style.zIndex = "1099";
+  // No z-index of its own: every slide-over stacks by DOM order, and
+  // raiseSlideover (app.js) moves this one to the top when it opens. A
+  // pinned 1099 put it over a network or block panel opened after it.
   overlay.innerHTML =
     '<div class="slideover" id="iface-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -13362,6 +13893,7 @@ function _ensureIfacePanelDOM() {
     if (e.target === overlay) closeIfacePanel();
   });
   document.getElementById("iface-panel-close").addEventListener("click", closeIfacePanel);
+  wireSlideoverEscape(overlay, closeIfacePanel);
   initSlideoverResize(document.getElementById("iface-panel"), "polaris.panel.width.iface");
 }
 
@@ -13410,6 +13942,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
     '<button class="btn btn-sm btn-secondary" id="btn-iface-panel-screenshot">Screenshot</button>' +
     '<span style="flex:1"></span>' +
     '<button class="btn btn-sm btn-secondary" id="btn-iface-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("iface-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("iface-panel-overlay").classList.add("open");
   });
@@ -13990,11 +14523,6 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxV = 0;
   inSeries.forEach (function (d) { if (d.inBps  > maxV) maxV = d.inBps;  });
   outSeries.forEach(function (d) { if (d.outBps > maxV) maxV = d.outBps; });
@@ -14050,14 +14578,7 @@ function _renderIfaceThroughputChart(container, derived, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBitsPerSecAxis(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var inColor  = "var(--color-accent)";
   var outColor = "#f4a261";
   var legend =
@@ -14121,11 +14642,6 @@ function _renderIfaceErrorChart(container, derived, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxE = 0;
   derived.forEach(function (d) {
     if (typeof d.inErr  === "number" && d.inErr  > maxE) maxE = d.inErr;
@@ -14172,14 +14688,7 @@ function _renderIfaceErrorChart(container, derived, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var legend =
     '<g font-size="10" fill="currentColor">' +
       '<rect x="' + (padL + 10) + '" y="2" width="10" height="10" fill="' + inErrColor + '"/>' +
@@ -14239,7 +14748,7 @@ function _ensureIpsecPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "ipsec-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="ipsec-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -14258,6 +14767,7 @@ function _ensureIpsecPanelDOM() {
     if (e.target === overlay) closeIpsecPanel();
   });
   document.getElementById("ipsec-panel-close").addEventListener("click", closeIpsecPanel);
+  wireSlideoverEscape(overlay, closeIpsecPanel);
   initSlideoverResize(document.getElementById("ipsec-panel"), "polaris.panel.width.ipsec");
 }
 
@@ -14279,6 +14789,7 @@ async function openIpsecTunnelDetailPanel(asset, tunnelName) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-ipsec-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("ipsec-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("ipsec-panel-overlay").classList.add("open");
   });
@@ -14547,11 +15058,6 @@ function _renderIpsecStatusChart(container, samples, opts) {
     : 600000;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   function colorFor(s) {
     if (s === "up") return MONITOR_STATE_COLORS.up;
     if (s === "down") return MONITOR_STATE_COLORS.down;
@@ -14573,14 +15079,7 @@ function _renderIpsecStatusChart(container, samples, opts) {
       ' data-ts="' + escapeHtml(String(s.timestamp)) + '"' +
       ' data-status="' + escapeHtml(s.status) + '"/>';
   }).join("");
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var hasDynamic = samples.some(function (s) { return s.status === "dynamic"; });
   var legend =
     '<g font-size="10" fill="currentColor">' +
@@ -14629,11 +15128,6 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
   var maxV = Math.max.apply(null, values.map(function (e) { return e.v; }));
   if (maxV < 1000) maxV = 1000;
   function tidyCeil(n) {
@@ -14658,14 +15152,7 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtBitsPerSec(v) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var color = side === "in" ? "var(--color-accent)" : "#f4a261";
   var clipId = _chartClipId("ipsecBps");
   container.innerHTML =
@@ -14817,7 +15304,8 @@ function _sdwanMembersTableHTML(members) {
 // Provenance + freshness strip carried by all three SD-WAN sections.
 //
 // Every section on this tab is a SNAPSHOT of what the gate last answered, and
-// each is a separate write on the system-info pass: a rules scrape can land
+// each is a separate write on the SD-WAN pass (its own cadence, default 60s —
+// not the system-info pass it rode until 2026-09): a rules scrape can land
 // while the perf-SLA one fails, and vice versa. So each states its OWN stamp
 // rather than the asset's lastSystemInfoAt — otherwise an empty members table
 // reads "this gate has no WAN members" when it means "not answered since
@@ -14860,7 +15348,7 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
       '<div data-shot-section="sdwanMembers" data-shot-label="SD-WAN Members">' +
       '<section style="margin-bottom:1.25rem">' +
         _sdwanSectionHeaderHTML(a, "SD-WAN Members", meta.membersAt, meta.membersPollSec, "never collected") +
-        '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">WAN members (interfaces + overlays) with per-health-check status. The Health Check Status strip shows recent up/down per scrape; IP / link / bytes come from the latest interface poll.</p>' +
+        '<p class="hint" style="margin:0 0 0.5rem 0;color:var(--color-text-tertiary)">WAN members (interfaces + overlays) with per-health-check status. The Health Check Status strip shows up/down per scrape over the last 30 minutes; IP / link / bytes come from the latest interface poll.</p>' +
         _sdwanMembersTableHTML(members) +
       '</section>' +
       ((rules.length || links.length) ? '<hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--color-border)">' : '') +
@@ -14974,19 +15462,21 @@ function _assetSdwanTabHTML(a, rules, links, members, meta) {
     // Same header builder as the two tables above, so all three sections state
     // provenance and age the same way. The stamp is the perf-SLA stream's own
     // newest sample — the very `collectedAt` the members table states, both
-    // reading that one table — falling back to the asset's pass stamp only when
-    // the endpoint returned none. It used to read lastSystemInfoAt
-    // unconditionally, which reports a pass whose SD-WAN leg failed as a
-    // successful SD-WAN scrape. _wireSdwanTab upgrades the badge to
-    // authoritative provenance.
+    // reading that one table. No fallback: it used to fall back to the asset's
+    // lastSystemInfoAt, but SD-WAN has its own pass since 2026-09, so that
+    // stamp says nothing about SD-WAN — no sample means "never collected".
+    // _wireSdwanTab upgrades the badge to authoritative provenance.
     html +=
       '<section>' +
         _sdwanSectionHeaderHTML(
           a, "Performance SLA",
-          meta.membersAt || a.lastSystemInfoAt || null, meta.membersPollSec, "never collected",
+          meta.membersAt || null, meta.membersPollSec, "never collected",
           '<select id="sdwan-perfsla-select" class="form-input" style="padding:2px 6px;font-size:0.82rem">' + options + '</select>',
           rangeBtns
         ) +
+        // ONE legend for all three charts, above the stats line — hiding a
+        // member hides it on latency, jitter and loss together.
+        '<div id="sdwan-perfsla-legend"></div>' +
         '<div id="sdwan-perfsla-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
         '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Latency (ms)</h5>' +
         '<div id="sdwan-latency-chart" class="sdwan-chart-box"></div>' +
@@ -15088,8 +15578,10 @@ async function _loadPerfSlaForHealthCheck(assetId, hcName, members, range) {
   var jitEl  = document.getElementById("sdwan-jitter-chart");
   var lossEl = document.getElementById("sdwan-loss-chart");
   var stats  = document.getElementById("sdwan-perfsla-stats");
+  var legendEl = document.getElementById("sdwan-perfsla-legend");
   if (!latEl || !members || !members.length) return;
   latEl.textContent = jitEl.textContent = lossEl.textContent = "Loading samples…";
+  if (legendEl) legendEl.innerHTML = "";
   if (stats) stats.textContent = "Loading…";
   var opts = (typeof range === "string" || !range) ? { range: range || "24h" } : range;
   // Stash the active selection on each chart container (canonical convention)
@@ -15153,12 +15645,14 @@ function _renderPerfSlaStats(container, series, data, subject) {
   _renderChartStats(container, total, parts);
 }
 
-// Re-render all three Performance SLA charts from the stashed state (honors the
-// current per-member hidden set). Called on initial load + on legend toggle.
+// Re-render the shared legend and all three Performance SLA charts from the
+// stashed state (honors the current per-member hidden set). Called on initial
+// load + on legend toggle.
 function _renderAllPerfSlaCharts() {
   var st = _sdwanTabState;
   if (!st || !st.perfSla) return;
   var ps = st.perfSla;
+  _renderPerfSlaLegend(document.getElementById("sdwan-perfsla-legend"), ps.series);
   var latEl  = document.getElementById("sdwan-latency-chart");
   var jitEl  = document.getElementById("sdwan-jitter-chart");
   var lossEl = document.getElementById("sdwan-loss-chart");
@@ -15167,21 +15661,81 @@ function _renderAllPerfSlaCharts() {
   if (lossEl) _renderPerfSlaMultiChart(lossEl, ps.series, "packetLoss", { label: "Packet loss", unit: "%", threshold: ps.thr.packetLossThreshold }, ps.copts);
 }
 
-// Toggle one member's visibility across all three Performance SLA charts.
-function _togglePerfSlaMember(label) {
-  var st = _sdwanTabState;
-  if (!st) return;
-  if (!st.hiddenMembers) st.hiddenMembers = new Set();
-  if (st.hiddenMembers.has(label)) st.hiddenMembers.delete(label);
-  else st.hiddenMembers.add(label);
-  _renderAllPerfSlaCharts();
+// The one member legend above the stats line, driving all three charts. Same
+// chips and gestures as the CPU chart's legend (_cpuLegendHTML /
+// _wireCpuLegend): click to hide or show a member, double-click to show ONLY
+// that member, "Show all" once anything is off. A member with no samples in
+// the range gets no chip — there is nothing of it on any chart to toggle.
+function _renderPerfSlaLegend(el, series) {
+  if (!el) return;
+  var hidden = (_sdwanTabState && _sdwanTabState.hiddenMembers) || new Set();
+  var withData = series.filter(function (s) { return s.samples && s.samples.length; });
+  if (!withData.length) { el.innerHTML = ""; return; }
+  var chips = withData.map(function (s) {
+    return _seriesChipHTML(s.label, s.label, s.color, !hidden.has(s.label),
+      "Click to hide " + s.label + " · double-click to show only this member", "sdwan-legend-chip");
+  }).join("");
+  if (hidden.size) {
+    chips += '<span class="sdwan-legend-all" title="Show every member again"' +
+      ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
+  }
+  el.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin:0.25rem 0 0.35rem">' +
+    chips + '</div>';
+  // A double-click also fires two clicks — defer the single-click toggle just
+  // past the double-click window (as _wireCpuLegend does) so an isolate does
+  // not first hide the member it was aimed at.
+  var clickTimer = null;
+  el.querySelectorAll(".sdwan-legend-chip").forEach(function (chip) {
+    var key = chip.getAttribute("data-series");
+    chip.addEventListener("click", function () {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      clickTimer = setTimeout(function () {
+        clickTimer = null;
+        var st = _sdwanTabState;
+        if (!st) return;
+        if (!st.hiddenMembers) st.hiddenMembers = new Set();
+        if (st.hiddenMembers.has(key)) st.hiddenMembers.delete(key);
+        else st.hiddenMembers.add(key);
+        _renderAllPerfSlaCharts();
+      }, 220);
+    });
+    chip.addEventListener("dblclick", function () {
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      var st = _sdwanTabState;
+      if (!st) return;
+      st.hiddenMembers = new Set(withData.map(function (s) { return s.label; }).filter(function (l) { return l !== key; }));
+      _renderAllPerfSlaCharts();
+    });
+  });
+  var all = el.querySelector(".sdwan-legend-all");
+  if (all) {
+    all.addEventListener("click", function () {
+      if (_sdwanTabState) _sdwanTabState.hiddenMembers = new Set();
+      _renderAllPerfSlaCharts();
+    });
+  }
 }
 
-// Multi-series gauge chart: one polyline per member (`series[].samples`), a
-// clickable per-member color legend (click to hide/show on every chart), and
-// the shared dashed SLA threshold line. The hidden set lives on
-// `_sdwanTabState.hiddenMembers` so it persists across resize re-renders and is
-// shared by all three charts.
+// Screenshot stats line for a Performance SLA chart. The legend lives outside
+// the chart SVG now, so the capture names the members it shows in the header
+// instead — otherwise the lines in a copied image are anonymous.
+function _perfSlaShotStats() {
+  var base = _statsSummaryFrom("sdwan-perfsla-stats")();
+  var st = _sdwanTabState;
+  if (!st || !st.perfSla) return base;
+  var hidden = st.hiddenMembers || new Set();
+  var shown = st.perfSla.series.filter(function (s) { return s.samples && s.samples.length && !hidden.has(s.label); })
+    .map(function (s) { return s.label; });
+  if (!shown.length) return base;
+  var line = "Members: " + shown.join(", ");
+  return base ? base + " · " + line : line;
+}
+
+// Multi-series gauge chart: one polyline per visible member
+// (`series[].samples`) and the shared dashed SLA threshold line. The legend is
+// NOT drawn here — _renderPerfSlaLegend draws one for all three charts. The
+// hidden set lives on `_sdwanTabState.hiddenMembers` so it persists across
+// resize re-renders and is shared by all three charts.
 function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   opts = opts || {};
   meta = meta || {};
@@ -15198,7 +15752,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   var hidden = (_sdwanTabState && _sdwanTabState.hiddenMembers) || new Set();
   var visible = drawn.filter(function (s) { return !hidden.has(s.label); });
   var W = container.clientWidth || 600, H = 160;
-  var padL = 52, padR = 10, padT = 10, padB = 40; // extra bottom pad for legend
+  var padL = 52, padR = 10, padT = 10, padB = 24; // legend is HTML above the stats line
   var innerW = W - padL - padR, innerH = H - padT - padB;
   var allTs = [];
   drawn.forEach(function (s) { s.values.forEach(function (e) { allTs.push({ timestamp: e.ts }); }); });
@@ -15206,7 +15760,6 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   var t0 = bounds.t0, t1 = bounds.t1;
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  var fmtTick = _chartTickFmt(t0, t1);
   var hasThreshold = typeof meta.threshold === "number" && meta.threshold > 0;
   // Scale the y-axis to the VISIBLE series so hiding a high member rescales the
   // rest (fall back to all members when everything is hidden).
@@ -15240,31 +15793,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + (Math.round(v * 100) / 100) + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
-  // Legend row beneath the x-axis — one clickable swatch+label per member.
-  // Click toggles that member's visibility on every chart; hidden members grey
-  // out + strike through. Each item is a <g class="sdwan-legend-item"> with a
-  // transparent hit rect so the whole chip is the click target.
-  var legendY = padT + innerH + 30;
-  var lx = padL;
-  var legend = '<g font-size="10">' + drawn.map(function (s) {
-    var isHidden = hidden.has(s.label);
-    var w = 16 + s.label.length * 6.5;
-    var item = '<g class="sdwan-legend-item" data-member="' + escapeHtml(s.label) + '" style="cursor:pointer" opacity="' + (isHidden ? "0.4" : "1") + '">' +
-      '<rect x="' + lx + '" y="' + (legendY - 11) + '" width="' + w + '" height="14" fill="transparent"/>' +
-      '<rect x="' + lx + '" y="' + (legendY - 7) + '" width="10" height="6" fill="' + s.color + '"/>' +
-      '<text x="' + (lx + 14) + '" y="' + legendY + '" fill="currentColor"' + (isHidden ? ' text-decoration="line-through"' : '') + '>' + escapeHtml(s.label) + '</text>' +
-      '</g>';
-    lx += w + 8;
-    return item;
-  }).join("") + '</g>';
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
   var clipId = _chartClipId("sdwanGauge");
   container.innerHTML =
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
@@ -15276,7 +15805,6 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
         thresholdLine +
         seriesSvg +
       '</g>' +
-      legend +
     '</svg>' + CHART_TOOLTIP_HTML;
   container.style.position = "relative";
   container.style.alignItems = "stretch";
@@ -15287,11 +15815,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<div>' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
       '<div>' + escapeHtml(meta.label || metricKey) + ': ' + escapeHtml(target.getAttribute("data-v")) + ' ' + escapeHtml(meta.unit || "") + '</div>';
   });
-  _addChartScreenshotButton(container, "SD-WAN " + (meta.label || metricKey), { yAxis: (meta.label || "") + " (" + (meta.unit || "") + ")", subject: opts.subject, getStats: _statsSummaryFrom("sdwan-perfsla-stats") });
-  // Clickable legend → toggle the member across all three charts.
-  container.querySelectorAll(".sdwan-legend-item").forEach(function (g) {
-    g.addEventListener("click", function () { _togglePerfSlaMember(g.getAttribute("data-member")); });
-  });
+  _addChartScreenshotButton(container, "SD-WAN " + (meta.label || metricKey), { yAxis: (meta.label || "") + " (" + (meta.unit || "") + ")", subject: opts.subject, getStats: _perfSlaShotStats });
   _observeChartResize(container, function (c) { _renderPerfSlaMultiChart(c, series, metricKey, meta, opts); });
 }
 
@@ -15307,7 +15831,7 @@ function _ensureStoragePanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "storage-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="storage-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -15326,6 +15850,7 @@ function _ensureStoragePanelDOM() {
     if (e.target === overlay) closeStoragePanel();
   });
   document.getElementById("storage-panel-close").addEventListener("click", closeStoragePanel);
+  wireSlideoverEscape(overlay, closeStoragePanel);
   initSlideoverResize(document.getElementById("storage-panel"), "polaris.panel.width.storage");
 }
 
@@ -15360,6 +15885,7 @@ async function openStorageDetailPanel(asset, focusMountPath, storage) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-storage-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("storage-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("storage-panel-overlay").classList.add("open");
   });
@@ -15867,11 +16393,6 @@ function _renderStorageChart(container, samples, opts) {
   }
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
-  function fmtTick(ts) {
-    var d = new Date(ts);
-    if (spanMs <= oneDayMs) return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-    return (d.getMonth() + 1) + "/" + d.getDate();
-  }
 
   var ceil;
   if (view === "bytes") {
@@ -15903,14 +16424,7 @@ function _renderStorageChart(container, samples, opts) {
       '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
       '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + label + '</text>';
   }
-  var xTicks = "";
-  for (var j = 0; j <= 5; j++) {
-    var tsTick = t0 + (t1 - t0) * (j / 5);
-    var xPos = padL + (j / 5) * innerW;
-    xTicks +=
-      '<line x1="' + xPos + '" y1="' + (padT + innerH) + '" x2="' + xPos + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
-      '<text x="' + xPos + '" y="' + (padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(tsTick) + '</text>';
-  }
+  var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
 
   // Missed polls. The storage cadence doesn't run while an asset is down, so a
   // skipped scrape leaves no row — same as telemetry and the interface
@@ -20100,6 +20614,7 @@ function openServiceDetailPanel(asset, svc) {
   titleEl.textContent = "Service — " + svc.unit;
   metaEl.textContent = asset.hostname || asset.ipAddress || asset.id;
   _setProcPanelFooter(footerEl);
+  raiseSlideover(document.getElementById("proc-panel-overlay"));
   revealOverlay(document.getElementById("proc-panel-overlay"));
 
   function metaRow(label, value) {
@@ -20202,7 +20717,7 @@ function _ensureProcPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "proc-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="proc-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -20219,6 +20734,7 @@ function _ensureProcPanelDOM() {
   document.body.appendChild(overlay);
   overlay.addEventListener("click", function (e) { if (e.target === overlay) _closeProcPanel(); });
   document.getElementById("proc-panel-close").addEventListener("click", _closeProcPanel);
+  wireSlideoverEscape(overlay, _closeProcPanel);
   if (typeof initSlideoverResize === "function") {
     initSlideoverResize(document.getElementById("proc-panel"), "polaris.panel.width.process");
   }
@@ -20402,6 +20918,7 @@ async function openProcessDetailPanel(asset, name, cfg, procRow, isPinned) {
   titleEl.textContent = "Process — " + name;
   metaEl.textContent = asset.hostname || asset.ipAddress || asset.id;
   _setProcPanelFooter(footerEl);
+  raiseSlideover(document.getElementById("proc-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("proc-panel-overlay").classList.add("open");
   });

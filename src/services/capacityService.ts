@@ -40,7 +40,7 @@ import { fileURLToPath } from "node:url";
 
 import pg from "pg";
 import { prisma } from "../db.js";
-import { getMonitorSettings, RETENTION_PRUNE_INTERVAL_MS, type MonitorSettings } from "./monitoringService.js";
+import { getMonitorSettings, RETENTION_PRUNE_INTERVAL_MS, SDWAN_INTERVAL_DEFAULT_SEC, type MonitorSettings } from "./monitoringService.js";
 import { isTimescaleAvailable, isHypertable, ALL_HYPERTABLE_CANDIDATES, getEffectiveCompressAfterDays } from "./timescaleService.js";
 import { getTableSizes, getDatabaseSizeBreakdown, type DatabaseSizeBreakdown } from "./dbSizeService.js";
 import { getSampleRetention, SELECTION_AWARE_ENTITIES, UNSELECTED_DETAIL_HOURS, type RetentionEntity, type RetentionTier, type SampleRetention, type FlatRetentionEntity } from "./sampleRetentionService.js";
@@ -461,11 +461,15 @@ export const SAMPLE_TABLES: Array<{
   { name: "asset_interface_samples",     entity: "interfaces",  tier: "detail", countKey: "systemInfo" },
   { name: "asset_storage_samples",       entity: "storage",     tier: "detail", countKey: "systemInfo" },
   { name: "asset_ipsec_tunnel_samples",  entity: "ipsec",       tier: "detail", countKey: "systemInfo" },
-  // SD-WAN streams ride the system-info cadence but only emit on FortiGate
-  // firewalls with pullSdwan enabled — countKey "systemInfo" overestimates on
-  // mixed fleets; learned avg bytes/row + actual row counts take over as soon
-  // as the tables are non-empty.
-  { name: "asset_perf_sla_samples",      entity: "perfSla",     tier: "detail", countKey: "systemInfo" },
+  // SD-WAN SLA samples run on their own per-INTEGRATION cadence
+  // (config.sdwanIntervalSeconds, default 60s) and only on FortiGates whose
+  // integration has pullSdwan on — neither is a fleet-wide input the workload
+  // model has. Priced against every system-info asset at 60s, the no-history
+  // guess would add ~5,760 rows/asset/day to installs that never enable SD-WAN,
+  // so the detail tier is measured-only (countKey null): its real byte-rate
+  // once rows exist, zero when the stream is off. The fixed-bucket rollups
+  // below keep their model.
+  { name: "asset_perf_sla_samples",      entity: "perfSla",     tier: "detail", countKey: null         },
   // Process telemetry is opt-in PER PINNED PROGRAM (Asset.monitoredProcesses) —
   // most assets pin zero, so countKey "telemetry" over-projects on mixed
   // fleets; learned row counts take over once the table is non-empty (same
@@ -572,7 +576,10 @@ const DEFAULT_ROWS_PER_ASSET_PER_DAY: Record<string, (c: WorkloadModelInputs) =>
   asset_interface_samples:     (c) => ((86400 / c.systemInfo) + (86400 / c.sample)) * c.pinnedIfacesPerAsset,
   asset_storage_samples:       (c) => (86400 / c.systemInfo) * 3,   // ~3 mounts
   asset_ipsec_tunnel_samples:  (c) => (86400 / c.systemInfo) * 1,   // ~1 tunnel
-  asset_perf_sla_samples:      (c) => (86400 / c.systemInfo) * 4,   // ~2 health-checks × 2 WAN members (SD-WAN FortiGates only)
+  // Not consulted today — the detail tier is measured-only (countKey null, see
+  // SAMPLE_TABLES) — but every tiered table keeps a row model so flipping it
+  // back can't throw inside the snapshot. Priced at the SD-WAN default cadence.
+  asset_perf_sla_samples:      () => (86400 / SDWAN_INTERVAL_DEFAULT_SEC) * 4,   // ~2 health-checks × 2 WAN members (SD-WAN FortiGates only)
   asset_process_samples:       (c) => (86400 / c.telemetry)  * 1,   // ~1 pinned program (opt-in; most assets pin zero)
   // Hourly rollups — 24 buckets/day × extra-key multiplier
   asset_monitor_samples_hourly:       () => 24,

@@ -13,8 +13,9 @@
 //
 // Above the chips sits the shared filter field + "Sort & filter" chip
 // (mobile/list-controls.js). The text rides the route's `search` param, the
-// sheet's status filter its `monitor` param, and the sort its sortBy/sortDir
-// — all server-side, because the list is paged. The topbar no longer carries
+// sheet's status filter its `monitor` param (several statuses at once, CSV,
+// which the route ORs), and the sort its sortBy/sortDir — all server-side,
+// because the list is paged. The topbar no longer carries
 // a search button: it only jumped to the Search tab, which the search bar
 // above every page already reaches.
 //
@@ -58,7 +59,9 @@
   // sort or a filter the server would refuse. "Recently added" is the
   // server's default order (no sortBy), which is what the list always showed.
   var PREFS_KEY = "polaris-mobile-assets-list";
-  var DEFAULTS = { sortKey: "", sortDir: "desc", monitor: "" };
+  // `monitor` is an ARRAY: the sheet's status filter is multi-select, and the
+  // route ORs the CSV it receives (monitorClause per value). Empty = Any.
+  var DEFAULTS = { sortKey: "", sortDir: "desc", monitor: [] };
   var SORTS = [
     { key: "",          label: "Recently added", defaultDir: "desc" },
     { key: "hostname",  label: "Name",           defaultDir: "asc" },
@@ -70,6 +73,7 @@
   var MONITOR_FILTER = {
     key: "monitor",
     label: "Status",
+    multi: true,
     options: [
       { value: "",            label: "Any" },
       { value: "Down",        label: "Down" },
@@ -116,7 +120,7 @@
             value: _state.search,
             sortLabel: sortLabel(),
             dir: p.sortDir,
-            active: !!p.monitor,
+            active: p.monitor.length > 0,
           })
         + '<div class="chip-row" id="assets-chips"></div>'
         + '<div id="assets-list-host"></div>';
@@ -154,7 +158,13 @@
     var p = _state.prefs;
     if (!SORTS.some(function (s) { return s.key === p.sortKey; })) p.sortKey = DEFAULTS.sortKey;
     if (p.sortDir !== "asc" && p.sortDir !== "desc") p.sortDir = DEFAULTS.sortDir;
-    if (!MONITOR_FILTER.options.some(function (o) { return o.value === p.monitor; })) p.monitor = DEFAULTS.monitor;
+    // A saved pick can outlive the option it named (or predate the array
+    // shape — the filter was a single string until 2026-09-24); keep only
+    // values the sheet still offers, in the order they were picked.
+    var raw = Array.isArray(p.monitor) ? p.monitor : (typeof p.monitor === "string" && p.monitor ? [p.monitor] : []);
+    p.monitor = raw.filter(function (v, i) {
+      return v && raw.indexOf(v) === i && MONITOR_FILTER.options.some(function (o) { return o.value === v; });
+    });
     return p;
   }
 
@@ -164,10 +174,14 @@
     var label = s ? s.label : "Sort";
     // The status filter lives in the sheet, so the chip names it — a list
     // narrowed by something the operator can't see reads as missing assets.
-    if (p.monitor) {
-      var m = MONITOR_FILTER.options.find(function (o) { return o.value === p.monitor; });
-      if (m) label += " · " + m.label;
-    }
+    // One pick is named; two are both named; more are counted, since the
+    // chip shares a row with the filter field.
+    var picked = p.monitor.map(function (v) {
+      var m = MONITOR_FILTER.options.find(function (o) { return o.value === v; });
+      return m ? m.label : v;
+    });
+    if (picked.length === 1 || picked.length === 2) label += " · " + picked.join(", ");
+    else if (picked.length > 2) label += " · " + picked.length + " statuses";
     return label;
   }
 
@@ -185,16 +199,17 @@
       sortOptions: SORTS,
       sortKey: p.sortKey,
       sortDir: p.sortDir,
-      filters: [Object.assign({ value: p.monitor }, MONITOR_FILTER)],
+      filters: [Object.assign({ value: p.monitor.slice() }, MONITOR_FILTER)],
       onApply: function (choice) {
+        var monitor = Array.isArray(choice.filters.monitor) ? choice.filters.monitor : [];
         var changed = choice.sortKey !== p.sortKey || choice.sortDir !== p.sortDir
-          || choice.filters.monitor !== p.monitor;
+          || monitor.join(",") !== p.monitor.join(",");
         if (!changed) return;
         p.sortKey = choice.sortKey;
         p.sortDir = choice.sortDir;
-        p.monitor = choice.filters.monitor || "";
+        p.monitor = monitor;
         PolarisListControls.savePrefs(PREFS_KEY, p);
-        PolarisListControls.updateSortChip("assets", sortLabel(), p.sortDir, !!p.monitor);
+        PolarisListControls.updateSortChip("assets", sortLabel(), p.sortDir, p.monitor.length > 0);
         reload();
       },
     });
@@ -239,7 +254,7 @@
     if (filter.type) params.assetType = filter.type;
     var p = prefs();
     if (_state.search) params.search = _state.search;
-    if (p.monitor) params.monitor = p.monitor;
+    if (p.monitor.length) params.monitor = p.monitor.join(",");
     if (p.sortKey) { params.sortBy = p.sortKey; params.sortDir = p.sortDir; }
 
     return api.assets.list(params).then(function (resp) {
@@ -274,7 +289,7 @@
         + '<div class="empty-state" style="padding-top:48px;">'
         + '  <div class="icon"><svg viewBox="0 0 24 24"><use href="#i-list"/></svg></div>'
         + '  <div class="ttl">No assets</div>'
-        + '  <div class="desc">' + (_state.search || prefs().monitor
+        + '  <div class="desc">' + (_state.search || prefs().monitor.length
           ? 'Nothing matches this filter. Clear it, or pick “Any” status in Sort &amp; filter.'
           : 'Nothing matches this filter. Try “All” or run a discovery to populate the inventory.') + '</div>'
         + '</div>';

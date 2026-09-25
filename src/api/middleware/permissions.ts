@@ -141,6 +141,16 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // granted apart (business rule 43(f)).
   { key: "manufacturerProfiles", label: "Manufacturer Profiles", description: "Per-vendor telemetry profiles (CPU / memory / temperature OIDs, custom widgets) and the vendor-name alias map that decides which profile a device gets.", levels: UP_TO_WRITE },
   { key: "credentials", label: "Credentials", description: "Stored SNMP / WinRM / SSH / REST / HTTP probe credentials. Read-Only lists them masked; Read-Write = your own rows.", hasOwnershipDimension: true },
+  // The firmware repository for switches and access points (business rule 87).
+  // `fullwrite` is a NAMED ACT under rule 43(d): POST /assets/:id/firmware-upgrade
+  // flashes a device and reboots it, which is the most consequential thing a
+  // Polaris operator can do to network hardware. Read = see the Repository tab
+  // and whether an asset has an upgrade available; Read-Write = upload and
+  // delete images, bind the device-admin login at a manufacturer, device-type
+  // or model node; Full Read-Write = start an upgrade. Seeded `fullwrite` for
+  // admin-equivalent roles only and `none` for every other role (migration
+  // 20260925000100_firmware_function_key): no existing rung implied the act.
+  { key: "firmware", label: "Firmware Repository", description: "Firmware images for switches and access points, the device-admin login bound to each model, type or manufacturer, and upgrade runs. Read-Write manages the repository; Full Read-Write flashes a device." },
   { key: "integrations", label: "Integrations", description: "The source integrations and their discovery runs. Full Read-Write also aborts a discovery in flight." },
   { key: "discoveryConflicts", label: "Discovery Conflicts", description: "Accept / reject / merge the reservation and asset conflicts discovery raises.", levels: UP_TO_WRITE },
   { key: "deviceMap", label: "Device Map", description: "The geographic device map and its topology graphs. Read-Write saves a site's topology layout.", levels: UP_TO_WRITE },

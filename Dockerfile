@@ -125,7 +125,7 @@ COPY agent ./agent
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
- && mkdir -p /app/state/data/backups /app/state/public/uploads /app/state/data/agents /app/state/.cache/go-build \
+ && mkdir -p /app/state/data/backups /app/state/public/uploads /app/state/data/agents /app/state/data/firmware /app/state/.cache/go-build \
  && chown -R node:node /app/state
 # The application runs as the image's unprivileged `node` user (uid 1000) —
 # docker-entrypoint.sh reconciles the /app/state bind mount and then drops to

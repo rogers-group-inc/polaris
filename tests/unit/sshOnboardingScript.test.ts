@@ -160,6 +160,15 @@ describe("buildWindowsOnboardingScript", () => {
     expect(script).not.toContain(".ssh\\authorized_keys'");
   });
 
+  it("reports the sshd binary and SCM error, then exits 1, when sshd will not start", () => {
+    const script = buildWindowsOnboardingScript(BASE);
+    const idx = script.indexOf("Start-Service -Name sshd");
+    const block = script.slice(idx, idx + 600);
+    expect(block).toContain("error: sshd failed to start - ");
+    expect(block).toContain("Get-PolarisSshdDiagnostics");
+    expect(block).toContain("exit 1");
+  });
+
   it("appends rather than overwrites, so other keys in the file survive", () => {
     const script = buildWindowsOnboardingScript(BASE);
     expect(script).toContain("Add-Content");
@@ -369,11 +378,80 @@ describe("buildWindowsOnboardingDetectionScript", () => {
     expect(script).toContain("WinNT://./");
   });
 
-  it("still does not check the firewall", () => {
-    // With no server IP configured there is no rule to find, so this is the
-    // one condition remediation could never satisfy.
+  it("names the sshd binary and SCM error when sshd is not running", () => {
+    // A capability that reads Installed can carry a years-stale sshd.exe that
+    // times out on start; a bare "not running" gave an operator nothing to go on.
     const script = buildWindowsOnboardingDetectionScript(DETECT);
-    expect(script).not.toContain("Get-NetFirewallRule");
+    expect(script).toContain("remediate: sshd not running (' + (Get-PolarisSshdDiagnostics) + ')'");
+  });
+
+  it("shares the sshd diagnostics helper with the remediation script", () => {
+    const detect = buildWindowsOnboardingDetectionScript(DETECT);
+    const remediate = buildWindowsOnboardingScript(BASE);
+    const fn = "function Get-PolarisSshdDiagnostics";
+    const extract = (s: string) => {
+      const start = s.indexOf(fn);
+      return s.slice(start, s.indexOf("\n}", start) + 2);
+    };
+    expect(detect).toContain(fn);
+    expect(extract(detect)).toBe(extract(remediate));
+    expect(extract(detect)).toContain("VersionInfo.ProductVersion");
+    expect(extract(detect)).toContain("'Service Control Manager'");
+  });
+
+  describe("firewall check (business rules 72, 76)", () => {
+    // An endpoint onboarded by another route passed detection forever and was
+    // never remediated: sshd listening, Windows' own rule Private-only, and a
+    // Domain-profile endpoint that nothing could reach.
+    const WITH_IP = { ...DETECT, polarisServerIp: "10.0.0.42" };
+
+    it("with a server address, asserts the scoped Polaris rule and no enabled built-in rule", () => {
+      const script = buildWindowsOnboardingDetectionScript(WITH_IP);
+      expect(script).toContain("Get-NetFirewallRule -DisplayName 'Polaris SSH (TCP 22)'");
+      expect(script).toContain("remediate: firewall rule ' + 'Polaris SSH (TCP 22)' + ' missing");
+      expect(script).toContain("[string]$fwRule.Profile -ne 'Any'");
+      expect(script).toContain("ConvertTo-PolarisNetwork -Address '10.0.0.42'");
+      expect(script).toContain("Get-NetFirewallRule -Name 'OpenSSH-Server-In-*'");
+      expect(script).toContain("still allows TCP/22 from any source");
+      expect(script).not.toContain("does not cover the Domain profile");
+    });
+
+    it("with no server address, asserts only that the built-in rule covers Domain", () => {
+      const script = buildWindowsOnboardingDetectionScript(DETECT);
+      expect(script).toContain("Get-NetFirewallRule -Name 'OpenSSH-Server-In-*'");
+      expect(script).toContain("$ruleProfile -eq 'Any' -or $ruleProfile -match 'Domain'");
+      expect(script).toContain("does not cover the Domain profile");
+      // Nothing remediation would not write: no Polaris rule, no Enabled demand.
+      expect(script).not.toContain("Polaris SSH (TCP 22)");
+      expect(script).not.toContain("ConvertTo-PolarisNetwork");
+      expect(script).not.toContain("Enabled -eq 'True'");
+    });
+
+    it("checks the same Domain predicate remediation settles, so the pair cannot loop", () => {
+      const detect = buildWindowsOnboardingDetectionScript(DETECT);
+      const remediate = buildWindowsOnboardingScript({ ...DETECT });
+      const predicate = "$ruleProfile -eq 'Any' -or $ruleProfile -match 'Domain'";
+      expect(detect).toContain(predicate);
+      expect(remediate).toContain(predicate);
+    });
+
+    it("compares the address as a network, so a CIDR Windows stores in mask form still matches", () => {
+      const script = buildWindowsOnboardingDetectionScript({ ...DETECT, polarisServerIp: "10.0.0.0/24" });
+      expect(script).toContain("function ConvertTo-PolarisNetwork");
+      expect(script).toContain("ConvertTo-PolarisNetwork -Address '10.0.0.0/24'");
+      // Emitted literally: a string replacement would expand the $' in '^\d+$'.
+      expect(script).toContain("if ($parts[1] -match '^\\d+$') {");
+    });
+
+    it("rejects a bad server address instead of emitting it", () => {
+      expect(() => buildWindowsOnboardingDetectionScript({ ...DETECT, polarisServerIp: "10.0.0.42'; calc; #" })).toThrow();
+    });
+
+    it("leaves no placeholder in either mode", () => {
+      for (const opts of [DETECT, WITH_IP]) {
+        expect(buildWindowsOnboardingDetectionScript(opts)).not.toMatch(/__[A-Z_]+__/);
+      }
+    });
   });
 
   it("treats an unsupported build as exit 0 so the pair doesn't loop", () => {

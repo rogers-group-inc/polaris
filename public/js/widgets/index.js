@@ -1034,14 +1034,14 @@
     }).catch(function () { return seed(); });
   };
 
-  // Open an asset's details slide-in in place when the canonical slide-over
-  // (openViewModal from assets.js) is loaded on the page — it is on the
-  // dashboard (index.html pulls assets.js + deps), map, and assets pages.
-  // Falls back to navigating to the Assets page with the view hash. Returns
-  // true when it opened in place. opts.tab names the slide-over tab to land
-  // on (openViewModal's opts.tab); the navigation fallback carries it as
-  // #view=asset:<id>&tab=<key>, which processSearchHash hands back to
-  // openViewModal on the Assets page.
+  // Open an asset's details slide-in in place. The canonical slide-over
+  // (openViewModal from assets.js) is loaded statically on the dashboard,
+  // map and assets pages and on demand everywhere else (PolarisPanels in
+  // app.js, which also owns the navigation fallback when its scripts can't
+  // load). Returns true when the opener was reached synchronously. opts.tab
+  // names the slide-over tab to land on (openViewModal's opts.tab); the deep
+  // link carries it as #view=asset:<id>&tab=<key>, which processSearchHash
+  // hands back to openViewModal on the Assets page.
   window.PolarisWidgets.openAssetDetail = function (id, opts) {
     if (!id) return false;
     opts = opts || {};
@@ -1050,6 +1050,10 @@
     // is no session — navigating would bounce the kiosk to the login page.
     // Make the click a no-op instead.
     if (window.POLARIS_DASH_LOCAL) return false;
+    if (window.PolarisPanels && typeof window.PolarisPanels.openAsset === "function") {
+      window.PolarisPanels.openAsset(id, opts);
+      return false;
+    }
     window.location.href = "/assets.html#view=asset:" + encodeURIComponent(id) +
       (opts.tab ? "&tab=" + encodeURIComponent(opts.tab) : "");
     return false;

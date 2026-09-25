@@ -83,8 +83,33 @@ describe("createSubnet", () => {
     prisma.subnet.create.mockResolvedValue(fakeSubnet);
 
     const result = await createSubnet({ blockId: "b1", cidr: "10.0.1.0/24", name: "test" });
-    expect(result).toEqual(fakeSubnet);
+    expect(result).toMatchObject(fakeSubnet);
+    expect(result.block).toEqual({ id: "b1", name: undefined, cidr: "10.0.0.0/8" });
     expect(prisma.subnet.create).toHaveBeenCalledOnce();
+  });
+
+  it("with no blockId, lands in the most specific block containing the CIDR", async () => {
+    prisma.ipBlock.findMany.mockResolvedValue([
+      { id: "wide", name: "Corp", cidr: "10.0.0.0/8", ipVersion: "v4" },
+      { id: "site", name: "Site", cidr: "10.84.0.0/16", ipVersion: "v4" },
+      { id: "far", name: "Lab", cidr: "192.168.0.0/16", ipVersion: "v4" },
+    ]);
+    prisma.subnet.findMany.mockResolvedValue([]);
+    prisma.subnet.create.mockImplementation(async ({ data }: any) => ({ id: "s1", ...data }));
+
+    const result = await createSubnet({ cidr: "10.84.3.7/24", name: "test" });
+    expect(prisma.ipBlock.findUnique).not.toHaveBeenCalled();
+    expect(prisma.ipBlock.findMany).toHaveBeenCalledWith({ where: { ipVersion: "v4" } });
+    expect(prisma.subnet.create.mock.calls[0][0].data).toMatchObject({ blockId: "site", cidr: "10.84.3.0/24" });
+    expect(result.block).toEqual({ id: "site", name: "Site", cidr: "10.84.0.0/16" });
+  });
+
+  it("with no blockId, 400s when no block contains the CIDR", async () => {
+    prisma.ipBlock.findMany.mockResolvedValue([
+      { id: "far", name: "Lab", cidr: "192.168.0.0/16", ipVersion: "v4" },
+    ]);
+    await expect(createSubnet({ cidr: "10.1.1.0/24", name: "test" })).rejects.toMatchObject({ httpStatus: 400 });
+    expect(prisma.subnet.create).not.toHaveBeenCalled();
   });
 
   it("inserts inside a transaction that first takes the per-block advisory lock", async () => {

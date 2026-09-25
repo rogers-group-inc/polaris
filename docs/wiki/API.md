@@ -111,6 +111,7 @@ GET    /assets/ip-check?ip=…                is this address already in use?
 POST   /assets                              create a device
 PUT    /assets/:id                          update + the monitoring surface
 POST   /assets/bulk-monitor                 flip monitoring on many at once
+POST   /assets/bulk-tags                    add / remove / replace tags on many at once
 DELETE /assets/:id
 GET    /credentials                         stored credentials, secrets masked
 ```
@@ -285,11 +286,14 @@ POST   /blocks              PUT /blocks/:id      DELETE /blocks/:id
 ```
 GET    /subnets                    GET /subnets/:id
 GET    /subnets/:id/ips
-POST   /subnets
+POST   /subnets                    blockId optional — omitted = most specific containing block
+GET    /subnets/resolve-block?cidr= which block that would be
 POST   /subnets/next-available     allocate the next free /N
 POST   /subnets/bulk-allocate      anchor-aligned, all-or-nothing
 PUT    /subnets/:id                DELETE /subnets/:id
 POST   /subnets/:id/refresh        the Discover button: DHCP + firewall VIPs
+GET    /subnets/:id/move-targets   blocks that can hold it, overlaps flagged
+POST   /subnets/:id/move           { blockId } — re-parent onto another block
 POST   /subnets/:id/archive        fullwrite
 GET    /subnets/archived           GET /subnets/archived/:id
 GET    /subnets/exclusions

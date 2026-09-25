@@ -31,7 +31,7 @@ import { requirePermission, requireOwnership, assertOwnership } from "../middlew
 import { logEvent } from "./events.js";
 import { AppError } from "../../utils/errors.js";
 import { probeCredentialAgainstHost } from "../../services/monitoringService.js";
-import type { HttpProbeDiagnostics } from "../../utils/httpCheck.js";
+import { isDeviceLoginCredential, type HttpAuthConfig, type HttpProbeDiagnostics } from "../../utils/httpCheck.js";
 import { normalizeProbeTarget } from "../../utils/probeTarget.js";
 
 const router = Router();
@@ -237,6 +237,20 @@ router.post("/test", requireOwnership("credentials"), async (req, res, next) => 
         success: false,
         responseTimeMs: 0,
         error: err?.message || "Credential config is invalid",
+        host,
+      });
+      return;
+    }
+
+    // A device admin login (authMode "form") has no HTTP check to run: it is
+    // the password a switch or AP's login page takes, and the only thing that
+    // can prove it is the firmware engine logging in (business rule 87).
+    // Answered as a RESULT, not a 4xx, so the modal renders it inline.
+    if (input.type === "http" && isDeviceLoginCredential(config as HttpAuthConfig)) {
+      res.json({
+        success: false,
+        responseTimeMs: 0,
+        error: "Device admin logins are used by the firmware repository and are verified when an upgrade signs in to the device",
         host,
       });
       return;

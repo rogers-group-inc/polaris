@@ -20,7 +20,9 @@ describe("streamForMetric", () => {
     expect(streamForMetric("hwSensorValue")).toBe("temperature");
     expect(streamForMetric("storageUsedPct")).toBe("storage");
     expect(streamForMetric("ifInBps")).toBe("systemInfo");
-    expect(streamForMetric("sdwanLatencyMs")).toBe("systemInfo");
+    // SD-WAN has its own cadence since 2026-09 — no longer the system-info pass.
+    expect(streamForMetric("sdwanLatencyMs")).toBe("sdwan");
+    expect(streamForMetric("sdwanRuleStatus")).toBe("sdwan");
   });
 
   it("maps the asset_state FIELDS too — a state trigger holds for polls like any other", () => {
@@ -37,10 +39,11 @@ describe("streamForMetric", () => {
   });
 
   it("names only streams the settings resolver actually carries (plus the path checks' own interval)", () => {
-    // `pathCheck` is the one stream that does not resolve through the
-    // monitor-settings hierarchy — resolveScopeCadence reads each check's
-    // intervalSec for it instead.
-    const allowed = new Set(["responseTime", "cpuMemory", "temperature", "systemInfo", "storage", "pathCheck"]);
+    // `sdwan` is carried by the resolver's integration sidecar
+    // (resolveSdwanIntervalSec) rather than a settings field, and `pathCheck`
+    // does not resolve through the monitor-settings hierarchy at all —
+    // resolveScopeCadence reads each check's intervalSec for it instead.
+    const allowed = new Set(["responseTime", "cpuMemory", "temperature", "systemInfo", "storage", "sdwan", "pathCheck"]);
     for (const stream of Object.values(METRIC_STREAM)) expect(allowed.has(stream)).toBe(true);
   });
 

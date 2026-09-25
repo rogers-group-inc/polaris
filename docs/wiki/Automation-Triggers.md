@@ -118,7 +118,7 @@ nothing.
 A field rather than a number.
 
 **Device-wide fields:** `monitorStatus` · `status` · `consecutiveFailures` ·
-`dependencySuppressed` · `quarantined` · `fortilinkStatus`.
+`dependencySuppressed` · `quarantined` · `fortilinkStatus` · `firmwareVsPrimary`.
 
 **Per-dimension fields:** `ifOperStatus` · `ifAdminStatus` · `ifIpAddress` ·
 `poeStatus` · `ipsecStatus` · `sdwanRuleStatus` · `sdwanSelectedMember`.
@@ -182,6 +182,31 @@ writes `!= up`, not `== down`.
 
 A null produces **no reading at all** — not a reading of null, which would make
 `!= up` true of every workstation in a fleet-wide scope.
+
+### `firmwareVsPrimary` — what the Repository would push
+
+How a switch or access point's running firmware stands against the **primary**
+image the [Repository](Server-Settings#repository) holds for its platform:
+`current`, `older` or `newer` ([rule 87](Business-Rules#rule-87)). Polaris makes
+the comparison from the parsed versions, so those three words are the only
+readings — the picker is closed.
+
+The usual rule is `!= current`, and the baseline automation **Firmware differs
+from repository primary** (informational, switches and access points) is
+exactly that. It is a to-do list, not a fault: the alert clears on its own once
+the device is upgraded, or once a different image is made primary. `== newer`
+names the fleet that is *ahead* of the image someone selected — useful the day
+an older image is made primary on purpose.
+
+A device the Repository cannot place produces **no reading at all**: not a
+switch or access point, no usable serial number (the platform is its first six
+characters), no version Polaris can parse, or no primary image for its
+platform. So a fleet-wide `!= current` is true only of devices that really
+differ, never of every printer and VM the Repository knows nothing about.
+
+The reading is refreshed by the system-info pass and by discovery, which are
+what update a device's firmware version — a `Sustained for (polls)` hold counts
+those, not the 60-second probe.
 
 ### `ifIpAddress` — a gate, not an alarm
 

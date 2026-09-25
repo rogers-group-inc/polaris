@@ -1,33 +1,44 @@
 /**
  * public/js/server-settings.js — Server Settings page (NTP + Web Server + Database).
  * Note: the "Web Server" tab keeps the internal key `certificates` (data-tab,
- * loadCertificates) from before it was renamed — only its label changed.
+ * loadCertificates) from before it was renamed — only its label changed. The
+ * "Repository" tab (firmware) has the same split: key `firmware`, label
+ * "Repository", body in its own module (server-settings-firmware.js).
  */
 
+/**
+ * Which tabs this operator may see. Backend guards are the source of truth —
+ * this is the UX hide. Admin sees every tab; a non-admin sees the Credentials
+ * tab (the MIB Database card, and the credential list at credentials=write)
+ * and, on the `firmware` key alone, the Repository tab (business rule 87).
+ * A pure decider so the rule is testable and so the firmware tab never rides
+ * the legacy isAdmin() check.
+ */
+function _settingsTabVisible(key) {
+  if (key === "firmware") return typeof permAtLeast === "function" && permAtLeast("firmware", "read");
+  if (typeof isAdmin === "function" && !isAdmin()) return key === "credentials";
+  return true;
+}
+
 document.addEventListener("DOMContentLoaded", function () {
-  // Page-level access widening: admin sees every tab; assets-admin sees only
-  // the Credentials tab (and only the MIB Database card within it) so the
-  // MIB-aware browse + walk surface is reachable without giving them the
-  // rest of Server Settings. Backend guards on /server-settings/mibs/* are
-  // the source of truth — this is just UX hide. The credentials list itself
-  // and the Manufacturer Profiles card are gated to admin inside
-  // renderCredentialsTab().
   var isAssetsAdminOnly = (typeof isAdmin === "function" && !isAdmin());
+  document.querySelectorAll("#settings-tabs .page-tab").forEach(function (t) {
+    if (!_settingsTabVisible(t.getAttribute("data-tab"))) t.style.display = "none";
+  });
+  document.querySelectorAll(".page-tab-panel").forEach(function (p) {
+    if (!_settingsTabVisible(p.id.replace(/^tab-/, ""))) p.style.display = "none";
+  });
   if (isAssetsAdminOnly) {
-    document.querySelectorAll("#settings-tabs .page-tab").forEach(function (t) {
-      if (t.getAttribute("data-tab") !== "credentials") t.style.display = "none";
-    });
-    document.querySelectorAll(".page-tab-panel").forEach(function (p) {
-      if (p.id !== "tab-credentials") p.style.display = "none";
-    });
     // The HTML defaults the active tab to Identification — flip the active
-    // class so assets-admin lands on Credentials without an extra click.
+    // class so a non-admin lands on the first tab they can see. Credentials
+    // when they may see it; otherwise (a firmware-only role) the Repository.
     document.querySelectorAll("#settings-tabs .page-tab").forEach(function (t) { t.classList.remove("active"); });
     document.querySelectorAll(".page-tab-panel").forEach(function (p) { p.classList.remove("active"); });
-    var credTab = document.querySelector('#settings-tabs .page-tab[data-tab="credentials"]');
-    var credPanel = document.getElementById("tab-credentials");
-    if (credTab) credTab.classList.add("active");
-    if (credPanel) credPanel.classList.add("active");
+    var firstKey = _settingsTabVisible("credentials") ? "credentials" : (_settingsTabVisible("firmware") ? "firmware" : "credentials");
+    var firstTab = document.querySelector('#settings-tabs .page-tab[data-tab="' + firstKey + '"]');
+    var firstPanel = document.getElementById("tab-" + firstKey);
+    if (firstTab) firstTab.classList.add("active");
+    if (firstPanel) firstPanel.classList.add("active");
   }
 
   // Tab switching
@@ -55,6 +66,9 @@ document.addEventListener("DOMContentLoaded", function () {
       if (target === "credentials" && !_credsLoaded) loadCredentialsTab();
       if (target === "retention" && !_retentionLoaded) loadRetentionTab();
       if (target === "api-tokens" && !_apiTokensLoaded) loadApiTokensTab();
+      // The firmware Repository lives in its own module
+      // (server-settings-firmware.js); it guards its own once-per-page load.
+      if (target === "firmware" && window.PolarisFirmwareTab) window.PolarisFirmwareTab.load();
       // High Availability lives in its own module (server-settings-ha.js):
       // the tab is a build procedure with its own state machine, and it
       // polls while visible because a node registering arrives from
@@ -71,16 +85,20 @@ document.addEventListener("DOMContentLoaded", function () {
   if (requestedTab === "database") requestedTab = "maintenance";
   if (requestedTab) {
     var tabBtn = document.querySelector('#settings-tabs .page-tab[data-tab="' + requestedTab + '"]');
-    if (tabBtn) {
+    // A hidden button is a tab this role may not see: fall through to the
+    // default landing rather than activating an empty panel.
+    if (tabBtn && tabBtn.style.display !== "none") {
       tabBtn.click();
       return;
     }
   }
 
-  // Assets-admin starts on Credentials (only tab they can see); admin starts
-  // on Identification per the HTML default.
+  // A non-admin starts on the first tab they can see (Credentials, or the
+  // Repository for a firmware-only role); admin starts on Identification per
+  // the HTML default.
   if (isAssetsAdminOnly) {
-    loadCredentialsTab();
+    if (_settingsTabVisible("credentials")) loadCredentialsTab();
+    else if (window.PolarisFirmwareTab) window.PolarisFirmwareTab.load();
   } else {
     loadIdentificationTab();
   }
@@ -2107,14 +2125,39 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
       'Check the server log for <span class="mono">dbSize.chunk_aware_sizing_failed</span>.' +
       '</p>';
   }
+  // Weighed by the bytes they hide, not the count: every TimescaleDB chunk
+  // compression leaves a small un-analyzed relation behind, so a count alone
+  // warned permanently on a healthy install. Material = over 64 MB or 1% of
+  // the database; below that it is a plain hint, not a warning.
   if (acct && acct.neverAnalyzedRelations > 0) {
-    sizingWarnings +=
-      '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
-      escapeHtml(formatNumber(acct.neverAnalyzedRelations)) +
-      ' relation(s) have never been vacuumed or analyzed, so they report zero pages and are missing from ' +
-      'every size on this card. Run <span class="mono">vacuumdb --analyze-in-stages</span> (expected right ' +
-      'after a restore or a PostgreSQL major-version upgrade).' +
-      '</p>';
+    var naCount = escapeHtml(formatNumber(acct.neverAnalyzedRelations));
+    var naMissing = acct.neverAnalyzedMissingBytes;
+    var naTotal = (dbInfo && dbInfo.sizeBytes) || 0;
+    var naMaterial = naMissing == null || naMissing > Math.max(64 * 1024 * 1024, naTotal * 0.01);
+    var naFix =
+      'Autovacuum only analyzes a relation after enough writes, so one nothing writes to stays this way ' +
+      'until <span class="mono">vacuumdb --analyze-only</span> runs against the database.';
+    if (naMissing == null) {
+      sizingWarnings +=
+        '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
+        naCount + ' relations have never been vacuumed or analyzed — too many to size individually — so ' +
+        'every size on this card may be substantially understated. This is expected right after a restore ' +
+        'or a PostgreSQL major-version upgrade. ' + naFix +
+        '</p>';
+    } else if (naMaterial) {
+      sizingWarnings +=
+        '<p class="hint" style="margin-top:0.5rem;color:var(--color-warning,#f59e0b)">' +
+        naCount + ' relation(s) that have never been analyzed hold about ' +
+        escapeHtml(_capacityFormatBytes(naMissing)) + ' that no size on this card includes. ' + naFix +
+        '</p>';
+    } else {
+      sizingWarnings +=
+        '<p class="hint" style="margin-top:0.5rem">' +
+        naCount + ' small relation(s), about ' + escapeHtml(_capacityFormatBytes(naMissing)) +
+        ', are not yet analyzed and are left out of the sizes above — normal for recently compressed ' +
+        'TimescaleDB chunks, and too small to matter.' +
+        '</p>';
+    }
   }
 
   // TimescaleDB three-state: not installed / installed but no hypertables / enabled
@@ -5652,7 +5695,7 @@ function _wireMibWalkPanel(symbolName) {
         result.rowCount + " row" + (result.rowCount === 1 ? '' : 's') +
         ' in ' + result.durationMs + ' ms' +
         (result.truncated ? ' (truncated)' : '');
-      resultBox.innerHTML = _renderMibWalkResult(result);
+      resultBox.innerHTML = _renderProfileMibWalkResult(result);
       _wireMibWalkCopy(result);
     } catch (err) {
       statusEl.textContent = "";
@@ -5665,7 +5708,7 @@ function _wireMibWalkPanel(symbolName) {
   setTimeout(function () { searchInput.focus(); }, 50);
 }
 
-function _renderMibWalkResult(result) {
+function _renderProfileMibWalkResult(result) {
   if (!result || !result.kind) return "";
   var mismatchBanner = "";
   if (result.rowCount > 0 && result.decodedCount * 2 < result.rowCount) {
@@ -7207,6 +7250,7 @@ function credSummary(c) {
     if (mode === "bearer") return "bearer token";
     if (mode === "basic")  return escapeHtml(cfg.username || "") + " · basic";
     if (mode === "digest") return escapeHtml(cfg.username || "") + " · digest";
+    if (mode === "form")   return escapeHtml(cfg.username || "") + " · device login";
     return "no authentication";
   }
   return "";
@@ -7358,23 +7402,23 @@ function _ensureCredUsagePanelDOM() {
 
   overlay.addEventListener("click", function (e) { if (e.target === overlay) closeCredUsagePanel(); });
   document.getElementById("cred-usage-close").addEventListener("click", closeCredUsagePanel);
-  document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
-    if (!overlay.classList.contains("open")) return;
-    // Let a nested asset panel grab Escape first.
-    if (document.querySelector(".slideover-overlay.slideover-nested.open")) return;
-    closeCredUsagePanel();
-  });
+  // Escape only when this panel is topmost — the asset panel a row opens
+  // stacks over it (wireSlideoverEscape / isTopmostSlideover, app.js).
+  wireSlideoverEscape(overlay, closeCredUsagePanel);
 
-  // Click-through to asset details. The Assets page isn't loaded here (this is
-  // the Server Settings page), so navigate to it via the canonical
-  // #view=asset:<id> hash that app.js processSearchHash() opens on load —
-  // the same deep link global search / widgets / the map use.
+  // Click-through to asset details, in place over this panel: PolarisPanels
+  // (app.js) loads assets.js on demand on the Server Settings page. The
+  // canonical #view=asset:<id> deep link, which processSearchHash() opens on
+  // load, stays as the fallback.
   document.getElementById("cred-usage-body").addEventListener("click", function (e) {
     var row = e.target.closest ? e.target.closest("[data-asset-id]") : null;
     if (!row) return;
     var assetId = row.getAttribute("data-asset-id");
     if (!assetId) return;
+    if (window.PolarisPanels && typeof window.PolarisPanels.openAsset === "function") {
+      window.PolarisPanels.openAsset(assetId);
+      return;
+    }
     window.location.href = "/assets.html#view=asset:" + encodeURIComponent(assetId);
   });
 
@@ -7433,6 +7477,7 @@ async function openCredUsagePanel(credId, credName) {
   metaEl.textContent = "";
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading...</p>';
 
+  raiseSlideover(document.getElementById("cred-usage-overlay"));
   requestAnimationFrame(function () {
     var ov = document.getElementById("cred-usage-overlay");
     ov.classList.add("open");
@@ -8229,6 +8274,7 @@ function credHttpForm(cfg) {
         '<option value="bearer"' + (authMode === "bearer" ? " selected" : "") + '>Bearer token</option>' +
         '<option value="basic"' +  (authMode === "basic"  ? " selected" : "") + '>Basic (cleartext)</option>' +
         '<option value="digest"' + (authMode === "digest" ? " selected" : "") + '>Digest (hashed)</option>' +
+        '<option value="form"' +   (authMode === "form"   ? " selected" : "") + '>Device admin login (form)</option>' +
       '</select>' +
       // One alert per mode, all three riding the same data-http-auth mechanism
       // that shows/hides the carrier fields below — so exactly one is on screen
@@ -8249,15 +8295,28 @@ function credHttpForm(cfg) {
         '<strong>The password hash is readable</strong> unless the assets using this credential are checked over HTTPS. ' +
         'Digest sends a hash instead of the password, so anyone on the path can attack it offline or replay it until the nonce expires ' +
         '— along with the username, which travels in the clear.') +
+      // "form" is not an HTTP auth scheme: it is a switch or access point's
+      // own admin login, posted to the device's login page by a firmware
+      // upgrade (Server Settings → Repository, business rule 87). It rides the
+      // same show/hide mechanism, but its box says what it is FOR rather than
+      // warning about a check — an HTTP-check widget refuses it at save time.
+      '<div class="alert alert-info" data-http-auth="form" ' +
+        'style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(53,132,228,0.10);' +
+        'border:1px solid var(--color-info,#3584e4);color:var(--color-text-primary);' +
+        'font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
+        '<strong>A device admin login.</strong> The username and password the switch or access point’s own web UI takes. ' +
+        'Used by firmware upgrades (<strong>Server Settings → Repository</strong>), which always talk HTTPS to the device. ' +
+        'Not an HTTP authentication scheme — an HTTP-check widget will not accept it.' +
+      '</div>' +
     '</div>' +
     '<div class="form-group" data-http-auth="bearer"><label>Bearer token</label>' +
       '<input type="password" id="f-http-token" value="' + escapeHtml(cfg.apiToken || "") + '">' +
       '<p class="hint">Sent as <code>Authorization: Bearer &lt;token&gt;</code>.</p>' +
     '</div>' +
-    '<div class="form-group" data-http-auth="basic digest"><label>Username</label>' +
+    '<div class="form-group" data-http-auth="basic digest form"><label>Username</label>' +
       '<input type="text" id="f-http-user" value="' + escapeHtml(cfg.username || "") + '">' +
     '</div>' +
-    '<div class="form-group" data-http-auth="basic digest"><label>Password</label>' +
+    '<div class="form-group" data-http-auth="basic digest form"><label>Password</label>' +
       '<input type="password" id="f-http-pass" value="' + escapeHtml(cfg.password || "") + '">' +
     '</div>'
   );
@@ -8287,7 +8346,7 @@ function _httpAuthAlert(mode, bodyHTML) {
  */
 function httpAuthModeOf(cfg) {
   var declared = cfg.authMode;
-  if (declared === "none" || declared === "bearer" || declared === "basic" || declared === "digest") return declared;
+  if (declared === "none" || declared === "bearer" || declared === "basic" || declared === "digest" || declared === "form") return declared;
   if (cfg.apiToken) return "bearer";
   if (cfg.username && cfg.password) return "basic";
   return "none";

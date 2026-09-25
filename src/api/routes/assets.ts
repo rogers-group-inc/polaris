@@ -49,11 +49,13 @@ import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "
 import { reconcileTagsForAsset, listAssetTags } from "../../services/tagAssignmentService.js";
 import { manualCoordPatchError } from "../../utils/geo.js";
 import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../services/mapRegionService.js";
+import { bulkEditAssetTags } from "../../services/assetBulkTagService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
 import { getDiscoveredHostnames, getDiscoveredHostname, findAssetIdsByDiscoveredHostname } from "../../services/discoveredHostnameService.js";
+import { buildTagFilter, findAssetIdsByTagSubstring, pageAssetIdsByTags, tagFilterNeedsLookup } from "../../services/assetTagListService.js";
 import { shapeMacRows, selectPrimaryMac, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter, TEXT_FILTER_OPS } from "../../utils/prismaTextFilter.js";
@@ -62,6 +64,8 @@ import {
   collectTelemetry, recordTelemetryResult,
   collectHardwareSensors, recordHardwareSensorResult,
   collectSystemInfo, recordSystemInfoResult,
+  runSdwanFor,
+  resolveSdwanPollIntervalForAsset,
   snmpWalkRaw,
   resolveMonitorSettings,
   resolveMonitorSettingsWithProvenance,
@@ -520,6 +524,9 @@ const ASSET_SORT_COLUMNS: Record<string, string> = {
   longitude: "longitude",
   lastSeen: "lastSeen",
   createdAt: "createdAt",
+  // String[] — Prisma cannot order by it; the list handler routes this key
+  // through pageAssetIdsByTags instead of buildAssetOrderBy.
+  tags: "tags",
 };
 
 // Operator-aware text-filter columns (column key → Asset column). Every one is
@@ -640,6 +647,8 @@ const ASSET_LIST_SELECT = {
   statusChangedBy: true,
   location: true,
   learnedLocation: true,
+  // Tags list column (sort + filter: assetTagListService).
+  tags: true,
   // Latitude / Longitude list columns (hidden by default) — the geographic pin
   // that places a firewall on the Device Map.
   latitude: true,
@@ -730,6 +739,19 @@ interface DiscoveredHostnameMatches {
 
 const NO_DISCOVERED_MATCHES: DiscoveredHostnameMatches = { hostnameIds: null, searchIds: null };
 
+/**
+ * Ids matching the Tags column's term (contains / not_contains), or null when
+ * the tags filter carries no term. Resolved before buildAssetListWhere for the
+ * same reason as the discovered-hostname ids: a substring inside a String[] is
+ * not expressible as a Prisma where.
+ */
+async function resolveTagMatches(raw: Record<string, unknown>): Promise<string[] | null> {
+  const value = typeof raw["tags"] === "string" ? (raw["tags"] as string) : undefined;
+  const op = typeof raw["tagsOp"] === "string" ? (raw["tagsOp"] as string) : undefined;
+  if (!tagFilterNeedsLookup(value, op)) return null;
+  return findAssetIdsByTagSubstring(value as string);
+}
+
 async function resolveDiscoveredHostnameMatches(
   q: z.infer<typeof AssetListQuerySchema>,
   raw: Record<string, unknown>,
@@ -765,6 +787,7 @@ function buildAssetListWhere(
   raw: Record<string, unknown>,
   sessionUsername: string | undefined,
   discovered: DiscoveredHostnameMatches = NO_DISCOVERED_MATCHES,
+  tagIds: string[] | null = null,
 ): Record<string, unknown> {
   const where: Record<string, unknown> = {};
   const and: Record<string, unknown>[] = [];
@@ -819,6 +842,14 @@ function buildAssetListWhere(
   const serverOp = typeof raw["serverOp"] === "string" ? (raw["serverOp"] as string) : undefined;
   if (serverVal != null || serverOp != null) {
     const frag = buildServerFilter(serverVal, serverOp);
+    if (frag) and.push(frag);
+  }
+
+  // Tags column (Asset.tags is a String[]; see assetTagListService).
+  const tagsVal = typeof raw["tags"] === "string" ? (raw["tags"] as string) : undefined;
+  const tagsOp = typeof raw["tagsOp"] === "string" ? (raw["tagsOp"] as string) : undefined;
+  if (tagsVal != null || tagsOp != null) {
+    const frag = buildTagFilter(tagsVal, tagsOp, tagIds ?? []);
     if (frag) and.push(frag);
   }
 
@@ -1013,9 +1044,12 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     const limit = Math.min(q.limit ?? ASSET_LIST_DEFAULT_LIMIT, ASSET_LIST_MAX_LIMIT);
     const offset = q.offset ?? 0;
 
-    const discovered = await resolveDiscoveredHostnameMatches(q, req.query as Record<string, unknown>);
-    const where = buildAssetListWhere(q, req.query as Record<string, unknown>, requestActor(req), discovered);
-    const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
+    const raw = req.query as Record<string, unknown>;
+    const [discovered, tagIds] = await Promise.all([
+      resolveDiscoveredHostnameMatches(q, raw),
+      resolveTagMatches(raw),
+    ]);
+    const where = buildAssetListWhere(q, raw, requestActor(req), discovered, tagIds);
 
     let favoriteIds = csvToArray(q.favoriteIds);
     if (favoriteIds && favoriteIds.length > ASSET_FAVORITES_MAX) {
@@ -1025,7 +1059,18 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
     let assets: Array<Record<string, unknown>>;
     let total: number;
 
-    if (favoriteIds && favoriteIds.length) {
+    if (q.sortBy === "tags") {
+      // Tags sort: order the matching ids in memory (favorites first), then
+      // load the page's rows and put them back in that order.
+      const page = await pageAssetIdsByTags(where, q.sortDir ?? "asc", offset, limit, favoriteIds);
+      total = page.total;
+      const rows = page.ids.length
+        ? await prisma.asset.findMany({ where: { id: { in: page.ids } }, select: ASSET_LIST_SELECT })
+        : [];
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      assets = page.ids.map((id) => byId.get(id)).filter((r): r is (typeof rows)[number] => r != null);
+    } else if (favoriteIds && favoriteIds.length) {
+      const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
       // Two-bucket ordering: favorites (matching the active filters, sorted)
       // occupy virtual positions [0, favTotal); non-favorites follow. The
       // requested window may straddle the boundary, so query each bucket with
@@ -1048,6 +1093,7 @@ router.get("/", requirePermission("assets", "read"), async (req, res, next) => {
       }
       assets = [...favPart, ...nonFavPart];
     } else {
+      const orderBy = buildAssetOrderBy(q.sortBy, q.sortDir);
       const [rows, totalCount] = await Promise.all([
         prisma.asset.findMany({ where, orderBy, skip: offset, take: limit, select: ASSET_LIST_SELECT }),
         prisma.asset.count({ where }),
@@ -1274,6 +1320,35 @@ router.post("/bulk-monitor", requirePermission("assets", "write"), async (req, r
       details: errors.length ? { errors } : undefined,
     });
     res.json({ updated: updatedCount, errors });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v1/assets/bulk-tags — add / remove / replace tags on a set of
+// assets (Assets page bulk bar "Tags"). Body: { ids, mode, tags }. Same gate
+// as PUT /:id, which is the single-asset tag write. Semantics — including the
+// managed prefixes a replace keeps — live in assetBulkTagService.
+const BulkTagsSchema = z.object({
+  ids:  z.array(z.string().uuid()).min(1).max(10000),
+  mode: z.enum(["add", "remove", "replace"]),
+  tags: z.array(z.string().max(128)).max(200),
+});
+
+router.post("/bulk-tags", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const body = BulkTagsSchema.parse(req.body);
+    const result = await bulkEditAssetTags(body);
+    const verb = body.mode === "add" ? "Added" : body.mode === "remove" ? "Removed" : "Replaced";
+    const tagList = result.tags.length ? result.tags.join(", ") : "(none)";
+    logEvent({
+      action: "asset.bulk_tags",
+      resourceType: "asset",
+      actor: requestActor(req),
+      message: `${verb} tags [${tagList}] on ${result.updated} asset(s)` +
+        (result.unchanged ? `; ${result.unchanged} already matched` : "") +
+        (result.notFound.length ? `; ${result.notFound.length} not found` : ""),
+      details: { mode: body.mode, tags: result.tags, updated: result.updated, unchanged: result.unchanged, notFound: result.notFound },
+    });
+    res.json(result);
   } catch (err) { next(err); }
 });
 
@@ -1948,7 +2023,13 @@ router.post("/:id/probe-now", requirePermission("assetsProbe", "read"), async (r
     const tr_p:    Promise<TelResult>  = collectTelemetry(id).catch((err: any): TelResult  => ({ supported: true, error: err?.message || "Telemetry collection failed" }));
     const hwR_p:   Promise<HwResult>   = collectHardwareSensors(id).catch((err: any): HwResult => ({ supported: true, error: err?.message || "Hardware sensor collection failed" }));
     const sr_p:    Promise<SysResult>  = collectSystemInfo(id).catch((err: any): SysResult  => ({ supported: true, error: err?.message || "System info collection failed" }));
+    // SD-WAN left the system-info pass for its own cadence (2026-09), so a Poll
+    // Now that should still refresh the SD-WAN tab asks for it explicitly. The
+    // runner applies its own eligibility (integration pulls SD-WAN, REST gate)
+    // and is a silent no-op everywhere else, so it stays out of the summary.
+    const sdwan_p = runSdwanFor(id, { transport: "rest_api", assetType: "unknown" }).catch(() => "crash" as const);
     const [tr, hwR, sr] = [await tr_p, await hwR_p, await sr_p];
+    await sdwan_p;
     await Promise.all([
       recordTelemetryResult(id, tr),
       recordHardwareSensorResult(id, hwR),
@@ -3393,15 +3474,17 @@ router.get("/:id/perf-sla-links", requirePermission("assets", "read"), async (re
 //
 // Carries the same freshness pair the ARP/MAC tabs do — `collectedAt` (the
 // newest perf-SLA sample, i.e. the scrape stamp) and `pollIntervalSec` — so the
-// table can state its own age and turn amber past its own cadence. No discovery
-// fallback: only the system-info pass writes perf-SLA samples, so an unmonitored
-// gate reports null rather than borrowing its integration's 12h sweep.
+// table can state its own age and turn amber past its own cadence. The cadence
+// is the SD-WAN stream's own (integration sdwanIntervalSeconds, default 60s) —
+// not the system-info one it rode until 2026-09. Only that cadence writes
+// perf-SLA samples, so an unpolled gate reports null rather than borrowing its
+// integration's 12h discovery sweep.
 router.get("/:id/sdwan-members", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const [result, pollIntervalSec] = await Promise.all([
       readSdwanMembers(id),
-      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+      resolveSdwanPollIntervalForAsset(id),
     ]);
     res.json({ ...result, pollIntervalSec });
   } catch (err) { next(err); }
@@ -3505,7 +3588,8 @@ router.get("/:id/sdwan-rules", requirePermission("assets", "read"), async (req, 
     });
     const [rows, pollIntervalSec] = await Promise.all([
       rowsP,
-      resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+      // The SD-WAN stream's own cadence, not the system-info one.
+      resolveSdwanPollIntervalForAsset(id),
     ]);
     // One stamp for the whole table: persistSdwanRules delete-replaces every
     // rule in one transaction, so the newest updatedAt IS the scrape time.
@@ -6249,9 +6333,11 @@ router.post("/bulk-quarantine/release", requirePermission("assetsQuarantine", "w
 // every selected asset at once (assets-page bulk bar "Deploy Agent"). OS
 // platform + transport are resolved per asset the way discovery auto-deploy
 // does (inferAgentPlatform: Windows → WinRM credential with SSH fallback,
-// everything else → SSH); ineligible assets (existing agent, hypervisor,
-// Fortinet source, unreachable, no matching credential) come back as skipped
-// with a reason instead of failing the batch. Remote installs run in a
+// everything else → SSH); ineligible assets (agent in any state but "failed",
+// hypervisor, Fortinet source, unreachable, no matching credential) come back
+// as skipped with a reason instead of failing the batch. An asset whose agent
+// install FAILED is retried in place (the /:id/agent/retry reset, with this
+// batch's credentials) and counted in `retried`. Remote installs run in a
 // bounded background pool — the response returns immediately and the UI
 // watches per-asset installStatus.
 const BulkAgentInstallSchema = z.object({

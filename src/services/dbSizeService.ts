@@ -7,9 +7,10 @@
  * hundreds of chunks (28 hypertables at prod scale), which made the Maintenance
  * tab wait minutes on the filesystem. The cost is freshness: relpages is
  * accurate as of the last VACUUM/ANALYZE, which is why `neverAnalyzedRelations`
- * is reported alongside every figure — after a `pg_upgrade` (planner stats are
- * not carried across before PG18) a relation nothing has written to since can
- * sit at relpages 0 forever and silently understate the total.
+ * and the bytes they hide are reported alongside every figure — after a
+ * `pg_upgrade` (planner stats are not carried across before PG18) a relation
+ * nothing has written to since can sit at relpages 0 forever and silently
+ * understate the total.
  *
  * Why this module exists at all: the Database card used to print a whole-database
  * total (`SUM(relpages)` over EVERY schema) directly above a table list that was
@@ -77,11 +78,30 @@ export interface DatabaseSizeBreakdown {
   /** Anything else (a session store in its own schema, an operator's scratch table). */
   otherBytes: number;
   /**
-   * Relations that have never been VACUUMed or ANALYZEd (`reltuples = -1`), so
-   * they carry relpages 0 and are invisible to every figure here. Non-zero right
-   * after a restore or a major-version upgrade until `vacuumdb --analyze` runs.
+   * Relations that have never been VACUUMed or ANALYZEd (`reltuples = -1`) AND
+   * hold data, so their bytes are invisible to every figure here. An empty heap
+   * is left out: relpages 0 is the truth for it. That matters because every
+   * TimescaleDB chunk compression leaves one behind — the original chunk is
+   * truncated, nothing writes to it again, and autovacuum never analyzes it —
+   * so counting them made the card warn permanently on a healthy install.
+   * When there are too many to measure (see `neverAnalyzedMissingBytes`), this
+   * is the raw count, empty heaps included.
    */
   neverAnalyzedRelations: number;
+  /**
+   * What those relations hold that the catalog figures leave out, measured
+   * from the filesystem. `null` when more than NEVER_ANALYZED_MEASURE_CAP
+   * relations are un-analyzed (a restore or major upgrade): measuring them all
+   * is the per-relfilenode stat() this module exists to avoid, and in that
+   * state the answer is "most of the database" anyway.
+   */
+  neverAnalyzedMissingBytes: number | null;
+}
+
+/** Everything `getDatabaseSizeBreakdown` reports about un-analyzed relations. */
+export interface NeverAnalyzed {
+  relations: number;
+  missingBytes: number | null;
 }
 
 /**
@@ -407,31 +427,72 @@ export async function getDatabaseSizeBreakdown(): Promise<DatabaseSizeBreakdown>
     }
   }
 
-  return summarizeBuckets(buckets, await countNeverAnalyzed());
+  return summarizeBuckets(buckets, await measureNeverAnalyzed());
 }
+
+/**
+ * Above this many un-analyzed relations the filesystem is not consulted. Each
+ * measured relation costs a stat() per fork of its heap, indexes and TOAST —
+ * ~20 at most — so 200 stays in the low thousands of syscalls. A healthy
+ * TimescaleDB install sits well under it (a handful of recently compressed
+ * chunks); a restore or a major upgrade leaves every relation un-analyzed and
+ * blows through it, which is the case the loud warning is for.
+ */
+export const NEVER_ANALYZED_MEASURE_CAP = 200;
+
+const NEVER_ANALYZED_WHERE_SQL = `
+        WHERE c.relkind = 'r'
+          AND c.reltuples = -1
+          AND (n.nspname = 'public' OR n.nspname LIKE '\\_timescaledb%')`;
 
 /** `reltuples = -1` is PG14+'s "never vacuumed or analyzed" marker. Such a
  *  relation reports relpages 0 no matter how much data it holds, so it is
- *  missing from every figure in this module until autovacuum reaches it. */
-async function countNeverAnalyzed(): Promise<number> {
+ *  missing from every figure in this module until something analyzes it —
+ *  and autovacuum only does that after enough writes, so a relation nothing
+ *  writes to (an old compressed chunk after a pg_upgrade) stays this way. */
+async function measureNeverAnalyzed(): Promise<NeverAnalyzed> {
   try {
-    const rows = await prisma.$queryRawUnsafe<{ count: bigint }[]>(
+    const counted = await prisma.$queryRawUnsafe<{ count: bigint }[]>(
       `SELECT count(*)::bigint AS count
          FROM pg_class c
-         JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relkind = 'r'
-          AND c.reltuples = -1
-          AND (n.nspname = 'public' OR n.nspname LIKE '\\_timescaledb%')`,
+         JOIN pg_namespace n ON n.oid = c.relnamespace${NEVER_ANALYZED_WHERE_SQL}`,
     );
-    return Number(rows[0]?.count ?? 0);
+    const total = Number(counted[0]?.count ?? 0);
+    if (total === 0 || total > NEVER_ANALYZED_MEASURE_CAP) {
+      return { relations: total, missingBytes: total === 0 ? 0 : null };
+    }
+
+    // Few enough to stat. An empty main fork is an empty heap (a truncated
+    // compressed-chunk shell, or a feature's table nothing has used): its
+    // relpages 0 is correct, so it is neither counted nor measured. The
+    // missing bytes are the on-disk size less what the catalog already
+    // credits it with — an index built by CREATE INDEX carries its own
+    // relpages even while the heap is un-analyzed.
+    const measured = await prisma.$queryRawUnsafe<{ relations: bigint; missing: bigint | null }[]>(
+      `SELECT count(*)::bigint AS relations,
+              COALESCE(SUM(GREATEST(0,
+                pg_total_relation_size(c.oid)
+                  - (${OWNED_PAGES_SQL}) * current_setting('block_size')::bigint
+              )), 0)::bigint AS missing
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace${OWNED_PAGES_JOINS_SQL}${NEVER_ANALYZED_WHERE_SQL}
+          AND pg_relation_size(c.oid, 'main') > 0`,
+    );
+    return {
+      relations: Number(measured[0]?.relations ?? 0),
+      missingBytes: Number(measured[0]?.missing ?? 0),
+    };
   } catch (err) {
     logger.debug({ err }, "dbSize.never_analyzed_probe_failed");
-    return 0;
+    return { relations: 0, missingBytes: 0 };
   }
 }
 
 /** Pure bucket → breakdown mapping. Exported for the unit tests. */
-export function summarizeBuckets(buckets: BucketRow[], neverAnalyzedRelations: number): DatabaseSizeBreakdown {
+export function summarizeBuckets(
+  buckets: BucketRow[],
+  neverAnalyzed: NeverAnalyzed = { relations: 0, missingBytes: 0 },
+): DatabaseSizeBreakdown {
   const by = (name: string) => Number(buckets.find((b) => b.bucket === name)?.bytes ?? 0);
   const polarisBytes = by("polaris");
   const pgbossBytes = by("pgboss");
@@ -445,6 +506,7 @@ export function summarizeBuckets(buckets: BucketRow[], neverAnalyzedRelations: n
     pgbossBytes,
     catalogBytes,
     otherBytes,
-    neverAnalyzedRelations,
+    neverAnalyzedRelations: neverAnalyzed.relations,
+    neverAnalyzedMissingBytes: neverAnalyzed.missingBytes,
   };
 }

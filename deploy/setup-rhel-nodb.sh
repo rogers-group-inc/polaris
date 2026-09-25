@@ -201,6 +201,10 @@ fi
 # right ownership so the first click doesn't crash on root-owned ancestors.
 mkdir -p "$APP_DIR/data/agents" "$APP_DIR/.cache/go-build"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/agents" "$APP_DIR/.cache"
+# The firmware repository (Server Settings → Repository) stores switch / AP
+# images under $APP_DIR/data/firmware/ — same posture as data/agents.
+mkdir -p "$APP_DIR/data/firmware"
+chown -R "$APP_USER:$APP_GROUP" "$APP_DIR/data/firmware"
 
 # ─── 4c. Java 25 + jsign (agent code signing — optional at runtime) ─────────
 # Used by the agent code-signing feature (Integrations → Polaris Agents →

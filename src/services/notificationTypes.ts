@@ -536,6 +536,13 @@ export const ASSET_STATE_FIELDS = [
   // is answering ICMP while its FortiLink session to the gate is dead, which
   // is a fault the monitor loop cannot see because it is asking the switch.
   "fortilinkStatus",
+  // How a switch / access point's running firmware stands against the
+  // PRIMARY image the Repository holds for its platform — business rule 87.
+  // "current" | "older" | "newer", and NO READING (not null) for a device the
+  // Repository cannot place: not a switch / AP, no usable serial, no readable
+  // version, no primary for its platform. Resolved from one findMany over the
+  // image table per evaluation, never one query per asset.
+  "firmwareVsPrimary",
   "ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus", "ipsecStatus", "sdwanRuleStatus", "sdwanSelectedMember",
   // Whether ONE WAN member of ONE performance-SLA health check is alive, as the
   // FortiGate itself judges it (AssetPerfSlaSample.state, normalized from the
@@ -3857,6 +3864,11 @@ export const FIELD_META: Record<string, { label: string; kind: "enum" | "bool" |
   // wants "tell me when the gate stops seeing this switch at all" writes
   // `!= up` rather than `== down`.
   fortilinkStatus: { label: "Controller link (FortiLink / CAPWAP)", kind: "enum", values: ["up", "down", "unknown"] },
+  // Business rule 87. Closed enum: the comparison is made by Polaris from the
+  // parsed versions, so the three words are the only readings that exist.
+  // The operator's usual rule is `!= current`; `== newer` names the fleet
+  // that is AHEAD of the image someone selected as primary.
+  firmwareVsPrimary: { label: "Firmware vs Repository primary", kind: "enum", values: ["current", "older", "newer"] },
   // The interface is INTEGRAL on all three port-state fields (see the header):
   // the row says which port it is about, and blank keeps meaning "every
   // monitored interface", one alert each — the engine folds per dimension

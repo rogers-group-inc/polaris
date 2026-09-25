@@ -3531,6 +3531,7 @@ async function openAutomationWizard(existing, opts) {
     temperature: "hardware-sensor",
     systemInfo: "interface/system",
     storage: "storage",
+    sdwan: "SD-WAN",
     pathCheck: "path-check",
   };
 

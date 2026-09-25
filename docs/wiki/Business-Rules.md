@@ -24,15 +24,20 @@ a per-block advisory lock, and backed by a unique index. A create that bypasses
 the lock re-opens the race in [rule 20a](#rule-20).
 
 ### Rule 2
-**A network must be contained within its parent block.**
+**A network must be contained within its parent block.** A new network is
+placed in the most specific block that contains it — **+ Add Network** never
+asks for one — and is refused if no block contains it.
 
 ### Rule 3
 **No duplicate IP reservations** — one *active* reservation per address per
 network, backed by a unique index.
 
 ### Rule 4
-**Block and network deletion are protected.** 409 while any active reservation
-exists inside. (Archiving is deliberately exempt — see [rule 41](#rule-41).)
+**Block and network deletion are protected.** A network delete is refused (409)
+while any active reservation exists inside it. A block delete is refused (409)
+while the block contains **any** network at all — move each one to another
+block (**Move to block…** on the Networks tab), archive it or delete it first.
+(Archiving is deliberately exempt — see [rule 41](#rule-41).)
 
 ### Rule 5
 **CIDRs are normalised on write.** Host bits are zeroed: `10.1.1.5/24` stores as
@@ -612,10 +617,12 @@ cannot disagree with it.
 Sizes are read from PostgreSQL's catalog rather than by measuring the data
 directory, which is what keeps the tab instant on a large install — so a figure
 is accurate as of the last `VACUUM`/`ANALYZE`, and the card says so when that
-matters. **"N relations have never been vacuumed or analyzed"** means those
-relations report zero pages whatever they hold and every size shown is
-understated: run `vacuumdb --analyze-in-stages`, which is owed after a restore
-or a PostgreSQL major-version upgrade. **"Hypertable sizing is degraded"** means
+matters. Relations that have never been analyzed report zero pages whatever
+they hold, so the card names how many there are **and how many bytes they
+hide**, and warns only when that is material (over 64 MB or 1% of the
+database) — a few small compressed chunks are normal and get a plain note. The
+fix is `vacuumdb --analyze-only`, which is owed after a restore or a PostgreSQL
+major-version upgrade. **"Hypertable sizing is degraded"** means
 Polaris could not read TimescaleDB's chunk catalog, so the sample tables are
 listed at their parent size — near zero — and their real bytes appear under
 *Unattributed*. Neither condition is left to be inferred from a number that
@@ -644,9 +651,15 @@ carrying on to authorize a key for an account that does not exist. It verifies
 without changing anything — choosing an existing account is not asking Polaris
 to create one or to promote it.
 
-The firewall rule is deliberately not checked. If you did not give Polaris a
-server address there is no rule to look for, and a check nothing can satisfy
-would make the pair remediate forever.
+On Windows, detection also checks the firewall, but only for the state the
+remediation itself sets up with the same server address (see
+[Rule 76](Business-Rules#rule-76)). With an address, it checks for the Polaris
+rule scoped to that address and for Windows' own rule being off. Without one, it
+checks that Windows' own rule covers the Domain profile. It never demands
+anything the remediation would not do, because a check nothing can satisfy would
+make the pair remediate forever. (Until 2026-09 the firewall was not checked at
+all, so a machine set up by hand could stay unreachable on a domain network
+while reporting healthy.)
 
 One consequence you will see: both scripts now refuse to download until you have
 named the account on the **SSH Deployment** card. Before, the Windows detection
@@ -747,8 +760,9 @@ whether you filled in **Polaris server address**:
 **Public is never added**, on either path: being unreachable on your own domain
 network is the problem being solved, and an any-source rule on the profile a
 laptop picks up in an airport is not part of it. Both paths are safe to re-run,
-and the detection script does not judge the firewall — it cannot know which of
-the two shapes to expect.
+and the detection script checks for whichever of the two shapes the same server
+address produces, so a machine left on Private-only is remediated rather than
+reported healthy.
 
 See [Polaris Agent](Polaris-Agent#the-windows-firewall-rule-and-the-one-windows-writes-for-itself).
 
@@ -1110,3 +1124,91 @@ matching host. Its result describes whether that host can reach the target, so:
   and check). You can alert on it with a *Path changed* trigger.
 
 See [Path Checks](Path-Monitor) and [Automation Triggers](Automation-Triggers).
+
+### Rule 86
+
+**An agent that deployed and went quiet has missed its poll, unless Polaris is
+the one that stopped listening.**
+
+Nothing polls a host that is monitored by the Polaris Agent. The agent sends its
+own response-time readings, so a host that dies, crashes, loses its network or
+has its agent stopped simply stops sending. Polaris now counts that silence as a
+missed poll.
+
+Once an agent that finished deploying has not been heard from for **two polling
+intervals** (and never less than one interval plus a minute), each poll it
+misses is recorded exactly like a failed ping. The asset turns **Warning**, then
+**Down** when your down-detection automation's missed-poll count is reached, and
+**Asset down** fires. At the default 60-second interval with three missed polls,
+that is about four minutes from the last reading. The chart shows the outage as
+a dive, and the asset recovers on the agent's next real reading.
+
+What does **not** count:
+
+- **An agent that has not finished deploying**: still installing, failed,
+  uninstalling, or revoked. Polaris does not expect to hear from it.
+- **An agent upgrade, reinstall or uninstall.** The asset is in a maintenance
+  hold for that ([rule 80](Business-Rules#rule-80)).
+- **Polaris being down.** After a restart or an update, every agent gets a full
+  window to reconnect before its silence counts. If *no* agent anywhere is
+  reporting, Polaris assumes it is the one not receiving (a stopped web service
+  or proxy, say) and records nothing. This check needs at least two agents. With
+  a single agent the two cases look the same, and Polaris alerts rather than
+  staying silent.
+
+The warning-level **Agent disconnected** automation still fires as well. It
+describes the agent's connection; **Asset down** describes the host.
+
+See [Polaris Agent](Polaris-Agent#when-the-host-stops-reporting) and
+[Monitor States](Monitor-States).
+
+### Rule 87
+
+**A firmware image is offered only to a device whose serial names the image's
+platform, and only forward; the flash takes a hold and never records a version
+it has not read back.**
+
+The [Repository](Server-Settings#repository) files firmware images under a
+model, but a device is matched on its **platform** — the token in the image's
+own header, which is the first six characters of the serial numbers the image
+was built for. An image whose header cannot be read is stored and never
+offered. A device is offered an image only when the platform matches **and**
+the image is strictly newer than what it runs; a device whose version Polaris
+cannot read is offered nothing. Never a downgrade — the switch's own
+compatibility check is consulted too, and a "downgrade" answer aborts before
+anything is flashed.
+
+A model keeps two images, a **primary** and a **backup**. Only the primary is
+offered on its own; the backup is named in the approval dialog when it is also
+newer than the device. The upgrade request carries the image you approved by
+name, and it must be one of those two — a click can never push an image nobody
+looked at.
+
+The same match feeds the automation field
+[`firmwareVsPrimary`](Automation-Triggers#firmwarevsprimary--what-the-repository-would-push):
+`current`, `older` or `newer` against the platform's primary image, and no
+reading at all for a device the Repository cannot place. The baseline
+automation **Firmware differs from repository primary** (informational) is
+that field with `!= current`.
+
+An upgrade does not start on a device that is down, warning, recovering,
+behind a parent that is down, decommissioned, quarantined, in storage or
+disabled; nor while another flash is running on that device, on a switch above
+or below it, or on its MCLAG peer. A device in a scheduled maintenance window
+is fine — that is when you flash. The flash opens a
+[maintenance window of its own](Maintenance-Windows#windows-polaris-opens-for-itself)
+(45 minutes at most) that suppresses everything behind the switch, released
+the moment the run ends.
+
+The run records what the device **reported after it came back**; it never
+rewrites the asset's OS/firmware field itself. The next discovery reads the
+device and records the new version — the same path every other firmware
+change takes — and until then the card says *Flashed* rather than offering
+the same image again.
+
+Starting an upgrade is the **Full Read-Write** rung of the `firmware` key,
+seeded only for admin-equivalent roles: it reboots network hardware, and
+nothing in the catalogue implied that act before.
+
+See [Server Settings → Repository](Server-Settings#repository) and
+[Assets → Firmware](Assets#firmware).

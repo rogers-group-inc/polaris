@@ -87,6 +87,8 @@
           </div>
         </div>
 
+        <button class="btn btn-sm btn-secondary" id="assets-bulk-tags-btn" data-manage-assets title="Add, remove or replace tags on the selected assets">Tags</button>
+
         <button class="btn btn-sm btn-secondary" id="assets-bulk-edit-btn" data-manage-assets title="Edit the selected asset" disabled>Edit</button>
 
         <button class="btn btn-sm btn-secondary" id="assets-bulk-agent-btn" data-deploy-agent title="Install the Polaris Agent on all selected assets over SSH/WinRM — assets that already have an agent are skipped">Deploy Agent</button>
@@ -127,6 +129,10 @@
                    Settings → Sources (Setting `assetSourcePriority`). -->
               <th data-sf-key="_server" data-sf-type="string">Sources</th>
               <th style="min-width:100px" data-sf-key="description" data-sf-type="string">Description</th>
+              <!-- Asset.tags (String[]). Filter matches any single tag by
+                   substring; sort orders by the alphabetically-first tag with
+                   untagged rows last — both server-side (assetTagListService). -->
+              <th data-sf-key="tags" data-sf-type="array">Tags</th>
               <th data-sf-key="assetTag" data-sf-type="string" data-col-default-hidden="true">Asset Tag</th>
               <th data-sf-key="manufacturer" data-sf-type="string" data-col-default-hidden="true">Manufacturer</th>
               <th data-sf-key="model" data-sf-type="string" data-col-default-hidden="true">Model</th>
@@ -145,7 +151,7 @@
             </tr>
           </thead>
           <tbody id="assets-tbody">
-            <tr><td colspan="22" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="23" class="empty-state">Loading...</td></tr>
           </tbody>
         </table>
       </div>

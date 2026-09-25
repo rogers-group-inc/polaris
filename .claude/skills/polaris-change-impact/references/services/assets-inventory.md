@@ -21,6 +21,43 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetTagListService.ts
+
+**What it owns:** The Assets list's **Tags** column on the server side — the filter (`contains` / `not_contains` / `empty` / `is_not_empty`, matching any single tag by case-insensitive substring) and the sort (alphabetically-first tag, untagged rows last in both directions). `Asset.tags` is a `String[]`, and Prisma can neither substring-match inside a scalar list nor order by one; that gap is the reason this service exists.
+
+**Public API:** `findAssetIdsByTagSubstring(term)` (one raw `EXISTS (… unnest(tags) … ILIKE …)` query, LIKE wildcards escaped); the pure `buildTagFilter(value, op, matchingIds)`, `tagFilterNeedsLookup(value, op)`, `tagSortKey(tags)`, `sortIdsByTags(rows, dir, favoriteIds?)`; `pageAssetIdsByTags(where, dir, offset, limit, favoriteIds?)`.
+
+**Cross-service deps:** `prisma.$queryRaw` on `assets`; `prisma.asset.findMany` with `select: { id, tags }`.
+
+**Used by:** `src/api/routes/assets.ts → GET /assets` — `resolveTagMatches` resolves the term's ids before `buildAssetListWhere` (the same pre-resolve shape as the discovered-hostname ids), and `sortBy=tags` takes the `pageAssetIdsByTags` branch instead of `buildAssetOrderBy`.
+
+**Invariants:**
+- `sortBy=tags` keeps the favorites-first contract: starred rows lead, each bucket sorted the same way.
+- `not_contains` keeps untagged rows; a term matching nothing makes it a no-op rather than `notIn []`.
+- A typed `%` / `_` is literal.
+
+**When changing this:** the Tags sort reads `id, tags` for EVERY row matching the active filters and sorts in memory, then fetches only the page's rows. At 2000 assets that is one narrow scan per page load (the same scan `GET /assets/tags` does); at 100 it is trivial. If fleets grow an order of magnitude past that, move the ordering into SQL (a raw ordered id query) rather than widening the select. The `contains` path's `id IN (…)` list is bounded by the number of tagged assets matching the term.
+
+## services/assetBulkTagService.ts
+
+**What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
+
+**Public API:** `bulkEditAssetTags({ ids, mode, tags })` → `{ updated, unchanged, notFound, tags }`; the pure `computeBulkTags(mode, existing, tags)` and `normalizeBulkTags(tags)`; `REPLACE_PRESERVED_PREFIXES`; `BulkTagMode`.
+
+**Cross-service deps:** `mapRegionService.assertAddedRegionTagsNameARegion` (the PUT's `region:` guard, asked once per batch); `utils/chunk.ts → chunkArray`; `prisma.asset` (`select: { id, tags }` read, per-row `update` in 50-row `$transaction`s).
+
+**Used by:** `src/api/routes/assets.ts → POST /assets/bulk-tags` — the only caller; writes the `asset.bulk_tags` Event.
+
+**Invariants:**
+- Replace never strips `region:`, `prev-entra:` or `prev-ad:` tags (case-insensitive prefix). Remove does strip one the caller names.
+- Add / remove with an empty tag list is a 400; replace with an empty list is legal (clears everything but the preserved namespaces).
+- Only rows whose tag array changes are written — a repeat call is silent.
+- Writes go through the extended client (not `updateMany` / raw SQL), so db.ts's asset-source shadow write fires on every changed row.
+
+**When changing this:** a new managed tag prefix (see [asset-tag-mutators](../cross-cutting/asset-tag-mutators.md)) decides whether a bulk replace may strip it — add it to `REPLACE_PRESERVED_PREFIXES` and to the modal hint in `openBulkTagsModal` if not. Scale: one `findMany` over the selection and ≤ N/50 transactions; at 2000 selected that is 40 transactions of 50 single-row updates.
+
+---
+
 ## services/tagAssignmentService.ts
 
 **What it owns:** Filter-based tag auto-assignment ("managed sync"). Both device-filter contracts on `Tag` — the CURRENT `assetCondition` condition tree (the automations / address-book shape) and the LEGACY flat `criteria` blob it superseded — the asset-matching engines behind each, and the diff-based reconcile that keeps every filter-bearing tag synced onto matching assets via the `TagAutoAssignment` provenance table. Strictly an asset-tagging service — it never writes block/subnet tags.

@@ -1,6 +1,63 @@
-# Services — Polaris Agent install, build, channel, commands
+# Services — Polaris Agent install, build, channel, commands; the firmware repository
 
-Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol.
+Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol. The two firmware services sit here because `firmwareUpgradeService` copies `agentInstallService.startUpgrade`'s shape — synchronous refusals, a row, a kickoff Event, a rule-80 hold, a `setImmediate` runner on the web process.
+
+## services/firmwareRepositoryService.ts
+
+**What it owns:** The firmware repository (Server Settings → Repository; business rule 87): the manufacturer › device type (`switch` / `access_point` only) › model TREE, the IMAGES filed under a model node (two per node — primary + backup — with the rotation an upload performs), the device-admin login BINDINGS at the three scopes, and the per-asset CANDIDATE lookup. Bytes on disk under `FIRMWARE_DIR`; identity from the image header, never the model string.
+
+**Public API:** `FIRMWARE_ASSET_TYPES`, `FIRMWARE_MAX_IMAGE_BYTES`, `isFirmwareAssetType`, `getFirmwareTree`, `listImages`, `getImage`, `registerUploadedImage`, `setPrimaryImage`, `deleteImage`, `purgeModelImages`, `resolveImagePath`, `ensureFirmwareDirs`, `listBindings`, `upsertBinding`, `deleteBinding`, `resolveFirmwareCredential`, `findUpgradeCandidates`, `listRecentRuns`; the row / node / candidate types.
+
+**Cross-service deps:** `prisma` (asset groupBy + a tight-select serial scan, firmwareImage, firmwareCredentialBinding, firmwareUpgradeRun.count); `utils/firmwareVersion` (header/filename parse, compare, `platformFromSerial`); `utils/manufacturerNormalize.normalizeManufacturer`; `utils/paths` (`FIRMWARE_DIR`, `FIRMWARE_INCOMING_DIR`); `credentialService.getCredential({ revealSecrets: true })` (the ONE place a device password is read); `utils/httpCheck.isDeviceLoginCredential`; `firmwareEngines/index` (`engineFor`, `engineKindForType`); `assetTypeService.listAssetTypes` (labels); `eventLogService.logEvent`.
+
+**Used by:**
+- `src/api/routes/firmware.ts` — every repository route.
+- `src/services/firmwareUpgradeService.ts` — `findUpgradeCandidates`, `resolveFirmwareCredential`, `resolveImagePath`, `getImage`.
+- `public/js/server-settings-firmware.js` — the tab, through the routes.
+
+**Invariants:**
+- **Matching is by platform, filing is by model.** An asset is offered an image only when `image.platform === platformFromSerial(asset.serialNumber)` (rule 87); the model node decides nothing about eligibility. A filename-only image has `platform: null` and is never offered.
+- **A node holds one primary and one backup**, and the DATABASE enforces it (two partial unique indexes). `registerUploadedImage` rotates in ONE transaction and refuses whole (409) when a queued/running run references the backup it would remove. `setPrimaryImage` steps through the transient `swapping` role because the partial indexes are checked per statement. `deleteImage` on the primary promotes the backup so a node never has a backup alone.
+- **Only a PRIMARY is offered unasked.** `findUpgradeCandidates` returns the strictly-newer primary for the platform (the asset's own model node preferred, else newest) and names the SAME node's backup only when it too is strictly newer. Zero queries when `engineFor` is null.
+- **Resolution is model › type › manufacturer, most specific LIVE row wins.** A binding whose credential was deleted (`credentialId` null) or whose credential is no longer a `form` login is SKIPPED, never a shadow — the rule-49 posture. Secrets are revealed only with `{ revealSecrets: true }`, which only `startFirmwareUpgrade` asks for.
+- **The same bytes are filed once** (`sha256 @unique` → 409 naming the node); the temp file is removed on every failure path; the final rename is same-filesystem (the incoming dir sits under FIRMWARE_DIR).
+- Never writes Asset. Never opens a socket to a device.
+
+**When changing this:**
+- Adding a device type: `FIRMWARE_ASSET_TYPES`, the two CHECK constraints in migration `20260925000000`, `engineKindForType`, the tree's type order, the wiki's "switches and access points only".
+- Changing the two-image cap: the partial unique indexes AND `registerUploadedImage`'s rotation AND the tab's copy ("A model keeps two images") move together; `tests/unit/firmwareImageRotation.test.ts` pins every transition.
+- Any new offer path must go through `findUpgradeCandidates` — the platform + strictly-newer gate lives there once.
+- Scale: the tree is two `groupBy`s + one small `findMany` + one tight-select serial scan (only when the tab opens); never add a per-asset query.
+
+## services/firmwareUpgradeService.ts
+
+**What it owns:** One asset, one flash (business rule 87): what the asset card is told (`getUpgradeAvailability`), the SYNCHRONOUS gates and the kickoff (`startFirmwareUpgrade`), the runner that drives an engine and keeps the run row current, the reads, and the boot sweep for runs a restart orphaned. Copies `agentInstallService.startUpgrade`'s shape.
+
+**Public API:** `getUpgradeAvailability`, `startFirmwareUpgrade`, `getRun`, `listRunsForAsset`, `failOrphanedFirmwareRuns`; `UpgradeAvailability` / `UpgradeAvailabilityState` / `RunSummary` / `StartUpgradeInput`.
+
+**Cross-service deps:** `firmwareRepositoryService` (candidates, credential, image path); `firmwareEngines/index` (`engineFor`, `engineByKind`) and `firmwareEngines/types` (`DEFAULT_FIRMWARE_TIMEOUTS`); `maintenanceScheduleService.openMaintenanceHold` / `releaseMaintenanceHold` (kind `firmware-upgrade`, rule 80); `connectionPathService.resolveConnectionPath` + `prisma.assetMclagPeer` (the topology gate); `utils/assetInvariants.UNMONITORABLE_STATUSES` (rule 10); `eventLogService.logEvent`; a dynamic import of `discovery/assetDiscoveryScope.resolveDiscoveryScopeForAsset` + `discovery/discoveryEngine.triggerDiscovery` (the scoped rediscover on success); `node:fs/promises.stat`.
+
+**Used by:**
+- `src/api/routes/firmware.ts` — `firmwareAssetRouter` (`GET /`, `POST /`, `GET /runs`) and `GET /server-settings/firmware/runs/:id`.
+- `src/jobs/failOrphanedFirmwareRuns.ts` — the boot sweep.
+- `public/js/assets.js` — the Firmware card, through the routes (`_startFirmwarePoll` polls the run).
+
+**Invariants:**
+- **The gates are synchronous and ordered** (engine → address → platform → candidates → the REQUIRED approved `imageId` must be the offered primary or the eligible backup → health → login → one live run per asset, none on a connection-path ancestor/descendant or MCLAG peer → the image file exists), each an `AppError` answered to the click; the partial unique index on `(assetId) WHERE status IN (queued, running)` answers the race (P2002 → 409). `tests/unit/firmwareUpgradeGates.test.ts` pins the order.
+- **`maintenance` is allowed; unmonitored is allowed** (the hold no-ops, as it does for an agent upgrade). Down / warning / recovering / dependency-suppressed / unmonitorable are refused.
+- **The hold is taken BEFORE the runner is scheduled** and released in the runner's `finally` BEFORE the terminal Event (the `failUpgrade` ordering, rule 80a), by `failOrphanedFirmwareRuns` at boot, and by the reconcile's 45-minute expiry as the backstop.
+- **Never writes `Asset.osVersion`.** Projection owns it (asset-source-projection); the run records `verifiedVersion` and requests a scoped rediscover, and `getUpgradeAvailability` reports `pending-discovery` until the record catches up so the button does not re-offer a flash that happened.
+- **The plaintext password exists only inside the runner's engine context** — never in a log line, the run `log`, or an Event's `details` (only `credentialId` / name / scope).
+- **The server owns the card's vocabulary**: `state` and `reason` are what the card draws; a new state is added here, not inferred from a sentence client-side.
+- Runs execute on the web process (the image is on its disk; pg-boss is optional). A restart mid-flash orphans the run; the sweep names it rather than hides it. Row writes are throttled to one per 5 s; nothing here touches the monitor ticks.
+
+**When changing this:**
+- A new blocker: add it to `healthBlockers` (so availability and start agree), to the gates test, and to the wiki's list.
+- A new engine: `firmwareEngines/index.ts` `engineFor` + `engineKindForType`, the run row's `engine` vocabulary, the file map, and the docs' "Fortinet only" sentence.
+- A new terminal outcome: `finish`, the Event table (`firmware.upgrade_*`), the card's `_fwRunResultHTML`, and `dropHold` ordering.
+- If a queue ever replaces `setImmediate`, the image must travel with the job (it lives on the web host's disk) and the boot sweep's "this process was driving it" premise changes.
+
+---
 
 ## services/serviceInventoryService.ts
 
@@ -125,16 +182,17 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Fire-and-forget remote install / uninstall / upgrade of the Polaris Agent over SSH (Linux/macOS/Windows) or WinRM (Windows): resolves credentials, mints an enrollment token, uploads the binary + a rendered `agent.conf`, runs platform scripts, and drives the ManagedAgent lifecycle (pending → uploading → enrolling → active | failed).
 
-**Public API:** `startInstall`, `startUninstall`, `startUpgrade`, `upgradeAllOutdated`, `resolveUpgradeCredential`, `UPGRADEABLE_INSTALL_STATUSES`, `canUpgradeFromStatus`, `renderAgentConf`, `inferOwnServerUrl`, `inferOwnServerUrlSync`, `AGENT_SERVER_URL_SETTING_KEY`, `StartInstallInput`, `StartUninstallInput`, `StartUpgradeInput`, `ResolvedUpgradeCredential`, `UpgradeAllResult`
+**Public API:** `startInstall`, `startUninstall`, `startUpgrade`, `upgradeAllOutdated`, `bulkInstallAgents`, `BulkInstallInput`, `BulkInstallResult`, `resolveUpgradeCredential`, `UPGRADEABLE_INSTALL_STATUSES`, `canUpgradeFromStatus`, `renderAgentConf`, `inferOwnServerUrl`, `inferOwnServerUrlSync`, `AGENT_SERVER_URL_SETTING_KEY`, `StartInstallInput`, `StartUninstallInput`, `StartUpgradeInput`, `ResolvedUpgradeCredential`, `UpgradeAllResult`
 
 **Cross-service deps:** `credentialService.getCredential`, `windowsSshOnboardingService.getOnboardingState` (the managed deployment credential the upgrade falls back to), `agentTokenService.mintEnrollmentToken`, `agentBuildService.getInventory`, `certInfo.getServerCertHostnames`, `maintenanceScheduleService` (`openMaintenanceHold` / `releaseMaintenanceHold` — business rule 80), `publicUrl` port helper, `utils/agentUnit` (`linuxServiceBlock`/`normalizePrivilegeTier`/`AgentPrivilegeTier` — the privilege-tier → systemd unit mapping; re-exported from here), `logEvent`, `prisma`, WinRM helper.
 
-**Used by:** `src/api/routes/assets.ts` (per-asset install / reinstall / upgrade / uninstall), `src/api/routes/serverSettings.ts` (upgrade-all), `src/services/agentAutoDeployService.ts` (`startInstall`), `src/services/agentBuildService.ts` (auto-upgrade hook).
+**Used by:** `src/api/routes/assets.ts` (per-asset install / reinstall / upgrade / uninstall; `bulkInstallAgents` behind `POST /assets/bulk-agent-install`), `src/api/routes/serverSettings.ts` (upgrade-all), `src/services/agentAutoDeployService.ts` (`startInstall`), `src/services/agentBuildService.ts` (auto-upgrade hook).
 
 **Invariants:**
 - **An operation that stops a RUNNING agent holds the asset in maintenance first** (business rule 80). Stopping the service drops the WebSocket, which writes `agent.disconnected` at warning level, which is what the seeded baseline automation fires on — so upgrade, reinstall and uninstall take a `MaintenanceHold` in their SYNCHRONOUS half, before the runner is scheduled, and a hold taken after the installer has already stopped the service has missed the event. A first install and `/retry` take NO hold (`StartInstallInput.holdKind` is set by the reinstall route alone): there is no agent to disconnect, and holding would silence a host still telling the truth. The hold is best-effort in both directions — `takeAgentHold` swallows its errors, because a hold is an improvement to an upgrade and never a precondition for one.
 - **Failure releases the hold; success does not.** Every `fail*` helper drops it — an agent down because its upgrade failed is a real problem and the alert is the point — while the success paths leave it to `agentChannelService.attach` (the agent reattaching) or to the hold's own expiry, because the WS teardown trails the service stop by up to a heartbeat interval. The exception is `agent.uninstalled`: nothing is coming back to reattach, so completing the uninstall ends that hold.
 - Fire-and-forget: kicks off an async runner, returns immediately.
+- **The bulk deploy RETRIES a failed install; it skips every other agent state** (2026-09-24). `bulkInstallAgents` resets a `installStatus="failed"` row in place — the same reset as `POST /assets/:id/agent/retry`, writing the same `agent.install_retry` Event with `details.bulk: true` — and counts it in `BulkInstallResult.retried` as well as `kicked`. The retry KEEPS the row's `osPlatform` + `arch` (the host has not changed; a wrong guess is corrected by reinstall / force-remove, not by re-inferring from `Asset.os`) and TAKES the batch's policy: credential + transport re-picked by `pickTransportAndCredential` for the row's platform, `installScriptId`, `privilegeTier`, `installedBy`. When the batch's credentials do not cover that platform, the row's own `installCredentialId` is reused if it still resolves (what the per-asset Retry does), else the asset is skipped with the reason. No maintenance hold (rule 80 — nothing running to disconnect). In-flight, `active`, `upgrade_failed`, `uninstall_failed` and `revoked` rows stay skipped as "agent already installed (status=…)": each has work on the host or an agent to preserve. Pinned by `tests/unit/agentInstallBulkRetry.test.ts`.
 - Platform/arch drives binary selection (inferred from `Asset.os`, arch defaults amd64); SSH needs username + (password OR privateKey), WinRM needs username + password.
 - Uninstall (and force-remove) hard-deletes the ManagedAgent row on success, clears all polling columns (incl. `processesPolling`) so source defaults resume, AND tears the host off the Application Map — clears `mappedProcesses`/`mappedServices` + `deleteMany` its `AssetProcessConnection` rows in the same transaction (nothing collects them once the agent is gone, and pinned child nodes render from the pins regardless of connection rows). Upgrade replaces the binary only — `agent.conf` (bearer + pin) is untouched so the agent keeps its identity.
 - Server-URL resolution order: Setting override → `POLARIS_PUBLIC_URL` → cert hostnames → fallback → localhost.

@@ -74,7 +74,7 @@ else's host over a stored credential and leaves a service behind.
 | Route | |
 |---|---|
 | **Per asset** | the asset slide-over's **System** tab carries a Polaris Agent card with an **Install Agent** button on every server and workstation that could take one — no need to pick "Polaris Agent" as a polling method first. Any other device type shows the card once an agent exists or a stream is set to the agent method. The edit modal's Monitoring tab has the same button. Neither appears on a FortiManager- or FortiGate-discovered asset or on an ESXi host: FortiOS and ESXi take no agent. On a Windows host the modal adds a **Transport** choice — **SSH** (preselected; needs OpenSSH Server running on the host) or **WinRM** — and shows the credential picker for whichever is chosen. Linux and macOS are SSH-only, and the row is hidden |
-| **Bulk** | the Assets bulk bar's **Deploy Agent** — one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, and ineligible assets come back as **skips with reasons** |
+| **Bulk** | the Assets bulk bar's **Deploy Agent** — one modal collects SSH + WinRM credentials and arch; OS and transport are resolved server-side, an asset whose last install **failed** is retried with the credentials you pick, and other ineligible assets come back as **skips with reasons** |
 | **Auto-deploy** | a per-class toggle on the AD / Entra / Arc integrations, off by default — pushes to newly discovered agent-less devices during discovery, bounded and paced |
 
 Enabling an integration's auto-deploy checkbox is **the same grant, chained**
@@ -128,6 +128,29 @@ meaningless on Linux.
 what makes rollout self-healing** — a plain platform script runs once per device
 and never retries.
 
+#### When sshd is installed but will not start
+
+The remediation installs OpenSSH Server only when Windows reports it missing.
+It never checks the version, and it never reinstalls. A machine can report
+OpenSSH Server as **Installed** while its `sshd.exe` is years out of date. The
+service then times out on start (error 1053), and the script stops before it
+reaches the account and key steps.
+
+When that happens, both scripts name the cause in the Intune output columns:
+
+| Script | Output |
+|---|---|
+| Detection | `remediate: sshd not running (sshd.exe OpenSSH_7.7p1 for Windows; last SCM event 7009 at …: A timeout was reached …)` |
+| Remediation | `error: sshd failed to start - …`, then the same version and Service Control Manager event, and exit 1 |
+
+An `sshd.exe` version far older than a healthy machine on the same Windows
+build means a stale install. Remove and reinstall the capability on that
+endpoint (`Remove-WindowsCapability`, then `Add-WindowsCapability`, with a
+reboot between them if Windows asks for one). The next remediation run then
+finishes on its own. A current version together with a timeout points instead
+at something stopping `sshd.exe`, such as endpoint security or application
+control.
+
 Platform differences that matter:
 
 - **Windows** — the key goes in `administrators_authorized_keys` with the
@@ -161,8 +184,22 @@ What the remediation script does about it depends on **Polaris server address**:
 
 **Public is deliberately never added.** Reachable-from-Domain is the problem
 being solved; an any-source TCP/22 rule on the profile a laptop picks up in an
-airport is not. Both paths are idempotent, and the detection script does not
-judge the firewall — it is not told which of the two shapes to expect.
+airport is not. Both paths are idempotent.
+
+**The detection script checks the firewall too**, against whichever of the two
+states the same **Polaris server address** produces:
+
+| Server address | Detection reports "needs remediation" when |
+|---|---|
+| **set** | `Polaris SSH (TCP 22)` is missing, disabled, not on every profile, or allows a different address; or `OpenSSH-Server-In-TCP` is still enabled |
+| **blank** | `OpenSSH-Server-In-TCP` does not cover the Domain profile. Whether it is enabled is not checked, because the remediation never turns back on a rule you turned off |
+
+Before this check, a machine set up some other way (by hand, or by an older
+script) passed detection and was never remediated. On a domain network that
+meant sshd was listening and nothing could reach it, and the first sign was an
+agent install timing out while waiting for the SSH handshake. Detection and
+remediation are built from the same saved address, so change the address and
+re-publish **both**.
 
 > **The script does not decide who may use SSH.** It never writes `sshd_config`,
 > so stock Windows OpenSSH rules apply: no `AllowUsers`/`AllowGroups`, and
@@ -312,6 +349,15 @@ The storage and interface collectors run under a 30-second guard, because
 `statfs` and interface ioctls can **block indefinitely** on a hung filesystem or
 an unresponsive NIC — without it the whole push loop freezes while the heartbeat
 keeps running and the agent looks connected.
+
+### When the host stops reporting
+
+A dead host sends nothing, so Polaris treats the agent's silence as the missed
+poll. Once an agent that finished deploying has been silent for two polling
+intervals, each further miss counts toward your down-detection automation, and
+the asset goes **Down** and raises **Asset down** just as a host that stopped
+answering pings would. Restarts and updates of Polaris itself, and agent
+upgrades, do not count. See [rule 86](Business-Rules#rule-86).
 
 ### Host identity — hostname, OS, make, model, serial
 
@@ -561,4 +607,5 @@ separate **Unmap everywhere** action does the actual strip.
 | An ICMP path check fails with `icmp unsupported on this host (ping_group_range)` | Linux only. The agent opens ICMP without privilege, which needs the service's group inside `net.ipv4.ping_group_range`. Modern distributions allow every group; RHEL 8 does not. Fix it on the host: `echo 'net.ipv4.ping_group_range = 0 2147483647' \| sudo tee /etc/sysctl.d/90-polaris-ping.conf && sudo sysctl --system`. HTTP, TCP and traceroute are unaffected |
 | A path check never produces results | the agent version (0.21.0+ runs checks — upgrade it), and whether the host is listed on the check's **Results** view. A host that is not listed does not match the check's Sources |
 | Every traceroute hop after the first shows `*` | the network drops ICMP errors (Time Exceeded) on the way back. The check result itself is unaffected |
+| An agent host is powered off but the asset still reads Up | whether an automation covers it (no automation means **Passive**, [rule 36](Business-Rules#rule-36)); whether the agent is revoked or not yet **active**; and, with a single agent, whether Polaris just restarted. The agent gets a full window from boot ([rule 86](Business-Rules#rule-86)) |
 | `agent.disconnected` alerts never clear | the counterpart reset — an event automation should clear on `agent.connected`, scoped to the same subject ([rule 32e](Business-Rules#rule-32)) |

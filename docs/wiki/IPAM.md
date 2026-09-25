@@ -8,7 +8,8 @@ address panel you reach by opening a network.
 | Gate | Grants |
 |---|---|
 | `ipBlocks:read` / `subnets:read` | see the page |
-| `subnets:write` | create and edit **your own** rows |
+| `ipBlocks:write` | add, edit and delete blocks |
+| `subnets:write` | create, edit and move **your own** rows |
 | `subnets:fullwrite` | edit anyone's, plus archive and exclusions |
 | `reservations:write` / `:fullwrite` | same ownership split on reservations |
 
@@ -29,8 +30,15 @@ Tags · Networks (count) · Created.
 
 **+ Add Block** takes a name, CIDR, version, description and tags.
 
-**Deleting a block is refused with a 409 while any active reservation exists
-inside it** ([rule 4](Business-Rules#rule-4)). Release or archive first.
+A block's name opens a menu; **Open** shows the networks inside it in a
+slide-over. Click a network's name there to open that network's address table
+over it. Both panels open from
+any page — a search result for a block or a network opens them in place.
+
+**Deleting a block is refused with a 409 while it still contains any network**
+([rule 4](Business-Rules#rule-4)) — deprecated and empty networks count too.
+Move the networks to another block ([Moving a network](#moving-a-network-to-another-block)),
+archive or delete them first.
 
 Utilisation (`allocatedAddresses / blockAddresses`) is what the Block
 Utilization dashboard widget ranks on. **Deprecated networks are excluded** from
@@ -96,6 +104,16 @@ cannot both win.
 | **Auto-Allocate Next** | ask for "the next free /N in this block" and get it |
 | **Exclusions** | manage the excluded-CIDR registry |
 
+**+ Add Network never asks for a block.** The network is placed in the **most
+specific** block whose range contains its CIDR — with a `10.0.0.0/8` block and
+a `10.90.0.0/16` block, `10.90.4.0/24` lands in the /16 and `10.91.0.0/24` in
+the /8. The dialog's **Block** field shows the choice as you type and cannot be
+edited; if no block contains the CIDR it says so, and saving is refused until a
+covering block exists. The same holds for **Add Network** in a block's panel: a
+CIDR that falls inside a narrower block nested in that one lands in the
+narrower block. To put a network somewhere else afterwards, use
+[Move to block…](#moving-a-network-to-another-block).
+
 Auto-allocation is **IPv4 only**. An allocator treats an
 [excluded range](#exclusions) as *taken space*, not as a refusal — asking for
 "any free /24" steps over an exclusion rather than 409-ing on it.
@@ -103,6 +121,19 @@ Auto-allocation is **IPv4 only**. An allocator treats an
 Bulk allocation packs into an **anchor** (default /24 when not stated) and is
 all-or-nothing in one transaction. A single `subnet.bulk-allocated` audit Event
 is written after the transaction commits, not one per network.
+
+### Moving a network to another block
+
+**Move to block…** in the row menu re-parents a network onto a different block.
+The same permission as Edit applies (`subnets:write` moves networks you
+created; `fullwrite` moves any). The network keeps its identity, so its
+reservations, conflicts and history move with it, and an integration-managed
+network stays managed — discovery finds networks by CIDR, not by block.
+
+The dialog lists only blocks whose range contains the network's CIDR. A block
+that already holds an overlapping network is shown greyed out, naming the
+network in the way. The move is re-checked on the server under both blocks'
+locks: containment and IP version are `400`, an overlap is `409`.
 
 ### Archiving a network
 

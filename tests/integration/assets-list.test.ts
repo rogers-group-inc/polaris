@@ -323,3 +323,98 @@ d("GET /api/v1/assets — favorites-first ordering", () => {
     expect(hostnames(page2.body)).toEqual(["alpha-srv", "beta-sw"]);
   });
 });
+
+// ─── tags column ─────────────────────────────────────────────────────────────
+
+d("GET /api/v1/assets — tags column", () => {
+  async function seedTags() {
+    await seedAssets();
+    const tagsByHost: Record<string, string[]> = {
+      "alpha-srv": ["Production", "dc1"],
+      "beta-sw": ["lab"],
+      "gamma-fw": ["edge", "100%_real"],
+    };
+    for (const [hostname, tags] of Object.entries(tagsByHost)) {
+      await prisma.asset.updateMany({ where: { hostname }, data: { tags } });
+    }
+  }
+
+  it("list rows carry their tags", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?limit=100");
+    const alpha = (resp.body.assets as Array<{ hostname: string; tags: string[] }>).find((a) => a.hostname === "alpha-srv");
+    expect(alpha?.tags).toEqual(["Production", "dc1"]);
+  });
+
+  it("contains matches any single tag, case-insensitively", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?tags=PROD&sortBy=hostname&sortDir=asc");
+    expect(resp.status).toBe(200);
+    expect(hostnames(resp.body)).toEqual(["alpha-srv"]);
+    expect(resp.body.total).toBe(1);
+  });
+
+  it("LIKE wildcards in the term are literal", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?tags=" + encodeURIComponent("0%_r"));
+    expect(hostnames(resp.body)).toEqual(["gamma-fw"]);
+    const none = await agent.get("/api/v1/assets?tags=" + encodeURIComponent("%"));
+    expect(hostnames(none.body)).toEqual(["gamma-fw"]);
+  });
+
+  it("not_contains keeps untagged rows and rows whose tags miss the term", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?tags=lab&tagsOp=not_contains&sortBy=hostname&sortDir=asc");
+    expect(hostnames(resp.body)).toEqual(["alpha-srv", "delta-srv", "epsilon-srv", "gamma-fw", "zeta-wks"]);
+  });
+
+  it("empty / is_not_empty", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const empty = await agent.get("/api/v1/assets?tagsOp=empty&sortBy=hostname&sortDir=asc");
+    expect(hostnames(empty.body)).toEqual(["delta-srv", "epsilon-srv", "zeta-wks"]);
+    const set = await agent.get("/api/v1/assets?tagsOp=is_not_empty&sortBy=hostname&sortDir=asc");
+    expect(hostnames(set.body)).toEqual(["alpha-srv", "beta-sw", "gamma-fw"]);
+  });
+
+  it("combines with the other column filters", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const resp = await agent.get("/api/v1/assets?tagsOp=is_not_empty&assetType=server");
+    expect(hostnames(resp.body)).toEqual(["alpha-srv"]);
+  });
+
+  it("sortBy=tags orders by first tag with untagged rows last, and pages", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    // First tags (lowercased): alpha "dc1", beta "lab", gamma "100%_real".
+    const asc = await agent.get("/api/v1/assets?sortBy=tags&sortDir=asc&limit=100");
+    expect(asc.status).toBe(200);
+    expect(hostnames(asc.body).slice(0, 3)).toEqual(["gamma-fw", "alpha-srv", "beta-sw"]);
+    expect(asc.body.total).toBe(6);
+    const desc = await agent.get("/api/v1/assets?sortBy=tags&sortDir=desc&limit=100");
+    expect(hostnames(desc.body).slice(0, 3)).toEqual(["beta-sw", "alpha-srv", "gamma-fw"]);
+    const page2 = await agent.get("/api/v1/assets?sortBy=tags&sortDir=asc&limit=2&offset=2");
+    expect(hostnames(page2.body)[0]).toBe("beta-sw");
+    expect(page2.body.assets).toHaveLength(2);
+    expect(page2.body.total).toBe(6);
+  });
+
+  it("sortBy=tags honours favorites-first and the active filter", async () => {
+    await seedTags();
+    const { agent } = await authedAgent(app);
+    const all = await agent.get("/api/v1/assets?limit=100");
+    const byName = Object.fromEntries(
+      (all.body.assets as Array<{ id: string; hostname: string }>).map((a) => [a.hostname, a.id]),
+    );
+    const resp = await agent.get(
+      "/api/v1/assets?sortBy=tags&sortDir=asc&tagsOp=is_not_empty&limit=100&favoriteIds=" + byName["beta-sw"],
+    );
+    expect(hostnames(resp.body)).toEqual(["beta-sw", "gamma-fw", "alpha-srv"]);
+    expect(resp.body.total).toBe(3);
+  });
+});
