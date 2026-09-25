@@ -139,3 +139,86 @@ describe("slide-over Connectivity tab helpers", () => {
     expect(phases.toLowerCase()).not.toMatch(/#d32f2f|#9e9e9e|grey|gray/);
   });
 });
+
+describe("traceroute path graph (NetPath-style)", () => {
+  const prelude = 'var MONITOR_STATE_COLORS = { up: "#2a9d8f", down: "#d32f2f", warning: "#f4a261" };' +
+    "function escapeHtml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;'); }\n";
+  const names = ["_trHopRtt", "_trPathGraph", "_trEdgeColor", "_trPathSVG", "_trPathTooltipHTML"];
+  const fns: any = new Function(prelude + names.map((n) => sliceFn(assetsSrc, n)).join("\n") + "\nreturn {" + names.join(",") + "};")();
+
+  const hop = (ttl: number, ip: string | null, rtt: number[] = [1, 1, 1], extra: any = {}) => ({ ttl, ip, rdns: null, rttMs: ip ? rtt : [-1, -1, -1], ...extra });
+  // Newest first, as the route returns them.
+  const newest = { destinationIp: "10.0.0.9", complete: true, hops: [hop(1, "10.0.0.1"), hop(2, "10.0.0.2", [2, 2, 2]), hop(3, null), hop(4, "10.0.0.9", [70, 70, 70])] };
+  const older = { destinationIp: "10.0.0.9", complete: true, hops: [hop(1, "10.0.0.1"), hop(2, "10.0.0.3"), hop(3, "10.0.0.9", [3, 3, 3])] };
+  const failed = { destinationIp: "10.0.0.9", complete: false, hops: [hop(1, "10.0.0.1"), hop(2, "10.0.0.2", [5, -1, 5])] };
+
+  it("merges a hop seen at the same TTL on several traces into one node, and a route change into a branch", () => {
+    const g = fns._trPathGraph([newest, older], 0);
+    expect(g.nodes["1:10.0.0.1"].traces).toBe(2);
+    expect(g.nodes["2:10.0.0.2"].onSel).toBe(true);
+    expect(g.nodes["2:10.0.0.3"].onSel).toBe(false);
+    expect(g.nodes["2:10.0.0.2"].row).not.toBe(g.nodes["2:10.0.0.3"].row);
+    expect(g.nodes.src.traces).toBe(2);
+  });
+
+  it("puts the destination in its own last column even when traces reach it at different TTLs", () => {
+    const g = fns._trPathGraph([newest, older], 0);
+    expect(g.nodes["4:10.0.0.9"]).toBeUndefined();
+    expect(g.nodes["3:10.0.0.9"]).toBeUndefined();
+    expect(g.nodes.dst.col).toBe(g.cols - 1);
+    expect(g.nodes.dst.traces).toBe(2);
+  });
+
+  it("colours the selected route by the latency each link adds, skipping unanswered hops", () => {
+    const g = fns._trPathGraph([newest, older], 0);
+    const edge = (a: string, b: string) => g.edges.find((e: any) => e.from === a && e.to === b);
+    expect(fns._trEdgeColor(edge("src", "1:10.0.0.1"))).toBe("var(--color-success)");
+    expect(edge("2:10.0.0.2", "3:*").unanswered).toBe(true);
+    // 70 ms at the destination minus the 2 ms at the last answered hop.
+    expect(edge("3:*", "dst").delta).toBe(68);
+    expect(fns._trEdgeColor(edge("3:*", "dst"))).toBe("var(--color-danger)");
+    expect(fns._trEdgeColor(edge("2:10.0.0.3", "dst"))).toBe("var(--color-text-tertiary)"); // not the selected route
+  });
+
+  it("marks a trace that stopped short as a broken link to the destination", () => {
+    const g = fns._trPathGraph([failed, newest], 0);
+    const broken = g.edges.find((e: any) => e.broken);
+    expect(broken).toMatchObject({ from: "2:10.0.0.2", to: "dst", onSel: true });
+    expect(g.edges.find((e: any) => e.from === "1:10.0.0.1" && e.to === "2:10.0.0.2").lossy).toBe(true);
+    expect(fns._trPathSVG(g, { hostname: "h" }, 400)).toContain('stroke-dasharray="5 4"');
+  });
+
+  it("still draws a destination no trace reached", () => {
+    const g = fns._trPathGraph([failed], 0);
+    expect(g.nodes.dst.hop.ip).toBe("10.0.0.9");
+    expect(g.nodes.dst.traces).toBe(0);
+  });
+
+  it("renders one hit target per node, colours inline, and escapes device names", () => {
+    const named = { ...newest, hops: [hop(1, "10.0.0.1", [1, 1, 1], { hostname: "<core>", assetId: "a1", monitorStatus: "up" }), ...newest.hops.slice(1)] };
+    const g = fns._trPathGraph([named], 0);
+    const svg = fns._trPathSVG(g, { hostname: "web01" }, 300);
+    expect((svg.match(/class="chart-hit"/g) || []).length).toBe(Object.keys(g.nodes).length);
+    expect(svg).toContain("&lt;core&gt;");
+    expect(svg).not.toContain("<core>");
+    expect(svg).toContain('fill="#2a9d8f"');
+    expect(svg).not.toMatch(/class="(?!chart-hit)/); // the camera sees no stylesheet
+    expect(fns._trPathTooltipHTML(g, "1:10.0.0.1", null)).toContain("Click to open the asset");
+    expect(fns._trPathTooltipHTML(g, "3:*", null)).toContain("No router answered");
+  });
+});
+
+describe("traceroute path graph — a stopped trace beside a completed one", () => {
+  const names = ["_trHopRtt", "_trPathGraph"];
+  const fns: any = new Function(names.map((n) => sliceFn(assetsSrc, n)).join("\n") + "\nreturn {" + names.join(",") + "};")();
+  const hop = (ttl: number, ip: string, ms = 1) => ({ ttl, ip, rdns: null, rttMs: [ms, ms, ms] });
+  it("does not put the ✕ on the route that got through", () => {
+    const done = { destinationIp: "10.0.0.9", complete: true, hops: [hop(1, "10.0.0.1"), hop(2, "10.0.0.9")] };
+    const stopped = { destinationIp: "10.0.0.9", complete: false, hops: [hop(1, "10.0.0.1")] };
+    const g = fns._trPathGraph([done, stopped], 0);
+    const toDst = g.edges.filter((e: any) => e.from === "1:10.0.0.1" && e.to === "dst");
+    expect(toDst).toHaveLength(2);
+    expect(toDst.find((e: any) => e.onSel).broken).toBe(false);
+    expect(toDst.find((e: any) => !e.onSel).broken).toBe(true);
+  });
+});

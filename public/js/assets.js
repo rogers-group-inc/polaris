@@ -23649,7 +23649,7 @@ function _connSelectCheck(a, checkId) {
   });
   _loadConnectivityHistoryFor(a.id, check, _getChartRangePref("assetConnectivity", "24h"));
   _renderConnLatestCard(check);
-  _loadConnTraceroutes(a.id, check);
+  _loadConnTraceroutes(a.id, check, a);
   if (!st.tiers) st.tiers = {};
   _loadMetricSeverityTiers(a.id, "connLatencyMs", { checkId: check.id }).then(function (tiers) {
     st.tiers[check.id] = tiers;
@@ -23956,7 +23956,201 @@ function _trHopRtt(rtts) {
   return { avg: sum / v.length, min: Math.min.apply(null, v), max: Math.max.apply(null, v) };
 }
 
-async function _loadConnTraceroutes(assetId, check) {
+/**
+ * Pure: fold the fetched traceroutes (newest first) into one NetPath-style
+ * graph — column 0 is this host, column N the destination, one column per TTL
+ * between. A hop is a node per (ttl, ip); the same address at the same TTL in
+ * several traces is one node, so a route change reads as a branch. Each link
+ * counts the traces that took it; `sel` marks the selected trace's own route,
+ * with the latency each link ADDS (its hop's avg RTT minus the last answered
+ * hop's before it) so the slow segment is the one that lights up.
+ */
+function _trPathGraph(traces, sel) {
+  var nodes = {}, edges = {}, maxTtl = 0;
+  var selT = traces[sel] || traces[0];
+  var destIp = (selT && selT.destinationIp) || null;
+  traces.forEach(function (t) { if (!destIp && t.destinationIp) destIp = t.destinationIp; });
+  function keyOf(t, h, isLast) {
+    if (h.ip && ((isLast && t.complete) || h.ip === destIp)) return "dst";
+    return h.ttl + ":" + (h.ip || "*");
+  }
+  function ensure(key, h) {
+    var n = nodes[key] || (nodes[key] = { key: key, ttl: h ? h.ttl : 0, hop: null, traces: 0, onSel: false });
+    if (h && !n.hop) n.hop = h; // newest trace first, so the first sighting is the latest
+    return n;
+  }
+  function touch(key, ti, h) {
+    var n = ensure(key, h);
+    n.traces++;
+    if (ti === sel) { n.onSel = true; if (h) n.hop = h; }
+    return n;
+  }
+  function link(a, b, ti, extra) {
+    // A trace that stopped short gets its own link to the destination — merged
+    // with a completed trace's, the ✕ would land on a route that got through.
+    var k = a + ">" + b + (extra && extra.broken ? "!" : "");
+    var e = edges[k] || (edges[k] = { from: a, to: b, traces: 0, onSel: false, broken: false, delta: null, lossy: false, unanswered: false });
+    e.traces++;
+    if (extra && extra.broken) e.broken = true;
+    if (ti === sel) { e.onSel = true; if (extra) { e.delta = extra.delta; e.lossy = !!extra.lossy; e.unanswered = !!extra.unanswered; } }
+  }
+  ensure("src", null).onSel = true;
+  traces.forEach(function (t, ti) {
+    var hops = (t.hops || []).slice().sort(function (a, b) { return a.ttl - b.ttl; });
+    var prev = "src", lastAvg = 0;
+    hops.forEach(function (h, i) {
+      var key = keyOf(t, h, i === hops.length - 1);
+      if (key === prev) return; // the destination answering at two TTLs
+      touch(key, ti, h);
+      if (key !== "dst" && h.ttl > maxTtl) maxTtl = h.ttl;
+      var rtt = _trHopRtt(h.rttMs);
+      var lost = (h.rttMs || []).filter(function (x) { return !(typeof x === "number" && x >= 0); }).length;
+      link(prev, key, ti, { delta: rtt ? Math.max(0, rtt.avg - lastAvg) : null, lossy: rtt && lost > 0, unanswered: !rtt });
+      if (rtt) lastAvg = rtt.avg;
+      prev = key;
+    });
+    if (prev !== "dst") {
+      ensure("dst", null); // drawn even when no trace reached it
+      link(prev, "dst", ti, { broken: true });
+    }
+  });
+  nodes.src.traces = traces.length;
+  if (nodes.dst && !nodes.dst.hop) nodes.dst.hop = { ttl: 0, ip: destIp, rdns: null, rttMs: [] };
+  // Columns: TTL for a hop, one past the deepest hop for the destination.
+  var cols = [];
+  Object.keys(nodes).forEach(function (k) {
+    var n = nodes[k];
+    n.col = k === "src" ? 0 : k === "dst" ? maxTtl + 1 : n.ttl;
+    (cols[n.col] || (cols[n.col] = [])).push(n);
+  });
+  // Rows: most-travelled first, then by address — stable across selections, so
+  // picking another trace moves the highlight, never the nodes.
+  cols.forEach(function (list) {
+    if (!list) return;
+    list.sort(function (a, b) { return b.traces - a.traces || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); });
+    list.forEach(function (n, i) { n.row = i; });
+  });
+  return { nodes: nodes, edges: Object.keys(edges).map(function (k) { return edges[k]; }), cols: maxTtl + 2, traces: traces.length, destIp: destIp };
+}
+
+/** Pure: a link's colour by the latency it adds — the NetPath reading. */
+function _trEdgeColor(e) {
+  if (e.broken) return "var(--color-danger)";
+  if (!e.onSel || e.delta == null) return "var(--color-text-tertiary)";
+  if (e.delta >= 50) return "var(--color-danger)";
+  if (e.delta >= 10 || e.lossy) return "var(--color-warning)";
+  return "var(--color-success)";
+}
+
+/** Pure: the path graph as SVG. `source` is this host ({hostname, ipAddress}). */
+function _trPathSVG(g, source, minWidth) {
+  // Columns shrink to fit the panel before the graph scrolls: source and
+  // destination on one screen is the point of the view.
+  var MINCOL = 76, MAXCOL = 130, ROWH = 74, PADX = 12, PADT = 22, R = 13;
+  var rows = 1;
+  Object.keys(g.nodes).forEach(function (k) { rows = Math.max(rows, g.nodes[k].row + 1); });
+  var colW = Math.max(MINCOL, Math.min(MAXCOL, ((minWidth || 0) - PADX * 2) / g.cols));
+  var W = Math.max(minWidth || 0, PADX * 2 + g.cols * colW);
+  var offX = (W - g.cols * colW) / 2;
+  var H = PADT + rows * ROWH + 4;
+  function pos(n) { return { x: offX + n.col * colW + colW / 2, y: PADT + R + n.row * ROWH }; }
+  function clip(s, px) { var max = Math.max(4, Math.floor(px / 6.2)); s = String(s || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; }
+  var edgeSvg = "", nodeSvg = "", hitSvg = "";
+  // Unselected routes first so the selected one paints on top.
+  g.edges.slice().sort(function (a, b) { return (a.onSel ? 1 : 0) - (b.onSel ? 1 : 0); }).forEach(function (e) {
+    var a = pos(g.nodes[e.from]), b = pos(g.nodes[e.to]);
+    var x1 = a.x + R, x2 = b.x - R, mx = (x1 + x2) / 2;
+    var w = (1.25 + 3 * (e.traces / Math.max(1, g.traces))).toFixed(2);
+    var dash = e.broken || e.unanswered ? ' stroke-dasharray="5 4"' : "";
+    edgeSvg += '<path d="M' + x1.toFixed(1) + "," + a.y + " C" + mx.toFixed(1) + "," + a.y + " " + mx.toFixed(1) + "," + b.y + " " + x2.toFixed(1) + "," + b.y +
+      '" fill="none" stroke="' + _trEdgeColor(e) + '" stroke-width="' + (e.onSel ? Math.max(2.5, +w) : w) + '"' + dash +
+      ' stroke-linecap="round" opacity="' + (e.onSel ? 1 : 0.35) + '"/>';
+    if (e.broken && e.onSel) {
+      var cx = (x1 + x2) / 2, cy = (a.y + b.y) / 2;
+      edgeSvg += '<g stroke="var(--color-danger)" stroke-width="2.5" stroke-linecap="round">' +
+        '<line x1="' + (cx - 5) + '" y1="' + (cy - 5) + '" x2="' + (cx + 5) + '" y2="' + (cy + 5) + '"/>' +
+        '<line x1="' + (cx - 5) + '" y1="' + (cy + 5) + '" x2="' + (cx + 5) + '" y2="' + (cy - 5) + '"/></g>';
+    }
+  });
+  Object.keys(g.nodes).forEach(function (k) {
+    var n = g.nodes[k], p = pos(n), h = n.hop || {};
+    var rtt = h.rttMs ? _trHopRtt(h.rttMs) : null;
+    var fill, stroke = "var(--color-text-secondary)", text = "var(--color-text-primary)", dash = "", glyph, name, sub;
+    if (k === "src") {
+      fill = "var(--color-accent)"; stroke = fill; text = "#fff"; glyph = "⌂";
+      name = (source && source.hostname) || "This host"; sub = "source";
+    } else if (k === "dst") {
+      fill = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus] ? MONITOR_STATE_COLORS[h.monitorStatus] : "var(--color-bg-primary)";
+      glyph = "◎"; if (fill.charAt(0) === "#") { stroke = fill; text = "#fff"; }
+      name = h.hostname || h.rdns || g.destIp || "Destination"; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "destination";
+    } else if (!h.ip) {
+      fill = "none"; stroke = "var(--color-text-tertiary)"; dash = ' stroke-dasharray="3 3"'; text = "var(--color-text-tertiary)";
+      glyph = "*"; name = "no reply"; sub = "TTL " + n.ttl;
+    } else {
+      var sc = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus];
+      fill = sc || "var(--color-bg-primary)"; if (sc) { stroke = sc; text = "#fff"; }
+      glyph = String(n.ttl); name = h.hostname || h.rdns || h.ip; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "—";
+    }
+    var op = n.onSel || k === "src" ? 1 : 0.45;
+    nodeSvg += '<g opacity="' + op + '">' +
+      '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + R + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + (k === "dst" ? 3 : 1.5) + '"' + dash + "/>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + text + '">' + escapeHtml(glyph) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 14) + '" text-anchor="middle" font-size="11" fill="var(--color-text-primary)">' + escapeHtml(clip(name, colW - 8)) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 27) + '" text-anchor="middle" font-size="10" fill="var(--color-text-secondary)">' + escapeHtml(clip(sub, colW - 8)) + "</text>" +
+      "</g>";
+    hitSvg += '<circle class="chart-hit" data-k="' + escapeHtml(k) + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + (R + 5) + '" fill="transparent"' +
+      (h.assetId ? ' style="cursor:pointer"' : "") + "/>";
+  });
+  return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" style="display:block;font-family:inherit">' + edgeSvg + nodeSvg + hitSvg + "</svg>";
+}
+
+function _trPathTooltipHTML(g, key, source) {
+  var n = g.nodes[key];
+  if (!n) return "";
+  var h = n.hop || {};
+  var rows = [];
+  var name = key === "src" ? ((source && source.hostname) || "This host") : (h.hostname || h.rdns || h.ip || "No reply");
+  rows.push("<strong>" + escapeHtml(name) + "</strong>" + (key === "src" ? " · source" : key === "dst" ? " · destination" : " · TTL " + n.ttl));
+  if (key === "src" && source && source.ipAddress) rows.push(escapeHtml(source.ipAddress));
+  if (key !== "src") {
+    if (h.ip && h.ip !== name) rows.push(escapeHtml(h.ip));
+    if (h.rdns && h.rdns !== name) rows.push(escapeHtml(h.rdns));
+    var rtt = _trHopRtt(h.rttMs);
+    if (rtt) rows.push("RTT " + (Math.round(rtt.avg * 10) / 10) + " ms avg · " + (Math.round(rtt.min * 10) / 10) + "–" + (Math.round(rtt.max * 10) / 10) + " ms");
+    var probes = (h.rttMs || []).length, lost = (h.rttMs || []).filter(function (x) { return !(typeof x === "number" && x >= 0); }).length;
+    if (probes && lost) rows.push(lost + " of " + probes + " probes unanswered");
+    if (!h.ip && key !== "dst") rows.push("No router answered at this hop — common where ICMP time-exceeded is filtered");
+    if (h.interfaceName) rows.push("Interface " + escapeHtml(h.interfaceName));
+    if (h.subnetCidr) rows.push("Subnet " + escapeHtml(h.subnetCidr));
+    if (h.assetId) rows.push('<span style="color:var(--color-text-secondary)">Click to open the asset</span>');
+  }
+  if (key !== "src" && g.traces > 1) rows.push('<span style="color:var(--color-text-secondary)">On ' + n.traces + " of " + g.traces + " traces" + (n.onSel ? "" : " · not on the selected one") + "</span>");
+  return rows.join("<br>");
+}
+
+var _TR_PATH_LEGEND_HTML =
+  '<div class="hint" style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin-top:0.35rem">' +
+    '<span>Latency added by each link:</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-success)"></span> under 10 ms</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-warning)"></span> 10–50 ms or probe loss</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-danger)"></span> over 50 ms · ✕ destination not reached</span>' +
+    '<span>Faded branches are routes other recent traces took; thicker links were taken more often.</span>' +
+  "</div>";
+
+function _renderTrPathGraph(box, list, sel, source) {
+  var g = _trPathGraph(list, sel);
+  box.innerHTML = '<div style="overflow-x:auto">' +
+    _trPathSVG(g, source, Math.max(0, (box.clientWidth || 0) - 16)) + "</div>" + CHART_TOOLTIP_HTML;
+  _wireChartTooltip(box, function (t) { return _trPathTooltipHTML(g, t.getAttribute("data-k"), source); });
+  box.querySelector("svg").addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains("chart-hit")) return;
+    var n = g.nodes[t.getAttribute("data-k")];
+    if (n && n.hop && n.hop.assetId) openViewModal(n.hop.assetId);
+  });
+}
+
+async function _loadConnTraceroutes(assetId, check, source) {
   var mount = document.getElementById("conn-traceroute");
   if (!mount) return;
   if (!check.traceroute || check.traceroute.enabled === false) {
@@ -23981,7 +24175,9 @@ async function _loadConnTraceroutes(assetId, check) {
         '<div class="chart-label" style="margin:0">Path</div>' +
         '<select id="conn-tr-select" style="width:auto">' + options + "</select>" +
         '<span id="conn-tr-diff" class="hint"></span></div>' +
-      '<div class="table-wrapper" style="margin-top:0.5rem"><table id="conn-tr-table"><thead><tr>' +
+      '<div class="chart-box" id="conn-tr-graph" style="margin-top:0.5rem;position:relative"></div>' +
+      _TR_PATH_LEGEND_HTML +
+      '<div class="table-wrapper" style="margin-top:0.75rem"><table id="conn-tr-table"><thead><tr>' +
         '<th style="width:50px">TTL</th><th style="width:140px">IP</th><th>Reverse DNS</th><th style="width:150px">RTT avg / min / max</th><th>Asset</th><th style="width:140px">Subnet</th>' +
       '</tr></thead><tbody id="conn-tr-body"></tbody></table></div>' +
       '<p class="hint" id="conn-tr-foot" style="margin-top:0.35rem"></p>';
@@ -23991,6 +24187,11 @@ async function _loadConnTraceroutes(assetId, check) {
       var i = Number(sel.value) || 0;
       var cur = list[i], prev = list[i + 1];
       var changed = _trDiffHops(cur, prev);
+      var graphBox = document.getElementById("conn-tr-graph");
+      if (graphBox) {
+        _renderTrPathGraph(graphBox, list, i, source);
+        _observeChartResize(graphBox, function (el) { _renderTrPathGraph(el, list, Number(sel.value) || 0, source); });
+      }
       var diffEl = document.getElementById("conn-tr-diff");
       if (diffEl) diffEl.textContent = !prev ? "" : changed.size ? "Path changed vs the previous trace — " + changed.size + " hop" + (changed.size === 1 ? "" : "s") + " differ" : "Same path as the previous trace";
       var prevIp = {};
