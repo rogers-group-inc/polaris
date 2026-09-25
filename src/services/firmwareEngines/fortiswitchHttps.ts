@@ -72,7 +72,23 @@ function loggedOut(res: { status: number; location: string | null; body: string 
   return false;
 }
 
-/** Sign in. Throws a FirmwareEngineError with the reason on refusal. */
+/** "HTTP 302 → /login" — what the device actually answered, for an error a human reads. */
+function answered(res: { status: number; location: string | null }): string {
+  return `HTTP ${res.status}` + (res.location ? ` → ${res.location}` : "");
+}
+
+/**
+ * Sign in. Throws a FirmwareEngineError with the reason on refusal.
+ *
+ * The WHERE of the login's redirect is not evidence either way — FortiSwitchOS
+ * 7.6.6 answers a GOOD password with `302 Location: /login` (plus the
+ * `APSCOOKIE_<n>` / `ssession` session cookies), and reading that as a refusal
+ * turned every sign-in on those switches into "rejected the username or
+ * password". fortiupgrade never looked at the target: a cookie must be set,
+ * and a page that needs a session must then load. Same here, and a refusal
+ * names what the switch answered so the next firmware's quirk is readable
+ * from the run log instead of a curl session.
+ */
 export async function switchLogin(c: DeviceHttpClient, ctx: FirmwareEngineContext, timeoutMs = ctx.timeouts.commandMs): Promise<void> {
   c.clearSession();
   const res = await c.postForm("/login", [
@@ -80,16 +96,20 @@ export async function switchLogin(c: DeviceHttpClient, ctx: FirmwareEngineContex
     { name: "password", value: ctx.credential.password },
     { name: "next_link", value: "" },
   ], timeoutMs);
-  // The login answers 302 to "/" with the session cookie on success and 302
-  // back to /login (or 200 with the form again) on a bad password.
-  if (res.status === 401 || res.status === 403) {
-    throw new FirmwareEngineError(res.status === 403 ? "the switch refused the login (locked out?)" : "the switch rejected the username or password", "preflight");
+  if (res.status === 403) throw new FirmwareEngineError(`the switch refused the login — locked out? (${answered(res)})`, "preflight");
+  if (res.status === 401) throw new FirmwareEngineError(`the switch rejected the username or password (${answered(res)})`, "preflight");
+  if (c.cookieCount() === 0) {
+    throw new FirmwareEngineError(`the switch rejected the username or password — the login set no session cookie (${answered(res)})`, "preflight");
   }
-  if (loggedOut(res) || (res.status >= 300 && res.status < 400 && /\/login/i.test(res.location ?? ""))) {
-    throw new FirmwareEngineError("the switch rejected the username or password", "preflight");
-  }
+  // A rejected login can still hand out a cookie, so only a page that needs a
+  // session proves the login worked.
   const confirm = await c.get("/", timeoutMs);
-  if (loggedOut(confirm)) throw new FirmwareEngineError("the switch did not keep the session after login", "preflight");
+  if (loggedOut(confirm)) {
+    throw new FirmwareEngineError(
+      `the switch rejected the username or password — the login answered ${answered(res)} and a page that needs a session answered ${answered(confirm)}`,
+      "preflight",
+    );
+  }
 }
 
 /** GET the firmware status; null progress when the switch is not flashing. */

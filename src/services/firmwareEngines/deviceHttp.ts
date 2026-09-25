@@ -95,6 +95,11 @@ export class DeviceHttpClient {
     this.extraHeaders.clear();
   }
 
+  /** How many cookies the device has handed us since the last clearSession(). */
+  cookieCount(): number {
+    return this.cookies.size;
+  }
+
   hasCookie(name: string): boolean {
     return this.cookies.has(name);
   }
