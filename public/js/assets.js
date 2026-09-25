@@ -6613,8 +6613,13 @@ function _fwRunResultHTML(run) {
 
 function _fwStageRow(label, pct, state) {
   var cls = "fw-stage" + (state ? " " + state : "");
+  // A step with no percentage (reboot, verify, the monitoring wait) slides
+  // while it runs and reads FULL once done — an empty track under a finished
+  // step looked like one that never ran.
   var bar = pct === null
-    ? '<span class="fw-progress' + (state === "is-active" ? " is-indeterminate" : "") + '"><span class="fw-progress-fill"></span></span>'
+    ? (state === "is-done"
+        ? '<span class="fw-progress"><span class="fw-progress-fill" style="width:100%"></span></span>'
+        : '<span class="fw-progress' + (state === "is-active" ? " is-indeterminate" : "") + '"><span class="fw-progress-fill"></span></span>')
     : '<span class="fw-progress"><span class="fw-progress-fill" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></span>';
   return '<div class="' + cls + '"><span class="fw-stage-label">' + escapeHtml(label) + '</span>' + bar +
     '<span class="fw-stage-pct">' + (pct === null ? '' : Math.round(pct) + '%') + '</span></div>';
