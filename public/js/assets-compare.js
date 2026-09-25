@@ -400,6 +400,7 @@ async function openComparePanel(opts) {
       '<div id="cmp-charts"></div>' +
     '</div>';
 
+  raiseSlideover(document.getElementById("compare-panel-overlay"));   // DOM order is stacking order
   revealOverlay(document.getElementById("compare-panel-overlay"));
 
   body.querySelectorAll(".cmp-range-btn").forEach(function (b) {

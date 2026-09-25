@@ -288,8 +288,13 @@ function _polarisReadPollingDropdown(id) {
 }
 
 // Standard MIBs selectable without uploading anything. Kept in lockstep with
-// the _SNMP_STANDARD_MIBS array in assets.js (SNMP Walk tab).
-var _SNMP_STANDARD_MIBS = [
+// the _SNMP_STANDARD_MIBS array in assets.js (SNMP Walk tab). Named apart from
+// it because both files share the page's global scope, and assets.js can now
+// be loaded onto the Integrations page on demand (PolarisPanels, app.js) —
+// under the same name the later file silently replaced this list, vendor
+// entries and all. Same reason for openIntegrationCreateModal /
+// openIntegrationEditModal / confirmDeleteIntegration below.
+var _INTEGRATION_SNMP_MIBS = [
   { id: "std:system",         label: "System (RFC 1213)",              oid: "1.3.6.1.2.1.1"         },
   { id: "std:interfaces",     label: "Interfaces — ifTable (RFC 2863)", oid: "1.3.6.1.2.1.2"         },
   { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (RFC 2863)", oid: "1.3.6.1.2.1.31"        },
@@ -334,7 +339,7 @@ function _mibOptionsHTML(selectedId, autoName) {
   var autoLabel = "Automatic" + (autoName ? " (" + autoName + ")" : " (let Polaris choose)");
   var html = '<option value=""' + (sel === "" ? " selected" : "") + ">" + escapeHtml(autoLabel) + "</option>";
   html += '<optgroup label="Standard MIBs">';
-  _SNMP_STANDARD_MIBS.forEach(function (m) {
+  _INTEGRATION_SNMP_MIBS.forEach(function (m) {
     html += '<option value="' + escapeHtml(m.id) + '"' + (sel === m.id ? " selected" : "") + '>' + escapeHtml(m.label) + '</option>';
   });
   html += '</optgroup>';
@@ -844,8 +849,8 @@ async function loadIntegrations() {
             (intg.type === "activedirectory" ? '<button class="btn btn-sm btn-secondary" onclick="openAdApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             (intg.type === "vcenter" ? '<button class="btn btn-sm btn-secondary" onclick="openVcenterApiQueryModal(\'' + intg.id + '\')">Query API</button>' : '') +
             '<button class="btn btn-sm btn-secondary" onclick="testConnection(\'' + intg.id + '\', this)">Test Connection</button>' +
-            '<button class="btn btn-sm btn-secondary" onclick="openEditModal(\'' + intg.id + '\')">Edit</button>' +
-            '<button class="btn btn-sm btn-danger" onclick="confirmDelete(\'' + intg.id + '\', \'' + escapeHtml(intg.name) + '\')">Delete</button>' +
+            '<button class="btn btn-sm btn-secondary" onclick="openIntegrationEditModal(\'' + intg.id + '\')">Edit</button>' +
+            '<button class="btn btn-sm btn-danger" onclick="confirmDeleteIntegration(\'' + intg.id + '\', \'' + escapeHtml(intg.name) + '\')">Delete</button>' +
           '</div>' +
         '</div>' +
         '<div class="integration-card-details">' +
@@ -5355,13 +5360,13 @@ function showTypePicker() {
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>';
   openModal("Add Integration", body, footer, { wide: true });
-  document.getElementById("pick-fmg").addEventListener("click", function () { closeModal(); openCreateModal("fortimanager"); });
-  document.getElementById("pick-fgt").addEventListener("click", function () { closeModal(); openCreateModal("fortigate"); });
-  document.getElementById("pick-win").addEventListener("click", function () { closeModal(); openCreateModal("windowsserver"); });
-  document.getElementById("pick-entra").addEventListener("click", function () { closeModal(); openCreateModal("entraid"); });
-  document.getElementById("pick-ad").addEventListener("click", function () { closeModal(); openCreateModal("activedirectory"); });
-  document.getElementById("pick-vc").addEventListener("click", function () { closeModal(); openCreateModal("vcenter"); });
-  document.getElementById("pick-arc").addEventListener("click", function () { closeModal(); openCreateModal("azurearc"); });
+  document.getElementById("pick-fmg").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("fortimanager"); });
+  document.getElementById("pick-fgt").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("fortigate"); });
+  document.getElementById("pick-win").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("windowsserver"); });
+  document.getElementById("pick-entra").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("entraid"); });
+  document.getElementById("pick-ad").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("activedirectory"); });
+  document.getElementById("pick-vc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("vcenter"); });
+  document.getElementById("pick-arc").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("azurearc"); });
 }
 
 function _formHTMLForType(type, defaults) {
@@ -5645,7 +5650,7 @@ function _wireIntegrationModal(type, id) {
 }
 
 
-async function openCreateModal(type) {
+async function openIntegrationCreateModal(type) {
   type = type || "fortimanager";
   var isFmg = type === "fortimanager";
   var isFgt = type === "fortigate";
@@ -5858,7 +5863,7 @@ async function _createIntegration(type, tested) {
 
 // Edit-modal orchestrator (split 2026-08): per-type form spec, tab assembly,
 // then the test-connection and save phases — bodies extracted verbatim.
-async function openEditModal(id) {
+async function openIntegrationEditModal(id) {
   try {
     var intg = await api.integrations.get(id);
     var config = intg.config || {};
@@ -6131,7 +6136,7 @@ function _intgEditFormSpec(intg, config) {
     // `defaults` rides along because _integrationTabs re-renders the FMG /
     // FortiGate General + Filters tabs from it and forwards the blob into the
     // Monitoring tab as `fmgDefaults`. It was function-local when this spec was
-    // split out of openEditModal, which left those call sites referencing a
+    // split out of openIntegrationEditModal, which left those call sites referencing a
     // free variable — a ReferenceError on every FMG / FortiGate edit.
     return { body: body, formGetter: formGetter, defaults: defaults };
 }
@@ -6512,7 +6517,7 @@ async function abortIntegrationDiscovery(id, name) {
   try { await api.integrations.abortDiscover(id); } catch (_) {}
 }
 
-async function confirmDelete(id, name) {
+async function confirmDeleteIntegration(id, name) {
   var ok = await showConfirm('Delete integration "' + name + '"? This cannot be undone.');
   if (!ok) return;
   try {

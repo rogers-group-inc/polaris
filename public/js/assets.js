@@ -1965,11 +1965,13 @@ async function openLeasePanel(asset) {
   footerEl.innerHTML =
     openInNetworks +
     ' <button class="btn btn-sm btn-secondary" id="btn-lease-close">Close</button>';
+  raiseSlideover(document.getElementById("lease-panel-overlay"));   // DOM order is stacking order
   revealOverlay(document.getElementById("lease-panel-overlay"));
   document.getElementById("btn-lease-close").addEventListener("click", closeLeasePanel);
+  // The network slide-over, in place and scrolled to this address
+  // (PolarisPanels loads ip-panel.js here on demand).
   document.getElementById("btn-lease-open-networks").addEventListener("click", function () {
-    var hash = '#ip=' + encodeURIComponent(ctx.subnetId) + '@' + encodeURIComponent(asset.ipAddress);
-    window.location.href = '/subnets.html' + hash;
+    PolarisPanels.openNetwork(ctx.subnetId, { focusIp: asset.ipAddress, subnetCidr: ctx.subnetCidr || undefined });
   });
 
   if (!ctx.reservation || !ctx.reservation.id) {
@@ -5155,22 +5157,18 @@ function _ensureAssetPanelDOM() {
   // keeps Escape from closing the whole asset panel out from under an open
   // nested panel. Not a hard focus trap: the asset panel is a resizable side
   // panel meant to coexist with the page, so role="dialog" without aria-modal.
-  document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
-    if (!overlay.classList.contains("open")) return;
-    if (document.querySelector(".slideover-overlay.slideover-nested.open")) return;
-    if (document.getElementById("modal-overlay") && document.getElementById("modal-overlay").classList.contains("open")) return;
-    closeAssetPanel();
-  });
+  // wireSlideoverEscape (app.js) gates on isTopmostSlideover, which covers
+  // both the nested drilldowns and a network or block slide-over opened from
+  // inside this panel: every slide-over stacks by DOM order (raiseSlideover),
+  // so whichever was opened last owns the key.
+  wireSlideoverEscape(overlay, closeAssetPanel);
 
   // Alt+Left / Alt+Right walk the panel history, mirroring the browser chord.
   // Gated exactly like Escape above: only while the asset panel is the topmost
   // layer, so an open drilldown or a stacked modal keeps the keys for itself.
   document.addEventListener("keydown", function (e) {
     if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-    if (!overlay.classList.contains("open")) return;
-    if (document.querySelector(".slideover-overlay.slideover-nested.open")) return;
-    if (document.getElementById("modal-overlay") && document.getElementById("modal-overlay").classList.contains("open")) return;
+    if (!isTopmostSlideover(overlay)) return;
     e.preventDefault();
     _assetPanelGo(e.key === "ArrowLeft" ? -1 : 1);
   });
@@ -5255,6 +5253,9 @@ async function openViewModal(id, opts) {
   // Cleared alongside the footer so a walk to another asset can't leave the
   // previous device's Open HTTPS / Open SSH buttons on screen while it loads.
   if (actionsEl) actionsEl.innerHTML = "";
+  // A closed panel re-opened from inside another slide-over (an IP row in the
+  // network panel) has to paint over it — DOM order is stacking order.
+  raiseSlideover(document.getElementById("asset-panel-overlay"));
   requestAnimationFrame(function () {
     var ov = document.getElementById("asset-panel-overlay");
     ov.classList.add("open");
@@ -8477,16 +8478,17 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       return;
     }
 
-    // Interface name click — opens the per-interface history panel. The
-    // already-loaded row rides along so the slide-over can surface
-    // current-state fields (VLAN config in particular) that the
-    // interface-history endpoint doesn't carry.
+    // Interface name click — opens the per-interface history panel, or, when
+    // the interface's address sits in a Polaris network, offers that network
+    // too (_openInterfaceOrNetwork). The already-loaded row rides along so the
+    // slide-over can surface current-state fields (VLAN config in particular)
+    // that the interface-history endpoint doesn't carry.
     var ifLink = t.closest(".asset-iface-link");
     if (ifLink) {
       e.preventDefault();
       var ifn = ifLink.getAttribute("data-ifname");
       var row = rows.find(function (r) { return r.ifName === ifn; }) || null;
-      openInterfaceDetailPanel(asset, ifn, row);
+      _openInterfaceOrNetwork(asset, ifn, row, ifLink);
       return;
     }
 
@@ -8506,6 +8508,58 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
       var id = lldpLink.getAttribute("data-asset-id");
       if (id) openViewModal(id);
     }
+  });
+}
+
+// The address an interface row carries, in the form GET /assets/ip-context
+// takes: the first address when a row lists several, without a prefix length
+// or a mask ("10.4.12.1/24", "10.4.12.1 255.255.255.0"), and null for the
+// unconfigured placeholders a device reports (0.0.0.0, ::). Display parsing
+// only — the containment maths stays server-side.
+function _ifaceIpForLookup(raw) {
+  if (raw == null) return null;
+  var first = String(raw).trim().split(/[\s,;]+/)[0] || "";
+  first = first.split("/")[0];
+  if (!first) return null;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(first)) return first === "0.0.0.0" ? null : first;
+  if (first.indexOf(":") !== -1 && /^[0-9a-f:.]+$/i.test(first)) return first === "::" ? null : first;
+  return null;
+}
+
+// An interface name is a link to its history panel — and, when the address it
+// carries sits inside a Polaris network, a fork: the operator may want the
+// interface OR the network that address lives in (the network slide-over,
+// scrolled to that row). The fork is offered only when the network exists,
+// resolved on click through GET /assets/ip-context — one small request, only
+// for an interface that has an address, only for a viewer who can read
+// networks — so a table of 48 ports costs nothing to render, and an address in
+// no network opens the interface straight away, as before. The row menu
+// anchors on the name the operator clicked (showRowMenu, app.js); a lookup
+// that fails, or lands after the table re-rendered under it, opens the
+// interface rather than nothing.
+function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
+  var ip = _ifaceIpForLookup(row && row.ipAddress);
+  var canReadNetworks = typeof permAtLeast === "function" && permAtLeast("subnets", "read");
+  var canLookup = typeof api !== "undefined" && api.assets && typeof api.assets.ipContext === "function";
+  if (!ip || !canReadNetworks || !canLookup) {
+    openInterfaceDetailPanel(asset, ifName, row);
+    return;
+  }
+  api.assets.ipContext(ip).then(function (ctx) {
+    var subnet = ctx && ctx.subnet;
+    if (!subnet || !subnet.id || !anchor || !document.body.contains(anchor)) {
+      openInterfaceDetailPanel(asset, ifName, row);
+      return;
+    }
+    var where = subnet.cidr + (subnet.name ? " · " + subnet.name : "");
+    showRowMenu(anchor, [
+      { label: "Open interface", onSelect: function () { openInterfaceDetailPanel(asset, ifName, row); } },
+      { label: "Open network", title: ip + " is in " + where, onSelect: function () {
+        PolarisPanels.openNetwork(subnet.id, { focusIp: ip, subnetCidr: subnet.cidr });
+      } },
+    ], { label: ifName });
+  }, function () {
+    openInterfaceDetailPanel(asset, ifName, row);
   });
 }
 
@@ -9818,7 +9872,7 @@ function _ensureSensorPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "sensor-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="sensor-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -9837,6 +9891,7 @@ function _ensureSensorPanelDOM() {
     if (e.target === overlay) closeSensorPanel();
   });
   document.getElementById("sensor-panel-close").addEventListener("click", closeSensorPanel);
+  wireSlideoverEscape(overlay, closeSensorPanel);
   initSlideoverResize(document.getElementById("sensor-panel"), "polaris.panel.width.sensor");
 }
 
@@ -9858,6 +9913,7 @@ async function openSensorDetailPanel(asset, sensorName) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-sensor-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("sensor-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("sensor-panel-overlay").classList.add("open");
   });
@@ -13457,8 +13513,9 @@ function _ensureIfacePanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "iface-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  // Sit above the asset panel (z-index 999/1000) so the inner panel is on top.
-  overlay.style.zIndex = "1099";
+  // No z-index of its own: every slide-over stacks by DOM order, and
+  // raiseSlideover (app.js) moves this one to the top when it opens. A
+  // pinned 1099 put it over a network or block panel opened after it.
   overlay.innerHTML =
     '<div class="slideover" id="iface-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -13477,6 +13534,7 @@ function _ensureIfacePanelDOM() {
     if (e.target === overlay) closeIfacePanel();
   });
   document.getElementById("iface-panel-close").addEventListener("click", closeIfacePanel);
+  wireSlideoverEscape(overlay, closeIfacePanel);
   initSlideoverResize(document.getElementById("iface-panel"), "polaris.panel.width.iface");
 }
 
@@ -13525,6 +13583,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow) {
     '<button class="btn btn-sm btn-secondary" id="btn-iface-panel-screenshot">Screenshot</button>' +
     '<span style="flex:1"></span>' +
     '<button class="btn btn-sm btn-secondary" id="btn-iface-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("iface-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("iface-panel-overlay").classList.add("open");
   });
@@ -14330,7 +14389,7 @@ function _ensureIpsecPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "ipsec-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="ipsec-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -14349,6 +14408,7 @@ function _ensureIpsecPanelDOM() {
     if (e.target === overlay) closeIpsecPanel();
   });
   document.getElementById("ipsec-panel-close").addEventListener("click", closeIpsecPanel);
+  wireSlideoverEscape(overlay, closeIpsecPanel);
   initSlideoverResize(document.getElementById("ipsec-panel"), "polaris.panel.width.ipsec");
 }
 
@@ -14370,6 +14430,7 @@ async function openIpsecTunnelDetailPanel(asset, tunnelName) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-ipsec-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("ipsec-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("ipsec-panel-overlay").classList.add("open");
   });
@@ -15411,7 +15472,7 @@ function _ensureStoragePanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "storage-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="storage-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -15430,6 +15491,7 @@ function _ensureStoragePanelDOM() {
     if (e.target === overlay) closeStoragePanel();
   });
   document.getElementById("storage-panel-close").addEventListener("click", closeStoragePanel);
+  wireSlideoverEscape(overlay, closeStoragePanel);
   initSlideoverResize(document.getElementById("storage-panel"), "polaris.panel.width.storage");
 }
 
@@ -15464,6 +15526,7 @@ async function openStorageDetailPanel(asset, focusMountPath, storage) {
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>';
   footerEl.innerHTML =
     '<button class="btn btn-sm btn-secondary" id="btn-storage-panel-close-btn">Close</button>';
+  raiseSlideover(document.getElementById("storage-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("storage-panel-overlay").classList.add("open");
   });
@@ -20192,6 +20255,7 @@ function openServiceDetailPanel(asset, svc) {
   titleEl.textContent = "Service — " + svc.unit;
   metaEl.textContent = asset.hostname || asset.ipAddress || asset.id;
   _setProcPanelFooter(footerEl);
+  raiseSlideover(document.getElementById("proc-panel-overlay"));
   revealOverlay(document.getElementById("proc-panel-overlay"));
 
   function metaRow(label, value) {
@@ -20294,7 +20358,7 @@ function _ensureProcPanelDOM() {
   var overlay = document.createElement("div");
   overlay.id = "proc-panel-overlay";
   overlay.className = "slideover-overlay slideover-nested";
-  overlay.style.zIndex = "1099";
+  // Stacks by DOM order like every slide-over — raiseSlideover on open.
   overlay.innerHTML =
     '<div class="slideover" id="proc-panel" style="z-index:1100">' +
       '<div class="slideover-resize-handle"></div>' +
@@ -20311,6 +20375,7 @@ function _ensureProcPanelDOM() {
   document.body.appendChild(overlay);
   overlay.addEventListener("click", function (e) { if (e.target === overlay) _closeProcPanel(); });
   document.getElementById("proc-panel-close").addEventListener("click", _closeProcPanel);
+  wireSlideoverEscape(overlay, _closeProcPanel);
   if (typeof initSlideoverResize === "function") {
     initSlideoverResize(document.getElementById("proc-panel"), "polaris.panel.width.process");
   }
@@ -20494,6 +20559,7 @@ async function openProcessDetailPanel(asset, name, cfg, procRow, isPinned) {
   titleEl.textContent = "Process — " + name;
   metaEl.textContent = asset.hostname || asset.ipAddress || asset.id;
   _setProcPanelFooter(footerEl);
+  raiseSlideover(document.getElementById("proc-panel-overlay"));
   requestAnimationFrame(function () {
     document.getElementById("proc-panel-overlay").classList.add("open");
   });
