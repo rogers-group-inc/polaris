@@ -44,7 +44,7 @@ AssetInterface                  -- CURRENT-STATE interface inventory: one row pe
   @@unique([assetId, ifName])
   @@index([assetId])
 
-AssetInterfaceOverride          -- Operator-typed "Interface Comments" override per (assetId, ifName). Polaris-local by default; when the originating integration's `syncDescriptions` toggle is on (business rule 14), the override is description-synced to the device — FortiGate `system/interface` description, or FortiSwitch port description via the parent controller — Polaris-primary (the override always wins; device-side edits are overwritten on the next cycle). Takes priority over the discovered AssetInterfaceSample.description for display. One row per (assetId, ifName); a null/empty `description` clears the override and the discovered comment shows through again (the device-side description is NOT deleted on clear). Edited from the interface slide-over on the asset details System tab; requires Assets Admin (or admin) to write.
+AssetInterfaceOverride          -- Operator-typed "Interface Comments" override per (assetId, ifName). Polaris-local by default; when the originating integration's description-sync toggle for that device class is on (`syncFortigateDescriptions` / `syncSwitchDescriptions` / `syncApDescriptions`) (business rule 14), the override is description-synced to the device — FortiGate `system/interface` description, or FortiSwitch port description via the parent controller — Polaris-primary (the override always wins; device-side edits are overwritten on the next cycle). Takes priority over the discovered AssetInterfaceSample.description for display. One row per (assetId, ifName); a null/empty `description` clears the override and the discovered comment shows through again (the device-side description is NOT deleted on clear). Edited from the interface slide-over on the asset details System tab; requires Assets Admin (or admin) to write.
   id            UUID PK
   assetId       UUID FK → Asset (cascade delete)
   ifName        String
@@ -285,7 +285,7 @@ AssetSdwanRule                 -- SD-WAN service-rule CURRENT-STATE (plain table
 
 #### AssetInterfaceOverride
 
-**AssetInterfaceOverride** — operator-typed Interface Comments override. Polaris-local by default; when the originating integration's `syncDescriptions` toggle is on it is description-synced to the device (FortiGate `system/interface` description / FortiSwitch port description, Polaris-primary) and carries per-row sync state (`syncStatus` ∈ synced/failed — `conflict` only on legacy rows from the retired newest-wins engine, `lastSyncAt`, `syncError`, `syncedValue` = last synced value). See business rule 14.
+**AssetInterfaceOverride** — operator-typed Interface Comments override. Polaris-local by default; when the originating integration's description-sync toggle for that device class is on (`syncFortigateDescriptions` / `syncSwitchDescriptions` / `syncApDescriptions`) it is description-synced to the device (FortiGate `system/interface` description / FortiSwitch port description, Polaris-primary) and carries per-row sync state (`syncStatus` ∈ synced/failed — `conflict` only on legacy rows from the retired newest-wins engine, `lastSyncAt`, `syncError`, `syncedValue` = last synced value). See business rule 14.
 
 #### AssetMacTableEntry
 

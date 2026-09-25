@@ -563,7 +563,16 @@ const FortiManagerConfigSchema = z.object({
   // (audited). Transport follows useProxy, same as pushReservations. Default
   // off; requires device-config write access on the FMG admin profile / API
   // token. Mirrored on FortiGateConfigSchema for parity.
+  //
+  // Gated per device class: syncFortigateDescriptions (FortiGate alias +
+  // interface comments), syncSwitchDescriptions (FortiSwitch + port
+  // descriptions), syncApDescriptions (FortiAP location). No defaults on the
+  // three — an unset key inherits the legacy `syncDescriptions` master toggle
+  // (utils/descriptionSyncFlags.ts), which is kept only for that fallback.
   syncDescriptions: z.boolean().optional().default(false),
+  syncFortigateDescriptions: z.boolean().optional(),
+  syncSwitchDescriptions: z.boolean().optional(),
+  syncApDescriptions: z.boolean().optional(),
   // Interface name to read for a managed FortiSwitch's management-access
   // (allowaccess) during the Phase 13.6 read. Defaults to "internal" at read
   // time when unset. The firewall's own management interface reuses
@@ -642,8 +651,12 @@ const FortiGateConfigSchema = z.object({
   // Requires pushReservations. Default off.
   adoptDiscoveredMac: z.boolean().optional().default(false),
   // Description sync (Polaris-primary) — see FortiManagerConfigSchema
-  // .syncDescriptions for shape + semantics. Default off.
+  // .syncDescriptions for shape + semantics (incl. the three per-class
+  // toggles and their legacy fallback). Default off.
   syncDescriptions: z.boolean().optional().default(false),
+  syncFortigateDescriptions: z.boolean().optional(),
+  syncSwitchDescriptions: z.boolean().optional(),
+  syncApDescriptions: z.boolean().optional(),
   // Interface name to read for a managed FortiSwitch's management-access
   // (allowaccess) during the Phase 13.6 read. Defaults to "internal" when
   // unset. See FortiManagerConfigSchema.switchManagementInterface.

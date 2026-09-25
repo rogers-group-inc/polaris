@@ -1570,12 +1570,32 @@ function _centralMgmtLabel(cm, key, countKey, noun) {
   return "Enabled" + (count !== null ? " (" + count + " " + noun + (count === 1 ? "" : "s") + ")" : "") + " — description pushes mirror to FortiManager";
 }
 
-// Description Sync tab body. Single master toggle (config.syncDescriptions).
-// Newest-wins three-way merge: the side edited since the last sync wins; both
-// edited → conflict (neither overwritten). `syncDescriptions` is the current
-// toggle value; `useProxy` drives the transport-mode label.
-function descriptionSyncFormHTML(syncDescriptions, useProxy, type) {
-  var checked = syncDescriptions === true ? "checked" : "";
+// Per-device-class Description Sync toggles, resolved the way the server does
+// (src/utils/descriptionSyncFlags.ts): a class whose key was never written
+// inherits the legacy `syncDescriptions` master toggle.
+var DESCRIPTION_SYNC_KEYS = {
+  fortigate:   "syncFortigateDescriptions",
+  fortiswitch: "syncSwitchDescriptions",
+  fortiap:     "syncApDescriptions",
+};
+function _descriptionSyncFlags(config) {
+  var cfg = config || {};
+  var legacy = cfg.syncDescriptions === true;
+  var out = {};
+  Object.keys(DESCRIPTION_SYNC_KEYS).forEach(function (role) {
+    var v = cfg[DESCRIPTION_SYNC_KEYS[role]];
+    out[role] = typeof v === "boolean" ? v : legacy;
+  });
+  return out;
+}
+
+// Description Sync tab body. One toggle per device class — FortiGates,
+// FortiSwitches, FortiAPs (see _descriptionSyncFlags). Polaris-primary: a
+// non-empty Polaris value wins, an empty one adopts the device value. `flags`
+// is the resolved {fortigate, fortiswitch, fortiap}; `useProxy` drives the
+// transport-mode label.
+function descriptionSyncFormHTML(flags, useProxy, type) {
+  flags = flags || {};
   // Three transports, not two. FMG proxy and FMG "bypass the proxy" direct mode
   // both sit behind a FortiManager; a standalone FortiGate has none at all
   // (buildTransportForIntegration always returns a direct-fortigate transport
@@ -1633,10 +1653,11 @@ function descriptionSyncFormHTML(syncDescriptions, useProxy, type) {
   return '<section style="margin-bottom:1.5rem">' +
       sectionHeading("Description Sync") +
       '<p class="hint" style="margin:0 0 0.75rem 0"><strong style="color:var(--color-text-primary)">Polaris is primary.</strong> A value in Polaris always wins: it pushes to the device on save and re-asserts on every discovery cycle — device-side edits are overwritten (every change is audited). An empty Polaris field adopts the device\'s value instead.</p>' +
-      '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
-        '<input type="checkbox" id="f-syncDescriptions" ' + checked + ' style="width:auto" onchange="onSyncDescriptionsToggle(this)">' +
-        '<label for="f-syncDescriptions" style="margin:0">Sync descriptions between Polaris and devices (Polaris is primary)</label>' +
-      '</div>' +
+      _descriptionSyncToggleRow("fortigate", flags.fortigate, "Sync FortiGate descriptions", "the FortiGate alias and interface comments") +
+      _descriptionSyncToggleRow("fortiswitch", flags.fortiswitch, "Sync FortiSwitch descriptions", "managed switch descriptions and port descriptions") +
+      _descriptionSyncToggleRow("fortiap", flags.fortiap, "Sync FortiAP descriptions", "the managed access point location field") +
+      (isStandalone ? "" : calloutHTML("warning", "FortiAP descriptions through FortiManager: use with caution",
+        "FortiManager access point description sync is not implemented well. AP Manager keeps its own copy of each AP's location, and Polaris only mirrors into it when central AP management is detected &mdash; a FortiManager install can still revert or overwrite what Polaris pushed. Try it on a few APs before turning it on for a whole ADOM.")) +
       '<ul class="hint" style="margin:0.25rem 0 0 1.2rem;padding:0">' +
         '<li><strong>Interface comments.</strong> The Interface Comments box on an asset\'s interface panel writes to the FortiGate\'s <code>system/interface</code> description (or the FortiSwitch port description via the parent controller). Clearing a comment in Polaris leaves the device value in place.</li>' +
         '<li><strong>Device descriptions.</strong> An asset\'s Description field writes to the FortiGate alias, FortiSwitch description, or FortiAP location' + (isStandalone ? "" : " (the field FortiManager's AP Manager shows)") + '. An empty Polaris Description is seeded from the device on the next discovery.</li>' +
@@ -1656,24 +1677,57 @@ function descriptionSyncFormHTML(syncDescriptions, useProxy, type) {
     '</section>';
 }
 
-// Read the description sync toggle. Returns undefined when the tab didn't render.
-function _readSyncDescriptionsToggle() {
-  var el = document.getElementById("f-syncDescriptions");
-  if (!el) return undefined;
-  return !!el.checked;
+function _descriptionSyncToggleRow(role, on, label, what) {
+  var id = "f-" + DESCRIPTION_SYNC_KEYS[role];
+  return '<div class="form-group" style="display:flex;align-items:center;gap:8px;margin-bottom:0.5rem">' +
+    '<input type="checkbox" id="' + id + '" ' + (on === true ? "checked" : "") + ' style="width:auto" onchange="onSyncDescriptionsToggle(this, \'' + role + '\')">' +
+    '<label for="' + id + '" style="margin:0">' + escapeHtml(label) +
+      ' <span style="color:var(--color-text-tertiary)">&mdash; ' + escapeHtml(what) + '</span></label>' +
+  '</div>';
 }
 
-// Fires the moment the operator flips Description Sync ON: confirm the FortiAP
-// field-length caveat before letting the box stay checked. Declining reverts
-// the toggle. No-op on un-check. showConfirm (app.js) stacks its own overlay
-// above the open integration modal, so the edit form's DOM survives.
-function onSyncDescriptionsToggle(el) {
+// Read the three description sync toggles as config keys. Returns undefined
+// when the tab didn't render. The legacy `syncDescriptions` key is written as
+// "any class on" so API readers of the old key still see a truthful value; the
+// per-class keys are always written, so the legacy fallback never applies to
+// an integration saved from this form.
+function _readSyncDescriptionsToggles() {
+  var out = {};
+  var any = false;
+  var rendered = false;
+  Object.keys(DESCRIPTION_SYNC_KEYS).forEach(function (role) {
+    var key = DESCRIPTION_SYNC_KEYS[role];
+    var el = document.getElementById("f-" + key);
+    if (!el) return;
+    rendered = true;
+    out[key] = !!el.checked;
+    if (el.checked) any = true;
+  });
+  if (!rendered) return undefined;
+  out.syncDescriptions = any;
+  return out;
+}
+
+// Device-side field length per class, for the enable confirm below. Keep in
+// lockstep with DESCRIPTION_CAPS in descriptionSyncService.ts.
+var DESCRIPTION_SYNC_CAP_COPY = {
+  fortigate:   "FortiOS limits the FortiGate alias to 35 characters (interface comments allow 255).",
+  fortiswitch: "FortiOS limits the FortiSwitch description and port descriptions to 63 characters.",
+  fortiap:     "FortiOS limits the FortiAP location field to 35 characters.",
+};
+var DESCRIPTION_SYNC_NOUN = { fortigate: "FortiGate", fortiswitch: "FortiSwitch", fortiap: "FortiAP" };
+
+// Fires the moment the operator flips a Description Sync toggle ON: confirm
+// that class's field-length caveat before letting the box stay checked.
+// Declining reverts the toggle. No-op on un-check. showConfirm (app.js) stacks
+// its own overlay above the open integration modal, so the edit form's DOM
+// survives.
+function onSyncDescriptionsToggle(el, role) {
   if (!el || !el.checked) return;
+  var noun = DESCRIPTION_SYNC_NOUN[role] || "device";
   showConfirm(
-    "Enable Description Sync?\n\n" +
-    "Device description fields are short: FortiOS limits the FortiAP location " +
-    "field and the FortiGate alias to 35 characters, and the FortiSwitch " +
-    "description to 63.\n\n" +
+    "Enable " + noun + " Description Sync?\n\n" +
+    (DESCRIPTION_SYNC_CAP_COPY[role] || "Device description fields are short.") + "\n\n" +
     "Polaris does not shorten what you type — it keeps the full description " +
     "and warns on the asset's Description field when the value is longer than " +
     "the device allows. The push truncates it to fit."
@@ -5559,7 +5613,7 @@ function _integrationTabs(ctx) {
       },
       {
         key: "description-sync", label: "Description Sync",
-        html: descriptionSyncFormHTML(config.syncDescriptions === true, pushUseProxy, type),
+        html: descriptionSyncFormHTML(_descriptionSyncFlags(config), pushUseProxy, type),
       },
       { key: "sdwan", label: "SD‑WAN", html: sdwanFormHTML(config.pullSdwan === true, config.sdwanIntervalSeconds) },
       {
@@ -5807,8 +5861,8 @@ async function _createIntegration(type, tested) {
     if (adoptMacNew !== undefined) createConfig.adoptDiscoveredMac = adoptMacNew;
     var quarantinePushToggleNew = _readPushQuarantineToggle();
     if (quarantinePushToggleNew !== undefined) createConfig.pushQuarantine = quarantinePushToggleNew;
-    var syncDescriptionsNew = _readSyncDescriptionsToggle();
-    if (syncDescriptionsNew !== undefined) createConfig.syncDescriptions = syncDescriptionsNew;
+    var syncDescriptionsNew = _readSyncDescriptionsToggles();
+    if (syncDescriptionsNew !== undefined) Object.assign(createConfig, syncDescriptionsNew);
     var sdwanToggleNew = _readPullSdwanToggle();
     if (sdwanToggleNew !== undefined) createConfig.pullSdwan = sdwanToggleNew;
     var sdwanIntervalNew = _readSdwanInterval();
@@ -6241,8 +6295,8 @@ async function _saveIntegration(id, intg, formGetter) {
         if (adoptMacEdit !== undefined) editConfig.adoptDiscoveredMac = adoptMacEdit;
         var quarantinePushToggle = _readPushQuarantineToggle();
         if (quarantinePushToggle !== undefined) editConfig.pushQuarantine = quarantinePushToggle;
-        var syncDescriptionsEdit = _readSyncDescriptionsToggle();
-        if (syncDescriptionsEdit !== undefined) editConfig.syncDescriptions = syncDescriptionsEdit;
+        var syncDescriptionsEdit = _readSyncDescriptionsToggles();
+        if (syncDescriptionsEdit !== undefined) Object.assign(editConfig, syncDescriptionsEdit);
         var sdwanToggle = _readPullSdwanToggle();
         if (sdwanToggle !== undefined) editConfig.pullSdwan = sdwanToggle;
         var sdwanInterval = _readSdwanInterval();
