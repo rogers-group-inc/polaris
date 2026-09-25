@@ -104,8 +104,8 @@
     }
     var stale = node.binding && node.binding.stale;
     return '<span class="fw-pill fw-binding-pill is-none" title="' +
-      (stale ? "The credential bound here was deleted; bind another or the next level up" : "Bind a device admin login here or at a level above") +
-      '">No login — upgrades cannot start</span>';
+      (stale ? "The credential bound here was deleted; bind another or the next level up" : "Bind a device admin login here or at a level above — an operator upgrading one of these devices needs one") +
+      '">No device login</span>';
   }
 
   /**
@@ -124,8 +124,9 @@
     var stale = m.binding && m.binding.stale;
     return '<span class="fw-pill fw-binding-pill is-none" title="' +
       esc((stale ? "The credential bound at " + m.name + " was deleted. " : "") +
-        "Bind a device admin login on each of these device types, on their models, or once here at " + m.name + ".") +
-      '">No login for ' + esc(names.join(", ")) + ' — upgrades cannot start</span>';
+        "Bind a device admin login on each of these device types, on their models, or once here at " + m.name +
+        " — an operator upgrading one of these devices needs one.") +
+      '">No device login for ' + esc(names.join(", ")) + '</span>';
   }
 
   /** Device types under a manufacturer with at least one model no login reaches. */

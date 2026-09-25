@@ -231,7 +231,7 @@ describe("the login pills — the server's scope, never a client guess", () => {
   it("none — and a stale binding says so in its title", () => {
     const p = pill({ binding: null, effectiveBinding: null });
     expect(p.classList.contains("is-none")).toBe(true);
-    expect(text(p)).toBe("No login — upgrades cannot start");
+    expect(text(p)).toBe("No device login");
     expect(pill({ binding: { id: "b", credentialId: null, credentialName: null, stale: true }, effectiveBinding: null }).getAttribute("title")).toMatch(/was deleted/);
   });
 });
@@ -274,7 +274,7 @@ describe("the manufacturer's login pill names the device types no login reaches"
     };
     const p = mpill(m)!;
     expect(p.classList.contains("is-none")).toBe(true);
-    expect(text(p)).toBe("No login for Access Point — upgrades cannot start");
+    expect(text(p)).toBe("No device login for Access Point");
   });
 
   it("lists every uncovered type, in tree order", () => {
@@ -282,7 +282,7 @@ describe("the manufacturer's login pill names the device types no login reaches"
       name: "Fortinet", binding: null, effectiveBinding: null,
       assetTypes: [type("switch", "Switch", null, [mdl("a", null)]), type("access_point", "Access Point", null, [mdl("b", null)])],
     };
-    expect(text(mpill(m))).toBe("No login for Switch, Access Point — upgrades cannot start");
+    expect(text(mpill(m))).toBe("No device login for Switch, Access Point");
   });
 
   it("a deleted manufacturer credential says so, and still names only what is uncovered", () => {
@@ -291,13 +291,13 @@ describe("the manufacturer's login pill names the device types no login reaches"
       assetTypes: [type("switch", "Switch", null, [mdl("a", null)])],
     };
     const p = mpill(m)!;
-    expect(text(p)).toBe("No login for Switch — upgrades cannot start");
+    expect(text(p)).toBe("No device login for Switch");
     expect(p.getAttribute("title")).toMatch(/was deleted/);
   });
 
   it("the tree renders it on the manufacturer node", () => {
     // Aruba in the fixture: nothing bound anywhere.
-    expect(text(node(renderCard(), "Aruba").querySelector(".fw-node-header .fw-binding-pill"))).toBe("No login for Switch — upgrades cannot start");
+    expect(text(node(renderCard(), "Aruba").querySelector(".fw-node-header .fw-binding-pill"))).toBe("No device login for Switch");
   });
 });
 

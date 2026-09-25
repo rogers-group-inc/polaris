@@ -151,11 +151,13 @@ credential in *Device admin login (form)* mode there. The most specific level
 wins: a model's own login beats the device type's, which beats the
 manufacturer's, and every node says which one applies to it and where it came
 from. A binding whose credential has since been deleted is skipped, not
-inherited — the next level up applies. A device with no login at any level
-cannot start an upgrade, and its card says so.
+inherited — the next level up applies. Upgrades are never automatic: an
+operator with the permission starts each one from the device's Firmware card.
+A device with no login at any level cannot be upgraded until one is bound, and
+its card says *No login bound*; the tree marks such a node *No device login*.
 
 A manufacturer with no login of its own warns only about what is actually
-uncovered: *No login for Access Point — upgrades cannot start* names each
+uncovered: *No device login for Access Point* names each
 device type that has at least one model no login reaches. When every device
 type is covered — by its own login or by each of its models — the manufacturer
 shows no warning at all.
