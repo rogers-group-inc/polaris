@@ -296,9 +296,52 @@ export async function fgRequest<T>(
   }
 }
 
+const FG_TLS_CERT_CODES = new Set([
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "CERT_HAS_EXPIRED",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+/**
+ * Describe a transport-level failure out of fgRequest — the request never got
+ * an HTTP answer (refused, timed out, no route, TLS rejected) or the answer was
+ * not JSON. fgRequest turns every HTTP-status failure into an AppError but lets
+ * these escape raw, which the route error handler can only report as a bare
+ * 500 "Internal server error". Returns null for anything that is not one.
+ */
+export function describeFgTransportError(err: unknown): string | null {
+  if (err instanceof AppError) return null;
+  const e = err as { name?: string; message?: string; cause?: { code?: string; message?: string } };
+  // fgRequest's own timeout fires controller.abort(), which surfaces as AbortError.
+  if (e?.name === "AbortError" || e?.name === "TimeoutError") return "request timed out";
+  if (err instanceof SyntaxError) return "the response was not JSON (something other than FortiOS answered on this address)";
+  const code = e?.cause?.code;
+  switch (code) {
+    case "ECONNREFUSED": return "connection refused (ECONNREFUSED) — nothing is listening on this port, or HTTPS admin access is not allowed on this interface";
+    case "ENOTFOUND": return "host not found (ENOTFOUND)";
+    case "ETIMEDOUT":
+    case "UND_ERR_CONNECT_TIMEOUT": return `connection timed out (${code}) — the address is unreachable from Polaris or a firewall is dropping the traffic`;
+    case "EHOSTUNREACH":
+    case "ENETUNREACH": return `no route to host (${code})`;
+    case "ECONNRESET":
+    case "UND_ERR_SOCKET": return `connection reset (${code})`;
+  }
+  if (code && FG_TLS_CERT_CODES.has(code)) {
+    return `TLS certificate error (${code}) — SSL verification is on for this FortiGate; turn it off or install a trusted certificate`;
+  }
+  if (code) return `${code}${e.cause?.message ? `: ${e.cause.message}` : ""}`;
+  if (e?.message === "fetch failed" && e.cause?.message) return e.cause.message;
+  return null;
+}
+
 /**
  * Proxy an arbitrary REST call to the FortiGate using stored credentials.
- * Used by the manual API query tool in the UI.
+ * Used by the manual API query tool in the UI. Transport failures become a
+ * 502 naming the address and port so the operator can see WHERE the call went;
+ * `targetNote` adds how that address was chosen (the FMG bypass path resolves
+ * it rather than the operator typing it).
  */
 export async function proxyQuery(
   config: FortiGateConfig,
@@ -306,8 +349,16 @@ export async function proxyQuery(
   path: string,
   query?: Record<string, string>,
   body?: unknown,
+  targetNote?: string,
 ): Promise<unknown> {
-  return fgRequest(config, method, path, { query, body });
+  try {
+    return await fgRequest(config, method, path, { query, body });
+  } catch (err) {
+    const detail = describeFgTransportError(err);
+    if (!detail) throw err;
+    const target = `${config.host}:${config.port || 443}`;
+    throw new AppError(502, `Could not reach FortiGate at ${target}${targetNote ? ` ${targetNote}` : ""} — ${detail}`);
+  }
 }
 
 // ─── Discovery ──────────────────────────────────────────────────────────────
