@@ -250,6 +250,14 @@ asset whose only remaining entries are ranges correctly shows no primary MAC.
 Live telemetry and history: response time, CPU, memory, temperature,
 interfaces, storage, IPsec tunnels, SD-WAN.
 
+**An interface name opens the interface — or the network its address is in.**
+Click a name in the Interfaces table to open that interface's history panel.
+When the interface's address sits inside a network Polaris knows, the click
+offers **Open interface** or **Open network** instead; *Open network* slides
+that network's address table in over the asset, scrolled to the address. The
+choice appears only for roles that can read networks, and only when a network
+actually contains the address.
+
 **CPU & Memory is one chart, or two, depending on what is collecting it.**
 Two sources report CPU per core and memory as a composition, and on those the
 section splits into a CPU chart and a Memory chart:

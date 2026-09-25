@@ -30,6 +30,11 @@ Tags · Networks (count) · Created.
 
 **+ Add Block** takes a name, CIDR, version, description and tags.
 
+A block's name opens a menu; **Open** shows the networks inside it in a
+slide-over. Click a network's name there to open that network's address table
+over it. Both panels open from
+any page — a search result for a block or a network opens them in place.
+
 **Deleting a block is refused with a 409 while it still contains any network**
 ([rule 4](Business-Rules#rule-4)) — deprecated and empty networks count too.
 Move the networks to another block ([Moving a network](#moving-a-network-to-another-block)),

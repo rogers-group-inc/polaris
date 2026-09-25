@@ -35,6 +35,10 @@ function _ensureBlockPanelDOM() {
   });
   document.getElementById("block-panel-close").addEventListener("click", closeBlockPanel);
 
+  // Escape closes the panel when it is the topmost layer (isTopmostSlideover,
+  // app.js) — it may sit over another slide-over now that any page can open it.
+  wireSlideoverEscape(overlay, closeBlockPanel);
+
   initSlideoverResize(document.getElementById("block-panel"), "polaris.panel.width.block");
 }
 
@@ -46,6 +50,8 @@ function openBlockPanel(blockId) {
   document.getElementById("block-panel-meta").innerHTML = "";
   document.getElementById("block-panel-body").innerHTML = '<p class="empty-state">Loading...</p>';
   document.getElementById("block-panel-footer").innerHTML = "";
+  // Paint over any slide-over already open — DOM order is stacking order.
+  raiseSlideover(document.getElementById("block-panel-overlay"));
   revealOverlay(document.getElementById("block-panel-overlay"));
   _fetchBlockSubnets();
 }
@@ -145,8 +151,12 @@ function _renderBlockSubnetList(subnets) {
     // instead: the cascade also removes the released and expired history.
     var reservations = s._count ? s._count.reservations : 0;
 
+    // The name opens that network's slide-over over this one (PolarisPanels,
+    // app.js); the href is the IPAM deep link, so ctrl/middle-click still
+    // opens it in a new tab.
     html += '<tr>' +
-      '<td><strong>' + escapeHtml(s.name) + '</strong></td>' +
+      '<td><a href="/ipam.html' + escapeHtml(networkPanelHash(s.id)) + '" class="block-panel-net-link" data-sid="' + escapeHtml(s.id) + '"' +
+        ' style="color:var(--color-accent);text-decoration:none"><strong>' + escapeHtml(s.name) + '</strong></a></td>' +
       '<td class="mono" style="font-size:0.8rem">' + escapeHtml(s.cidr) + '</td>' +
       '<td>' + statusHtml + '</td>' +
       '<td style="font-size:0.8rem">' + server + '</td>' +
@@ -170,6 +180,13 @@ function _renderBlockSubnetList(subnets) {
   html += '</tbody></table>';
   body.innerHTML = html;
 
+  body.querySelectorAll(".block-panel-net-link").forEach(function (a) {
+    a.addEventListener("click", function (e) {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      PolarisPanels.openNetwork(a.getAttribute("data-sid"));
+    });
+  });
   body.querySelectorAll(".subnet-panel-edit-btn").forEach(function (btn) {
     btn.addEventListener("click", function () {
       _openBlockPanelEditSubnet(btn.getAttribute("data-sid"));

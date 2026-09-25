@@ -27,9 +27,9 @@ The canonical to mirror for a standalone-device-with-its-own-API type (most comm
 - `public/js/integrations.js:<type>FormHTML(defaults)` — NEW. Combines General + Filters, mirrors `fortiGateFormHTML`.
 - `public/js/integrations.js:get<Type>FormConfig()` — NEW reader. Returns the config object parsed from the modal's input fields. Must include `verboseLogging: readVerboseLoggingFromForm()` so the Debug section roundtrips.
 - `public/js/integrations.js:form dispatch ternaries` — extend each to include the new type. These switch on `type === "<value>"` for form HTML selection, config reader selection, label rendering, and per-type booleans.
-- `public/js/integrations.js:openCreateModal tab visibility` — if the new type supports DHCP Push / Quarantine Push, extend `isFmg || isFgt` to include it. If not, add a separate branch alongside `isAd || isEntra || isWin` (Monitoring tab only).
-- `public/js/integrations.js:openCreateModal edit branch tab visibility` — same extension on the edit path.
-- `public/js/integrations.js:type-list picker grid` — NEW button (`pick-<type>`) + its click listener calling `openCreateModal("<type>")`.
+- `public/js/integrations.js:openIntegrationCreateModal tab visibility` — if the new type supports DHCP Push / Quarantine Push, extend `isFmg || isFgt` to include it. If not, add a separate branch alongside `isAd || isEntra || isWin` (Monitoring tab only).
+- `public/js/integrations.js:openIntegrationCreateModal edit branch tab visibility` — same extension on the edit path.
+- `public/js/integrations.js:type-list picker grid` — NEW button (`pick-<type>`) + its click listener calling `openIntegrationCreateModal("<type>")`.
 - `public/js/integrations.js:type-label ternaries` — `intg.type === "<type>" ? "<HumanLabel>" : ...` in both places (integrations list + modal title).
 - `public/js/integrations.js:Monitoring tab visibility` — if the new type owns devices that can be monitored as a class (FortiSwitch / FortiAP style), extend `isFmgFgt`. Most new types skip this — only the FMG-FortiGate-managed-device pattern needs the class-level auto-monitor cards.
 - `public/js/integrations.js:_CLASS_SUBTAB_SPECS` — per-type Monitoring class subtab set. `monitorSettingsFormHTML` has a generic single-subtab fallback, so a missing entry degrades quietly rather than erroring.

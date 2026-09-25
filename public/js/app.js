@@ -1955,6 +1955,11 @@ function openSearchResult(hit) {
 
   if (window.location.pathname === target.page) {
     target.handler();
+  } else if (typeof target.open === "function") {
+    // The record's slide-over, in place — every page can host one
+    // (PolarisPanels loads the panel's scripts on demand), so a hit no
+    // longer costs the operator the page they were on.
+    target.open();
   } else {
     window.location.href = target.page + target.hash;
   }
@@ -2032,13 +2037,18 @@ function _searchTargetFor(hit) {
       page: "/assets.html",
       hash: "#view=asset:" + encodeURIComponent(hit.id),
       handler: function () { if (typeof openViewModal === "function") openViewModal(hit.id); },
+      open: function () { PolarisPanels.openAsset(hit.id); },
     };
   }
   if (hit.type === "block") {
+    // On the IPAM page a block hit opens its editor; anywhere else the
+    // drill-in slide-over (the block's networks) is the one surface that can
+    // be hosted in place.
     return {
       page: "/ipam.html",
       hash: "#tab=blocks&view=block:" + encodeURIComponent(hit.id),
       handler: function () { if (typeof openBlockEditModal === "function") openBlockEditModal(hit.id); },
+      open: function () { PolarisPanels.openBlock(hit.id); },
     };
   }
   if (hit.type === "subnet") {
@@ -2046,6 +2056,7 @@ function _searchTargetFor(hit) {
       page: "/ipam.html",
       hash: "#tab=networks&subnet=" + encodeURIComponent(hit.id),
       handler: function () { if (typeof openIpPanel === "function") openIpPanel(hit.id); },
+      open: function () { PolarisPanels.openNetwork(hit.id); },
     };
   }
   if (hit.type === "reservation") {
@@ -2061,6 +2072,7 @@ function _searchTargetFor(hit) {
         handler: function () {
           if (typeof openIpPanel === "function") openIpPanel(resvSubnetId, { focusReservationId: hit.id });
         },
+        open: function () { PolarisPanels.openNetwork(resvSubnetId, { focusReservationId: hit.id }); },
       };
     }
     // Fallback when the search hit didn't carry a subnetId — open the
@@ -2081,6 +2093,7 @@ function _searchTargetFor(hit) {
         handler: function () {
           if (typeof openIpPanel === "function") openIpPanel(ctx.subnetId, { focusIp: ctx.ipAddress });
         },
+        open: function () { PolarisPanels.openNetwork(ctx.subnetId, { focusIp: ctx.ipAddress }); },
       };
     }
   }
@@ -3313,6 +3326,229 @@ function revealOverlay(el, after) {
   setTimeout(reveal, 50);
 }
 if (typeof window !== "undefined") window.revealOverlay = revealOverlay;
+
+// ─── Slide-overs from any page ──────────────────────────────────────────────
+//
+// The asset, network (IP) and block slide-overs each live in their own script
+// (assets.js, ip-panel.js, block-panel.js) and used to be reachable only on
+// the pages that load them; everywhere else a click-through navigated to the
+// panel's home page with a #view= hash and the operator lost their place.
+// PolarisPanels loads a panel's scripts on demand — in order, once, skipping
+// any the page already carries — then opens it in place, so every page can
+// pivot into any record without paying for assets.js up front. CSP permits
+// it: the files are same-origin, which `script-src 'self'` covers regardless
+// of how the <script> element reaches the document.
+//
+// Each bundle is the SAME ordered list the panel's home page loads statically
+// (index.html / map.html / ipam.html carry the commented versions) — keep
+// them in step when a panel grows a dependency. A file's DOMContentLoaded
+// page-init never runs when it lands late, which is exactly the off-page case
+// those handlers already guard for.
+var _PANEL_SCRIPT_BUNDLES = {
+  asset: [
+    "/js/vendor/jspdf.umd.min.js",
+    "/js/vendor/jspdf.plugin.autotable.min.js",
+    "/js/vendor/html-to-image.min.js",
+    "/js/table-sf.js",
+    "/js/favorites.js",
+    "/js/integrations.js",
+    "/js/temp-unit.js",
+    "/js/chart-severity.js",
+    "/js/monitor-states.js",
+    "/js/monitor-down-after.js",
+    "/js/asset-merge-modal.js",
+    "/js/assets.js",
+    "/js/condition-builder.js",
+    "/js/automations-address-book.js",
+    "/js/automations-wizard.js",
+    "/js/automations-portability.js",
+    "/js/recurrence-editor.js",
+    "/js/assets-maintenance.js",
+  ],
+  network: ["/js/table-sf.js", "/js/placeholder-mac.js", "/js/reservation-notes.js", "/js/ip-panel.js"],
+  block: ["/js/block-panel.js"],
+};
+// The global each bundle must leave behind — also the "already here" test, so
+// a page that loads a panel statically never fetches a byte.
+var _PANEL_OPENERS = { asset: "openViewModal", network: "openIpPanel", block: "openBlockPanel" };
+var _panelScriptLoads = {};   // src → Promise; a script is requested once per page
+
+function _loadPanelScript(src) {
+  if (_panelScriptLoads[src]) return _panelScriptLoads[src];
+  if (document.querySelector('script[src="' + src + '"]')) {
+    _panelScriptLoads[src] = Promise.resolve();
+    return _panelScriptLoads[src];
+  }
+  _panelScriptLoads[src] = new Promise(function (resolve, reject) {
+    var s = document.createElement("script");
+    s.src = src;
+    s.async = false;
+    s.onload = function () { resolve(); };
+    s.onerror = function () {
+      delete _panelScriptLoads[src];   // let a later open retry after a blip
+      reject(new Error("Failed to load " + src));
+    };
+    document.body.appendChild(s);
+  });
+  return _panelScriptLoads[src];
+}
+
+// Resolves once `kind`'s opener is callable. Sequential on purpose: the files
+// declare globals the next one reads at evaluation time.
+function ensurePanelScripts(kind) {
+  var opener = _PANEL_OPENERS[kind];
+  var list = _PANEL_SCRIPT_BUNDLES[kind];
+  if (!opener || !list) return Promise.reject(new Error("Unknown panel: " + kind));
+  if (typeof window[opener] === "function") return Promise.resolve();
+  return list.reduce(function (p, src) {
+    return p.then(function () { return _loadPanelScript(src); });
+  }, Promise.resolve()).then(function () {
+    if (typeof window[opener] !== "function") throw new Error(opener + " is not defined after loading the " + kind + " panel");
+  });
+}
+
+// When the scripts cannot be loaded (a proxy that blocks a file, a half-
+// deployed update) the deep link is still the right answer — it is what every
+// caller did before the panel could open in place.
+function _panelFallbackNavigate(href) {
+  window.location.href = href;
+  return false;
+}
+
+// Deep-link hash the network slide-over is reachable by on /ipam.html. Two
+// forms because two readers exist: subnets.js applyHashFilters takes
+// subnet= (+ focusReservation=), processSearchHash takes ip=<sid>@<ip>.
+function networkPanelHash(subnetId, opts) {
+  var o = opts || {};
+  if (o.focusIp) return "#tab=networks&ip=" + encodeURIComponent(subnetId) + "@" + encodeURIComponent(o.focusIp);
+  return "#tab=networks&subnet=" + encodeURIComponent(subnetId) +
+    (o.focusReservationId ? "&focusReservation=" + encodeURIComponent(o.focusReservationId) : "");
+}
+
+var PolarisPanels = {
+  ensure: ensurePanelScripts,
+
+  // Asset details (openViewModal in assets.js). opts.tab lands on a tab.
+  // Resolves true when the panel opened in place, false when it could not
+  // (the Dash wallboard has no session, so a panel there would only 401 —
+  // the click stays a no-op, as it always was).
+  openAsset: function (id, opts) {
+    if (!id || window.POLARIS_DASH_LOCAL) return Promise.resolve(false);
+    var href = "/assets.html#view=asset:" + encodeURIComponent(id) +
+      (opts && opts.tab ? "&tab=" + encodeURIComponent(opts.tab) : "");
+    return ensurePanelScripts("asset").then(function () {
+      window.openViewModal(id, opts || undefined);
+      return true;
+    }, function () { return _panelFallbackNavigate(href); });
+  },
+
+  // Network slide-over (openIpPanel in ip-panel.js) — the reservation table
+  // of one subnet. opts: focusIp / focusReservationId scroll to a row;
+  // subnetCidr lets the panel land on the right page of a large subnet
+  // without a second fetch, and is looked up here when focusIp is given
+  // without it.
+  openNetwork: function (subnetId, opts) {
+    if (!subnetId || window.POLARIS_DASH_LOCAL) return Promise.resolve(false);
+    var o = Object.assign({}, opts || {});
+    var href = "/ipam.html" + networkPanelHash(subnetId, o);
+    return ensurePanelScripts("network").then(function () {
+      var cidrP = (o.focusIp && !o.subnetCidr && typeof api !== "undefined" && api.subnets && typeof api.subnets.get === "function")
+        ? api.subnets.get(subnetId).then(function (s) { if (s && s.cidr) o.subnetCidr = s.cidr; }, function () {})
+        : Promise.resolve();
+      return cidrP.then(function () {
+        window.openIpPanel(subnetId, Object.keys(o).length ? o : undefined);
+        return true;
+      });
+    }, function () { return _panelFallbackNavigate(href); });
+  },
+
+  // Block drill-in (openBlockPanel in block-panel.js) — the networks inside
+  // one block.
+  openBlock: function (blockId) {
+    if (!blockId || window.POLARIS_DASH_LOCAL) return Promise.resolve(false);
+    var href = "/ipam.html#tab=blocks&view=block:" + encodeURIComponent(blockId);
+    return ensurePanelScripts("block").then(function () {
+      window.openBlockPanel(blockId);
+      return true;
+    }, function () { return _panelFallbackNavigate(href); });
+  },
+};
+if (typeof window !== "undefined") window.PolarisPanels = PolarisPanels;
+
+// True when `overlayEl` is the slide-over the operator is looking at: it is
+// open, no other slide-over was opened after it (every .slideover-overlay is
+// z-index 1050, so the later one in the DOM paints on top — see
+// raiseSlideover; that is why no slide-over may carry a z-index of its own),
+// and no modal is stacked over it. Escape and keyboard
+// chords gate on this, so a key meant for the top panel never closes the one
+// underneath.
+function isTopmostSlideover(overlayEl) {
+  if (!overlayEl || !overlayEl.classList || !overlayEl.classList.contains("open")) return false;
+  var mo = document.getElementById("modal-overlay");
+  if (mo && mo.classList.contains("open")) return false;
+  var open = document.querySelectorAll(".slideover-overlay.open");
+  return open.length > 0 && open[open.length - 1] === overlayEl;
+}
+if (typeof window !== "undefined") window.isTopmostSlideover = isTopmostSlideover;
+
+// Escape closes `overlayEl`'s slide-over when it is the topmost layer — the
+// one Escape handler every slide-over uses. Exactly one open slide-over is
+// topmost when the key lands, so exactly one handler matches; it then stops
+// the event, because once it has closed, the panel beneath IS topmost and a
+// handler registered after this one would close that too — one keypress,
+// two panels gone. Handlers registered earlier already ran and declined.
+function wireSlideoverEscape(overlayEl, close) {
+  if (!overlayEl || typeof close !== "function") return;
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (!isTopmostSlideover(overlayEl)) return;
+    e.stopImmediatePropagation();
+    close();
+  });
+}
+if (typeof window !== "undefined") window.wireSlideoverEscape = wireSlideoverEscape;
+
+// Move a CLOSED slide-over overlay to the end of <body> before it opens, so it
+// paints over every slide-over already open. The overlays are created once and
+// kept, so DOM order is first-open order, not open order: a network panel
+// opened early in a session and then re-opened from inside the asset panel
+// would otherwise slide in BEHIND the panel that asked for it. A no-op for an
+// open overlay (a panel pivoting in place must not be re-inserted under its
+// own nested drilldowns) and for one with no slide-over after it.
+function raiseSlideover(overlayEl) {
+  if (!overlayEl || overlayEl.parentNode !== document.body) return;
+  if (!overlayEl.classList.contains("slideover-overlay") || overlayEl.classList.contains("open")) return;
+  var later = overlayEl.nextElementSibling;
+  while (later) {
+    if (later.classList && later.classList.contains("slideover-overlay")) { document.body.appendChild(overlayEl); return; }
+    later = later.nextElementSibling;
+  }
+}
+if (typeof window !== "undefined") window.raiseSlideover = raiseSlideover;
+
+// Any <a href="/assets.html#view=asset:<id>[&tab=<key>]"> — the deep link the
+// dashboard widgets, the Events page's conflict cards and the alert email all
+// emit — opens the asset panel in place on a plain left click. Modifier and
+// middle clicks keep the href so "open in a new tab" still works, an explicit
+// target does too, and a listener that already handled the click (the Down
+// Assets widget's acknowledge menu calls preventDefault) is left alone.
+// Guarded against app.js being evaluated twice.
+function _wirePanelDeepLinks() {
+  if (typeof document === "undefined" || window.__polarisPanelLinksWired) return;
+  window.__polarisPanelLinksWired = true;
+  document.addEventListener("click", function (e) {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target && e.target.closest ? e.target.closest('a[href^="/assets.html#view=asset:"]') : null;
+    if (!a) return;
+    var tgt = a.getAttribute("target");
+    if (tgt && tgt !== "_self") return;
+    var m = /#view=asset:([^&]+)(?:&tab=([^&]+))?/.exec(a.getAttribute("href") || "");
+    if (!m) return;
+    e.preventDefault();
+    PolarisPanels.openAsset(decodeURIComponent(m[1]), m[2] ? { tab: decodeURIComponent(m[2]) } : undefined);
+  });
+}
+_wirePanelDeepLinks();
 
 // ─── Modal tabs + form parts ────────────────────────────────────────────────
 //

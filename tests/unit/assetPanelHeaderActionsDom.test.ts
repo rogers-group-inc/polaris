@@ -74,6 +74,10 @@ beforeEach(() => {
   g._assetPanelHistory = { entries: [], idx: -1 };
   g._assetPanelWalkDelta = 0;
   g.initSlideoverResize = vi.fn();
+  // app.js keyboard helpers _ensureAssetPanelDOM wires — the header markup is
+  // what this file pins; the key handling is tests/unit/assetPanelHistoryDom.test.ts.
+  g.wireSlideoverEscape = vi.fn();
+  g.isTopmostSlideover = vi.fn(() => false);
   g._handleMonitorPillClick = vi.fn();
   g.closeAssetPanel = vi.fn();
   g.openViewModal = vi.fn(async () => {});

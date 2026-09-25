@@ -5669,7 +5669,7 @@ function _wireMibWalkPanel(symbolName) {
         result.rowCount + " row" + (result.rowCount === 1 ? '' : 's') +
         ' in ' + result.durationMs + ' ms' +
         (result.truncated ? ' (truncated)' : '');
-      resultBox.innerHTML = _renderMibWalkResult(result);
+      resultBox.innerHTML = _renderProfileMibWalkResult(result);
       _wireMibWalkCopy(result);
     } catch (err) {
       statusEl.textContent = "";
@@ -5682,7 +5682,7 @@ function _wireMibWalkPanel(symbolName) {
   setTimeout(function () { searchInput.focus(); }, 50);
 }
 
-function _renderMibWalkResult(result) {
+function _renderProfileMibWalkResult(result) {
   if (!result || !result.kind) return "";
   var mismatchBanner = "";
   if (result.rowCount > 0 && result.decodedCount * 2 < result.rowCount) {
@@ -7375,23 +7375,23 @@ function _ensureCredUsagePanelDOM() {
 
   overlay.addEventListener("click", function (e) { if (e.target === overlay) closeCredUsagePanel(); });
   document.getElementById("cred-usage-close").addEventListener("click", closeCredUsagePanel);
-  document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape") return;
-    if (!overlay.classList.contains("open")) return;
-    // Let a nested asset panel grab Escape first.
-    if (document.querySelector(".slideover-overlay.slideover-nested.open")) return;
-    closeCredUsagePanel();
-  });
+  // Escape only when this panel is topmost — the asset panel a row opens
+  // stacks over it (wireSlideoverEscape / isTopmostSlideover, app.js).
+  wireSlideoverEscape(overlay, closeCredUsagePanel);
 
-  // Click-through to asset details. The Assets page isn't loaded here (this is
-  // the Server Settings page), so navigate to it via the canonical
-  // #view=asset:<id> hash that app.js processSearchHash() opens on load —
-  // the same deep link global search / widgets / the map use.
+  // Click-through to asset details, in place over this panel: PolarisPanels
+  // (app.js) loads assets.js on demand on the Server Settings page. The
+  // canonical #view=asset:<id> deep link, which processSearchHash() opens on
+  // load, stays as the fallback.
   document.getElementById("cred-usage-body").addEventListener("click", function (e) {
     var row = e.target.closest ? e.target.closest("[data-asset-id]") : null;
     if (!row) return;
     var assetId = row.getAttribute("data-asset-id");
     if (!assetId) return;
+    if (window.PolarisPanels && typeof window.PolarisPanels.openAsset === "function") {
+      window.PolarisPanels.openAsset(assetId);
+      return;
+    }
     window.location.href = "/assets.html#view=asset:" + encodeURIComponent(assetId);
   });
 
@@ -7450,6 +7450,7 @@ async function openCredUsagePanel(credId, credName) {
   metaEl.textContent = "";
   bodyEl.innerHTML = '<p class="empty-state" style="padding:1rem 1.25rem">Loading...</p>';
 
+  raiseSlideover(document.getElementById("cred-usage-overlay"));
   requestAnimationFrame(function () {
     var ov = document.getElementById("cred-usage-overlay");
     ov.classList.add("open");

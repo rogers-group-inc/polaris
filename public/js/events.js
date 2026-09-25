@@ -717,6 +717,7 @@ function getAlertsFormData() {
   refreshBadge();
 
   function openPanel() {
+    if (typeof raiseSlideover === "function") raiseSlideover(overlay);   // DOM order is stacking order
     overlay.classList.add("open");
     loadConflicts();
   }
@@ -1757,6 +1758,7 @@ function getAlertsFormData() {
   refreshBadge();
 
   function openPanel() {
+    if (typeof raiseSlideover === "function") raiseSlideover(overlay);   // DOM order is stacking order
     overlay.classList.add("open");
     loadAlerts();
   }
