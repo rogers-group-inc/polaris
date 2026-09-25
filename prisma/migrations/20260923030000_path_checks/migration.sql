@@ -186,16 +186,18 @@ CREATE INDEX "asset_path_check_traceroutes_assetId_checkId_timestamp_idx" ON "as
 -- ─── 5. Seed the `pathChecks` function key ──────────────────────
 -- A check directs every matching agent to send traffic at an operator-chosen
 -- destination, so it is its own grant (the networkScan precedent) rather than
--- a rung of automationManagement. Seeded FROM automationManagement so nobody
--- gains a capability beyond what they held on the page the tab lives on:
--- write -> write, read -> read, anything else -> none. `updatedAt` is bumped so
--- the in-process role-version cache refetches and live sessions see the key on
--- their next request. Idempotent: only rows that lack the key.
+-- a rung of automationManagement. Seeded FROM applicationMap: Path Monitor is
+-- the page beside Application Map in the sidebar, and a role gets the same
+-- level on both (built-ins: admin write, every other built-in read). The key
+-- is UP_TO_WRITE, so a fullwrite folds to write; read -> read; anything else
+-- -> none. `updatedAt` is bumped so the in-process role-version cache refetches
+-- and live sessions see the key on their next request. Idempotent: only rows
+-- that lack the key.
 UPDATE "roles"
    SET "permissions" = jsonb_set(
          "permissions",
          '{pathChecks}',
-         CASE "permissions" ->> 'automationManagement'
+         CASE "permissions" ->> 'applicationMap'
            WHEN 'fullwrite' THEN '"write"'::jsonb
            WHEN 'write'     THEN '"write"'::jsonb
            WHEN 'read'      THEN '"read"'::jsonb

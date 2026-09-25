@@ -23,7 +23,7 @@ Checks live on the **Path Monitor** page (sidebar, under Application Map). Resul
 - The **Polaris Agent 0.21.0 or later** on the hosts that should run the check.
   Older agents are listed on the check's Results view with *upgrade agent*;
   they run nothing until upgraded.
-- The **Path Checks** permission. *Read-Only* shows the list and the
+- The **Path Monitor** permission. *Read-Only* shows the list and the
   results; *Read-Write* creates, edits and deletes checks. It is its own
   permission because a check tells every matching agent to send traffic to a
   destination on a schedule.
