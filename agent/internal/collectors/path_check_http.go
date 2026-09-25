@@ -25,7 +25,7 @@ import (
 // ─── Status spec ──────────────────────────────────────────────────────────
 //
 // MIRRORED from src/utils/httpCheck.ts parseStatusSpec (and the check modal's
-// copy in public/js/connectivity-checks.js). "200,204,300-399"; empty = any
+// copy in public/js/path-checks.js). "200,204,300-399"; empty = any
 // 2xx. Change all three together.
 
 type statusRange struct{ lo, hi int }
@@ -80,7 +80,7 @@ func statusAccepted(code int, ranges []statusRange) bool {
 // bodyMatches mirrors src/utils/httpCheck.ts bodyMatches plus "exact" (equal
 // after trimming trailing CR/LF, so a health endpoint's "OK\n" matches "OK").
 // Regex is RE2 — the server refuses lookaround / backreferences at save.
-func bodyMatches(body []byte, exp *transport.ConnectivityBodyExpect) (bool, error) {
+func bodyMatches(body []byte, exp *transport.PathCheckBodyExpect) (bool, error) {
 	if exp == nil || exp.Value == "" {
 		return true, nil
 	}
@@ -113,8 +113,8 @@ func bodyMatches(body []byte, exp *transport.ConnectivityBodyExpect) (bool, erro
 // bodyExcerpt: the first 4 KB, cut on a rune boundary, as valid UTF-8.
 func bodyExcerpt(body []byte) string {
 	b := body
-	if len(b) > connectivityMaxExcerptBytes {
-		b = b[:connectivityMaxExcerptBytes]
+	if len(b) > pathCheckMaxExcerptBytes {
+		b = b[:pathCheckMaxExcerptBytes]
 		for len(b) > 0 && !utf8.Valid(b) {
 			b = b[:len(b)-1]
 		}
@@ -138,7 +138,7 @@ func leafFromHandshake(state tls.ConnectionState, err error) *x509.Certificate {
 	return nil
 }
 
-func applyLeaf(leaf *x509.Certificate, s *transport.ConnectivitySample) {
+func applyLeaf(leaf *x509.Certificate, s *transport.PathCheckSample) {
 	if leaf == nil {
 		return
 	}
@@ -153,7 +153,7 @@ func applyLeaf(leaf *x509.Certificate, s *transport.ConnectivitySample) {
 // runHTTP performs one GET against u, dialing ip (already resolved and
 // refused-checked) so resolvedIp is the address actually used and DNS is
 // counted once. Redirects are never followed; status is judged before body.
-func runHTTP(ctx context.Context, def *transport.ConnectivityCheckDef, u *url.URL, ip net.IP, ua string, s *transport.ConnectivitySample) {
+func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip net.IP, ua string, s *transport.PathCheckSample) {
 	start := time.Now()
 	port := u.Port()
 	if port == "" {
@@ -228,7 +228,7 @@ func runHTTP(ctx context.Context, def *transport.ConnectivityCheckDef, u *url.UR
 		return
 	}
 	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, connectivityMaxBodyBytes))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, pathCheckMaxBodyBytes))
 	sum := sha256.Sum256(body)
 	s.BodySha256 = hex.EncodeToString(sum[:])
 	s.BodyBytes = iptr(len(body))

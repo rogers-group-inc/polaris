@@ -1,15 +1,15 @@
 /**
- * src/jobs/reconcileConnectivitySources.ts
+ * src/jobs/reconcilePathCheckSources.ts
  *
- * Every 5 minutes (first tick 45 s after boot) re-resolve every connectivity
- * check's Sources filter into `connectivity_check_sources`. The write paths
+ * Every 5 minutes (first tick 45 s after boot) re-resolve every pathCheck
+ * check's Sources filter into `path_check_sources`. The write paths
  * (create / edit / enable) reconcile their own check inline; this tick catches
  * everything that changes membership WITHOUT touching a check — an agent
  * enrolled or uninstalled, a host re-tagged, moved subnet, or retyped so a
  * condition tree now matches it (or no longer does).
  *
  * Scheduler role only: one fleet pass, not one per monitor replica. Batched
- * inside reconcileConnectivityCheckSources (one agent query + one source query
+ * inside reconcilePathCheckSources (one agent query + one source query
  * + a handful of set-based writes), so at 2000 hosts × 50 checks it is ~50
  * scope resolutions per 5 minutes, never a query per host.
  *
@@ -17,7 +17,7 @@
  */
 
 import { logger } from "../utils/logger.js";
-import { reconcileConnectivityCheckSources } from "../services/connectivityCheckService.js";
+import { reconcilePathCheckSources } from "../services/pathCheckService.js";
 import { runInstrumentedJob } from "./_metrics.js";
 
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -29,14 +29,14 @@ async function tick(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    await runInstrumentedJob("connectivitySources.reconcile", async () => {
-      const r = await reconcileConnectivityCheckSources();
+    await runInstrumentedJob("pathCheckSources.reconcile", async () => {
+      const r = await reconcilePathCheckSources();
       if (r.added || r.removed) {
-        logger.info(r, "Connectivity check membership reconciled");
+        logger.info(r, "Path check membership reconciled");
       }
     });
   } catch (err: any) {
-    logger.error({ err: err?.message ?? String(err) }, "connectivitySources.reconcile tick failed (non-fatal)");
+    logger.error({ err: err?.message ?? String(err) }, "pathCheckSources.reconcile tick failed (non-fatal)");
   } finally {
     running = false;
   }

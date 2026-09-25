@@ -36,7 +36,7 @@ type tracerouteOpts struct {
 	silentHopLimit int // consecutive TTLs with no reply before giving up
 }
 
-func tracerouteOptsFrom(def transport.ConnectivityTracerouteDef) tracerouteOpts {
+func tracerouteOptsFrom(def transport.PathCheckTracerouteDef) tracerouteOpts {
 	def = normalizeTracerouteDef(def)
 	return tracerouteOpts{
 		maxHops:        def.MaxHops,
@@ -52,7 +52,7 @@ func tracerouteOptsFrom(def transport.ConnectivityTracerouteDef) tracerouteOpts 
 // path stopped at, the hop's IP being the first responder at that TTL, and
 // rttMs one value per probe in probe order (-1 = timeout). complete = the
 // destination was reached. Pure — tested on every platform.
-func assembleHops(results []probeResult, dst net.IP, o tracerouteOpts) ([]transport.ConnectivityHop, bool) {
+func assembleHops(results []probeResult, dst net.IP, o tracerouteOpts) ([]transport.PathCheckHop, bool) {
 	byTTL := map[int][]probeResult{}
 	last := 0
 	for _, r := range results {
@@ -61,7 +61,7 @@ func assembleHops(results []probeResult, dst net.IP, o tracerouteOpts) ([]transp
 			last = r.ttl
 		}
 	}
-	var hops []transport.ConnectivityHop
+	var hops []transport.PathCheckHop
 	complete := false
 	silent := 0
 	for ttl := 1; ttl <= last && ttl <= o.maxHops; ttl++ {
@@ -90,7 +90,7 @@ func assembleHops(results []probeResult, dst net.IP, o tracerouteOpts) ([]transp
 				stop = true
 			}
 		}
-		hops = append(hops, transport.ConnectivityHop{TTL: ttl, IP: ip, RttMs: rtts})
+		hops = append(hops, transport.PathCheckHop{TTL: ttl, IP: ip, RttMs: rtts})
 		if reached {
 			complete = true
 			break
@@ -121,7 +121,7 @@ var lookupAddr = net.DefaultResolver.LookupAddr
 
 // enrichRdns fills Rdns for each distinct hop IP: 1 s per lookup, at most 8 at
 // once, 3 s overall. A failed lookup leaves it blank.
-func enrichRdns(ctx context.Context, hops []transport.ConnectivityHop) {
+func enrichRdns(ctx context.Context, hops []transport.PathCheckHop) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	names := map[string]string{}
@@ -166,14 +166,14 @@ func enrichRdns(ctx context.Context, hops []transport.ConnectivityHop) {
 // Traceroute runs one unprivileged traceroute to dst. It always returns a row;
 // an unsupported platform or a socket failure is recorded in Note with
 // whatever hops were gathered.
-func Traceroute(ctx context.Context, checkID string, dst net.IP, def transport.ConnectivityTracerouteDef, now func() time.Time) *transport.ConnectivityTraceroute {
+func Traceroute(ctx context.Context, checkID string, dst net.IP, def transport.PathCheckTracerouteDef, now func() time.Time) *transport.PathCheckTraceroute {
 	o := tracerouteOptsFrom(def)
-	tr := &transport.ConnectivityTraceroute{
+	tr := &transport.PathCheckTraceroute{
 		CheckID:       checkID,
 		Timestamp:     now().UTC().Format(time.RFC3339Nano),
 		DestinationIP: dst.String(),
 		Reason:        "scheduled",
-		Hops:          []transport.ConnectivityHop{},
+		Hops:          []transport.PathCheckHop{},
 	}
 	results, err := platformTraceroute(ctx, dst, o)
 	if err != nil {

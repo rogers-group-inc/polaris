@@ -20,7 +20,7 @@ import {
   resolveTierLadder,
   severityRank,
   hwSensorFilterMatches,
-  connCheckFilterMatches,
+  pathCheckFilterMatches,
   deviceFilterMatch,
   CHANGE_TYPE_ACTIONS,
   legacyMirrorOfV2,
@@ -154,9 +154,9 @@ export async function getMetricSeverityTiers(
     if (trigger.type === "asset_metric" && trigger.metric === metric) {
       if (!deviceFilterSelects(trigger.dimensionFilter)) continue;
       if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(trigger.dimensionFilter, dimension)) continue;
-      // A connectivity chart is ONE check's series: a rule filtered to another
+      // A path-check chart is ONE check's series: a rule filtered to another
       // check must not shade it.
-      if (metric.startsWith("conn") && dimension?.checkId && !connCheckFilterMatches(trigger.dimensionFilter, dimension)) continue;
+      if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(trigger.dimensionFilter, dimension)) continue;
       for (const tier of resolveTierLadder(trigger.operator, trigger.threshold, ruleSeverity, trigger.forDurationSec ?? 0, v2.severityBands)) {
         push(tier.operator, tier.threshold, tier.severity as Severity);
       }
@@ -168,7 +168,7 @@ export async function getMetricSeverityTiers(
         if (leaf.type !== "asset_metric" || leaf.metric !== metric) continue;
         if (!deviceFilterSelects(leaf.dimensionFilter)) continue;
         if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(leaf.dimensionFilter, dimension)) continue;
-        if (metric.startsWith("conn") && dimension?.checkId && !connCheckFilterMatches(leaf.dimensionFilter, dimension)) continue;
+        if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(leaf.dimensionFilter, dimension)) continue;
         push(leaf.operator, leaf.threshold, ruleSeverity);
       }
     }

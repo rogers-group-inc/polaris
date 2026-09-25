@@ -102,27 +102,27 @@ const downDetectionUnavailable = new Counter({
   registers: [registry],
 });
 
-// Agent-run connectivity checks. `outcome` ∈ ok | fail | rejected (a sample
+// Agent-run path checks. `outcome` ∈ ok | fail | rejected (a sample
 // naming a check the pushing host is not a source of).
-const connectivitySamplesTotal = new Counter({
-  name: "polaris_agent_connectivity_samples_total",
-  help: "Connectivity-check results ingested from Polaris Agents, by outcome.",
+const pathCheckSamplesTotal = new Counter({
+  name: "polaris_agent_path_check_samples_total",
+  help: "Path-check results ingested from Polaris Agents, by outcome.",
   labelNames: ["outcome"] as const,
   registers: [registry],
 });
 
-const connectivityPathChangesTotal = new Counter({
-  name: "polaris_connectivity_path_changes_total",
-  help: "Traceroute path changes detected on connectivity checks (connectivity.path_changed Events written).",
+const pathCheckPathChangesTotal = new Counter({
+  name: "polaris_path_check_path_changes_total",
+  help: "Traceroute path changes detected on path checks (path_check.path_changed Events written).",
   registers: [registry],
 });
 
-export function recordConnectivitySamples(outcome: "ok" | "fail" | "rejected", n: number): void {
-  if (n > 0) connectivitySamplesTotal.inc({ outcome }, n);
+export function recordPathCheckSamples(outcome: "ok" | "fail" | "rejected", n: number): void {
+  if (n > 0) pathCheckSamplesTotal.inc({ outcome }, n);
 }
 
-export function recordConnectivityPathChange(): void {
-  connectivityPathChangesTotal.inc();
+export function recordPathCheckPathChange(): void {
+  pathCheckPathChangesTotal.inc();
 }
 
 const pgbossQueueJobs = new Gauge({

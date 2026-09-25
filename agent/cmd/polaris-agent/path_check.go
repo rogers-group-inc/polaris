@@ -1,7 +1,7 @@
 package main
 
-// Agent-run connectivity checks — the scheduler half. The probes live in
-// internal/collectors/connectivity*.go; this file decides which checks are
+// Agent-run path checks — the scheduler half. The probes live in
+// internal/collectors/path_check*.go; this file decides which checks are
 // due each minute, whether each run carries a traceroute, runs them on a
 // small bounded pool, and pushes one batch per stream.
 //
@@ -10,7 +10,7 @@ package main
 // (see TestPhasesAreDistinctAndCadencesAreMinuteMultiples), and a check's own
 // intervalSec is a multiple of 60, so "due" is decided per tick.
 //
-// This loop has its OWN time budget (connectivityTickBudget, 55 s) instead of
+// This loop has its OWN time budget (pathCheckTickBudget, 55 s) instead of
 // the shared 30 s collectionTimeout. That guard exists for OS calls that cannot
 // be cancelled (statfs, ioctl), whose goroutine is expected to leak; here every
 // operation is context-bound (DialContext, the request context, Poll with a
@@ -34,25 +34,25 @@ import (
 )
 
 const (
-	defaultConnectivityIntervalSec = 60
-	connectivityWorkers            = 4
-	connectivityTickBudget         = 55 * time.Second
-	connectivityDueSlack           = 5 * time.Second
+	defaultPathCheckIntervalSec = 60
+	pathCheckWorkers            = 4
+	pathCheckTickBudget         = 55 * time.Second
+	pathCheckDueSlack           = 5 * time.Second
 	// The server caps a host at 20; this is the agent's own ceiling.
-	maxConnectivityChecks = 64
+	maxPathChecks = 64
 )
 
-type connectivityRuntimeCfg struct {
-	checks []transport.ConnectivityCheckDef
+type pathCheckRuntimeCfg struct {
+	checks []transport.PathCheckDef
 }
 
-var connectivityCfg atomic.Value // connectivityRuntimeCfg
+var pathCheckCfg atomic.Value // pathCheckRuntimeCfg
 
-func loadConnectivityCfg() connectivityRuntimeCfg {
-	if v := connectivityCfg.Load(); v != nil {
-		return v.(connectivityRuntimeCfg)
+func loadPathCheckCfg() pathCheckRuntimeCfg {
+	if v := pathCheckCfg.Load(); v != nil {
+		return v.(pathCheckRuntimeCfg)
 	}
-	return connectivityRuntimeCfg{}
+	return pathCheckRuntimeCfg{}
 }
 
 // checkState is the scheduler's memory of one check.
@@ -64,20 +64,20 @@ type checkState struct {
 	lastTracerouteAt time.Time
 }
 
-// connectivityDue: never run, or at least one interval (minus a little
+// pathCheckDue: never run, or at least one interval (minus a little
 // slack for tick jitter) since the last run started.
-func connectivityDue(st *checkState, def *transport.ConnectivityCheckDef, now time.Time) bool {
+func pathCheckDue(st *checkState, def *transport.PathCheckDef, now time.Time) bool {
 	if st == nil || st.runCount == 0 {
 		return true
 	}
 	interval := time.Duration(def.IntervalSec) * time.Second
-	return now.Sub(st.lastRunAt) >= interval-connectivityDueSlack
+	return now.Sub(st.lastRunAt) >= interval-pathCheckDueSlack
 }
 
 // tracerouteModeFor: the first run of a definition always traces (the
 // baseline path), then every Nth run; a run following a PASS traces only if
 // it fails — the pass→fail transition always has a fresh path.
-func tracerouteModeFor(st *checkState, def *transport.ConnectivityCheckDef) collectors.TraceMode {
+func tracerouteModeFor(st *checkState, def *transport.PathCheckDef) collectors.TraceMode {
 	if !def.Traceroute.Enabled {
 		return collectors.TraceNever
 	}
@@ -94,9 +94,9 @@ func tracerouteModeFor(st *checkState, def *transport.ConnectivityCheckDef) coll
 	return collectors.TraceNever
 }
 
-// pruneConnectivityState drops checks no longer shipped and resets any whose
+// prunePathCheckState drops checks no longer shipped and resets any whose
 // definition changed, so an edited check re-baselines.
-func pruneConnectivityState(states map[string]*checkState, defs []transport.ConnectivityCheckDef) {
+func prunePathCheckState(states map[string]*checkState, defs []transport.PathCheckDef) {
 	keep := make(map[string]string, len(defs))
 	for i := range defs {
 		keep[defs[i].ID] = collectors.DefHash(&defs[i])
@@ -118,43 +118,43 @@ func pruneConnectivityState(states map[string]*checkState, defs []transport.Conn
 	}
 }
 
-func connectivityLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
+func pathCheckLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
 	_ = cfg // cadence is the fixed 60 s tick; each check carries its own interval
 	states := map[string]*checkState{}
-	runLoop(ctx, "connectivity", time.Duration(defaultConnectivityIntervalSec)*time.Second, true, func() {
-		pushConnectivityOne(ctx, client, states)
+	runLoop(ctx, "pathCheck", time.Duration(defaultPathCheckIntervalSec)*time.Second, true, func() {
+		pushPathCheckOne(ctx, client, states)
 	})
 }
 
-type connectivityJob struct {
-	def  transport.ConnectivityCheckDef
+type pathCheckJob struct {
+	def  transport.PathCheckDef
 	mode collectors.TraceMode
 	st   *checkState
 }
 
-type connectivityOutcome struct {
-	job    connectivityJob
-	sample *transport.ConnectivitySample
-	trace  *transport.ConnectivityTraceroute
+type pathCheckOutcome struct {
+	job    pathCheckJob
+	sample *transport.PathCheckSample
+	trace  *transport.PathCheckTraceroute
 }
 
-func pushConnectivityOne(ctx context.Context, client *transport.Client, states map[string]*checkState) {
-	defs := loadConnectivityCfg().checks
-	if len(defs) > maxConnectivityChecks {
-		log.Printf("connectivity: %d checks shipped, running the first %d", len(defs), maxConnectivityChecks)
-		defs = defs[:maxConnectivityChecks]
+func pushPathCheckOne(ctx context.Context, client *transport.Client, states map[string]*checkState) {
+	defs := loadPathCheckCfg().checks
+	if len(defs) > maxPathChecks {
+		log.Printf("pathCheck: %d checks shipped, running the first %d", len(defs), maxPathChecks)
+		defs = defs[:maxPathChecks]
 	}
-	pruneConnectivityState(states, defs)
+	prunePathCheckState(states, defs)
 	if len(defs) == 0 {
 		return
 	}
 
 	now := time.Now()
-	var due []connectivityJob
+	var due []pathCheckJob
 	for i := range defs {
 		st := states[defs[i].ID]
-		if connectivityDue(st, &defs[i], now) {
-			due = append(due, connectivityJob{def: defs[i], st: st})
+		if pathCheckDue(st, &defs[i], now) {
+			due = append(due, pathCheckJob{def: defs[i], st: st})
 		}
 	}
 	if len(due) == 0 {
@@ -164,13 +164,13 @@ func pushConnectivityOne(ctx context.Context, client *transport.Client, states m
 	// most recently run check rather than the same one every time.
 	sort.Slice(due, func(i, j int) bool { return due[i].st.lastRunAt.Before(due[j].st.lastRunAt) })
 
-	tickCtx, cancel := context.WithTimeout(ctx, connectivityTickBudget)
+	tickCtx, cancel := context.WithTimeout(ctx, pathCheckTickBudget)
 	defer cancel()
-	jobs := make(chan connectivityJob)
-	outcomes := make(chan connectivityOutcome, len(due))
+	jobs := make(chan pathCheckJob)
+	outcomes := make(chan pathCheckOutcome, len(due))
 	var wg sync.WaitGroup
-	opts := collectors.ConnectivityOpts{UserAgent: "polaris-agent/" + version}
-	for w := 0; w < connectivityWorkers; w++ {
+	opts := collectors.PathCheckOpts{UserAgent: "polaris-agent/" + version}
+	for w := 0; w < pathCheckWorkers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -181,7 +181,7 @@ func pushConnectivityOne(ctx context.Context, client *transport.Client, states m
 					time.Duration(j.def.TimeoutMs)*time.Millisecond+collectors.TracerouteBudget)
 				s, tr := collectors.RunOnce(runCtx, &j.def, o)
 				runCancel()
-				outcomes <- connectivityOutcome{job: j, sample: s, trace: tr}
+				outcomes <- pathCheckOutcome{job: j, sample: s, trace: tr}
 			}
 		}()
 	}
@@ -204,11 +204,11 @@ dispatch:
 	wg.Wait()
 	close(outcomes)
 	if deferred > 0 {
-		log.Printf("connectivity: %d checks deferred — tick budget exhausted", deferred)
+		log.Printf("pathCheck: %d checks deferred — tick budget exhausted", deferred)
 	}
 
-	var samples []*transport.ConnectivitySample
-	var traces []*transport.ConnectivityTraceroute
+	var samples []*transport.PathCheckSample
+	var traces []*transport.PathCheckTraceroute
 	for o := range outcomes {
 		o.job.st.lastOk = o.sample.OK
 		samples = append(samples, o.sample)
@@ -218,25 +218,25 @@ dispatch:
 		}
 	}
 	if len(samples) > 0 {
-		resp, err := client.PushSamples(&transport.SamplesBody{Stream: "connectivity", Samples: samples})
+		resp, err := client.PushSamples(&transport.SamplesBody{Stream: "pathCheck", Samples: samples})
 		if err != nil {
-			log.Printf("push connectivity samples: %v", err)
+			log.Printf("push path-check samples: %v", err)
 		} else if verbose {
-			log.Printf("connectivity sent: rows=%d -> accepted=%d rejected=%d", len(samples), resp.Accepted, resp.Rejected)
+			log.Printf("path-check sent: rows=%d -> accepted=%d rejected=%d", len(samples), resp.Accepted, resp.Rejected)
 		}
 	}
 	if len(traces) > 0 {
-		resp, err := client.PushSamples(&transport.SamplesBody{Stream: "connectivityTraceroute", Samples: traces})
+		resp, err := client.PushSamples(&transport.SamplesBody{Stream: "pathCheckTraceroute", Samples: traces})
 		if err != nil {
-			log.Printf("push connectivity traceroutes: %v", err)
+			log.Printf("push path-check traceroutes: %v", err)
 		} else if verbose {
-			log.Printf("connectivity traceroutes sent: rows=%d -> accepted=%d rejected=%d", len(traces), resp.Accepted, resp.Rejected)
+			log.Printf("path-check traceroutes sent: rows=%d -> accepted=%d rejected=%d", len(traces), resp.Accepted, resp.Rejected)
 		}
 	}
 }
 
 // countStarted is how many jobs before `stop` were dispatched.
-func countStarted(due []connectivityJob, stop connectivityJob) int {
+func countStarted(due []pathCheckJob, stop pathCheckJob) int {
 	for i, j := range due {
 		if j.def.ID == stop.def.ID {
 			return i

@@ -213,14 +213,14 @@ export function statusAccepted(statusCode: number, expectStatus: number | null |
 }
 
 /**
- * A connectivity check's accepted-status spec: comma-separated codes and
+ * A path check's accepted-status spec: comma-separated codes and
  * inclusive ranges, e.g. "200,204,300-399". Empty means "any 2xx" — the same
  * default `statusAccepted` applies to a vendor HTTP check with no expectation.
  *
  * MIRRORED twice: the Go agent (`parseStatusSpec` in
- * agent/internal/collectors/connectivity_http.go) judges the response with it,
- * and the check modal (`parseStatusSpec` in public/js/connectivity-checks.js)
- * validates it as the operator types. tests/unit/connectivityStatusSpecParity
+ * agent/internal/collectors/path_check_http.go) judges the response with it,
+ * and the check modal (`parseStatusSpec` in public/js/path-checks.js)
+ * validates it as the operator types. tests/unit/pathCheckStatusSpecParity
  * pins the client copy to this one; the Go copy has its own table test with the
  * same cases. Change all three together.
  */

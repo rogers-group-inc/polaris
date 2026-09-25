@@ -91,8 +91,8 @@ function legacyStreamToTier(raw: unknown, fallback: TierRetention): TierRetentio
           // Process telemetry postdates the legacy class shape — no legacy key
           // to migrate; take the default.
           process:     def.process,
-          // Connectivity checks likewise postdate it.
-          connectivity: def.connectivity,
+          // Path checks likewise postdate it.
+          pathCheck: def.pathCheck,
           // Flat (non-tiered) entities likewise postdate the legacy shape and
           // have no stream to derive from. Spread the defaults rather than
           // naming each one, so a future flat entity can't be forgotten here.

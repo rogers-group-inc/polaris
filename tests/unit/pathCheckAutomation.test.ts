@@ -1,6 +1,6 @@
 /**
- * tests/unit/connectivityAutomation.test.ts — the automation vocabulary for
- * agent-run connectivity checks: the six conn* metrics and their `checkId`
+ * tests/unit/pathCheckAutomation.test.ts — the automation vocabulary for
+ * agent-run path checks: the six path* metrics and their `checkId`
  * dimension, the `agentInstalled` device-filter field (joined row AND
  * prefetched verdict), the path-change change type, the alert-email chart
  * suppression and the specimen dimension.
@@ -11,7 +11,7 @@ import {
   ruleInputSchema,
   evaluateScopeCondition,
   relationLeafKey,
-  connCheckFilterMatches,
+  pathCheckFilterMatches,
   isBooleanMetric,
   METRIC_DIMENSIONS,
   METRIC_META,
@@ -23,21 +23,21 @@ import {
   scopeMatchesAsset,
   type ScopeConditionGroup,
 } from "../../src/services/notificationTypes.js";
-import { isConnectivityScopedAlert, chartTokenForMetric } from "../../src/services/alertChartService.js";
-import { sampleDimensionFor, SAMPLE_CONNECTIVITY_CHECK } from "../../src/utils/sampleAlertDevice.js";
+import { isPathCheckScopedAlert, chartTokenForMetric } from "../../src/services/alertChartService.js";
+import { sampleDimensionFor, SAMPLE_PATH_CHECK } from "../../src/utils/sampleAlertDevice.js";
 
-const CONN = ["connLatencyMs", "connHttpStatus", "connOk", "connFailurePct", "connHopCount", "connTlsDaysLeft"];
+const CONN = ["pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft"];
 
-describe("conn* metrics", () => {
+describe("path* metrics", () => {
   it("each carries label metadata and the checkId dimension", () => {
     for (const m of CONN) {
       expect(METRIC_META[m]?.label).toBeTruthy();
       expect(METRIC_DIMENSIONS[m]).toEqual(["checkId"]);
     }
   });
-  it("connOk is boolean and connFailurePct is a windowed ratio", () => {
-    expect(isBooleanMetric("connOk")).toBe(true);
-    expect((WINDOWED_RATIO_METRICS as readonly string[]).includes("connFailurePct")).toBe(true);
+  it("pathOk is boolean and pathFailurePct is a windowed ratio", () => {
+    expect(isBooleanMetric("pathOk")).toBe(true);
+    expect((WINDOWED_RATIO_METRICS as readonly string[]).includes("pathFailurePct")).toBe(true);
   });
   it("a latency SLA with a check filter saves (dimensionFilter is .strict())", () => {
     const parsed = ruleInputSchema.safeParse({
@@ -45,7 +45,7 @@ describe("conn* metrics", () => {
       enabled: true,
       severity: "warning",
       trigger: {
-        type: "asset_metric", metric: "connLatencyMs", aggregation: "latest", windowSec: 0,
+        type: "asset_metric", metric: "pathLatencyMs", aggregation: "latest", windowSec: 0,
         operator: ">", threshold: 800, forPolls: 3, forDurationSec: 180,
         dimensionFilter: { checkId: "c-intranet" },
       },
@@ -55,10 +55,10 @@ describe("conn* metrics", () => {
     });
     expect(parsed.success).toBe(true);
   });
-  it("connCheckFilterMatches: blank = every check, else exact id", () => {
-    expect(connCheckFilterMatches(undefined, { checkId: "a" })).toBe(true);
-    expect(connCheckFilterMatches({ checkId: "a" }, { checkId: "a" })).toBe(true);
-    expect(connCheckFilterMatches({ checkId: "a" }, { checkId: "b" })).toBe(false);
+  it("pathCheckFilterMatches: blank = every check, else exact id", () => {
+    expect(pathCheckFilterMatches(undefined, { checkId: "a" })).toBe(true);
+    expect(pathCheckFilterMatches({ checkId: "a" }, { checkId: "a" })).toBe(true);
+    expect(pathCheckFilterMatches({ checkId: "a" }, { checkId: "b" })).toBe(false);
   });
 });
 
@@ -97,20 +97,20 @@ describe("agentInstalled device-filter field", () => {
 
 describe("path-change change type", () => {
   it("maps to the Event the ingest writes, with a label", () => {
-    expect(CHANGE_TYPE_ACTIONS.connectivity_path_changed).toBe("connectivity.path_changed");
-    expect(CHANGE_TYPE_META.connectivity_path_changed).toMatch(/path/i);
+    expect(CHANGE_TYPE_ACTIONS.path_check_path_changed).toBe("path_check.path_changed");
+    expect(CHANGE_TYPE_META.path_check_path_changed).toMatch(/path/i);
   });
 });
 
 describe("alert email + specimen", () => {
-  it("draws no device charts for a connectivity alert", () => {
+  it("draws no device charts for a path-check alert", () => {
     for (const m of CONN) {
-      expect(isConnectivityScopedAlert(m)).toBe(true);
+      expect(isPathCheckScopedAlert(m)).toBe(true);
       expect(chartTokenForMetric(m)).toBeNull();
     }
-    expect(isConnectivityScopedAlert("cpuPct")).toBe(false);
+    expect(isPathCheckScopedAlert("cpuPct")).toBe(false);
   });
   it("a delivery test names a made-up check", () => {
-    expect(sampleDimensionFor("connLatencyMs")).toBe(SAMPLE_CONNECTIVITY_CHECK);
+    expect(sampleDimensionFor("pathLatencyMs")).toBe(SAMPLE_PATH_CHECK);
   });
 });

@@ -104,14 +104,14 @@ to keep absorbing:
   written to disk, so a healthy host reads several GB "swapped" against a
   nearly empty page file. The page file itself comes from `EnumPageFilesW`.
 
-### Connectivity checks (`connectivity` + `connectivityTraceroute` streams, 0.21.0)
+### Path checks (`pathCheck` + `pathCheckTraceroute` streams, 0.21.0)
 
 The server ships each agent the checks it runs in `GET /config` →
-`connectivityChecks` (`transport.ConnectivityCheckDef`; empty below 0.21.0 or
+`pathChecks` (`transport.PathCheckDef`; empty below 0.21.0 or
 when the host runs none — the list is the enable signal). One 60 s loop
-(`cmd/polaris-agent/connectivity.go`, phase 16) runs the checks that are due on
+(`cmd/polaris-agent/path_check.go`, phase 16) runs the checks that are due on
 a pool of 4, and pushes one batch per stream. The probes are in
-`internal/collectors/connectivity*.go`.
+`internal/collectors/path_check*.go`.
 
 - **Kinds**: `http` / `https` (one GET, status judged before body, redirects
   never followed, body capped at 64 KB, SHA-256 of the capped body always, a
@@ -161,5 +161,5 @@ a pool of 4, and pushes one batch per stream. The probes are in
 | 7 | Process inventory (`processInventory` stream, gated on `processes` stream = agent): gopsutil enumeration aggregated by program name, current-state full-replace into the asset Services tab's *Include processes* view. |
 | 7b | Per-pinned-program CPU/RAM telemetry (`processTelemetry` stream, 1/min): instantaneous CPU via prime→sleep→read delta over the pinned PIDs, summed by name, into the AssetProcessSample time-series. Pinned set + log config delivered via `/config`'s `pinnedProcesses`. |
 | 7c | Per-pinned-program log tailing (`processLog` stream): journald-by-`_COMM` (Linux, cursored) + cross-platform file-glob tailing (per-file byte offset; rotation-aware), per `pinnedProcesses[].logSource`/`logPathGlob`. Cursors in `processlog-cursors.json`; first run seeds at tail (no history dump). |
-| 9 (0.21.0) | Agent-run connectivity checks: `connectivity` + `connectivityTraceroute` streams, server-shipped definitions in `/config` → `connectivityChecks`, unprivileged ICMP / traceroute (see *Connectivity checks* above). |
+| 9 (0.21.0) | Agent-run path checks: `pathCheck` + `pathCheckTraceroute` streams, server-shipped definitions in `/config` → `pathChecks`, unprivileged ICMP / traceroute (see *Path checks* above). |
 | 8 | Process control (Phase 4): service/unit resolution in the inventory collector (Linux `/proc/<pid>/cgroup` → `*.service`; Windows `tasklist /svc` → service short-name) sets `controllable`. `commandLoop` polls `GET /agents/commands`, executes via `systemctl <action> <unit>` (Linux) / `net stop|start` + `sc query` (Windows), and reports to `POST /agents/command-result`. Action + target re-validated agent-side (strict charset, exec-with-args — no shell). Operator-initiated only. |

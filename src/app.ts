@@ -623,7 +623,7 @@ app.use((req, res, next) => {
 });
 
 // Protect dashboard pages — redirect unauthenticated users to login
-const protectedPages = ["/", "/index.html", "/ipam.html", "/blocks.html", "/subnets.html", "/reservations.html", "/users.html", "/integrations.html", "/assets.html", "/events.html", "/notifications.html", "/automations.html", "/server-settings.html", "/map.html", "/appmap.html", "/connections.html", "/alert-ack.html"];
+const protectedPages = ["/", "/index.html", "/ipam.html", "/blocks.html", "/subnets.html", "/reservations.html", "/users.html", "/integrations.html", "/assets.html", "/events.html", "/notifications.html", "/automations.html", "/server-settings.html", "/map.html", "/appmap.html", "/path-monitor.html", "/alert-ack.html"];
 
 // Page-level gating — each protected page requires at least `read` on the
 // matching function key. Maps to the same matrix the API guards use, so
@@ -657,9 +657,9 @@ const pageRequiredPermission: Record<string, PagePermission> = {
   // widget lives).
   "/notifications.html":   { key: "automationManagement", level: "read" },
   "/automations.html":     { key: "automationManagement", level: "read" },
-  // Agent-run connectivity checks. Its own page (sidebar: under Application
+  // Agent-run path checks. Its own page (sidebar: under Application
   // Map), gated on its own key — in lockstep with the NAV_ITEMS entry.
-  "/connections.html":     { key: "connectivityChecks",   level: "read" },
+  "/path-monitor.html":     { key: "pathChecks",   level: "read" },
   // `credentials=write` joins the floor with the ownership dimension on that
   // key (2026-09-04): a role granted "add credentials, edit your own" has to
   // be able to REACH the Credentials tab, and it lives on this page. The page
@@ -1205,10 +1205,10 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/reconcileTagAssignments.js",
       "./jobs/reconcileAppMapAutoMap.js",
       "./jobs/reconcileDnsResolvedReservations.js",
-      // Connectivity-check membership: re-resolves each check's Sources
+      // Path-check membership: re-resolves each check's Sources
       // filter as agents enroll / leave and hosts change. Scheduler role only
       // — one fleet pass.
-      "./jobs/reconcileConnectivitySources.js",
+      "./jobs/reconcilePathCheckSources.js",
       "./jobs/runSampleRollup.js",
       "./jobs/reclaimBloatedChunks.js",
       "./jobs/autoBuildAgents.js",

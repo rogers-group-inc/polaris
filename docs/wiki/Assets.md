@@ -464,9 +464,9 @@ of showing nothing.
 There is no Refresh button here — SD-WAN is read on the system-info pass, and
 the tab is showing you what that pass last brought back.
 
-### Connectivity (hosts with the Polaris Agent)
+### Path Monitor (hosts with the Polaris Agent)
 
-Shown on a host that runs at least one [connectivity check](Connectivity-Checks).
+Shown on a host that runs at least one [path check](Path-Monitor).
 A table lists every check the host runs; click one to see its **Latency**
 (with optional DNS / Connect / TLS / TTFB lines and any automation SLA shaded),
 **Availability**, **HTTP status**, the **Latest result** (body fingerprint and

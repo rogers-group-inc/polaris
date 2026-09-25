@@ -33,13 +33,13 @@ import { resolveMonitorSettings, type ResolvedMonitorSettings } from "./monitori
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import type { RuleScope } from "./notificationTypes.js";
 
-/** The six cadences a metric can ride. `connectivity` is the one that does NOT
+/** The six cadences a metric can ride. `pathCheck` is the one that does NOT
  *  resolve through the monitor-settings hierarchy: it is the intervalSec of the
- *  connectivity checks the matched agent hosts run. */
-export type CadenceStream = "responseTime" | "cpuMemory" | "temperature" | "systemInfo" | "storage" | "connectivity";
+ *  path checks the matched agent hosts run. */
+export type CadenceStream = "responseTime" | "cpuMemory" | "temperature" | "systemInfo" | "storage" | "pathCheck";
 
 /** Which resolved settings fields carry each stream's cadence + collector timeout. */
-const STREAM_FIELDS: Record<Exclude<CadenceStream, "connectivity">, { interval: keyof ResolvedMonitorSettings; timeout: keyof ResolvedMonitorSettings }> = {
+const STREAM_FIELDS: Record<Exclude<CadenceStream, "pathCheck">, { interval: keyof ResolvedMonitorSettings; timeout: keyof ResolvedMonitorSettings }> = {
   responseTime: { interval: "intervalSeconds",            timeout: "probeTimeoutMs" },
   cpuMemory:    { interval: "cpuMemoryIntervalSeconds",   timeout: "cpuMemoryTimeoutMs" },
   temperature:  { interval: "temperatureIntervalSeconds", timeout: "temperatureTimeoutMs" },
@@ -100,16 +100,16 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ipsecStatus: "systemInfo",
   customWidgetValue: "systemInfo",
   customStateValue: "systemInfo",
-  // Agent-run connectivity checks — each check's own intervalSec. Without
+  // Agent-run path checks — each check's own intervalSec. Without
   // these entries a `forPolls` hold would be converted at the probe cadence.
-  connLatencyMs: "connectivity",
-  connHttpStatus: "connectivity",
-  connOk: "connectivity",
-  connFailurePct: "connectivity",
-  connTlsDaysLeft: "connectivity",
+  pathLatencyMs: "pathCheck",
+  pathHttpStatus: "pathCheck",
+  pathOk: "pathCheck",
+  pathFailurePct: "pathCheck",
+  pathTlsDaysLeft: "pathCheck",
   // Traceroutes run every Nth check run, so a hold counted in polls over this
   // metric counts traceroutes; the caption still reports the check interval.
-  connHopCount: "connectivity",
+  pathHopCount: "pathCheck",
 };
 
 /**
@@ -172,11 +172,11 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
   if (!ids.length) {
     return { stream, mode: 0, min: 0, max: 0, timeoutMs: 0, assetCount: 0 };
   }
-  if (stream === "connectivity") {
+  if (stream === "pathCheck") {
     // One interval per (host, enabled check) pair the scope covers, so a check
     // run from 400 hosts outweighs one run from 3 — the same "modal across the
     // matched devices" the monitor streams report.
-    const pairs = await prisma.connectivityCheckSource.findMany({
+    const pairs = await prisma.pathCheckSource.findMany({
       where: { assetId: { in: ids }, check: { enabled: true } },
       select: { assetId: true, check: { select: { intervalSec: true, timeoutMs: true } } },
     });

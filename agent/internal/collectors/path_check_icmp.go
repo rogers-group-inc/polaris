@@ -78,7 +78,7 @@ func parseEchoReply(b []byte) (typ, code uint8, id, seq uint16, payload []byte, 
 }
 
 // runICMP sends one echo and waits for its reply.
-func runICMP(ctx context.Context, ip net.IP, timeout time.Duration, s *transport.ConnectivitySample) {
+func runICMP(ctx context.Context, ip net.IP, timeout time.Duration, s *transport.PathCheckSample) {
 	rtt, err := platformICMPEcho(ctx, ip, timeout)
 	if err != nil {
 		s.Error = truncateError(err)

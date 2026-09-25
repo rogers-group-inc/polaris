@@ -32,7 +32,7 @@ var defaultIntervalSec = map[string]int{
 	"processLog":         defaultProcessLogIntervalSec,
 	"serviceLog":         defaultProcessLogIntervalSec,
 	"processConnections": defaultProcessConnectionsIntervalSec,
-	"connectivity":       defaultConnectivityIntervalSec,
+	"pathCheck":       defaultPathCheckIntervalSec,
 }
 
 func TestEveryLoopPhaseIsKnown(t *testing.T) {
@@ -200,7 +200,7 @@ func TestNoTwoExpensiveLoopsEverCoincide(t *testing.T) {
 	expensive := []string{
 		"processInventory", "serviceInventory", "systemInfo", "eventLog",
 		"processLog", "serviceLog", "processTelemetry", "processConnections",
-		"telemetry", "connectivity",
+		"telemetry", "pathCheck",
 	}
 	const minGapSec = 3
 	const horizonSec = 3600

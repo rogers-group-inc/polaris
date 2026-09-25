@@ -306,7 +306,7 @@ single-pin key, so a downgrade to an older binary keeps working.
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
-| [Connectivity checks](Connectivity-Checks) | agent **0.21.0+**; runs only the checks an operator created and pointed at this host. HTTP / HTTPS / TCP / ICMP plus traceroute, **no extra privilege** on any tier |
+| [Path checks](Path-Monitor) | agent **0.21.0+**; runs only the checks an operator created and pointed at this host. HTTP / HTTPS / TCP / ICMP plus traceroute, **no extra privilege** on any tier |
 
 The storage and interface collectors run under a 30-second guard, because
 `statfs` and interface ioctls can **block indefinitely** on a hung filesystem or
@@ -558,7 +558,7 @@ separate **Unmap everywhere** action does the actual strip.
 | TLS handshake fails after a certificate rotation | the pin. Stage the new pin **before** rotating |
 | Samples stop but the heartbeat continues | a hung filesystem or NIC in a collector — the 30 s guard bounds this on current builds |
 | Upgrade silently skips a host | check for `agent.upgrade_skipped` Events; on older builds this was completely silent |
-| An ICMP connectivity check fails with `icmp unsupported on this host (ping_group_range)` | Linux only. The agent opens ICMP without privilege, which needs the service's group inside `net.ipv4.ping_group_range`. Modern distributions allow every group; RHEL 8 does not. Fix it on the host: `echo 'net.ipv4.ping_group_range = 0 2147483647' \| sudo tee /etc/sysctl.d/90-polaris-ping.conf && sudo sysctl --system`. HTTP, TCP and traceroute are unaffected |
-| A connectivity check never produces results | the agent version (0.21.0+ runs checks — upgrade it), and whether the host is listed on the check's **Results** view. A host that is not listed does not match the check's Sources |
+| An ICMP path check fails with `icmp unsupported on this host (ping_group_range)` | Linux only. The agent opens ICMP without privilege, which needs the service's group inside `net.ipv4.ping_group_range`. Modern distributions allow every group; RHEL 8 does not. Fix it on the host: `echo 'net.ipv4.ping_group_range = 0 2147483647' \| sudo tee /etc/sysctl.d/90-polaris-ping.conf && sudo sysctl --system`. HTTP, TCP and traceroute are unaffected |
+| A path check never produces results | the agent version (0.21.0+ runs checks — upgrade it), and whether the host is listed on the check's **Results** view. A host that is not listed does not match the check's Sources |
 | Every traceroute hop after the first shows `*` | the network drops ICMP errors (Time Exceeded) on the way back. The check result itself is unaffected |
 | `agent.disconnected` alerts never clear | the counterpart reset — an event automation should clear on `agent.connected`, scoped to the same subject ([rule 32e](Business-Rules#rule-32)) |

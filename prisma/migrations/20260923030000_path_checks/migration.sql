@@ -1,24 +1,24 @@
--- Agent-run connectivity checks. 2026-09-23.
+-- Agent-run path checks. 2026-09-23.
 --
--- An operator defines a ConnectivityCheck (HTTP / HTTPS / TCP / ICMP against a
+-- An operator defines a PathCheck (HTTP / HTTPS / TCP / ICMP against a
 -- URL or host, plus an optional traceroute); every host whose Polaris Agent
 -- matches the check's device filter runs it on its own cadence and pushes the
--- result. Automations then set SLAs on the results through the conn* metrics.
+-- result. Automations then set SLAs on the results through the path* metrics.
 -- A check carries no threshold of its own, and nothing here moves
 -- Asset.monitorStatus: a host that cannot reach a target is not a host that is
 -- down.
 --
 -- Five parts:
---   1. `connectivity_checks` — the definition (plain table).
---   2. `connectivity_check_sources` — materialized (check × agent host)
+--   1. `path_checks` — the definition (plain table).
+--   2. `path_check_sources` — materialized (check × agent host)
 --      membership plus each pair's latest result (plain table; FK cascade on
 --      both sides is safe, it is small and never compressed).
---   3. `asset_connectivity_samples` + `_hourly` + `_daily` — the per-run
+--   3. `asset_path_check_samples` + `_hourly` + `_daily` — the per-run
 --      time-series and its rollups.
---   4. `asset_connectivity_traceroutes` — traceroute snapshots, a standalone
+--   4. `asset_path_check_traceroutes` — traceroute snapshots, a standalone
 --      detail-only table (a path has no meaningful average) on a flat retention
 --      window.
---   5. The `connectivityChecks` function key seeded on every role.
+--   5. The `pathChecks` function key seeded on every role.
 --
 -- The sample/traceroute tables are created PLAIN here; ensureSampleHypertables
 -- (timescaleService.ts) converts them to hypertables and attaches compression
@@ -30,7 +30,7 @@
 -- column in the PK.
 
 -- ─── 1. Definitions ─────────────────────────────────────────────────────
-CREATE TABLE "connectivity_checks" (
+CREATE TABLE "path_checks" (
     "id"               TEXT         NOT NULL,
     "name"             TEXT         NOT NULL,
     "description"      TEXT,
@@ -50,12 +50,12 @@ CREATE TABLE "connectivity_checks" (
     "updatedAt"        TIMESTAMP(3) NOT NULL,
     "lastReconciledAt" TIMESTAMP(3),
 
-    CONSTRAINT "connectivity_checks_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "path_checks_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX "connectivity_checks_name_key" ON "connectivity_checks" ("name");
+CREATE UNIQUE INDEX "path_checks_name_key" ON "path_checks" ("name");
 
 -- ─── 2. Membership + latest result ──────────────────────────────────────
-CREATE TABLE "connectivity_check_sources" (
+CREATE TABLE "path_check_sources" (
     "id"                     TEXT         NOT NULL,
     "checkId"                TEXT         NOT NULL,
     "assetId"                TEXT         NOT NULL,
@@ -74,17 +74,17 @@ CREATE TABLE "connectivity_check_sources" (
     "lastPathChangeEventAt"  TIMESTAMP(3),
     "createdAt"              TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "connectivity_check_sources_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "path_check_sources_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX "connectivity_check_sources_checkId_assetId_key" ON "connectivity_check_sources" ("checkId", "assetId");
-CREATE INDEX "connectivity_check_sources_assetId_idx" ON "connectivity_check_sources" ("assetId");
-ALTER TABLE "connectivity_check_sources"
-  ADD CONSTRAINT "connectivity_check_sources_checkId_fkey" FOREIGN KEY ("checkId") REFERENCES "connectivity_checks"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "connectivity_check_sources"
-  ADD CONSTRAINT "connectivity_check_sources_assetId_fkey" FOREIGN KEY ("assetId") REFERENCES "assets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+CREATE UNIQUE INDEX "path_check_sources_checkId_assetId_key" ON "path_check_sources" ("checkId", "assetId");
+CREATE INDEX "path_check_sources_assetId_idx" ON "path_check_sources" ("assetId");
+ALTER TABLE "path_check_sources"
+  ADD CONSTRAINT "path_check_sources_checkId_fkey" FOREIGN KEY ("checkId") REFERENCES "path_checks"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "path_check_sources"
+  ADD CONSTRAINT "path_check_sources_assetId_fkey" FOREIGN KEY ("assetId") REFERENCES "assets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- ─── 3. Samples + rollups ───────────────────────────────────────────────
-CREATE TABLE "asset_connectivity_samples" (
+CREATE TABLE "asset_path_check_samples" (
     "id"          TEXT             NOT NULL,
     "assetId"     TEXT             NOT NULL,
     "timestamp"   TIMESTAMP(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -107,13 +107,13 @@ CREATE TABLE "asset_connectivity_samples" (
     "hopCount"    INTEGER,
     "cadence"     TEXT,
 
-    CONSTRAINT "asset_connectivity_samples_pkey" PRIMARY KEY ("id","timestamp")
+    CONSTRAINT "asset_path_check_samples_pkey" PRIMARY KEY ("id","timestamp")
 );
-CREATE INDEX "asset_connectivity_samples_assetId_timestamp_idx" ON "asset_connectivity_samples" ("assetId", "timestamp");
-CREATE INDEX "asset_connectivity_samples_assetId_checkId_timestamp_idx" ON "asset_connectivity_samples" ("assetId", "checkId", "timestamp");
-CREATE INDEX "asset_connectivity_samples_checkId_timestamp_idx" ON "asset_connectivity_samples" ("checkId", "timestamp");
+CREATE INDEX "asset_path_check_samples_assetId_timestamp_idx" ON "asset_path_check_samples" ("assetId", "timestamp");
+CREATE INDEX "asset_path_check_samples_assetId_checkId_timestamp_idx" ON "asset_path_check_samples" ("assetId", "checkId", "timestamp");
+CREATE INDEX "asset_path_check_samples_checkId_timestamp_idx" ON "asset_path_check_samples" ("checkId", "timestamp");
 
-CREATE TABLE "asset_connectivity_samples_hourly" (
+CREATE TABLE "asset_path_check_samples_hourly" (
     "id"                 TEXT             NOT NULL,
     "assetId"            TEXT             NOT NULL,
     "bucketStart"        TIMESTAMP(3)     NOT NULL,
@@ -133,13 +133,13 @@ CREATE TABLE "asset_connectivity_samples_hourly" (
     "modeHttpStatus"     INTEGER,
     "lastBucketSampleAt" TIMESTAMP(3)     NOT NULL,
 
-    CONSTRAINT "asset_connectivity_samples_hourly_pkey" PRIMARY KEY ("id","bucketStart")
+    CONSTRAINT "asset_path_check_samples_hourly_pkey" PRIMARY KEY ("id","bucketStart")
 );
-CREATE UNIQUE INDEX "asset_connectivity_samples_hourly_bucketStart_assetId_check_key" ON "asset_connectivity_samples_hourly" ("bucketStart", "assetId", "checkId");
-CREATE INDEX "asset_connectivity_samples_hourly_assetId_bucketStart_idx" ON "asset_connectivity_samples_hourly" ("assetId", "bucketStart");
-CREATE INDEX "asset_connectivity_samples_hourly_assetId_checkId_bucketSta_idx" ON "asset_connectivity_samples_hourly" ("assetId", "checkId", "bucketStart");
+CREATE UNIQUE INDEX "asset_path_check_samples_hourly_bucketStart_assetId_check_key" ON "asset_path_check_samples_hourly" ("bucketStart", "assetId", "checkId");
+CREATE INDEX "asset_path_check_samples_hourly_assetId_bucketStart_idx" ON "asset_path_check_samples_hourly" ("assetId", "bucketStart");
+CREATE INDEX "asset_path_check_samples_hourly_assetId_checkId_bucketSta_idx" ON "asset_path_check_samples_hourly" ("assetId", "checkId", "bucketStart");
 
-CREATE TABLE "asset_connectivity_samples_daily" (
+CREATE TABLE "asset_path_check_samples_daily" (
     "id"                 TEXT             NOT NULL,
     "assetId"            TEXT             NOT NULL,
     "bucketStart"        TIMESTAMP(3)     NOT NULL,
@@ -159,14 +159,14 @@ CREATE TABLE "asset_connectivity_samples_daily" (
     "modeHttpStatus"     INTEGER,
     "lastBucketSampleAt" TIMESTAMP(3)     NOT NULL,
 
-    CONSTRAINT "asset_connectivity_samples_daily_pkey" PRIMARY KEY ("id","bucketStart")
+    CONSTRAINT "asset_path_check_samples_daily_pkey" PRIMARY KEY ("id","bucketStart")
 );
-CREATE UNIQUE INDEX "asset_connectivity_samples_daily_bucketStart_assetId_checkI_key" ON "asset_connectivity_samples_daily" ("bucketStart", "assetId", "checkId");
-CREATE INDEX "asset_connectivity_samples_daily_assetId_bucketStart_idx" ON "asset_connectivity_samples_daily" ("assetId", "bucketStart");
-CREATE INDEX "asset_connectivity_samples_daily_assetId_checkId_bucketStar_idx" ON "asset_connectivity_samples_daily" ("assetId", "checkId", "bucketStart");
+CREATE UNIQUE INDEX "asset_path_check_samples_daily_bucketStart_assetId_checkI_key" ON "asset_path_check_samples_daily" ("bucketStart", "assetId", "checkId");
+CREATE INDEX "asset_path_check_samples_daily_assetId_bucketStart_idx" ON "asset_path_check_samples_daily" ("assetId", "bucketStart");
+CREATE INDEX "asset_path_check_samples_daily_assetId_checkId_bucketStar_idx" ON "asset_path_check_samples_daily" ("assetId", "checkId", "bucketStart");
 
 -- ─── 4. Traceroutes ─────────────────────────────────────────────────────
-CREATE TABLE "asset_connectivity_traceroutes" (
+CREATE TABLE "asset_path_check_traceroutes" (
     "id"            TEXT         NOT NULL,
     "assetId"       TEXT         NOT NULL,
     "timestamp"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -179,11 +179,11 @@ CREATE TABLE "asset_connectivity_traceroutes" (
     "reason"        TEXT         NOT NULL DEFAULT 'scheduled',
     "note"          TEXT,
 
-    CONSTRAINT "asset_connectivity_traceroutes_pkey" PRIMARY KEY ("id","timestamp")
+    CONSTRAINT "asset_path_check_traceroutes_pkey" PRIMARY KEY ("id","timestamp")
 );
-CREATE INDEX "asset_connectivity_traceroutes_assetId_checkId_timestamp_idx" ON "asset_connectivity_traceroutes" ("assetId", "checkId", "timestamp");
+CREATE INDEX "asset_path_check_traceroutes_assetId_checkId_timestamp_idx" ON "asset_path_check_traceroutes" ("assetId", "checkId", "timestamp");
 
--- ─── 5. Seed the `connectivityChecks` function key ──────────────────────
+-- ─── 5. Seed the `pathChecks` function key ──────────────────────
 -- A check directs every matching agent to send traffic at an operator-chosen
 -- destination, so it is its own grant (the networkScan precedent) rather than
 -- a rung of automationManagement. Seeded FROM automationManagement so nobody
@@ -194,7 +194,7 @@ CREATE INDEX "asset_connectivity_traceroutes_assetId_checkId_timestamp_idx" ON "
 UPDATE "roles"
    SET "permissions" = jsonb_set(
          "permissions",
-         '{connectivityChecks}',
+         '{pathChecks}',
          CASE "permissions" ->> 'automationManagement'
            WHEN 'fullwrite' THEN '"write"'::jsonb
            WHEN 'write'     THEN '"write"'::jsonb
@@ -203,4 +203,4 @@ UPDATE "roles"
          END,
          true),
        "updatedAt" = CURRENT_TIMESTAMP
- WHERE NOT ("permissions" ? 'connectivityChecks');
+ WHERE NOT ("permissions" ? 'pathChecks');

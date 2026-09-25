@@ -61,8 +61,8 @@ import { buildFirmwareChangedEvent } from "../../services/eventLogService.js";
 import { ingestOsEventLog, getAgentEventLogConfig } from "../../services/osEventLogService.js";
 import { fetchPendingCommands, recordCommandResult } from "../../services/agentCommandService.js";
 import { SCRIPT_OUTPUT_CAP_BYTES } from "../../services/automationScriptService.js";
-import { agentConfigChecks, connectivityEtagFold } from "../../services/connectivityCheckService.js";
-import { ingestConnectivitySamples, ingestConnectivityTraceroutes } from "../../services/connectivityIngestService.js";
+import { agentConfigChecks, pathCheckEtagFold } from "../../services/pathCheckService.js";
+import { ingestPathCheckSamples, ingestPathCheckTraceroutes } from "../../services/pathCheckIngestService.js";
 import { logger } from "../../utils/logger.js";
 import { macColonUpperOrNull } from "../../utils/mac.js";
 
@@ -326,11 +326,11 @@ const ServiceLogSampleSchema = z.object({
   source:    z.string().max(512).nullable().optional(),
 });
 
-// Agent-run connectivity check result — one row per check run. Mirrors
-// transport.ConnectivitySample in agent/internal/transport/client.go. Timings
+// Agent-run path check result — one row per check run. Mirrors
+// transport.PathCheckSample in agent/internal/transport/client.go. Timings
 // are optional/nullable on purpose: "not measured" must never arrive as 0.
 const optMs = z.number().min(0).max(600_000).nullable().optional();
-const ConnectivitySampleSchema = z.object({
+const PathCheckSampleSchema = z.object({
   checkId:       z.string().min(1).max(64),
   timestamp:     z.string().datetime().optional(),
   ok:            z.boolean(),
@@ -353,9 +353,9 @@ const ConnectivitySampleSchema = z.object({
   tracerouteRan: z.boolean().optional(),
 });
 
-// A traceroute the agent ran for a connectivity check. Mirrors
-// transport.ConnectivityTraceroute. `ip` "" (or null) = a silent hop.
-const ConnectivityTracerouteSchema = z.object({
+// A traceroute the agent ran for a path check. Mirrors
+// transport.PathCheckTraceroute. `ip` "" (or null) = a silent hop.
+const PathCheckTracerouteSchema = z.object({
   checkId:       z.string().min(1).max(64),
   timestamp:     z.string().datetime().optional(),
   destinationIp: z.string().max(64).nullable().optional(),
@@ -390,10 +390,10 @@ const SamplesBodySchema = z.discriminatedUnion("stream", [
   z.object({ stream: z.literal("serviceInventory"), samples: z.array(ServiceSampleSchema).max(5000) }),
   // Per-pinned-unit journalctl lines. Bounded like processLog.
   z.object({ stream: z.literal("serviceLog"), samples: z.array(ServiceLogSampleSchema).min(1).max(2000) }),
-  // Connectivity checks: one row per run (the agent caps at 64 checks, so a
+  // Path checks: one row per run (the agent caps at 64 checks, so a
   // tick's push is small); traceroutes ride their own stream.
-  z.object({ stream: z.literal("connectivity"), samples: z.array(ConnectivitySampleSchema).min(1).max(500) }),
-  z.object({ stream: z.literal("connectivityTraceroute"), samples: z.array(ConnectivityTracerouteSchema).min(1).max(64) }),
+  z.object({ stream: z.literal("pathCheck"), samples: z.array(PathCheckSampleSchema).min(1).max(500) }),
+  z.object({ stream: z.literal("pathCheckTraceroute"), samples: z.array(PathCheckTracerouteSchema).min(1).max(64) }),
 ]);
 
 // ─── Per-stream ingest handlers (split from the /samples dispatcher, 2026-08
@@ -773,12 +773,12 @@ agentsRouter.post("/samples", async (req, res, next) => {
       );
     }
 
-    // Connectivity streams report their own rejects: a sample naming a check
+    // Path streams report their own rejects: a sample naming a check
     // this host is not a source of is refused, not stored.
-    if (body.stream === "connectivity" || body.stream === "connectivityTraceroute") {
-      const r = body.stream === "connectivity"
-        ? await ingestConnectivitySamples(assetId, body.samples, now)
-        : await ingestConnectivityTraceroutes(assetId, body.samples, now);
+    if (body.stream === "pathCheck" || body.stream === "pathCheckTraceroute") {
+      const r = body.stream === "pathCheck"
+        ? await ingestPathCheckSamples(assetId, body.samples, now)
+        : await ingestPathCheckTraceroutes(assetId, body.samples, now);
       res.json(r);
       return;
     }
@@ -1007,11 +1007,11 @@ agentsRouter.get("/config", async (req, res, next) => {
       // refreshes running agents.
       monitoredServices: (asset.monitoredServices ?? []) as string[],
       mappedServices:    (asset.mappedServices ?? []) as string[],
-      // Agent-run connectivity checks this host is a source of (enabled only,
-      // oldest first, capped; empty below MIN_AGENT_CONNECTIVITY_VERSION).
+      // Agent-run path checks this host is a source of (enabled only,
+      // oldest first, capped; empty below MIN_AGENT_PATH_CHECK_VERSION).
       // Part of the payload hash, and folded into computeConfigEtag by
       // id + revision — both halves, or running agents never see an edit.
-      connectivityChecks: await agentConfigChecks(assetId, managedAgent?.agentVersion),
+      pathChecks: await agentConfigChecks(assetId, managedAgent?.agentVersion),
     };
     const etag = computeEtag(payload);
 
@@ -1348,10 +1348,10 @@ async function computeConfigEtag(assetId: string): Promise<string> {
     spins: (asset.monitoredServices ?? []).join(""),
     smap:  (asset.mappedServices    ?? []).join(""),
     mon:   asset.monitored,
-    // Connectivity checks by id + definition revision, so a target edit, a
+    // Path checks by id + definition revision, so a target edit, a
     // new membership or a disable all move the heartbeat etag — the agent
     // only re-fetches /config when this changes (the deadlock above).
-    conn:  connectivityEtagFold(await agentConfigChecks(assetId, (await prisma.managedAgent.findUnique({
+    path:  pathCheckEtagFold(await agentConfigChecks(assetId, (await prisma.managedAgent.findUnique({
       where: { assetId },
       select: { agentVersion: true },
     }))?.agentVersion)),

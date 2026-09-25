@@ -104,7 +104,7 @@ export function triggerSubject(trigger: SummarizableTrigger, dimensionLabel?: st
       : 0;
   const agg =
     trigger.metric && (WINDOWED_RATIO_METRICS as readonly string[]).includes(trigger.metric)
-      ? ` (over the last ${humanDuration(probeLossWindowSec(trigger.windowSec))} of ${trigger.metric === "connFailurePct" ? "check" : "probe"} history)`
+      ? ` (over the last ${humanDuration(probeLossWindowSec(trigger.windowSec))} of ${trigger.metric === "pathFailurePct" ? "check" : "probe"} history)`
       : countWindow
         ? ` (${AGG_PHRASE[trigger.aggregation!] ?? trigger.aggregation} the last ${countWindow} readings)`
       : trigger.aggregation && trigger.aggregation !== "latest" && trigger.windowSec

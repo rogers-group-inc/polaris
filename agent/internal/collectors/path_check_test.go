@@ -17,7 +17,7 @@ import (
 )
 
 // The same table the server's parser and the check modal's copy are pinned
-// to (tests/unit/connectivityStatusSpecParity.test.ts). Keep them identical.
+// to (tests/unit/pathCheckStatusSpecParity.test.ts). Keep them identical.
 func TestParseStatusSpec(t *testing.T) {
 	ok := []struct {
 		spec string
@@ -54,15 +54,15 @@ func TestParseStatusSpec(t *testing.T) {
 func TestBodyMatches(t *testing.T) {
 	body := []byte("Status: OK\r\n")
 	cases := []struct {
-		exp  transport.ConnectivityBodyExpect
+		exp  transport.PathCheckBodyExpect
 		want bool
 	}{
-		{transport.ConnectivityBodyExpect{Mode: "contains", Value: "ok"}, true},
-		{transport.ConnectivityBodyExpect{Mode: "contains", Value: "ok", CaseSensitive: true}, false},
-		{transport.ConnectivityBodyExpect{Mode: "regex", Value: `status:\s+ok`}, true},
-		{transport.ConnectivityBodyExpect{Mode: "exact", Value: "status: ok"}, true},
-		{transport.ConnectivityBodyExpect{Mode: "exact", Value: "Status: OK", CaseSensitive: true}, true},
-		{transport.ConnectivityBodyExpect{Mode: "exact", Value: "Status"}, false},
+		{transport.PathCheckBodyExpect{Mode: "contains", Value: "ok"}, true},
+		{transport.PathCheckBodyExpect{Mode: "contains", Value: "ok", CaseSensitive: true}, false},
+		{transport.PathCheckBodyExpect{Mode: "regex", Value: `status:\s+ok`}, true},
+		{transport.PathCheckBodyExpect{Mode: "exact", Value: "status: ok"}, true},
+		{transport.PathCheckBodyExpect{Mode: "exact", Value: "Status: OK", CaseSensitive: true}, true},
+		{transport.PathCheckBodyExpect{Mode: "exact", Value: "Status"}, false},
 	}
 	for _, c := range cases {
 		e := c.exp
@@ -71,15 +71,15 @@ func TestBodyMatches(t *testing.T) {
 			t.Errorf("%+v: got %v err %v, want %v", c.exp, got, err, c.want)
 		}
 	}
-	if _, err := bodyMatches(body, &transport.ConnectivityBodyExpect{Mode: "regex", Value: "("}); err == nil {
+	if _, err := bodyMatches(body, &transport.PathCheckBodyExpect{Mode: "regex", Value: "("}); err == nil {
 		t.Error("invalid regex should error")
 	}
 }
 
 func TestBodyExcerptCutsOnARuneBoundary(t *testing.T) {
-	b := []byte(strings.Repeat("é", connectivityMaxExcerptBytes)) // 2 bytes each
+	b := []byte(strings.Repeat("é", pathCheckMaxExcerptBytes)) // 2 bytes each
 	got := bodyExcerpt(b)
-	if len(got) > connectivityMaxExcerptBytes || !strings.HasSuffix(got, "é") {
+	if len(got) > pathCheckMaxExcerptBytes || !strings.HasSuffix(got, "é") {
 		t.Fatalf("excerpt not cut cleanly: len=%d", len(got))
 	}
 	if bodyExcerpt([]byte{0xff, 'a'}) != "�a" {
@@ -135,8 +135,8 @@ func TestSplitTargetHostPort(t *testing.T) {
 	}
 }
 
-func validDef() transport.ConnectivityCheckDef {
-	return transport.ConnectivityCheckDef{ID: "c1", Kind: "https", Target: "https://intranet.example/", IntervalSec: 60, TimeoutMs: 5000}
+func validDef() transport.PathCheckDef {
+	return transport.PathCheckDef{ID: "c1", Kind: "https", Target: "https://intranet.example/", IntervalSec: 60, TimeoutMs: 5000}
 }
 
 func TestValidateCheckDef(t *testing.T) {
@@ -144,16 +144,16 @@ func TestValidateCheckDef(t *testing.T) {
 	if err := ValidateCheckDef(&d); err != nil {
 		t.Fatal(err)
 	}
-	bad := []func(*transport.ConnectivityCheckDef){
-		func(d *transport.ConnectivityCheckDef) { d.Kind = "ftp" },
-		func(d *transport.ConnectivityCheckDef) { d.IntervalSec = 90 },
-		func(d *transport.ConnectivityCheckDef) { d.TimeoutMs = 100 },
-		func(d *transport.ConnectivityCheckDef) { d.ExpectStatus = "abc" },
-		func(d *transport.ConnectivityCheckDef) {
-			d.ExpectBody = &transport.ConnectivityBodyExpect{Mode: "glob", Value: "x"}
+	bad := []func(*transport.PathCheckDef){
+		func(d *transport.PathCheckDef) { d.Kind = "ftp" },
+		func(d *transport.PathCheckDef) { d.IntervalSec = 90 },
+		func(d *transport.PathCheckDef) { d.TimeoutMs = 100 },
+		func(d *transport.PathCheckDef) { d.ExpectStatus = "abc" },
+		func(d *transport.PathCheckDef) {
+			d.ExpectBody = &transport.PathCheckBodyExpect{Mode: "glob", Value: "x"}
 		},
-		func(d *transport.ConnectivityCheckDef) { d.Traceroute.MaxHops = 500 },
-		func(d *transport.ConnectivityCheckDef) { d.ID = "" },
+		func(d *transport.PathCheckDef) { d.Traceroute.MaxHops = 500 },
+		func(d *transport.PathCheckDef) { d.ID = "" },
 	}
 	for i, mut := range bad {
 		d := validDef()
@@ -167,7 +167,7 @@ func TestValidateCheckDef(t *testing.T) {
 func TestRunOnceRefusesAnInvalidDefinitionWithoutProbing(t *testing.T) {
 	d := validDef()
 	d.Kind = "ftp"
-	s, tr := RunOnce(context.Background(), &d, ConnectivityOpts{Trace: TraceAlways})
+	s, tr := RunOnce(context.Background(), &d, PathCheckOpts{Trace: TraceAlways})
 	if s.OK || !strings.HasPrefix(s.Error, "refused:") || tr != nil {
 		t.Fatalf("got %+v %v", s, tr)
 	}
@@ -185,7 +185,7 @@ func TestDefHashIsStableAndSensitive(t *testing.T) {
 }
 
 func TestTruncateError(t *testing.T) {
-	if got := truncateError(errors.New(strings.Repeat("x", 600))); len(got) != connectivityMaxErrorLen {
+	if got := truncateError(errors.New(strings.Repeat("x", 600))); len(got) != pathCheckMaxErrorLen {
 		t.Fatalf("len %d", len(got))
 	}
 }
@@ -194,7 +194,7 @@ func TestTruncateError(t *testing.T) {
 // runHTTP takes the already-resolved IP, which is how these tests reach a
 // loopback server that resolveTarget would (rightly) refuse.
 
-func runHTTPAgainst(t *testing.T, srv *httptest.Server, def transport.ConnectivityCheckDef) *transport.ConnectivitySample {
+func runHTTPAgainst(t *testing.T, srv *httptest.Server, def transport.PathCheckDef) *transport.PathCheckSample {
 	t.Helper()
 	u, _ := url.Parse(srv.URL + "/health")
 	def.Target = u.String()
@@ -204,7 +204,7 @@ func runHTTPAgainst(t *testing.T, srv *httptest.Server, def transport.Connectivi
 	if def.TimeoutMs == 0 {
 		def.TimeoutMs = 5000
 	}
-	s := &transport.ConnectivitySample{}
+	s := &transport.PathCheckSample{}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runHTTP(ctx, &def, u, net.ParseIP("127.0.0.1"), "polaris-agent/test", s)
@@ -222,7 +222,7 @@ func TestRunHTTPStatusBodyAndExcerpt(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := runHTTPAgainst(t, srv, transport.ConnectivityCheckDef{Kind: "http", ExpectBody: &transport.ConnectivityBodyExpect{Mode: "contains", Value: "OK"}})
+	s := runHTTPAgainst(t, srv, transport.PathCheckDef{Kind: "http", ExpectBody: &transport.PathCheckBodyExpect{Mode: "contains", Value: "OK"}})
 	if !s.OK || *s.HTTPStatus != 200 || s.BodyMatched == nil || !*s.BodyMatched {
 		t.Fatalf("got %+v", s)
 	}
@@ -240,12 +240,12 @@ func TestRunHTTPStatusBodyAndExcerpt(t *testing.T) {
 		t.Error("timings missing")
 	}
 
-	kept := runHTTPAgainst(t, srv, transport.ConnectivityCheckDef{Kind: "http", KeepBodyExcerpt: true})
+	kept := runHTTPAgainst(t, srv, transport.PathCheckDef{Kind: "http", KeepBodyExcerpt: true})
 	if kept.BodyExcerpt != "service ok" {
 		t.Errorf("keepBodyExcerpt: %q", kept.BodyExcerpt)
 	}
 
-	miss := runHTTPAgainst(t, srv, transport.ConnectivityCheckDef{Kind: "http", ExpectBody: &transport.ConnectivityBodyExpect{Mode: "contains", Value: "nope"}})
+	miss := runHTTPAgainst(t, srv, transport.PathCheckDef{Kind: "http", ExpectBody: &transport.PathCheckBodyExpect{Mode: "contains", Value: "nope"}})
 	if miss.OK || !strings.Contains(miss.Error, "Expected text not found") || miss.BodyExcerpt != "service ok" {
 		t.Errorf("body miss: %+v", miss)
 	}
@@ -260,23 +260,23 @@ func TestRunHTTPJudgesStatusFirstAndNeverFollowsRedirects(t *testing.T) {
 		_, _ = w.Write([]byte("followed"))
 	}))
 	defer srv.Close()
-	s := runHTTPAgainst(t, srv, transport.ConnectivityCheckDef{Kind: "http"})
+	s := runHTTPAgainst(t, srv, transport.PathCheckDef{Kind: "http"})
 	if s.OK || *s.HTTPStatus != 302 || !strings.Contains(s.Error, "HTTP 302") {
 		t.Fatalf("a redirect must be judged as itself: %+v", s)
 	}
-	ok := runHTTPAgainst(t, srv, transport.ConnectivityCheckDef{Kind: "http", ExpectStatus: "200,300-399"})
+	ok := runHTTPAgainst(t, srv, transport.PathCheckDef{Kind: "http", ExpectStatus: "200,300-399"})
 	if !ok.OK {
 		t.Fatalf("302 accepted by spec: %+v", ok)
 	}
 }
 
 func TestRunHTTPCapsTheBodyAt64KB(t *testing.T) {
-	big := strings.Repeat("a", connectivityMaxBodyBytes+5000)
+	big := strings.Repeat("a", pathCheckMaxBodyBytes+5000)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(big)) }))
 	defer srv.Close()
-	s := runHTTPAgainst(t, srv, transport.ConnectivityCheckDef{Kind: "http"})
-	sum := sha256.Sum256([]byte(big[:connectivityMaxBodyBytes]))
-	if *s.BodyBytes != connectivityMaxBodyBytes || s.BodySha256 != hex.EncodeToString(sum[:]) {
+	s := runHTTPAgainst(t, srv, transport.PathCheckDef{Kind: "http"})
+	sum := sha256.Sum256([]byte(big[:pathCheckMaxBodyBytes]))
+	if *s.BodyBytes != pathCheckMaxBodyBytes || s.BodySha256 != hex.EncodeToString(sum[:]) {
 		t.Fatalf("cap: bytes=%d", *s.BodyBytes)
 	}
 }
@@ -284,11 +284,11 @@ func TestRunHTTPCapsTheBodyAt64KB(t *testing.T) {
 func TestRunHTTPReportsTheCertificateEvenWhenVerificationFails(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
 	defer srv.Close()
-	insecure := runHTTPAgainst(t, srv, transport.ConnectivityCheckDef{Kind: "https", VerifyTLS: false})
+	insecure := runHTTPAgainst(t, srv, transport.PathCheckDef{Kind: "https", VerifyTLS: false})
 	if !insecure.OK || insecure.TLSNotAfter == "" || insecure.TLSMs == nil {
 		t.Fatalf("verifyTls=false: %+v", insecure)
 	}
-	strict := runHTTPAgainst(t, srv, transport.ConnectivityCheckDef{Kind: "https", VerifyTLS: true})
+	strict := runHTTPAgainst(t, srv, transport.PathCheckDef{Kind: "https", VerifyTLS: true})
 	if strict.OK || !strings.Contains(strict.Error, "certificate") {
 		t.Fatalf("verifyTls=true should fail on a self-signed cert: %+v", strict)
 	}

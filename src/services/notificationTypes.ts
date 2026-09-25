@@ -484,11 +484,11 @@ export const ASSET_METRICS = [
   "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
   "customWidgetValue", "customStateValue",
-  // Agent-run connectivity checks — the asset is the AGENT HOST and the
-  // dimension is the check (`checkId`). connOk is the 0/1 verdict,
-  // connFailurePct the windowed ratio, the rest gauges off the same samples
-  // (connHopCount off the traceroutes).
-  "connLatencyMs", "connHttpStatus", "connOk", "connFailurePct", "connHopCount", "connTlsDaysLeft",
+  // Agent-run path checks — the asset is the AGENT HOST and the
+  // dimension is the check (`checkId`). pathOk is the 0/1 verdict,
+  // pathFailurePct the windowed ratio, the rest gauges off the same samples
+  // (pathHopCount off the traceroutes).
+  "pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft",
 ] as const;
 
 /**
@@ -504,7 +504,7 @@ export const ASSET_METRICS = [
  * chart's threshold shading, and the value/unit hints. Everything that offers
  * those checks this set rather than testing metric names inline.
  */
-export const BOOLEAN_METRICS = ["customStateValue", "hwSensorAlarm", "connOk"] as const;
+export const BOOLEAN_METRICS = ["customStateValue", "hwSensorAlarm", "pathOk"] as const;
 
 export function isBooleanMetric(metric: string | null | undefined): boolean {
   return !!metric && (BOOLEAN_METRICS as readonly string[]).includes(metric);
@@ -521,7 +521,7 @@ export function isBooleanMetric(metric: string | null | undefined): boolean {
 export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLabel: string; trueIsProblem: boolean }> = {
   hwSensorAlarm: { trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true },
   // 1 = the run met every expectation (status, body, TLS, connect / echo).
-  connOk: { trueLabel: "Reachable", falseLabel: "Unreachable", trueIsProblem: false },
+  pathOk: { trueLabel: "Reachable", falseLabel: "Unreachable", trueIsProblem: false },
 };
 
 // ─── Asset-state trigger ────────────────────────────────────────────────────
@@ -562,7 +562,7 @@ export const CHANGE_TYPES = [
   "sdwan_failover", "mclag_peer_lost", "wireless_station_connected",
   "firmware_changed", "switch_port_changed", "wireless_ap_changed", "gateway_firewall_changed",
   "fortilink_changed",
-  "connectivity_path_changed",
+  "path_check_path_changed",
 ] as const;
 
 // Map a change type → the audit Event action the persist functions emit and
@@ -594,10 +594,10 @@ export const CHANGE_TYPE_ACTIONS: Record<(typeof CHANGE_TYPES)[number], string> 
   // the link is down" (it has a reading, so it gets auto-reset and a forPolls
   // hold); this one is for "tell me each time it moves".
   fortilink_changed: "asset.fortilink.changed",
-  // Written unconditionally by connectivityIngestService when an agent's
+  // Written unconditionally by pathCheckIngestService when an agent's
   // traceroute for a check takes a different hop sequence than the last one
   // (10-minute floor per host and check). Names the agent HOST as its asset.
-  connectivity_path_changed: "connectivity.path_changed",
+  path_check_path_changed: "path_check.path_changed",
 };
 
 const dimensionFilterSchema = z
@@ -653,8 +653,8 @@ const dimensionFilterSchema = z
     // its own. Matching on the label rather than the OID index is the point of
     // resolving labels at all — an operator knows "PSU 2", not ".14".
     stateRowPattern: z.string().max(200).optional(),
-    // ── Connectivity checks (conn*) ──────────────────────────────────────
-    // Which check — a ConnectivityCheck id, matched exactly (a registry key,
+    // ── Path checks (path*) ──────────────────────────────────────
+    // Which check — a PathCheck id, matched exactly (a registry key,
     // like stateProbeId). Blank = every check the host runs, one alert each.
     checkId: z.string().max(200).optional(),
   })
@@ -1025,7 +1025,7 @@ export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   ssid: STRING_OPS,
   // "Polaris Agent installed" — yes / no, from the asset's ManagedAgent row:
   // yes means an ACTIVE agent (installStatus "active"), the same test
-  // requestScriptRun and connectivity-check membership apply. The third
+  // requestScriptRun and path-check membership apply. The third
   // relation-backed field: fleet-scale loaders prefetch it through
   // scopeRelationIndex, the single-asset paths join `managedAgent`.
   agentInstalled: ["equals", "notEquals"],
@@ -3652,7 +3652,7 @@ export function isAssetScopedTrigger(trigger: Trigger): boolean {
  * its `latest`-sample lookback floor. Exposed on /automations/schema as
  * `windowedRatioMetrics`.
  */
-export const WINDOWED_RATIO_METRICS = ["probeLossPct", "connFailurePct"] as const;
+export const WINDOWED_RATIO_METRICS = ["probeLossPct", "pathFailurePct"] as const;
 
 /**
  * The probe-loss measurement window, resolved exactly the way the engine
@@ -3772,15 +3772,15 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
   // the builder renders the probe's own labels ("Alarm" / "OK") instead of the
   // numbers, and there's no unit because there's no magnitude.
   customStateValue: { label: "Device state flag (0/1)", unit: "" },
-  // Agent-run connectivity checks (asset = the agent host, dimension = check).
-  connLatencyMs: { label: "Connectivity latency", unit: "ms" },
-  connHttpStatus: { label: "Connectivity HTTP status", unit: "" },
-  connOk: { label: "Connectivity check result", unit: "" },
+  // Agent-run path checks (asset = the agent host, dimension = check).
+  pathLatencyMs: { label: "Path latency", unit: "ms" },
+  pathHttpStatus: { label: "Path HTTP status", unit: "" },
+  pathOk: { label: "Path check result", unit: "" },
   // Failed runs / runs over the History window, like probeLossPct.
-  connFailurePct: { label: "Connectivity failure rate", unit: "%" },
-  connHopCount: { label: "Traceroute hop count", unit: "hops" },
+  pathFailurePct: { label: "Path failure rate", unit: "%" },
+  pathHopCount: { label: "Traceroute hop count", unit: "hops" },
   // Days until the target's TLS certificate expires. Alert with "<", e.g. < 14.
-  connTlsDaysLeft: { label: "TLS certificate days remaining", unit: "days" },
+  pathTlsDaysLeft: { label: "TLS certificate days remaining", unit: "days" },
   // host_metric
   memUsedPct: { label: "Memory utilization", unit: "%" },
   loadAvg1: { label: "Load average (1m)", unit: "" },
@@ -3901,7 +3901,7 @@ export const CHANGE_TYPE_META: Record<string, string> = {
   wireless_ap_changed: "Wireless AP changed (roam)",
   gateway_firewall_changed: "Gateway FortiGate changed",
   fortilink_changed: "Controller link changed (FortiLink / CAPWAP)",
-  connectivity_path_changed: "Connectivity path changed (traceroute)",
+  path_check_path_changed: "Path changed (traceroute)",
 };
 
 // Which dimensionFilter inputs are relevant per asset_metric metric, so the
@@ -3945,18 +3945,18 @@ export const METRIC_DIMENSIONS: Record<string, string[]> = {
   ipsecThroughputBps: ["tunnelName"],
   customWidgetValue: ["widgetId"],
   customStateValue: ["stateProbeId", "stateRowPattern"],
-  connLatencyMs: ["checkId"],
-  connHttpStatus: ["checkId"],
-  connOk: ["checkId"],
-  connFailurePct: ["checkId"],
-  connHopCount: ["checkId"],
-  connTlsDaysLeft: ["checkId"],
+  pathLatencyMs: ["checkId"],
+  pathHttpStatus: ["checkId"],
+  pathOk: ["checkId"],
+  pathFailurePct: ["checkId"],
+  pathHopCount: ["checkId"],
+  pathTlsDaysLeft: ["checkId"],
 };
 
-/** Does a conn* dimension filter select this check? Shared by the engine's
+/** Does a path* dimension filter select this check? Shared by the engine's
  *  resolvers (applied in SQL there) and getMetricSeverityTiers, so a chart is
  *  never shaded with another check's thresholds. */
-export function connCheckFilterMatches(
+export function pathCheckFilterMatches(
   df: { checkId?: string } | null | undefined,
   check: { checkId?: string | null },
 ): boolean {
@@ -4109,7 +4109,7 @@ export const DIMENSION_NOUNS: Record<string, string> = {
   widgetId: "custom widget",
   stateProbeId: "state probe",
   stateRowPattern: "state-probe row",
-  checkId: "connectivity check",
+  checkId: "path check",
 };
 
 /**

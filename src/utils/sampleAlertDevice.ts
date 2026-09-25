@@ -80,9 +80,9 @@ export const SAMPLE_SDWAN_LINK = "wan1";
 /** The interface a test of a port-scoped automation names. */
 export const SAMPLE_INTERFACE_NAME = "port12";
 
-/** The connectivity check a test of a conn* automation names (a made-up check,
+/** The path check a test of a path* automation names (a made-up check,
  *  business rule 65 — never one from this install). */
-export const SAMPLE_CONNECTIVITY_CHECK = "Example-Intranet-Check";
+export const SAMPLE_PATH_CHECK = "Example-Intranet-Check";
 
 /**
  * The `Notification.dimension` a test alert should carry for `metric`.
@@ -99,6 +99,6 @@ export function sampleDimensionFor(metric: string | null | undefined): string | 
   if (metric === "hwSensorValue" || metric === "hwSensorAlarm") return SAMPLE_SENSOR_NAME;
   if (metric.startsWith("sdwan")) return `${SAMPLE_SDWAN_HEALTH_CHECK}|${SAMPLE_SDWAN_LINK}`;
   if (metric.startsWith("if") || metric === "poeStatus") return SAMPLE_INTERFACE_NAME;
-  if (metric.startsWith("conn")) return SAMPLE_CONNECTIVITY_CHECK;
+  if (metric.startsWith("path")) return SAMPLE_PATH_CHECK;
   return null;
 }

@@ -1,6 +1,6 @@
-# Connectivity checks
+# Path Monitor
 
-A connectivity check tests whether a web page, a service or an address can be
+A path check tests whether a web page, a service or an address can be
 reached **from the machines that run the Polaris Agent**, not from the Polaris
 server. Each matching host runs the check on its own schedule and reports:
 
@@ -11,8 +11,8 @@ server. Each matching host runs the check on its own schedule and reports:
 - a **traceroute** of the path the traffic took, with each hop matched to the
   device Polaris monitors at that address.
 
-Checks live on the **Connections** page (sidebar, under Application Map). Results appear on each host's
-**Connectivity** tab and on the check's **Results** view.
+Checks live on the **Path Monitor** page (sidebar, under Application Map). Results appear on each host's
+**Paths** tab and on the check's **Results** view.
 
 > A check measures the path from a host. It **never changes that host's own
 > Up / Down status** — a laptop that cannot reach the intranet is not a laptop
@@ -23,7 +23,7 @@ Checks live on the **Connections** page (sidebar, under Application Map). Result
 - The **Polaris Agent 0.21.0 or later** on the hosts that should run the check.
   Older agents are listed on the check's Results view with *upgrade agent*;
   they run nothing until upgraded.
-- The **Connectivity Checks** permission. *Read-Only* shows the list and the
+- The **Path Checks** permission. *Read-Only* shows the list and the
   results; *Read-Write* creates, edits and deletes checks. It is its own
   permission because a check tells every matching agent to send traffic to a
   destination on a schedule.
@@ -85,16 +85,16 @@ Tick the box beside a host to **pin** it: a pinned host keeps running the check
 even if it stops matching the filter.
 
 A host runs at most 20 checks. If it matches more, it runs the oldest 20, and
-Polaris writes a `connectivity_check.agent_over_cap` event naming it.
+Polaris writes a `path_check.agent_over_cap` event naming it.
 
 ## Reading the results
 
 **Results** (from a check's row menu) lists every host that runs it, with the
 latest result, latency, HTTP status, resolved address, hop count and the last
 error. It refreshes on the check's interval while it is open. Click a host to
-open its Connectivity tab.
+open its Paths tab.
 
-The host's **Connectivity** tab shows:
+The host's **Paths** tab shows:
 
 - a table of every check the host runs — click one to see it below;
 - **Latency** over time. Failed runs show as red dots on the baseline. Use the
@@ -106,22 +106,43 @@ The host's **Connectivity** tab shows:
 - **HTTP status** — one cell per run, green for a pass and red for a failure;
 - **Latest result** — including the body fingerprint and size, the TLS issuer
   and how many days are left on the certificate, and the error text;
-- **Path** — the traceroute. Pick an earlier trace from the list to compare.
-  Hops that changed since the previous trace are marked. A hop that is a
-  device Polaris monitors links to it, with its status at the time of the
-  trace, and shows the subnet it sits in.
+- **Path** — the traceroute, as a graph and a table. Pick an earlier trace
+  from the list to compare. Hops that changed since the previous trace are
+  marked in the table. A hop that is a device Polaris monitors links to it,
+  with its status at the time of the trace, and shows the subnet it sits in.
+
+### Reading the path graph
+
+The graph combines the host's last ten traces. It reads left to right: this
+host, then one column per hop, then the destination.
+
+- **Branches** are routes that changed. When recent traces took different
+  routers at the same hop, the graph splits there and joins again where the
+  routes meet. Thicker links were taken by more traces.
+- **The selected trace** is drawn solid on top; the other routes are faded.
+  Each of its links is coloured by the latency that hop **adds**: green under
+  10 ms, amber for 10–50 ms or when some probes got no reply, red over 50 ms.
+  The red link is usually the one to look at.
+- **Circles** carry the hop number. A hop Polaris monitors is filled with its
+  status colour — click it to open the device. A dashed `*` is a router that
+  did not reply; that is common and does not mean traffic stopped there.
+- **A dashed red link with a cross** into the destination means that trace
+  never reached it.
+
+Hover a circle for its address, reverse DNS, round-trip times, lost probes and
+how many of the recent traces passed through it.
 
 ## Alerting — setting an SLA
 
 A check has no threshold of its own. To be alerted, create an
-[automation](Automations) on one of the connectivity metrics:
+[automation](Automations) on one of the path-check metrics:
 
 | Metric | Meaning |
 |---|---|
-| **Connectivity latency** | ms for a run. A failed run has no latency. |
-| **Connectivity failure rate** | % of runs that failed over the *History* window, like packet loss |
-| **Connectivity check result** | *Reachable* / *Unreachable* for each run |
-| **Connectivity HTTP status** | the status code returned |
+| **Path latency** | ms for a run. A failed run has no latency. |
+| **Path failure rate** | % of runs that failed over the *History* window, like packet loss |
+| **Path check result** | *Reachable* / *Unreachable* for each run |
+| **Path HTTP status** | the status code returned |
 | **Traceroute hop count** | hops in the latest traces |
 | **TLS certificate days remaining** | days until the target's certificate expires |
 
@@ -131,17 +152,17 @@ every check each host runs (one alert per check). In the **Devices** step,
 severity bands, resets, maintenance windows and dependency suppression all work
 as for any other automation.
 
-For route changes, use a **Change** trigger with **Connectivity path changed
-(traceroute)**. Polaris writes this event (`connectivity.path_changed`) at most
+For route changes, use a **Change** trigger with **Path changed
+(traceroute)**. Polaris writes this event (`path_check.path_changed`) at most
 once every 10 minutes per host and check, naming the host.
 
 ## What is stored
 
 | Kept | For how long |
 |---|---|
-| Each run's result, timings, status, fingerprint (SHA-256) and size of the body | the *Connectivity checks* row of the Retention card (Server Settings → Maintenance), default 7 days raw / 30 days hourly / 365 days daily |
+| Each run's result, timings, status, fingerprint (SHA-256) and size of the body | the *Path checks* row of the Retention card (Server Settings → Maintenance), default 7 days raw / 30 days hourly / 365 days daily |
 | Up to 4 KB of the response body — **only when the run failed**, or on every run when *Keep a body excerpt* is on | the same |
-| Traceroutes | the *Connectivity traceroutes* row, default 30 days |
+| Traceroutes | the *Path traceroutes* row, default 30 days |
 
 Response bodies can contain sensitive data. Leave *Keep a body excerpt* off
 unless you need it.

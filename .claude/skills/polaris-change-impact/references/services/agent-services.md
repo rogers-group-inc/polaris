@@ -212,18 +212,18 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
-## services/connectivityCheckService.ts
+## services/pathCheckService.ts
 
-**What it owns:** Agent-run connectivity checks — the `ConnectivityCheck` definition (HTTP / HTTPS / TCP / ICMP + optional traceroute), its validation, audited CRUD, and the materialized `ConnectivityCheckSource` membership (check × agent host, plus each pair's latest result). Also the agent-facing definition shape and its ETag fold.
+**What it owns:** Agent-run path checks — the `PathCheck` definition (HTTP / HTTPS / TCP / ICMP + optional traceroute), its validation, audited CRUD, and the materialized `PathCheckSource` membership (check × agent host, plus each pair's latest result). Also the agent-facing definition shape and its ETag fold.
 
-**Public API:** `CHECK_KINDS`, `BODY_MATCH_MODES`, `MIN/MAX_INTERVAL_SEC`, `MIN/MAX_TIMEOUT_MS`, `MAX_ENABLED_CHECKS` (50), `MAX_CHECKS_PER_AGENT` (20), `MIN_AGENT_CONNECTIVITY_VERSION` (0.21.0), `DEFAULT_TRACEROUTE`, `normalizeTraceroute`, `splitHostPort`, `targetHostOf`, `assertTargetHostAllowed`, `normalizeCheckInput`, `definitionSha256`, `toAgentCheckDef`, `listChecks`, `getCheck`, `createCheck`, `updateCheck`, `setCheckEnabled`, `deleteCheck`, `reconcileConnectivityCheckSources`, `agentOnline`, `previewSources`, `listCheckResults`, `getAssetChecks`, `agentConfigChecks`, `connectivityEtagFold`; types `ConnectivityCheckInput`, `NormalizedCheck`, `AgentCheckDef`, `CheckHttpConfig`, `CheckTracerouteConfig`, `ReconcileResult`.
+**Public API:** `CHECK_KINDS`, `BODY_MATCH_MODES`, `MIN/MAX_INTERVAL_SEC`, `MIN/MAX_TIMEOUT_MS`, `MAX_ENABLED_CHECKS` (50), `MAX_CHECKS_PER_AGENT` (20), `MIN_AGENT_PATH_CHECK_VERSION` (0.21.0), `DEFAULT_TRACEROUTE`, `normalizeTraceroute`, `splitHostPort`, `targetHostOf`, `assertTargetHostAllowed`, `normalizeCheckInput`, `definitionSha256`, `toAgentCheckDef`, `listChecks`, `getCheck`, `createCheck`, `updateCheck`, `setCheckEnabled`, `deleteCheck`, `reconcilePathCheckSources`, `agentOnline`, `previewSources`, `listCheckResults`, `getAssetChecks`, `agentConfigChecks`, `pathCheckEtagFold`; types `PathCheckInput`, `NormalizedCheck`, `AgentCheckDef`, `CheckHttpConfig`, `CheckTracerouteConfig`, `ReconcileResult`.
 
 **Cross-service deps:** `prisma`, `eventLogService.logEvent`, `agentCommandWake.publishConfigRefresh`, `notificationEngine.loadScopeAssetIds` (the scope resolver the engine itself uses — so a check's Sources can never disagree with an automation's Devices step), `notificationTypes.scopeIsUnconstrained`, `utils/netGuard.isBlockedOutboundHost`, `utils/httpCheck` (`parseStatusSpec`, `agentRegexProblem`), `utils/version.versionAtLeast`, `agentInstallService.AGENT_SERVER_URL_SETTING_KEY`.
 
-**Used by:** `src/api/routes/connectivityChecks.ts` (CRUD / preview / results / filter-schema), `src/jobs/reconcileConnectivitySources.ts` (5-minute full reconcile).
+**Used by:** `src/api/routes/pathChecks.ts` (CRUD / preview / results / filter-schema), `src/jobs/reconcilePathCheckSources.ts` (5-minute full reconcile).
 
 **Invariants:**
-- **A check carries no threshold.** The SLA — what latency is a breach, how many failures page someone — lives in the automation that watches the `conn*` metrics, the split business rule 36 makes for "down". Never add a threshold column here.
+- **A check carries no threshold.** The SLA — what latency is a breach, how many failures page someone — lives in the automation that watches the `path*` metrics, the split business rule 36 makes for "down". Never add a threshold column here.
 - **Membership ignores `monitored`.** Whether a result may ALERT is business rule 37's question, asked by the engine at fire time. `loadScopeAssetIds` is called WITHOUT `monitoredOnly`.
 - **`{}` / an empty tree means "nothing chosen"** here (a pins-only check), NOT "any device" — that legacy reading belongs to event automations (business rule 46). `{allAssets:true}` short-circuits to every active agent without loading the fleet.
 - **Target refusal is at save, on the LITERAL host**: loopback / link-local / unspecified / multicast (netGuard), IPv6 literals (v1 is IPv4-only), URL userinfo, and Polaris's own names/addresses. The agent refuses the same ranges again AFTER resolution. Rule 33's netGuard exemption (the vendor HTTP check aims at the device's own address) does NOT carry over.
@@ -231,38 +231,38 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`definitionSha256` covers exactly what the agent receives** (`agentDefCore`), key-sorted at every level. A description/name-only edit must not change it; any field the agent reads must. It is what both config ETags fold.
 - **Reconcile is set-based**: one active-agent query, one source query, then `createMany` / `deleteMany` / `updateMany` in one `$transaction` — never a query per host. Agents whose membership changed (or every member, when the definition changed) are nudged via `publishConfigRefresh`.
 - **Disabled checks keep their sources** (the fleet view shows their last results); `agentConfigChecks` filters on `enabled`.
-- **`MAX_CHECKS_PER_AGENT` is enforced in `agentConfigChecks`** (oldest checks win, deterministically) and REPORTED by `reportOverCap` as a `connectivity_check.agent_over_cap` Event when a host newly exceeds it — never a silent truncation. The in-memory set dedupes it across the 5-minute ticks.
-- **`agentConfigChecks` returns `[]` below `MIN_AGENT_CONNECTIVITY_VERSION`.**
+- **`MAX_CHECKS_PER_AGENT` is enforced in `agentConfigChecks`** (oldest checks win, deterministically) and REPORTED by `reportOverCap` as a `path_check.agent_over_cap` Event when a host newly exceeds it — never a silent truncation. The in-memory set dedupes it across the 5-minute ticks.
+- **`agentConfigChecks` returns `[]` below `MIN_AGENT_PATH_CHECK_VERSION`.**
 - **A target/kind edit clears `lastPathHash` / `lastOk`** on every source so the first new traceroute is a baseline, not a "path changed" Event about a different destination.
 - Delete cascades sources only; samples and traceroutes age out on retention (a row DELETE in a compressed chunk decompresses it).
 
-**Wired into GET /agents/config and the heartbeat:** `agents.ts` ships `connectivityChecks: await agentConfigChecks(assetId, agentVersion)` in the payload (strong ETag covers it) AND folds `connectivityEtagFold(...)` into `computeConfigEtag` as `conn`. **Both halves or neither** — the heartbeat etag is the only thing that makes a running agent refetch.
+**Wired into GET /agents/config and the heartbeat:** `agents.ts` ships `pathChecks: await agentConfigChecks(assetId, agentVersion)` in the payload (strong ETag covers it) AND folds `pathCheckEtagFold(...)` into `computeConfigEtag` as `conn`. **Both halves or neither** — the heartbeat etag is the only thing that makes a running agent refetch.
 
-**When changing this:** a field the agent reads → `agentDefCore` + `transport.ConnectivityCheckDef` in `agent/internal/transport/client.go` + an `agent/VERSION` bump, in lockstep. A new kind → `CHECK_KINDS`, `targetHostOf`, the route's Zod enum, the agent's `ValidateCheckDef` + runner, and the modal. A new membership signal → the 5-minute job catches it; a write path that changes membership should reconcile inline.
+**When changing this:** a field the agent reads → `agentDefCore` + `transport.PathCheckDef` in `agent/internal/transport/client.go` + an `agent/VERSION` bump, in lockstep. A new kind → `CHECK_KINDS`, `targetHostOf`, the route's Zod enum, the agent's `ValidateCheckDef` + runner, and the modal. A new membership signal → the 5-minute job catches it; a write path that changes membership should reconcile inline.
 
 ---
 
-## services/connectivityIngestService.ts
+## services/pathCheckIngestService.ts
 
-**What it owns:** The server half of the agent's two connectivity streams (`POST /agents/samples`, stream `connectivity` and `connectivityTraceroute`): authorization of each sample against the pushing host's sources, the body-excerpt policy, buffered sample writes, the source's latest-result columns, hop resolution, and path-change Events.
+**What it owns:** The server half of the agent's two path-check streams (`POST /agents/samples`, stream `pathCheck` and `pathCheckTraceroute`): authorization of each sample against the pushing host's sources, the body-excerpt policy, buffered sample writes, the source's latest-result columns, hop resolution, and path-change Events.
 
-**Public API:** `ingestConnectivitySamples`, `ingestConnectivityTraceroutes`, `resolveHopContexts`, `excerptToKeep`, `hopIp`, `pathHashOf`, `sampleTime`, `PATH_CHANGE_EVENT_FLOOR_MS`; types `IngestResult`, `ConnectivitySampleInput`, `ConnectivityTracerouteInput`, `StoredHop`, `HopContext`.
+**Public API:** `ingestPathCheckSamples`, `ingestPathCheckTraceroutes`, `resolveHopContexts`, `excerptToKeep`, `hopIp`, `pathHashOf`, `sampleTime`, `PATH_CHANGE_EVENT_FLOOR_MS`; types `IngestResult`, `PathCheckSampleInput`, `PathCheckTracerouteInput`, `StoredHop`, `HopContext`.
 
-**Cross-service deps:** `prisma` (`connectivityCheckSource`, `assetConnectivityTraceroute`, `asset`, one `$queryRaw`), `sampleWriteBuffer.enqueueConnectivitySamples`, `eventLogService.logEvent`, `metrics` (`recordConnectivitySamples`, `recordConnectivityPathChange`), `utils/cidr.isValidIpAddress`, `utils/httpCheck.MAX_EXCERPT_CHARS`.
+**Cross-service deps:** `prisma` (`pathCheckSource`, `assetPathCheckTraceroute`, `asset`, one `$queryRaw`), `sampleWriteBuffer.enqueuePathCheckSamples`, `eventLogService.logEvent`, `metrics` (`recordPathCheckSamples`, `recordPathCheckPathChange`), `utils/cidr.isValidIpAddress`, `utils/httpCheck.MAX_EXCERPT_CHARS`.
 
-**Used by:** `src/api/routes/agents.ts` (`POST /samples` — the two connectivity arms return `{accepted, rejected}` of their own).
+**Used by:** `src/api/routes/agents.ts` (`POST /samples` — the two path-check arms return `{accepted, rejected}` of their own).
 
 **Invariants:**
 - **The subject is the pushing agent's own asset.** Nothing in the body names a host; `assetId` comes from `req.managedAgent`.
-- **A sample for a check this host is not a source of is REJECTED**, counted in `rejected` and in `polaris_agent_connectivity_samples_total{outcome="rejected"}` — never stored.
+- **A sample for a check this host is not a source of is REJECTED**, counted in `rejected` and in `polaris_agent_path_check_samples_total{outcome="rejected"}` — never stored.
 - **The excerpt policy is enforced HERE, not trusted from the wire** (`excerptToKeep`): kept only on a failed run or when the check keeps excerpts, re-cut to `MAX_EXCERPT_CHARS`. Hash + byte count are always stored.
-- **Nothing here touches `monitorStatus` / `consecutiveFailures` / `lastMonitorAt` / the responseTime stream.** A connectivity result describes a path from the host, not the host.
+- **Nothing here touches `monitorStatus` / `consecutiveFailures` / `lastMonitorAt` / the responseTime stream.** A path-check result describes a path from the host, not the host.
 - **Every row is stamped `cadence: "fast"`** — the rollup SQL filters on it.
 - **Hop resolution is ONE query per push** (`resolveHopContexts`: unnest + three LATERAL joins — primary `Asset.ipAddress`, then `AssetAssociatedIp` with the port name, then the most specific non-deprecated subnet via `cidr >>= inet`). Decommissioned assets skipped; `AssetIpHistory` deliberately not read (no `ip` index, and a live hop is not "who held it last month"). Hops are decorated at WRITE time, so a trace shows what Polaris knew when it was taken.
 - **`pathHashOf` excludes RTTs and trailing silent hops** — the same route at a different latency, or timing out two TTLs later, is not a change.
-- **`connectivity.path_changed` is written only against a non-null previous hash** (the first trace, and the first after a target edit, is a baseline) and at most once per `PATH_CHANGE_EVENT_FLOOR_MS` (10 min) per (host, check) — ECMP flap is recorded in the rows, not in the Event table. It names the asset (`resourceType: "asset"`, `resourceName`) so an event automation's device filter applies to the HOST (business rule 46).
+- **`path_check.path_changed` is written only against a non-null previous hash** (the first trace, and the first after a target edit, is a baseline) and at most once per `PATH_CHANGE_EVENT_FLOOR_MS` (10 min) per (host, check) — ECMP flap is recorded in the rows, not in the Event table. It names the asset (`resourceType: "asset"`, `resourceName`) so an event automation's device filter applies to the HOST (business rule 46).
 - A late-arriving older push never overwrites a newer latest result (`lastSampleAt` guard).
 
-**When changing this:** a new sample field → `ConnectivitySampleSchema` in agents.ts + `ConnectivitySampleRow` (sampleWriteBuffer) + the Prisma model/migration + the Go `transport.ConnectivitySample`, in lockstep; a rollup column also needs `sampleRollupService` + `sampleHistoryService.readConnectivityHistory`.
+**When changing this:** a new sample field → `PathCheckSampleSchema` in agents.ts + `PathCheckSampleRow` (sampleWriteBuffer) + the Prisma model/migration + the Go `transport.PathCheckSample`, in lockstep; a rollup column also needs `sampleRollupService` + `sampleHistoryService.readPathCheckHistory`.
 
 ---

@@ -157,8 +157,8 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // a capability an admin may want to withhold from someone who may still edit
   // automations. Not RCE (the agent runs a fixed, validated probe), so not
   // `automationScripts`. Seeded from automationManagement by migration
-  // 20260923030000_connectivity_checks.
-  { key: "connectivityChecks", label: "Connectivity Checks", description: "Agent-run reachability checks (HTTP / HTTPS / TCP / ICMP + traceroute). Read-Write directs every matching agent to send traffic at the target.", levels: UP_TO_WRITE },
+  // 20260923030000_path_checks.
+  { key: "pathChecks", label: "Path Checks", description: "Agent-run reachability checks (HTTP / HTTPS / TCP / ICMP + traceroute). Read-Write directs every matching agent to send traffic at the target.", levels: UP_TO_WRITE },
   { key: "maintenanceManagement", label: "Maintenance Schedules", description: "Maintenance windows that pause monitoring and alerts, including per-asset maintenance mode. Read-Write = schedule CRUD.", levels: UP_TO_WRITE },
   { key: "contacts", label: "Address Book", description: "The address book alerts route to, each entry optionally owning devices. Read-Write = your own rows.", hasOwnershipDimension: true },
   { key: "staleReservations", label: "Stale Reservations", description: "Snooze, ignore and un-ignore stale DHCP reservation alerts, and set the staleness threshold.", levels: UP_TO_WRITE },

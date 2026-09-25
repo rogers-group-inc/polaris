@@ -1014,14 +1014,14 @@ export async function readPerfSlaHistory(
   };
 }
 
-// ─── Agent-run connectivity checks ───────────────────────────────────────────
+// ─── Agent-run path checks ───────────────────────────────────────────
 //
 // One (agent host, check) series. Detail rows carry the per-run verdict; rollup
 // rows translate back to the SAME field names (latencyMs = the bucket average,
 // ok = the bucket's majority verdict) plus the counts the availability chart
 // and the status strip need: okCount / failCount / sampleCount.
 
-export interface ConnectivityHistoryRow {
+export interface PathCheckHistoryRow {
   timestamp:  Date;
   ok:         boolean;
   latencyMs:  number | null;
@@ -1040,17 +1040,17 @@ export interface ConnectivityHistoryRow {
   sampleCount?:  number;
 }
 
-export async function readConnectivityHistory(
+export async function readPathCheckHistory(
   assetId: string,
   since: Date,
   until: Date,
   tier: SampleTier,
   checkId: string,
   fetchSince?: Date,
-): Promise<{ samples: ConnectivityHistoryRow[] }> {
+): Promise<{ samples: PathCheckHistoryRow[] }> {
   const queryFrom = fetchSince ?? since;
   if (tier === "detail") {
-    const samples = await prisma.assetConnectivitySample.findMany({
+    const samples = await prisma.assetPathCheckSample.findMany({
       where: { assetId, checkId, timestamp: { gte: queryFrom, lte: until } },
       orderBy: { timestamp: "asc" },
       select: {
@@ -1060,7 +1060,7 @@ export async function readConnectivityHistory(
     });
     return { samples };
   }
-  const table = tier === "hourly" ? "asset_connectivity_samples_hourly" : "asset_connectivity_samples_daily";
+  const table = tier === "hourly" ? "asset_path_check_samples_hourly" : "asset_path_check_samples_daily";
   const rows = await prisma.$queryRawUnsafe<Array<{
     bucketStart: Date;
     sampleCount: number; okCount: number; failCount: number;

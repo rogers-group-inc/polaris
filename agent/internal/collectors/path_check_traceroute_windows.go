@@ -19,7 +19,7 @@ func platformTraceroute(ctx context.Context, dst net.IP, o tracerouteOpts) ([]pr
 	}
 	var results []probeResult
 	silent := 0
-	payload := []byte("polaris-connectivity-trace")
+	payload := []byte("polaris-path-check-trace")
 	for first := 1; first <= o.maxHops; first += o.inflightTTLs {
 		if ctx.Err() != nil {
 			return results, nil

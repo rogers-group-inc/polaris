@@ -17,7 +17,7 @@ import notificationsRouter from "./routes/notifications.js";
 import notificationRulesRouter from "./routes/notificationRules.js";
 import automationScriptsRouter from "./routes/automationScripts.js";
 import maintenanceSchedulesRouter from "./routes/maintenanceSchedules.js";
-import connectivityChecksRouter from "./routes/connectivityChecks.js";
+import pathChecksRouter from "./routes/pathChecks.js";
 import contactsRouter from "./routes/contacts.js";
 import networkScansRouter from "./routes/networkScans.js";
 import notificationChannelsRouter from "./routes/notificationChannels.js";
@@ -194,9 +194,9 @@ router.use("/notification-rules", deprecatedAlias("/api/v1/automations"), notifi
 // Maintenance schedules (Assets page → Maintenance modal); per-route gates
 // on the maintenanceManagement function key.
 router.use("/maintenance-schedules", maintenanceSchedulesRouter);
-// Agent-run connectivity checks (Connections page (/connections.html)); per-route
-// gates on the connectivityChecks function key.
-router.use("/connectivity-checks", connectivityChecksRouter);
+// Agent-run path checks (Path Monitor page (/path-monitor.html)); per-route
+// gates on the pathChecks function key.
+router.use("/path-checks", pathChecksRouter);
 // Address book (Automations → Address Book tab + the recipient picker's
 // typeahead); per-route gates on the ownership-dimensioned contacts key.
 router.use("/contacts", contactsRouter);

@@ -827,9 +827,9 @@ const api = {
       if (opts.checkId)     qs.push("checkId="     + encodeURIComponent(opts.checkId));
       return request("GET", `/assets/${id}/metric-thresholds?` + qs.join("&"));
     },
-    // Agent-run connectivity checks this host runs (+ latest result each).
-    connectivityChecks:      (id) => request("GET", `/assets/${id}/connectivity-checks`),
-    connectivityHistory:     (id, checkId, opts) => {
+    // Agent-run path checks this host runs (+ latest result each).
+    pathChecks:      (id) => request("GET", `/assets/${id}/path-checks`),
+    pathCheckHistory:     (id, checkId, opts) => {
       if (typeof opts === "string") opts = { range: opts };
       opts = opts || {};
       var qs = ["checkId=" + encodeURIComponent(checkId)];
@@ -839,10 +839,10 @@ const api = {
       } else if (opts.range) {
         qs.push("range=" + encodeURIComponent(opts.range));
       }
-      return request("GET", `/assets/${id}/connectivity-history?` + qs.join("&"));
+      return request("GET", `/assets/${id}/path-check-history?` + qs.join("&"));
     },
-    connectivityTraceroutes: (id, checkId, limit) =>
-      request("GET", `/assets/${id}/connectivity-traceroutes?checkId=` + encodeURIComponent(checkId) + "&limit=" + (limit || 10)),
+    pathCheckTraceroutes: (id, checkId, limit) =>
+      request("GET", `/assets/${id}/path-check-traceroutes?checkId=` + encodeURIComponent(checkId) + "&limit=" + (limit || 10)),
     hardwareHistory:      (id, opts) => {
       if (typeof opts === "string") opts = { range: opts };
       opts = opts || {};
@@ -1075,18 +1075,18 @@ const api = {
     runs:    (params)=> request("GET", "/automations/scripts/runs" + toQuery(params)),
     run:     (id)    => request("GET", `/automations/scripts/runs/${id}`),
   },
-  // Agent-run connectivity checks (Connections page (/connections.html)). Gated by the
-  // connectivityChecks function key.
-  connectivityChecks: {
-    list:           ()      => request("GET", "/connectivity-checks"),
-    get:            (id)    => request("GET", `/connectivity-checks/${id}`),
-    create:         (body)  => request("POST", "/connectivity-checks", body),
-    update:         (id, b) => request("PUT", `/connectivity-checks/${id}`, b),
-    delete:         (id)    => request("DELETE", `/connectivity-checks/${id}`),
-    setEnabled:     (id, enabled) => request("POST", `/connectivity-checks/${id}/enabled`, { enabled: !!enabled }),
-    filterSchema:   ()      => request("GET", "/connectivity-checks/filter-schema"),
-    previewSources: (body)  => request("POST", "/connectivity-checks/preview-sources", body || {}),
-    results:        (id)    => request("GET", `/connectivity-checks/${id}/results`),
+  // Agent-run path checks (Path Monitor page (/path-monitor.html)). Gated by the
+  // pathChecks function key.
+  pathChecks: {
+    list:           ()      => request("GET", "/path-checks"),
+    get:            (id)    => request("GET", `/path-checks/${id}`),
+    create:         (body)  => request("POST", "/path-checks", body),
+    update:         (id, b) => request("PUT", `/path-checks/${id}`, b),
+    delete:         (id)    => request("DELETE", `/path-checks/${id}`),
+    setEnabled:     (id, enabled) => request("POST", `/path-checks/${id}/enabled`, { enabled: !!enabled }),
+    filterSchema:   ()      => request("GET", "/path-checks/filter-schema"),
+    previewSources: (body)  => request("POST", "/path-checks/preview-sources", body || {}),
+    results:        (id)    => request("GET", `/path-checks/${id}/results`),
   },
   contacts: {
     // Paginated + server-side searched. `params` = { q, limit, offset }; the

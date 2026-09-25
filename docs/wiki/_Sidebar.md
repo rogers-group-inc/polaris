@@ -13,7 +13,7 @@
 - [Assets](Assets)
 - [Device Map](Device-Map)
 - [Application Map](Application-Map)
-- [Connections](Connectivity-Checks)
+- [Path Monitor](Path-Monitor)
 - [Events](Events)
 - [Automations](Automations)
 - [Integrations](Integrations)
@@ -27,7 +27,7 @@
 - [Actions and recipients](Automation-Actions)
 - [Escalation, reminders, quiet time](Automation-Escalation)
 - [Scripts](Automation-Scripts)
-- [Connectivity checks](Connectivity-Checks)
+- [Path checks](Path-Monitor)
 - [Delivery channels](Delivery-Channels)
 - [Address book](Address-Book)
 

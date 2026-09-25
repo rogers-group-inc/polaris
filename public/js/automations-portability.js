@@ -370,11 +370,11 @@
         var p = nameOf(cat.stateProbes, df[field]);
         deps.add("stateProbe", p ? p.name : df[field], "trigger dimension", p ? p.unresolved : true);
       } else if (field === "checkId") {
-        // A connectivity check id is install-specific. Blanked (not kept): a
+        // A path check id is install-specific. Blanked (not kept): a
         // blank checkId watches EVERY check on the host, so the import marks
         // the trigger incomplete rather than silently widening it.
-        var ck = nameOf(cat.connectivityChecks, df[field]);
-        deps.add("connectivityCheck", ck ? ck.name : df[field], "trigger dimension", ck ? ck.unresolved : true);
+        var ck = nameOf(cat.pathChecks, df[field]);
+        deps.add("pathCheck", ck ? ck.name : df[field], "trigger dimension", ck ? ck.unresolved : true);
       } else {
         deps.add("customWidget", df[field], "trigger dimension", true);
       }
@@ -572,7 +572,7 @@
       user: cat.users,
       role: cat.roles,
       stateProbe: cat.stateProbes,
-      connectivityCheck: cat.connectivityChecks,
+      pathCheck: cat.pathChecks,
     };
     var labelKeys = { user: ["username", "name", "email"] };
     function nameMatches(rows, value, keys) {

@@ -13783,14 +13783,14 @@ export async function pruneSystemInfoSamples(): Promise<number> {
     // ARP neighbour rows — the other accumulate+age table, on its own flat
     // `arpEntries` window. Same encoding as a tier (FOREVER = never prune).
     pruneArpEntries(),
-    // Agent-run connectivity checks — a tiered entity (every detail row is
+    // Agent-run path checks — a tiered entity (every detail row is
     // stamped "fast", so the plain by-days prune is correct) plus the
     // traceroute snapshots, a standalone hypertable on the FLAT
-    // `connectivityTraceroutes` window.
-    pruneTierByDays((w) => prisma.assetConnectivitySample.deleteMany({       where: w as any }), r.connectivity.detail, "timestamp",   "asset_connectivity_samples"),
-    pruneTierByDays((w) => prisma.assetConnectivitySampleHourly.deleteMany({ where: w as any }), r.connectivity.hourly, "bucketStart", "asset_connectivity_samples_hourly"),
-    pruneTierByDays((w) => prisma.assetConnectivitySampleDaily.deleteMany({  where: w as any }), r.connectivity.daily,  "bucketStart", "asset_connectivity_samples_daily"),
-    pruneTierByDays((w) => prisma.assetConnectivityTraceroute.deleteMany({   where: w as any }), r.connectivityTraceroutes.days, "timestamp", "asset_connectivity_traceroutes"),
+    // `pathCheckTraceroutes` window.
+    pruneTierByDays((w) => prisma.assetPathCheckSample.deleteMany({       where: w as any }), r.pathCheck.detail, "timestamp",   "asset_path_check_samples"),
+    pruneTierByDays((w) => prisma.assetPathCheckSampleHourly.deleteMany({ where: w as any }), r.pathCheck.hourly, "bucketStart", "asset_path_check_samples_hourly"),
+    pruneTierByDays((w) => prisma.assetPathCheckSampleDaily.deleteMany({  where: w as any }), r.pathCheck.daily,  "bucketStart", "asset_path_check_samples_daily"),
+    pruneTierByDays((w) => prisma.assetPathCheckTraceroute.deleteMany({   where: w as any }), r.pathCheckTraceroutes.days, "timestamp", "asset_path_check_traceroutes"),
   ]);
   return iDetail + iHourly + iDaily + sDetail + sHourly + sDaily + ipDetail + ipHourly + ipDaily
     + psDetail + psHourly + psDaily + lldp + customWidget + stateProbe + processLog + processConn + arpEntries

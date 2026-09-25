@@ -567,10 +567,10 @@ function makeAutomationSentences(s) {
     checkId: "for check {value}",
   }, s.dimensionPhrases || {});
 
-  /** A connectivity check's NAME for its id — the id must never reach a
-   *  sentence. Resolved off /schema's `connectivityChecks` registry. */
+  /** A path check's NAME for its id — the id must never reach a
+   *  sentence. Resolved off /schema's `pathChecks` registry. */
   function checkNameOf(id) {
-    var list = s.connectivityChecks || [];
+    var list = s.pathChecks || [];
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return "«" + list[i].name + "»";
     return id + " (not found)";
   }
@@ -1617,7 +1617,7 @@ async function openAutomationWizard(existing, opts) {
       dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
-  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which connectivity check — click to pick" };
+  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick" };
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
@@ -2225,7 +2225,7 @@ async function openAutomationWizard(existing, opts) {
       roles: (_awScopeOptions && _awScopeOptions.roles) || [],
       regions: (_awScopeOptions && _awScopeOptions.regions) || [],
       stateProbes: (s && s.stateProbes) || [],
-      connectivityChecks: (s && s.connectivityChecks) || [],
+      pathChecks: (s && s.pathChecks) || [],
       tags: _ruleTagList || [],
       assetTypes: _ruleAssetTypes || [],
       assets: [],
@@ -3530,7 +3530,7 @@ async function openAutomationWizard(existing, opts) {
     temperature: "hardware-sensor",
     systemInfo: "interface/system",
     storage: "storage",
-    connectivity: "connectivity-check",
+    pathCheck: "path-check",
   };
 
   /** The metric whose cadence the poll fields are counted in: the first metric

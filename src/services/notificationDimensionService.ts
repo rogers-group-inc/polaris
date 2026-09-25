@@ -378,23 +378,23 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
         },
       })).map((r) => ({ value: r.rowLabel, assetId: r.assetId })),
   },
-  // Which agent-run connectivity check (conn* metrics). Strict like
+  // Which agent-run path check (path* metrics). Strict like
   // stateProbeId — an exact registry id, so free text could only be a typo —
   // and labelled by the check's name. Pairs come from MEMBERSHIP
-  // (connectivity_check_sources), not the samples: the pin-set reasoning — a
+  // (path_check_sources), not the samples: the pin-set reasoning — a
   // host is a source the moment it is reconciled, before its first result,
   // and the membership is exactly what the engine's readings can come from.
   checkId: {
-    noun: "connectivity checks",
+    noun: "path checks",
     strict: true,
     candidateWhere: { managedAgent: { is: { installStatus: "active" } } },
     labelOf: async () => {
-      const rows = await prisma.connectivityCheck.findMany({ select: { id: true, name: true, kind: true } });
+      const rows = await prisma.pathCheck.findMany({ select: { id: true, name: true, kind: true } });
       const byId = new Map(rows.map((r) => [r.id, `${r.name} (${r.kind.toUpperCase()})`]));
       return (value: string) => byId.get(value);
     },
     pairs: async (ids) =>
-      (await prisma.connectivityCheckSource.findMany({
+      (await prisma.pathCheckSource.findMany({
         where: { assetId: { in: ids } },
         select: { assetId: true, checkId: true },
       })).map((r) => ({ value: r.checkId, assetId: r.assetId })),

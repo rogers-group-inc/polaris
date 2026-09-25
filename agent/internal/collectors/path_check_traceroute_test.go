@@ -75,7 +75,7 @@ func TestEnrichRdnsTrimsTheDotAndDedupes(t *testing.T) {
 		calls++
 		return []string{"gw-" + addr + ".example."}, nil
 	}
-	hops := []transport.ConnectivityHop{{TTL: 1, IP: "10.0.0.1"}, {TTL: 2, IP: ""}, {TTL: 3, IP: "10.0.0.1"}}
+	hops := []transport.PathCheckHop{{TTL: 1, IP: "10.0.0.1"}, {TTL: 2, IP: ""}, {TTL: 3, IP: "10.0.0.1"}}
 	enrichRdns(context.Background(), hops)
 	if hops[0].Rdns != "gw-10.0.0.1.example" || hops[2].Rdns != hops[0].Rdns || hops[1].Rdns != "" {
 		t.Fatalf("%+v", hops)

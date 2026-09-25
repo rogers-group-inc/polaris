@@ -14,7 +14,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **MonitorClassOverride** — tier-2 of the monitor settings hierarchy; manual-scope only post-Phase-2.
 
-- **ConnectivityCheck / ConnectivityCheckSource / AssetConnectivitySample / AssetConnectivityTraceroute** — agent-run connectivity checks. A `ConnectivityCheck` is an operator-defined HTTP / HTTPS / TCP / ICMP probe (+ optional traceroute) that the Polaris Agent on every matching host runs; `ConnectivityCheckSource` is the materialized check × agent-host membership plus that pair's latest result. `AssetConnectivitySample` (+ hourly/daily) and `AssetConnectivityTraceroute` are hypertables with NO FK to Asset, and their `assetId` is the **agent host**, never the target. **A result never moves `monitorStatus`** — a host that cannot reach a website is not a host that is down — and **a check carries no threshold**: the SLA lives in the automation that watches the `conn*` metrics. Deleting a check cascades its sources only; samples age out on retention (never row-deleted — compressed chunks).
+- **PathCheck / PathCheckSource / AssetPathCheckSample / AssetPathCheckTraceroute** — agent-run path checks. A `PathCheck` is an operator-defined HTTP / HTTPS / TCP / ICMP probe (+ optional traceroute) that the Polaris Agent on every matching host runs; `PathCheckSource` is the materialized check × agent-host membership plus that pair's latest result. `AssetPathCheckSample` (+ hourly/daily) and `AssetPathCheckTraceroute` are hypertables with NO FK to Asset, and their `assetId` is the **agent host**, never the target. **A result never moves `monitorStatus`** — a host that cannot reach a website is not a host that is down — and **a check carries no threshold**: the SLA lives in the automation that watches the `path*` metrics. Deleting a check cascades its sources only; samples age out on retention (never row-deleted — compressed chunks).
 
 ## Schema
 
@@ -202,30 +202,30 @@ MonitorClassOverride            -- Tier-2 of the monitor settings hierarchy. **A
   -- (null, "switch") rows. The route layer enforces uniqueness for the
   -- manual-tier case before insert.
 
-ConnectivityCheck               -- connectivity_checks (plain). An operator-defined agent-run reachability check. NO threshold field on purpose — the SLA lives in the automation.
+PathCheck               -- path_checks (plain). An operator-defined agent-run reachability check. NO threshold field on purpose — the SLA lives in the automation.
   id               UUID PK
   name             String @unique
   description      String?
   enabled          Boolean         -- disabled checks keep their sources (fleet view shows last results); GET /agents/config filters them out
   kind             String          -- "http" | "https" | "tcp" | "icmp"
   target           String          -- URL (http/https), host:port (tcp), host (icmp). Literal refused: loopback / link-local / unspecified / multicast / IPv6 / Polaris's own addresses
-  intervalSec      Int             -- 60-multiple, 60..3600 (the agent's connectivity loop ticks every 60 s)
+  intervalSec      Int             -- 60-multiple, 60..3600 (the agent's path-check loop ticks every 60 s)
   timeoutMs        Int             -- 500..30000 and ≤ intervalSec×1000/2
   http             Json?           -- http/https only: { expectStatus: "200,204,300-399" ("" = any 2xx), bodyMatch: {mode contains|regex|exact, pattern, caseSensitive} | null, verifyTls }
   traceroute       Json            -- { enabled, everyNRuns, maxHops, probesPerHop, probeTimeoutMs }
   keepBodyExcerpt  Boolean         -- http/https only; otherwise the 4 KB excerpt is kept only on a FAILED run
   scope            Json            -- automation-shaped RuleScope ({allAssets:true} | {condition}), implicitly AND'd with "active Polaris Agent"
   assetIds         String[]        -- explicit pins, kept even when the filter stops matching
-  definitionSha256 String          -- sha256 of exactly what the agent receives (connectivityCheckService.definitionSha256) — the ETag fold; a description edit does not change it
+  definitionSha256 String          -- sha256 of exactly what the agent receives (pathCheckService.definitionSha256) — the ETag fold; a description edit does not change it
   createdBy / createdAt / updatedAt / lastReconciledAt
 
-ConnectivityCheckSource         -- connectivity_check_sources (plain, FK cascade to both check and asset). Materialized check × agent-host membership, rebuilt by reconcileConnectivityCheckSources; ALSO the latest-result cache the fleet view / asset tab / path-change detection read.
+PathCheckSource         -- path_check_sources (plain, FK cascade to both check and asset). Materialized check × agent-host membership, rebuilt by reconcilePathCheckSources; ALSO the latest-result cache the fleet view / asset tab / path-change detection read.
   checkId, assetId  @@unique       -- @@index([assetId])
-  explicit          Boolean        -- from ConnectivityCheck.assetIds
+  explicit          Boolean        -- from PathCheck.assetIds
   lastOk / lastSampleAt / lastLatencyMs / lastHttpStatus / lastError / lastResolvedIp / lastFailAt
   lastHopCount / lastTracerouteComplete / lastPathHash / lastTracerouteAt / lastPathChangeEventAt   -- path-change detection state (10-minute Event floor)
 
-AssetConnectivitySample         -- asset_connectivity_samples, hypertable, NO FK. One agent host's result for one check run. assetId = the AGENT HOST, never the target.
+AssetPathCheckSample         -- asset_path_check_samples, hypertable, NO FK. One agent host's result for one check run. assetId = the AGENT HOST, never the target.
   id, timestamp (@@id)  assetId  checkId (not a FK — AssetStateSample.probeId precedent)
   ok            Boolean
   latencyMs / dnsMs / connectMs / tlsMs / ttfbMs   Float?   -- null = not measured (never 0); dnsMs null for an IP-literal target
@@ -234,9 +234,9 @@ AssetConnectivitySample         -- asset_connectivity_samples, hypertable, NO FK
   error / resolvedIp / tlsNotAfter / tlsIssuer / hopCount
   cadence       "fast"         -- rollups filter on it
   @@index([assetId, timestamp]) @@index([assetId, checkId, timestamp]) @@index([checkId, timestamp])
-AssetConnectivitySampleHourly / AssetConnectivitySampleDaily  -- @@unique([bucketStart, assetId, checkId]); sampleCount, okCount, failCount, avg/min/max latency, avg phases, avg/max hopCount, modeHttpStatus, lastBucketSampleAt
+AssetPathCheckSampleHourly / AssetPathCheckSampleDaily  -- @@unique([bucketStart, assetId, checkId]); sampleCount, okCount, failCount, avg/min/max latency, avg phases, avg/max hopCount, modeHttpStatus, lastBucketSampleAt
 
-AssetConnectivityTraceroute     -- asset_connectivity_traceroutes, STANDALONE hypertable (no rollups), flat retention entity connectivityTraceroutes. NO FK.
+AssetPathCheckTraceroute     -- asset_path_check_traceroutes, STANDALONE hypertable (no rollups), flat retention entity pathCheckTraceroutes. NO FK.
   id, timestamp (@@id)  assetId  checkId  destinationIp  complete  hopCount
   hops          Json           -- [{ttl, ip|null, rdns?, rttMs[] (-1 = timeout), assetId?, hostname?, monitorStatus?, subnetCidr?, interfaceName?}] — resolved to assets/subnets at WRITE time
   pathHash      String         -- sha256 of the hop IP sequence ("*" for silent hops), RTTs excluded

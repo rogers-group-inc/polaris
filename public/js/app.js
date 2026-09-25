@@ -564,9 +564,9 @@ const NAV_ITEMS = [
   { href: "/",                label: "Dashboard",    icon: "grid" },
   { href: "/map.html",        label: "Device Map",   icon: "mapPin", perm: ["deviceMap", "read"] },
   { href: "/appmap.html",     label: "Application Map", icon: "share2", perm: ["applicationMap", "read"] },
-  // Agent-run connectivity checks. Gate in lockstep with pageRequiredPermission
+  // Agent-run path checks. Gate in lockstep with pageRequiredPermission
   // in src/app.ts.
-  { href: "/connections.html", label: "Connections", icon: "globe", perm: ["connectivityChecks", "read"] },
+  { href: "/path-monitor.html", label: "Path Monitor", icon: "globe", perm: ["pathChecks", "read"] },
   { href: "/ipam.html",       label: "IPAM",         icon: "layers", anyPerm: [["ipBlocks", "read"], ["subnets", "read"]] },
   { href: "/assets.html",         label: "Assets",       icon: "monitor", perm: ["assets", "read"] },
   { href: "/events.html",         label: "Events",       icon: "activity", perm: ["events", "read"] },

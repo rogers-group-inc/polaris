@@ -40,14 +40,14 @@ A number, compared against a threshold.
 | `ipsecThroughputBps` | bps | tunnel name |
 | `customWidgetValue` | — | widget |
 | `customStateValue` — Device state flag | 0/1 | state probe, row |
-| `connLatencyMs` — Connectivity latency | ms | connectivity check |
-| `connFailurePct` — Connectivity failure rate | % | connectivity check (windowed ratio, like packet loss) |
-| `connOk` — Connectivity check result | Reachable / Unreachable | connectivity check |
-| `connHttpStatus` — Connectivity HTTP status | — | connectivity check |
-| `connHopCount` — Traceroute hop count | hops | connectivity check |
-| `connTlsDaysLeft` — TLS certificate days remaining | days | connectivity check |
+| `pathLatencyMs` — Path latency | ms | path check |
+| `pathFailurePct` — Path failure rate | % | path check (windowed ratio, like packet loss) |
+| `pathOk` — Path check result | Reachable / Unreachable | path check |
+| `pathHttpStatus` — Path HTTP status | — | path check |
+| `pathHopCount` — Traceroute hop count | hops | path check |
+| `pathTlsDaysLeft` — TLS certificate days remaining | days | path check |
 
-The `conn*` metrics come from [agent-run connectivity checks](Connectivity-Checks).
+The `path*` metrics come from [agent-run path checks](Path-Monitor).
 The device they are about is the **host that ran the check**, not the target, and
 they never change that host's Up / Down status. Pick the check on the condition
 row; blank means every check the host runs, one alert each.
@@ -281,10 +281,10 @@ Sugar over the change Events Polaris emits:
 | `wireless_ap_changed` | a roam |
 | `gateway_firewall_changed` | the gate in front of the device changed |
 | `fortilink_changed` | controller link changed |
-| `connectivity_path_changed` | an agent's traceroute for a [connectivity check](Connectivity-Checks) took a different set of hops (at most once per 10 minutes per host and check) |
+| `path_check_path_changed` | an agent's traceroute for a [path check](Path-Monitor) took a different set of hops (at most once per 10 minutes per host and check) |
 
 The Devices step's **Polaris Agent installed** field (*yes* / *no*) selects hosts
-with an active Polaris Agent — the natural scope for connectivity automations.
+with an active Polaris Agent — the natural scope for path-check automations.
 
 ---
 

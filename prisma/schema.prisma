@@ -1228,9 +1228,9 @@ model Asset {
   dependencyParents  AssetDependencyParent[]  @relation("AssetDependencyChild")
   dependencyChildren AssetDependencyParent[]  @relation("AssetDependencyParent")
   managedAgent       ManagedAgent?
-  // Connectivity checks this agent host runs (materialized membership; see
-  // ConnectivityCheckSource).
-  connectivitySources ConnectivityCheckSource[]
+  // Path checks this agent host runs (materialized membership; see
+  // PathCheckSource).
+  pathCheckSources PathCheckSource[]
   maintenanceWindows AssetMaintenanceWindow[]
   maintenanceHolds   MaintenanceHold[]
   topologyLayouts    TopologyLayout[]
@@ -3228,12 +3228,12 @@ model AssetPerfSlaSampleDaily {
   @@map("asset_perf_sla_samples_daily")
 }
 
-// ─── Agent-run connectivity checks ──────────────────────────────────────────
+// ─── Agent-run path checks ──────────────────────────────────────────
 // An operator-defined reachability check (HTTP/HTTPS/TCP/ICMP + optional
 // traceroute) that the Polaris Agent on every matching host runs on its own
 // cadence. The check carries NO threshold — the SLA lives in the automation
-// that watches its conn* metrics. Results never move Asset.monitorStatus.
-model ConnectivityCheck {
+// that watches its path* metrics. Results never move Asset.monitorStatus.
+model PathCheck {
   id               String   @id @default(uuid())
   name             String   @unique
   description      String?
@@ -3262,22 +3262,22 @@ model ConnectivityCheck {
   updatedAt        DateTime @updatedAt
   lastReconciledAt DateTime?
 
-  sources ConnectivityCheckSource[]
+  sources PathCheckSource[]
 
-  @@map("connectivity_checks")
+  @@map("path_checks")
 }
 
 // Materialized (check × agent host) membership, rebuilt by
-// reconcileConnectivityCheckSources. Also carries the latest result so the
+// reconcilePathCheckSources. Also carries the latest result so the
 // fleet view, the asset tab and path-change detection read this small table
 // instead of the sample hypertable.
-model ConnectivityCheckSource {
+model PathCheckSource {
   id                    String            @id @default(uuid())
   checkId               String
-  check                 ConnectivityCheck @relation(fields: [checkId], references: [id], onDelete: Cascade)
+  check                 PathCheck @relation(fields: [checkId], references: [id], onDelete: Cascade)
   assetId               String
   asset                 Asset             @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  // true = pinned by ConnectivityCheck.assetIds (kept even when the filter no longer matches).
+  // true = pinned by PathCheck.assetIds (kept even when the filter no longer matches).
   explicit              Boolean           @default(false)
   lastOk                Boolean?
   lastSampleAt          DateTime?
@@ -3295,13 +3295,13 @@ model ConnectivityCheckSource {
 
   @@unique([checkId, assetId])
   @@index([assetId])
-  @@map("connectivity_check_sources")
+  @@map("path_check_sources")
 }
 
-// One agent host's result for one connectivity check run. Hypertable, NO FK
+// One agent host's result for one path check run. Hypertable, NO FK
 // (sample-table rule: never cascade into compressed chunks). checkId is not a
 // FK either (the AssetStateSample.probeId precedent).
-model AssetConnectivitySample {
+model AssetPathCheckSample {
   id          String    @default(uuid())
   assetId     String
   timestamp   DateTime  @default(now())
@@ -3332,10 +3332,10 @@ model AssetConnectivitySample {
   @@index([assetId, timestamp])
   @@index([assetId, checkId, timestamp])
   @@index([checkId, timestamp])
-  @@map("asset_connectivity_samples")
+  @@map("asset_path_check_samples")
 }
 
-model AssetConnectivitySampleHourly {
+model AssetPathCheckSampleHourly {
   id                 String   @default(uuid())
   assetId            String
   bucketStart        DateTime
@@ -3360,10 +3360,10 @@ model AssetConnectivitySampleHourly {
   @@unique([bucketStart, assetId, checkId])
   @@index([assetId, bucketStart])
   @@index([assetId, checkId, bucketStart])
-  @@map("asset_connectivity_samples_hourly")
+  @@map("asset_path_check_samples_hourly")
 }
 
-model AssetConnectivitySampleDaily {
+model AssetPathCheckSampleDaily {
   id                 String   @default(uuid())
   assetId            String
   bucketStart        DateTime
@@ -3387,15 +3387,15 @@ model AssetConnectivitySampleDaily {
   @@unique([bucketStart, assetId, checkId])
   @@index([assetId, bucketStart])
   @@index([assetId, checkId, bucketStart])
-  @@map("asset_connectivity_samples_daily")
+  @@map("asset_path_check_samples_daily")
 }
 
-// A traceroute an agent ran for a connectivity check. Standalone hypertable
+// A traceroute an agent ran for a path check. Standalone hypertable
 // (no rollups — a path snapshot has no meaningful average), pruned on the flat
-// `connectivityTraceroutes` retention window. Hops were resolved to assets and
+// `pathCheckTraceroutes` retention window. Hops were resolved to assets and
 // subnets at WRITE time: [{ttl, ip|null, rdns?, rttMs[], assetId?, hostname?,
 // monitorStatus?, subnetCidr?, interfaceName?}].
-model AssetConnectivityTraceroute {
+model AssetPathCheckTraceroute {
   id            String   @default(uuid())
   assetId       String
   timestamp     DateTime @default(now())
@@ -3412,7 +3412,7 @@ model AssetConnectivityTraceroute {
 
   @@id([id, timestamp])
   @@index([assetId, checkId, timestamp])
-  @@map("asset_connectivity_traceroutes")
+  @@map("asset_path_check_traceroutes")
 }
 
 model AssetIpHistory {

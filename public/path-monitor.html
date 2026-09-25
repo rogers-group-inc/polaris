@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Polaris — Connections</title>
+  <title>Polaris — Path Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="icon" type="image/png" href="/img/brand/polaris-symbol-light.png">
@@ -13,23 +13,23 @@
 <body>
   <div class="layout">
     <aside class="sidebar" id="sidebar"></aside>
-    <main class="main" id="conn-page">
+    <main class="main" id="path-page">
       <div class="page-header">
-        <h2>Connections</h2>
+        <h2>Path Monitor</h2>
         <div class="page-header-actions">
           <button class="btn btn-primary" id="btn-add-check" style="display:none">+ Add check</button>
           <button class="btn btn-secondary" id="btn-refresh-checks">Refresh</button>
         </div>
       </div>
 
-      <!-- Agent-run connectivity checks (connectivity-checks.js). Gated by the
-           connectivityChecks key: read = the list + Results, write = the verbs.
+      <!-- Agent-run path checks (path-checks.js). Gated by the
+           pathChecks key: read = the list + Results, write = the verbs.
            A check says WHAT to measure and FROM which agent hosts; SLAs are set
-           by automations on its conn* metrics (business rule 85). -->
+           by automations on its path* metrics (business rule 85). -->
       <p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 1rem">
-        Checks the <strong>Polaris Agent</strong> runs from the hosts you choose: an HTTP / HTTPS request, a TCP connect or a ping, with a traceroute of the path. Results appear on each host's <strong>Connectivity</strong> tab. To be alerted, create an <a href="/automations.html">automation</a> on the <em>Connectivity</em> metrics (latency, failure rate, HTTP status…) — a check has no threshold of its own, and never changes the host's own Up / Down status.
+        Checks the <strong>Polaris Agent</strong> runs from the hosts you choose: an HTTP / HTTPS request, a TCP connect or a ping, with a traceroute of the path. Results appear on each host's <strong>Paths</strong> tab. To be alerted, create an <a href="/automations.html">automation</a> on the <em>Path</em> metrics (latency, failure rate, HTTP status…) — a check has no threshold of its own, and never changes the host's own Up / Down status.
       </p>
-      <div id="conn-pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
+      <div id="path-pagination-top" style="display:flex;align-items:center;gap:12px;justify-content:center"></div>
       <div class="table-wrapper table-wrapper-sticky">
         <table>
           <thead>
@@ -46,17 +46,17 @@
               <th data-col-id="createdBy" data-sf-key="createdBy" data-sf-type="string">Created by</th>
             </tr>
           </thead>
-          <tbody id="conn-tbody">
+          <tbody id="path-tbody">
             <tr><td colspan="10" class="empty-state">Loading...</td></tr>
           </tbody>
         </table>
       </div>
-      <div class="pagination" id="conn-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
+      <div class="pagination" id="path-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:1rem 0"></div>
     </main>
   </div>
 
   <!-- assets.js + its UI deps power the canonical asset details slide-in
-       (openViewModal) the Results view opens on a host's Connectivity tab —
+       (openViewModal) the Results view opens on a host's Paths tab —
        the same stack appmap.html loads. Each file's page-init self-guards on
        its own page DOM. -->
   <script src="/js/vendor/jspdf.umd.min.js"></script>
@@ -84,6 +84,6 @@
   <script src="/js/automations-address-book.js"></script>
   <script src="/js/automations-wizard.js"></script>
   <script src="/js/automations-portability.js"></script>
-  <script src="/js/connectivity-checks.js"></script>
+  <script src="/js/path-checks.js"></script>
 </body>
 </html>

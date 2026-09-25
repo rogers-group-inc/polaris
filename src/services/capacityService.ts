@@ -482,12 +482,12 @@ export const SAMPLE_TABLES: Array<{
   { name: "asset_process_log_samples",   entity: "process",     tier: "detail", countKey: null         },
   { name: "asset_custom_widget_samples", entity: "interfaces",  tier: "detail", countKey: null         },
   { name: "asset_state_samples",         entity: "interfaces",  tier: "detail", countKey: null         },
-  // Agent-run connectivity checks. countKey null for the same reason as the
+  // Agent-run path checks. countKey null for the same reason as the
   // standalone tables: rows are per (agent host × check), which no per-asset
   // cadence multiplier models honestly — measured-only. The traceroutes ride
-  // their own FLAT window (connectivityTraceroutes), not a tier.
-  { name: "asset_connectivity_samples",  entity: "connectivity", tier: "detail", countKey: null        },
-  { name: "asset_connectivity_traceroutes", entity: "connectivity", tier: "detail", countKey: null, flatEntity: "connectivityTraceroutes" },
+  // their own FLAT window (pathCheckTraceroutes), not a tier.
+  { name: "asset_path_check_samples",  entity: "pathCheck", tier: "detail", countKey: null        },
+  { name: "asset_path_check_traceroutes", entity: "pathCheck", tier: "detail", countKey: null, flatEntity: "pathCheckTraceroutes" },
   // (asset_sdwan_rules is current-state, not a sample table — excluded from the projection.)
   // Hourly rollups
   { name: "asset_monitor_samples_hourly",       entity: "assets",      tier: "hourly", countKey: "all"        },
@@ -498,7 +498,7 @@ export const SAMPLE_TABLES: Array<{
   { name: "asset_ipsec_tunnel_samples_hourly",  entity: "ipsec",       tier: "hourly", countKey: "systemInfo" },
   { name: "asset_perf_sla_samples_hourly",      entity: "perfSla",     tier: "hourly", countKey: "systemInfo" },
   { name: "asset_process_samples_hourly",       entity: "process",     tier: "hourly", countKey: "telemetry"  },
-  { name: "asset_connectivity_samples_hourly",  entity: "connectivity", tier: "hourly", countKey: null      },
+  { name: "asset_path_check_samples_hourly",  entity: "pathCheck", tier: "hourly", countKey: null      },
   // Daily rollups
   { name: "asset_monitor_samples_daily",        entity: "assets",      tier: "daily",  countKey: "all"        },
   { name: "asset_telemetry_samples_daily",      entity: "cpuMem",      tier: "daily",  countKey: "telemetry"  },
@@ -508,7 +508,7 @@ export const SAMPLE_TABLES: Array<{
   { name: "asset_ipsec_tunnel_samples_daily",   entity: "ipsec",       tier: "daily",  countKey: "systemInfo" },
   { name: "asset_perf_sla_samples_daily",       entity: "perfSla",     tier: "daily",  countKey: "systemInfo" },
   { name: "asset_process_samples_daily",        entity: "process",     tier: "daily",  countKey: "telemetry"  },
-  { name: "asset_connectivity_samples_daily",   entity: "connectivity", tier: "daily",  countKey: null      },
+  { name: "asset_path_check_samples_daily",   entity: "pathCheck", tier: "daily",  countKey: null      },
 ];
 
 // Cadence intervals consumed by the rows-per-asset-per-day calc. Source
@@ -595,13 +595,13 @@ const DEFAULT_ROWS_PER_ASSET_PER_DAY: Record<string, (c: WorkloadModelInputs) =>
   asset_ipsec_tunnel_samples_daily:   () => 1,
   asset_perf_sla_samples_daily:       () => 4,
   asset_process_samples_daily:        () => 1,
-  // Connectivity checks project measured-only (countKey null), so these are
+  // Path checks project measured-only (countKey null), so these are
   // never multiplied by an asset count; they exist because the map is
   // dereferenced without a fallback for every tiered table. Per agent host ×
   // one check at the 60 s floor.
-  asset_connectivity_samples:         () => 1440,
-  asset_connectivity_samples_hourly:  () => 24,
-  asset_connectivity_samples_daily:   () => 1,
+  asset_path_check_samples:         () => 1440,
+  asset_path_check_samples_hourly:  () => 24,
+  asset_path_check_samples_daily:   () => 1,
 };
 
 // Defaults used only when a table has zero rows (so avg bytes/row is unknown).
@@ -648,10 +648,10 @@ const DEFAULT_BYTES_PER_ROW: Record<string, number> = {
   asset_perf_sla_samples_daily:      360,
   asset_process_samples_hourly:      340,
   asset_process_samples_daily:       340,
-  asset_connectivity_samples:        380,
-  asset_connectivity_samples_hourly: 360,
-  asset_connectivity_samples_daily:  360,
-  asset_connectivity_traceroutes:    2048,
+  asset_path_check_samples:        380,
+  asset_path_check_samples_hourly: 360,
+  asset_path_check_samples_daily:  360,
+  asset_path_check_traceroutes:    2048,
 };
 
 const APP_DIR = dirname(fileURLToPath(import.meta.url));
@@ -1102,7 +1102,7 @@ export function projectSteadyStateSize(args: {
     // returns 0 (an unbounded tier can't be projected); 0 = tier off = 0.
     // The configured number is kept alongside it: it is the compression gate,
     // while the widened one is the multiplier. See projectDetailBytes.
-    // A table on a FLAT window (the connectivity traceroutes) reads that one
+    // A table on a FLAT window (the path-check traceroutes) reads that one
     // number instead of a tier.
     const tierDays = def.flatEntity ? retention[def.flatEntity].days : retention[def.entity][def.tier];
     const configuredRetentionDays = Math.max(0, tierDays);

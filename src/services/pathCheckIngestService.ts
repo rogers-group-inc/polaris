@@ -1,7 +1,7 @@
 /**
- * src/services/connectivityIngestService.ts — the server half of the agent's
- * two connectivity streams (POST /agents/samples, stream "connectivity" and
- * "connectivityTraceroute").
+ * src/services/pathCheckIngestService.ts — the server half of the agent's
+ * two path-check streams (POST /agents/samples, stream "pathCheck" and
+ * "pathCheckTraceroute").
  *
  * WHAT IS AND IS NOT TRUSTED FROM THE WIRE
  *  - The subject is the PUSHING agent's own asset (req.managedAgent.assetId);
@@ -15,7 +15,7 @@
  *
  * WHAT NEVER HAPPENS HERE
  *  Nothing touches `monitorStatus`, `consecutiveFailures`, `lastMonitorAt` or
- *  the responseTime stream. A connectivity result describes the path from this
+ *  the responseTime stream. A path-check result describes the path from this
  *  host to a target; the host's own health is the responseTime stream's job.
  *
  * SCALE
@@ -31,8 +31,8 @@ import { prisma } from "../db.js";
 import { isValidIpAddress } from "../utils/cidr.js";
 import { MAX_EXCERPT_CHARS } from "../utils/httpCheck.js";
 import { logEvent } from "./eventLogService.js";
-import { enqueueConnectivitySamples, type ConnectivitySampleRow } from "./sampleWriteBuffer.js";
-import { recordConnectivitySamples, recordConnectivityPathChange } from "../metrics.js";
+import { enqueuePathCheckSamples, type PathCheckSampleRow } from "./sampleWriteBuffer.js";
+import { recordPathCheckSamples, recordPathCheckPathChange } from "../metrics.js";
 
 /** A path change within this long of the last one for the same (host, check)
  *  is recorded (the traceroute row keeps it) but writes no second Event — ECMP
@@ -44,7 +44,7 @@ export interface IngestResult {
   rejected: number;
 }
 
-export interface ConnectivitySampleInput {
+export interface PathCheckSampleInput {
   checkId: string;
   timestamp?: string;
   ok: boolean;
@@ -72,7 +72,7 @@ export interface TracerouteHopInput {
   rttMs: number[];
 }
 
-export interface ConnectivityTracerouteInput {
+export interface PathCheckTracerouteInput {
   checkId: string;
   timestamp?: string;
   destinationIp?: string | null;
@@ -225,7 +225,7 @@ interface SourceRow {
 }
 
 async function sourcesFor(assetId: string, checkIds: readonly string[]): Promise<Map<string, SourceRow>> {
-  const rows = await prisma.connectivityCheckSource.findMany({
+  const rows = await prisma.pathCheckSource.findMany({
     where: { assetId, checkId: { in: [...new Set(checkIds)] } },
     select: {
       id: true, checkId: true, lastOk: true, lastPathHash: true, lastPathChangeEventAt: true, lastSampleAt: true,
@@ -241,20 +241,20 @@ function parseTlsNotAfter(raw: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-export async function ingestConnectivitySamples(
+export async function ingestPathCheckSamples(
   assetId: string,
-  samples: readonly ConnectivitySampleInput[],
+  samples: readonly PathCheckSampleInput[],
   now: Date,
 ): Promise<IngestResult> {
   const sources = await sourcesFor(assetId, samples.map((s) => s.checkId));
-  const rows: ConnectivitySampleRow[] = [];
+  const rows: PathCheckSampleRow[] = [];
   let rejected = 0;
   // Newest sample per check drives the source's latest-result columns.
-  const newest = new Map<string, { row: ConnectivitySampleRow }>();
+  const newest = new Map<string, { row: PathCheckSampleRow }>();
   for (const s of samples) {
     const src = sources.get(s.checkId);
     if (!src) { rejected++; continue; }
-    const row: ConnectivitySampleRow = {
+    const row: PathCheckSampleRow = {
       assetId,
       timestamp: sampleTime(s.timestamp, now),
       cadence: "fast",
@@ -280,14 +280,14 @@ export async function ingestConnectivitySamples(
     const prev = newest.get(s.checkId);
     if (!prev || prev.row.timestamp < row.timestamp) newest.set(s.checkId, { row });
   }
-  enqueueConnectivitySamples(rows);
+  enqueuePathCheckSamples(rows);
 
   const updates = [];
   for (const [checkId, { row }] of newest) {
     const src = sources.get(checkId)!;
     // A late-arriving older push must not overwrite a newer latest result.
     if (src.lastSampleAt && src.lastSampleAt > row.timestamp) continue;
-    updates.push(prisma.connectivityCheckSource.update({
+    updates.push(prisma.pathCheckSource.update({
       where: { id: src.id },
       data: {
         lastOk: row.ok,
@@ -303,15 +303,15 @@ export async function ingestConnectivitySamples(
   if (updates.length) await prisma.$transaction(updates);
 
   const okN = rows.filter((r) => r.ok).length;
-  recordConnectivitySamples("ok", okN);
-  recordConnectivitySamples("fail", rows.length - okN);
-  recordConnectivitySamples("rejected", rejected);
+  recordPathCheckSamples("ok", okN);
+  recordPathCheckSamples("fail", rows.length - okN);
+  recordPathCheckSamples("rejected", rejected);
   return { accepted: rows.length, rejected };
 }
 
-export async function ingestConnectivityTraceroutes(
+export async function ingestPathCheckTraceroutes(
   assetId: string,
-  items: readonly ConnectivityTracerouteInput[],
+  items: readonly PathCheckTracerouteInput[],
   now: Date,
 ): Promise<IngestResult> {
   const sources = await sourcesFor(assetId, items.map((t) => t.checkId));
@@ -332,7 +332,7 @@ export async function ingestConnectivityTraceroutes(
 
   // Oldest first so each item is compared against the one before it.
   const ordered = [...accepted].sort((a, b) => sampleTime(a.timestamp, now).getTime() - sampleTime(b.timestamp, now).getTime());
-  const creates: Parameters<typeof prisma.assetConnectivityTraceroute.createMany>[0]["data"] = [];
+  const creates: Parameters<typeof prisma.assetPathCheckTraceroute.createMany>[0]["data"] = [];
   const state = new Map<string, { hash: string | null; hops: StoredHop[] | null; lastEventAt: Date | null; lastAt: Date | null; complete: boolean | null; hopCount: number | null }>();
   const events: Promise<void>[] = [];
 
@@ -363,14 +363,14 @@ export async function ingestConnectivityTraceroutes(
     const changed = st.hash !== null && st.hash !== hash;
     if (changed && (!st.lastEventAt || ts.getTime() - st.lastEventAt.getTime() >= PATH_CHANGE_EVENT_FLOOR_MS)) {
       st.lastEventAt = ts;
-      recordConnectivityPathChange();
+      recordPathCheckPathChange();
       events.push(logEvent({
-        action: "connectivity.path_changed",
+        action: "path_check.path_changed",
         resourceType: "asset",
         resourceId: assetId,
         resourceName: hostLabel,
         level: "warning",
-        message: `Path from ${hostLabel} for connectivity check "${src.check.name}" changed (${hops.length} hops${t.complete ? "" : ", incomplete"})`,
+        message: `Path from ${hostLabel} for path check "${src.check.name}" changed (${hops.length} hops${t.complete ? "" : ", incomplete"})`,
         details: {
           checkId: t.checkId,
           checkName: src.check.name,
@@ -403,8 +403,8 @@ export async function ingestConnectivityTraceroutes(
   }
 
   await prisma.$transaction([
-    prisma.assetConnectivityTraceroute.createMany({ data: creates }),
-    ...[...state].map(([checkId, st]) => prisma.connectivityCheckSource.update({
+    prisma.assetPathCheckTraceroute.createMany({ data: creates }),
+    ...[...state].map(([checkId, st]) => prisma.pathCheckSource.update({
       where: { id: sources.get(checkId)!.id },
       data: {
         lastPathHash: st.hash,

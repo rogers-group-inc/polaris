@@ -1,6 +1,6 @@
 /**
- * tests/unit/connectivityIngest.test.ts — the server half of the agent's
- * connectivity streams: what is trusted from the wire (nothing about WHICH
+ * tests/unit/pathCheckIngest.test.ts — the server half of the agent's
+ * path-check streams: what is trusted from the wire (nothing about WHICH
  * host; not the excerpt policy), rejection of checks the host is not a source
  * of, latest-result bookkeeping, hop resolution decoration, and path-change
  * Events with their 10-minute floor.
@@ -19,13 +19,13 @@ const { enqueue, logEvent } = vi.hoisted(() => ({
   logEvent: vi.fn(async () => {}),
 }));
 
-vi.mock("../../src/services/sampleWriteBuffer.js", () => ({ enqueueConnectivitySamples: enqueue }));
+vi.mock("../../src/services/sampleWriteBuffer.js", () => ({ enqueuePathCheckSamples: enqueue }));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent }));
-vi.mock("../../src/metrics.js", () => ({ recordConnectivitySamples: vi.fn(), recordConnectivityPathChange: vi.fn() }));
+vi.mock("../../src/metrics.js", () => ({ recordPathCheckSamples: vi.fn(), recordPathCheckPathChange: vi.fn() }));
 
 vi.mock("../../src/db.js", () => ({
   prisma: {
-    connectivityCheckSource: {
+    pathCheckSource: {
       findMany: vi.fn(async ({ where }: any) =>
         db.sources.filter((s) => s.assetId === where.assetId && where.checkId.in.includes(s.checkId))),
       update: vi.fn(async ({ where, data }: any) => {
@@ -34,7 +34,7 @@ vi.mock("../../src/db.js", () => ({
         return s;
       }),
     },
-    assetConnectivityTraceroute: {
+    assetPathCheckTraceroute: {
       createMany: vi.fn(async ({ data }: any) => { db.traceroutes.push(...data); return { count: data.length }; }),
     },
     asset: { findUnique: vi.fn(async () => ({ hostname: "branch-pc-01", ipAddress: "10.1.1.50" })) },
@@ -44,14 +44,14 @@ vi.mock("../../src/db.js", () => ({
 }));
 
 import {
-  ingestConnectivitySamples,
-  ingestConnectivityTraceroutes,
+  ingestPathCheckSamples,
+  ingestPathCheckTraceroutes,
   excerptToKeep,
   hopIp,
   pathHashOf,
   sampleTime,
   PATH_CHANGE_EVENT_FLOOR_MS,
-} from "../../src/services/connectivityIngestService.js";
+} from "../../src/services/pathCheckIngestService.js";
 import { MAX_EXCERPT_CHARS } from "../../src/utils/httpCheck.js";
 
 const now = new Date("2026-09-23T12:00:00Z");
@@ -98,10 +98,10 @@ describe("pure helpers", () => {
   });
 });
 
-describe("ingestConnectivitySamples", () => {
+describe("ingestPathCheckSamples", () => {
   it("rejects checks the host is not a source of, and never trusts the excerpt policy", async () => {
     db.sources = [source("c1")];
-    const r = await ingestConnectivitySamples("host", [
+    const r = await ingestPathCheckSamples("host", [
       { checkId: "c1", ok: true, latencyMs: 42, bodyExcerpt: "secret token page", bodySha256: "A".repeat(64) },
       { checkId: "foreign", ok: false },
     ], now);
@@ -113,15 +113,15 @@ describe("ingestConnectivitySamples", () => {
   });
   it("stamps lastFailAt on a failure and ignores an older push arriving late", async () => {
     db.sources = [source("c1", { lastSampleAt: new Date("2026-09-23T11:59:30Z"), lastOk: true })];
-    await ingestConnectivitySamples("host", [{ checkId: "c1", ok: false, timestamp: "2026-09-23T11:58:00Z", error: "timeout" }], now);
+    await ingestPathCheckSamples("host", [{ checkId: "c1", ok: false, timestamp: "2026-09-23T11:58:00Z", error: "timeout" }], now);
     expect(db.sources[0].lastOk).toBe(true); // older than what we hold
-    await ingestConnectivitySamples("host", [{ checkId: "c1", ok: false, timestamp: "2026-09-23T11:59:50Z", error: "timeout" }], now);
+    await ingestPathCheckSamples("host", [{ checkId: "c1", ok: false, timestamp: "2026-09-23T11:59:50Z", error: "timeout" }], now);
     expect(db.sources[0]).toMatchObject({ lastOk: false, lastError: "timeout" });
     expect(db.sources[0].lastFailAt).toEqual(new Date("2026-09-23T11:59:50Z"));
   });
 });
 
-describe("ingestConnectivityTraceroutes", () => {
+describe("ingestPathCheckTraceroutes", () => {
   const hops = (third: string) => [
     { ttl: 1, ip: "10.1.1.1", rttMs: [1, 1, 1] },
     { ttl: 2, ip: "", rttMs: [-1, -1, -1] },
@@ -133,7 +133,7 @@ describe("ingestConnectivityTraceroutes", () => {
     db.hopRows = [
       { ip: "10.1.1.1", primary_id: null, primary_hostname: null, primary_status: null, assoc_id: "fgt", assoc_hostname: "branch-fw", assoc_status: "up", assoc_iface: "internal1", subnet_cidr: "10.1.1.0/24" },
     ];
-    const r = await ingestConnectivityTraceroutes("host", [{ checkId: "c1", complete: true, destinationIp: "8.8.8.8", hops: hops("8.8.8.8") }], now);
+    const r = await ingestPathCheckTraceroutes("host", [{ checkId: "c1", complete: true, destinationIp: "8.8.8.8", hops: hops("8.8.8.8") }], now);
     expect(r).toEqual({ accepted: 1, rejected: 0 });
     const tr = db.traceroutes[0];
     expect(tr.hops[0]).toMatchObject({ ip: "10.1.1.1", assetId: "fgt", hostname: "branch-fw", interfaceName: "internal1", subnetCidr: "10.1.1.0/24" });
@@ -142,13 +142,13 @@ describe("ingestConnectivityTraceroutes", () => {
     expect(db.sources[0].lastPathHash).toBe(tr.pathHash);
   });
 
-  it("writes connectivity.path_changed on a changed path, naming the host — once per floor", async () => {
+  it("writes path_check.path_changed on a changed path, naming the host — once per floor", async () => {
     db.sources = [source("c1")];
-    await ingestConnectivityTraceroutes("host", [{ checkId: "c1", complete: true, timestamp: "2026-09-23T11:00:00Z", hops: hops("8.8.8.8") }], now);
-    await ingestConnectivityTraceroutes("host", [{ checkId: "c1", complete: true, timestamp: "2026-09-23T11:20:00Z", hops: hops("8.8.4.4") }], now);
+    await ingestPathCheckTraceroutes("host", [{ checkId: "c1", complete: true, timestamp: "2026-09-23T11:00:00Z", hops: hops("8.8.8.8") }], now);
+    await ingestPathCheckTraceroutes("host", [{ checkId: "c1", complete: true, timestamp: "2026-09-23T11:20:00Z", hops: hops("8.8.4.4") }], now);
     expect(logEvent).toHaveBeenCalledTimes(1);
     expect((logEvent.mock.calls[0] as any)[0]).toMatchObject({
-      action: "connectivity.path_changed",
+      action: "path_check.path_changed",
       resourceType: "asset",
       resourceId: "host",
       resourceName: "branch-pc-01",
@@ -156,13 +156,13 @@ describe("ingestConnectivityTraceroutes", () => {
     });
     // Flap back within the floor: recorded, no second Event.
     const within = new Date(Date.parse("2026-09-23T11:20:00Z") + PATH_CHANGE_EVENT_FLOOR_MS - 1000).toISOString();
-    await ingestConnectivityTraceroutes("host", [{ checkId: "c1", complete: true, timestamp: within, hops: hops("8.8.8.8") }], now);
+    await ingestPathCheckTraceroutes("host", [{ checkId: "c1", complete: true, timestamp: within, hops: hops("8.8.8.8") }], now);
     expect(logEvent).toHaveBeenCalledTimes(1);
     expect(db.traceroutes).toHaveLength(3);
   });
 
   it("rejects a traceroute for a check the host does not run", async () => {
-    const r = await ingestConnectivityTraceroutes("host", [{ checkId: "nope", complete: false, hops: [] }], now);
+    const r = await ingestPathCheckTraceroutes("host", [{ checkId: "nope", complete: false, hops: [] }], now);
     expect(r).toEqual({ accepted: 0, rejected: 1 });
     expect(db.traceroutes).toHaveLength(0);
   });

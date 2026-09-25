@@ -1,5 +1,5 @@
 /**
- * src/services/connectivityCheckService.ts — agent-run connectivity checks.
+ * src/services/pathCheckService.ts — agent-run path checks.
  *
  * WHAT A CHECK IS
  * An operator-defined reachability probe — HTTP / HTTPS (status + optional body
@@ -12,22 +12,22 @@
  *
  * A CHECK HAS NO THRESHOLD
  * Whether 800 ms is a breach, how many failures in a row page someone, and who
- * gets the email all live in the automation that watches the conn* metrics —
+ * gets the email all live in the automation that watches the path* metrics —
  * the same split business rule 36 makes for "down". The check says what to
  * measure; the automation says what measuring it badly means.
  *
  * WHO RUNS IT
  * `scope` is an automation-shaped device filter, implicitly AND'd with "has an
  * ACTIVE Polaris Agent", plus `assetIds` pins kept even when the filter no
- * longer matches. `reconcileConnectivityCheckSources` materializes that into
- * `connectivity_check_sources` (one row per check × agent host); the agent's
+ * longer matches. `reconcilePathCheckSources` materializes that into
+ * `path_check_sources` (one row per check × agent host); the agent's
  * GET /agents/config reads those rows. Membership deliberately ignores
  * `monitored` — whether a result may ALERT is business rule 37's question,
  * asked by the engine at fire time, not this one.
  *
  * WHERE IT MAY POINT
  * The vendor HTTP check (business rule 33) skips netGuard because its target is
- * the monitored device's own address. A connectivity check's target is
+ * the monitored device's own address. A path check's target is
  * operator-chosen, so that exemption does NOT carry over: loopback, link-local
  * (incl. cloud metadata), unspecified and multicast literals are refused here,
  * and the agent refuses the same ranges again AFTER resolving the name, which
@@ -67,8 +67,8 @@ export const MAX_TIMEOUT_MS = 30_000;
 export const MAX_ENABLED_CHECKS = 50;
 /** Per-agent cap. The agent itself stops at 64; this is the operative one. */
 export const MAX_CHECKS_PER_AGENT = 20;
-/** First agent version whose config loop runs connectivity checks. */
-export const MIN_AGENT_CONNECTIVITY_VERSION = "0.21.0";
+/** First agent version whose config loop runs path checks. */
+export const MIN_AGENT_PATH_CHECK_VERSION = "0.21.0";
 /** Preview / results list caps. */
 const PREVIEW_ROW_CAP = 100;
 
@@ -101,7 +101,7 @@ export const DEFAULT_TRACEROUTE: CheckTracerouteConfig = {
   probeTimeoutMs: 1000,
 };
 
-export interface ConnectivityCheckInput {
+export interface PathCheckInput {
   name: string;
   description?: string | null;
   enabled?: boolean;
@@ -138,7 +138,7 @@ export interface NormalizedCheck {
 
 /**
  * The definition as the AGENT receives it (GET /agents/config →
- * connectivityChecks[]). Hand-mirrored by `transport.ConnectivityCheckDef` in
+ * pathChecks[]). Hand-mirrored by `transport.PathCheckDef` in
  * agent/internal/transport/client.go — rename a field here and every deployed
  * agent silently reads its zero value.
  */
@@ -291,7 +291,7 @@ export async function assertTargetHostAllowed(host: string): Promise<void> {
  * Validate + normalize a check body. Pure except for the own-host lookup.
  * Every refusal is an AppError(400) naming the field.
  */
-export async function normalizeCheckInput(input: ConnectivityCheckInput): Promise<NormalizedCheck> {
+export async function normalizeCheckInput(input: PathCheckInput): Promise<NormalizedCheck> {
   const name = (input.name ?? "").trim();
   if (!name) throw new AppError(400, "Name is required");
   if (name.length > 120) throw new AppError(400, "Name is longer than 120 characters");
@@ -431,7 +431,7 @@ export interface CheckSummary {
 async function summariesFor(checkIds: string[]): Promise<Map<string, CheckSummary>> {
   const out = new Map<string, CheckSummary>();
   if (checkIds.length === 0) return out;
-  const rows = await prisma.connectivityCheckSource.groupBy({
+  const rows = await prisma.pathCheckSource.groupBy({
     by: ["checkId", "lastOk"],
     where: { checkId: { in: checkIds } },
     _count: { _all: true },
@@ -450,7 +450,7 @@ async function summariesFor(checkIds: string[]): Promise<Map<string, CheckSummar
 }
 
 export async function listChecks() {
-  const checks = await prisma.connectivityCheck.findMany({ orderBy: { name: "asc" } });
+  const checks = await prisma.pathCheck.findMany({ orderBy: { name: "asc" } });
   const sums = await summariesFor(checks.map((c) => c.id));
   return checks.map((c) => ({
     ...c,
@@ -458,27 +458,27 @@ export async function listChecks() {
   }));
 }
 
-/** The id → name/kind registry the automation builder renders conn* sentences
+/** The id → name/kind registry the automation builder renders path* sentences
  *  and the checkId picker from (GET /automations/schema). No sources, no
  *  results — the builder needs names, and it is read on every wizard open. */
 export async function listCheckCatalog() {
-  return prisma.connectivityCheck.findMany({
+  return prisma.pathCheck.findMany({
     select: { id: true, name: true, kind: true, target: true, enabled: true },
     orderBy: { name: "asc" },
   });
 }
 
 export async function getCheck(id: string) {
-  const check = await prisma.connectivityCheck.findUnique({ where: { id } });
-  if (!check) throw new AppError(404, "Connectivity check not found");
+  const check = await prisma.pathCheck.findUnique({ where: { id } });
+  if (!check) throw new AppError(404, "Path check not found");
   const sums = await summariesFor([id]);
   return { ...check, ...(sums.get(id) ?? { sourceCount: 0, okCount: 0, failCount: 0, lastRunAt: null }) };
 }
 
 async function assertEnabledCap(excludeId?: string): Promise<void> {
-  const n = await prisma.connectivityCheck.count({ where: { enabled: true, ...(excludeId ? { id: { not: excludeId } } : {}) } });
+  const n = await prisma.pathCheck.count({ where: { enabled: true, ...(excludeId ? { id: { not: excludeId } } : {}) } });
   if (n >= MAX_ENABLED_CHECKS) {
-    throw new AppError(409, `At most ${MAX_ENABLED_CHECKS} connectivity checks can be enabled at once`);
+    throw new AppError(409, `At most ${MAX_ENABLED_CHECKS} path checks can be enabled at once`);
   }
 }
 
@@ -486,14 +486,14 @@ function jsonOf<T>(v: T): object {
   return v as unknown as object;
 }
 
-export async function createCheck(input: ConnectivityCheckInput, actor?: string) {
+export async function createCheck(input: PathCheckInput, actor?: string) {
   const n = await normalizeCheckInput(input);
   if (n.enabled) await assertEnabledCap();
-  const dupe = await prisma.connectivityCheck.findUnique({ where: { name: n.name } });
-  if (dupe) throw new AppError(409, `A connectivity check named "${n.name}" already exists`);
+  const dupe = await prisma.pathCheck.findUnique({ where: { name: n.name } });
+  if (dupe) throw new AppError(409, `A path check named "${n.name}" already exists`);
   const id = randomUUID();
   const sha = definitionSha256({ id, ...n, http: n.http, traceroute: n.traceroute });
-  const check = await prisma.connectivityCheck.create({
+  const check = await prisma.pathCheck.create({
     data: {
       id,
       name: n.name,
@@ -513,32 +513,32 @@ export async function createCheck(input: ConnectivityCheckInput, actor?: string)
     },
   });
   await logEvent({
-    action: "connectivity_check.created",
-    resourceType: "connectivity-check",
+    action: "path_check.created",
+    resourceType: "path-check",
     resourceId: check.id,
     resourceName: check.name,
     actor,
     // Always audit-worthy: a new check directs agents to send traffic.
     level: "warning",
-    message: `Connectivity check "${check.name}" created (${check.kind} ${check.target}, every ${check.intervalSec / 60} min)`,
+    message: `Path check "${check.name}" created (${check.kind} ${check.target}, every ${check.intervalSec / 60} min)`,
     details: { kind: check.kind, target: check.target, intervalSec: check.intervalSec },
   });
-  await reconcileConnectivityCheckSources(check.id, { refreshAllMembers: true });
+  await reconcilePathCheckSources(check.id, { refreshAllMembers: true });
   return getCheck(check.id);
 }
 
-export async function updateCheck(id: string, input: ConnectivityCheckInput, actor?: string) {
-  const existing = await prisma.connectivityCheck.findUnique({ where: { id } });
-  if (!existing) throw new AppError(404, "Connectivity check not found");
+export async function updateCheck(id: string, input: PathCheckInput, actor?: string) {
+  const existing = await prisma.pathCheck.findUnique({ where: { id } });
+  if (!existing) throw new AppError(404, "Path check not found");
   const n = await normalizeCheckInput(input);
   if (n.enabled && !existing.enabled) await assertEnabledCap(id);
   if (n.name !== existing.name) {
-    const dupe = await prisma.connectivityCheck.findUnique({ where: { name: n.name } });
-    if (dupe) throw new AppError(409, `A connectivity check named "${n.name}" already exists`);
+    const dupe = await prisma.pathCheck.findUnique({ where: { name: n.name } });
+    if (dupe) throw new AppError(409, `A path check named "${n.name}" already exists`);
   }
   const sha = definitionSha256({ id, ...n, http: n.http, traceroute: n.traceroute });
   const targetChanged = existing.target !== n.target || existing.kind !== n.kind;
-  const check = await prisma.connectivityCheck.update({
+  const check = await prisma.pathCheck.update({
     where: { id },
     data: {
       name: n.name,
@@ -557,15 +557,15 @@ export async function updateCheck(id: string, input: ConnectivityCheckInput, act
     },
   });
   await logEvent({
-    action: "connectivity_check.updated",
-    resourceType: "connectivity-check",
+    action: "path_check.updated",
+    resourceType: "path-check",
     resourceId: id,
     resourceName: check.name,
     actor,
     level: targetChanged ? "warning" : "info",
     message: targetChanged
-      ? `Connectivity check "${check.name}" TARGET changed: ${existing.kind} ${existing.target} → ${check.kind} ${check.target}`
-      : `Connectivity check "${check.name}" updated`,
+      ? `Path check "${check.name}" TARGET changed: ${existing.kind} ${existing.target} → ${check.kind} ${check.target}`
+      : `Path check "${check.name}" updated`,
     details: {
       previousTarget: existing.target, target: check.target,
       previousKind: existing.kind, kind: check.kind,
@@ -576,54 +576,54 @@ export async function updateCheck(id: string, input: ConnectivityCheckInput, act
   // A changed path makes every stored path hash describe a different target;
   // forget them so the first new traceroute is a baseline, not a "change".
   if (targetChanged) {
-    await prisma.connectivityCheckSource.updateMany({
+    await prisma.pathCheckSource.updateMany({
       where: { checkId: id },
       data: { lastPathHash: null, lastOk: null, lastHopCount: null, lastTracerouteComplete: null },
     });
   }
-  await reconcileConnectivityCheckSources(id, {
+  await reconcilePathCheckSources(id, {
     refreshAllMembers: sha !== existing.definitionSha256 || check.enabled !== existing.enabled,
   });
   return getCheck(id);
 }
 
 export async function setCheckEnabled(id: string, enabled: boolean, actor?: string) {
-  const existing = await prisma.connectivityCheck.findUnique({ where: { id } });
-  if (!existing) throw new AppError(404, "Connectivity check not found");
+  const existing = await prisma.pathCheck.findUnique({ where: { id } });
+  if (!existing) throw new AppError(404, "Path check not found");
   if (existing.enabled === enabled) return getCheck(id);
   if (enabled) await assertEnabledCap(id);
-  await prisma.connectivityCheck.update({ where: { id }, data: { enabled } });
+  await prisma.pathCheck.update({ where: { id }, data: { enabled } });
   await logEvent({
-    action: enabled ? "connectivity_check.enabled" : "connectivity_check.disabled",
-    resourceType: "connectivity-check",
+    action: enabled ? "path_check.enabled" : "path_check.disabled",
+    resourceType: "path-check",
     resourceId: id,
     resourceName: existing.name,
     actor,
-    message: `Connectivity check "${existing.name}" ${enabled ? "enabled" : "disabled"}`,
+    message: `Path check "${existing.name}" ${enabled ? "enabled" : "disabled"}`,
   });
-  await reconcileConnectivityCheckSources(id, { refreshAllMembers: true });
+  await reconcilePathCheckSources(id, { refreshAllMembers: true });
   return getCheck(id);
 }
 
 export async function deleteCheck(id: string, actor?: string) {
-  const existing = await prisma.connectivityCheck.findUnique({ where: { id } });
-  if (!existing) throw new AppError(404, "Connectivity check not found");
-  const members = await prisma.connectivityCheckSource.findMany({
+  const existing = await prisma.pathCheck.findUnique({ where: { id } });
+  if (!existing) throw new AppError(404, "Path check not found");
+  const members = await prisma.pathCheckSource.findMany({
     where: { checkId: id },
     select: { asset: { select: { managedAgent: { select: { id: true } } } } },
   });
   // Sources cascade. Samples and traceroutes are NOT deleted: they live in
   // compressed hypertable chunks, and a row DELETE there decompresses the
   // chunk (the 2026-06-08 incident). They age out on the retention schedule.
-  await prisma.connectivityCheck.delete({ where: { id } });
+  await prisma.pathCheck.delete({ where: { id } });
   await logEvent({
-    action: "connectivity_check.deleted",
-    resourceType: "connectivity-check",
+    action: "path_check.deleted",
+    resourceType: "path-check",
     resourceId: id,
     resourceName: existing.name,
     actor,
     level: "warning",
-    message: `Connectivity check "${existing.name}" deleted (${existing.kind} ${existing.target})`,
+    message: `Path check "${existing.name}" deleted (${existing.kind} ${existing.target})`,
     details: { kind: existing.kind, target: existing.target },
   });
   await publishConfigRefresh(members.map((m) => m.asset.managedAgent?.id ?? "").filter(Boolean));
@@ -687,7 +687,7 @@ export interface ReconcileResult {
 let _overCapLast = new Set<string>();
 
 /**
- * Rebuild `connectivity_check_sources` for one check (a write path) or all of
+ * Rebuild `path_check_sources` for one check (a write path) or all of
  * them (the 5-minute job). Batched throughout — one agent query, one source
  * query, then createMany / deleteMany / updateMany — so the 2000-host fleet
  * costs a handful of statements per check, never a query per host.
@@ -695,18 +695,18 @@ let _overCapLast = new Set<string>();
  * Disabled checks keep their membership: the fleet view still shows their
  * last results, and GET /agents/config filters on `enabled`.
  */
-export async function reconcileConnectivityCheckSources(
+export async function reconcilePathCheckSources(
   checkId?: string,
   opts: { refreshAllMembers?: boolean } = {},
 ): Promise<ReconcileResult> {
-  const checks = await prisma.connectivityCheck.findMany({
+  const checks = await prisma.pathCheck.findMany({
     where: checkId ? { id: checkId } : {},
     select: { id: true, name: true, scope: true, assetIds: true },
   });
   const result: ReconcileResult = { checks: checks.length, added: 0, removed: 0, refreshedAgents: 0 };
   if (checks.length === 0) return result;
   const agents = await activeAgents();
-  const existing = await prisma.connectivityCheckSource.findMany({
+  const existing = await prisma.pathCheckSource.findMany({
     where: { checkId: { in: checks.map((c) => c.id) } },
     select: { id: true, checkId: true, assetId: true, explicit: true },
   });
@@ -743,11 +743,11 @@ export async function reconcileConnectivityCheckSources(
     }
   }
   const ops = [];
-  if (toCreate.length) ops.push(prisma.connectivityCheckSource.createMany({ data: toCreate, skipDuplicates: true }));
-  if (toDelete.length) ops.push(prisma.connectivityCheckSource.deleteMany({ where: { id: { in: toDelete } } }));
-  if (toExplicit.length) ops.push(prisma.connectivityCheckSource.updateMany({ where: { id: { in: toExplicit } }, data: { explicit: true } }));
-  if (toImplicit.length) ops.push(prisma.connectivityCheckSource.updateMany({ where: { id: { in: toImplicit } }, data: { explicit: false } }));
-  ops.push(prisma.connectivityCheck.updateMany({ where: { id: { in: checks.map((c) => c.id) } }, data: { lastReconciledAt: new Date() } }));
+  if (toCreate.length) ops.push(prisma.pathCheckSource.createMany({ data: toCreate, skipDuplicates: true }));
+  if (toDelete.length) ops.push(prisma.pathCheckSource.deleteMany({ where: { id: { in: toDelete } } }));
+  if (toExplicit.length) ops.push(prisma.pathCheckSource.updateMany({ where: { id: { in: toExplicit } }, data: { explicit: true } }));
+  if (toImplicit.length) ops.push(prisma.pathCheckSource.updateMany({ where: { id: { in: toImplicit } }, data: { explicit: false } }));
+  ops.push(prisma.pathCheck.updateMany({ where: { id: { in: checks.map((c) => c.id) } }, data: { lastReconciledAt: new Date() } }));
   await prisma.$transaction(ops);
   result.added = toCreate.length;
   result.removed = toDelete.length;
@@ -763,7 +763,7 @@ export async function reconcileConnectivityCheckSources(
  * newest checks go quietly unrun there.
  */
 async function reportOverCap(fullPass: boolean): Promise<void> {
-  const rows = await prisma.connectivityCheckSource.groupBy({
+  const rows = await prisma.pathCheckSource.groupBy({
     by: ["assetId"],
     where: { check: { enabled: true } },
     _count: { _all: true },
@@ -778,12 +778,12 @@ async function reportOverCap(fullPass: boolean): Promise<void> {
   await Promise.all(assets.map((a) => {
     const count = rows.find((r) => r.assetId === a.id)?._count._all ?? 0;
     return logEvent({
-      action: "connectivity_check.agent_over_cap",
+      action: "path_check.agent_over_cap",
       resourceType: "asset",
       resourceId: a.id,
       resourceName: a.hostname || a.ipAddress || a.id,
       level: "warning",
-      message: `${a.hostname || a.ipAddress} matches ${count} enabled connectivity checks; its agent runs only the oldest ${MAX_CHECKS_PER_AGENT}`,
+      message: `${a.hostname || a.ipAddress} matches ${count} enabled path checks; its agent runs only the oldest ${MAX_CHECKS_PER_AGENT}`,
       details: { count, cap: MAX_CHECKS_PER_AGENT },
     });
   }));
@@ -836,12 +836,12 @@ export async function previewSources(input: PreviewSourcesInput) {
       os: a.os,
       agentVersion: a.managedAgent?.agentVersion ?? null,
       online: a.managedAgent ? agentOnline(a.managedAgent) : false,
-      supported: versionAtLeast(a.managedAgent?.agentVersion, MIN_AGENT_CONNECTIVITY_VERSION),
+      supported: versionAtLeast(a.managedAgent?.agentVersion, MIN_AGENT_PATH_CHECK_VERSION),
       pinned: members.get(a.id)?.explicit === true,
       pinnedOnly: members.get(a.id)?.explicit === true && !filterIds.has(a.id),
     })),
     pinnedWithoutAgent: missing.map((a) => ({ assetId: a.id, hostname: a.hostname, ipAddress: a.ipAddress })),
-    minAgentVersion: MIN_AGENT_CONNECTIVITY_VERSION,
+    minAgentVersion: MIN_AGENT_PATH_CHECK_VERSION,
   };
 }
 
@@ -854,9 +854,9 @@ const SOURCE_RESULT_SELECT = {
 
 /** Fleet view of one check: every member host with its latest result. */
 export async function listCheckResults(checkId: string) {
-  const check = await prisma.connectivityCheck.findUnique({ where: { id: checkId }, select: { id: true } });
-  if (!check) throw new AppError(404, "Connectivity check not found");
-  const rows = await prisma.connectivityCheckSource.findMany({
+  const check = await prisma.pathCheck.findUnique({ where: { id: checkId }, select: { id: true } });
+  if (!check) throw new AppError(404, "Path check not found");
+  const rows = await prisma.pathCheckSource.findMany({
     where: { checkId },
     select: {
       ...SOURCE_RESULT_SELECT,
@@ -876,14 +876,14 @@ export async function listCheckResults(checkId: string) {
       os: asset.os,
       agentVersion: asset.managedAgent?.agentVersion ?? null,
       online: asset.managedAgent ? agentOnline(asset.managedAgent) : false,
-      supported: versionAtLeast(asset.managedAgent?.agentVersion, MIN_AGENT_CONNECTIVITY_VERSION),
+      supported: versionAtLeast(asset.managedAgent?.agentVersion, MIN_AGENT_PATH_CHECK_VERSION),
     }))
     .sort((a, b) => (a.hostname ?? "").localeCompare(b.hostname ?? ""));
 }
 
 /** The checks one host runs, with its latest result for each. */
 export async function getAssetChecks(assetId: string) {
-  const rows = await prisma.connectivityCheckSource.findMany({
+  const rows = await prisma.pathCheckSource.findMany({
     where: { assetId },
     select: {
       ...SOURCE_RESULT_SELECT,
@@ -899,7 +899,7 @@ export async function getAssetChecks(assetId: string) {
   // failed run, or a check that keeps them) the excerpt live there, not on the
   // source row. One indexed findFirst per check; a host runs at most
   // MAX_CHECKS_PER_AGENT, and this serves one slide-over open.
-  const newest = await Promise.all(rows.map((r) => prisma.assetConnectivitySample.findFirst({
+  const newest = await Promise.all(rows.map((r) => prisma.assetPathCheckSample.findFirst({
     where: { assetId, checkId: r.checkId },
     orderBy: { timestamp: "desc" },
     select: {
@@ -918,12 +918,12 @@ export async function getAssetChecks(assetId: string) {
 /**
  * The definitions GET /agents/config ships to one agent: enabled checks it is
  * a member of, oldest first, capped at MAX_CHECKS_PER_AGENT — and NONE for an
- * agent older than MIN_AGENT_CONNECTIVITY_VERSION, which would ignore the
+ * agent older than MIN_AGENT_PATH_CHECK_VERSION, which would ignore the
  * field anyway and whose operator should see "upgrade" rather than silence.
  */
 export async function agentConfigChecks(assetId: string, agentVersion: string | null | undefined): Promise<AgentCheckDef[]> {
-  if (!versionAtLeast(agentVersion, MIN_AGENT_CONNECTIVITY_VERSION)) return [];
-  const rows = await prisma.connectivityCheckSource.findMany({
+  if (!versionAtLeast(agentVersion, MIN_AGENT_PATH_CHECK_VERSION)) return [];
+  const rows = await prisma.pathCheckSource.findMany({
     where: { assetId, check: { enabled: true } },
     select: {
       check: {
@@ -942,6 +942,6 @@ export async function agentConfigChecks(assetId: string, agentVersion: string | 
 }
 
 /** The compact fold both config ETags carry: check id + revision, in order. */
-export function connectivityEtagFold(defs: readonly AgentCheckDef[]): string {
+export function pathCheckEtagFold(defs: readonly AgentCheckDef[]): string {
   return defs.map((d) => `${d.id}:${d.revision}`).join("\u0001");
 }

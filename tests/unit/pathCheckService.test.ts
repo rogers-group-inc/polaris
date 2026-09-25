@@ -1,5 +1,5 @@
 /**
- * tests/unit/connectivityCheckService.test.ts — agent-run connectivity checks:
+ * tests/unit/pathCheckService.test.ts — agent-run path checks:
  * validation (target refusal, status spec, RE2-safe regex, interval / timeout),
  * the agent-facing definition + its hash, the ETag fold, the version gate, and
  * the set-based membership reconcile (scope ∪ pins ∩ active agents).
@@ -44,7 +44,7 @@ function matchWhere(row: any, where: any): boolean {
 vi.mock("../../src/db.js", () => ({
   prisma: {
     setting: { findUnique: vi.fn(async ({ where }: any) => (db.settings.has(where.key) ? { value: db.settings.get(where.key) } : null)) },
-    connectivityCheck: {
+    pathCheck: {
       findMany: vi.fn(async ({ where }: any = {}) => db.checks.filter((c) => matchWhere(c, where))),
       findUnique: vi.fn(async ({ where }: any) => {
         const c = db.checks.find((x) => (where.id ? x.id === where.id : x.name === where.name));
@@ -67,7 +67,7 @@ vi.mock("../../src/db.js", () => ({
         db.sources = db.sources.filter((s) => s.checkId !== where.id);
       }),
     },
-    connectivityCheckSource: {
+    pathCheckSource: {
       findMany: vi.fn(async ({ where, select }: any = {}) => {
         const rows = db.sources.filter((s) => matchWhere(s, where));
         if (select?.check) {
@@ -106,13 +106,13 @@ import {
   definitionSha256,
   toAgentCheckDef,
   agentConfigChecks,
-  connectivityEtagFold,
-  reconcileConnectivityCheckSources,
+  pathCheckEtagFold,
+  reconcilePathCheckSources,
   agentOnline,
   normalizeTraceroute,
-  MIN_AGENT_CONNECTIVITY_VERSION,
+  MIN_AGENT_PATH_CHECK_VERSION,
   MAX_CHECKS_PER_AGENT,
-} from "../../src/services/connectivityCheckService.js";
+} from "../../src/services/pathCheckService.js";
 import { parseStatusSpec, statusInRanges, agentRegexProblem } from "../../src/utils/httpCheck.js";
 
 const base = { name: "Intranet", kind: "https" as const, target: "https://intranet.example/health", scope: { allAssets: true } };
@@ -242,7 +242,7 @@ describe("agent definition + hash", () => {
     expect(definitionSha256({ ...row, description: "x" } as any)).toBe(definitionSha256(row));
   });
   it("folds id + revision", () => {
-    expect(connectivityEtagFold([{ id: "a", revision: "r1" } as any, { id: "b", revision: "r2" } as any])).toBe("a:r1\u0001b:r2");
+    expect(pathCheckEtagFold([{ id: "a", revision: "r1" } as any, { id: "b", revision: "r2" } as any])).toBe("a:r1\u0001b:r2");
   });
 });
 
@@ -258,7 +258,7 @@ describe("agentConfigChecks", () => {
     seedCheck("c1");
     expect(await agentConfigChecks("host", "0.20.1")).toEqual([]);
     expect(await agentConfigChecks("host", null)).toEqual([]);
-    expect(await agentConfigChecks("host", MIN_AGENT_CONNECTIVITY_VERSION)).toHaveLength(1);
+    expect(await agentConfigChecks("host", MIN_AGENT_PATH_CHECK_VERSION)).toHaveLength(1);
   });
   it("skips disabled checks and caps at MAX_CHECKS_PER_AGENT, oldest first", async () => {
     seedCheck("off", false);
@@ -270,7 +270,7 @@ describe("agentConfigChecks", () => {
   });
 });
 
-describe("reconcileConnectivityCheckSources", () => {
+describe("reconcilePathCheckSources", () => {
   it("adds scope ∪ pins ∩ active agents, removes the rest, and nudges the changed agents", async () => {
     db.agents = [
       { id: "ma1", assetId: "a1", installStatus: "active", agentVersion: "0.21.0" },
@@ -285,7 +285,7 @@ describe("reconcileConnectivityCheckSources", () => {
     loadScopeAssetIds.mockResolvedValue(["a1", "a5"]); // a5 has no agent
     db.sources.push({ id: "old", checkId: "c1", assetId: "a4", explicit: false });
 
-    const r = await reconcileConnectivityCheckSources("c1");
+    const r = await reconcilePathCheckSources("c1");
     const members = db.sources.map((s) => `${s.assetId}:${s.explicit}`).sort();
     expect(members).toEqual(["a1:false", "a2:true"]);
     expect(r).toMatchObject({ added: 2, removed: 1 });
@@ -295,7 +295,7 @@ describe("reconcileConnectivityCheckSources", () => {
   it("allAssets short-circuits to every active agent without loading the fleet", async () => {
     db.agents = [{ id: "ma1", assetId: "a1", installStatus: "active" }, { id: "ma9", assetId: "a9", installStatus: "pending" }];
     db.checks.push({ id: "c1", name: "c1", scope: { allAssets: true }, assetIds: [] });
-    await reconcileConnectivityCheckSources("c1");
+    await reconcilePathCheckSources("c1");
     expect(loadScopeAssetIds).not.toHaveBeenCalled();
     expect(db.sources.map((s) => s.assetId)).toEqual(["a1"]);
   });

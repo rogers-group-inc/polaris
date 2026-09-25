@@ -116,7 +116,7 @@ func traceBatch(ctx context.Context, dst4 net.IP, firstTTL, lastTTL int, o trace
 		}
 	}()
 	pending := map[[2]int]*pendingProbe{} // (ttl, idx)
-	payload := []byte("polaris-connectivity-trace")
+	payload := []byte("polaris-path-check-trace")
 	for ttl := firstTTL; ttl <= lastTTL; ttl++ {
 		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, 0)
 		if err != nil {

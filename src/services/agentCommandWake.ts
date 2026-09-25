@@ -27,7 +27,7 @@ export const CMD_WAKE_CHANNEL = "polaris_agent_cmd_wake";
 
 /**
  * Sibling channel: "this agent's config changed — refetch it". Used when a
- * connectivity check is created, edited or re-scoped: the reconcile that
+ * path check is created, edited or re-scoped: the reconcile that
  * notices runs wherever the write or the scheduler job ran, while the WS
  * session lives in the web/all role. Payload is a comma-joined list of
  * managedAgentIds. The heartbeat's configEtag (≤ one heartbeat interval) stays

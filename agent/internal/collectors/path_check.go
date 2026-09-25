@@ -1,7 +1,7 @@
-// Agent-run connectivity checks — the probe half.
+// Agent-run path checks — the probe half.
 //
 // The server ships each agent the checks it is a source of (GET /agents/config
-// → connectivityChecks); the scheduler in cmd/polaris-agent/connectivity.go
+// → pathChecks); the scheduler in cmd/polaris-agent/path_check.go
 // decides which are due and calls RunOnce. Satellite posture: a definition is
 // validated STRICTLY before anything touches the network (ValidateCheckDef),
 // and the agent only ever runs the fixed probe the kind names — never operator
@@ -47,17 +47,17 @@ const (
 	TraceOnFail
 )
 
-// ConnectivityOpts carries what RunOnce needs from outside the definition.
-type ConnectivityOpts struct {
+// PathCheckOpts carries what RunOnce needs from outside the definition.
+type PathCheckOpts struct {
 	UserAgent string
 	Trace     TraceMode
 	Now       func() time.Time // nil → time.Now
 }
 
 const (
-	connectivityMaxBodyBytes    = 64 * 1024
-	connectivityMaxExcerptBytes = 4 * 1024
-	connectivityMaxErrorLen     = 512
+	pathCheckMaxBodyBytes    = 64 * 1024
+	pathCheckMaxExcerptBytes = 4 * 1024
+	pathCheckMaxErrorLen     = 512
 	// TracerouteBudget bounds one traceroute. The windowed implementation
 	// normally finishes in a few seconds; this is the ceiling.
 	TracerouteBudget = 30 * time.Second
@@ -68,7 +68,7 @@ var ErrIPv6Unsupported = errors.New("ipv6 not supported in v1")
 
 // ─── Definition validation ────────────────────────────────────────────────
 
-func normalizeTracerouteDef(t transport.ConnectivityTracerouteDef) transport.ConnectivityTracerouteDef {
+func normalizeTracerouteDef(t transport.PathCheckTracerouteDef) transport.PathCheckTracerouteDef {
 	if t.EveryNRuns <= 0 {
 		t.EveryNRuns = 5
 	}
@@ -86,7 +86,7 @@ func normalizeTracerouteDef(t transport.ConnectivityTracerouteDef) transport.Con
 
 // ValidateCheckDef enforces the definition schema. Anything outside it is
 // refused — the run then reports "refused: …" instead of probing.
-func ValidateCheckDef(def *transport.ConnectivityCheckDef) error {
+func ValidateCheckDef(def *transport.PathCheckDef) error {
 	if def == nil {
 		return errors.New("no definition")
 	}
@@ -132,7 +132,7 @@ func ValidateCheckDef(def *transport.ConnectivityCheckDef) error {
 
 // DefHash is the scheduler's reset key: sha256 of the definition's JSON.
 // A changed definition re-baselines the check (immediate run + traceroute).
-func DefHash(def *transport.ConnectivityCheckDef) string {
+func DefHash(def *transport.PathCheckDef) string {
 	b, _ := json.Marshal(def)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
@@ -237,10 +237,10 @@ func truncateError(err error) string {
 		return ""
 	}
 	s := err.Error()
-	if len(s) <= connectivityMaxErrorLen {
+	if len(s) <= pathCheckMaxErrorLen {
 		return s
 	}
-	s = s[:connectivityMaxErrorLen]
+	s = s[:pathCheckMaxErrorLen]
 	for !utf8.ValidString(s) && len(s) > 0 {
 		s = s[:len(s)-1]
 	}
@@ -252,13 +252,13 @@ func truncateError(err error) string {
 // RunOnce runs one check and, per opts.Trace, one traceroute. It always
 // returns a sample (a refused definition is a failed sample saying why); the
 // traceroute is nil when none ran. ctx carries the run's deadline.
-func RunOnce(ctx context.Context, def *transport.ConnectivityCheckDef, opts ConnectivityOpts) (*transport.ConnectivitySample, *transport.ConnectivityTraceroute) {
+func RunOnce(ctx context.Context, def *transport.PathCheckDef, opts PathCheckOpts) (*transport.PathCheckSample, *transport.PathCheckTraceroute) {
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now
 	}
 	started := now()
-	s := &transport.ConnectivitySample{CheckID: def.ID, Timestamp: started.UTC().Format(time.RFC3339Nano)}
+	s := &transport.PathCheckSample{CheckID: def.ID, Timestamp: started.UTC().Format(time.RFC3339Nano)}
 	if err := ValidateCheckDef(def); err != nil {
 		s.Error = truncateError(fmt.Errorf("refused: %w", err))
 		return s, nil
@@ -327,7 +327,7 @@ func RunOnce(ctx context.Context, def *transport.ConnectivityCheckDef, opts Conn
 }
 
 // runTCP measures one TCP connect. Latency = the connect time.
-func runTCP(ctx context.Context, ip net.IP, port int, s *transport.ConnectivitySample) {
+func runTCP(ctx context.Context, ip net.IP, port int, s *transport.PathCheckSample) {
 	var d net.Dialer
 	start := time.Now()
 	conn, err := d.DialContext(ctx, "tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(port)))

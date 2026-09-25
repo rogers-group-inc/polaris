@@ -1,10 +1,10 @@
 /**
- * tests/unit/connectivityChecksUi.test.ts — the browser half of agent-run
- * connectivity checks:
+ * tests/unit/pathChecksUi.test.ts — the browser half of agent-run
+ * path checks:
  *   - the check modal's status-spec parser agrees with the server's (the
- *     three-way mirror: src/utils/httpCheck.ts, public/js/connectivity-checks.js,
- *     agent/internal/collectors/connectivity_http.go — the Go copy has the same
- *     table in connectivity_test.go),
+ *     three-way mirror: src/utils/httpCheck.ts, public/js/path-checks.js,
+ *     agent/internal/collectors/path_check_http.go — the Go copy has the same
+ *     table in path_check_test.go),
  *   - client validation, the row menu (Results first, Delete danger, no
  *     fullwrite on an UP_TO_WRITE key),
  *   - the slide-over tab's pure helpers in assets.js (eligibility, hop diff,
@@ -20,7 +20,7 @@ import { parseStatusSpec as serverParse } from "../../src/utils/httpCheck.js";
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const ROOT = resolve(__dirname, "../..");
-const pageSrc = readFileSync(resolve(ROOT, "public/js/connectivity-checks.js"), "utf8");
+const pageSrc = readFileSync(resolve(ROOT, "public/js/path-checks.js"), "utf8");
 const assetsSrc = readFileSync(resolve(ROOT, "public/js/assets.js"), "utf8");
 
 let CC: any;
@@ -30,7 +30,7 @@ beforeAll(() => {
   g.window = g;
   g.escapeHtml = (s: string) => String(s);
   (0, eval)(pageSrc);
-  CC = g.PolarisConnectivityChecks;
+  CC = g.PolarisPathChecks;
 });
 
 /** Slice one top-level `function name(…) { … }` out of a browser file. */
@@ -78,7 +78,7 @@ describe("client validation", () => {
     expect(CC.validateCheck({ ...good, kind: "tcp", target: "db01", http: null }).tab).toBe("general");
   });
   it("every payload it accepts parses against the route schema", async () => {
-    const { connectivityCheckInputSchema } = await import("../../src/api/routes/connectivityChecks.js");
+    const { pathCheckInputSchema } = await import("../../src/api/routes/pathChecks.js");
     for (const p of [
       good,
       { ...good, kind: "tcp", target: "db01.example:5432", http: null },
@@ -86,7 +86,7 @@ describe("client validation", () => {
       { ...good, scope: { condition: { op: "and", children: [{ field: "agentInstalled", operator: "equals", value: "yes" }] } } },
     ]) {
       expect(CC.validateCheck(p)).toBeNull();
-      expect(connectivityCheckInputSchema.safeParse(p).success).toBe(true);
+      expect(pathCheckInputSchema.safeParse(p).success).toBe(true);
     }
   }, 60_000);
 });
@@ -101,16 +101,16 @@ describe("row menu", () => {
     expect(edit[edit.length - 1].danger).toBe(true);
   });
   it("never asks for fullwrite on the UP_TO_WRITE key (rule 43d)", () => {
-    expect(pageSrc).not.toMatch(/connectivityChecks",\s*"fullwrite"/);
+    expect(pageSrc).not.toMatch(/pathChecks",\s*"fullwrite"/);
   });
 });
 
-describe("slide-over Connectivity tab helpers", () => {
-  const fns = load(assetsSrc, ["_connTabEligible", "_trDiffHops", "_trHopRtt", "_connAvailabilityBuckets"]);
+describe("slide-over Paths tab helpers", () => {
+  const fns = load(assetsSrc, ["_pathTabEligible", "_trDiffHops", "_trHopRtt", "_pathAvailabilityBuckets"]);
   it("shows the tab only when the host runs a check", () => {
-    expect(fns._connTabEligible(null)).toBe(false);
-    expect(fns._connTabEligible({ checks: [] })).toBe(false);
-    expect(fns._connTabEligible({ checks: [{ id: "c" }] })).toBe(true);
+    expect(fns._pathTabEligible(null)).toBe(false);
+    expect(fns._pathTabEligible({ checks: [] })).toBe(false);
+    expect(fns._pathTabEligible({ checks: [{ id: "c" }] })).toBe(true);
   });
   it("diffs hops by TTL", () => {
     const prev = { hops: [{ ttl: 1, ip: "10.0.0.1" }, { ttl: 2, ip: null }, { ttl: 3, ip: "8.8.8.8" }] };
@@ -124,7 +124,7 @@ describe("slide-over Connectivity tab helpers", () => {
   });
   it("buckets availability from detail rows and rollup counts", () => {
     const t0 = 0, t1 = 4000;
-    const b = (fns._connAvailabilityBuckets as any)([
+    const b = (fns._pathAvailabilityBuckets as any)([
       { timestamp: new Date(100).toISOString(), ok: true },
       { timestamp: new Date(200).toISOString(), ok: false },
       { timestamp: new Date(3500).toISOString(), okCount: 9, sampleCount: 10 },
@@ -134,8 +134,8 @@ describe("slide-over Connectivity tab helpers", () => {
     expect(b[3]).toMatchObject({ ok: 9, total: 10 });
   });
   it("draws no data series in the failure red or dependency grey", () => {
-    const tab = assetsSrc.slice(assetsSrc.indexOf("// ─── Asset slide-over → Connectivity tab"));
-    const phases = /var _CONN_PHASES = \[([\s\S]*?)\];/.exec(tab)![1];
+    const tab = assetsSrc.slice(assetsSrc.indexOf("// ─── Asset slide-over → Paths tab"));
+    const phases = /var _PATH_PHASES = \[([\s\S]*?)\];/.exec(tab)![1];
     expect(phases.toLowerCase()).not.toMatch(/#d32f2f|#9e9e9e|grey|gray/);
   });
 });

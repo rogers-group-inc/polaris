@@ -24,7 +24,7 @@ func platformICMPEcho(ctx context.Context, dst net.IP, timeout time.Duration) (t
 		return 0, err
 	}
 	defer h.Close()
-	_, status, rtt, err := h.echo(dst, 128, []byte("polaris-connectivity"), timeout)
+	_, status, rtt, err := h.echo(dst, 128, []byte("polaris-path-check"), timeout)
 	if err != nil {
 		return 0, err
 	}
