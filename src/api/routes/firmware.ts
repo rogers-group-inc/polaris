@@ -38,6 +38,7 @@ import {
   upsertBinding,
   deleteBinding,
   listRecentRuns,
+  listAssetsForNode,
 } from "../../services/firmwareRepositoryService.js";
 import {
   getUpgradeAvailability,
@@ -49,6 +50,16 @@ import {
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const AssetTypeSchema = z.enum(FIRMWARE_ASSET_TYPES);
+
+const NodeAssetsQuerySchema = z.object({
+  manufacturer: z.string().trim().min(1),
+  assetType: AssetTypeSchema.optional(),
+  model: z.string().trim().min(1).max(200).optional(),
+  // The tree's "(no model)" node — a flag, because a query string drops an empty model.
+  noModel: z.enum(["1", "true"]).optional().transform((v) => v !== undefined),
+})
+  .refine((q) => (q.model === undefined && !q.noModel) || q.assetType !== undefined, { message: "model needs assetType" })
+  .refine((q) => !(q.model && q.noModel), { message: "model and noModel are exclusive" });
 
 const ImageListQuerySchema = z.object({
   manufacturer: z.string().trim().min(1).optional(),
@@ -132,6 +143,15 @@ export const firmwareRouter: Router = Router();
 
 firmwareRouter.get("/tree", requirePermission("firmware", "read"), handle(async (_req, res) => {
   res.json(await getFirmwareTree());
+}));
+
+// The asset-count slide-in on a tree node. Names devices, so it takes
+// `assets:read` as well as the Repository's own key: a role that may see the
+// tree's counts but not the inventory gets the counts only.
+firmwareRouter.get("/assets", requirePermission("firmware", "read"), requirePermission("assets", "read"), handle(async (req, res) => {
+  const q = NodeAssetsQuerySchema.safeParse(req.query);
+  if (!q.success) throw new AppError(400, firstIssue(q.error));
+  res.json(await listAssetsForNode(q.data));
 }));
 
 firmwareRouter.get("/images", requirePermission("firmware", "read"), handle(async (req, res) => {

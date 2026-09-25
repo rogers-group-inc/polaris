@@ -128,6 +128,55 @@ d("firmware repository routes", () => {
     expect((await none.agent.get("/api/v1/server-settings/firmware/tree")).status).toBe(403);
   });
 
+  it("a node's device list counts exactly what the tree counts, (no model) included, and needs assets:read too", async () => {
+    // Its own manufacturer, so rows another test left in a shared database
+    // cannot move these counts.
+    const LM = PFX + "-listco";
+    for (const [hostname, assetType, model, status] of [
+      ["fwlist-sw-null", "switch", null, "active"],
+      ["fwlist-sw-blank", "switch", "", "active"],
+      ["fwlist-sw-a", "switch", "FortiSwitch S108FF", "active"],
+      ["fwlist-sw-gone", "switch", "FortiSwitch S108FF", "decommissioned"],
+      ["fwlist-ap", "access_point", "FortiAP 231K", "active"],
+      ["fwlist-fg", "firewall", "FortiGate 60F", "active"],
+    ] as const) {
+      const a = await prisma.asset.create({ data: { hostname, assetType, model, status, manufacturer: LM, serialNumber: null, osVersion: "7.4.3 build0542" } });
+      createdAssetIds.push(a.id);
+    }
+    const reader = await loginAs(readerU);
+    const tree = (await reader.agent.get("/api/v1/server-settings/firmware/tree")).body;
+    const m = tree.manufacturers.find((x: { name: string }) => x.name === LM);
+    const sw = m.assetTypes.find((t: { assetType: string }) => t.assetType === "switch");
+    const noModel = sw.models.find((x: { model: string }) => x.model === "");
+    const list = async (q: string) => {
+      const r = await reader.agent.get("/api/v1/server-settings/firmware/assets?" + q);
+      expect(r.status, q).toBe(200);
+      return r.body as { total: number; assets: Array<{ hostname: string; firmwareVsPrimary: string | null }> };
+    };
+    const enc = encodeURIComponent;
+    const all = await list(`manufacturer=${enc(LM)}`);
+    expect(all.total).toBe(m.assetCount);
+    expect(all.assets.map((a) => a.hostname).sort()).toEqual(["fwlist-ap", "fwlist-sw-a", "fwlist-sw-blank", "fwlist-sw-null"]);
+    expect((await list(`manufacturer=${enc(LM)}&assetType=switch`)).total).toBe(sw.assetCount);
+    const nm = await list(`manufacturer=${enc(LM)}&assetType=switch&noModel=1`);
+    expect(nm.total).toBe(noModel.assetCount);
+    expect(nm.assets.map((a) => a.hostname).sort()).toEqual(["fwlist-sw-blank", "fwlist-sw-null"]);
+    const one = await list(`manufacturer=${enc(LM)}&assetType=switch&model=${enc("FortiSwitch S108FF")}`);
+    expect(one.assets.map((a) => a.hostname)).toEqual(["fwlist-sw-a"]);
+    // No serial → the Repository cannot place the device, so no standing.
+    expect(one.assets[0]!.firmwareVsPrimary).toBeNull();
+
+    expect((await reader.agent.get(`/api/v1/server-settings/firmware/assets?manufacturer=${enc(LM)}&model=x`)).status).toBe(400);
+    expect((await reader.agent.get(`/api/v1/server-settings/firmware/assets?manufacturer=${enc(LM)}&assetType=switch&model=x&noModel=1`)).status).toBe(400);
+    // The tree's counts are firmware:read; the names behind them are the inventory's.
+    const blindU = await createRoleUser("blind", matrix("none", { firmware: "read" }));
+    const blind = await loginAs(blindU);
+    expect((await blind.agent.get("/api/v1/server-settings/firmware/tree")).status).toBe(200);
+    expect((await blind.agent.get(`/api/v1/server-settings/firmware/assets?manufacturer=${enc(LM)}`)).status).toBe(403);
+    const none = await loginAs(noneU);
+    expect((await none.agent.get(`/api/v1/server-settings/firmware/assets?manufacturer=${enc(LM)}`)).status).toBe(403);
+  });
+
   it("read may not upload; write may, and the image is parsed from its header", async () => {
     const reader = await loginAs(readerU);
     const denied = await reader.agent.post("/api/v1/server-settings/firmware/images").set("X-CSRF-Token", reader.csrf)

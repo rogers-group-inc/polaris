@@ -137,8 +137,12 @@ still on disk, and the flag is the only thing telling you so.
 Images are up to 100 MiB and live on the host under `data/firmware` (outside
 the database backup, like the agent binaries; a Docker install keeps them in
 the state volume). An nginx-fronted install needs the shipped config's
-firmware location block, or the upload is rejected at the edge with a 413 —
-managed-mode installs receive it on the next update.
+firmware location block, or the upload is rejected at the edge with a 413.
+An install whose nginx is managed from the **Web Server** tab receives it on
+the next update. One that never adopted management, or whose nginx file was
+edited by hand since, is left alone by the updater: adopt on the Web Server
+tab to render the current config. A load balancer in front of nginx has its
+own request-body limit, which must allow 100 MiB as well.
 
 ### Device logins
 
@@ -149,6 +153,24 @@ manufacturer's, and every node says which one applies to it and where it came
 from. A binding whose credential has since been deleted is skipped, not
 inherited — the next level up applies. A device with no login at any level
 cannot start an upgrade, and its card says so.
+
+A manufacturer with no login of its own warns only about what is actually
+uncovered: *No login for Access Point — upgrades cannot start* names each
+device type that has at least one model no login reaches. When every device
+type is covered — by its own login or by each of its models — the manufacturer
+shows no warning at all.
+
+### The devices behind a node
+
+The **asset count** on a manufacturer, device type or model is a link. Click it
+to open a panel listing those devices: hostname, address, model, serial, the
+version each one runs, and whether that is **Current**, **Behind primary** or
+**Ahead of primary** against its platform's primary image. Filter by any of
+those, and click a device to open its details over the list. The list counts
+exactly what the tree counts, so *(no model)* lists the devices with a blank
+model. On a very large node it shows the first 2000 by hostname and says so;
+filter to find the rest. The count is a link only for a role that can see
+assets.
 
 ### Recent upgrade runs
 

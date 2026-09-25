@@ -108,6 +108,44 @@
       '">No login — upgrades cannot start</span>';
   }
 
+  /**
+   * The manufacturer node's login pill. A login bound HERE reads like any
+   * other node's. Otherwise the manufacturer has no login of its own to report,
+   * and what matters is whether every device type below it is covered — by a
+   * type binding, or by each of its models carrying one. It names the types
+   * that are not, and says nothing at all when every type is: a warning that
+   * fires on a fully covered manufacturer is one an operator learns to ignore.
+   */
+  function manufacturerLoginPillHTML(m, ctx) {
+    if (m.binding && m.binding.credentialId && m.effectiveBinding) return bindingPillHTML(m, ctx);
+    var missing = typesWithoutLogin(m);
+    if (missing.length === 0) return "";
+    var names = missing.map(function (t) { return t.label || t.assetType; });
+    var stale = m.binding && m.binding.stale;
+    return '<span class="fw-pill fw-binding-pill is-none" title="' +
+      esc((stale ? "The credential bound at " + m.name + " was deleted. " : "") +
+        "Bind a device admin login on each of these device types, on their models, or once here at " + m.name + ".") +
+      '">No login for ' + esc(names.join(", ")) + ' — upgrades cannot start</span>';
+  }
+
+  /** Device types under a manufacturer with at least one model no login reaches. */
+  function typesWithoutLogin(m) {
+    return (m.assetTypes || []).filter(function (t) {
+      if (t.effectiveBinding) return false;
+      var models = t.models || [];
+      if (models.length === 0) return true;
+      return models.some(function (mdl) { return !mdl.effectiveBinding; });
+    });
+  }
+
+  /** "12 assets" — a button that opens the device list when the viewer may see assets. */
+  function assetCountHTML(n, scopeLabel) {
+    var text = n + " asset" + (n === 1 ? "" : "s");
+    var mayList = n > 0 && typeof permAtLeast === "function" && permAtLeast("assets", "read");
+    if (!mayList) return text;
+    return '<button type="button" class="fw-asset-count" title="List the devices in ' + esc(scopeLabel) + '">' + text + '</button>';
+  }
+
   /** Only http credentials in "form" mode are device logins. */
   function credentialOptionsHTML(list, currentId) {
     return (list || []).filter(function (c) {
@@ -247,7 +285,7 @@
       key: key, depth: 2, orphaned: mdl.orphaned,
       attrs: ' data-fw-mfr="' + esc(m.name) + '" data-fw-type="' + esc(t.assetType) + '" data-fw-model="' + esc(mdl.model) + '"',
       title: esc(mdl.model || "(no model)"),
-      metaHTML: mdl.assetCount + " asset" + (mdl.assetCount === 1 ? "" : "s") + " · " + (mdl.images || []).length + " image" + ((mdl.images || []).length === 1 ? "" : "s"),
+      metaHTML: assetCountHTML(mdl.assetCount, m.name + " › " + t.label + " › " + (mdl.model || "(no model)")) + " · " + (mdl.images || []).length + " image" + ((mdl.images || []).length === 1 ? "" : "s"),
       pillsHTML: orphanPill + bindingPillHTML(mdl, ctx),
       verbsHTML: purge + bindVerbHTML(mdl),
       bodyHTML: body,
@@ -266,7 +304,7 @@
       key: key, depth: 1,
       attrs: ' data-fw-mfr="' + esc(m.name) + '" data-fw-type="' + esc(t.assetType) + '"',
       title: esc(t.label),
-      metaHTML: t.models.length + " model" + (t.models.length === 1 ? "" : "s") + " · " + t.assetCount + " asset" + (t.assetCount === 1 ? "" : "s"),
+      metaHTML: t.models.length + " model" + (t.models.length === 1 ? "" : "s") + " · " + assetCountHTML(t.assetCount, m.name + " › " + t.label),
       pillsHTML: enginePill + bindingPillHTML(t, ctx),
       verbsHTML: bindVerbHTML(t),
       bodyHTML: body,
@@ -282,8 +320,8 @@
       key: key, depth: 0,
       attrs: ' data-fw-mfr="' + esc(m.name) + '"',
       title: esc(m.name),
-      metaHTML: m.assetCount + " asset" + (m.assetCount === 1 ? "" : "s"),
-      pillsHTML: bindingPillHTML(m, ctx),
+      metaHTML: assetCountHTML(m.assetCount, m.name),
+      pillsHTML: manufacturerLoginPillHTML(m, ctx),
       verbsHTML: bindVerbHTML(m),
       bodyHTML: body,
     });
@@ -393,6 +431,9 @@
       if ((btn = target.closest(".fw-run-view"))) return viewRun(btn.getAttribute("data-id"));
       var node = nodeOf(target);
       if (!node) return;
+      // Before the header toggle: the count sits in the header, and a click on
+      // it opens the device list without folding the node.
+      if ((btn = target.closest(".fw-asset-count"))) { e.stopPropagation(); return openAssetList(node); }
       if ((btn = target.closest(".fw-binding-edit"))) { e.stopPropagation(); return openBindingEditor(node); }
       if ((btn = target.closest(".fw-binding-save"))) { e.stopPropagation(); return saveBinding(node); }
       if ((btn = target.closest(".fw-binding-cancel"))) { e.stopPropagation(); delete _bindingEdit[node.key]; return render(); }
@@ -565,6 +606,167 @@
     } catch (err) { toast(err && err.message ? err.message : "Could not load the run", "error"); }
   }
 
+  // ─── device-list slide-in ──────────────────────────────────────────────────
+  // The devices behind a node's asset count. Modelled on the credential-usage
+  // slide-in (server-settings.js → openCredUsagePanel): a `.slideover-overlay`
+  // appended to <body> once, raised on open, Escape to the topmost only, and a
+  // row click hands off to PolarisPanels.openAsset, which loads the asset
+  // slide-over on this page and stacks it over this one.
+
+  var _listReturnFocus = null;
+  var _listRows = [];
+
+  var FW_STANDING = {
+    current: { label: "Current", cls: "is-own", title: "Runs the platform's primary image" },
+    older: { label: "Behind primary", cls: "is-none", title: "Runs an older version than the platform's primary image" },
+    newer: { label: "Ahead of primary", cls: "is-inherited", title: "Runs a newer version than the image selected as primary" },
+  };
+
+  function standingPillHTML(v) {
+    var s = v && FW_STANDING[v];
+    if (!s) return '<span class="fw-node-meta" title="No primary image for this platform, or no readable serial or version">—</span>';
+    return '<span class="fw-pill fw-binding-pill ' + s.cls + '" title="' + esc(s.title) + '">' + esc(s.label) + '</span>';
+  }
+
+  function assetListRowHTML(a) {
+    var name = a.hostname || a.ipAddress || a.id;
+    var sub = [];
+    if (a.ipAddress && a.hostname) sub.push(esc(a.ipAddress));
+    if (a.model) sub.push(esc(a.model));
+    if (a.serialNumber) sub.push(esc(a.serialNumber));
+    if (!a.monitored) sub.push('<span style="color:var(--color-text-tertiary)">not monitored</span>');
+    return '<div class="fw-asset-row" data-asset-id="' + esc(a.id) + '" role="button" tabindex="0" title="Open asset details">' +
+      '<div class="fw-asset-row-main">' +
+        '<div class="fw-asset-row-name">' + esc(name) + '</div>' +
+        (sub.length ? '<div class="fw-asset-row-sub">' + sub.join(" · ") + '</div>' : "") +
+      '</div>' +
+      '<div class="fw-asset-row-fw">' +
+        '<span class="fw-asset-row-version">' + esc(a.osVersion || "no version") + '</span>' +
+        standingPillHTML(a.firmwareVsPrimary) +
+      '</div>' +
+    '</div>';
+  }
+
+  /** The list body for a filter string — pure, so the DOM test renders it. */
+  function assetListBodyHTML(res, filter) {
+    var rows = (res && res.assets) || [];
+    if (rows.length === 0) return '<p class="empty-state" style="padding:1rem 0">No devices here.</p>';
+    var f = String(filter || "").trim().toLowerCase();
+    var shown = f
+      ? rows.filter(function (a) {
+          return [a.hostname, a.ipAddress, a.model, a.serialNumber, a.osVersion].some(function (x) { return x && String(x).toLowerCase().indexOf(f) !== -1; });
+        })
+      : rows;
+    var capped = res.total > rows.length
+      ? '<p class="fw-node-meta" style="margin:0 0 0.5rem">Showing the first ' + rows.length + ' of ' + res.total + ' by hostname — filter to find the rest.</p>'
+      : "";
+    if (shown.length === 0) return capped + '<p class="empty-state" style="padding:1rem 0">Nothing matches “' + esc(filter) + '”.</p>';
+    return capped + shown.map(assetListRowHTML).join("");
+  }
+
+  function ensureAssetListDOM() {
+    if (document.getElementById("fw-assets-overlay")) return;
+    var overlay = document.createElement("div");
+    overlay.id = "fw-assets-overlay";
+    overlay.className = "slideover-overlay";
+    overlay.innerHTML =
+      '<div class="slideover" id="fw-assets-panel" role="dialog" aria-labelledby="fw-assets-title" tabindex="-1">' +
+        '<div class="slideover-resize-handle"></div>' +
+        '<div class="slideover-header">' +
+          '<div class="slideover-header-top">' +
+            '<h3 id="fw-assets-title">Devices</h3>' +
+            '<button class="btn-icon" id="fw-assets-close" aria-label="Close">&times;</button>' +
+          '</div>' +
+          '<div class="slideover-meta" id="fw-assets-meta"></div>' +
+        '</div>' +
+        '<div class="slideover-body">' +
+          '<div style="padding:1rem 1.25rem">' +
+            '<input type="search" id="fw-assets-filter" placeholder="Filter by hostname, IP, model, serial or version" style="width:100%;margin-bottom:0.75rem">' +
+            '<div id="fw-assets-body"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeAssetList(); });
+    document.getElementById("fw-assets-close").addEventListener("click", closeAssetList);
+    if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, closeAssetList);
+
+    var body = document.getElementById("fw-assets-body");
+    var openRow = function (row) {
+      var id = row && row.getAttribute("data-asset-id");
+      if (!id) return;
+      if (window.PolarisPanels && typeof window.PolarisPanels.openAsset === "function") { window.PolarisPanels.openAsset(id); return; }
+      window.location.href = "/assets.html#view=asset:" + encodeURIComponent(id);
+    };
+    body.addEventListener("click", function (e) { openRow(e.target.closest ? e.target.closest("[data-asset-id]") : null); });
+    body.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var row = e.target.closest ? e.target.closest("[data-asset-id]") : null;
+      if (row) { e.preventDefault(); openRow(row); }
+    });
+    document.getElementById("fw-assets-filter").addEventListener("input", function (e) {
+      body.innerHTML = assetListBodyHTML(_listRows, e.target.value);
+    });
+
+    if (typeof initSlideoverResize === "function") initSlideoverResize(document.getElementById("fw-assets-panel"), "polaris.panel.width.firmwareassets");
+  }
+
+  function closeAssetList() {
+    var overlay = document.getElementById("fw-assets-overlay");
+    if (overlay) overlay.classList.remove("open");
+    if (_listReturnFocus && typeof _listReturnFocus.focus === "function") { try { _listReturnFocus.focus(); } catch (_) { /* gone */ } }
+    _listReturnFocus = null;
+  }
+
+  function typeLabelOf(mfrName, assetType) {
+    var m = ((_tree && _tree.manufacturers) || []).filter(function (x) { return x.name === mfrName; })[0];
+    var t = m && (m.assetTypes || []).filter(function (x) { return x.assetType === assetType; })[0];
+    return (t && t.label) || typeWord(assetType, false);
+  }
+
+  async function openAssetList(node) {
+    ensureAssetListDOM();
+    _listReturnFocus = document.activeElement;
+    var title = node.manufacturer;
+    var params = { manufacturer: node.manufacturer };
+    if (node.assetType) {
+      params.assetType = node.assetType;
+      title += " › " + typeLabelOf(node.manufacturer, node.assetType);
+    }
+    if (node.model !== null && node.model !== undefined) {
+      // nodeOf reads data-fw-model, which is "" on the "(no model)" node.
+      if (node.model === "") { params.noModel = "1"; title += " › (no model)"; }
+      else { params.model = node.model; title += " › " + node.model; }
+    }
+    document.getElementById("fw-assets-title").textContent = title;
+    document.getElementById("fw-assets-meta").textContent = "";
+    var filterEl = document.getElementById("fw-assets-filter");
+    filterEl.value = "";
+    var body = document.getElementById("fw-assets-body");
+    body.innerHTML = '<p class="empty-state" style="padding:1rem 0">Loading…</p>';
+    _listRows = [];
+
+    var overlay = document.getElementById("fw-assets-overlay");
+    if (typeof raiseSlideover === "function") raiseSlideover(overlay);
+    requestAnimationFrame(function () {
+      overlay.classList.add("open");
+      var panel = document.getElementById("fw-assets-panel");
+      if (panel) panel.focus();
+    });
+
+    try {
+      var res = await api.serverSettings.listFirmwareNodeAssets(params);
+      _listRows = res;
+      var behind = (res.assets || []).filter(function (a) { return a.firmwareVsPrimary === "older"; }).length;
+      document.getElementById("fw-assets-meta").textContent =
+        res.total + " device" + (res.total === 1 ? "" : "s") + (behind ? " · " + behind + " behind the primary image" : "") + " · click one to open its details";
+      body.innerHTML = assetListBodyHTML(res, filterEl.value);
+    } catch (err) {
+      body.innerHTML = '<p class="empty-state" style="padding:1rem 0;color:var(--color-danger)">' + esc(err && err.message ? err.message : "Could not load the devices") + '</p>';
+    }
+  }
+
   window.PolarisFirmwareTab = {
     load: load,
     render: render,
@@ -573,6 +775,9 @@
     cardHTML: cardHTML,
     runsCardHTML: runsCardHTML,
     bindingPillHTML: bindingPillHTML,
+    manufacturerLoginPillHTML: manufacturerLoginPillHTML,
+    assetListBodyHTML: assetListBodyHTML,
+    openAssetList: openAssetList,
     credentialOptionsHTML: credentialOptionsHTML,
     bindingEditorHTML: bindingEditorHTML,
     imagesTableHTML: imagesTableHTML,

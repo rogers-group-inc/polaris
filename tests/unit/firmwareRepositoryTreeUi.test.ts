@@ -236,6 +236,89 @@ describe("the login pills — the server's scope, never a client guess", () => {
   });
 });
 
+describe("the manufacturer's login pill names the device types no login reaches", () => {
+  const mctx = { mfrName: "Fortinet", typeLabel: "" };
+  const mpill = (m: unknown) => {
+    const host = sb.document.createElement("div");
+    host.innerHTML = sb.PolarisFirmwareTab.manufacturerLoginPillHTML(m, mctx);
+    return host.querySelector(".fw-binding-pill");
+  };
+  const mdl = (name: string, effective: unknown) => ({ model: name, assetCount: 1, orphaned: false, binding: null, effectiveBinding: effective, images: [] });
+  const type = (assetType: string, label: string, effective: unknown, models: unknown[]) => ({ assetType, label, engine: null, assetCount: 1, binding: null, effectiveBinding: effective, models });
+
+  it("a login bound on the manufacturer reads like any other node", () => {
+    const p = mpill({ name: "Fortinet", binding: own("FSW admin", "manufacturer"), effectiveBinding: eff("FSW admin", "manufacturer"), assetTypes: [] })!;
+    expect(text(p)).toBe("Login: FSW admin");
+  });
+
+  it("no pill at all when every device type is covered — by the type, or by each of its models", () => {
+    // The operator's screenshot: Switch bound at the type, and here Access
+    // Point covered model by model. Nothing is missing, so nothing warns.
+    const m = {
+      name: "Fortinet", binding: null, effectiveBinding: null,
+      assetTypes: [
+        type("switch", "Switch", eff("FortiSwitch HTTP", "assetType"), [mdl("FortiSwitch", eff("FortiSwitch HTTP", "assetType"))]),
+        type("access_point", "Access Point", null, [mdl("FortiAP 231K", eff("AP 231K", "model")), mdl("FortiAP 431F", eff("AP 431F", "model"))]),
+      ],
+    };
+    expect(mpill(m)).toBeNull();
+  });
+
+  it("names exactly the types left uncovered, including one where only SOME models carry a login", () => {
+    const m = {
+      name: "Fortinet", binding: null, effectiveBinding: null,
+      assetTypes: [
+        type("switch", "Switch", eff("FortiSwitch HTTP", "assetType"), [mdl("FortiSwitch", eff("FortiSwitch HTTP", "assetType"))]),
+        type("access_point", "Access Point", null, [mdl("FortiAP 231K", eff("AP 231K", "model")), mdl("FortiAP 431F", null)]),
+      ],
+    };
+    const p = mpill(m)!;
+    expect(p.classList.contains("is-none")).toBe(true);
+    expect(text(p)).toBe("No login for Access Point — upgrades cannot start");
+  });
+
+  it("lists every uncovered type, in tree order", () => {
+    const m = {
+      name: "Fortinet", binding: null, effectiveBinding: null,
+      assetTypes: [type("switch", "Switch", null, [mdl("a", null)]), type("access_point", "Access Point", null, [mdl("b", null)])],
+    };
+    expect(text(mpill(m))).toBe("No login for Switch, Access Point — upgrades cannot start");
+  });
+
+  it("a deleted manufacturer credential says so, and still names only what is uncovered", () => {
+    const m = {
+      name: "Fortinet", binding: { id: "b", credentialId: null, credentialName: null, stale: true }, effectiveBinding: null,
+      assetTypes: [type("switch", "Switch", null, [mdl("a", null)])],
+    };
+    const p = mpill(m)!;
+    expect(text(p)).toBe("No login for Switch — upgrades cannot start");
+    expect(p.getAttribute("title")).toMatch(/was deleted/);
+  });
+
+  it("the tree renders it on the manufacturer node", () => {
+    // Aruba in the fixture: nothing bound anywhere.
+    expect(text(node(renderCard(), "Aruba").querySelector(".fw-node-header .fw-binding-pill"))).toBe("No login for Switch — upgrades cannot start");
+  });
+});
+
+describe("the asset count", () => {
+  it("is plain text without assets:read, and a button that names its scope with it", () => {
+    const meta = () => node(renderCard(), "Fortinet", "switch", "FortiSwitch S108FF").querySelector(".fw-node-header .fw-node-meta")!;
+    expect(meta().querySelector(".fw-asset-count")).toBeNull();
+    const prev = (sb as unknown as { permAtLeast: unknown }).permAtLeast;
+    (sb as unknown as { permAtLeast: unknown }).permAtLeast = (key: string, want: string) => (key === "assets" && want === "read") || (key === "firmware" && RANK[level] >= RANK[want]);
+    try {
+      const btn = meta().querySelector(".fw-asset-count")!;
+      expect(text(btn)).toBe("10 assets");
+      expect(btn.getAttribute("title")).toBe("List the devices in Fortinet › Switch › FortiSwitch S108FF");
+      // A zero count never opens an empty list.
+      expect(node(renderCard(), "Fortinet", "switch", "FortiSwitch S224E").querySelector(".fw-asset-count")).toBeNull();
+    } finally {
+      (sb as unknown as { permAtLeast: unknown }).permAtLeast = prev;
+    }
+  });
+});
+
 describe("the binding editor", () => {
   const creds = [
     { id: "c1", name: "FSW admin", type: "http", config: { authMode: "form", username: "admin" } },
