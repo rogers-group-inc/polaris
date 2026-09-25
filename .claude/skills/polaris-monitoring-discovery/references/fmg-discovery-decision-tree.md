@@ -223,10 +223,10 @@ FMG Integration Discovery
 │     → PUT user.quarantine with the MAC in a targets[] entry (drop=enable)
 │        record per-target status in Asset.quarantineTargets
 │
-├─ Description sync (writeback — syncDescriptions toggle; POLARIS IS PRIMARY)
+├─ Description sync (writeback — per-class syncFortigate/Switch/ApDescriptions toggles; POLARIS IS PRIMARY)
 │   interface comment saved in Polaris, or Asset.description set/changed,
 │   or the per-discovery reconcile (Phase 13.7) finds device ≠ Polaris
-│   AND syncDescriptions === true on integration
+│   AND the integration's toggle for the device's class is on (syncFortigate/Switch/ApDescriptions)
 │     →  Polaris empty + device has a value: adopt the device value into
 │        Polaris (seed once; audited)
 │        Polaris has a value: write it to the device — FortiGate
@@ -255,7 +255,7 @@ FMG Integration Discovery
 | `forti{switch,ap}Monitor.{enabled, addAsMonitored, snmpCredentialId}` | all `false` / `null` | 4-way grid above; operator-override preservation on existing rows. |
 | `pushReservations` / `pushQuarantine` | both `false` | Writeback toggles; off by default. |
 | `autoReserveFortinetInfra` | `false` | Writes a real MAC→IP reserved-address entry for managed FortiSwitches/FortiAPs that hold their address by dynamic lease — the FortiLink case, where the gate otherwise reports the address "Not Reserved". Requires `pushReservations` and is ignored without it. Pins addresses the devices already hold, so the pool's occupancy doesn't change. Unlike every other DHCP write, this one runs on a schedule rather than on an operator action: it is bounded per cycle, uses only the MAC the gate saw requesting the address, verifies each write by read-back, and never re-attempts a row a gate has refused. Turning it off stops new entries but does not remove existing ones — release those reservations to do that. Confirm the behaviour on one gate before enabling fleet-wide. |
-| `syncDescriptions` | `false` | Description writeback (Polaris-primary). Polaris descriptions overwrite the device; device values are only imported where Polaris has none. Needs the same Manage Device Configurations RW (proxy mode) / per-FG REST write access (direct mode) as DHCP push. Enable only once Polaris is where your team edits descriptions — device-side edits get reverted. |
+| `syncFortigateDescriptions` / `syncSwitchDescriptions` / `syncApDescriptions` | `false` (unset → legacy `syncDescriptions`) | Description writeback (Polaris-primary), one toggle per device class. Polaris descriptions overwrite the device; device values are only imported where Polaris has none. Needs the same Manage Device Configurations RW (proxy mode) / per-FG REST write access (direct mode) as DHCP push. Enable only once Polaris is where your team edits descriptions — device-side edits get reverted. |
 
 ## Discovering a single FortiGate (and its switches/APs)
 

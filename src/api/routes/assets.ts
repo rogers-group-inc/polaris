@@ -42,6 +42,7 @@ import {
   getQuarantinePushAvailability,
 } from "../../services/assetQuarantineService.js";
 import { syncDescriptionsOnSave } from "../../services/descriptionSyncService.js";
+import { descriptionSyncEnabledForRole } from "../../utils/descriptionSyncFlags.js";
 import { cidrContains, isValidIpAddress } from "../../utils/cidr.js";
 import { buildIpContexts } from "../../services/subnetService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
@@ -237,7 +238,7 @@ const CreateAssetSchema = z.object({
   purchaseOrder: z.string().optional(),
   notes:         z.string().optional(),
   // Operator-owned device description. On Fortinet assets whose originating
-  // integration has `syncDescriptions` on, the PUT handler mirrors it to the
+  // integration syncs this device class (utils/descriptionSyncFlags.ts), the PUT handler mirrors it to the
   // device (Polaris-primary; see descriptionSyncService). Device-side caps
   // are tighter for some targets (FortiGate alias ~35) — the push truncates.
   description:   z.string().max(255).optional(),
@@ -1591,9 +1592,11 @@ router.get("/:id", requirePermission("assets", "read"), async (req, res, next) =
       // a derived boolean (the raw config is stripped below — it holds API
       // tokens) so the asset edit form can cap the FortiAP Description at the
       // 35-char device `location` limit, but only when this AP's integration
-      // actually syncs descriptions to the device.
+      // actually syncs descriptions to the device. The toggle is per device
+      // class, so this is resolved for THIS asset's Fortinet role.
       if (isFortinetIntegrationType(asset.discoveredByIntegration.type)) {
-        integrationSyncDescriptions = cfg.syncDescriptions === true;
+        const role = ((asset.fortinetTopology ?? {}) as { role?: string }).role;
+        integrationSyncDescriptions = descriptionSyncEnabledForRole(cfg, role);
       }
     }
     const { config: _omit, ...integrationLite } = (asset.discoveredByIntegration as { config?: unknown } | null) || {};
@@ -3278,15 +3281,15 @@ router.get("/:id/interface-history", requirePermission("assets", "read"), async 
     ];
     const overrideDescription = override?.description ?? null;
     // Interface comments sync to the device only when the originating
-    // integration's syncDescriptions toggle is on AND the asset is a synced
-    // Fortinet role (FortiGate interface / FortiSwitch port — FortiAPs have
-    // no per-interface description).
+    // integration's toggle for this device class is on AND the asset is a
+    // synced Fortinet role (FortiGate interface / FortiSwitch port — FortiAPs
+    // have no per-interface description).
     const dsIntegration = assetMeta?.discoveredByIntegration ?? null;
     const dsRole = ((assetMeta?.fortinetTopology ?? {}) as { role?: string }).role;
     const descriptionSyncEnabled =
       (isFortinetIntegrationType(dsIntegration?.type)) &&
-      (dsIntegration?.config as { syncDescriptions?: boolean } | null)?.syncDescriptions === true &&
-      (dsRole === "fortigate" || dsRole === "fortiswitch");
+      (dsRole === "fortigate" || dsRole === "fortiswitch") &&
+      descriptionSyncEnabledForRole(dsIntegration?.config, dsRole);
     res.json({
       range: rangeLabel,
       ifName,
@@ -3334,7 +3337,7 @@ router.get("/:id/interface-history", requirePermission("assets", "read"), async 
 
 // PUT /assets/:id/interfaces/:ifName/comment — operator-typed override for the
 // interface's "Interface Comments" text box. Polaris-local by default; when
-// the originating integration's `syncDescriptions` toggle is on, a saved
+// the originating integration's FortiGate / FortiSwitch description-sync toggle is on, a saved
 // comment is also pushed to the device (Polaris-primary — see
 // descriptionSyncService). Empty string or null clears the override locally
 // only (the device keeps its description; the discovered FortiOS CMDB
@@ -3885,7 +3888,7 @@ router.post("/", requirePermission("assets", "write"), async (req, res, next) =>
     if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
     // Description: empty string clears to null (an empty Polaris description
     // is re-seeded from the device on the next discovery when the
-    // integration's syncDescriptions toggle is on).
+    // integration's description-sync toggle for its device class is on).
     if (typeof input.description === "string") data.description = input.description.trim() || null;
     // Hostname: trim; an empty box means "not provided", not "" (the edit
     // form now always sends the field, including blank).
@@ -4074,7 +4077,7 @@ async function buildAssetUpdatePatch(
   if (input.macAddress) data.macAddress = input.macAddress.toUpperCase().replace(/-/g, ":");
   // Description: empty string clears to null (an empty Polaris description
   // is re-seeded from the device on the next discovery when the
-  // integration's syncDescriptions toggle is on).
+  // integration's description-sync toggle for its device class is on).
   if (typeof input.description === "string") data.description = input.description.trim() || null;
   // Notes: empty string clears to null (notes are operator-only — an
   // emptied box is an intentional clear, not "not provided").
