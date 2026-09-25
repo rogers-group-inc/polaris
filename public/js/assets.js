@@ -24243,15 +24243,10 @@ function _pathChartFrame(container, H) {
   return { W: W, H: H, padL: 52, padR: 10, padT: 10, padB: 22 };
 }
 
+// The shared calendar-boundary ticks every chart draws (_chartXTicksSVG) — the
+// equal-fifths loop this replaced called _chartTickFmt, which main retired.
 function _pathXTicks(g, t0, t1, innerW, innerH) {
-  var fmtTick = _chartTickFmt(t0, t1);
-  var s = "";
-  for (var j = 0; j <= 5; j++) {
-    var ts = t0 + (t1 - t0) * (j / 5);
-    var x = g.padL + (j / 5) * innerW;
-    s += '<text x="' + x + '" y="' + (g.padT + innerH + 14) + '" text-anchor="middle" font-size="10" fill="currentColor">' + fmtTick(ts) + "</text>";
-  }
-  return s;
+  return _chartXTicksSVG(t0, t1, g.padL, g.padT, innerW, innerH);
 }
 
 function _renderPathLatencyChart(container, samples, opts, check) {
