@@ -98,7 +98,8 @@ is *inferred* and labelled as such.
 ### Rule 14
 **Description sync is opt-in and Polaris-primary.** A non-empty Polaris value
 always wins; an empty Polaris field adopts the device value. No conflict state
-exists.
+exists. It is switched on per device class — FortiGates, FortiSwitches and
+FortiAPs each have their own toggle.
 
 ### Rule 15
 **Location codes ride device descriptions; notes are operator-only.** The asset

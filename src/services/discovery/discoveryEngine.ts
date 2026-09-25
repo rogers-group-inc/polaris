@@ -93,6 +93,7 @@ import * as directorySync from "../directorySyncService.js";
 import { recomputeDependencyTree } from "../dependencyTreeService.js";
 import { collectManagementAccess, type DeviceAccessGroup } from "../fortinetManagementAccessService.js";
 import { runDescriptionSyncForIntegration } from "../descriptionSyncService.js";
+import { anyDescriptionSyncEnabled } from "../../utils/descriptionSyncFlags.js";
 import { reconcileMapRegions } from "../mapRegionService.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
@@ -7065,7 +7066,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
     phaseMark("13.7");
     // Phase 13.7 — Description sync reconcile (Polaris-primary; gated by the
-    // integration's `syncDescriptions` toggle, default off = zero cost). Per
+    // integration's per-class FortiGate / FortiSwitch / FortiAP toggles,
+    // all default off = zero cost; the service skips each class that's off). Per
     // FortiGate: read the current device-side descriptions (system/interface,
     // system/global, managed-switch, wtp — through the shared push transport,
     // so both useProxy modes work), adopt device values where Polaris has
@@ -7078,7 +7080,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           where: { id: integrationId },
           select: { id: true, type: true, config: true, name: true },
         });
-        if (integrationRow && (integrationRow.config as Record<string, any> | null)?.syncDescriptions === true) {
+        if (integrationRow && anyDescriptionSyncEnabled(integrationRow.config)) {
           const summary = await runDescriptionSyncForIntegration(integrationRow);
           if (summary.pushed || summary.adopted || summary.failed || summary.skippedDevices || summary.fmgMirrored || summary.fmgMirrorFailed) {
             syncLog("info", `Description sync: pushed ${summary.pushed}, adopted ${summary.adopted}, failed ${summary.failed}${summary.fmgMirrored || summary.fmgMirrorFailed ? `, FMG mirror ${summary.fmgMirrored} ok / ${summary.fmgMirrorFailed} failed` : ""}${summary.skippedDevices ? `, ${summary.skippedDevices} device(s) skipped` : ""}`);

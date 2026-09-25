@@ -40,8 +40,12 @@ const ts = readFileSync(INTG_TS, "utf8").replace(/\r\n/g, "\n");
 type Forms = {
   reservationPushFormHTML: (a: boolean, b: boolean, c: boolean, d: boolean, e: boolean, type: string) => string;
   quarantinePushFormHTML: (on: boolean, useProxy: boolean, type: string) => string;
-  descriptionSyncFormHTML: (on: boolean, useProxy: boolean, type: string) => string;
+  descriptionSyncFormHTML: (flags: DescFlags, useProxy: boolean, type: string) => string;
+  _descriptionSyncFlags: (config: Record<string, unknown>) => DescFlags;
 };
+
+type DescFlags = { fortigate?: boolean; fortiswitch?: boolean; fortiap?: boolean };
+const ALL_ON: DescFlags = { fortigate: true, fortiswitch: true, fortiap: true };
 
 function loadForms(): Forms {
   const grab = (name: string) => {
@@ -49,6 +53,12 @@ function loadForms(): Forms {
     if (i < 0) throw new Error(name + " not found in integrations.js");
     const j = js.indexOf("\n}\n", i);
     return js.slice(i, j + 3);
+  };
+  const grabVar = (name: string) => {
+    const i = js.indexOf("\nvar " + name + " = {");
+    if (i < 0) throw new Error(name + " not found in integrations.js");
+    const j = js.indexOf("\n};\n", i);
+    return js.slice(i, j + 4);
   };
   const stubs =
     'function calloutHTML(kind, title, body) { return "[callout " + kind + ": " + title + " | " + body + "]"; }\n' +
@@ -59,12 +69,15 @@ function loadForms(): Forms {
     "_fortigateAccessProfileHTML",
     "reservationPushFormHTML",
     "quarantinePushFormHTML",
+    "_descriptionSyncFlags",
+    "_descriptionSyncToggleRow",
     "descriptionSyncFormHTML",
   ];
   const body =
     stubs +
+    grabVar("DESCRIPTION_SYNC_KEYS") +
     names.map(grab).join("\n") +
-    "\nreturn { reservationPushFormHTML, quarantinePushFormHTML, descriptionSyncFormHTML };";
+    "\nreturn { reservationPushFormHTML, quarantinePushFormHTML, descriptionSyncFormHTML, _descriptionSyncFlags };";
   return new Function(body)() as Forms;
 }
 
@@ -76,7 +89,7 @@ const FMG_MENTION = /FortiManager|FMG|ADOM|sys\/proxy/;
 const STANDALONE_TABS: Array<[string, () => string]> = [
   ["DHCP Push", () => forms.reservationPushFormHTML(true, false, true, true, true, "fortigate")],
   ["Quarantine Push", () => forms.quarantinePushFormHTML(true, false, "fortigate")],
-  ["Description Sync", () => forms.descriptionSyncFormHTML(true, false, "fortigate")],
+  ["Description Sync", () => forms.descriptionSyncFormHTML(ALL_ON, false, "fortigate")],
 ];
 
 describe("standalone FortiGate push tabs never mention FortiManager", () => {
@@ -106,12 +119,12 @@ describe("standalone FortiGate push tabs never mention FortiManager", () => {
     expect(forms.reservationPushFormHTML(true, false, false, false, false, "fortigate")).toContain(
       "/api/v2/cmdb/system/dhcp/server",
     );
-    expect(forms.descriptionSyncFormHTML(true, false, "fortigate")).toContain("/api/v2/cmdb/system/global");
+    expect(forms.descriptionSyncFormHTML(ALL_ON, false, "fortigate")).toContain("/api/v2/cmdb/system/global");
   });
 
   it("keeps the Polaris-is-primary warning, which is not FMG copy", () => {
     // It applies on every transport; only the devices it names change.
-    const html = forms.descriptionSyncFormHTML(true, false, "fortigate");
+    const html = forms.descriptionSyncFormHTML(ALL_ON, false, "fortigate");
     expect(html).toContain("Polaris overwrites device-side edits");
     expect(html).toContain("edited directly on the FortiGate");
   });
@@ -126,8 +139,8 @@ describe("the FortiManager copy is untouched", () => {
     ["DHCP Push direct", () => forms.reservationPushFormHTML(true, false, true, true, true, "fortimanager")],
     ["Quarantine Push proxy", () => forms.quarantinePushFormHTML(true, true, "fortimanager")],
     ["Quarantine Push direct", () => forms.quarantinePushFormHTML(true, false, "fortimanager")],
-    ["Description Sync proxy", () => forms.descriptionSyncFormHTML(true, true, "fortimanager")],
-    ["Description Sync direct", () => forms.descriptionSyncFormHTML(true, false, "fortimanager")],
+    ["Description Sync proxy", () => forms.descriptionSyncFormHTML(ALL_ON, true, "fortimanager")],
+    ["Description Sync direct", () => forms.descriptionSyncFormHTML(ALL_ON, false, "fortimanager")],
   ];
   for (const [label, render] of cases) {
     it(label + " still carries the FMG admin-profile section", () => {
@@ -146,8 +159,8 @@ describe("the FortiManager copy is untouched", () => {
   });
 
   it("keeps the FMG central-management bullet only where an FMG database exists", () => {
-    expect(forms.descriptionSyncFormHTML(true, true, "fortimanager")).toContain("FMG central management");
-    expect(forms.descriptionSyncFormHTML(true, false, "fortigate")).not.toContain("central management");
+    expect(forms.descriptionSyncFormHTML(ALL_ON, true, "fortimanager")).toContain("FMG central management");
+    expect(forms.descriptionSyncFormHTML(ALL_ON, false, "fortigate")).not.toContain("central management");
   });
 });
 
@@ -158,8 +171,8 @@ describe("description sync asks for System Read-Write on every direct transport"
   // descriptions synced — and FMG's bypass-direct mode, whose device writes
   // use each gate's own REST token, showed only the FMG admin profile.
   const direct: Array<[string, () => string]> = [
-    ["standalone FortiGate", () => forms.descriptionSyncFormHTML(true, false, "fortigate")],
-    ["FMG bypass-direct", () => forms.descriptionSyncFormHTML(true, false, "fortimanager")],
+    ["standalone FortiGate", () => forms.descriptionSyncFormHTML(ALL_ON, false, "fortigate")],
+    ["FMG bypass-direct", () => forms.descriptionSyncFormHTML(ALL_ON, false, "fortimanager")],
   ];
   for (const [label, render] of direct) {
     it(label + " names System → Read-Write and the tree it covers", () => {
@@ -172,15 +185,51 @@ describe("description sync asks for System Read-Write on every direct transport"
   }
 
   it("FMG bypass-direct points at the per-device token, not the General tab", () => {
-    const html = forms.descriptionSyncFormHTML(true, false, "fortimanager");
+    const html = forms.descriptionSyncFormHTML(ALL_ON, false, "fortimanager");
     expect(html).toContain("per-device API token on the Monitoring tab (FortiGate subtab)");
     expect(html).toContain("central-management mirror only");
   });
 
   it("FMG proxy mode is authorized by FortiManager alone", () => {
-    const html = forms.descriptionSyncFormHTML(true, true, "fortimanager");
+    const html = forms.descriptionSyncFormHTML(ALL_ON, true, "fortimanager");
     expect(html).not.toContain("Required FortiGate Access Profile");
     expect(html).not.toContain("central-management mirror only");
+  });
+});
+
+describe("description sync has one toggle per device class", () => {
+  const ids = ["f-syncFortigateDescriptions", "f-syncSwitchDescriptions", "f-syncApDescriptions"];
+
+  it("renders a FortiGate, a FortiSwitch and a FortiAP toggle on both integration types", () => {
+    for (const type of ["fortigate", "fortimanager"]) {
+      const html = forms.descriptionSyncFormHTML({}, true, type);
+      for (const id of ids) expect(html).toContain('id="' + id + '"');
+      expect(html).not.toContain('id="f-syncDescriptions"');
+    }
+  });
+
+  it("checks each toggle from its own flag", () => {
+    const html = forms.descriptionSyncFormHTML({ fortigate: false, fortiswitch: true, fortiap: false }, true, "fortimanager");
+    expect(html).toContain('id="f-syncSwitchDescriptions" checked');
+    expect(html).not.toContain('id="f-syncFortigateDescriptions" checked');
+    expect(html).not.toContain('id="f-syncApDescriptions" checked');
+  });
+
+  it("warns about FortiAP descriptions through FortiManager in both FMG transport modes only", () => {
+    for (const useProxy of [true, false]) {
+      expect(forms.descriptionSyncFormHTML({}, useProxy, "fortimanager")).toContain(
+        "FortiAP descriptions through FortiManager: use with caution",
+      );
+    }
+    expect(forms.descriptionSyncFormHTML(ALL_ON, false, "fortigate")).not.toContain("use with caution");
+  });
+
+  it("resolves an unset class from the legacy master toggle, an explicit key wins", () => {
+    expect(forms._descriptionSyncFlags({ syncDescriptions: true })).toEqual(ALL_ON);
+    expect(forms._descriptionSyncFlags({})).toEqual({ fortigate: false, fortiswitch: false, fortiap: false });
+    expect(forms._descriptionSyncFlags({ syncDescriptions: true, syncApDescriptions: false })).toEqual({
+      fortigate: true, fortiswitch: true, fortiap: false,
+    });
   });
 });
 
@@ -196,7 +245,7 @@ describe("the tab set hands the three shared tabs the integration type", () => {
   it("passes type to all three push tabs", () => {
     expect(tabSet).toContain("config.adoptDiscoveredMac === true, type,");
     expect(tabSet).toContain("quarantinePushFormHTML(config.pushQuarantine === true, pushUseProxy, type)");
-    expect(tabSet).toContain("descriptionSyncFormHTML(config.syncDescriptions === true, pushUseProxy, type)");
+    expect(tabSet).toContain("descriptionSyncFormHTML(_descriptionSyncFlags(config), pushUseProxy, type)");
   });
 });
 

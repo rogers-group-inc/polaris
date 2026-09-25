@@ -74,7 +74,7 @@ Asset
   warrantyExpiry  DateTime?
   purchaseOrder   String?
   notes           String?
-  description     String?          -- Operator-owned device description (VarChar 255). When the originating integration's `syncDescriptions` toggle is on (business rule 14), description-synced with the device — Polaris-primary: empty → seeded (adopted) from the device; a value in Polaris → written to the device (FortiGate `system/global` alias / FortiSwitch managed-switch description / FortiAP wtp `location` per `fortinetTopology.role`) and re-asserted over device-side edits. All audited. See descriptionSyncService.
+  description     String?          -- Operator-owned device description (VarChar 255). When the originating integration's description-sync toggle for that device class is on (`syncFortigateDescriptions` / `syncSwitchDescriptions` / `syncApDescriptions`) (business rule 14), description-synced with the device — Polaris-primary: empty → seeded (adopted) from the device; a value in Polaris → written to the device (FortiGate `system/global` alias / FortiSwitch managed-switch description / FortiAP wtp `location` per `fortinetTopology.role`) and re-asserted over device-side edits. All audited. See descriptionSyncService.
   descriptionSync Json?            -- Device-level description-sync state: { status: "synced"|"failed"|"conflict", at, value?: baseline (last agreed value; key present = merge base known), error?, device?/polaris?: conflicting values }. Null = never synced / cleared. Stamped only by actual push attempts / reconcile decisions (transport errors leave it untouched); cleared when the operator empties `description`.
   tags            String[]
   createdBy       String?
