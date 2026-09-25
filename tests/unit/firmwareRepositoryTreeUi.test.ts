@@ -145,7 +145,26 @@ describe("the tree", () => {
     expect(node(open, "Fortinet", "switch", "FortiSwitch S108FF").querySelector(".fw-node-body")!.getAttribute("style")).toBeNull();
   });
 
-  it("lists a model's images primary first with role pills, the warning pill, and Make primary only on the backup", () => {
+  it("keeps a model's rows in version order when the backup is the newer image, so a swap moves the pills, not the versions", () => {
+    // The server hands rows primary-first; after Make primary on an older
+    // image that order would only trade the version strings between rows.
+    sb.PolarisFirmwareTab._setState({ expanded: { [sb.PolarisFirmwareTab.nodeKey("Fortinet", "switch", "FortiSwitch S108FF")]: true } });
+    const swapped = fixture();
+    const mdl = swapped.manufacturers[0]!.assetTypes[0]!.models[0]! as { images: Array<Record<string, unknown>> };
+    mdl.images = [
+      image({ id: "img-old", role: "primary", versionLabel: "7.4.3 build0542", version: { major: 7, minor: 4, patch: 3, build: 542 } }),
+      image({ id: "img-new", role: "backup", versionLabel: "7.6.8 build1164", version: { major: 7, minor: 6, patch: 8, build: 1164 } }),
+    ];
+    sb.PolarisFirmwareTab._setState({ tree: swapped });
+    const rows = Array.from(node(renderCard(), "Fortinet", "switch", "FortiSwitch S108FF").querySelectorAll(".fw-images tbody tr"));
+    expect(rows.map((r) => r.getAttribute("data-image-id"))).toEqual(["img-new", "img-old"]);
+    expect(text(rows[0]!.querySelector(".fw-role-pill"))).toBe("Backup");
+    expect(text(rows[1]!.querySelector(".fw-role-pill"))).toBe("Primary");
+    expect(rows[0]!.querySelector(".fw-image-promote")).not.toBeNull();
+    expect(rows[1]!.querySelector(".fw-image-promote")).toBeNull();
+  });
+
+  it("lists a model's images newest first with role pills, the warning pill, and Make primary only on the backup", () => {
     sb.PolarisFirmwareTab._setState({ expanded: { [sb.PolarisFirmwareTab.nodeKey("Fortinet", "switch", "FortiSwitch S108FF")]: true } });
     const rows = Array.from(node(renderCard(), "Fortinet", "switch", "FortiSwitch S108FF").querySelectorAll(".fw-images tbody tr"));
     expect(rows).toHaveLength(2);

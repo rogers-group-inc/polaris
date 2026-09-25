@@ -28,8 +28,8 @@ function image(over: Record<string, unknown> = {}) {
 
 /** The tree as the server sorts it: primary first. `primaryIs` picks which image holds the role. */
 function tree(primaryIs: "new" | "old") {
-  const a = image({ id: "img-new", versionLabel: "7.6.8 build1164", role: primaryIs === "new" ? "primary" : "backup" });
-  const b = image({ id: "img-old", versionLabel: "7.6.5 build1105", role: primaryIs === "old" ? "primary" : "backup" });
+  const a = image({ id: "img-new", versionLabel: "7.6.8 build1164", version: { major: 7, minor: 6, patch: 8, build: 1164 }, role: primaryIs === "new" ? "primary" : "backup" });
+  const b = image({ id: "img-old", versionLabel: "7.6.5 build1105", version: { major: 7, minor: 6, patch: 5, build: 1105 }, role: primaryIs === "old" ? "primary" : "backup" });
   const images = primaryIs === "new" ? [a, b] : [b, a];
   const eff = { credentialName: "Mock device login", scope: "manufacturer" };
   return { manufacturers: [{ name: "Fortinet", assetCount: 1, binding: { credentialName: "Mock device login", stale: false }, effectiveBinding: eff, assetTypes: [
@@ -83,7 +83,8 @@ describe("Make primary on the Repository tab", () => {
     await new Promise((r) => setTimeout(r, 30));
 
     expect(calls).toEqual(["tree", "promote:img-old", "tree"]);
-    expect(rowsOf(doc)).toEqual(["img-old:Primary", "img-new:Backup"]);
+    // Rows keep their version order; the roles and the verb are what moved.
+    expect(rowsOf(doc)).toEqual(["img-new:Backup", "img-old:Primary"]);
     // The node the operator had open is still open after the redraw.
     expect((doc.querySelector(`.fw-node[data-fw-key="${key}"] .fw-node-caret`) as HTMLElement).textContent).toBe("▼");
     // The promoted row is flagged so the swap is visible, and the verb moved to the other row.

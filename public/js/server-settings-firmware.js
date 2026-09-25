@@ -163,13 +163,35 @@
     '</tr>';
   }
 
+  /** Higher version first; an unparsed version sorts last; ties by upload time, newest first. */
+  function byVersionDesc(a, b) {
+    var va = a.version, vb = b.version;
+    if (va && vb) {
+      var parts = ["major", "minor", "patch", "build"];
+      for (var i = 0; i < parts.length; i++) {
+        var x = va[parts[i]], y = vb[parts[i]];
+        if (x == null || y == null) continue;
+        if (x !== y) return y - x;
+      }
+    } else if (va || vb) {
+      return va ? -1 : 1;
+    }
+    return String(b.uploadedAt || "").localeCompare(String(a.uploadedAt || ""));
+  }
+
   function imagesTableHTML(mdl) {
     if (!mdl.images || mdl.images.length === 0) {
       return '<p class="empty-state" style="padding:0.75rem">No images uploaded for this model.</p>';
     }
+    // Newest version on top, regardless of role. The server hands the rows
+    // primary-first; drawn that way, Make primary only traded the two
+    // version strings while every pill and verb stayed put, and an operator
+    // could not see the swap. With a stable order the Primary pill and the
+    // button move between rows instead.
+    var images = mdl.images.slice().sort(byVersionDesc);
     return '<table class="data-table fw-images"><thead><tr>' +
       '<th style="width:6rem">Role</th><th>Version</th><th style="width:7rem">Platform</th><th>File</th><th style="width:6rem">Size</th><th>Uploaded</th><th></th>' +
-    '</tr></thead><tbody>' + mdl.images.map(imageRowHTML).join("") + '</tbody></table>' +
+    '</tr></thead><tbody>' + images.map(imageRowHTML).join("") + '</tbody></table>' +
     '<p class="fw-node-meta" style="margin:6px 0 0">A model keeps two images. Uploading a new one makes it primary and moves the current primary to backup; the old backup is removed.</p>';
   }
 
