@@ -1151,6 +1151,13 @@ newer than the device. The upgrade request carries the image you approved by
 name, and it must be one of those two — a click can never push an image nobody
 looked at.
 
+The same match feeds the automation field
+[`firmwareVsPrimary`](Automation-Triggers#firmwarevsprimary--what-the-repository-would-push):
+`current`, `older` or `newer` against the platform's primary image, and no
+reading at all for a device the Repository cannot place. The baseline
+automation **Firmware differs from repository primary** (informational) is
+that field with `!= current`.
+
 An upgrade does not start on a device that is down, warning, recovering,
 behind a parent that is down, decommissioned, quarantined, in storage or
 disabled; nor while another flash is running on that device, on a switch above

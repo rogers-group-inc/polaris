@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   // ── assets ────────────────────────────────────────────────────────────────
   for (const a of ASSETS) {
     await prisma.asset.create({
-      data: { ...a, manufacturer: MFR, status: "active", monitored: false, notes: "Mock device for the firmware repository demo — served by scripts/mock-firmware-devices.mjs" },
+      data: { ...a, manufacturer: MFR, status: "active", monitored: true, notes: "Mock device for the firmware repository demo — served by scripts/mock-firmware-devices.mjs" },
     });
     console.log(`  asset ${a.hostname} (${a.assetType}, ${a.serialNumber}) @ ${a.ipAddress}`);
   }

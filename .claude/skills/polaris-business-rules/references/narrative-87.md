@@ -131,6 +131,26 @@ the read rung shows new information (which devices are behind on firmware).
 - *Deleting the model node when its assets are gone.* The images are still on disk; an
   invisible 100 MiB is worse than an amber row with a delete button.
 
+### Follow-on (2026-09-25): the `firmwareVsPrimary` automation field
+
+The operator asked for "an informational automation for when an asset's firmware differs from
+what is selected as primary". Modelled as an **asset-state field**, not a change type: the
+condition is continuous (a device stays behind until someone flashes it or re-selects the
+primary), it must clear on its own when either side moves, and nothing emits an Event at the
+moment the two start to differ — an upload, a Make primary, or a discovery run can each cause
+it. `services/firmwareRepositoryService.ts → firmwareVsPrimary` is the pure half (the same
+manufacturer / device type / serial-prefix match the card uses, own model node preferred), and
+the engine resolves it from ONE `findMany` over the image table per evaluation, comparing in
+memory — never a query per asset at 2000. Readings are `current` / `older` / `newer`; `newer` is
+deliberately a reading and not folded into `current`, because an operator who makes an older
+image primary has a fleet that differs from it, and the field reports the difference rather
+than judging which side is right. The **no-reading** posture is fortilinkStatus's (rule 59): a
+device the Repository cannot place yields nothing, so `!= current` is never true of a printer.
+The baseline automation "Firmware differs from repository primary" ships as seed set V9 with
+its own marker, informational, `!= current`, scoped to switches + access points, auto reset.
+Anchor is `lastSystemInfoAt` (falling back to the probe tick) because that pass and discovery
+are what refresh `osVersion`; `METRIC_STREAM` says `systemInfo` for the same reason.
+
 ### What is deliberately not here
 
 The bulk / fleet run fortiupgrade's scheduler performs (deepest-first ordering, concurrency);

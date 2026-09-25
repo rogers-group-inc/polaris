@@ -122,6 +122,14 @@ primary promotes the backup. The
 same bytes cannot be filed twice, and an image a device is flashing right now
 cannot be removed by anything.
 
+**Which devices differ from the primary** is also an automation field:
+`firmwareVsPrimary` reads `current`, `older` or `newer` for every switch and
+access point the Repository can place, and the baseline automation **Firmware
+differs from repository primary** (informational) raises one in-app alert per
+device that is not on the primary, clearing on its own once it is upgraded or
+the primary is changed. See
+[Automation triggers](Automation-Triggers#firmwarevsprimary--what-the-repository-would-push).
+
 A model with images but **no assets carrying it any more** is flagged amber
 and opened for you, with **Delete firmware for this model** — the images are
 still on disk, and the flag is the only thing telling you so.

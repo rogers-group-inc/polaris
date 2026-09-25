@@ -38,6 +38,7 @@ import { FIRMWARE_DIR, FIRMWARE_INCOMING_DIR } from "../utils/paths.js";
 import {
   identifyFirmwareImage,
   formatFirmwareVersion,
+  compareFirmwareVersions,
   isStrictlyNewer,
   parseFirmwareVersion,
   platformFromSerial,
@@ -736,6 +737,77 @@ export interface UpgradeCandidates {
   backup: FirmwareImageRow | null;
 }
 
+/** The node named by the asset's own model first, then the newest upload. */
+function preferOwnModelNode<T extends { model: string; uploadedAt: Date }>(rows: T[], model: string | null): T[] {
+  return rows.slice().sort((a, b) => {
+    const aOwn = a.model === (model ?? "") ? 0 : 1;
+    const bOwn = b.model === (model ?? "") ? 0 : 1;
+    if (aOwn !== bOwn) return aOwn - bOwn;
+    return b.uploadedAt.getTime() - a.uploadedAt.getTime();
+  });
+}
+
+export type PrimaryImageLite = {
+  manufacturer: string; assetType: string; model: string; platform: string | null;
+  versionMajor: number | null; versionMinor: number | null; versionPatch: number | null; build: number | null;
+  versionLabel: string; uploadedAt: Date;
+};
+
+/**
+ * Every primary image that names a platform — ONE findMany over a table that
+ * holds at most two rows per model node, for callers that compare a whole
+ * fleet in memory (the `firmwareVsPrimary` automation field) rather than one
+ * asset at a time.
+ */
+export async function loadPrimaryFirmwareImages(): Promise<PrimaryImageLite[]> {
+  return prisma.firmwareImage.findMany({
+    where: { role: "primary", platform: { not: null } },
+    select: { manufacturer: true, assetType: true, model: true, platform: true, versionMajor: true, versionMinor: true, versionPatch: true, build: true, versionLabel: true, uploadedAt: true },
+  });
+}
+
+export type FirmwareVsPrimary = "current" | "older" | "newer";
+export type FirmwareVsPrimaryAsset = { assetType: string | null; manufacturer: string | null; model: string | null; serialNumber: string | null; osVersion: string | null };
+
+/**
+ * The primary image the Repository holds for THIS asset: same manufacturer
+ * and device type, platform token == the serial's prefix, the asset's own
+ * model node preferred when two nodes both hold one. null when the asset is
+ * not a switch / access point, has no usable serial, or no primary names its
+ * platform.
+ */
+export function primaryImageForAsset(asset: FirmwareVsPrimaryAsset, primaries: PrimaryImageLite[]): PrimaryImageLite | null {
+  if (!asset.assetType || !(FIRMWARE_ASSET_TYPES as readonly string[]).includes(asset.assetType)) return null;
+  if (!asset.manufacturer) return null;
+  const platform = platformFromSerial(asset.serialNumber);
+  if (!platform) return null;
+  const manufacturer = normalizeManufacturer(asset.manufacturer);
+  const matches = primaries.filter((p) => p.manufacturer === manufacturer && p.assetType === asset.assetType && p.platform === platform);
+  return matches.length === 0 ? null : preferOwnModelNode(matches, asset.model)[0]!;
+}
+
+/**
+ * How the asset's running firmware stands against the Repository's primary
+ * for its platform (business rule 87) — the `firmwareVsPrimary` automation
+ * field. null means NO READING, deliberately: not a switch / access point, no
+ * usable serial, no readable version, or no primary image names its platform.
+ * A reading of null would make `!= current` true of every device the
+ * Repository knows nothing about, which is the inverse of what an operator
+ * writing that rule means. "newer" is a reading too — an operator who made an
+ * older image primary has devices that differ from it, and that is the fact
+ * the field reports, not a judgement about which side is right.
+ */
+export function firmwareVsPrimary(asset: FirmwareVsPrimaryAsset, primaries: PrimaryImageLite[]): FirmwareVsPrimary | null {
+  const current = parseFirmwareVersion(asset.osVersion);
+  if (!current) return null;
+  const primary = primaryImageForAsset(asset, primaries);
+  if (!primary) return null;
+  const target = versionOf(primary);
+  if (!target) return null;
+  const c = compareFirmwareVersions(current, target);
+  return c === 0 ? "current" : c < 0 ? "older" : "newer";
+}
+
 /**
  * Which image(s) an asset may take. ZERO queries when no engine exists for
  * it; otherwise one indexed findMany on (manufacturer, assetType, platform).
@@ -758,14 +830,8 @@ export async function findUpgradeCandidates(asset: { manufacturer: string | null
     const any = await prisma.firmwareImage.count({ where: { manufacturer, assetType: asset.assetType } });
     return { ...base, reason: any === 0 ? "no-images" : "platform-unmatched" };
   }
-  const primaries = rows.filter((r) => r.role === "primary" && isStrictlyNewer(versionOf(r), current));
+  const primaries = preferOwnModelNode(rows.filter((r) => r.role === "primary" && isStrictlyNewer(versionOf(r), current)), asset.model);
   if (primaries.length === 0) return { ...base, reason: "current" };
-  primaries.sort((a, b) => {
-    const aOwn = a.model === (asset.model ?? "") ? 0 : 1;
-    const bOwn = b.model === (asset.model ?? "") ? 0 : 1;
-    if (aOwn !== bOwn) return aOwn - bOwn;
-    return b.uploadedAt.getTime() - a.uploadedAt.getTime();
-  });
   const primary = primaries[0]!;
   const backup = rows.find((r) => r.role === "backup" && r.model === primary.model && isStrictlyNewer(versionOf(r), current)) ?? null;
   return {
