@@ -55,7 +55,10 @@ off such a stack, and "Mock switches and access points for the firmware reposito
 `scripts/seed-firmware-mock.ts` + `scripts/mock-firmware-devices.mjs`, both run INSIDE the
 app container (`podman exec`), which put three Fortinet devices on loopback aliases, a
 device-login credential and firmware images in place so an upgrade can be clicked through
-end to end (business rule 87).
+end to end (business rule 87). **`podman exec -d <c> node script.mjs` loses the process** —
+it is gone before its first log line; background it inside the container instead
+(`podman exec <c> sh -c 'cd /app && (nohup node scripts/… > /tmp/x.log 2>&1 &)'`) and read
+the log file, since `podman logs` never shows an exec'd process either way.
 
 ## Run the full test suite against it
 

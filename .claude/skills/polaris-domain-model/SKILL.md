@@ -1,6 +1,6 @@
 ---
 name: polaris-domain-model
-description: "Polaris data model: every Prisma entity (Asset, Subnet, Reservation, Integration, NotificationRule/Notification, Role, Credential, the sample hypertables and rollups, every Asset* side table), its fields, enums and load-bearing invariants. Load whenever a task names a table, model, column, enum, AssetSource kind, sourceType, monitorStatus or dhcpBinding; asks what a field means or where something is stored; adds a field/column/model; edits prisma/schema.prisma; or writes a migration."
+description: "Polaris data model: every Prisma entity (Asset, Subnet, Reservation, Integration, NotificationRule/Notification, Role, Credential, the firmware repository trio (FirmwareImage / FirmwareCredentialBinding / FirmwareUpgradeRun), the sample hypertables and rollups, every Asset* side table), its fields, enums and load-bearing invariants. Load whenever a task names a table, model, column, enum, AssetSource kind, sourceType, monitorStatus or dhcpBinding; asks what a field means or where something is stored; adds a field/column/model; edits prisma/schema.prisma; or writes a migration."
 ---
 
 # Polaris domain model
