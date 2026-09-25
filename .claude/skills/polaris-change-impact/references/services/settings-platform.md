@@ -250,7 +250,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 **Used by:** `src/services/nginxApplyService.ts` (bootstrap + drift status), `tests/unit/nginxConfigParser.test.ts`.
 
 **Invariants:**
-- Whole-line comments are stripped before matching so comment text doesn't trip drift detection; drift reports unknown `proxy_pass` targets, unknown `add_header` keys, or a location-block count ≠ `EXPECTED_LOCATION_BLOCKS` (9).
+- Whole-line comments are stripped before matching so comment text doesn't trip drift detection; drift reports unknown `proxy_pass` targets, unknown `add_header` keys, or a location-block count ≠ `EXPECTED_LOCATION_BLOCKS` (10 since the firmware-image upload override, 2026-09-25).
 - Missing file returns defaults with `managedMode=false`; `KNOWN_PROXY_PASS_PATTERNS` + `KNOWN_ADD_HEADERS` define the template's expected schema.
 - `allow` lines are collected ONLY from `/metrics*` location blocks (`extractLocationBlocks`, brace-matched) — a file-global scan would merge the /api block's RFC1918 allows into `prometheusAllowIps` at bootstrap, silently widening the metrics allow-list. `tests/unit/nginxConfigParser.test.ts` pins this.
 

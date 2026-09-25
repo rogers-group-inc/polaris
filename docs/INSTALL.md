@@ -1109,7 +1109,11 @@ card (unchanged).
 > dark either way until you enable it on the Dash Wallboard card.
 > **Upgrade note (request-body limits):** the shipped nginx config gained a
 > server-level `client_max_body_size 8m` plus one `location` that lifts the
-> limit for the database-restore upload (7 → 8 locations). Before this, nginx
+> limit for the database-restore upload (7 → 8 locations), and later a second
+> `location` that raises it to 100m for the firmware-image upload
+> (`/api/v1/server-settings/firmware/images`, 9 → 10 locations, after the
+> `/api` docs block; the app's own multer limit is the same number). Before
+> this, nginx
 > enforced its 1 MB default on every request — **below** what Polaris's own
 > handlers accept — so a branding logo over 1 MB and *any* database restore
 > through the UI were rejected at the edge with a 413 whose HTML error page the

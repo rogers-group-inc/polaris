@@ -126,6 +126,8 @@ Verbatim from UI-CANON.md. Each pattern: **What it is** / **Canonical implementa
 
 **What it is:** A `data-table` whose rows form a parent → child (→ grandchild) tree: a caret on the parent row hides and shows its descendants, and the collapsed set persists per user per asset.
 
+**When NOT to use it:** a tree whose nodes have COMPOSITE bodies — a table, an upload control, an inline editor under one node — cannot live in a `data-table` row without a colspan cell that breaks the table's column semantics. Those use the settings **accordion** instead (`renderProfileRow` in `public/js/server-settings.js` is the canonical; `renderFwNode` in `public/js/server-settings-firmware.js` is the same mechanic nested three deep), keeping only this section's persisted collapse state and per-level indent.
+
 **Canonical implementation:** the System tab's **interface tree** in `public/js/assets.js` (`_renderInterfacesCard` and the `iface-expand-toggle` handler) — an aggregate/trunk row with its member ports and VLANs nested under it. The Wireless tab's **radio → SSID → client tree** (`_renderWirelessTree`) is the second implementation and follows it exactly; copy from either, but do not invent a third set of mechanics.
 
 **Key conventions:**

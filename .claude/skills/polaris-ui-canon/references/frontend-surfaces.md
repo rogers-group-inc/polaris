@@ -35,6 +35,25 @@ Vanilla JavaScript SPA served from `/public/`. No build step — plain ES module
 
 ---
 
+## Server Settings → Repository
+
+**What it is:** the firmware repository for switches and access points (business rule 87) — a three-level accordion, manufacturer › device type › model, each model holding its two images (primary + backup), an upload control and the device-admin login bound at that node; a "Recent upgrade runs" card beneath. Its own module, `public/js/server-settings-firmware.js`, exposing `window.PolarisFirmwareTab = { load, render, … }` (the HA-tab precedent), which server-settings.js calls on tab open; it guards its own once-per-page load.
+
+**Canonical implementation:** `public/js/server-settings-firmware.js` → `cardHTML()` / `renderFwNode()` (via `manufacturerNodeHTML` → `typeNodeHTML` → `modelNodeHTML`) / `bindingPillHTML()` / `bindingEditorHTML()` / `imagesTableHTML()` / `uploadRowHTML()` / `wire()`.
+
+**Key conventions:**
+- **The Manufacturer Profiles accordion, nested three deep — NOT the interface-tree table mechanic.** A model node's body is composite (an images table, an upload row, an inline binding editor) and there is no sort or filter, so a `data-table` row could not hold it. Borrowed from the interface tree: per-browser persisted collapse state (`localStorage["polaris-firmware-collapse"]`, wrapped in try/catch) and the per-level indent as a style, never a column. Manufacturer and type nodes open by default; a model closed — unless it is **orphaned** (images, no assets), which is forced open, painted amber (`.fw-node.is-orphaned`, `.fw-orphan-pill`) and given the ONE node-level delete verb (`.fw-model-purge`), rendered nowhere else.
+- **The server owns precedence.** Every node's login pill reads `effectiveBinding.scope` from the tree payload (`set here` / `inherited from Fortinet › Switch` / `inherited from Fortinet` / amber `No login — upgrades cannot start`); the client never recomputes model › type › manufacturer, and a save reloads the whole tree rather than patching a pill.
+- **Inline editor, not a modal**, for the binding: one `<select>` whose first option reads `Inherit — <effective name|none>`, listing ONLY `http` credentials in `form` mode (`credentialOptionsHTML`, filtered through `httpAuthModeOf`), Save / Cancel, and "Add a device admin login…" → `openCredentialModal(null, {type:"http", config:{authMode:"form"}})`. The editor re-fetches `GET /credentials` every time it opens so a credential just created is offered.
+- **Upload shows progress.** `api.js → _uploadWithProgress` (one `XMLHttpRequest`, the only one in `public/`) drives `.fw-progress` from `upload.onprogress`; an image is up to 100 MiB. A `showConfirm` names the backup the upload will remove when the node already holds two. Warnings from the response (a platform no asset under the model carries; a filename-only parse) stay in the status span until the next render. A proxy 413 arrives as `_proxyErrorMessage`'s sentence — the sign an nginx-fronted install lacks the firmware location block.
+- **Role pills, primary first**, `Make primary` only on the backup row, `Delete` on both at `firmware:write`; `Check` (amber, `title` = the joined warnings) beside a version; `File missing` when the bytes are gone from disk.
+- Every verb — upload, delete, make-primary, purge, Set/Change login — is withheld below `firmware:write`; the facts render at `read`. The tab itself shows on `permAtLeast("firmware","read")` through `_settingsTabVisible` in server-settings.js, never `isAdmin()`.
+- One delegated `click` listener on `#tab-firmware` (the `wireManufacturerProfileControls` shape) plus one delegated `change` for the file inputs; handlers read `data-fw-mfr` / `-type` / `-model` off the `.fw-node`, never re-parse the key. The container is re-filled by `render()` but never replaced, so the listener survives.
+
+**When adding to it:** a new per-node fact goes into the tree payload and a pill, not into a second fetch; a new verb goes behind `can("write")` and into the delegated dispatcher; anything that changes which image a device is OFFERED belongs server-side in `findUpgradeCandidates`, never here.
+
+**Tests:** `tests/unit/firmwareRepositoryTreeUi.test.ts` (evals server-settings.js + this module into a happy-dom Window).
+
 ## Server Settings → High Availability
 
 **What it is:** the tab that turns a single host into an active/standby pair — the operator enters the three nodes, enables HA, and downloads a generated bootstrap script per node. Its own module, `public/js/server-settings-ha.js`, exposing `window.PolarisHaTab = { load }`, which `server-settings.js` calls on every activation of the `ha` tab (not once — returning to it must show current cluster state). Backed by `/api/v1/ha`; operator-facing walkthrough in docs/HA.md.

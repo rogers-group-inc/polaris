@@ -36,4 +36,6 @@
 
 **Known accepted noise:** an agent `/system-info` push landing between Phase 7's coarse osVersion and Phase 11's correction emits one self-describing spurious firmware event ("10.0 → 10.0.19045"); rare, and the alternative is not auditing the agent path. Discovery events are also optimistic with respect to Phase 7.5's `batchSettled` flush — the same caveat the Arc path already carries.
 
+**Deliberately NOT a writer: the firmware upgrade engine** (`services/firmwareUpgradeService.ts`, business rule 87). A successful flash records what the device reported on `FirmwareUpgradeRun.verifiedVersion`, writes its own `firmware.upgrade_*` audit Events, and REQUESTS a scoped rediscover — it never writes `Asset.osVersion` and never hand-builds a firmware-changed Event. The version change reaches the asset, and this Event family, through projection + `logDiscoveryAssetUpdated` exactly as every other Fortinet-infra firmware change does; doing it in the engine too would double-emit and be overwritten by the next run.
+
 ---

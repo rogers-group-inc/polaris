@@ -51,8 +51,9 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | Application Map | `appmap.html` | `applicationMap:read` |
 | Events | `events.html` | `events:read` |
 | Users | `users.html` | `users:read` |
-| Server Settings | `server-settings.html` | `serverSettingsSystem:read` floor |
+| Server Settings | `server-settings.html` | `anyOf` `serverSettingsSystem:read` / `credentials:write` / `firmware:read` — each non-admin key opens exactly the tab it is about |
 | Server Settings → High Availability | `public/js/server-settings-ha.js` (own module) | `serverSettingsSystem:read` to see, `fullwrite` to act |
+| Server Settings → Repository | `public/js/server-settings-firmware.js` (own module) | `firmware:read` to see; `write` uploads, deletes, binds a login; flashing is the asset slide-over's verb at `fullwrite` |
 | Dash wallboard | `dash.html` | unauthenticated, source-IP scoped |
 | Acknowledge alert | `alert-ack.html` | `alerts:read` |
 | Signed out | `signed-out.html` | unauthenticated (the desktop logout landing — no form; its Sign in button opens the bare `/login.html`) |

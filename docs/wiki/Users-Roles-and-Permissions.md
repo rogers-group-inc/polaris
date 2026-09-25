@@ -98,6 +98,7 @@ the only thing that justifies the rung existing.
 | `mibDatabase` | Read-Write | upload / browse / walk SNMP MIBs |
 | `manufacturerProfiles` | Read-Write | per-vendor telemetry profiles — CPU/memory/temperature OIDs, custom widgets — **and the manufacturer alias map**, which decides which profile a device gets |
 | `credentials` | Full RW | stored SNMP / WinRM / SSH / REST / HTTP credentials — **ownership** |
+| `firmware` | Full RW | the firmware repository for switches and access points. Read = see the Repository tab and which devices have an upgrade waiting; Read-Write = upload / delete images and bind device logins; **Full Read-Write = start an upgrade** — it reboots network hardware, so it is seeded only for admin-equivalent roles ([rule 87](Business-Rules#rule-87)) |
 | `deviceIcons` | Read-Write | operator-uploaded topology icons |
 
 > `manufacturerAliases` was **folded into `manufacturerProfiles`** on
