@@ -908,7 +908,10 @@ export async function proxyQueryViaFortigate(
     mgmtInterface: mgmtIfaceName,
   };
 
-  return fgProxyQuery(fgConfig, method, path, query, body);
+  return fgProxyQuery(
+    fgConfig, method, path, query, body,
+    `(management IP of "${deviceName}" as FortiManager reports it on interface "${mgmtIfaceName}")`,
+  );
 }
 
 // ─── DHCP Discovery ─────────────────────────────────────────────────────────

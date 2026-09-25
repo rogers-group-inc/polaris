@@ -245,3 +245,15 @@ High volume. Flip it on to diagnose, flip it off when done.
 Every integration type has a **Query API** button that proxies a raw read to the
 upstream system. It is the operator's self-service way to answer *"why didn't
 device X get discovered?"*.
+
+When a FortiGate query cannot connect at all, the response reads
+**Could not reach FortiGate at `<address>:<port>` — `<reason>`**, where the reason
+is a timeout, a refused connection, no route, a TLS certificate rejection, or a
+reply that was not JSON. On a FortiManager integration in **Directly to
+FortiGate** mode the address is not one you typed: it is the device's
+management IP as FortiManager reports it on the integration's **Management
+Interface**, and the message says so. A device that is up but unreachable at
+that address usually means the interface resolves to an IP Polaris cannot
+route to, the gate's HTTPS admin port is not 443, or HTTPS admin access is off
+on that interface. Try the same query in **FortiManager (JSON-RPC)** mode to
+confirm the device itself answers.
