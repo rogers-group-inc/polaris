@@ -6577,6 +6577,7 @@ var _FW_STAGE_LABELS = {
   deploying:  "Deploying",
   rebooting:  "Rebooting",
   verifying:  "Verifying new version",
+  recovering: "Waiting for monitoring to answer",
 };
 
 function _fwBadge(text, color) {
@@ -6612,8 +6613,13 @@ function _fwRunResultHTML(run) {
 
 function _fwStageRow(label, pct, state) {
   var cls = "fw-stage" + (state ? " " + state : "");
+  // A step with no percentage (reboot, verify, the monitoring wait) slides
+  // while it runs and reads FULL once done — an empty track under a finished
+  // step looked like one that never ran.
   var bar = pct === null
-    ? '<span class="fw-progress' + (state === "is-active" ? " is-indeterminate" : "") + '"><span class="fw-progress-fill"></span></span>'
+    ? (state === "is-done"
+        ? '<span class="fw-progress"><span class="fw-progress-fill" style="width:100%"></span></span>'
+        : '<span class="fw-progress' + (state === "is-active" ? " is-indeterminate" : "") + '"><span class="fw-progress-fill"></span></span>')
     : '<span class="fw-progress"><span class="fw-progress-fill" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></span>';
   return '<div class="' + cls + '"><span class="fw-stage-label">' + escapeHtml(label) + '</span>' + bar +
     '<span class="fw-stage-pct">' + (pct === null ? '' : Math.round(pct) + '%') + '</span></div>';
@@ -6622,7 +6628,7 @@ function _fwStageRow(label, pct, state) {
 function _fwProgressHTML(run) {
   var p = (run && run.progress) || {};
   var stage = run && run.stage;
-  var order = ["preflight", "staging", "compat", "deploying", "rebooting", "verifying"];
+  var order = ["preflight", "staging", "compat", "deploying", "rebooting", "verifying", "recovering"];
   var idx = order.indexOf(stage);
   var rows = "";
   // The switch reports percentages for erase / write / verify while deploying.
@@ -6635,7 +6641,10 @@ function _fwProgressHTML(run) {
     rows += _fwStageRow("Verifying image", p.verify || 0, (p.verify || 0) >= 100 ? "is-done" : (writeDone ? "is-active" : ""));
   }
   if (idx >= order.indexOf("rebooting")) rows += _fwStageRow("Rebooting", null, stage === "rebooting" ? "is-active" : "is-done");
-  if (idx >= order.indexOf("verifying")) rows += _fwStageRow("Verifying new version", null, "is-active");
+  if (idx >= order.indexOf("verifying")) rows += _fwStageRow("Verifying new version", null, stage === "verifying" ? "is-active" : "is-done");
+  // The device answered its web UI; the maintenance window stays open until
+  // Polaris's own monitoring probe answers too (the runner's last stage).
+  if (idx >= order.indexOf("recovering")) rows += _fwStageRow("Waiting for monitoring to answer", null, "is-active");
   var step = (typeof p.curStep === "number" && typeof p.totStep === "number") ? ' · step ' + p.curStep + ' of ' + p.totStep : '';
   return '<div id="asset-fw-progress">' +
     '<div style="font-size:0.85rem;margin:0.3rem 0 0.5rem">Stage: <strong>' + escapeHtml(_FW_STAGE_LABELS[stage] || stage || "starting") + '</strong>' + escapeHtml(step) +

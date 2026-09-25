@@ -1198,8 +1198,13 @@ disabled; nor while another flash is running on that device, on a switch above
 or below it, or on its MCLAG peer. A device in a scheduled maintenance window
 is fine — that is when you flash. The flash opens a
 [maintenance window of its own](Maintenance-Windows#windows-polaris-opens-for-itself)
-(45 minutes at most) that suppresses everything behind the switch, released
-the moment the run ends.
+(45 minutes at most) that suppresses everything behind the switch. A failed
+run ends it at once. A run that got as far as the reboot keeps it open until
+**Polaris's own monitoring** answers the device again, for up to 10 more
+minutes: a device's web interface, which the upgrade talks to, often comes
+back minutes before the SNMP agent that monitoring polls. If monitoring still
+has not answered by then, the window ends anyway and the device is judged
+normally.
 
 The run records what the device **reported after it came back**; it never
 rewrites the asset's OS/firmware field itself. The next discovery reads the

@@ -4178,7 +4178,15 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 .fw-upload-status { font-size: 0.8rem; color: var(--color-text-secondary); min-width: 160px; }
 .fw-upload-status.is-error { color: var(--color-danger); }
 .fw-upload-status.is-warn { color: var(--color-warning, #d68910); }
+/* Both halves are <span>s in the markup, so both need a display of their own:
+   an inline element ignores width and height, and the fill drew at 0x0 —
+   every erase / write / verify bar, the reboot "working" bar and the upload
+   bar were invisible while their tracks showed as empty grooves. The track is
+   inline-block so it still sits in a line of text (the upload status span); a
+   grid cell (the card's stage rows) blockifies it either way. */
 .fw-progress {
+  display: inline-block;
+  vertical-align: middle;
   height: 6px;
   border-radius: 3px;
   background: var(--color-bg-tertiary);
@@ -4187,6 +4195,7 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   flex: 1;
 }
 .fw-progress-fill {
+  display: block;
   height: 100%;
   width: 0;
   background: var(--color-accent);

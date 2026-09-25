@@ -40,6 +40,14 @@ const h = vi.hoisted(() => {
     created: [] as Array<Record<string, unknown>>,
     assetUpdates: [] as unknown[],
     engineOutcome: { outcome: "upgraded", verifiedVersion: "7.6.8 build1164" } as Record<string, unknown>,
+    // The firmware hold as the runner re-reads it after the engine; null = the
+    // device was unmonitored, so openMaintenanceHold took none.
+    hold: null as { expiresAt: Date } | null,
+    holdUpdates: [] as unknown[],
+    // Monitoring answers on this poll (1-based); 0 = never.
+    answerOnPoll: 0,
+    monitorPolls: 0,
+    order: [] as string[],
   };
   return {
     state, primary, backup, stale,
@@ -73,6 +81,17 @@ vi.mock("../../src/db.js", () => ({
       findUnique: vi.fn(async () => ({ engine: "fortiswitch-https" })),
     },
     assetMclagPeer: { findMany: vi.fn(async () => h.state.mclag) },
+    maintenanceHold: {
+      findUnique: vi.fn(async () => h.state.hold),
+      update: vi.fn(async (args: unknown) => { h.state.holdUpdates.push(args); return {}; }),
+    },
+    assetMonitorSample: {
+      findFirst: vi.fn(async () => {
+        h.state.monitorPolls += 1;
+        h.state.order.push("poll");
+        return h.state.answerOnPoll > 0 && h.state.monitorPolls >= h.state.answerOnPoll ? { timestamp: new Date() } : null;
+      }),
+    },
   },
 }));
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
@@ -112,6 +131,11 @@ beforeEach(() => {
   h.state.created = [];
   h.state.assetUpdates = [];
   h.state.engineOutcome = { outcome: "upgraded", verifiedVersion: "7.6.8 build1164" };
+  h.state.hold = null;
+  h.state.holdUpdates = [];
+  h.state.answerOnPoll = 0;
+  h.state.monitorPolls = 0;
+  h.state.order = [];
 });
 
 const start = (imageId = "img-primary") => startFirmwareUpgrade({ assetId: "asset-1", imageId, actor: "tester" });
@@ -267,6 +291,77 @@ describe("the runner", () => {
     await flushRunner();
     expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_unverified");
     expect(h.releaseMaintenanceHold).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("the runner keeps the maintenance window open until monitoring answers", () => {
+  // A FortiAP's web UI answered the engine while its SNMP agent was still
+  // silent, so the hold ended and the misses landed just outside it. The run
+  // now waits for the first SUCCESSFUL monitor sample after the engine is done.
+  const fast = { timeouts: { recoveryWaitMs: 400, recoveryPollMs: 10 } };
+  const startFast = () => startFirmwareUpgrade({ assetId: "asset-1", imageId: "img-primary", actor: "tester", overrides: fast });
+  const settle = (ms = 600) => new Promise((r) => setTimeout(r, ms));
+
+  it("holds until the first successful sample, then releases before the success Event", async () => {
+    h.state.hold = { expiresAt: new Date(Date.now() + 60_000) };
+    h.state.answerOnPoll = 3;
+    const order = h.state.order;
+    const { prisma } = await import("../../src/db.js");
+    h.releaseMaintenanceHold.mockImplementation(async () => { order.push("release"); return true; });
+    h.logEvent.mockImplementation(async (e: { action: string }) => { order.push(e.action); });
+    await startFast();
+    await settle();
+    // Three polls, the third answered, THEN the window closed, THEN the Event.
+    expect(order.filter((x) => x === "poll")).toHaveLength(3);
+    expect(order.indexOf("release")).toBeGreaterThan(order.lastIndexOf("poll"));
+    expect(order.indexOf("release")).toBeLessThan(order.indexOf("firmware.upgrade_succeeded"));
+    // The hold's own expiry was pushed past the wait, so it cannot lapse mid-wait.
+    expect(h.state.holdUpdates).toHaveLength(1);
+    // The card saw the stage.
+    const stages = vi.mocked(prisma.firmwareUpgradeRun.update).mock.calls.map((c) => (c[0] as { data: { stage?: string } }).data.stage);
+    expect(stages).toContain("recovering");
+    const log = (vi.mocked(prisma.firmwareUpgradeRun.update).mock.calls.at(-1)![0] as { data: { log: Array<{ msg: string }> } }).data.log.map((l) => l.msg);
+    expect(log.some((m) => /monitoring answered .* ending the maintenance window/.test(m))).toBe(true);
+  });
+
+  it("ends the window at the cap when monitoring never answers, and says so", async () => {
+    h.state.hold = { expiresAt: new Date(Date.now() + 60_000) };
+    h.state.answerOnPoll = 0;
+    const { prisma } = await import("../../src/db.js");
+    const t0 = Date.now();
+    await startFast();
+    await settle(700);
+    expect(h.releaseMaintenanceHold).toHaveBeenCalledTimes(1);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(400);
+    expect(h.state.monitorPolls).toBeGreaterThan(3);
+    const log = (vi.mocked(prisma.firmwareUpgradeRun.update).mock.calls.at(-1)![0] as { data: { log: Array<{ msg: string }> } }).data.log.map((l) => l.msg);
+    expect(log.some((m) => /did not answer within .* ending the maintenance window anyway/.test(m))).toBe(true);
+    // Still a success: the device reported the new version to the engine.
+    expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
+  });
+
+  it("waits on an unverified run too, but a FAILED run releases at once", async () => {
+    h.state.hold = { expiresAt: new Date(Date.now() + 60_000) };
+    h.state.answerOnPoll = 1;
+    h.state.engineOutcome = { outcome: "unverified", error: "no answer" };
+    await startFast();
+    await settle();
+    expect(h.state.monitorPolls).toBe(1);
+    h.state.monitorPolls = 0;
+    h.state.engineOutcome = { outcome: "failed", error: "boom" };
+    await startFast();
+    await settle();
+    expect(h.state.monitorPolls).toBe(0);
+    expect(h.releaseMaintenanceHold).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not wait when there is no hold (an unmonitored device — nothing polls it)", async () => {
+    h.state.hold = null;
+    h.state.answerOnPoll = 0;
+    await startFast();
+    await settle(100);
+    expect(h.state.monitorPolls).toBe(0);
+    expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
   });
 });
 

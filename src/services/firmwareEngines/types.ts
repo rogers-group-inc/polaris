@@ -16,7 +16,12 @@
 
 export type FirmwareEngineKind = "fortiswitch-https" | "fortiap-https";
 
-export type FirmwareRunStage = "preflight" | "staging" | "compat" | "deploying" | "rebooting" | "verifying";
+/**
+ * "recovering" is the runner's, not an engine's: the device has answered the
+ * engine over its web UI, and the run is holding its maintenance window open
+ * until Polaris's OWN monitoring probe answers too (business rule 87).
+ */
+export type FirmwareRunStage = "preflight" | "staging" | "compat" | "deploying" | "rebooting" | "verifying" | "recovering";
 
 export type FirmwareEngineOutcome = "upgraded" | "already-current" | "failed" | "unverified";
 
@@ -31,6 +36,14 @@ export interface FirmwareEngineTimeouts {
   rebootUpMs: number;
   verifyRetries: number;
   verifyRetryDelayMs: number;
+  /**
+   * The RUNNER's, read by no engine: how long, after the engine is done, the
+   * maintenance hold stays open waiting for the device's own monitoring probe
+   * to answer, and how often that is checked. A device's web UI routinely
+   * answers minutes before its SNMP agent does.
+   */
+  recoveryWaitMs: number;
+  recoveryPollMs: number;
   /** FortiSwitch: the whole flash + reboot budget measured from deploy. */
   switchUpgradeMs: number;
   /** First contact with the device's UI — short, so "unreachable" is fast. */
@@ -48,6 +61,8 @@ export const DEFAULT_FIRMWARE_TIMEOUTS: FirmwareEngineTimeouts = {
   rebootUpMs: 900_000,
   verifyRetries: 5,
   verifyRetryDelayMs: 15_000,
+  recoveryWaitMs: 600_000,
+  recoveryPollMs: 15_000,
   switchUpgradeMs: 1_800_000,
   probeMs: 8_000,
   uploadIdleMs: 120_000,

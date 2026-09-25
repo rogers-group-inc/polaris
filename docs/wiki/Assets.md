@@ -352,10 +352,22 @@ instead. Nothing is pushed until you tick that you checked the version and
 platform and click **Approve and upgrade**.
 
 While it runs the card shows the stage and, on a switch, the erase / write /
-verify percentages, then *Rebooting* and *Verifying new version*. The device
-is in a maintenance window for the duration
+verify percentages, then *Rebooting*, *Verifying new version* and *Waiting
+for monitoring to answer*. The device is in a maintenance window for the
+duration
 ([Maintenance Windows](Maintenance-Windows#windows-polaris-opens-for-itself)),
-so everything behind a switch is suppressed with it. Polaris does not offer a
+so everything behind a switch is suppressed with it. The last stage is the
+window staying open after the device has confirmed its new version: its web
+interface, which the upgrade uses, usually answers before the SNMP agent
+Polaris monitors it with. The run finishes when monitoring gets its first
+answer, or after 10 minutes if it never does. A failed run ends the window
+straight away.
+
+**How the version is confirmed.** The upgrade never takes the device's word
+from before the reboot. It waits for the device's old web session to be
+refused, which only happens once it has restarted, then signs in afresh and
+reads the running version. That can succeed while the device's monitoring
+still shows missed polls; the two use different services on the device. Polaris does not offer a
 cancel — a flash mid-write must finish — and **you must not power-cycle the
 device while it is writing.**
 

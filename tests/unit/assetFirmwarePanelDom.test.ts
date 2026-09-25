@@ -144,6 +144,18 @@ describe("the states, in the server's words", () => {
     expect(labels).toEqual(["Erasing flash", "Writing image", "Verifying image", "Rebooting", "Verifying new version"]);
     expect(r.querySelectorAll(".fw-progress.is-indeterminate")).toHaveLength(1);
   });
+  it("the monitoring wait: finished no-percent steps read FULL, only the wait slides", () => {
+    const r = render(asset(), fw({ state: "running", available: false, activeRun: { id: "r", status: "running", stage: "recovering", toVersion: "7.6.8 build1164", progress: null } }));
+    const rows = Array.from(r.querySelectorAll(".fw-stage"));
+    expect(rows.map((x) => text(x.querySelector(".fw-stage-label")))).toEqual(["Rebooting", "Verifying new version", "Waiting for monitoring to answer"]);
+    expect(text(r)).toContain("Stage: Waiting for monitoring to answer");
+    for (const done of rows.slice(0, 2)) {
+      expect(done.classList.contains("is-done")).toBe(true);
+      expect((done.querySelector(".fw-progress-fill") as HTMLElement).getAttribute("style")).toMatch(/width:100%/);
+    }
+    expect(rows[2]!.querySelector(".fw-progress.is-indeterminate")).not.toBeNull();
+    expect(r.querySelectorAll(".fw-progress.is-indeterminate")).toHaveLength(1);
+  });
   it("shows the last run's result under the facts: succeeded, unverified, failed", () => {
     expect(text(render(asset(), fw({ lastRun: { status: "succeeded", result: "upgraded", verifiedVersion: "7.6.8 build1164", toVersion: "7.6.8 build1164", finishedAt: "2026-09-25T01:20:00Z" } })))).toContain("Upgraded to 7.6.8 build1164, 5 minutes ago");
     expect(text(render(asset(), fw({ lastRun: { status: "unverified", toVersion: "7.6.8 build1164", error: "no answer" } })))).toMatch(/couldn’t confirm the version/);
