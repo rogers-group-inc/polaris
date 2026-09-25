@@ -102,6 +102,29 @@ const downDetectionUnavailable = new Counter({
   registers: [registry],
 });
 
+// Agent-run path checks. `outcome` ∈ ok | fail | rejected (a sample
+// naming a check the pushing host is not a source of).
+const pathCheckSamplesTotal = new Counter({
+  name: "polaris_agent_path_check_samples_total",
+  help: "Path-check results ingested from Polaris Agents, by outcome.",
+  labelNames: ["outcome"] as const,
+  registers: [registry],
+});
+
+const pathCheckPathChangesTotal = new Counter({
+  name: "polaris_path_check_path_changes_total",
+  help: "Traceroute path changes detected on path checks (path_check.path_changed Events written).",
+  registers: [registry],
+});
+
+export function recordPathCheckSamples(outcome: "ok" | "fail" | "rejected", n: number): void {
+  if (n > 0) pathCheckSamplesTotal.inc({ outcome }, n);
+}
+
+export function recordPathCheckPathChange(): void {
+  pathCheckPathChangesTotal.inc();
+}
+
 const pgbossQueueJobs = new Gauge({
   name: "polaris_pgboss_queue_jobs",
   help: "pg-boss job counts by queue and state (pg-boss mode only).",

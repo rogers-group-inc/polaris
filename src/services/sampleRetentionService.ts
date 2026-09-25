@@ -42,6 +42,9 @@
  *
  *   appMapConnections — asset_process_connections   (Application Map socket facts)
  *   arpEntries        — asset_arp_entries           (FortiGate IP neighbour cache)
+ *   pathCheckTraceroutes — asset_path_check_traceroutes (path snapshots; a
+ *                       standalone HYPERTABLE, pruned by drop_chunks — the
+ *                       flat window is just its one retention number)
  *
  * They carry a single `{ days }` window using the same encoding as a tier, and
  * they also bound what the reading surface can show — the Application Map's
@@ -172,6 +175,7 @@ export type RetentionEntity =
   | "storage"
   | "ipsec"
   | "perfSla"
+  | "pathCheck"
   | "process";
 export type RetentionTier = "detail" | "hourly" | "daily";
 
@@ -183,14 +187,16 @@ export const RETENTION_ENTITIES: RetentionEntity[] = [
   "storage",
   "ipsec",
   "perfSla",
+  "pathCheck",
   "process",
 ];
 
 /** Entities with a single window instead of detail/hourly/daily tiers — see the
- *  "FLAT entities" note in the file header. */
-export type FlatRetentionEntity = "appMapConnections" | "arpEntries";
+ *  "FLAT entities" note in the file header. `pathCheckTraceroutes` is the
+ *  path-snapshot table: averaging a path means nothing, so it has no tiers. */
+export type FlatRetentionEntity = "appMapConnections" | "arpEntries" | "pathCheckTraceroutes";
 
-export const FLAT_RETENTION_ENTITIES: FlatRetentionEntity[] = ["appMapConnections", "arpEntries"];
+export const FLAT_RETENTION_ENTITIES: FlatRetentionEntity[] = ["appMapConnections", "arpEntries", "pathCheckTraceroutes"];
 
 export interface FlatRetention {
   days: number;
@@ -242,6 +248,7 @@ export function defaultSampleRetention(): SampleRetention {
     storage:     defaultTier(),
     ipsec:       defaultTier(),
     perfSla:     defaultTier(),
+    pathCheck: defaultTier(),
     process:     defaultTier(),
     appMapConnections: { days: defaultAppMapConnDays() },
     // How far back the ARP Table tab's range selector can reach. 30 days
@@ -249,6 +256,10 @@ export function defaultSampleRetention(): SampleRetention {
     // is interval-per-binding, so this bounds distinct bindings retained, not
     // scrapes.
     arpEntries: { days: 30 },
+    // Traceroute snapshots for path checks. 30 days is enough to answer
+    // "has this path changed since last month" without the ~2 KB rows (every
+    // 5th run per check per agent host) dominating the database.
+    pathCheckTraceroutes: { days: 30 },
   };
 }
 
@@ -386,4 +397,9 @@ export async function getAppMapConnectionRetentionDays(): Promise<number> {
  */
 export async function getArpEntryRetentionDays(): Promise<number> {
   return (await getSampleRetention()).arpEntries.days;
+}
+
+/** Configured window (days) for path-check traceroute snapshots. */
+export async function getPathCheckTracerouteRetentionDays(): Promise<number> {
+  return (await getSampleRetention()).pathCheckTraceroutes.days;
 }

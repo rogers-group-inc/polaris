@@ -229,6 +229,7 @@
       <a href="#assets">Assets &amp; inventory</a>
       <a href="#quarantine">Quarantine (SIEM)</a>
       <a href="#dashboard">Dashboard &amp; NOC feeds</a>
+      <a href="#path-monitor">Path Monitor</a>
       <a href="#search">Search</a>
       <a href="#ipam-blocks">IPAM: IP blocks</a>
       <a href="#ipam-subnets">IPAM: Networks</a>
@@ -696,6 +697,167 @@
             every built-in type followed by every operator-added type the asset-type
             registry carries (plus any custom name still worn by a live asset whose
             registry row is gone), registry-labelled. Empty arrays (not 403) without <code>assets:read</code>.</p>
+        </div>
+      </section>
+
+      <section id="path-monitor">
+        <h2>Path Monitor</h2>
+        <p>
+          A <strong>path check</strong> is an HTTP / HTTPS request, a TCP connect or a ping that
+          the <strong>Polaris Agent</strong> (0.21.0 or later) runs from each host it is pointed
+          at, with an optional traceroute of the path. A check's hosts are its Sources filter
+          plus any pinned assets, <em>intersected with hosts running an active agent</em>. A
+          check has no threshold of its own and never changes a host's Up / Down status: alert
+          on it with an automation on the <code>path*</code> metrics (<code>pathOk</code>,
+          <code>pathLatencyMs</code>, <code>pathFailurePct</code>, <code>pathHttpStatus</code>,
+          <code>pathHopCount</code>, <code>pathTlsDaysLeft</code>) or on the
+          <code>path_check.path_changed</code> event. Check endpoints gate on the
+          <code>pathChecks</code> key; the per-host readings under <code>/assets/:id</code> gate on
+          <code>assets:read</code>, because they describe that asset.
+        </p>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks
+            <span class="gate">pathChecks:read</span></div>
+          <p><code>{ checks: [...] }</code>, by name. Each check carries its definition (below)
+            plus a fleet summary: <code>sourceCount</code> (hosts running it),
+            <code>okCount</code> / <code>failCount</code> (hosts whose latest run passed / failed
+            — a host with no result yet is in neither) and <code>lastRunAt</code>.</p>
+          <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
+  "<span class="js-base-url">/api/v1</span>/path-checks"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id
+            <span class="gate">pathChecks:read</span></div>
+          <p>One check, same shape as a list row. <code>404</code> when it does not exist.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/:id/results
+            <span class="gate">pathChecks:read</span></div>
+          <p><code>{ results: [...] }</code> — every host running the check with its latest
+            result, by hostname: <code>assetId, hostname, ipAddress, os, explicit</code> (pinned
+            rather than matched), <code>lastOk, lastSampleAt, lastLatencyMs, lastHttpStatus,
+            lastError, lastResolvedIp, lastFailAt, lastHopCount, lastTracerouteComplete,
+            lastTracerouteAt</code>, and the agent's <code>agentVersion, online,
+            supported</code> (<code>false</code> below 0.21.0 — the host is a member but cannot run
+            it).</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks
+            <span class="gate">pathChecks:write</span></div>
+          <p>Create a check; <code>201</code> with the stored check. Body:</p>
+          <ul>
+            <li><code>name</code> (required, ≤120, unique — <code>409</code> on a duplicate),
+              <code>description?</code>, <code>enabled?</code> (default <code>true</code>).</li>
+            <li><code>kind</code>: <code>http</code> | <code>https</code> | <code>tcp</code> |
+              <code>icmp</code>. <code>target</code>: a full URL for HTTP / HTTPS (no credentials
+              in it), <code>host:port</code> for TCP, a bare host for ICMP. IPv4 only. Refused
+              with <code>400</code>: loopback, link-local, cloud-metadata and multicast addresses,
+              and this Polaris server itself.</li>
+            <li><code>intervalSec?</code> — whole minutes, 60–3600, default 60.
+              <code>timeoutMs?</code> — 500–30000, default 5000, and at most half the
+              interval.</li>
+            <li><code>http?</code> (HTTP / HTTPS only): <code>{ expectStatus?</code> — e.g.
+              <code>"200,204,300-399"</code>, empty = any 2xx; <code>bodyMatch?: { mode:
+              "contains" | "regex" | "exact", pattern (≤1024), caseSensitive? }</code>;
+              <code>verifyTls?</code> (default <code>true</code>) <code>}</code>. A regex must be
+              RE2-compatible (no look-around or back-references) — the agent runs it.</li>
+            <li><code>traceroute?: { enabled?</code> (default <code>true</code>),
+              <code>everyNRuns?</code> (1–100, default 5), <code>maxHops?</code> (1–64, default 30),
+              <code>probesPerHop?</code> (1–5, default 3), <code>probeTimeoutMs?</code> (100–5000,
+              default 1000) <code>}</code>. A trace also runs whenever a passing check starts
+              failing.</li>
+            <li><code>keepBodyExcerpt?</code> — keep the first 4&nbsp;KB of the response on every
+              run, not only on failures.</li>
+            <li><code>scope?</code> — the automation device-filter tree
+              (<code>{ "allAssets": true }</code> for every agent host), and
+              <code>assetIds?</code> (≤2000) to pin hosts regardless of the filter. At least one of
+              the two must select something.</li>
+          </ul>
+          <p><code>409</code> when the new check would be the 51st enabled one. A host runs at
+            most 20 checks, the oldest first; past that, the newer ones stay listed as members but
+            are not run, and a <code>path_check.agent_over_cap</code> event is written.</p>
+          <pre class="curl"><code>curl -X POST -H "Authorization: Bearer $POLARIS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"ERP web","kind":"https","target":"https://erp.example.com/health","http":{"expectStatus":"200"},"scope":{"allAssets":true}}' \
+  "<span class="js-base-url">/api/v1</span>/path-checks"</code></pre>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-put">PUT</span> /path-checks/:id
+            <span class="gate">pathChecks:write</span></div>
+          <p>Replace a check — the full body <code>POST</code> takes, not a patch. Agents pick the
+            new definition up on their next heartbeat.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks/:id/enabled
+            <span class="gate">pathChecks:write</span></div>
+          <p><code>{ enabled: boolean }</code>. A disabled check keeps its hosts and their last
+            results; agents stop running it.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /path-checks/:id
+            <span class="gate">pathChecks:write</span></div>
+          <p><code>204</code>. Removes the check and its host list.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks/preview-sources
+            <span class="gate">pathChecks:write</span></div>
+          <p>Dry-run a Sources selection without saving: body <code>{ scope?, assetIds? }</code>.
+            Returns <code>{ total, pinned, matchedWithoutAgent, agents[], pinnedWithoutAgent[],
+            minAgentVersion }</code>; <code>agents</code> (first 100) is <code>{ assetId, hostname,
+            ipAddress, os, agentVersion, online, supported, pinned, pinnedOnly }</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /path-checks/filter-schema
+            <span class="gate">pathChecks:read</span></div>
+          <p>The fields, operators and option lists the <code>scope</code> filter accepts — the
+            same vocabulary as an automation's device filter.</p>
+        </div>
+
+        <h3>Per-host readings</h3>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /assets/:id/path-checks
+            <span class="gate">assets:read</span></div>
+          <p><code>{ checks: [...] }</code> — the checks this host runs, each with its definition,
+            <code>latest</code> (the result fields listed under <code>/results</code>) and
+            <code>latestSample</code> (the newest run in full, including <code>bodyMatched,
+            bodySha256, bodyBytes, bodyExcerpt, tlsNotAfter, tlsIssuer</code>). Empty when the host
+            runs none.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /assets/:id/path-check-history?checkId=
+            <span class="gate">assets:read</span></div>
+          <p>One check's series from this host. <code>checkId</code> is required;
+            <code>range=</code> <code>1h | 12h | 24h | 7d | 30d</code> (default 24h), or
+            <code>from=</code> + <code>to=</code> (ISO, ≤1 year). Returns <code>{ range, checkId,
+            since, until, tier, bucketSeconds, samples }</code>. On the <code>detail</code> tier a
+            sample is one run: <code>{ timestamp, ok, latencyMs, dnsMs, connectMs, tlsMs, ttfbMs,
+            httpStatus, hopCount, error }</code>, with a timing field <code>null</code> when it was
+            not measured. On <code>hourly</code> / <code>daily</code> each sample is a bucket
+            carrying averages plus <code>okCount, failCount, sampleCount, minLatencyMs,
+            maxLatencyMs</code>.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-get">GET</span> /assets/:id/path-check-traceroutes?checkId=
+            <span class="gate">assets:read</span></div>
+          <p>The newest traceroutes this host ran for one check, newest first:
+            <code>limit=</code> 1–50, default 10. Returns <code>{ checkId, traceroutes }</code>;
+            each is <code>{ timestamp, destinationIp, complete, hopCount, pathHash, reason</code>
+            (<code>scheduled</code> or <code>transition</code> — taken because the check started
+            failing), <code>note, hops }</code>. A hop is <code>{ ttl, ip, rdns, rttMs[] }</code>
+            (<code>ip: null</code> and <code>-1</code> RTTs for probes that got no reply), plus
+            <code>assetId, hostname, monitorStatus, interfaceName, subnetCidr</code> when the
+            address belongs to something Polaris knows, as it stood when the trace was stored.</p>
         </div>
       </section>
 

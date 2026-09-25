@@ -38,11 +38,19 @@ describe("streamForMetric", () => {
     expect(streamForMetric("")).toBe("responseTime");
   });
 
-  it("names only streams the settings resolver actually carries", () => {
+  it("names only streams the settings resolver actually carries (plus the path checks' own interval)", () => {
     // `sdwan` is carried by the resolver's integration sidecar
-    // (resolveSdwanIntervalSec) rather than a settings field.
-    const allowed = new Set(["responseTime", "cpuMemory", "temperature", "systemInfo", "storage", "sdwan"]);
+    // (resolveSdwanIntervalSec) rather than a settings field, and `pathCheck`
+    // does not resolve through the monitor-settings hierarchy at all —
+    // resolveScopeCadence reads each check's intervalSec for it instead.
+    const allowed = new Set(["responseTime", "cpuMemory", "temperature", "systemInfo", "storage", "sdwan", "pathCheck"]);
     for (const stream of Object.values(METRIC_STREAM)) expect(allowed.has(stream)).toBe(true);
+  });
+
+  it("maps every path* metric to the path-check stream (else holds convert at the probe cadence)", () => {
+    for (const m of ["pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft"]) {
+      expect(streamForMetric(m)).toBe("pathCheck");
+    }
   });
 
   it("states the Polaris host's own fixed sampling tick", () => {

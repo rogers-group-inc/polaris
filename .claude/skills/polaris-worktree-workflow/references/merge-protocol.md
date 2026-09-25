@@ -115,6 +115,15 @@ After the last merge and the skill review: `npm run check:docs`, `npm run typech
 unless this merge is stage 5 of `/polaris-deploy`, which continues into `push-protocol.md`;
 otherwise the user says "push" separately.
 
+**A clean merge is not a working browser.** `public/` has no build step and no typecheck, and the
+browser scripts share one global scope, so two classes of break merge with no conflict marker and a
+green unit suite (both hit on 2026-09-25, merging 67 commits of `main` into a feature branch):
+a POSITIONAL array both sides appended to (`openViewModal`'s `Promise.all` in `assets.js` is read
+back as `wave[N]` — re-derive every index after resolving a hunk there), and a helper one side
+removed while the other still calls it (`tests/unit/browserPrivateCallsDefined.test.ts` now catches
+the `_name(` case statically). When the merged range touched `public/js`, open the affected page
+headlessly and read its `pageerror`s before calling the merge verified.
+
 ## The DEVLOCK variant (the chat's own worktree)
 
 When the user has been working in a dev environment in THIS chat and says they are satisfied

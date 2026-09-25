@@ -46,7 +46,7 @@ import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { releaseMaintenanceHold } from "./maintenanceScheduleService.js";
 import { getDirectDatabaseUrl } from "../utils/dbConnections.js";
-import { CMD_WAKE_CHANNEL } from "./agentCommandWake.js";
+import { CMD_WAKE_CHANNEL, CFG_REFRESH_CHANNEL } from "./agentCommandWake.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const PROBE_NOW_DEFAULT_TIMEOUT_MS = 10_000;
@@ -341,7 +341,12 @@ async function connectWakeListener(): Promise<void> {
   }
   const client = new pg.Client({ connectionString: url });
   client.on("notification", (msg) => {
-    if (msg.payload) wakeCommands(msg.payload);
+    if (!msg.payload) return;
+    if (msg.channel === CFG_REFRESH_CHANNEL) {
+      for (const id of msg.payload.split(",")) if (id) refreshConfig(id);
+      return;
+    }
+    wakeCommands(msg.payload);
   });
   client.on("error", (err) => {
     logger.warn({ err: err.message }, "Agent command-wake listener error — reconnecting");
@@ -350,6 +355,7 @@ async function connectWakeListener(): Promise<void> {
   try {
     await client.connect();
     await client.query(`LISTEN ${CMD_WAKE_CHANNEL}`);
+    await client.query(`LISTEN ${CFG_REFRESH_CHANNEL}`);
     wakeClient = client;
     logger.info("Agent command-wake listener attached");
   } catch (err) {

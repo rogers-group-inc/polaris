@@ -32,8 +32,8 @@ import { prisma } from "../../src/db.js";
 const daysAgo = (d: number) => new Date(Date.now() - d * 24 * 3600 * 1000);
 
 describe("sampleRetentionService — entity model + encoding", () => {
-  it("exposes the eight entities, three of them selection-aware", () => {
-    expect(RETENTION_ENTITIES).toEqual(["assets", "cpuMem", "hardware", "interfaces", "storage", "ipsec", "perfSla", "process"]);
+  it("exposes the nine entities, three of them selection-aware", () => {
+    expect(RETENTION_ENTITIES).toEqual(["assets", "cpuMem", "hardware", "interfaces", "storage", "ipsec", "perfSla", "pathCheck", "process"]);
     expect(SELECTION_AWARE_ENTITIES).toEqual(["interfaces", "storage", "ipsec"]);
     expect(FOREVER).toBe(-1);
     expect(UNSELECTED_DETAIL_HOURS).toBe(24);
@@ -57,10 +57,12 @@ describe("sampleRetentionService — entity model + encoding", () => {
   it("exposes the FLAT entities, each defaulting to 30 days", () => {
     // Flat = one window instead of detail/hourly/daily, for the two
     // accumulate+age tables (Application Map sockets, ARP neighbour cache)
-    // rather than tiered time-series.
-    expect(FLAT_RETENTION_ENTITIES).toEqual(["appMapConnections", "arpEntries"]);
+    // and the path-check traceroute snapshots — none of them tiered
+    // time-series.
+    expect(FLAT_RETENTION_ENTITIES).toEqual(["appMapConnections", "arpEntries", "pathCheckTraceroutes"]);
     expect(defaultSampleRetention().appMapConnections).toEqual({ days: 30 });
     expect(defaultSampleRetention().arpEntries).toEqual({ days: 30 });
+    expect(defaultSampleRetention().pathCheckTraceroutes).toEqual({ days: 30 });
   });
 });
 

@@ -357,7 +357,7 @@
     return { scope: out, needsDevices: false };
   }
 
-  var DIMENSION_ID_FIELDS = ["stateProbeId", "widgetId"];
+  var DIMENSION_ID_FIELDS = ["stateProbeId", "widgetId", "checkId"];
 
   /** Blank the two id-valued dimension filters, recording each as a dependency.
    *  Collects which dimensions were blanked so the caller can mark the trigger
@@ -369,6 +369,12 @@
       if (field === "stateProbeId") {
         var p = nameOf(cat.stateProbes, df[field]);
         deps.add("stateProbe", p ? p.name : df[field], "trigger dimension", p ? p.unresolved : true);
+      } else if (field === "checkId") {
+        // A path check id is install-specific. Blanked (not kept): a
+        // blank checkId watches EVERY check on the host, so the import marks
+        // the trigger incomplete rather than silently widening it.
+        var ck = nameOf(cat.pathChecks, df[field]);
+        deps.add("pathCheck", ck ? ck.name : df[field], "trigger dimension", ck ? ck.unresolved : true);
       } else {
         deps.add("customWidget", df[field], "trigger dimension", true);
       }
@@ -566,6 +572,7 @@
       user: cat.users,
       role: cat.roles,
       stateProbe: cat.stateProbes,
+      pathCheck: cat.pathChecks,
     };
     var labelKeys = { user: ["username", "name", "email"] };
     function nameMatches(rows, value, keys) {

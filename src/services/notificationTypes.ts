@@ -484,6 +484,11 @@ export const ASSET_METRICS = [
   "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
   "customWidgetValue", "customStateValue",
+  // Agent-run path checks — the asset is the AGENT HOST and the
+  // dimension is the check (`checkId`). pathOk is the 0/1 verdict,
+  // pathFailurePct the windowed ratio, the rest gauges off the same samples
+  // (pathHopCount off the traceroutes).
+  "pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft",
 ] as const;
 
 /**
@@ -499,7 +504,7 @@ export const ASSET_METRICS = [
  * chart's threshold shading, and the value/unit hints. Everything that offers
  * those checks this set rather than testing metric names inline.
  */
-export const BOOLEAN_METRICS = ["customStateValue", "hwSensorAlarm"] as const;
+export const BOOLEAN_METRICS = ["customStateValue", "hwSensorAlarm", "pathOk"] as const;
 
 export function isBooleanMetric(metric: string | null | undefined): boolean {
   return !!metric && (BOOLEAN_METRICS as readonly string[]).includes(metric);
@@ -515,6 +520,8 @@ export function isBooleanMetric(metric: string | null | undefined): boolean {
  */
 export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLabel: string; trueIsProblem: boolean }> = {
   hwSensorAlarm: { trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true },
+  // 1 = the run met every expectation (status, body, TLS, connect / echo).
+  pathOk: { trueLabel: "Reachable", falseLabel: "Unreachable", trueIsProblem: false },
 };
 
 // ─── Asset-state trigger ────────────────────────────────────────────────────
@@ -562,6 +569,7 @@ export const CHANGE_TYPES = [
   "sdwan_failover", "mclag_peer_lost", "wireless_station_connected",
   "firmware_changed", "switch_port_changed", "wireless_ap_changed", "gateway_firewall_changed",
   "fortilink_changed",
+  "path_check_path_changed",
 ] as const;
 
 // Map a change type → the audit Event action the persist functions emit and
@@ -593,6 +601,10 @@ export const CHANGE_TYPE_ACTIONS: Record<(typeof CHANGE_TYPES)[number], string> 
   // the link is down" (it has a reading, so it gets auto-reset and a forPolls
   // hold); this one is for "tell me each time it moves".
   fortilink_changed: "asset.fortilink.changed",
+  // Written unconditionally by pathCheckIngestService when an agent's
+  // traceroute for a check takes a different hop sequence than the last one
+  // (10-minute floor per host and check). Names the agent HOST as its asset.
+  path_check_path_changed: "path_check.path_changed",
 };
 
 const dimensionFilterSchema = z
@@ -648,6 +660,10 @@ const dimensionFilterSchema = z
     // its own. Matching on the label rather than the OID index is the point of
     // resolving labels at all — an operator knows "PSU 2", not ".14".
     stateRowPattern: z.string().max(200).optional(),
+    // ── Path checks (path*) ──────────────────────────────────────
+    // Which check — a PathCheck id, matched exactly (a registry key,
+    // like stateProbeId). Blank = every check the host runs, one alert each.
+    checkId: z.string().max(200).optional(),
   })
   .strict()
   .optional();
@@ -716,8 +732,9 @@ const assetMetricTrigger = z.object({
    * SATURATION CEILING: a reading at or above this produces no reading at all,
    * and clears any alert this rule already had on that asset.
    *
-   * Offered for the windowed-ratio metrics (packet loss), where the top of the
-   * scale stops describing the thing the metric is named after. 100% loss is an
+   * Offered for packet loss only (SATURATION_CEILING_METRICS), where the top of
+   * the scale stops describing the thing the metric is named after. Inert on
+   * every other metric — a path check's failure rate included. 100% loss is an
    * outage, which the down automation already owns; and since the loss anchor
    * was removed (business rule 29) a device coming back from a 55-minute outage
    * genuinely reads ~92% for the rest of the window, so an operator who does not
@@ -1014,6 +1031,12 @@ export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   // single-asset paths. Same consequence, too: an AP whose radios have not
   // been discovered reports no SSIDs, so a positive rule never selects it.
   ssid: STRING_OPS,
+  // "Polaris Agent installed" — yes / no, from the asset's ManagedAgent row:
+  // yes means an ACTIVE agent (installStatus "active"), the same test
+  // requestScriptRun and path-check membership apply. The third
+  // relation-backed field: fleet-scale loaders prefetch it through
+  // scopeRelationIndex, the single-asset paths join `managedAgent`.
+  agentInstalled: ["equals", "notEquals"],
   status: ["equals", "notEquals"],
   assetId: ["equals", "notEquals"],
 };
@@ -1190,9 +1213,13 @@ export function conditionFields(cond: ScopeConditionGroup): Set<string> {
  * which is what kept the fleet-scale SQL path and the single-asset in-memory
  * path answering the same question when the second such field arrived.
  */
-export const RELATION_CONDITION_FIELDS: Record<string, { relation: "interfaces" | "apVaps"; column: "ifName" | "ssid" }> = {
-  interfaceName: { relation: "interfaces", column: "ifName" },
-  ssid:          { relation: "apVaps",     column: "ssid" },
+export const RELATION_CONDITION_FIELDS: Record<string, { relation: "interfaces" | "apVaps" | "managedAgent"; column: "ifName" | "ssid" | "installStatus" }> = {
+  interfaceName:  { relation: "interfaces",   column: "ifName" },
+  ssid:           { relation: "apVaps",       column: "ssid" },
+  // Not a string match like the other two: the prefetch answers "has an
+  // ACTIVE agent" whatever the rule's value, and matchScopeRule compares that
+  // with yes / no. See `agentInstalled` in SCOPE_FIELD_OPS.
+  agentInstalled: { relation: "managedAgent", column: "installStatus" },
 };
 export const RELATION_CONDITION_FIELD_NAMES = Object.keys(RELATION_CONDITION_FIELDS);
 
@@ -1205,6 +1232,14 @@ export function conditionNeedsInterfaces(cond: ScopeConditionGroup | null | unde
 export function conditionNeedsApVaps(cond: ScopeConditionGroup | null | undefined): boolean {
   return !!cond && conditionFields(cond).has("ssid");
 }
+
+/** Does this tree ask whether the Polaris Agent is installed? */
+export function conditionNeedsManagedAgent(cond: ScopeConditionGroup | null | undefined): boolean {
+  return !!cond && conditionFields(cond).has("agentInstalled");
+}
+
+/** The single-asset join `agentInstalled` reads (the fleet paths prefetch). */
+export const MANAGED_AGENT_CONDITION_SELECT = { managedAgent: { select: { installStatus: true } } } as const;
 
 /**
  * The asset fields the condition evaluator reads (matcher + engine select).
@@ -1238,6 +1273,9 @@ export interface ScopeConditionAsset {
    *  the same terms as `interfaces` above — only when a tree asks for it,
    *  and only on the SINGLE-asset paths. */
   apVaps?: { ssid: string | null }[];
+  /** The asset's Polaris Agent row, for `agentInstalled`. Same terms as the two
+   *  relations above: joined only when a tree asks, on single-asset paths. */
+  managedAgent?: { installStatus: string } | null;
   /** The fleet-scale alternative for EVERY relation-backed field:
    *  `relationLeafKey(leaf)` -> did this asset satisfy that leaf, resolved in
    *  SQL by decorateRelationLeafHits rather than by shipping the relation.
@@ -1407,6 +1445,18 @@ function matchScopeRule(rule: ScopeConditionRule, asset: ScopeConditionAsset): b
       return rule.operator === "notInCidr" ? !inside : inside;
     }
     case "fortigate": return matchMultiValue(rule, fortigateNames(asset), v);
+    case "agentInstalled": {
+      // "Has an ACTIVE agent" — prefetched per leaf by scopeRelationIndex on
+      // fleet paths (the verdict is value-independent), else read off the
+      // joined row. An absent prefetch key is unknown, so fall through.
+      const pre = asset.relationLeafHits;
+      const key = relationLeafKey(rule);
+      const has = pre && pre.has(key)
+        ? pre.get(key) === true
+        : asset.managedAgent?.installStatus === "active";
+      const eq = has === (v === "yes" || v === "true");
+      return rule.operator === "notEquals" ? !eq : eq;
+    }
     case "interfaceName":
     case "ssid": {
       // Two ways in, one predicate, for both relation-backed fields. A
@@ -3610,7 +3660,18 @@ export function isAssetScopedTrigger(trigger: Trigger): boolean {
  * its `latest`-sample lookback floor. Exposed on /automations/schema as
  * `windowedRatioMetrics`.
  */
-export const WINDOWED_RATIO_METRICS = ["probeLossPct"] as const;
+export const WINDOWED_RATIO_METRICS = ["probeLossPct", "pathFailurePct"] as const;
+
+/**
+ * The windowed-ratio metrics the SATURATION CEILING (`ignoreAtOrAbove`) applies
+ * to — a narrower list than WINDOWED_RATIO_METRICS, on purpose. The ceiling
+ * exists because 100% packet loss is an OUTAGE, which the down automation
+ * already owns (business rule 29). A path check's failure rate has no such
+ * owner: the host is up and is the one reporting, so 100% is the headline case
+ * ("the ERP is unreachable from this site") and must fire (business rule 85).
+ * Exposed on /automations/schema as `saturationCeilingMetrics`.
+ */
+export const SATURATION_CEILING_METRICS = ["probeLossPct"] as const;
 
 /**
  * The probe-loss measurement window, resolved exactly the way the engine
@@ -3644,8 +3705,12 @@ export const DEFAULT_READING_CEILING_PCT = 100;
  */
 export function readingAtOrAboveCeiling(trigger: unknown, value: number | null): boolean {
   if (typeof value !== "number" || !Number.isFinite(value)) return false;
-  const t = trigger as { type?: string; ignoreAtOrAbove?: unknown } | null;
+  const t = trigger as { type?: string; metric?: unknown; ignoreAtOrAbove?: unknown } | null;
   if (!t || t.type !== "asset_metric") return false;
+  // Only the metrics whose top of scale IS someone else's alert. A stored
+  // ceiling on any other metric (an API write, or a rule saved before this
+  // list existed) is inert rather than silencing readings.
+  if (!(SATURATION_CEILING_METRICS as readonly string[]).includes(String(t.metric))) return false;
   const ceiling = typeof t.ignoreAtOrAbove === "number" && Number.isFinite(t.ignoreAtOrAbove)
     ? t.ignoreAtOrAbove
     : DEFAULT_READING_CEILING_PCT;
@@ -3730,6 +3795,15 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
   // the builder renders the probe's own labels ("Alarm" / "OK") instead of the
   // numbers, and there's no unit because there's no magnitude.
   customStateValue: { label: "Device state flag (0/1)", unit: "" },
+  // Agent-run path checks (asset = the agent host, dimension = check).
+  pathLatencyMs: { label: "Path latency", unit: "ms" },
+  pathHttpStatus: { label: "Path HTTP status", unit: "" },
+  pathOk: { label: "Path check result", unit: "" },
+  // Failed runs / runs over the History window, like probeLossPct.
+  pathFailurePct: { label: "Path failure rate", unit: "%" },
+  pathHopCount: { label: "Traceroute hop count", unit: "hops" },
+  // Days until the target's TLS certificate expires. Alert with "<", e.g. < 14.
+  pathTlsDaysLeft: { label: "TLS certificate days remaining", unit: "days" },
   // host_metric
   memUsedPct: { label: "Memory utilization", unit: "%" },
   loadAvg1: { label: "Load average (1m)", unit: "" },
@@ -3855,6 +3929,7 @@ export const CHANGE_TYPE_META: Record<string, string> = {
   wireless_ap_changed: "Wireless AP changed (roam)",
   gateway_firewall_changed: "Gateway FortiGate changed",
   fortilink_changed: "Controller link changed (FortiLink / CAPWAP)",
+  path_check_path_changed: "Path changed (traceroute)",
 };
 
 // Which dimensionFilter inputs are relevant per asset_metric metric, so the
@@ -3898,7 +3973,24 @@ export const METRIC_DIMENSIONS: Record<string, string[]> = {
   ipsecThroughputBps: ["tunnelName"],
   customWidgetValue: ["widgetId"],
   customStateValue: ["stateProbeId", "stateRowPattern"],
+  pathLatencyMs: ["checkId"],
+  pathHttpStatus: ["checkId"],
+  pathOk: ["checkId"],
+  pathFailurePct: ["checkId"],
+  pathHopCount: ["checkId"],
+  pathTlsDaysLeft: ["checkId"],
 };
+
+/** Does a path* dimension filter select this check? Shared by the engine's
+ *  resolvers (applied in SQL there) and getMetricSeverityTiers, so a chart is
+ *  never shaded with another check's thresholds. */
+export function pathCheckFilterMatches(
+  df: { checkId?: string } | null | undefined,
+  check: { checkId?: string | null },
+): boolean {
+  if (!df?.checkId) return true;
+  return df.checkId === (check.checkId ?? "");
+}
 // Which dimensionFilter inputs apply per asset_state FIELD — the state twin of
 // METRIC_DIMENSIONS. The engine has honored ifNamePattern on the interface
 // state trio and tunnelName on ipsecStatus since the pin-gate work, but the
@@ -4045,6 +4137,7 @@ export const DIMENSION_NOUNS: Record<string, string> = {
   widgetId: "custom widget",
   stateProbeId: "state probe",
   stateRowPattern: "state-probe row",
+  checkId: "path check",
 };
 
 /**
@@ -4167,6 +4260,9 @@ export function buildSchemaCatalog() {
     // The saturation ceiling the wizard prefills for those metrics, served
     // rather than hardcoded client-side so the two cannot drift.
     readingCeilingDefault: DEFAULT_READING_CEILING_PCT,
+    // ...and which of them the ceiling applies to at all (packet loss, not a
+    // path check's failure rate — see SATURATION_CEILING_METRICS).
+    saturationCeilingMetrics: SATURATION_CEILING_METRICS,
     // Per-metric state names, so a boolean metric with no probe behind it still
     // renders "is Alarm" rather than "is true".
     booleanMetricLabels: BOOLEAN_METRIC_LABELS,
@@ -4356,6 +4452,10 @@ const SCOPE_FIELD_META: Record<string, { label: string; optionsFrom: string | nu
   ipBlock: { label: "IP block", optionsFrom: "ipBlocks" },
   interfaceName: { label: "Device interface", optionsFrom: "interfaceNames" },
   ssid: { label: "Broadcast SSID", optionsFrom: "ssids" },
+  // `values` rather than `optionsFrom`: every client valueOptions switch
+  // returns a field's `values` before consulting optionsFrom, so a closed
+  // yes/no field needs no case in any of them.
+  agentInstalled: { label: "Polaris Agent installed", optionsFrom: null, values: ["yes", "no"] },
   status: {
     label: "Lifecycle status",
     optionsFrom: null,

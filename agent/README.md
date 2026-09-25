@@ -104,6 +104,45 @@ to keep absorbing:
   written to disk, so a healthy host reads several GB "swapped" against a
   nearly empty page file. The page file itself comes from `EnumPageFilesW`.
 
+### Path checks (`pathCheck` + `pathCheckTraceroute` streams, 0.21.0)
+
+The server ships each agent the checks it runs in `GET /config` →
+`pathChecks` (`transport.PathCheckDef`; empty below 0.21.0 or
+when the host runs none — the list is the enable signal). One 60 s loop
+(`cmd/polaris-agent/path_check.go`, phase 16) runs the checks that are due on
+a pool of 4, and pushes one batch per stream. The probes are in
+`internal/collectors/path_check*.go`.
+
+- **Kinds**: `http` / `https` (one GET, status judged before body, redirects
+  never followed, body capped at 64 KB, SHA-256 of the capped body always, a
+  4 KB excerpt only on failure or when the check keeps it), `tcp` (connect
+  time), `icmp` (one echo).
+- **Its own HTTP client**, never the pinned Polaris transport: normal chain
+  validation (unless `verifyTls: false`), no proxy, HTTP/1.1, no keep-alive,
+  `User-Agent: polaris-agent/<version>`, no authentication. The leaf
+  certificate is reported even when verification fails.
+- **Refused targets**: loopback, link-local (incl. cloud metadata), unspecified
+  and multicast, checked AFTER DNS resolution; IPv6 is not supported in v1.
+  Any definition outside the schema is refused without probing
+  (`ValidateCheckDef`).
+- **No privilege needed.** Linux traceroute uses UDP probes with `IP_TTL` +
+  `IP_RECVERR`, reading ICMP errors from the socket error queue (the tracepath
+  technique); Linux ICMP echo uses a datagram ICMP socket, which works where
+  `net.ipv4.ping_group_range` includes the service's GID (systemd ≥ 243 default:
+  RHEL 9, Ubuntu 22.04+). Where it does not, the sample carries exactly
+  `icmp unsupported on this host (ping_group_range)`. Windows uses
+  `IcmpSendEcho2` (what `ping` / `tracert` use). macOS: ICMP echo yes,
+  traceroute not in v1.
+- **Traceroute cadence**: the first run of a definition (baseline), every Nth
+  run (default 5), and immediately when a run fails after a pass. Up to 8 TTLs
+  in flight, stops at the destination, a hard ICMP error, 8 silent TTLs or
+  `maxHops`; reverse DNS per hop (1 s each, 3 s total).
+- **Budget**: the loop has its own 55 s tick budget rather than the shared 30 s
+  `collectionTimeout` (everything here is context-cancellable). A check that
+  cannot start in time stays due and one log line says so.
+- Results describe the path from the host — the server never lets them touch
+  the host's `monitorStatus` (business rule 85).
+
 ## Security
 
 - **TLS leaf pinning** — agent does NOT trust system roots; only the SHA-256 baked into `agent.conf` at install time matches. Rotating the pin requires the operator to re-run install with a re-keyed Polaris server.
@@ -122,4 +161,5 @@ to keep absorbing:
 | 7 | Process inventory (`processInventory` stream, gated on `processes` stream = agent): gopsutil enumeration aggregated by program name, current-state full-replace into the asset Services tab's *Include processes* view. |
 | 7b | Per-pinned-program CPU/RAM telemetry (`processTelemetry` stream, 1/min): instantaneous CPU via prime→sleep→read delta over the pinned PIDs, summed by name, into the AssetProcessSample time-series. Pinned set + log config delivered via `/config`'s `pinnedProcesses`. |
 | 7c | Per-pinned-program log tailing (`processLog` stream): journald-by-`_COMM` (Linux, cursored) + cross-platform file-glob tailing (per-file byte offset; rotation-aware), per `pinnedProcesses[].logSource`/`logPathGlob`. Cursors in `processlog-cursors.json`; first run seeds at tail (no history dump). |
+| 9 (0.21.0) | Agent-run path checks: `pathCheck` + `pathCheckTraceroute` streams, server-shipped definitions in `/config` → `pathChecks`, unprivileged ICMP / traceroute (see *Path checks* above). |
 | 8 | Process control (Phase 4): service/unit resolution in the inventory collector (Linux `/proc/<pid>/cgroup` → `*.service`; Windows `tasklist /svc` → service short-name) sets `controllable`. `commandLoop` polls `GET /agents/commands`, executes via `systemctl <action> <unit>` (Linux) / `net stop|start` + `sc query` (Windows), and reports to `POST /agents/command-result`. Action + target re-validated agent-side (strict charset, exec-with-args — no shell). Operator-initiated only. |

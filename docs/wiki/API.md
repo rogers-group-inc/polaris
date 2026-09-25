@@ -218,6 +218,53 @@ evaluated against that clock) and repeat the end as a true instant
 not narrow them: a schedule is returned when any of its devices is in scope,
 whole, with `matchedCount` giving the in-scope share.
 
+### Path Monitor
+
+```
+GET    /path-checks
+GET    /path-checks/:id
+GET    /path-checks/:id/results
+POST   /path-checks
+PUT    /path-checks/:id
+POST   /path-checks/:id/enabled
+DELETE /path-checks/:id
+POST   /path-checks/preview-sources
+GET    /path-checks/filter-schema
+GET    /assets/:id/path-checks
+GET    /assets/:id/path-check-history?checkId=
+GET    /assets/:id/path-check-traceroutes?checkId=
+```
+
+A [path check](Path-Monitor) is an HTTP / HTTPS request, a TCP connect or a
+ping that the Polaris Agent (0.21.0 or later) runs from each of its hosts, with
+an optional traceroute. The `/path-checks` endpoints gate on the `pathChecks`
+key; the three `/assets/:id/…` readings gate on `assets:read`, because they
+describe that asset.
+
+- **Hosts** are the check's `scope` (the automation device-filter tree,
+  `{ "allAssets": true }` for every agent host) plus pinned `assetIds`, limited
+  to hosts running an active agent. One of the two must select something.
+  `preview-sources` dry-runs that selection without saving.
+- **Targets** are a full URL for HTTP / HTTPS, `host:port` for TCP and a bare
+  host for ICMP, IPv4 only. Loopback, link-local, cloud-metadata and multicast
+  addresses, and the Polaris server itself, are refused with `400`.
+- **Limits:** `intervalSec` is whole minutes (60–3600); `timeoutMs` is
+  500–30000 and at most half the interval; a body-match regex must be
+  RE2-compatible. At most 50 checks can be enabled (`409` past that), and a
+  host runs at most 20 — the oldest win, and the rest raise a
+  `path_check.agent_over_cap` event.
+- `PUT` replaces the whole definition; it is not a patch.
+- A check has no threshold and never changes a host's Up / Down status. To be
+  alerted, build an automation on the `path*` metrics or the
+  `path_check.path_changed` event.
+
+`path-check-history` takes the same `range=` presets and `from` / `to` as the
+other history endpoints and returns per-run samples on the detail tier, or
+per-bucket averages with `okCount` / `failCount` on the hourly and daily tiers.
+`path-check-traceroutes` returns the newest traces first (`limit` ≤ 50). Each
+hop carries the asset, interface and subnet Polaris matched its address to at
+the time of the trace.
+
 ### Search
 
 ```

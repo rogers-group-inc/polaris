@@ -52,6 +52,8 @@ import {
 import {
   deviceFilterConditionSchema,
   conditionNeedsApVaps,
+  conditionNeedsManagedAgent,
+  MANAGED_AGENT_CONDITION_SELECT,
   conditionNeedsInterfaces,
   evaluateScopeCondition,
   scopeConditionStats,
@@ -845,6 +847,7 @@ export async function resolveContactsForAsset(assetId: string): Promise<ContactR
   // interface, and this is the alert fan-out path.
   const needsInterfaces = filtered.some((f) => conditionNeedsInterfaces(f.condition));
   const needsApVaps = filtered.some((f) => conditionNeedsApVaps(f.condition));
+  const needsAgent = filtered.some((f) => conditionNeedsManagedAgent(f.condition));
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
     // `tags` on top of the flat-criteria select: the condition tree has a `tag`
@@ -854,6 +857,7 @@ export async function resolveContactsForAsset(assetId: string): Promise<ContactR
       tags: true,
       ...(needsInterfaces ? { interfaces: { select: { ifName: true } } } : {}),
       ...(needsApVaps ? { apVaps: { select: { ssid: true } } } : {}),
+      ...(needsAgent ? MANAGED_AGENT_CONDITION_SELECT : {}),
     },
   });
   if (!asset) return byPin;

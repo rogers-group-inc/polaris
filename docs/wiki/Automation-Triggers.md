@@ -40,6 +40,17 @@ A number, compared against a threshold.
 | `ipsecThroughputBps` | bps | tunnel name |
 | `customWidgetValue` | — | widget |
 | `customStateValue` — Device state flag | 0/1 | state probe, row |
+| `pathLatencyMs` — Path latency | ms | path check |
+| `pathFailurePct` — Path failure rate | % | path check (windowed ratio, like packet loss) |
+| `pathOk` — Path check result | Reachable / Unreachable | path check |
+| `pathHttpStatus` — Path HTTP status | — | path check |
+| `pathHopCount` — Traceroute hop count | hops | path check |
+| `pathTlsDaysLeft` — TLS certificate days remaining | days | path check |
+
+The `path*` metrics come from [agent-run path checks](Path-Monitor).
+The device they are about is the **host that ran the check**, not the target, and
+they never change that host's Up / Down status. Pick the check on the condition
+row; blank means every check the host runs, one alert each.
 
 ### Prefer the device's own alarm bit
 
@@ -73,7 +84,9 @@ Three things it does that no other metric does
 - **A reading at or above the rule's `ignoreAtOrAbove` ceiling is not a
   reading** — default 100, so an untouched rule is unchanged and only a total
   outage is suppressed. Polaris opts its own baseline rule out at **90**.
-  Lower it if you do not want an alert trailing every outage.
+  Lower it if you do not want an alert trailing every outage. This box is
+  offered for packet loss only — a path check's failure rate has no ceiling,
+  because 100 % there means every run to the target failed, which is the alert.
 
 And the failures of an outage are **excluded from the metric**: every maximal
 run of consecutive failures that reached `down` is dropped whole, onset
@@ -295,6 +308,10 @@ Sugar over the change Events Polaris emits:
 | `wireless_ap_changed` | a roam |
 | `gateway_firewall_changed` | the gate in front of the device changed |
 | `fortilink_changed` | controller link changed |
+| `path_check_path_changed` | an agent's traceroute for a [path check](Path-Monitor) took a different set of hops (at most once per 10 minutes per host and check) |
+
+The Devices step's **Polaris Agent installed** field (*yes* / *no*) selects hosts
+with an active Polaris Agent — the natural scope for path-check automations.
 
 ---
 

@@ -2283,6 +2283,7 @@ var SAMPLE_RETENTION_ENTITIES = [
   { key: "storage",     label: "Storage",        hint: "Per-volume usage.",       selectionAware: true },
   { key: "ipsec",       label: "IPsec tunnels",  hint: "Per-tunnel state.",       selectionAware: true },
   { key: "perfSla",     label: "SD-WAN Perf SLA", hint: "Per health-check member latency / jitter / loss." },
+  { key: "pathCheck", label: "Path checks", hint: "Per agent host × check: latency, phases, HTTP status and pass/fail." },
   { key: "process",     label: "Processes & services", hint: "Pinned-program CPU/RAM plus process + service log lines." },
 ];
 // FLAT entities: one window instead of detail/hourly/daily, for tables that are
@@ -2303,6 +2304,13 @@ var SAMPLE_RETENTION_FLAT_ENTITIES = [
     hint: "IP→MAC bindings read from each FortiGate. Rows accumulate (one per distinct " +
           "binding, not one per poll) and age out on this window; capped at 4000 per device. " +
           "Also sets how far back the ARP Table tab’s range selector can reach.",
+    def: 30,
+  },
+  {
+    key: "pathCheckTraceroutes",
+    label: "Path traceroutes",
+    hint: "Hop-by-hop paths the Polaris Agent traced for path checks (every Nth run " +
+          "and on each pass→fail). Sets how far back the Paths tab’s path history reaches.",
     def: 30,
   },
 ];

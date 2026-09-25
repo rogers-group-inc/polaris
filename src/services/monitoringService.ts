@@ -13997,6 +13997,7 @@ export async function pruneSystemInfoSamples(): Promise<number> {
   const [
     iDetail, iHourly, iDaily, sDetail, sHourly, sDaily, ipDetail, ipHourly, ipDaily,
     psDetail, psHourly, psDaily, lldp, customWidget, stateProbe, processLog, processConn, arpEntries,
+    cDetail, cHourly, cDaily, cTrace,
   ] = await Promise.all([
     // interfaces — detail is selection-aware. Nothing WRITES unselected
     // (cadence="slow") interface rows any more (see persistInterfaceSampleStream:
@@ -14046,9 +14047,18 @@ export async function pruneSystemInfoSamples(): Promise<number> {
     // ARP neighbour rows — the other accumulate+age table, on its own flat
     // `arpEntries` window. Same encoding as a tier (FOREVER = never prune).
     pruneArpEntries(),
+    // Agent-run path checks — a tiered entity (every detail row is
+    // stamped "fast", so the plain by-days prune is correct) plus the
+    // traceroute snapshots, a standalone hypertable on the FLAT
+    // `pathCheckTraceroutes` window.
+    pruneTierByDays((w) => prisma.assetPathCheckSample.deleteMany({       where: w as any }), r.pathCheck.detail, "timestamp",   "asset_path_check_samples"),
+    pruneTierByDays((w) => prisma.assetPathCheckSampleHourly.deleteMany({ where: w as any }), r.pathCheck.hourly, "bucketStart", "asset_path_check_samples_hourly"),
+    pruneTierByDays((w) => prisma.assetPathCheckSampleDaily.deleteMany({  where: w as any }), r.pathCheck.daily,  "bucketStart", "asset_path_check_samples_daily"),
+    pruneTierByDays((w) => prisma.assetPathCheckTraceroute.deleteMany({   where: w as any }), r.pathCheckTraceroutes.days, "timestamp", "asset_path_check_traceroutes"),
   ]);
   return iDetail + iHourly + iDaily + sDetail + sHourly + sDaily + ipDetail + ipHourly + ipDaily
-    + psDetail + psHourly + psDaily + lldp + customWidget + stateProbe + processLog + processConn + arpEntries;
+    + psDetail + psHourly + psDaily + lldp + customWidget + stateProbe + processLog + processConn + arpEntries
+    + cDetail + cHourly + cDaily + cTrace;
 }
 
 async function pruneLldpNeighbors(days: number): Promise<number> {

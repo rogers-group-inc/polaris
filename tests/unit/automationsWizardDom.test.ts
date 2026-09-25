@@ -2635,6 +2635,36 @@ describe("automation wizard DOM render", () => {
     expect(saved.trigger.windowSec).toBe(1200);
     expect(saved.severityBands.map((b: any) => b.forDurationSec)).toEqual([undefined, undefined]);
   });
+
+  it("offers the saturation ceiling on packet loss but not on a path check's failure rate", async () => {
+    // Both are windowed ratios, but only loss has an outage owner at 100% (rule
+    // 29). A path check failing every run is the alert itself (rule 85), so the
+    // box must not be offered — and a ceiling left over from a loss condition
+    // must not ride along onto the path metric.
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      ...LOSS_BASE, id: "r-path-ceiling", name: "Path failures",
+      reset: { mode: "auto" }, severityBands: null, bandNotify: null,
+    });
+    for (let i = 0; i < 2; i++) {
+      (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const ceiling = () => doc.querySelector(".aw-ratio-ceiling") as unknown as { style: { display: string } };
+    await pickMetric("probeLossPct");
+    expect(ceiling().style.display).toBe("");
+    (doc.querySelector("#tf-ratio-ceiling") as unknown as { value: string }).value = "90";
+    await pickMetric("pathFailurePct");
+    expect(ceiling().style.display).toBe("none");
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const saved = savedPayloads[0]! as Record<string, any>;
+    expect(saved.trigger.metric).toBe("pathFailurePct");
+    expect(saved.trigger.ignoreAtOrAbove).toBeUndefined();
+  });
 });
 
 // ── Trigger filter rows (device identifiers / component names), 2026-08 ─────

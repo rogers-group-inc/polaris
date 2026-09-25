@@ -230,6 +230,61 @@ export function statusAccepted(statusCode: number, expectStatus: number | null |
 }
 
 /**
+ * A path check's accepted-status spec: comma-separated codes and
+ * inclusive ranges, e.g. "200,204,300-399". Empty means "any 2xx" — the same
+ * default `statusAccepted` applies to a vendor HTTP check with no expectation.
+ *
+ * MIRRORED twice: the Go agent (`parseStatusSpec` in
+ * agent/internal/collectors/path_check_http.go) judges the response with it,
+ * and the check modal (`parseStatusSpec` in public/js/path-checks.js)
+ * validates it as the operator types. tests/unit/pathCheckStatusSpecParity
+ * pins the client copy to this one; the Go copy has its own table test with the
+ * same cases. Change all three together.
+ */
+export interface StatusRange { lo: number; hi: number }
+
+export function parseStatusSpec(spec: string | null | undefined): { ranges: StatusRange[]; error: string | null } {
+  const s = (spec ?? "").trim();
+  if (!s) return { ranges: [{ lo: 200, hi: 299 }], error: null };
+  const ranges: StatusRange[] = [];
+  for (const raw of s.split(",")) {
+    const part = raw.trim();
+    if (!part) return { ranges: [], error: "Empty entry in the status list" };
+    const m = /^(\d{3})(?:\s*-\s*(\d{3}))?$/.exec(part);
+    if (!m) return { ranges: [], error: `"${part}" is not a status code or range (use 200 or 200-299)` };
+    const lo = Number(m[1]);
+    const hi = m[2] !== undefined ? Number(m[2]) : lo;
+    if (lo < 100 || hi > 599) return { ranges: [], error: `"${part}" is outside 100–599` };
+    if (lo > hi) return { ranges: [], error: `"${part}" runs backwards` };
+    ranges.push({ lo, hi });
+  }
+  if (ranges.length > 20) return { ranges: [], error: "At most 20 codes or ranges" };
+  return { ranges, error: null };
+}
+
+export function statusInRanges(code: number, ranges: readonly StatusRange[]): boolean {
+  return ranges.some((r) => code >= r.lo && code <= r.hi);
+}
+
+/**
+ * A body-match regex the AGENT can run. The agent is Go, whose regexp package
+ * is RE2: no lookaround and no backreferences. A pattern that compiles in
+ * JavaScript but not in RE2 would save, ship to every agent, and fail every run
+ * with "invalid regex" — so it is refused here, where the operator can fix it.
+ * Returns an error message, or null when the pattern is usable.
+ */
+export function agentRegexProblem(pattern: string): string | null {
+  try {
+    new RegExp(pattern);
+  } catch (err) {
+    return `Invalid regular expression: ${(err as Error).message}`;
+  }
+  if (/\(\?<?[=!]/.test(pattern)) return "Lookahead / lookbehind is not supported (the agent uses RE2)";
+  if (/\\[1-9]/.test(pattern) || /\\k</.test(pattern)) return "Backreferences are not supported (the agent uses RE2)";
+  return null;
+}
+
+/**
  * Compile the body expectation. Returns null when there is nothing to match,
  * so callers can distinguish "no expectation" from "expectation not met".
  * An invalid regex throws — credential validation rejects one at save time, so

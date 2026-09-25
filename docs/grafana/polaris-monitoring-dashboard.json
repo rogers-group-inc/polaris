@@ -3005,6 +3005,128 @@
       ],
       "title": "Link state changes (1h)",
       "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 189
+      },
+      "id": 123,
+      "panels": [],
+      "title": "Path checks (agent-run, business rule 85)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Path-check results the Polaris Agents pushed and Polaris accepted, per minute, by outcome. `ok` and `fail` are the checks' own verdicts: a rising `fail` line is the fleet reporting that targets are unreachable, which the path* automations alert on. `rejected` is a result naming a check the pushing host is not a source of: a short burst right after a check's Sources change is normal (the agent re-fetches its config on the next heartbeat), but a sustained line means an agent is running a stale check list. Steady state is (enabled checks x hosts) per interval.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 190
+      },
+      "id": 124,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(polaris_agent_path_check_samples_total[5m])) * 60",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Path-check results ingested by outcome",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Traceroute path changes detected in the last hour: one per path_check.path_changed Event, at most one per host and check every 10 minutes. Flat or low in a stable network. A spike across many hosts at once is usually a WAN or core routing change; the Events page names the host and check for each.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 190
+      },
+      "id": 125,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(polaris_path_check_path_changes_total[1h]))",
+          "legendFormat": "path changes",
+          "refId": "A"
+        }
+      ],
+      "title": "Path changes (1h)",
+      "type": "stat"
     }
   ],
   "refresh": "30s",

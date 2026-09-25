@@ -102,6 +102,17 @@ async function assetIdsForLeaf(rule: ScopeConditionRule, assetIds: string[]): Pr
   const spec = RELATION_CONDITION_FIELDS[rule.field];
   if (!spec) return new Set();
   const scope = { assetId: { in: assetIds } };
+
+  // agentInstalled: the positive answer is "has an ACTIVE agent", whatever
+  // the rule's value — matchScopeRule compares it with yes / no. One indexed
+  // read of a 1:1 table (assetId @unique), at most fleet-sized.
+  if (spec.relation === "managedAgent") {
+    const rows = await prisma.managedAgent.findMany({
+      where: { ...scope, installStatus: "active" },
+      select: { assetId: true },
+    });
+    return new Set(rows.map((r) => r.assetId));
+  }
   const where = valueWhere(rule);
 
   if (where) {

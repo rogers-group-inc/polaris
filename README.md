@@ -131,6 +131,9 @@ The graph stitches edges from three independent signals: controller-derived Fort
 
 Admins and network admins can draw named **regions** on the map. Each region's name becomes a `region:<name>` tag stamped on every enclosed FortiGate plus its managed FortiSwitches and FortiAPs, so the assets-page tag column / search / filter can act on "everything in Atlanta" without anyone maintaining the membership list by hand. Polygons render only while editing — the default map view is unchanged.
 
+### Path Monitor
+Checks that a web page, a service or an address can be reached **from where your users are** — an HTTP / HTTPS request, a TCP connect or a ping that the Polaris Agent runs on the hosts you pick, every one to sixty minutes, with an optional traceroute of the path. Each host reports latency (split into DNS, connect, TLS and time-to-first-byte for web checks), the HTTP status, a fingerprint of the response body and the certificate's days to expiry. A host's **Paths** tab charts those per check and draws the route NetPath-style: the last ten traces merged into one left-to-right graph, with a route change showing as a branch, each link coloured by the latency it adds, and hops matched to the devices Polaris already monitors. A check has no threshold of its own and never changes the host's Up / Down status; you alert on it with an automation (unreachable, latency, failure rate, HTTP status, TLS days left, or *Path changed*). Needs agent 0.21.0+ and runs unprivileged; on some Linux hosts (RHEL 8) ICMP checks need one sysctl, described in the operator wiki's Polaris Agent troubleshooting.
+
 ### Saved dashboards
 A dashboard you have built can be saved under a name and either kept **private** or published **public**. A public dashboard is offered to every operator — loading one adds it as a new tab of your own dashboard, as a copy, so you can rearrange it without touching the original — and it is also what a Dash wallboard can be pointed at, so a NOC screen is designed once and every wall picks it up. Publishing needs the Saved Dashboards write permission; keeping private ones does not.
 
@@ -321,7 +324,7 @@ All endpoints live under `/api/v1/`. **Developer documentation for the external 
 served by Polaris itself at `<polaris-url>/api`** — no login required; reachable from
 loopback/RFC1918 (or operator-listed private subnets) per the access scope on Server
 Settings → API Tokens. It covers authentication, errors, the quarantine (SIEM) flow,
-asset inventory, dashboard/NOC feeds, search, IPAM, and the events audit tail, with
+asset inventory, dashboard/NOC feeds, Path Monitor, search, IPAM, and the events audit tail, with
 curl examples against the install's own base URL.
 
 | Resource | Base path |
@@ -331,6 +334,7 @@ curl examples against the install's own base URL.
 | Reservations | `/reservations` (incl. `/alerts`, `/stale-settings`) |
 | Allocation Templates | `/allocation-templates` |
 | Assets | `/assets` (incl. monitoring, quarantine, snmp-walk) |
+| Path Monitor | `/path-checks` (per-host readings under `/assets/:id/path-check*`) |
 | Map | `/map` (sites, search, topology) |
 | Integrations | `/integrations` (incl. discovery, query, interface aggregate) |
 | Conflicts | `/conflicts` |

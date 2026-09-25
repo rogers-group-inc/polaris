@@ -5367,6 +5367,9 @@ async function openViewModal(id, opts) {
       customWidgetsP,
       sdwanP,
       firmwareP,
+      // Path checks this host runs — prefetched so the tab is present
+      // on first paint or absent, never flashing in and out.
+      api.assets.pathChecks(id).catch(function () { return null; }),
     ]);
 
     var a = wave[0];
@@ -5383,6 +5386,7 @@ async function openViewModal(id, opts) {
     var sdwanLinks   = wave[11].links;
     var sdwanMembers = wave[11].members;
     var sdwanMeta    = wave[11].meta || {};
+    var pathPayload  = wave[13];
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -5428,6 +5432,10 @@ async function openViewModal(id, opts) {
     // above so the tab is present + pre-populated on first paint.
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) {
       tabs.push({ key: "sdwan", label: "SD-WAN", html: _assetSdwanTabHTML(a, sdwanRules, sdwanLinks, sdwanMembers, sdwanMeta) });
+    }
+    // Paths tab — agent-run path checks this host runs.
+    if (_pathTabEligible(pathPayload)) {
+      tabs.push({ key: "pathCheck", label: "Paths", html: _assetPathCheckTabHTML(a, pathPayload) });
     }
     // MAC Table tab — the switch's layer-2 forwarding database. Switch-class
     // only, mirroring where the collector spends the walk; lazy-loaded on
@@ -5582,6 +5590,7 @@ async function openViewModal(id, opts) {
     if (showSnmpWalkTab) _wireSnmpWalkTab(a);
     if (canQuarantineAssets()) _wireQuarantineTab(a);
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) _wireSdwanTab(a, sdwanRules, sdwanLinks, sdwanMembers);
+    if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
     if (!isInfraProc) _wireAssetServicesTab(a);
@@ -10167,6 +10176,7 @@ function _loadMetricSeverityTiers(assetId, metric, dim) {
   var params = { metric: metric };
   if (dim && dim.sensorName)  params.sensorName  = dim.sensorName;
   if (dim && dim.sensorClass) params.sensorClass = dim.sensorClass;
+  if (dim && dim.checkId)     params.checkId     = dim.checkId;
   return api.assets.metricThresholds(assetId, params)
     .then(function (res) { return (res && res.tiers) || []; })
     .catch(function () { return []; }); // no shading rather than no chart
@@ -23999,5 +24009,735 @@ async function _loadAssetArpTable(assetId, range) {
     render();
   } catch (err) {
     mount.innerHTML = '<span class="empty-state">Error: ' + escapeHtml(err.message || "failed to load") + '</span>';
+  }
+}
+
+// ─── Asset slide-over → Paths tab ───────────────────────────────────
+//
+// Agent-run path checks this host runs (path-checks.js owns
+// the definitions). Prefetched in openViewModal's wave so the tab never
+// appears and then vanishes. One check is "selected" at a time; its charts,
+// latest result and traceroute render below the summary table.
+//
+// A result describes the PATH from this host (business rule 85): nothing here
+// says anything about the host's own Up / Down. The latency line follows the
+// canonical two-colour failure treatment (a failed run dives to the baseline
+// in red), NOT the five-verdict palette the response-time chart alone uses; no
+// DATA series is red or grey.
+
+var _pathTabState = null;
+var _PATH_PHASES = [
+  { key: "latencyMs", label: "Total", color: "#4f9dde" },
+  { key: "dnsMs",     label: "DNS",     color: "#9b7ede" },
+  { key: "connectMs", label: "Connect", color: "#e0a84f" },
+  { key: "tlsMs",     label: "TLS",     color: "#5bc0be" },
+  { key: "ttfbMs",    label: "TTFB",    color: "#c77dba" },
+];
+var _PATH_KIND_LABELS = { http: "HTTP", https: "HTTPS", tcp: "TCP", icmp: "ICMP" };
+
+/** Pure: does this host get a Paths tab? */
+function _pathTabEligible(payload) {
+  return !!(payload && Array.isArray(payload.checks) && payload.checks.length);
+}
+
+function _pathResultPill(latest) {
+  if (!latest || !latest.lastSampleAt || latest.lastOk === null || latest.lastOk === undefined) {
+    return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
+  }
+  return '<span class="badge" style="background:' + (latest.lastOk ? MONITOR_STATE_COLORS.up : MONITOR_STATE_COLORS.down) + ';color:#fff">' +
+    (latest.lastOk ? "Reachable" : "Failing") + "</span>";
+}
+
+function _pathFmtWhen(v) {
+  if (!v) return "—";
+  var d = new Date(v);
+  return isNaN(d.getTime()) ? "—" : _fmtTooltipTs(d.toISOString());
+}
+
+function _assetPathCheckTabHTML(a, payload) {
+  var checks = (payload && payload.checks) || [];
+  var rows = checks.map(function (c, i) {
+    var l = c.latest || {};
+    return '<tr class="path-check-row' + (i === 0 ? " row-panel-active" : "") + '" data-check-id="' + escapeHtml(c.id) + '" style="cursor:pointer">' +
+      "<td>" + escapeHtml(c.name) + (c.enabled ? "" : ' <span class="hint">(disabled)</span>') + "</td>" +
+      '<td><span class="badge">' + escapeHtml(_PATH_KIND_LABELS[c.kind] || c.kind) + "</span></td>" +
+      '<td style="font-family:var(--font-mono,monospace);font-size:0.8rem" title="' + escapeHtml(c.target) + '">' + escapeHtml(c.target) + "</td>" +
+      "<td>" + _pathResultPill(l) + "</td>" +
+      "<td>" + (l.lastLatencyMs != null ? Math.round(l.lastLatencyMs) + " ms" : "—") + "</td>" +
+      "<td>" + escapeHtml(_pathFmtWhen(l.lastSampleAt)) + "</td>" +
+      "</tr>";
+  }).join("");
+  var manage = (typeof permAtLeast === "function" && permAtLeast("pathChecks", "read"))
+    ? '<a href="/path-monitor.html" class="btn btn-sm btn-secondary">Manage checks</a>' : "";
+  return '<div data-shot-section="pathChecks">' +
+      '<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">' +
+        '<p class="hint" style="margin:0">Checks the Polaris Agent on this host runs. They describe the path from this host — never its own Up / Down.</p>' +
+        '<span style="margin-left:auto">' + manage + "</span></div>" +
+      '<div class="table-wrapper"><table><thead><tr><th>Check</th><th style="width:70px">Kind</th><th>Target</th><th style="width:110px">Result</th><th style="width:80px">Latency</th><th style="width:140px">Last result</th></tr></thead>' +
+        "<tbody>" + rows + "</tbody></table></div>" +
+    "</div>" +
+    '<div id="path-detail" style="margin-top:1.25rem"></div>';
+}
+
+function _wireAssetPathCheckTab(a, payload) {
+  var checks = (payload && payload.checks) || [];
+  if (!checks.length) return;
+  _pathTabState = { assetId: a.id, checks: checks, checkId: checks[0].id, hiddenPhases: _pathLoadHiddenPhases() };
+  document.querySelectorAll(".path-check-row").forEach(function (tr) {
+    tr.addEventListener("click", function () {
+      document.querySelectorAll(".path-check-row").forEach(function (x) { x.classList.remove("row-panel-active"); });
+      tr.classList.add("row-panel-active");
+      _pathSelectCheck(a, tr.getAttribute("data-check-id"));
+    });
+  });
+  _pathSelectCheck(a, checks[0].id);
+}
+
+function _pathLoadHiddenPhases() {
+  var hidden = new Set(["dnsMs", "connectMs", "tlsMs", "ttfbMs"]);
+  try {
+    var raw = localStorage.getItem("polaris-prefs-series-" + (typeof currentUsername !== "undefined" ? currentUsername : "") + "-pathPhases");
+    if (raw) hidden = new Set(JSON.parse(raw));
+  } catch (_) { /* per-viewer convenience only */ }
+  return hidden;
+}
+
+function _pathSaveHiddenPhases(set) {
+  try {
+    localStorage.setItem("polaris-prefs-series-" + (typeof currentUsername !== "undefined" ? currentUsername : "") + "-pathPhases", JSON.stringify(Array.from(set)));
+  } catch (_) { /* ignore */ }
+}
+
+function _pathSelectCheck(a, checkId) {
+  var st = _pathTabState;
+  if (!st) return;
+  st.checkId = checkId;
+  var check = st.checks.find(function (c) { return c.id === checkId; });
+  var mount = document.getElementById("path-detail");
+  if (!check || !mount) return;
+  var l = check.latest || {};
+  var stale = l.lastSampleAt && (Date.now() - new Date(l.lastSampleAt).getTime()) > 3 * (check.intervalSec || 60) * 1000;
+  var isHttp = check.kind === "http" || check.kind === "https";
+  mount.innerHTML =
+    '<div data-shot-section="pathDetail" data-shot-chart="assetPathCheck">' +
+      '<div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin-bottom:0.5rem">' +
+        '<strong>' + escapeHtml(check.name) + "</strong>" +
+        '<span class="badge">' + escapeHtml(_PATH_KIND_LABELS[check.kind] || check.kind) + "</span>" +
+        _pathResultPill(l) +
+        '<span class="hint">Polaris Agent on this host · every ' + Math.round((check.intervalSec || 60) / 60) + " min</span>" +
+        _freshnessStampHTML(l.lastSampleAt || null, check.intervalSec || 60, "no results yet") +
+        '<span style="margin-left:auto;display:flex;gap:4px">' +
+          _chartRangeBtnsHTML("path-range-btn", [
+            { value: "1h", label: "1h" }, { value: "12h", label: "12h" }, { value: "24h", label: "24h" },
+            { value: "7d", label: "7d" }, { value: "30d", label: "30d" },
+          ], "assetPathCheck", "24h") +
+        "</span>" +
+      "</div>" +
+      (stale ? _staleBannerBoxHTML("⚠ Last result " + _pathFmtWhen(l.lastSampleAt) + " — the agent may be offline or not running this check") : "") +
+      '<div class="chart-label">Latency</div>' +
+      '<div class="chart-box" id="asset-path-latency-chart" style="min-height:170px">Loading samples…</div>' +
+      '<div class="chart-stats" id="asset-path-latency-stats"></div>' +
+      '<div class="chart-label" style="margin-top:0.75rem">Availability</div>' +
+      '<div class="chart-box" id="asset-path-avail-chart" style="min-height:120px">Loading…</div>' +
+      '<div class="chart-stats" id="asset-path-avail-stats"></div>' +
+      (isHttp
+        ? '<div class="chart-label" style="margin-top:0.75rem">HTTP status</div>' +
+          '<div class="chart-box" id="asset-path-status-chart" style="min-height:44px">Loading…</div>' +
+          '<div class="chart-stats" id="asset-path-status-stats"></div>'
+        : "") +
+    "</div>" +
+    '<div data-shot-section="pathLatest" id="path-latest" style="margin-top:1rem"></div>' +
+    '<div data-shot-section="pathTraceroute" id="path-traceroute" style="margin-top:1rem"></div>';
+
+  mount.querySelectorAll(".path-range-btn").forEach(function (b) {
+    b.addEventListener("click", function () {
+      mount.querySelectorAll(".path-range-btn").forEach(function (x) { x.classList.remove("btn-primary"); x.classList.add("btn-secondary"); });
+      b.classList.remove("btn-secondary"); b.classList.add("btn-primary");
+      _setChartRangePref("assetPathCheck", b.getAttribute("data-range"));
+      _loadPathCheckHistoryFor(a.id, check, b.getAttribute("data-range"));
+    });
+  });
+  ["asset-path-latency-chart", "asset-path-avail-chart"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) _wireChartDragSelect(el, function (fromIso, toIso) {
+      _applyCustomRangeSelection({ btnClass: "path-range-btn" }, fromIso, toIso);
+      _loadPathCheckHistoryFor(a.id, check, { from: fromIso, to: toIso });
+    });
+  });
+  _loadPathCheckHistoryFor(a.id, check, _getChartRangePref("assetPathCheck", "24h"));
+  _renderPathLatestCard(check);
+  _loadPathTraceroutes(a.id, check, a);
+  if (!st.tiers) st.tiers = {};
+  _loadMetricSeverityTiers(a.id, "pathLatencyMs", { checkId: check.id }).then(function (tiers) {
+    st.tiers[check.id] = tiers;
+    if (st.lastData && st.checkId === check.id) _renderPathCharts(check, st.lastData);
+  });
+}
+
+async function _loadPathCheckHistoryFor(assetId, check, rangeOrOpts) {
+  var opts = (typeof rangeOrOpts === "string" || !rangeOrOpts) ? { range: rangeOrOpts || "24h" } : rangeOrOpts;
+  ["asset-path-latency-chart", "asset-path-avail-chart", "asset-path-status-chart"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (opts.from && opts.to) { el.dataset.from = opts.from; el.dataset.to = opts.to; delete el.dataset.range; }
+    else { el.dataset.range = opts.range; delete el.dataset.from; delete el.dataset.to; }
+  });
+  try {
+    var data = await api.assets.pathCheckHistory(assetId, check.id, opts);
+    var st = _pathTabState;
+    if (!st || st.assetId !== assetId || st.checkId !== check.id) return;
+    st.lastData = data;
+    _renderPathCharts(check, data);
+  } catch (err) {
+    var el = document.getElementById("asset-path-latency-chart");
+    if (el) el.textContent = "Error: " + (err.message || "failed to load");
+  }
+}
+
+function _renderPathCharts(check, data) {
+  var samples = (data && data.samples) || [];
+  var lat = document.getElementById("asset-path-latency-chart");
+  var av = document.getElementById("asset-path-avail-chart");
+  var stc = document.getElementById("asset-path-status-chart");
+  var copts = { since: data && data.since, until: data && data.until, subject: check.name, tier: data && data.tier };
+  if (lat) _renderPathLatencyChart(lat, samples, copts, check);
+  if (av) _renderPathAvailabilityChart(av, samples, copts);
+  if (stc) _renderPathStatusStrip(stc, samples, copts);
+  var ok = samples.filter(function (s) { return s.ok; });
+  var lats = samples.map(function (s) { return s.latencyMs; }).filter(function (v) { return typeof v === "number"; });
+  var avg = lats.length ? lats.reduce(function (x, y) { return x + y; }, 0) / lats.length : null;
+  var count = samples.reduce(function (n, s) { return n + (s.sampleCount || 1); }, 0);
+  var okCount = samples.reduce(function (n, s) { return n + (s.okCount != null ? s.okCount : (s.ok ? 1 : 0)); }, 0);
+  var parts = [
+    _tierStatsPart(data),
+    { label: "Avg latency", value: avg == null ? null : Math.round(avg) + " ms" },
+    { label: "Max", value: lats.length ? Math.round(Math.max.apply(null, lats)) + " ms" : null },
+  ].filter(Boolean);
+  _renderChartStats(document.getElementById("asset-path-latency-stats"), samples.length, parts);
+  _renderChartStats(document.getElementById("asset-path-avail-stats"), samples.length, [
+    { label: "Availability", value: count ? (Math.round((okCount / count) * 1000) / 10) + " %" : null },
+    { label: "Failed runs", value: String(count - okCount) },
+  ]);
+  void ok;
+}
+
+/** Pure: bucket detail samples into n availability ratios over [t0, t1]. */
+function _pathAvailabilityBuckets(samples, t0, t1, n) {
+  var out = [];
+  var span = (t1 - t0) / n;
+  for (var i = 0; i < n; i++) out.push({ t: t0 + i * span, ok: 0, total: 0 });
+  samples.forEach(function (s) {
+    var t = new Date(s.timestamp).getTime();
+    if (t < t0 || t > t1) return;
+    var idx = Math.min(n - 1, Math.floor((t - t0) / span));
+    var total = s.sampleCount != null ? s.sampleCount : 1;
+    var ok = s.okCount != null ? s.okCount : (s.ok ? 1 : 0);
+    out[idx].total += total;
+    out[idx].ok += ok;
+  });
+  return out;
+}
+
+function _pathChartFrame(container, H) {
+  var W = container.clientWidth || 600;
+  return { W: W, H: H, padL: 52, padR: 10, padT: 10, padB: 22 };
+}
+
+// The shared calendar-boundary ticks every chart draws (_chartXTicksSVG) — the
+// equal-fifths loop this replaced called _chartTickFmt, which main retired.
+function _pathXTicks(g, t0, t1, innerW, innerH) {
+  return _chartXTicksSVG(t0, t1, g.padL, g.padT, innerW, innerH);
+}
+
+function _renderPathLatencyChart(container, samples, opts, check) {
+  var st = _pathTabState || {};
+  var hidden = st.hiddenPhases || new Set();
+  if (!samples.length) { container.textContent = "No samples in this range yet."; return; }
+  var g = _pathChartFrame(container, 170);
+  var innerW = g.W - g.padL - g.padR, innerH = g.H - g.padT - g.padB;
+  var bounds = _chartTimeBounds(samples, opts.since, opts.until);
+  var t0 = bounds.t0, t1 = bounds.t1;
+  var phases = _PATH_PHASES.filter(function (p) {
+    return samples.some(function (s) { return typeof s[p.key] === "number"; });
+  });
+  var visible = phases.filter(function (p) { return !hidden.has(p.key) || p.key === "latencyMs" && phases.length === 1; });
+  var maxV = 1;
+  visible.forEach(function (p) { samples.forEach(function (s) { if (typeof s[p.key] === "number" && s[p.key] > maxV) maxV = s[p.key]; }); });
+  var tiers = (st.tiers && st.tiers[check.id]) || [];
+  tiers.forEach(function (t) { if (t.threshold > maxV) maxV = t.threshold * 1.05; });
+  var exp = Math.pow(10, Math.floor(Math.log10(maxV)));
+  var m = maxV / exp;
+  var ceil = (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * exp;
+  var xFor = _chartXScale(g.padL, innerW, t0, t1);
+  var yFor = _chartYScale(g.padT, innerH, 0, ceil);
+  var sev = _severityChartLayer("conn", tiers, 0, ceil, { padL: g.padL, padR: g.padR, padT: g.padT, innerH: innerH, W: g.W, yFor: yFor, unit: "ms" });
+  var ticks = "";
+  for (var i = 0; i <= 4; i++) {
+    var v = ceil * i / 4, y = g.padT + innerH - (i / 4) * innerH;
+    ticks += '<line x1="' + g.padL + '" y1="' + y + '" x2="' + (g.W - g.padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (g.padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + "</text>";
+  }
+  var lines = visible.map(function (p, idx) {
+    var pts = samples.filter(function (s) { return typeof s[p.key] === "number"; })
+      .map(function (s) { return xFor(s.timestamp) + "," + yFor(s[p.key]); }).join(" ");
+    var stroke = p.key === "latencyMs" && tiers.length ? sev.stroke : p.color;
+    return '<polyline points="' + pts + '" fill="none" stroke="' + stroke + '" stroke-width="' + (p.key === "latencyMs" ? 1.75 : 1.25) + '"/>';
+  }).join("");
+  // Failed runs dive to the baseline in the canonical failure red (a marker,
+  // not a data series).
+  var fails = samples.filter(function (s) { return s.ok === false || (s.failCount > 0 && s.okCount === 0); }).map(function (s) {
+    return '<circle cx="' + xFor(s.timestamp) + '" cy="' + (g.padT + innerH) + '" r="3" fill="' + _CHART_FAIL_COLOR + '"/>';
+  }).join("");
+  var hits = samples.map(function (s) {
+    var yv = typeof s.latencyMs === "number" ? yFor(s.latencyMs) : g.padT + innerH;
+    return '<circle class="chart-hit" cx="' + xFor(s.timestamp) + '" cy="' + yv + '" r="5" fill="transparent" style="cursor:crosshair" data-ts="' +
+      escapeHtml(String(s.timestamp)) + '" data-i="' + samples.indexOf(s) + '"/>';
+  }).join("");
+  var chips = phases.map(function (p) {
+    var off = hidden.has(p.key) && !(p.key === "latencyMs" && phases.length === 1);
+    return '<button type="button" class="btn btn-sm btn-secondary path-phase-chip" data-phase="' + p.key + '" style="opacity:' + (off ? 0.45 : 1) + '">' +
+      '<span style="display:inline-block;width:10px;height:6px;background:' + p.color + ';margin-right:4px"></span>' + escapeHtml(p.label) + "</button>";
+  }).join(" ");
+  var clipId = _chartClipId("conn");
+  container.innerHTML =
+    '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">' + chips + "</div>" +
+    '<svg width="100%" height="' + g.H + '" viewBox="0 0 ' + g.W + " " + g.H + '" preserveAspectRatio="none" style="display:block">' +
+      sev.defs + _chartClipDefs(clipId, g.padL, g.padT, innerW, innerH) +
+      ticks + _pathXTicks(g, t0, t1, innerW, innerH) +
+      _dateChangeMarkers(t0, t1, g.padL, g.padT, innerW, innerH) +
+      _maintenanceBandLayer(t0, t1, g.padL, g.padT, innerW, innerH) +
+      "<g " + _chartClipAttr(clipId) + ">" + sev.lines + lines + fails + hits + "</g>" + sev.labels +
+    "</svg>" + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  _stashChartGeometry(container, t0, t1, g.padL, innerW, g.W);
+  _wireChartTooltip(container, function (target) {
+    var s = samples[Number(target.getAttribute("data-i"))] || {};
+    var row = function (label, v) { return typeof v === "number" ? "<div>" + label + ": " + Math.round(v) + " ms</div>" : ""; };
+    return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + "</div>" +
+      (s.ok === false ? '<div style="color:' + _CHART_FAIL_COLOR + '">Failed' + (s.error ? " — " + escapeHtml(s.error) : "") + "</div>" : "") +
+      row("Total", s.latencyMs) + row("DNS", s.dnsMs) + row("Connect", s.connectMs) + row("TLS", s.tlsMs) + row("TTFB", s.ttfbMs) +
+      (s.httpStatus != null ? "<div>HTTP " + s.httpStatus + "</div>" : "");
+  });
+  container.querySelectorAll(".path-phase-chip").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var key = b.getAttribute("data-phase");
+      if (hidden.has(key)) hidden.delete(key); else hidden.add(key);
+      _pathSaveHiddenPhases(hidden);
+      _renderPathLatencyChart(container, samples, opts, check);
+    });
+  });
+  _addChartScreenshotButton(container, "Path latency", { yAxis: "Latency (ms)", subject: opts.subject, getStats: _statsSummaryFrom("asset-path-latency-stats") });
+  _observeChartResize(container, function (c) { _renderPathLatencyChart(c, samples, opts, check); });
+}
+
+function _renderPathAvailabilityChart(container, samples, opts) {
+  if (!samples.length) { container.textContent = "No samples in this range yet."; return; }
+  var g = _pathChartFrame(container, 120);
+  var innerW = g.W - g.padL - g.padR, innerH = g.H - g.padT - g.padB;
+  var bounds = _chartTimeBounds(samples, opts.since, opts.until);
+  var t0 = bounds.t0, t1 = bounds.t1;
+  var n = Math.max(10, Math.min(120, Math.floor(innerW / 8)));
+  var buckets = _pathAvailabilityBuckets(samples, t0, t1, n);
+  var bw = innerW / n;
+  var yFor = _chartYScale(g.padT, innerH, 0, 100);
+  var bars = buckets.map(function (b, i) {
+    if (!b.total) return ""; // no run in this slot (agent offline) — a gap, not a failure
+    var pct = (b.ok / b.total) * 100;
+    var y = yFor(pct);
+    return '<rect class="chart-hit" x="' + (g.padL + i * bw + 0.5) + '" y="' + y + '" width="' + Math.max(1, bw - 1) + '" height="' + (g.padT + innerH - y) +
+      '" fill="' + _CHART_UP_COLOR + '" opacity="0.8" data-ts="' + new Date(b.t).toISOString() + '" data-v="' + (Math.round(pct * 10) / 10) + '" data-n="' + b.total + '"/>';
+  }).join("");
+  var ticks = [0, 50, 100].map(function (v) {
+    var y = yFor(v);
+    return '<line x1="' + g.padL + '" y1="' + y + '" x2="' + (g.W - g.padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (g.padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + v + "%</text>";
+  }).join("");
+  container.innerHTML =
+    '<svg width="100%" height="' + g.H + '" viewBox="0 0 ' + g.W + " " + g.H + '" preserveAspectRatio="none" style="display:block">' +
+      ticks + _pathXTicks(g, t0, t1, innerW, innerH) +
+      _maintenanceBandLayer(t0, t1, g.padL, g.padT, innerW, innerH) + bars +
+    "</svg>" + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  _stashChartGeometry(container, t0, t1, g.padL, innerW, g.W);
+  _wireChartTooltip(container, function (target) {
+    return "<div>" + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + "</div>" +
+      "<div>Available: " + escapeHtml(target.getAttribute("data-v")) + " % of " + escapeHtml(target.getAttribute("data-n")) + " runs</div>";
+  });
+  _addChartScreenshotButton(container, "Path availability", { yAxis: "Availability (%)", subject: opts.subject, getStats: _statsSummaryFrom("asset-path-avail-stats") });
+  _observeChartResize(container, function (c) { _renderPathAvailabilityChart(c, samples, opts); });
+}
+
+/** A verdict strip, not a data series: one cell per run (or rollup bucket),
+ *  green for a pass and red for a failure, the HTTP code in the tooltip. */
+function _renderPathStatusStrip(container, samples, opts) {
+  if (!samples.length) { container.textContent = "No samples in this range yet."; return; }
+  var W = container.clientWidth || 600, H = 26, padL = 52, padR = 10;
+  var innerW = W - padL - padR;
+  var bounds = _chartTimeBounds(samples, opts.since, opts.until);
+  var xFor = _chartXScale(padL, innerW, bounds.t0, bounds.t1);
+  var cellW = Math.max(2, innerW / Math.max(samples.length, 1));
+  var counts = {};
+  var cells = samples.map(function (s, i) {
+    var label = s.httpStatus != null ? String(s.httpStatus) : (s.ok ? "ok" : "error");
+    counts[label] = (counts[label] || 0) + (s.sampleCount || 1);
+    var partial = s.failCount > 0 && s.okCount > 0;
+    var color = partial ? "#f4a261" : (s.ok ? MONITOR_STATE_COLORS.up : MONITOR_STATE_COLORS.down);
+    return '<rect class="chart-hit" x="' + xFor(s.timestamp) + '" y="4" width="' + cellW + '" height="' + (H - 8) + '" fill="' + color + '" data-i="' + i + '"/>';
+  }).join("");
+  container.innerHTML = '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" style="display:block">' + cells + "</svg>" + CHART_TOOLTIP_HTML;
+  container.style.position = "relative";
+  _wireChartTooltip(container, function (target) {
+    var s = samples[Number(target.getAttribute("data-i"))] || {};
+    return "<div>" + escapeHtml(_fmtTooltipTs(String(s.timestamp))) + "</div>" +
+      "<div>" + (s.httpStatus != null ? "HTTP " + s.httpStatus : (s.ok ? "Passed" : "Failed")) +
+      (s.sampleCount ? " · " + s.okCount + "/" + s.sampleCount + " passed" : "") + "</div>";
+  });
+  var summary = Object.keys(counts).sort().map(function (k) { return k + " ×" + counts[k]; }).join(" · ");
+  var statsEl = document.getElementById("asset-path-status-stats");
+  if (statsEl) statsEl.textContent = summary;
+  _observeChartResize(container, function (c) { _renderPathStatusStrip(c, samples, opts); });
+}
+
+function _renderPathLatestCard(check) {
+  var mount = document.getElementById("path-latest");
+  if (!mount) return;
+  var l = check.latest || {};
+  var row = function (k, v) { return '<div class="asset-view-row"><span class="asset-view-label">' + k + '</span><span class="asset-view-value">' + v + "</span></div>"; };
+  mount.innerHTML = '<div class="chart-label">Latest result</div><div class="asset-view-grid">' +
+    row("Result", _pathResultPill(l)) +
+    row("When", escapeHtml(_pathFmtWhen(l.lastSampleAt))) +
+    row("Latency", l.lastLatencyMs != null ? Math.round(l.lastLatencyMs) + " ms" : "—") +
+    (check.kind === "http" || check.kind === "https" ? row("HTTP status", l.lastHttpStatus != null ? String(l.lastHttpStatus) : "—") : "") +
+    row("Resolved IP", escapeHtml(l.lastResolvedIp || "—")) +
+    (l.lastOk === false && l.lastError ? row("Error", '<span style="color:' + _CHART_FAIL_COLOR + '">' + escapeHtml(l.lastError) + "</span>") : "") +
+    row("Last failure", escapeHtml(_pathFmtWhen(l.lastFailAt))) +
+    _pathSampleRows(check.latestSample, row) +
+    "</div>" +
+    _pathExcerptHTML(check.latestSample);
+}
+
+/** The newest sample's body / TLS facts (the source row carries only the verdict). */
+function _pathSampleRows(s, row) {
+  if (!s) return "";
+  var out = "";
+  var phases = ["dnsMs", "connectMs", "tlsMs", "ttfbMs"].filter(function (k) { return typeof s[k] === "number"; })
+    .map(function (k) { return k.replace("Ms", "").toUpperCase() + " " + Math.round(s[k]) + " ms"; });
+  if (phases.length) out += row("Phases", escapeHtml(phases.join(" · ")));
+  if (s.bodyMatched != null) out += row("Body match", s.bodyMatched ? "matched" : '<span style="color:' + _CHART_FAIL_COLOR + '">not found</span>');
+  if (s.bodySha256) out += row("Body SHA-256", '<code class="copy-cell" style="font-size:0.75rem;word-break:break-all">' + escapeHtml(s.bodySha256) + "</code>");
+  if (s.bodyBytes != null) out += row("Body size", s.bodyBytes + " bytes" + (s.bodyBytes >= 65536 ? " (first 64 KB read)" : ""));
+  if (s.tlsIssuer) out += row("TLS issuer", escapeHtml(s.tlsIssuer));
+  if (s.tlsNotAfter) out += row("TLS expires", _pathTlsExpiryHTML(s.tlsNotAfter));
+  return out;
+}
+
+/** Display bands only — the alerting threshold is an automation on pathTlsDaysLeft. */
+function _pathTlsExpiryHTML(notAfter) {
+  var d = new Date(notAfter);
+  if (isNaN(d.getTime())) return "—";
+  var days = Math.floor((d.getTime() - Date.now()) / 86400000);
+  var color = days <= 7 ? MONITOR_STATE_COLORS.down : days <= 30 ? MONITOR_STATE_COLORS.warning : MONITOR_STATE_COLORS.up;
+  return escapeHtml(formatDate(notAfter)) + ' <span style="color:' + color + ';font-weight:600">(' + (days < 0 ? "expired" : days + " days") + ")</span>";
+}
+
+function _pathExcerptHTML(s) {
+  if (!s || !s.bodyExcerpt) return "";
+  return '<div class="chart-label" style="margin-top:0.5rem">Response excerpt' + (s.ok ? "" : " (failed run)") + "</div>" +
+    '<pre style="max-height:160px;overflow:auto;white-space:pre-wrap;font-size:0.75rem;background:var(--color-bg-subtle,rgba(127,127,127,0.08));padding:0.5rem;border-radius:var(--radius-md)">' +
+    escapeHtml(String(s.bodyExcerpt).slice(0, 4096)) + "</pre>";
+}
+
+/** Pure: which TTLs differ between two traceroutes' hop lists. */
+function _trDiffHops(cur, prev) {
+  var out = new Set();
+  if (!prev) return out;
+  var byTtl = {};
+  (prev.hops || []).forEach(function (h) { byTtl[h.ttl] = h.ip || null; });
+  (cur.hops || []).forEach(function (h) {
+    var before = Object.prototype.hasOwnProperty.call(byTtl, h.ttl) ? byTtl[h.ttl] : undefined;
+    if (before === undefined || before !== (h.ip || null)) out.add(h.ttl);
+  });
+  return out;
+}
+
+/** Pure: avg / min / max of a hop's answered probes (−1 = timeout). */
+function _trHopRtt(rtts) {
+  var v = (rtts || []).filter(function (x) { return typeof x === "number" && x >= 0; });
+  if (!v.length) return null;
+  var sum = v.reduce(function (a, b) { return a + b; }, 0);
+  return { avg: sum / v.length, min: Math.min.apply(null, v), max: Math.max.apply(null, v) };
+}
+
+/**
+ * Pure: fold the fetched traceroutes (newest first) into one NetPath-style
+ * graph — column 0 is this host, column N the destination, one column per TTL
+ * between. A hop is a node per (ttl, ip); the same address at the same TTL in
+ * several traces is one node, so a route change reads as a branch. Each link
+ * counts the traces that took it; `sel` marks the selected trace's own route,
+ * with the latency each link ADDS (its hop's avg RTT minus the last answered
+ * hop's before it) so the slow segment is the one that lights up.
+ */
+function _trPathGraph(traces, sel) {
+  var nodes = {}, edges = {}, maxTtl = 0;
+  var selT = traces[sel] || traces[0];
+  var destIp = (selT && selT.destinationIp) || null;
+  traces.forEach(function (t) { if (!destIp && t.destinationIp) destIp = t.destinationIp; });
+  function keyOf(t, h, isLast) {
+    if (h.ip && ((isLast && t.complete) || h.ip === destIp)) return "dst";
+    return h.ttl + ":" + (h.ip || "*");
+  }
+  function ensure(key, h) {
+    var n = nodes[key] || (nodes[key] = { key: key, ttl: h ? h.ttl : 0, hop: null, traces: 0, onSel: false });
+    if (h && !n.hop) n.hop = h; // newest trace first, so the first sighting is the latest
+    return n;
+  }
+  function touch(key, ti, h) {
+    var n = ensure(key, h);
+    n.traces++;
+    if (ti === sel) { n.onSel = true; if (h) n.hop = h; }
+    return n;
+  }
+  function link(a, b, ti, extra) {
+    // A trace that stopped short gets its own link to the destination — merged
+    // with a completed trace's, the ✕ would land on a route that got through.
+    var k = a + ">" + b + (extra && extra.broken ? "!" : "");
+    var e = edges[k] || (edges[k] = { from: a, to: b, traces: 0, onSel: false, broken: false, delta: null, lossy: false, unanswered: false });
+    e.traces++;
+    if (extra && extra.broken) e.broken = true;
+    if (ti === sel) { e.onSel = true; if (extra) { e.delta = extra.delta; e.lossy = !!extra.lossy; e.unanswered = !!extra.unanswered; } }
+  }
+  ensure("src", null).onSel = true;
+  traces.forEach(function (t, ti) {
+    var hops = (t.hops || []).slice().sort(function (a, b) { return a.ttl - b.ttl; });
+    var prev = "src", lastAvg = 0;
+    hops.forEach(function (h, i) {
+      var key = keyOf(t, h, i === hops.length - 1);
+      if (key === prev) return; // the destination answering at two TTLs
+      touch(key, ti, h);
+      if (key !== "dst" && h.ttl > maxTtl) maxTtl = h.ttl;
+      var rtt = _trHopRtt(h.rttMs);
+      var lost = (h.rttMs || []).filter(function (x) { return !(typeof x === "number" && x >= 0); }).length;
+      link(prev, key, ti, { delta: rtt ? Math.max(0, rtt.avg - lastAvg) : null, lossy: rtt && lost > 0, unanswered: !rtt });
+      if (rtt) lastAvg = rtt.avg;
+      prev = key;
+    });
+    if (prev !== "dst") {
+      ensure("dst", null); // drawn even when no trace reached it
+      link(prev, "dst", ti, { broken: true });
+    }
+  });
+  nodes.src.traces = traces.length;
+  if (nodes.dst && !nodes.dst.hop) nodes.dst.hop = { ttl: 0, ip: destIp, rdns: null, rttMs: [] };
+  // Columns: TTL for a hop, one past the deepest hop for the destination.
+  var cols = [];
+  Object.keys(nodes).forEach(function (k) {
+    var n = nodes[k];
+    n.col = k === "src" ? 0 : k === "dst" ? maxTtl + 1 : n.ttl;
+    (cols[n.col] || (cols[n.col] = [])).push(n);
+  });
+  // Rows: most-travelled first, then by address — stable across selections, so
+  // picking another trace moves the highlight, never the nodes.
+  cols.forEach(function (list) {
+    if (!list) return;
+    list.sort(function (a, b) { return b.traces - a.traces || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); });
+    list.forEach(function (n, i) { n.row = i; });
+  });
+  return { nodes: nodes, edges: Object.keys(edges).map(function (k) { return edges[k]; }), cols: maxTtl + 2, traces: traces.length, destIp: destIp };
+}
+
+/** Pure: a link's colour by the latency it adds — the NetPath reading. */
+function _trEdgeColor(e) {
+  if (e.broken) return "var(--color-danger)";
+  if (!e.onSel || e.delta == null) return "var(--color-text-tertiary)";
+  if (e.delta >= 50) return "var(--color-danger)";
+  if (e.delta >= 10 || e.lossy) return "var(--color-warning)";
+  return "var(--color-success)";
+}
+
+/** Pure: the path graph as SVG. `source` is this host ({hostname, ipAddress}). */
+function _trPathSVG(g, source, minWidth) {
+  // Columns shrink to fit the panel before the graph scrolls: source and
+  // destination on one screen is the point of the view.
+  var MINCOL = 76, MAXCOL = 130, ROWH = 74, PADX = 12, PADT = 22, R = 13;
+  var rows = 1;
+  Object.keys(g.nodes).forEach(function (k) { rows = Math.max(rows, g.nodes[k].row + 1); });
+  var colW = Math.max(MINCOL, Math.min(MAXCOL, ((minWidth || 0) - PADX * 2) / g.cols));
+  var W = Math.max(minWidth || 0, PADX * 2 + g.cols * colW);
+  var offX = (W - g.cols * colW) / 2;
+  var H = PADT + rows * ROWH + 4;
+  function pos(n) { return { x: offX + n.col * colW + colW / 2, y: PADT + R + n.row * ROWH }; }
+  function clip(s, px) { var max = Math.max(4, Math.floor(px / 6.2)); s = String(s || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; }
+  var edgeSvg = "", nodeSvg = "", hitSvg = "";
+  // Unselected routes first so the selected one paints on top.
+  g.edges.slice().sort(function (a, b) { return (a.onSel ? 1 : 0) - (b.onSel ? 1 : 0); }).forEach(function (e) {
+    var a = pos(g.nodes[e.from]), b = pos(g.nodes[e.to]);
+    var x1 = a.x + R, x2 = b.x - R, mx = (x1 + x2) / 2;
+    var w = (1.25 + 3 * (e.traces / Math.max(1, g.traces))).toFixed(2);
+    var dash = e.broken || e.unanswered ? ' stroke-dasharray="5 4"' : "";
+    edgeSvg += '<path d="M' + x1.toFixed(1) + "," + a.y + " C" + mx.toFixed(1) + "," + a.y + " " + mx.toFixed(1) + "," + b.y + " " + x2.toFixed(1) + "," + b.y +
+      '" fill="none" stroke="' + _trEdgeColor(e) + '" stroke-width="' + (e.onSel ? Math.max(2.5, +w) : w) + '"' + dash +
+      ' stroke-linecap="round" opacity="' + (e.onSel ? 1 : 0.35) + '"/>';
+    if (e.broken && e.onSel) {
+      var cx = (x1 + x2) / 2, cy = (a.y + b.y) / 2;
+      edgeSvg += '<g stroke="var(--color-danger)" stroke-width="2.5" stroke-linecap="round">' +
+        '<line x1="' + (cx - 5) + '" y1="' + (cy - 5) + '" x2="' + (cx + 5) + '" y2="' + (cy + 5) + '"/>' +
+        '<line x1="' + (cx - 5) + '" y1="' + (cy + 5) + '" x2="' + (cx + 5) + '" y2="' + (cy - 5) + '"/></g>';
+    }
+  });
+  Object.keys(g.nodes).forEach(function (k) {
+    var n = g.nodes[k], p = pos(n), h = n.hop || {};
+    var rtt = h.rttMs ? _trHopRtt(h.rttMs) : null;
+    var fill, stroke = "var(--color-text-secondary)", text = "var(--color-text-primary)", dash = "", glyph, name, sub;
+    if (k === "src") {
+      fill = "var(--color-accent)"; stroke = fill; text = "#fff"; glyph = "⌂";
+      name = (source && source.hostname) || "This host"; sub = "source";
+    } else if (k === "dst") {
+      fill = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus] ? MONITOR_STATE_COLORS[h.monitorStatus] : "var(--color-bg-primary)";
+      glyph = "◎"; if (fill.charAt(0) === "#") { stroke = fill; text = "#fff"; }
+      name = h.hostname || h.rdns || g.destIp || "Destination"; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "destination";
+    } else if (!h.ip) {
+      fill = "none"; stroke = "var(--color-text-tertiary)"; dash = ' stroke-dasharray="3 3"'; text = "var(--color-text-tertiary)";
+      glyph = "*"; name = "no reply"; sub = "TTL " + n.ttl;
+    } else {
+      var sc = h.monitorStatus && MONITOR_STATE_COLORS[h.monitorStatus];
+      fill = sc || "var(--color-bg-primary)"; if (sc) { stroke = sc; text = "#fff"; }
+      glyph = String(n.ttl); name = h.hostname || h.rdns || h.ip; sub = rtt ? (Math.round(rtt.avg * 10) / 10) + " ms" : "—";
+    }
+    var op = n.onSel || k === "src" ? 1 : 0.45;
+    nodeSvg += '<g opacity="' + op + '">' +
+      '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + R + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + (k === "dst" ? 3 : 1.5) + '"' + dash + "/>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + 4) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + text + '">' + escapeHtml(glyph) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 14) + '" text-anchor="middle" font-size="11" fill="var(--color-text-primary)">' + escapeHtml(clip(name, colW - 8)) + "</text>" +
+      '<text x="' + p.x.toFixed(1) + '" y="' + (p.y + R + 27) + '" text-anchor="middle" font-size="10" fill="var(--color-text-secondary)">' + escapeHtml(clip(sub, colW - 8)) + "</text>" +
+      "</g>";
+    hitSvg += '<circle class="chart-hit" data-k="' + escapeHtml(k) + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y + '" r="' + (R + 5) + '" fill="transparent"' +
+      (h.assetId ? ' style="cursor:pointer"' : "") + "/>";
+  });
+  return '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" style="display:block;font-family:inherit">' + edgeSvg + nodeSvg + hitSvg + "</svg>";
+}
+
+function _trPathTooltipHTML(g, key, source) {
+  var n = g.nodes[key];
+  if (!n) return "";
+  var h = n.hop || {};
+  var rows = [];
+  var name = key === "src" ? ((source && source.hostname) || "This host") : (h.hostname || h.rdns || h.ip || "No reply");
+  rows.push("<strong>" + escapeHtml(name) + "</strong>" + (key === "src" ? " · source" : key === "dst" ? " · destination" : " · TTL " + n.ttl));
+  if (key === "src" && source && source.ipAddress) rows.push(escapeHtml(source.ipAddress));
+  if (key !== "src") {
+    if (h.ip && h.ip !== name) rows.push(escapeHtml(h.ip));
+    if (h.rdns && h.rdns !== name) rows.push(escapeHtml(h.rdns));
+    var rtt = _trHopRtt(h.rttMs);
+    if (rtt) rows.push("RTT " + (Math.round(rtt.avg * 10) / 10) + " ms avg · " + (Math.round(rtt.min * 10) / 10) + "–" + (Math.round(rtt.max * 10) / 10) + " ms");
+    var probes = (h.rttMs || []).length, lost = (h.rttMs || []).filter(function (x) { return !(typeof x === "number" && x >= 0); }).length;
+    if (probes && lost) rows.push(lost + " of " + probes + " probes unanswered");
+    if (!h.ip && key !== "dst") rows.push("No router answered at this hop — common where ICMP time-exceeded is filtered");
+    if (h.interfaceName) rows.push("Interface " + escapeHtml(h.interfaceName));
+    if (h.subnetCidr) rows.push("Subnet " + escapeHtml(h.subnetCidr));
+    if (h.assetId) rows.push('<span style="color:var(--color-text-secondary)">Click to open the asset</span>');
+  }
+  if (key !== "src" && g.traces > 1) rows.push('<span style="color:var(--color-text-secondary)">On ' + n.traces + " of " + g.traces + " traces" + (n.onSel ? "" : " · not on the selected one") + "</span>");
+  return rows.join("<br>");
+}
+
+var _TR_PATH_LEGEND_HTML =
+  '<div class="hint" style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin-top:0.35rem">' +
+    '<span>Latency added by each link:</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-success)"></span> under 10 ms</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-warning)"></span> 10–50 ms or probe loss</span>' +
+    '<span><span style="display:inline-block;width:18px;height:3px;vertical-align:middle;background:var(--color-danger)"></span> over 50 ms · ✕ destination not reached</span>' +
+    '<span>Faded branches are routes other recent traces took; thicker links were taken more often.</span>' +
+  "</div>";
+
+function _renderTrPathGraph(box, list, sel, source) {
+  var g = _trPathGraph(list, sel);
+  box.innerHTML = '<div style="overflow-x:auto">' +
+    _trPathSVG(g, source, Math.max(0, (box.clientWidth || 0) - 16)) + "</div>" + CHART_TOOLTIP_HTML;
+  _wireChartTooltip(box, function (t) { return _trPathTooltipHTML(g, t.getAttribute("data-k"), source); });
+  box.querySelector("svg").addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains("chart-hit")) return;
+    var n = g.nodes[t.getAttribute("data-k")];
+    if (n && n.hop && n.hop.assetId) openViewModal(n.hop.assetId);
+  });
+}
+
+async function _loadPathTraceroutes(assetId, check, source) {
+  var mount = document.getElementById("path-traceroute");
+  if (!mount) return;
+  if (!check.traceroute || check.traceroute.enabled === false) {
+    mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">Traceroute is off for this check.</p>';
+    return;
+  }
+  mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">Loading…</p>';
+  try {
+    var res = await api.assets.pathCheckTraceroutes(assetId, check.id, 10);
+    if (!_pathTabState || _pathTabState.checkId !== check.id) return;
+    var list = (res && res.traceroutes) || [];
+    if (!list.length) {
+      mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">No traceroute yet — one runs on the first run, every ' +
+        ((check.traceroute && check.traceroute.everyNRuns) || 5) + " runs after that, and whenever the check starts failing.</p>";
+      return;
+    }
+    var options = list.map(function (t, i) {
+      return '<option value="' + i + '">' + escapeHtml(_pathFmtWhen(t.timestamp)) + " · " + t.hopCount + " hops" +
+        (t.complete ? "" : " · incomplete") + (t.reason === "transition" ? " · on failure" : "") + "</option>";
+    }).join("");
+    mount.innerHTML = '<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">' +
+        '<div class="chart-label" style="margin:0">Path</div>' +
+        '<select id="path-tr-select" style="width:auto">' + options + "</select>" +
+        '<span id="path-tr-diff" class="hint"></span></div>' +
+      '<div class="chart-box" id="path-tr-graph" style="margin-top:0.5rem;position:relative"></div>' +
+      _TR_PATH_LEGEND_HTML +
+      '<div class="table-wrapper" style="margin-top:0.75rem"><table id="path-tr-table"><thead><tr>' +
+        '<th style="width:50px">TTL</th><th style="width:140px">IP</th><th>Reverse DNS</th><th style="width:150px">RTT avg / min / max</th><th>Asset</th><th style="width:140px">Subnet</th>' +
+      '</tr></thead><tbody id="path-tr-body"></tbody></table></div>' +
+      '<p class="hint" id="path-tr-foot" style="margin-top:0.35rem"></p>';
+    var sel = document.getElementById("path-tr-select");
+    sel.value = "0";
+    var draw = function () {
+      var i = Number(sel.value) || 0;
+      var cur = list[i], prev = list[i + 1];
+      var changed = _trDiffHops(cur, prev);
+      var graphBox = document.getElementById("path-tr-graph");
+      if (graphBox) {
+        _renderTrPathGraph(graphBox, list, i, source);
+        _observeChartResize(graphBox, function (el) { _renderTrPathGraph(el, list, Number(sel.value) || 0, source); });
+      }
+      var diffEl = document.getElementById("path-tr-diff");
+      if (diffEl) diffEl.textContent = !prev ? "" : changed.size ? "Path changed vs the previous trace — " + changed.size + " hop" + (changed.size === 1 ? "" : "s") + " differ" : "Same path as the previous trace";
+      var prevIp = {};
+      (prev ? prev.hops : []).forEach(function (h) { prevIp[h.ttl] = h.ip; });
+      document.getElementById("path-tr-body").innerHTML = (cur.hops || []).map(function (h) {
+        var rtt = _trHopRtt(h.rttMs);
+        var fmt = function (x) { return (Math.round(x * 10) / 10) + " ms"; };
+        var assetCell = h.assetId
+          ? '<a href="#" class="dep-tree-link path-tr-asset" data-id="' + escapeHtml(h.assetId) + '" title="Status when the trace was taken">' +
+              '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:' + (MONITOR_STATE_COLORS[h.monitorStatus] || "var(--color-text-tertiary)") + '"></span>' +
+              escapeHtml(h.hostname || h.ip) + (h.interfaceName ? " · " + escapeHtml(h.interfaceName) : "") + "</a>"
+          : "";
+        var isChanged = changed.has(h.ttl);
+        return '<tr' + (isChanged ? ' style="box-shadow:inset 3px 0 0 var(--color-accent)" title="was ' + escapeHtml(prevIp[h.ttl] || "* (no reply)") + '"' : "") + ">" +
+          "<td>" + h.ttl + "</td>" +
+          "<td>" + (h.ip ? escapeHtml(h.ip) : '<span class="hint">* * *</span>') + "</td>" +
+          "<td>" + escapeHtml(h.rdns || "") + "</td>" +
+          "<td>" + (rtt ? fmt(rtt.avg) + " / " + fmt(rtt.min) + " / " + fmt(rtt.max) : "—") + "</td>" +
+          "<td>" + assetCell + "</td>" +
+          "<td>" + (h.subnetCidr ? '<span class="tag-chip">' + escapeHtml(h.subnetCidr) + "</span>" : "") + "</td>" +
+          "</tr>";
+      }).join("");
+      var last = (cur.hops || [])[cur.hops.length - 1];
+      document.getElementById("path-tr-foot").textContent =
+        (cur.complete ? "Reached the destination (" + (cur.destinationIp || "") + ")." : "Incomplete — stopped at TTL " + (last ? last.ttl : 0) + ".") +
+        (cur.note ? " " + cur.note : "") +
+        " A path change is recorded on the Events tab as path_check.path_changed.";
+      document.querySelectorAll(".path-tr-asset").forEach(function (lnk) {
+        lnk.addEventListener("click", function (e) { e.preventDefault(); openViewModal(lnk.getAttribute("data-id")); });
+      });
+    };
+    sel.addEventListener("change", draw);
+    draw();
+  } catch (err) {
+    mount.innerHTML = '<div class="chart-label">Path</div><p class="hint">' + escapeHtml(err.message || "Failed to load traceroutes") + "</p>";
   }
 }

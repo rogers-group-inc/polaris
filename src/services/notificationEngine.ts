@@ -1099,9 +1099,99 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       const filtered = rows.filter((r) => tunnelIsPinned(index.get(r.assetId), r.tunnelName) && substringMatch(r.tunnelName, df.tunnelName));
       return rateReadings(filtered, index, (r) => r.tunnelName, (r) => r.tunnelName, (r) => { const i = num(r.incomingBytes); const o = num(r.outgoingBytes); return i === null && o === null ? null : (i ?? 0) + (o ?? 0); }, 8);
     }
+    // ── Agent-run path checks ──────────────────────────────────────
+    // The asset is the AGENT HOST; the dimension is the check (key = id, label
+    // = the check's name). A reading here is about a path from that host — it
+    // never moves the host's monitorStatus, and the SLA the operator writes is
+    // this trigger's threshold, not anything stored on the check.
+    case "pathLatencyMs": case "pathHttpStatus": case "pathOk": case "pathTlsDaysLeft": {
+      const rows = await prisma.assetPathCheckSample.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since }, ...(df.checkId ? { checkId: df.checkId } : {}) },
+        select: { assetId: true, timestamp: true, checkId: true, ok: true, latencyMs: true, httpStatus: true, tlsNotAfter: true },
+      });
+      const names = await pathCheckNames(rows.map((r) => r.checkId));
+      const now = Date.now();
+      const valueFn = (r: typeof rows[number]): number | null => {
+        switch (trigger.metric) {
+          // A failed run carries no latency (nothing connected, or it timed
+          // out): no reading, not a zero — the failure is pathOk's to report.
+          case "pathLatencyMs": return r.latencyMs ?? null;
+          case "pathHttpStatus": return r.httpStatus ?? null;
+          case "pathOk": return r.ok ? 1 : 0;
+          // tcp / icmp checks and plain-http runs have no certificate: no reading.
+          default: return r.tlsNotAfter ? Math.floor((r.tlsNotAfter.getTime() - now) / 86_400_000) : null;
+        }
+      };
+      return reduceReadings(rows, index, (r) => r.checkId, (r) => names.get(r.checkId) ?? r.checkId, valueFn, agg, winPolls);
+    }
+    case "pathHopCount": {
+      // Read off the traceroutes (every Nth run + each pass→fail), not the
+      // per-run samples, which carry no hop count.
+      const rows = await prisma.assetPathCheckTraceroute.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since }, ...(df.checkId ? { checkId: df.checkId } : {}) },
+        select: { assetId: true, timestamp: true, checkId: true, hopCount: true },
+      });
+      const names = await pathCheckNames(rows.map((r) => r.checkId));
+      return reduceReadings(rows, index, (r) => r.checkId, (r) => names.get(r.checkId) ?? r.checkId, (r) => r.hopCount, agg, winPolls);
+    }
+    case "pathFailurePct": {
+      // A windowed RATIO (failed runs / runs) like probeLossPct: the window is
+      // the measurement, floored at 5 min and defaulted to 15 by the same
+      // probeLossWindowSec. ONE grouped aggregate over (host, check, ok) — never
+      // a fetch-all at 2000 hosts on the 60 s tick. Emits 0 % rows too so a
+      // hysteresis reset recovers. NOT gated on the host answering probes (the
+      // probeLossPct gate): these results are the agent's own report, and a
+      // host that cannot report pushes nothing, so it is naturally silent.
+      const windowSec = probeLossWindowSec(trigger.windowSec);
+      const grouped = await prisma.assetPathCheckSample.groupBy({
+        by: ["assetId", "checkId", "ok"],
+        where: {
+          assetId: { in: ids },
+          timestamp: { gte: new Date(Date.now() - windowSec * 1000) },
+          ...(df.checkId ? { checkId: df.checkId } : {}),
+        },
+        _count: { _all: true },
+        _max: { timestamp: true },
+      });
+      const cells = new Map<string, { assetId: string; checkId: string; total: number; failed: number; last: Date | null }>();
+      for (const g of grouped) {
+        const key = `${g.assetId}|${g.checkId}`;
+        const c = cells.get(key) ?? { assetId: g.assetId, checkId: g.checkId, total: 0, failed: 0, last: null };
+        c.total += g._count._all;
+        if (!g.ok) c.failed += g._count._all;
+        const m = g._max.timestamp;
+        if (m && (!c.last || m > c.last)) c.last = m;
+        cells.set(key, c);
+      }
+      const names = await pathCheckNames([...cells.values()].map((c) => c.checkId));
+      const out: Reading[] = [];
+      for (const c of cells.values()) {
+        const a = index.get(c.assetId);
+        if (!a || c.total === 0) continue;
+        const value = Math.round((c.failed / c.total) * 1000) / 10;
+        // No saturation ceiling here (business rule 85): 100% is every run
+        // failing while the host reports — the case an operator wrote this rule
+        // for — not an outage some other automation owns, as it is for loss.
+        out.push({
+          assetId: a.id, hostname: a.hostname, tags: a.tags,
+          dimKey: c.checkId, dimLabel: names.get(c.checkId) ?? c.checkId,
+          value, readingAt: c.last,
+        });
+      }
+      return out;
+    }
     default:
       return [];
   }
+}
+
+/** id → name for the path checks a resolver's rows mention. One small
+ *  query per resolver call (the table is capped at a few dozen rows). */
+async function pathCheckNames(ids: readonly string[]): Promise<Map<string, string>> {
+  const distinct = [...new Set(ids)];
+  if (distinct.length === 0) return new Map();
+  const rows = await prisma.pathCheck.findMany({ where: { id: { in: distinct } }, select: { id: true, name: true } });
+  return new Map(rows.map((r) => [r.id, r.name]));
 }
 
 /** Compute a per-dimension rate (delta / dt) from the two latest counter samples. */

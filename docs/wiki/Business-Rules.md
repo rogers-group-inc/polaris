@@ -1093,6 +1093,39 @@ used to match them.
 
 See [Polaris Agent](Polaris-Agent) and [Conflict Resolution](Conflict-Resolution).
 
+### Rule 85
+
+**A path check measures the path from a host, not the host — and the
+automation, not the check, decides what failing means.**
+
+A [path check](Path-Monitor) is run by the Polaris Agent on each
+matching host. Its result describes whether that host can reach the target, so:
+
+- **It never changes the host's status.** A laptop that cannot reach the
+  intranet is not a laptop that is down. The host's own Up / Down comes only
+  from its agent's response time, exactly as before.
+- **A check has no threshold.** You set the SLA in an automation on the
+  path-check metrics (latency, failure rate, HTTP status, pass / fail, hop
+  count, TLS days remaining). Holds, severity bands, resets, maintenance
+  windows and dependency suppression all work the same as for any other
+  automation. One difference from packet loss: the failure rate has no
+  "ignore readings at or above" ceiling, so a target that fails **every** run
+  alerts — the host is up and reporting, so no other automation covers it.
+- **Response bodies are not kept by default.** Every run stores a fingerprint
+  (SHA-256) and the size of the body. Up to 4 KB of the body itself is kept
+  only when a run fails, so you can see what came back, or when you turn on
+  *Keep body excerpt* for that check.
+- **Some targets are refused.** Loopback, link-local (including cloud
+  metadata addresses), multicast, IPv6 addresses, URLs with a user name or
+  password in them, and the Polaris server itself cannot be a check target.
+  Private (RFC 1918) addresses are allowed.
+- **A route change is an Event, not an alert state.** When an agent's
+  traceroute takes a different set of hops from last time, Polaris writes
+  `path_check.path_changed` to Events (at most once every 10 minutes per host
+  and check). You can alert on it with a *Path changed* trigger.
+
+See [Path Checks](Path-Monitor) and [Automation Triggers](Automation-Triggers).
+
 ### Rule 86
 
 **An agent that deployed and went quiet has missed its poll, unless Polaris is

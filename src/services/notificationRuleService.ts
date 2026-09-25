@@ -20,6 +20,7 @@ import {
   resolveTierLadder,
   severityRank,
   hwSensorFilterMatches,
+  pathCheckFilterMatches,
   deviceFilterMatch,
   CHANGE_TYPE_ACTIONS,
   legacyMirrorOfV2,
@@ -59,7 +60,10 @@ export { scopeMatchesAsset, type ScopeAsset } from "./notificationTypes.js";
 export async function findRulesMatchingAsset(assetId: string) {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { id: true, assetType: true, tags: true, discoveredByIntegrationId: true, manufacturer: true, model: true, ipAddress: true, hostname: true, os: true, status: true },
+    // managedAgent: the `agentInstalled` condition field reads it on this
+    // single-asset path (a 1:1 row, so joining it unconditionally is cheaper
+    // than walking every rule's tree first).
+    select: { id: true, assetType: true, tags: true, discoveredByIntegrationId: true, manufacturer: true, model: true, ipAddress: true, hostname: true, os: true, status: true, managedAgent: { select: { installStatus: true } } },
   });
   if (!asset) return [];
 
@@ -118,7 +122,7 @@ function orderedOperator(op: string): MetricSeverityTier["operator"] | null {
 export async function getMetricSeverityTiers(
   assetId: string,
   metric: string,
-  dimension?: { sensorName?: string; sensorClass?: string },
+  dimension?: { sensorName?: string; sensorClass?: string; checkId?: string },
 ): Promise<MetricSeverityTier[]> {
   const rules = await findRulesMatchingAsset(assetId);
   const collected: MetricSeverityTier[] = [];
@@ -150,6 +154,9 @@ export async function getMetricSeverityTiers(
     if (trigger.type === "asset_metric" && trigger.metric === metric) {
       if (!deviceFilterSelects(trigger.dimensionFilter)) continue;
       if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(trigger.dimensionFilter, dimension)) continue;
+      // A path-check chart is ONE check's series: a rule filtered to another
+      // check must not shade it.
+      if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(trigger.dimensionFilter, dimension)) continue;
       for (const tier of resolveTierLadder(trigger.operator, trigger.threshold, ruleSeverity, trigger.forDurationSec ?? 0, v2.severityBands)) {
         push(tier.operator, tier.threshold, tier.severity as Severity);
       }
@@ -161,6 +168,7 @@ export async function getMetricSeverityTiers(
         if (leaf.type !== "asset_metric" || leaf.metric !== metric) continue;
         if (!deviceFilterSelects(leaf.dimensionFilter)) continue;
         if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(leaf.dimensionFilter, dimension)) continue;
+        if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(leaf.dimensionFilter, dimension)) continue;
         push(leaf.operator, leaf.threshold, ruleSeverity);
       }
     }

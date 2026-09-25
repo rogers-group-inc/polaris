@@ -539,7 +539,7 @@ function makeAutomationSentences(s) {
       // The probe is the subject when it resolved to a name; an unresolved one
       // still shows as a clause so the filter is never invisible.
       if (k === "stateProbeId" && m.name) return;
-      if (df[k]) out += " " + (DIM_PHRASE[k] || k + " = {value}").replace("{value}", df[k]);
+      if (df[k]) out += " " + dimPhrase(k, df[k]);
     });
     return out;
   }
@@ -564,7 +564,21 @@ function makeAutomationSentences(s) {
     // the factory reads correctly against a partial /schema payload, the same as
     // every other dimension above.
     stateProbeId: "for probe {value}", stateRowPattern: "on rows matching {value}",
+    checkId: "for check {value}",
   }, s.dimensionPhrases || {});
+
+  /** A path check's NAME for its id — the id must never reach a
+   *  sentence. Resolved off /schema's `pathChecks` registry. */
+  function checkNameOf(id) {
+    var list = s.pathChecks || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return "«" + list[i].name + "»";
+    return id + " (not found)";
+  }
+  /** One dimension clause: the DIM_PHRASE template with its value. */
+  function dimPhrase(k, value) {
+    var v = k === "checkId" && value && value !== "…" ? checkNameOf(value) : value;
+    return (DIM_PHRASE[k] || k + " = {value}").replace("{value}", v);
+  }
 
   // Windowed-ratio metrics: the window is the measurement, mirrored from the
   // server's `windowedRatioMetrics` with the same built-in fallback the other
@@ -595,7 +609,7 @@ function makeAutomationSentences(s) {
     // Defensive: a filter row from an UNCOMPILED UI tree (the stored trigger
     // never carries one — tgFilterCompile folds them away before save).
     if (leaf.type === "asset_filter") {
-      return (DIM_PHRASE[leaf.dim] || leaf.dim + " = {value}").replace("{value}", String(leaf.value || "…"));
+      return dimPhrase(leaf.dim, String(leaf.value || "…"));
     }
     if (leaf.type === "asset_state") {
       // A down-detection leaf is not a status comparison to read back — it is a
@@ -606,7 +620,7 @@ function makeAutomationSentences(s) {
         var dOut = "the device misses " + dMiss + " poll" + (dMiss === 1 ? "" : "s") + " in a row";
         var dDf = leaf.dimensionFilter || {};
         Object.keys(dDf).forEach(function (k) {
-          if (dDf[k]) dOut += " " + (DIM_PHRASE[k] || k + " = {value}").replace("{value}", dDf[k]);
+          if (dDf[k]) dOut += " " + dimPhrase(k, dDf[k]);
         });
         return dOut;
       }
@@ -628,7 +642,7 @@ function makeAutomationSentences(s) {
       // same way a metric leaf does, or the filter is invisible in the sentence.
       var sDf = leaf.dimensionFilter || {};
       Object.keys(sDf).forEach(function (k) {
-        if (sDf[k]) sOut += " " + (DIM_PHRASE[k] || k + " = {value}").replace("{value}", sDf[k]);
+        if (sDf[k]) sOut += " " + dimPhrase(k, sDf[k]);
       });
       return sOut;
     }
@@ -647,7 +661,7 @@ function makeAutomationSentences(s) {
     var out = (leaf.type === "host_metric" ? "the Polaris host's " : "") + metricLabel(leaf.metric) + agg + " " + (CMP_PHRASE[leaf.operator] || leaf.operator) + " " + thr + unit;
     var df = leaf.dimensionFilter || {};
     Object.keys(df).forEach(function (k) {
-      if (df[k]) out += " " + (DIM_PHRASE[k] || k + " = {value}").replace("{value}", df[k]);
+      if (df[k]) out += " " + dimPhrase(k, df[k]);
     });
     return out;
   }
@@ -751,7 +765,7 @@ function makeAutomationSentences(s) {
       out = "When <strong>" + escapeHtml(subject) + agg + " " + escapeHtml(CMP_PHRASE[tr.operator] || tr.operator) + " " + escapeHtml(String(thr)) + escapeHtml(unit) + "</strong>";
       var df = tr.dimensionFilter || {};
       Object.keys(df).forEach(function (k) {
-        if (df[k]) out += " " + escapeHtml((DIM_PHRASE[k] || k + " = {value}").replace("{value}", df[k]));
+        if (df[k]) out += " " + escapeHtml(dimPhrase(k, df[k]));
       });
     } else if (tr.type === "asset_state") {
       var trVal = tr.value == null || tr.value === "" ? "…"
@@ -761,7 +775,7 @@ function makeAutomationSentences(s) {
       // filter by interface / tunnel / hostname and the sentence must say so.
       var sdf = tr.dimensionFilter || {};
       Object.keys(sdf).forEach(function (k) {
-        if (sdf[k]) out += " " + escapeHtml((DIM_PHRASE[k] || k + " = {value}").replace("{value}", sdf[k]));
+        if (sdf[k]) out += " " + escapeHtml(dimPhrase(k, sdf[k]));
       });
     } else if (tr.type === "event") {
       // The detail conditions are named here, not summarised as "with filters":
@@ -826,7 +840,7 @@ function makeAutomationSentences(s) {
     sensorClass: "class=", sensorNamePattern: "name~", ifNamePattern: "if~",
     mountPathPattern: "mount~", sdwanRulePattern: "rule~", healthCheck: "health=", link: "member=",
     tunnelName: "tunnel=", widgetId: "widget=", processNamePattern: "process~",
-    stateProbeId: "probe=", stateRowPattern: "row~", hostnamePattern: "host~",
+    stateProbeId: "probe=", stateRowPattern: "row~", hostnamePattern: "host~", checkId: "check=",
     ipPattern: "ip~", macPattern: "mac~", manufacturerPattern: "mfr~", modelPattern: "model~",
   }, s.formulaDimensions || {});
 
@@ -851,6 +865,7 @@ function makeAutomationSentences(s) {
         var p = stateProbeOf(v);
         if (p && p.name) v = p.name;
       }
+      if (k === "checkId") v = checkNameOf(v).replace(/[«»]/g, "");
       parts.push((FORMULA_DIM[k] || (k + "=")) + '"' + v + '"');
     });
     return parts.length ? "[" + parts.join(", ") + "]" : "";
@@ -1602,7 +1617,7 @@ async function openAutomationWizard(existing, opts) {
       dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
-  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter" };
+  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick" };
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
@@ -2210,6 +2225,7 @@ async function openAutomationWizard(existing, opts) {
       roles: (_awScopeOptions && _awScopeOptions.roles) || [],
       regions: (_awScopeOptions && _awScopeOptions.regions) || [],
       stateProbes: (s && s.stateProbes) || [],
+      pathChecks: (s && s.pathChecks) || [],
       tags: _ruleTagList || [],
       assetTypes: _ruleAssetTypes || [],
       assets: [],
@@ -3080,7 +3096,8 @@ async function openAutomationWizard(existing, opts) {
           (dims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
         '</div>';
     }
-    return '<div class="scr-row"' + (ratio ? ' data-ratio="1"' : "") + ' style="margin:4px 0;padding:4px;border:1px solid var(--color-border);border-radius:6px">' + line1 + line2 + '</div>';
+    var ceiling = !isState && !!leaf && isCeilingMetric(leaf.metric);
+    return '<div class="scr-row"' + (ratio ? ' data-ratio="1"' : "") + (ceiling ? ' data-ceiling="1"' : "") + ' style="margin:4px 0;padding:4px;border:1px solid var(--color-border);border-radius:6px">' + line1 + line2 + '</div>';
   }
   function tgGroupHtml(group, depth, kind) {
     group = group || { op: "and", children: [] };
@@ -3479,7 +3496,7 @@ async function openAutomationWizard(existing, opts) {
    * syncDurationRequirement can toggle it live as the metric changes.
    */
   function ratioCeilingFieldHtml(tr) {
-    var ratio = triggerIsWindowedRatio(tr);
+    var ratio = triggerHasCeiling(tr);
     var stored = tr && typeof tr.ignoreAtOrAbove === "number" ? tr.ignoreAtOrAbove : null;
     var val = stored === null ? "" : String(stored);
     return '<div class="form-group aw-ratio-ceiling"' + (ratio ? "" : ' style="display:none"') + '>' +
@@ -3515,6 +3532,7 @@ async function openAutomationWizard(existing, opts) {
     systemInfo: "interface/system",
     storage: "storage",
     sdwan: "SD-WAN",
+    pathCheck: "path-check",
   };
 
   /** The metric whose cadence the poll fields are counted in: the first metric
@@ -4094,8 +4112,9 @@ async function openAutomationWizard(existing, opts) {
         setPollFieldSec(input, RATIO_WINDOW_MIN_SEC);
       }
     }
+    // The ceiling is packet loss's alone, not every ratio's (business rule 85).
     var ceilingWrap = panel.querySelector(".aw-ratio-ceiling");
-    if (ceilingWrap) ceilingWrap.style.display = ratio ? "" : "none";
+    if (ceilingWrap) ceilingWrap.style.display = root && root.querySelector('.scr-row[data-ceiling="1"]') ? "" : "none";
     // THE SECOND FIELD serves both windows that leave room for a hold beside
     // them: a ratio's History (the hold rides on top of the measurement) and a
     // count window (the hold counts recalculations of it). A TIME-windowed
@@ -4466,6 +4485,21 @@ async function openAutomationWizard(existing, opts) {
     if (tr.type === "composite") return (tgLeaves(tr) || []).some(tgLeafWindowedRatio);
     return tgLeafWindowedRatio(tr);
   }
+  /** The saturation ceiling ("ignore readings at or above") is packet loss's
+   *  alone — the server's `saturationCeilingMetrics`. A path check's failure
+   *  rate is a windowed ratio too, but 100% there is the alert, not an outage
+   *  some other automation owns (business rule 85). */
+  function isCeilingMetric(m) {
+    return (s.saturationCeilingMetrics || ["probeLossPct"]).indexOf(m) !== -1;
+  }
+  function tgLeafCeiling(leaf) {
+    return !!(leaf && leaf.type !== "asset_state" && isCeilingMetric(leaf.metric));
+  }
+  function triggerHasCeiling(tr) {
+    if (!tr) return false;
+    if (tr.type === "composite") return (tgLeaves(tr) || []).some(tgLeafCeiling);
+    return tgLeafCeiling(tr);
+  }
   /** True when this leaf measures over a period rather than reading the latest
    *  sample — the case that needs a window, and so needs the duration field.
    *  A windowed-ratio leaf always counts, whatever its (ignored) aggregation. */
@@ -4574,7 +4608,7 @@ async function openAutomationWizard(existing, opts) {
     (function walk(n) {
       if (!n) return;
       if (n.type === undefined && Array.isArray(n.children)) { n.children.forEach(walk); return; }
-      if (tgLeafWindowedRatio(n)) {
+      if (tgLeafCeiling(n)) {
         if (pct === null) delete n.ignoreAtOrAbove;
         else n.ignoreAtOrAbove = pct;
       } else if (n.type !== "asset_state") {

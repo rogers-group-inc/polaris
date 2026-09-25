@@ -45,7 +45,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`matches` (wildcard) has no SQL form.** Narrowed by the pattern's literal prefix, then regex-tested here against lower-cased values (compileWildcard is case-SENSITIVE, the evaluator is not).
 - Single-asset paths deliberately do NOT use this — `contactService.resolveContactsForAsset` and `tagAssignmentService` join `interfaces` / `apVaps` on the one row, which beats a second round trip. Both joins are conditional on the tree actually asking (`conditionNeedsInterfaces` / `conditionNeedsApVaps`, and `deviceFilterSelect` deriving `apVaps` from the tree's own fields).
 
-**When changing this:** Adding a third relation-backed condition field means an entry in `RELATION_CONDITION_FIELDS`, a branch in `assetIdsForLeaf` for its table, the matching join in `deviceFilterSelect` + `contactService`'s single-asset select, an `optionsFrom` list in `listScopeOptions`, and the value-suggestion case in ALL FOUR browser builders (`automations-wizard.js` — which also carries its own hardcoded field catalog — `assets-masspin.js`, `automations-address-book.js`, `server-settings.js`). Miss the last one and the field appears with an empty picker on exactly one surface.
+**The third relation-backed field is `agentInstalled` ("Polaris Agent installed", yes/no, 2026-09-23)** — relation `managedAgent`, and NOT a string match: `assetIdsForLeaf`'s `managedAgent` branch answers "has an ACTIVE agent" (`installStatus === "active"`) whatever the rule's value, and `matchScopeRule` compares that verdict with yes/no. Single-asset paths join `MANAGED_AGENT_CONDITION_SELECT` (deviceFilterSelect derives it from the tree; contactService checks `conditionNeedsManagedAgent`; `findRulesMatchingAsset` joins it unconditionally — 1:1). Shipped with `values: ["yes","no"]` on SCOPE_FIELD_META so none of the client `valueOptions` switches needs a case.
+
+**When changing this:** Adding a fourth relation-backed condition field means an entry in `RELATION_CONDITION_FIELDS`, a branch in `assetIdsForLeaf` for its table, the matching join in `deviceFilterSelect` + `contactService`'s single-asset select, an `optionsFrom` list in `listScopeOptions`, and the value-suggestion case in ALL FOUR browser builders (`automations-wizard.js` — which also carries its own hardcoded field catalog — `assets-masspin.js`, `automations-address-book.js`, `server-settings.js`). Miss the last one and the field appears with an empty picker on exactly one surface.
 
 ---
 
@@ -105,6 +107,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this**
 
+**`checkId` (path* metrics)** is strict and labelled like `stateProbeId`, but its pairs come from MEMBERSHIP (`path_check_sources`) rather than samples, and its `labelOf` is ASYNC (one read of the check registry) — `labelOf` may return a Promise since 2026-09-23. Candidates are hosts with an active agent.
+
 1. Adding a dimension → walk the lockstep list above, then add a `DIMENSION_SOURCES` entry + a case to `tests/unit/automationDimensionValues.test.ts`.
 2. Changing the window/caps → re-reason at 100 AND 2000 assets (default scope is every asset) and update the numbers quoted in the skill references (formerly ARCHITECTURE.md).
 3. New sibling narrowing → extend `DimensionNarrow`, the route's `narrow` schema, AND the client's `awDimNarrow`, or the client will keep asking for the unnarrowed list.
@@ -127,6 +131,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Cost is per CLASS, not per asset** — `resolveMonitorSettings` memoizes on (integrationId, assetType). Keep the tight `select` and keep it that way: this is an interactive call on a fleet-wide default scope.
 
 **When changing this**
+
+**The `pathCheck` stream is the one that does not resolve through the monitor-settings hierarchy** (2026-09-23): `STREAM_FIELDS` excludes it, and `resolveScopeCadence` answers it from the `intervalSec` / `timeoutMs` of every enabled check the scoped hosts are sources of (one row per host × check, so the mode reflects the fleet). All six path* metrics map to it.
 
 1. New metric → add a `METRIC_STREAM` entry in the same change as the engine's reading resolver, plus a case in `tests/unit/notificationCadence.test.ts`.
 2. New cadence stream → add it to `STREAM_FIELDS` with the resolver field names, and to `CADENCE_STREAM_NOUN` in the wizard or the caption will read "poll interval" with no idea which.

@@ -8,7 +8,7 @@ Roles**, **Group Mappings**, **Authentication**.
 ## The model
 
 Every route declares a **function key** plus a required **level**. A role is a
-matrix over the 32 keys:
+matrix over the 34 keys:
 
 ```
 none  <  read  <  write  <  fullwrite
@@ -62,7 +62,7 @@ silently revoke.
 
 ---
 
-## The 32 function keys
+## The 34 function keys
 
 **Top rung** names the highest level the key offers. Where that is Full
 Read-Write, the last column says what it buys over Read-Write — because that is
@@ -131,6 +131,7 @@ the only thing that justifies the rung existing.
 | `alerts` | Full RW | **Read** = view · **Read-Write** = acknowledge · **Full RW** = clear |
 | `automationManagement` | Read-Write | automations and delivery channels |
 | `automationScripts` | Read-Write | **RCE-equivalent** — see [Automation scripts](Automation-Scripts) |
+| `pathChecks` | Read-Write | [agent-run path checks](Path-Monitor). Read-Write tells every matching Polaris Agent to send traffic to a destination on a schedule. Gates the **Path Monitor** page (sidebar, under Application Map). Starts at each role's **Application Map** level, so the built-in roles read the same on both |
 | `maintenanceManagement` | Read-Write | maintenance windows; Read-Write is schedule CRUD |
 | `contacts` | Full RW | the address book — **ownership** |
 

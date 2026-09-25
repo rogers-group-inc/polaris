@@ -880,8 +880,25 @@ const api = {
       var qs = ["metric=" + encodeURIComponent(opts.metric || "")];
       if (opts.sensorName)  qs.push("sensorName="  + encodeURIComponent(opts.sensorName));
       if (opts.sensorClass) qs.push("sensorClass=" + encodeURIComponent(opts.sensorClass));
+      if (opts.checkId)     qs.push("checkId="     + encodeURIComponent(opts.checkId));
       return request("GET", `/assets/${id}/metric-thresholds?` + qs.join("&"));
     },
+    // Agent-run path checks this host runs (+ latest result each).
+    pathChecks:      (id) => request("GET", `/assets/${id}/path-checks`),
+    pathCheckHistory:     (id, checkId, opts) => {
+      if (typeof opts === "string") opts = { range: opts };
+      opts = opts || {};
+      var qs = ["checkId=" + encodeURIComponent(checkId)];
+      if (opts.from && opts.to) {
+        qs.push("from=" + encodeURIComponent(opts.from));
+        qs.push("to="   + encodeURIComponent(opts.to));
+      } else if (opts.range) {
+        qs.push("range=" + encodeURIComponent(opts.range));
+      }
+      return request("GET", `/assets/${id}/path-check-history?` + qs.join("&"));
+    },
+    pathCheckTraceroutes: (id, checkId, limit) =>
+      request("GET", `/assets/${id}/path-check-traceroutes?checkId=` + encodeURIComponent(checkId) + "&limit=" + (limit || 10)),
     hardwareHistory:      (id, opts) => {
       if (typeof opts === "string") opts = { range: opts };
       opts = opts || {};
@@ -1119,6 +1136,19 @@ const api = {
     testRun: (id, b) => request("POST", `/automations/scripts/${id}/test-run`, b || {}),
     runs:    (params)=> request("GET", "/automations/scripts/runs" + toQuery(params)),
     run:     (id)    => request("GET", `/automations/scripts/runs/${id}`),
+  },
+  // Agent-run path checks (Path Monitor page (/path-monitor.html)). Gated by the
+  // pathChecks function key.
+  pathChecks: {
+    list:           ()      => request("GET", "/path-checks"),
+    get:            (id)    => request("GET", `/path-checks/${id}`),
+    create:         (body)  => request("POST", "/path-checks", body),
+    update:         (id, b) => request("PUT", `/path-checks/${id}`, b),
+    delete:         (id)    => request("DELETE", `/path-checks/${id}`),
+    setEnabled:     (id, enabled) => request("POST", `/path-checks/${id}/enabled`, { enabled: !!enabled }),
+    filterSchema:   ()      => request("GET", "/path-checks/filter-schema"),
+    previewSources: (body)  => request("POST", "/path-checks/preview-sources", body || {}),
+    results:        (id)    => request("GET", `/path-checks/${id}/results`),
   },
   contacts: {
     // Paginated + server-side searched. `params` = { q, limit, offset }; the

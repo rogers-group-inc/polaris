@@ -191,6 +191,7 @@ var loopPhaseSec = map[string]int{
 	"heartbeat":          4,
 	"telemetry":          8,  // cheap now: counter read + push, no sample window
 	"systemInfo":         13, // full host enumeration
+	"pathCheck":       16, // network-bound; see path_check.go
 	"interfaces":         18,
 	"storage":            22,
 	"eventLog":           27, // journalctl / Get-WinEvent
@@ -370,6 +371,14 @@ func applyServerStreams(resp *transport.ConfigResponse) {
 	} else {
 		servicesCfg.Store(servicesRuntimeCfg{monitored: resp.MonitoredServices, mapped: resp.MappedServices})
 	}
+	// Path checks: the definition list IS the enable signal (an older
+	// server sends none, so the loop idles). An explicit streams.pathCheck
+	// {enabled:false} from a future server still switches it off.
+	checks := resp.PathChecks
+	if s, ok := resp.Streams["pathCheck"]; ok && !s.Enabled {
+		checks = nil
+	}
+	pathCheckCfg.Store(pathCheckRuntimeCfg{checks: checks})
 }
 
 // refreshConfig fetches /config (using the cached ETag for a 304 short-circuit)
@@ -473,6 +482,7 @@ func runAgent(ctx context.Context, confPath string) {
 	go processTelemetryLoop(ctx, cfg, client)
 	go processLogLoop(ctx, cfg, client)
 	go processConnectionsLoop(ctx, cfg, client)
+	go pathCheckLoop(ctx, cfg, client)
 	go commandLoop(ctx, cfg, client)
 	go wsLoop(ctx, cfg, client)
 
