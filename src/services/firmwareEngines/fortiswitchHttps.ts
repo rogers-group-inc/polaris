@@ -120,9 +120,20 @@ export async function switchStatus(c: DeviceHttpClient, _ctx: FirmwareEngineCont
   if (res.status !== 200 || !j) throw new FirmwareEngineError(`unexpected status answer (${res.status})`, "preflight");
   const progress: FirmwareProgress = {};
   let any = false;
-  for (const [k, key] of [["erase_progress", "erase"], ["write_progress", "write"], ["verify_progress", "verify"], ["restart_progress", "restart"], ["cur_step", "curStep"], ["tot_step", "totStep"]] as const) {
+  // The switch reports each stage as a FRACTION, 0..1 — erase as an exact 1
+  // once done, the others as long decimals (fortiupgrade's capture; confirmed
+  // on prod, where a finished erase drew as "1%"). FirmwareProgress is a
+  // PERCENT, 0..100, so convert here, at the one place the device is read,
+  // clamped so a 1.0000000002 from some build never draws past full.
+  for (const [k, key] of [["erase_progress", "erase"], ["write_progress", "write"], ["verify_progress", "verify"], ["restart_progress", "restart"]] as const) {
     const n = asNumber(j[k]);
-    if (n !== null) { (progress as Record<string, number>)[key] = n; any = true; }
+    if (n !== null) { progress[key] = Math.round(Math.min(1, Math.max(0, n)) * 1000) / 10; any = true; }
+  }
+  // The step counter is carried for the run log only: observed pinned at 6/40
+  // for an entire flash, so nothing displays or decides on it.
+  for (const [k, key] of [["cur_step", "curStep"], ["tot_step", "totStep"]] as const) {
+    const n = asNumber(j[k]);
+    if (n !== null) progress[key] = n;
   }
   return {
     osVersion: asString(j.os_version),

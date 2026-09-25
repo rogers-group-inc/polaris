@@ -129,9 +129,11 @@ function makeFakeSwitch(state: FakeSwitchState): Server {
           req.socket.destroy();
           return;
         }
-        const pct = Math.min(100, state.progressPolls * 50);
+        // A real switch reports 0..1 FRACTIONS (erase an exact 1 once done,
+        // the others long decimals) and pins its step counter at 6/40.
+        const write = Math.min(1, state.progressPolls * 0.4637291);
         res.writeHead(200, { "content-type": "application/json" });
-        return res.end(JSON.stringify({ msg: "Upgrade is done successfully!", status: 0, erase_progress: 100, write_progress: pct, verify_progress: 0, restart_progress: 0, cur_step: 2, tot_step: 4 }));
+        return res.end(JSON.stringify({ msg: "Upgrade is done successfully!", status: 0, erase_progress: 1, write_progress: write, verify_progress: 0, restart_progress: 0, cur_step: 6, tot_step: 40 }));
       }
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify({ os_version: state.osVersion, build: state.build, serial_number: state.serial, model: "FS-108F-FPOE", hostname: "lab-sw1", admin_timeout: 5, msg: "", status: 0 }));
@@ -238,7 +240,12 @@ describe("FortiSwitch HTTPS engine — the happy path", () => {
     expect(state.calls).not.toContain("compat:reset");
     // Progress reached the caller.
     expect(c.progress.length).toBeGreaterThan(0);
-    expect((c.progress[0] as { erase: number }).erase).toBe(100);
+    // The switch's 0..1 fractions arrive as PERCENT: erase 1 → 100, write
+    // 0.4637291 → 46.4 (one decimal), never the raw fraction the card would
+    // draw as "1%" / a sliver.
+    const first = c.progress[0] as { erase: number; write: number };
+    expect(first.erase).toBe(100);
+    expect(first.write).toBe(46.4);
   });
 
   it("FortiSwitchOS 7.6.6: a GOOD password answers 302 → /login with its session cookies, and the upgrade runs", async () => {

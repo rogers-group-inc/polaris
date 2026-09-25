@@ -70,6 +70,13 @@ export const DEFAULT_FIRMWARE_TIMEOUTS: FirmwareEngineTimeouts = {
 };
 
 /** Percent-style progress a FortiSwitch reports while it flashes. */
+/**
+ * Flash progress as PERCENT, 0..100, one decimal. The FortiSwitch engine
+ * converts from the device's 0..1 fractions when it reads them; the card and
+ * the run row only ever see percent. `curStep` / `totStep` are the switch's
+ * own counter, which has been seen pinned at 6/40 for a whole flash — logged,
+ * never shown.
+ */
 export interface FirmwareProgress {
   erase?: number;
   write?: number;

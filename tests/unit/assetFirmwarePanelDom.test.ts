@@ -129,7 +129,9 @@ describe("the states, in the server's words", () => {
     const run = { id: "run-1", status: "running", stage: "deploying", fromVersion: "7.4.3 build0542", toVersion: "7.6.8 build1164", progress: { erase: 100, write: 40, verify: 0, curStep: 2, totStep: 5 }, startedAt: "2026-09-25T01:00:00Z" };
     const r = render(asset(), fw({ state: "running", available: false, activeRun: run }));
     expect(text(r)).toContain("Upgrading");
-    expect(text(r)).toContain("Stage: Deploying · step 2 of 5");
+    // The switch's step counter is never shown — prod saw it pinned at 6/40.
+    expect(text(r)).toContain("Stage: Deploying");
+    expect(text(r)).not.toMatch(/step \d+ of \d+/);
     const rows = Array.from(r.querySelectorAll(".fw-stage"));
     expect(rows.map((x) => text(x.querySelector(".fw-stage-label")))).toEqual(["Erasing flash", "Writing image", "Verifying image"]);
     expect(rows[0]!.classList.contains("is-done")).toBe(true);
