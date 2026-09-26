@@ -42,7 +42,16 @@
 // any of them opens that asset. See openArpSheet / openMacSheet /
 // openWirelessSheet.
 //
+// A switch or access point's OS row in General carries the firmware upgrade
+// verb (business rule 87): "Upgrade to <version>" when the Repository holds a
+// newer image and the operator has assets:write, a stacked confirm sheet, then
+// "Upgrade started" and the stage / percent polled live. See the Firmware
+// upgrade block (osRowValue / loadFirmwareRow / confirmFirmwareUpgrade /
+// watchFirmwareRun).
+//
 // Out of scope for v1 (desktop-only):
+//   - The Firmware Repository, the choice of a model's backup image, and a
+//     run's history and log
 //   - Per-interface throughput + errors charts
 //   - Per-interface comments editor
 //   - IPsec tunnels
@@ -270,6 +279,8 @@
     closeSdwanSheet();
     closeTableSheet();
     closeInterfaceSheet();
+    closeFirmwareConfirm(false);
+    stopFirmwarePoll();
     var s = document.getElementById("asset-sheet");
     var sc = document.getElementById("asset-sheet-scrim");
     if (s) s.remove();
@@ -426,6 +437,7 @@
       loadSdwanGate(id, st, asset);
       wireTableButtons(id, asset);
       loadAlerts(id, asset);
+      loadFirmwareRow(id, asset);
     }).catch(function (err) {
       if (_openId !== id) return;
       var msg = (err && err.message) ? err.message : "Failed to load asset";
@@ -672,7 +684,7 @@
     row("Serial", asset.serialNumber ? '<span class="mono">' + escapeHtml(asset.serialNumber) + '</span>' : null);
     row("Manufacturer", asset.manufacturer);
     row("Model", asset.model);
-    row("OS", [asset.os, asset.osVersion].filter(Boolean).join(" "));
+    row("OS", osRowValue(asset));
     row("Location", asset.location || asset.learnedLocation);
     row("Department", asset.department);
     row("Assigned to", asset.assignedTo);
@@ -2301,6 +2313,222 @@
     }).catch(function () { /* pill/button stay as-is; the action already toasted */ });
   }
 
+  // ─── Firmware upgrade (business rule 87) ────────────────────────────────
+  // A switch or access point's OS / Firmware row carries the upgrade verb —
+  // the desktop Firmware card, cut down to what a phone needs: the button
+  // when the Repository holds a newer image and the operator may flash
+  // (assets:write, rule 43(g)), a stacked confirm sheet naming the device and
+  // the exact image (never window.confirm — suppressed in some installed
+  // PWAs; canon-mobile), then "Upgrade started" and live progress polled from
+  // the per-asset run read. The PRIMARY image only: choosing the model's
+  // backup, the run history and its log stay on the desktop card. The
+  // Repository itself is desktop-only.
+  var FW_ELIGIBLE = { "switch": true, "access_point": true };
+  var FW_POLL_MS = 3000;
+  var FW_STAGE_LABELS = {
+    preflight: "Signing in",
+    staging: "Uploading image",
+    compat: "Checking compatibility",
+    deploying: "Flashing",
+    rebooting: "Rebooting",
+    verifying: "Verifying new version",
+    recovering: "Waiting for monitoring to answer",
+  };
+  var _fwPoll = null;   // { assetId, runId, timer } while a run is being watched
+
+  function canFlashFirmware() {
+    var user = (window.PolarisMobile && PolarisMobile.user && PolarisMobile.user()) || null;
+    var have = (user && user.permissions && user.permissions.assets) || "none";
+    return (_PERM_RANK[have] || 0) >= _PERM_RANK.write;
+  }
+
+  /** The OS row's value: the version text, plus a slot the firmware loader fills. */
+  function osRowValue(asset) {
+    var text = [asset.os, asset.osVersion].filter(Boolean).join(" ");
+    if (!FW_ELIGIBLE[asset.assetType]) return text;
+    return '<span>' + escapeHtml(text || "—") + '</span><div id="asset-fw-slot" class="asset-fw-slot"></div>';
+  }
+
+  /**
+   * One line for a run in flight: the stage, and on a switch the percent of
+   * the stage the flash is in (the engine stores percent, 0..100).
+   */
+  function fwProgressText(run) {
+    if (!run) return "Upgrade started";
+    var stage = run.stage;
+    var p = run.progress || {};
+    if (stage === "deploying" && (typeof p.erase === "number" || typeof p.write === "number" || typeof p.verify === "number")) {
+      var parts = [["erase", "Erasing flash"], ["write", "Writing image"], ["verify", "Verifying image"]];
+      for (var i = 0; i < parts.length; i++) {
+        var v = p[parts[i][0]];
+        if (typeof v === "number" && v < 100) return parts[i][1] + " " + Math.round(v) + "%";
+      }
+      return "Flashing — finishing up";
+    }
+    return FW_STAGE_LABELS[stage] || "Upgrade started";
+  }
+
+  /** What the slot shows for an availability answer. Pure, for the tests. */
+  function fwSlotHtml(fw) {
+    if (!fw || fw.error) return "";
+    if (fw.state === "running" && fw.activeRun) return fwRunningHtml(fw.activeRun);
+    if (fw.state === "available" && fw.image) {
+      if (!canFlashFirmware()) {
+        return '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.image.versionLabel) + ' available — upgrading needs Read-Write on Assets</div>';
+      }
+      return '<button class="btn btn-tonal" id="asset-fw-upgrade-btn" style="margin-top:6px;">Upgrade to ' + escapeHtml(fw.image.versionLabel) + '</button>';
+    }
+    if (fw.state === "pending-discovery") {
+      return '<div class="muted" style="font-size:12px;margin-top:4px;">' + escapeHtml(fw.reason || "Upgraded — the record updates on the next discovery") + '</div>';
+    }
+    return "";
+  }
+
+  function fwRunningHtml(run) {
+    return '<div id="asset-fw-progress" style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--md-warning);">'
+      + '<div class="spinner" style="width:14px;height:14px;border-width:2px;flex-shrink:0;"></div>'
+      + '<span id="asset-fw-progress-text">' + escapeHtml(fwProgressText(run)) + '</span></div>';
+  }
+
+  function fwResultHtml(run) {
+    if (!run) return "";
+    if (run.status === "succeeded") {
+      return '<div style="font-size:13px;margin-top:6px;color:var(--md-success);">Upgraded to ' + escapeHtml(run.verifiedVersion || run.toVersion) + '</div>';
+    }
+    if (run.status === "unverified") {
+      return '<div style="font-size:13px;margin-top:6px;color:var(--md-warning);">The device came back but its version couldn’t be confirmed — check it</div>';
+    }
+    return '<div style="font-size:13px;margin-top:6px;color:var(--md-error);">Upgrade failed' + (run.error ? ': ' + escapeHtml(run.error) : '') + '</div>';
+  }
+
+  function loadFirmwareRow(id, asset) {
+    if (!FW_ELIGIBLE[asset.assetType]) return;
+    api.assets.firmwareUpgrade(id).then(function (fw) {
+      if (_openId !== id) return;
+      paintFirmwareSlot(asset, fw);
+    }).catch(function () { /* the row keeps its version; the desktop card explains */ });
+  }
+
+  function paintFirmwareSlot(asset, fw) {
+    var slot = document.getElementById("asset-fw-slot");
+    if (!slot) return;
+    slot.innerHTML = fwSlotHtml(fw);
+    var btn = document.getElementById("asset-fw-upgrade-btn");
+    if (btn) btn.addEventListener("click", function () { startFirmwareFlow(asset, fw, btn); });
+    if (fw && fw.state === "running" && fw.activeRun) watchFirmwareRun(asset.id, fw.activeRun.id);
+  }
+
+  function startFirmwareFlow(asset, fw, btn) {
+    confirmFirmwareUpgrade(asset, fw).then(function (ok) {
+      if (!ok || _openId !== asset.id) return;
+      btn.disabled = true;
+      api.assets.startFirmwareUpgrade(asset.id, { imageId: fw.image.id }).then(function (res) {
+        if (_openId !== asset.id) return;
+        PolarisTabs.showSnackbar("Upgrade started");
+        var slot = document.getElementById("asset-fw-slot");
+        if (slot) slot.innerHTML = fwRunningHtml(res && res.run);
+        if (res && res.run) watchFirmwareRun(asset.id, res.run.id);
+      }).catch(function (err) {
+        btn.disabled = false;
+        PolarisTabs.showSnackbar(err && err.message ? err.message : "Could not start the upgrade", { error: true });
+      });
+    });
+  }
+
+  // The confirm — a stacked .sheet at 1010/1011, the shape of confirmClear in
+  // mobile/alerts.js. Resolves true on Upgrade, false on Cancel / scrim /
+  // close / the asset sheet being dismissed underneath it.
+  var _fwConfirmResolve = null;
+  function confirmFirmwareUpgrade(asset, fw) {
+    closeFirmwareConfirm(false);
+    return new Promise(function (resolve) {
+      _fwConfirmResolve = resolve;
+      var img = fw.image;
+      var cred = fw.credential;
+      function line(k, v) {
+        return '<div class="kv-row"><span class="k">' + escapeHtml(k) + '</span><span class="v">' + v + '</span></div>';
+      }
+      var scrim = document.createElement("div");
+      scrim.className = "scrim";
+      scrim.id = "fw-confirm-scrim";
+      scrim.style.zIndex = "1010";
+      var sheet = document.createElement("div");
+      sheet.className = "sheet";
+      sheet.id = "fw-confirm-sheet";
+      sheet.style.zIndex = "1011";
+      sheet.innerHTML = ''
+        + '<div class="sheet-handle"></div>'
+        + '<h3 class="sheet-title" style="margin:0 0 8px;">Upgrade firmware?</h3>'
+        + line("Device", escapeHtml(asset.hostname || asset.ipAddress || asset.id))
+        + (asset.serialNumber ? line("Serial", '<span class="mono">' + escapeHtml(asset.serialNumber) + '</span>') : '')
+        + line("Running", escapeHtml(fw.current || asset.osVersion || "unknown"))
+        + line("Upgrade to", '<strong>' + escapeHtml(img.versionLabel) + '</strong>' + (img.platform ? ' (' + escapeHtml(img.platform) + ')' : ''))
+        + line("Image", '<span class="mono" style="word-break:break-all;">' + escapeHtml(img.filename || "") + '</span>')
+        + (cred ? line("Login", escapeHtml(cred.credentialName)) : '')
+        + '<p style="margin:12px 0 0;color:var(--md-on-surface-variant);font-size:14px;line-height:20px;">'
+        + 'The device reboots and is unreachable for a few minutes. Polaris holds its alerts, and the alerts of everything behind it, while it works. '
+        + 'Do not power-cycle it while it is flashing.</p>'
+        + '<div style="display:flex;gap:12px;justify-content:flex-end;margin-top:16px;">'
+        + '  <button id="fw-confirm-cancel" class="btn btn-outlined">Cancel</button>'
+        + '  <button id="fw-confirm-ok" class="btn btn-filled">Upgrade</button>'
+        + '</div>';
+      document.body.appendChild(scrim);
+      document.body.appendChild(sheet);
+      scrim.addEventListener("click", function () { closeFirmwareConfirm(false); });
+      sheet.querySelector("#fw-confirm-cancel").addEventListener("click", function () { closeFirmwareConfirm(false); });
+      sheet.querySelector("#fw-confirm-ok").addEventListener("click", function () { closeFirmwareConfirm(true); });
+      PolarisTabs.attachSwipeToDismiss(sheet, function () { closeFirmwareConfirm(false); });
+    });
+  }
+
+  function closeFirmwareConfirm(val) {
+    var s = document.getElementById("fw-confirm-sheet");
+    var sc = document.getElementById("fw-confirm-scrim");
+    if (s) s.remove();
+    if (sc) sc.remove();
+    var r = _fwConfirmResolve;
+    _fwConfirmResolve = null;
+    if (r) r(val);
+  }
+
+  // Poll one run until it ends, repainting the row. Stops when the sheet is
+  // dismissed or swaps to another asset; a network hiccup backs off and
+  // tries again rather than giving up on a flash that is still running.
+  function watchFirmwareRun(assetId, runId) {
+    if (_fwPoll && _fwPoll.assetId === assetId && _fwPoll.runId === runId) return;
+    stopFirmwarePoll();
+    var me = { assetId: assetId, runId: runId, timer: null };
+    _fwPoll = me;
+    function tick() {
+      if (_fwPoll !== me || _openId !== assetId) return;
+      api.assets.firmwareUpgradeRun(assetId, runId).then(function (res) {
+        if (_fwPoll !== me || _openId !== assetId) return;
+        var run = res && res.run;
+        var slot = document.getElementById("asset-fw-slot");
+        if (run && (run.status === "queued" || run.status === "running")) {
+          var t = document.getElementById("asset-fw-progress-text");
+          if (t) t.textContent = fwProgressText(run);
+          else if (slot) slot.innerHTML = fwRunningHtml(run);
+          me.timer = setTimeout(tick, FW_POLL_MS);
+          return;
+        }
+        _fwPoll = null;
+        if (slot) slot.innerHTML = fwResultHtml(run);
+        if (run && run.status === "succeeded") PolarisTabs.showSnackbar("Firmware upgraded to " + (run.verifiedVersion || run.toVersion));
+        else if (run) PolarisTabs.showSnackbar(run.status === "unverified" ? "Upgrade finished, version unconfirmed" : "Firmware upgrade failed", { error: true });
+      }).catch(function () {
+        if (_fwPoll !== me) return;
+        me.timer = setTimeout(tick, FW_POLL_MS * 2);
+      });
+    }
+    me.timer = setTimeout(tick, FW_POLL_MS);
+  }
+
+  function stopFirmwarePoll() {
+    if (_fwPoll && _fwPoll.timer) clearTimeout(_fwPoll.timer);
+    _fwPoll = null;
+  }
+
   // ─── helpers ───────────────────────────────────────────────────────────
   function monitorDotCls(asset) {
     if (!asset.monitored) return "";
@@ -2434,6 +2662,8 @@
 
   window.PolarisAssetDetail = {
     open: open,
+    // Pure firmware-row pieces, for the tests.
+    _fw: { fwProgressText: fwProgressText, fwSlotHtml: fwSlotHtml, fwResultHtml: fwResultHtml },
     spec: {
       parentTab: "assets",
       // No topbar — the slide-up sheet carries its own header.

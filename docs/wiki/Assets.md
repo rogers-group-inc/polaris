@@ -380,7 +380,8 @@ it on the device) or *failed* (the transcript says at which stage). The
 asset's OS/firmware field is not rewritten by the run: the next discovery
 reads the new version, and until it does the card says *Flashed*. **Run
 history** lists every attempt with a **View log**. No bulk upgrade exists; it
-is this device, from this card. The phone shows no Firmware card.
+is this device, from this card. On the phone the upgrade lives in the
+asset's OS row instead — see [Mobile and Dash](Mobile-and-Dash#assets-and-networks).
 
 **Managed by** names the integration that owns this asset's monitoring
 configuration — whose class settings and stored credential it inherits, whose

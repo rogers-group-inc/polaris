@@ -218,6 +218,9 @@ the happy-path test fails against the old engine (`expected 1 to be 100`).
 
 The bulk / fleet run fortiupgrade's scheduler performs (deepest-first ordering, concurrency);
 the SSH + SFTP/TFTP fallback; a FortiGate-controller push for managed APs; an "available"
-badge on the assets list (no per-row query on the list); the mobile SPA. And a bench test on
+badge on the assets list (no per-row query on the list); the Repository on the mobile SPA
+(the phone gained the per-asset upgrade on 2026-09-26 — the asset sheet's OS row, primary
+image only, the same POST and gates; `public/js/mobile/asset-detail.js` → Firmware upgrade
+block). And a bench test on
 real hardware — the wiki says so, in the words a human must review before this reaches a
 fleet: a flash that fails partway can leave a device unbootable.
