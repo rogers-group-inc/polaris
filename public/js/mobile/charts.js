@@ -374,10 +374,11 @@
       + '</div>';
 
     // X-axis labels — start time at left, end time at right.
+    var crossesDay = new Date(tMin).toDateString() !== new Date(tMax).toDateString();
     var xLabels = ''
       + '<div class="chart-x-labels">'
-      + '  <span class="chart-x-tick">' + formatX(tMin, tMax - tMin) + '</span>'
-      + '  <span class="chart-x-tick">' + formatX(tMax, tMax - tMin) + '</span>'
+      + '  <span class="chart-x-tick">' + formatX(tMin, tMax - tMin, crossesDay) + '</span>'
+      + '  <span class="chart-x-tick">' + formatX(tMax, tMax - tMin, crossesDay) + '</span>'
       + '</div>';
 
     return ''
@@ -402,11 +403,16 @@
 
   // Picks an appropriate label format based on the total window duration:
   // sub-day windows show HH:MM, sub-month show "MMM D", larger show "MMM YYYY".
-  function formatX(ts, spanMs) {
+  // A sub-day window that crosses midnight (every 24h window does) prefixes the
+  // date — otherwise both ends of a 24h chart read the same "14:05".
+  function formatX(ts, spanMs, crossesDay) {
     if (ts == null || !isFinite(ts)) return "";
     var d = new Date(ts);
     if (isNaN(d.getTime())) return "";
     if (spanMs < 36 * 3600 * 1000) {
+      if (crossesDay) {
+        return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      }
       return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
     if (spanMs < 31 * 86400 * 1000) {
