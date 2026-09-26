@@ -46,9 +46,10 @@ import { logger } from "../utils/logger.js";
 import { escapeHtml, formatLocalTime } from "../utils/notificationTemplate.js";
 import { factRow } from "../utils/alertEmailTemplate.js";
 import { fortiapInterfaceAliases } from "../utils/fortiapInterfaceAlias.js";
+import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
 
 /** The interface-facts tokens, resolved at delivery like `{chart.*}`. */
-export const INTERFACE_TOKENS = ["interface.lldp"] as const;
+export const INTERFACE_TOKENS = ["interface.lldp", "interface.ip"] as const;
 export type InterfaceToken = (typeof INTERFACE_TOKENS)[number];
 
 /**
@@ -139,6 +140,47 @@ export async function loadInterfaceLldp(assetId: string, ifName: string): Promis
     logger.warn({ err: (err as Error)?.message, assetId, ifName }, "alert LLDP lookup failed — sending without it");
     return [];
   }
+}
+
+/**
+ * The address configured on one interface, or null when it has none.
+ *
+ * The default body leaves the DEVICE's IP out of an interface alert
+ * (notificationRecipientService.defaultBodyContext) — it is the address of a
+ * box that is answering fine. The PORT's own address is a different fact: on a
+ * routed interface (a WAN uplink, a VLAN gateway) it is how the reader
+ * recognises which link this is, and what they would ping. An access port has
+ * none, and prints nothing.
+ *
+ * One read on the `(assetId, ifName)` unique key. "Unaddressed" is decided by
+ * `interfaceIpIsUnaddressed`, so the FortiOS CMDB pair "0.0.0.0 0.0.0.0" and a
+ * bare "0.0.0.0" both read as no address. A failed read yields null.
+ */
+export async function loadInterfaceIp(assetId: string, ifName: string): Promise<string | null> {
+  try {
+    const row = await prisma.assetInterface.findUnique({
+      where: { assetId_ifName: { assetId, ifName } },
+      select: { ipAddress: true },
+    });
+    if (!row || interfaceIpIsUnaddressed(row.ipAddress)) return null;
+    return bareInterfaceIp(row.ipAddress);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message, assetId, ifName }, "alert interface IP lookup failed — sending without it");
+    return null;
+  }
+}
+
+/**
+ * The Interface IP fact as the email carries it: a complete facts-table row
+ * (HTML) or one "Interface IP:" line (text), or "" when the port has no
+ * address. A complete row rather than a value inside a template row for the
+ * same reason `{interface.lldp}` is a complete block: `pruneEmptyRows` runs at
+ * compose time, before this deferred token is filled, so a row whose value
+ * came out empty HERE would never be pruned.
+ */
+export function renderInterfaceIp(ip: string | null, opts: { html: boolean }): string {
+  if (!ip) return "";
+  return opts.html ? factRow("Interface IP", escapeHtml(ip)) : `Interface IP: ${ip}`;
 }
 
 function truncateDesc(value: string | null): string | null {
@@ -235,6 +277,7 @@ export function renderInterfaceLldp(
 }
 
 const LLDP_TOKEN_RE = /\{interface\.lldp\}/g;
+const IP_TOKEN_RE = /\{interface\.ip\}/g;
 
 /** Do any of these templates reference an `{interface.*}` token? */
 export function interfaceTokensIn(...templates: Array<string | null | undefined>): Set<InterfaceToken> {
@@ -258,9 +301,11 @@ export function interfaceTokensIn(...templates: Array<string | null | undefined>
  * renderer interpolates there is nothing to escape here: `renderInterfaceLldp`
  * has already escaped every network-supplied string it put in its HTML form.
  */
-export function substituteInterfaceTokens(body: string, block: string): string {
+export function substituteInterfaceTokens(body: string, block: string, ipBlock = ""): string {
   if (!body) return body;
-  return body.replace(LLDP_TOKEN_RE, block);
+  // `() => x` rather than the string itself: a replacement string treats `$&`
+  // and friends as patterns, and these blocks carry network-supplied text.
+  return body.replace(LLDP_TOKEN_RE, () => block).replace(IP_TOKEN_RE, () => ipBlock);
 }
 
 /**
@@ -273,13 +318,14 @@ export async function buildInterfaceLldpBlocks(
   metric: string | null,
   dimension: string | null,
   timeZone: string | null = null,
-): Promise<{ html: string; text: string }> {
-  const empty = { html: "", text: "" };
+): Promise<{ html: string; text: string; ipHtml: string; ipText: string }> {
+  const empty = { html: "", text: "", ipHtml: "", ipText: "" };
   if (!assetId || !dimension || !isInterfaceDimensionMetric(metric)) return empty;
-  const neighbors = await loadInterfaceLldp(assetId, dimension);
-  if (neighbors.length === 0) return empty;
+  const [neighbors, ip] = await Promise.all([loadInterfaceLldp(assetId, dimension), loadInterfaceIp(assetId, dimension)]);
   return {
     html: renderInterfaceLldp(dimension, neighbors, { html: true, timeZone }),
     text: renderInterfaceLldp(dimension, neighbors, { html: false, timeZone }),
+    ipHtml: renderInterfaceIp(ip, { html: true }),
+    ipText: renderInterfaceIp(ip, { html: false }),
   };
 }

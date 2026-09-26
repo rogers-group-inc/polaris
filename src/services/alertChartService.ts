@@ -32,7 +32,6 @@ import { alarmStatusToFlag, convertSensorForDisplay, sensorDisplayUnit } from ".
 import { getBranding } from "./brandingService.js";
 import { SAMPLE_SDWAN_HEALTH_CHECK, SAMPLE_SDWAN_LINK } from "../utils/sampleAlertDevice.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
-import { isInterfaceDimensionMetric } from "./alertInterfaceService.js";
 
 /**
  * Template token → what it draws. The token vocabulary lives in
@@ -110,19 +109,22 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
  * do — the port's LLDP neighbour, which alertInterfaceService supplies in the
  * charts' place.
  *
- * EVERY interface-dimensioned metric is here, the rate quartet included
- * (`ifInErrorRate`, `ifInBps` …). An earlier cut kept the device graphs on a
- * port erroring or saturating, on the theory that it might correlate with the
- * device's load; operators read those emails the same way as the down ones —
- * four graphs about the wrong thing — and asked for them gone (2026-09-26).
+ * Only the STATE fields are here, deliberately, not every interface-dimensioned
+ * metric: a port that is DOWN — or that lost its address — is not a device
+ * condition, but a port erroring or saturating plausibly correlates with the
+ * device's own load, so an `ifInErrorRate` / `ifInBps` alert keeps its graphs.
+ * (2026-09-26 briefly widened this to all eight interface metrics; operators
+ * asked for the rate quartet's graphs back the same day.)
  *
- * The one thing an interface alert CAN still chart is a WAN port that is an
+ * The one thing a port-scoped alert CAN still chart is a WAN port that is an
  * SD-WAN member: the health checks probing through it are the picture of that
  * link, so `buildAlertCharts` draws the SD-WAN trio for it (see
  * loadWanMemberSeries). Any other port gets no charts at all.
  */
+const PORT_SCOPED_METRICS: ReadonlySet<string> = new Set(["ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus"]);
+
 export function isPortScopedAlert(metric: string | null | undefined): boolean {
-  return isInterfaceDimensionMetric(metric);
+  return !!metric && PORT_SCOPED_METRICS.has(metric);
 }
 
 /**

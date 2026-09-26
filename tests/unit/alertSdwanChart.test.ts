@@ -411,15 +411,19 @@ describe("an interface alert on a WAN member", () => {
     expect(calls).toEqual(["perfSlaLink:wan1"]);
   });
 
-  it("covers the rate metrics too, not only the state ones", async () => {
+  it("leaves the rate metrics on the device graphs, WAN member or not", async () => {
+    // Error rate and throughput plausibly correlate with the device's load,
+    // so they keep CPU / memory / response time / loss and get no SD-WAN swap.
     const charts = await buildAlertCharts("a1", ALL_TOKENS, {
       now: new Date(T0 + 10 * 60_000),
       metric: "ifInErrorRate",
       dimension: "wan1",
     });
-    expect([...charts.keys()].sort()).toEqual(["chart.sdwanJitter", "chart.sdwanLatency", "chart.sdwanLoss"]);
-    expect(calls).not.toContain("telemetry");
-    expect(calls).not.toContain("monitor");
+    const keys = [...charts.keys()];
+    expect(keys).toEqual(expect.arrayContaining(["chart.cpu", "chart.memory", "chart.responseTime", "chart.probeLoss"]));
+    expect(keys).not.toContain("chart.sdwanLatency");
+    expect(calls).not.toContain("perfSlaLink:wan1");
+    expect(calls).toContain("telemetry");
   });
 
   it("draws nothing for a port no health check probes through", async () => {

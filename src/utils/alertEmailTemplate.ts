@@ -80,6 +80,10 @@ export const DEFAULT_ALERT_TEXT = [
   // bare ": " that `pruneEmptyTextLines` drops (its label is optional for
   // exactly this line).
   "{dimension.label}: {dimension}",
+  // The PORT's own address, on an interface alert whose port has one. A
+  // deferred token (alertInterfaceService) that expands to the whole line or
+  // to nothing, so it needs no label here.
+  "{interface.ip}",
   "IP:         {asset.ip}",
   "Switch:     {asset.connectedSwitch}",
   "AP:         {asset.connectedAp}",
@@ -114,8 +118,9 @@ export const DEFAULT_ALERT_TEXT = [
   // What was on the port, when the alert is about ONE port. Renders away for
   // every other alert — and for a port that advertised no neighbour — so it
   // costs a non-interface alert nothing. Above the charts because on an
-  // interface alert the device charts never render (alertChartService's
-  // isPortScopedAlert) — only the SD-WAN trio, when the port is a WAN member.
+  // interface STATUS alert the device charts never render (alertChartService's
+  // isPortScopedAlert) — only the SD-WAN trio, when the port is a WAN member;
+  // error-rate and throughput alerts keep the device charts.
   // The device facts above (IP, switch, AP, location, description) are blanked
   // for an interface alert too (notificationRecipientService's
   // defaultBodyContext) and prune away.
@@ -257,6 +262,14 @@ export const DEFAULT_ALERT_HTML = [
   // "Interface", "Sensor" or "IPsec tunnel" without three templates; both
   // render blank on a whole-device alert and `pruneEmptyRows` drops the row.
   factRow("{dimension.label}", "{dimension}"),
+  // The PORT's own address, when the alert is about an interface that has one
+  // (a WAN uplink, a VLAN gateway). Deferred and filled at delivery by
+  // alertInterfaceService, which emits the complete row or nothing: a
+  // factRow() here would be judged by pruneEmptyRows at COMPOSE time, while
+  // the token was still literal, and survive empty. On an interface alert the
+  // device's IP row below it is blanked (defaultBodyContext) and prunes away,
+  // so this row takes its place.
+  "{interface.ip}",
   factRow("IP address", "{asset.ip}"),
   factRow("Connected switch", "{asset.connectedSwitch}"),
   factRow("Connected AP", "{asset.connectedAp}"),
@@ -305,8 +318,8 @@ export const DEFAULT_ALERT_HTML = [
   // "interface down" email: the device is answering, so its own graphs explain
   // nothing, and "what was plugged into port2" is the question being asked.
   // On any interface alert the device rows above prune away (their tokens are
-  // blanked by defaultBodyContext) and only a WAN member's SD-WAN charts can
-  // render below.
+  // blanked by defaultBodyContext); on an interface STATUS alert only a WAN
+  // member's SD-WAN charts can render below.
   "{interface.lldp}",
   // Charts — the last hour of the metrics that explain most alerts. The sensor
   // chart leads because when it renders at all, it IS what the alert is about:

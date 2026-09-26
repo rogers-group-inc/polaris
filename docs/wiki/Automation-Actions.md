@@ -190,20 +190,25 @@ toggle only chooses what is on screen.
 
 An alert on an interface (oper status, admin status, IP address, PoE status,
 error rate or throughput) is about **one port, not the device**. The device is
-still answering, which is how Polaris knows the port is down, so its facts and
-graphs describe a healthy device. The default email therefore leaves out:
-
-- the device facts: IP address, connected switch and AP, location, model and
-  description
-- the device graphs: CPU, memory, response time and packet loss
+still answering, which is how Polaris knows the port is down, so its facts
+describe a healthy device. The default email therefore leaves out the device
+facts: IP address, connected switch and AP, location, model and description.
 
 It keeps the device name, the **Interface** row, the automation and timing
-rows, and the LLDP neighbour that was last seen on the port.
+rows, and the LLDP neighbour that was last seen on the port. **If the port has
+an IP address configured, an Interface IP row shows it.** An access port, or
+one at 0.0.0.0, shows nothing.
 
-**A WAN port that is an SD-WAN member gets the SD-WAN graphs instead.** They
-show the last hour of latency, jitter and packet loss for that member, from the
-health checks probing through it, with the FortiGate's own SLA targets drawn as
-dashed lines. A port that no health check probes through gets no graphs.
+**Graphs depend on the kind of alert:**
+
+- **Status alerts** (oper status, admin status, interface IP, PoE) drop the
+  device graphs (CPU, memory, response time and packet loss). A WAN port that
+  is an SD-WAN member gets the SD-WAN graphs instead: the last hour of
+  latency, jitter and packet loss for that member, from the health checks
+  probing through it, with the FortiGate's own SLA targets drawn as dashed
+  lines. Any other port gets no graphs.
+- **Error-rate and throughput alerts** keep the device graphs, because a port
+  erroring or saturating can go with load on the device itself.
 
 This applies to the **default** email only. If you tick **Customize the
 email**, your body is sent exactly as written. A `{asset.ip}` you put in it

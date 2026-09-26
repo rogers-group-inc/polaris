@@ -14,8 +14,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // vi.mock is hoisted above the module graph, so the spy has to be created in a
 // hoisted block too or the factory closes over an uninitialized binding.
-const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
-vi.mock("../../src/db.js", () => ({ prisma: { assetLldpNeighbor: { findMany } } }));
+const { findMany, findUnique } = vi.hoisted(() => ({ findMany: vi.fn(), findUnique: vi.fn() }));
+vi.mock("../../src/db.js", () => ({
+  prisma: { assetLldpNeighbor: { findMany }, assetInterface: { findUnique } },
+}));
 
 import {
   isPortScopedAlert,
@@ -30,6 +32,8 @@ import {
   isInterfaceDimensionMetric,
   buildInterfaceLldpBlocks,
   loadInterfaceLldp,
+  loadInterfaceIp,
+  renderInterfaceIp,
   type AlertLldpNeighbor,
 } from "../../src/services/alertInterfaceService.js";
 import { isDeferredToken, renderNotificationTemplate } from "../../src/utils/notificationTemplate.js";
@@ -54,16 +58,18 @@ const neighbor = (over: Partial<AlertLldpNeighbor> = {}): AlertLldpNeighbor => (
 
 beforeEach(() => {
   findMany.mockReset();
+  findUnique.mockReset();
+  findUnique.mockResolvedValue(null);
 });
 
 describe("a port-scoped alert draws no charts", () => {
-  it("names every interface metric, the rate ones included", () => {
-    // The rate quartet used to keep the device graphs; operators read those
-    // the same way as the down ones and asked for them gone (2026-09-26).
-    for (const m of ["ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus", "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps"]) {
+  it("names exactly the interface STATE metrics", () => {
+    for (const m of ["ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus"]) {
       expect(isPortScopedAlert(m)).toBe(true);
     }
-    for (const m of ["cpuPct", "monitorStatus", "sdwanLatencyMs", null, undefined, ""]) {
+    // A port erroring or saturating can genuinely correlate with device load,
+    // so those keep their graphs (briefly removed and restored 2026-09-26).
+    for (const m of ["ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps", "cpuPct", "monitorStatus", null, undefined, ""]) {
       expect(isPortScopedAlert(m)).toBe(false);
     }
   });
@@ -195,10 +201,11 @@ describe("delivery-time gating", () => {
   });
 
   it("never queries for a non-interface alert", async () => {
-    await expect(buildInterfaceLldpBlocks("asset-1", "hwSensorValue", "TMP1")).resolves.toEqual({ html: "", text: "" });
-    await expect(buildInterfaceLldpBlocks("asset-1", "ifOperStatus", null)).resolves.toEqual({ html: "", text: "" });
-    await expect(buildInterfaceLldpBlocks(null, "ifOperStatus", "port2")).resolves.toEqual({ html: "", text: "" });
+    await expect(buildInterfaceLldpBlocks("asset-1", "hwSensorValue", "TMP1")).resolves.toEqual({ html: "", text: "", ipHtml: "", ipText: "" });
+    await expect(buildInterfaceLldpBlocks("asset-1", "ifOperStatus", null)).resolves.toEqual({ html: "", text: "", ipHtml: "", ipText: "" });
+    await expect(buildInterfaceLldpBlocks(null, "ifOperStatus", "port2")).resolves.toEqual({ html: "", text: "", ipHtml: "", ipText: "" });
     expect(findMany).not.toHaveBeenCalled();
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it("renders both bodies from one read", async () => {
@@ -240,5 +247,69 @@ describe("the token is deferred, or the delivery pass finds nothing to fill", ()
   it("sits above the charts, since on an interface alert the charts render away", () => {
     expect(DEFAULT_ALERT_HTML.indexOf("{interface.lldp}")).toBeLessThan(DEFAULT_ALERT_HTML.indexOf("{chart.trigger}"));
     expect(DEFAULT_ALERT_TEXT.indexOf("{interface.lldp}")).toBeLessThan(DEFAULT_ALERT_TEXT.indexOf("{chart.trigger}"));
+  });
+});
+
+describe("the Interface IP row", () => {
+  it("reads the port's own address on the (assetId, ifName) key", async () => {
+    findUnique.mockResolvedValue({ ipAddress: "203.0.113.10/29" });
+    await expect(loadInterfaceIp("asset-1", "wan1")).resolves.toBe("203.0.113.10");
+    expect(findUnique.mock.calls[0]![0].where).toEqual({ assetId_ifName: { assetId: "asset-1", ifName: "wan1" } });
+  });
+
+  it("treats every unaddressed shape as no address", async () => {
+    for (const ipAddress of [null, "", "0.0.0.0", "0.0.0.0 0.0.0.0"]) {
+      findUnique.mockResolvedValue({ ipAddress });
+      await expect(loadInterfaceIp("asset-1", "port7")).resolves.toBeNull();
+    }
+    findUnique.mockResolvedValue(null);
+    await expect(loadInterfaceIp("asset-1", "port7")).resolves.toBeNull();
+  });
+
+  it("reads the FortiOS CMDB pair as its address", async () => {
+    findUnique.mockResolvedValue({ ipAddress: "10.4.1.1 255.255.255.0" });
+    await expect(loadInterfaceIp("asset-1", "vlan40")).resolves.toBe("10.4.1.1");
+  });
+
+  it("never holds up the alert when the read fails", async () => {
+    findUnique.mockRejectedValue(new Error("db gone"));
+    await expect(loadInterfaceIp("asset-1", "wan1")).resolves.toBeNull();
+  });
+
+  it("renders a complete row, a line, or nothing", () => {
+    expect(renderInterfaceIp("10.4.1.1", { html: true })).toContain("Interface IP");
+    expect(renderInterfaceIp("10.4.1.1", { html: true })).toMatch(/^<tr>.*<\/tr>$/s);
+    expect(renderInterfaceIp("10.4.1.1", { html: false })).toBe("Interface IP: 10.4.1.1");
+    expect(renderInterfaceIp(null, { html: true })).toBe("");
+    expect(renderInterfaceIp(null, { html: false })).toBe("");
+  });
+
+  it("is filled for a port with an address even when it has no LLDP neighbour", async () => {
+    findMany.mockResolvedValue([]);
+    findUnique.mockResolvedValue({ ipAddress: "203.0.113.10" });
+    const out = await buildInterfaceLldpBlocks("asset-1", "ifOperStatus", "wan1");
+    expect(out.html).toBe("");
+    expect(out.ipText).toBe("Interface IP: 203.0.113.10");
+    expect(out.ipHtml).toContain("203.0.113.10");
+  });
+
+  it("lands in the facts table of the default body, and vanishes when empty", () => {
+    const ip = renderInterfaceIp("203.0.113.10", { html: true });
+    const withIp = substituteInterfaceTokens(DEFAULT_ALERT_HTML, "", ip);
+    expect(withIp).toContain("203.0.113.10");
+    expect(withIp).not.toContain("{interface.");
+    // Inside the facts table: after the component row, before the device IP row.
+    expect(withIp.indexOf("Interface IP")).toBeGreaterThan(withIp.indexOf("{dimension}"));
+    expect(withIp.indexOf("Interface IP")).toBeLessThan(withIp.indexOf("{asset.ip}"));
+    const without = substituteInterfaceTokens(DEFAULT_ALERT_HTML, "", "");
+    expect(without).not.toContain("Interface IP");
+    expect(without).not.toContain("{interface.");
+  });
+
+  it("is deferred and ships in both default bodies", () => {
+    expect(isDeferredToken("interface.ip")).toBe(true);
+    expect(DEFAULT_ALERT_TEXT).toContain("{interface.ip}");
+    expect(DEFAULT_ALERT_HTML).toContain("{interface.ip}");
+    expect(interfaceTokensIn("x {interface.ip} y").has("interface.ip")).toBe(true);
   });
 });

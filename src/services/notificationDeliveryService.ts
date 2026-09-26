@@ -252,8 +252,8 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
         // what the body around it now uses.
         typeof meta.timeZone === "string" ? meta.timeZone : null,
       );
-      text = pruneEmptyTextLines(substituteInterfaceTokens(text, lldp.text));
-      if (html) html = substituteInterfaceTokens(html, lldp.html);
+      text = pruneEmptyTextLines(substituteInterfaceTokens(text, lldp.text, lldp.ipText));
+      if (html) html = substituteInterfaceTokens(html, lldp.html, lldp.ipHtml);
     }
 
     // The letterhead. Built here rather than at fire time for the same reason
