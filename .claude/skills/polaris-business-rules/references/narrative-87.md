@@ -113,10 +113,20 @@ came back — and asks for a scoped rediscover, which is what makes the asset re
 firmware-changed Event say the new version. The availability read reports `pending-discovery`
 in between so the button does not re-offer a flash that already happened.
 
-**`fullwrite` on the `firmware` key is the named act** rule 43(d) requires for a fourth rung.
-Seeded `fullwrite` for admin-equivalent roles and `none` for everyone else including
-`readonly`: nothing in the catalogue implied this act before, so nothing derives it, and even
-the read rung shows new information (which devices are behind on firmware).
+**`fullwrite` on the `firmware` key was the named act** rule 43(d) requires for a fourth rung
+(2026-09-25). Seeded `fullwrite` for admin-equivalent roles and `none` for everyone else
+including `readonly`: nothing in the catalogue implied this act before, so nothing derives it,
+and even the read rung shows new information (which devices are behind on firmware).
+**Superseded 2026-09-26 by the operator:** "the rbac for repository: they can see the
+repository; read-write can upload new firmware to the repository; asset read-write are able to
+flash firmware." The flash is now `assets:write` and the card's reads `assets:read`; the
+`firmware` key is none / read / write and governs the Repository alone; migration
+`20260926000000_firmware_key_repository_only` rewrites stored `fullwrite`. The trade the
+operator accepted: every Assets Read-Write role — `networkadmin` and `assetsadmin` by default —
+can now reboot network hardware, where before only admin-equivalent roles could. A per-asset
+`GET /assets/:id/firmware-upgrade/runs/:runId` (`getRunForAsset`, 404 on another asset's run)
+replaced the card's use of the Repository's run read, which would otherwise have refused an
+assets-only operator mid-flash. See rule 43(g).
 
 ### Rejected alternatives
 

@@ -5297,11 +5297,13 @@ async function openViewModal(id, opts) {
     });
 
     // Firmware upgrade availability (business rule 87) — switches and access
-    // points only, and only for a role that may see the Repository. Errors
-    // become a card line rather than a failed wave.
+    // points only. The card is part of the asset, so it is read at
+    // assets:read like the rest of the slide-over (flashing is assets:write);
+    // the Repository key only decides whether the card links to the tab.
+    // Errors become a card line rather than a failed wave.
     var firmwareP = assetP.then(function (asset) {
       if (!_assetFirmwareEligible(asset)) return null;
-      if (!(typeof permAtLeast === "function" && permAtLeast("firmware", "read"))) return null;
+      if (!(typeof permAtLeast === "function" && permAtLeast("assets", "read"))) return null;
       return api.assets.firmwareUpgrade(asset.id).catch(function (err) { return { error: (err && err.message) || "request failed" }; });
     });
 
@@ -6667,7 +6669,8 @@ function assetFirmwarePanelHTML(a, fw) {
   if (!fw || !_assetFirmwareEligible(a)) return "";
   var badge = "";
   var body = "";
-  var canFlash = typeof permAtLeast === "function" && permAtLeast("firmware", "fullwrite");
+  // Whoever may edit an asset may upgrade it (operator decision, 2026-09-26).
+  var canFlash = typeof permAtLeast === "function" && permAtLeast("assets", "write");
   var repoLink = (typeof permAtLeast === "function" && permAtLeast("firmware", "read"))
     ? ' <a href="/server-settings.html?tab=firmware">Open the Repository</a>'
     : '';
@@ -6707,7 +6710,7 @@ function assetFirmwarePanelHTML(a, fw) {
       '</div>' +
       (canFlash
         ? '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem"><button type="button" class="btn btn-primary" id="btn-fw-upgrade">Upgrade firmware to ' + escapeHtml(fw.image.versionLabel) + '…</button></div>'
-        : '<p class="hint" style="margin:0">Starting an upgrade needs Full Read-Write on Firmware Repository — ask an administrator.</p>');
+        : '<p class="hint" style="margin:0">Starting an upgrade needs Read-Write on Assets — ask an administrator.</p>');
   }
   if (!fw.error && fw.state !== "running" && fw.lastRun) body += _fwRunResultHTML(fw.lastRun);
   return '<div id="asset-firmware-panel" data-asset-id="' + escapeHtml(a.id) + '" style="margin:0 0 1.5rem;padding:1rem;border:1px solid var(--color-border);border-radius:6px;background:var(--color-surface)">' +
@@ -6821,16 +6824,18 @@ async function _loadFirmwareHistory(a) {
     }).join("");
     box.innerHTML = '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>Started</th><th>Version</th><th>Result</th><th>Duration</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
     box.querySelectorAll(".fw-history-view").forEach(function (b) {
-      b.addEventListener("click", function () { _openFwRunLogModal(b.getAttribute("data-id")); });
+      b.addEventListener("click", function () { _openFwRunLogModal(a.id, b.getAttribute("data-id")); });
     });
   } catch (err) {
     box.innerHTML = '<p class="hint" style="margin:0;color:var(--color-danger)">' + escapeHtml((err && err.message) || "Could not load run history") + '</p>';
   }
 }
 
-async function _openFwRunLogModal(runId) {
+// The per-asset run read (assets:read), not the Repository's (firmware:read):
+// a role that may flash a device need not hold the Repository key.
+async function _openFwRunLogModal(assetId, runId) {
   try {
-    var res = await api.serverSettings.getFirmwareRun(runId);
+    var res = await api.assets.firmwareUpgradeRun(assetId, runId);
     var run = res.run;
     var lines = (run.log || []).map(function (l) { return "[" + l.t + "] " + (l.level || "info").toUpperCase() + " " + l.msg; }).join("\n");
     openModal("Firmware upgrade — " + run.toVersion,
@@ -6877,7 +6882,7 @@ function _startFirmwarePoll(a, runId) {
   var tick = function () {
     var panel = document.getElementById("asset-firmware-panel");
     if (!panel || panel.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }
-    api.serverSettings.getFirmwareRun(runId).then(function (res) {
+    api.assets.firmwareUpgradeRun(a.id, runId).then(function (res) {
       var run = res && res.run;
       var panel2 = document.getElementById("asset-firmware-panel");
       if (!panel2 || panel2.getAttribute("data-asset-id") !== a.id || _fwPollKey !== key) { if (_fwPollKey === key) _fwPollKey = null; return; }

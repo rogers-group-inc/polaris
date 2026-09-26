@@ -5,7 +5,7 @@
  *
  * The card is the only place an operator sees what the Repository can do to
  * THIS device, so what is pinned is the state vocabulary the server hands it
- * and what each state withholds: the Upgrade verb is fullwrite-only (the
+ * and what each state withholds: the Upgrade verb is assets:write-only (the
  * facts stay visible at read); a running flash shows stage and percent and no
  * verb; a card for a server or firewall does not exist at all; and the
  * approval dialog names the exact image — version, platform, file, hash —
@@ -41,15 +41,17 @@ function varSrc(name: string): string {
   return assetsLines.slice(start, end + 1).join("\n");
 }
 
-let level = "fullwrite";
+// The card reads two keys: `assets` (write = the Upgrade verb, 2026-09-26) and
+// `firmware` (read = the "Open the Repository" link). Each test sets both.
+let perms: Record<string, string> = {};
 const RANK: Record<string, number> = { none: 0, read: 1, write: 2, fullwrite: 3 };
 
 beforeEach(() => {
-  level = "fullwrite";
+  perms = { assets: "write", firmware: "read" };
   g.escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.timeAgo = () => "5 minutes ago";
   g.formatBytes = (n: number) => n + " B";
-  g.permAtLeast = (key: string, want: string) => key === "firmware" && RANK[level] >= RANK[want];
+  g.permAtLeast = (key: string, want: string) => RANK[perms[key] ?? "none"]! >= RANK[want]!;
   for (const name of ["_assetFirmwareEligible", "_fwBadge", "_fwImageLine", "_fwRunResultHTML", "_fwStageRow", "_fwProgressHTML", "_fwRunHistoryHTML", "assetFirmwarePanelHTML", "_fwApprovalBlockHTML", "_fwApprovalModalHTML"]) {
     (0, eval)(fnSrc(name));
   }
@@ -105,7 +107,7 @@ describe("the states, in the server's words", () => {
     expect(text(r)).toContain("No login bound");
     expect(r.querySelector("#btn-fw-upgrade")).toBeNull();
   });
-  it("available at fullwrite: the facts and the verb, naming the version", () => {
+  it("available at assets:write: the facts and the verb, naming the version", () => {
     const r = render(asset(), fw());
     expect(text(r)).toContain("Upgrade available");
     expect(text(r)).toContain("Current: 7.4.3 build0542");
@@ -114,12 +116,19 @@ describe("the states, in the server's words", () => {
     expect(text(r.querySelector("#btn-fw-upgrade"))).toBe("Upgrade firmware to 7.6.8 build1164…");
     expect(r.querySelector("#btn-fw-history")).not.toBeNull();
   });
-  it("available at write: the facts, the hint, no verb", () => {
-    level = "write";
+  it("available at assets:read: the facts, the hint, no verb", () => {
+    perms = { assets: "read", firmware: "read" };
     const r = render(asset(), fw());
     expect(text(r)).toContain("Available: 7.6.8 build1164");
     expect(r.querySelector("#btn-fw-upgrade")).toBeNull();
-    expect(text(r)).toMatch(/needs Full Read-Write on Firmware Repository/);
+    expect(text(r)).toMatch(/needs Read-Write on Assets/);
+  });
+  it("Repository Read-Write alone does not flash — uploading an image is not upgrading a device", () => {
+    perms = { assets: "read", firmware: "write" };
+    expect(render(asset(), fw()).querySelector("#btn-fw-upgrade")).toBeNull();
+    // …and the verb needs no Repository grant at all.
+    perms = { assets: "write", firmware: "none" };
+    expect(render(asset(), fw()).querySelector("#btn-fw-upgrade")).not.toBeNull();
   });
   it("names the backup when it is also eligible", () => {
     const r = render(asset(), fw({ backupImage: image({ id: "img-2", role: "backup", versionLabel: "7.6.5 build1105" }) }));

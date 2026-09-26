@@ -123,7 +123,10 @@ describe("no dead top rung", () => {
     users: "IdP group-mapping CRUD (the /group-mappings mount)",
     roles: "admin-equivalence, together with users=fullwrite",
     savedDashboards: "deleting someone else's dashboard",
-    firmware: "starting a firmware upgrade (POST /assets/:id/firmware-upgrade) — the flash reboots a switch or access point (business rule 87)",
+    // `firmware` was here until 2026-09-26, its fourth rung reserving the
+    // flash (POST /assets/:id/firmware-upgrade). The operator moved that act
+    // to assets:write — whoever may edit an asset may upgrade it — so the key
+    // now governs the repository alone and tops out at write.
     // `serverSettingsSystem` was here until 2026-09-23, excused on the grounds
     // that its `write` rung really did gate something — the identity providers
     // — while `fullwrite` gated the rest of the System tab. That was the key
@@ -149,6 +152,10 @@ describe("no dead top rung", () => {
     // Keeps the allow-list from outliving the key it excuses.
     const keys = new Set(FUNCTION_KEYS.map(f => f.key));
     for (const key of Object.keys(FULLWRITE_IS_MEANINGFUL)) expect(keys).toContain(key);
+  });
+
+  it("firmware governs the repository only: none / read / write", () => {
+    expect(levelsFor("firmware")).toEqual(["none", "read", "write"]);
   });
 
   it("serverSettingsData has no Read-Only rung", () => {
