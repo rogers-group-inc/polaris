@@ -57,13 +57,13 @@ beforeEach(() => {
 });
 
 describe("a port-scoped alert draws no charts", () => {
-  it("names exactly the interface STATE metrics", () => {
-    for (const m of ["ifOperStatus", "ifAdminStatus", "poeStatus"]) {
+  it("names every interface metric, the rate ones included", () => {
+    // The rate quartet used to keep the device graphs; operators read those
+    // the same way as the down ones and asked for them gone (2026-09-26).
+    for (const m of ["ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus", "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps"]) {
       expect(isPortScopedAlert(m)).toBe(true);
     }
-    // A port erroring or saturating can genuinely correlate with device load,
-    // so those keep their graphs.
-    for (const m of ["ifInErrorRate", "ifOutBps", "cpuPct", "monitorStatus", null, undefined, ""]) {
+    for (const m of ["cpuPct", "monitorStatus", "sdwanLatencyMs", null, undefined, ""]) {
       expect(isPortScopedAlert(m)).toBe(false);
     }
   });

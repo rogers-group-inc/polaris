@@ -32,6 +32,7 @@ import { alarmStatusToFlag, convertSensorForDisplay, sensorDisplayUnit } from ".
 import { getBranding } from "./brandingService.js";
 import { SAMPLE_SDWAN_HEALTH_CHECK, SAMPLE_SDWAN_LINK } from "../utils/sampleAlertDevice.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
+import { isInterfaceDimensionMetric } from "./alertInterfaceService.js";
 
 /**
  * Template token → what it draws. The token vocabulary lives in
@@ -100,7 +101,7 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
 
 /**
  * Metrics whose alert is about ONE PORT, not the device — and which therefore
- * get NO charts at all.
+ * never get the device charts.
  *
  * A switch with a dead port is answering probes: that is how Polaris knows the
  * port is down. So its CPU, memory, response-time and packet-loss graphs are
@@ -109,15 +110,19 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
  * do — the port's LLDP neighbour, which alertInterfaceService supplies in the
  * charts' place.
  *
- * Only the STATE fields are here, deliberately, not every interface-dimensioned
- * metric: a port that is DOWN — or that lost its address — is not a device
- * condition, but a port erroring or saturating plausibly correlates with the
- * device's own load, so an `ifInErrorRate` alert keeps its graphs.
+ * EVERY interface-dimensioned metric is here, the rate quartet included
+ * (`ifInErrorRate`, `ifInBps` …). An earlier cut kept the device graphs on a
+ * port erroring or saturating, on the theory that it might correlate with the
+ * device's load; operators read those emails the same way as the down ones —
+ * four graphs about the wrong thing — and asked for them gone (2026-09-26).
+ *
+ * The one thing an interface alert CAN still chart is a WAN port that is an
+ * SD-WAN member: the health checks probing through it are the picture of that
+ * link, so `buildAlertCharts` draws the SD-WAN trio for it (see
+ * loadWanMemberSeries). Any other port gets no charts at all.
  */
-const PORT_SCOPED_METRICS: ReadonlySet<string> = new Set(["ifOperStatus", "ifAdminStatus", "ifIpAddress", "poeStatus"]);
-
 export function isPortScopedAlert(metric: string | null | undefined): boolean {
-  return !!metric && PORT_SCOPED_METRICS.has(metric);
+  return isInterfaceDimensionMetric(metric);
 }
 
 /**
@@ -629,6 +634,52 @@ async function loadSdwanSeries(assetId: string, target: SdwanTarget, since: Date
     },
   });
   return sdwanSeriesFrom(rows, target);
+}
+
+/**
+ * The SD-WAN target for an INTERFACE alert on a port that is an SD-WAN member,
+ * or null when no health check probed through that port in the window. Pure;
+ * `rows` are that port's samples, ascending.
+ *
+ * A member can sit under several health checks (a DC check and an internet
+ * check both probing out of wan1), and these charts draw one. The freshest one
+ * leads — it is the one still reporting about the link — with the rest behind
+ * it in first-seen order. The link is pinned to the port: unlike an SD-WAN
+ * metric alert, there is no sibling member worth falling back to, since the
+ * alert is about THIS port and a graph of wan2 under "wan1 is down" would be
+ * the wrong link's story.
+ */
+export function wanMemberTarget(rows: Array<{ healthCheck: string; timestamp: Date }>, ifName: string): SdwanTarget | null {
+  const last = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.healthCheck) continue;
+    last.set(r.healthCheck, Math.max(last.get(r.healthCheck) ?? 0, r.timestamp.getTime()));
+  }
+  if (last.size === 0) return null;
+  const healthChecks = Array.from(last.keys()).sort((a, b) => last.get(b)! - last.get(a)!);
+  return { healthChecks, link: ifName };
+}
+
+/**
+ * The DB half: ONE read of the port's health-check samples in the window,
+ * keyed on the member name (`AssetPerfSlaSample.link` is the FortiOS SD-WAN
+ * member interface, the same name the interface alert's dimension carries).
+ * Filtered on the link so the fold can never borrow a sibling member. On an
+ * asset that is not an SD-WAN gate — every switch port — it returns nothing and
+ * the alert stays graphless, which is what a LAN port has always got.
+ */
+async function loadWanMemberSeries(assetId: string, ifName: string, since: Date): Promise<SdwanSeries | null> {
+  const rows = await prisma.assetPerfSlaSample.findMany({
+    where: { assetId, link: ifName, timestamp: { gte: since } },
+    orderBy: { timestamp: "asc" },
+    select: {
+      timestamp: true, healthCheck: true, link: true, state: true,
+      latencyMs: true, jitterMs: true, packetLoss: true,
+      latencyThresholdMs: true, jitterThresholdMs: true, packetLossThreshold: true,
+    },
+  });
+  const target = wanMemberTarget(rows, ifName);
+  return target ? sdwanSeriesFrom(rows, target) : null;
 }
 
 /**
@@ -1258,11 +1309,18 @@ export async function buildAlertCharts(
   const aliasWanted = wanted.delete("chart.trigger");
   if (aliasWanted && primary) wanted.add(primary);
   const out = new Map<ChartToken, RenderedChart>();
-  // An alert about one port draws nothing — see PORT_SCOPED_METRICS. Returning
-  // the empty map (rather than filtering the token list) is what makes every
-  // chart token render away and `pruneEmptyChartSection` drop the "Last hour"
-  // heading with them, and it skips all four sample queries.
-  if (isPortScopedAlert(opts?.metric)) return out;
+  // An alert about one port never draws the device charts — see
+  // isPortScopedAlert. The only thing it can draw is the SD-WAN trio, when the
+  // port is an SD-WAN member; that needs a real asset and a named port, so
+  // without them it returns the empty map right here. Returning the empty map
+  // (rather than filtering the token list) is what makes every chart token
+  // render away and `pruneEmptyChartSection` drop the "Last hour" heading with
+  // them, and it skips every sample query. A test alert (sampleData) lands here
+  // too: its device is invented, so whether its port is a WAN member is not a
+  // question with an answer.
+  const interfaceScoped = isPortScopedAlert(opts?.metric);
+  const wanPort = interfaceScoped ? (opts?.dimension ?? opts?.sensorName ?? null) : null;
+  if (interfaceScoped && (!assetId || opts?.sampleData || !wanPort)) return out;
   // Same for a path-check alert (see PATH_CHECK_SCOPED_METRICS).
   if (isPathCheckScopedAlert(opts?.metric)) return out;
   // A sensor chart with no sensor has nothing to draw. Dropping it here (rather
@@ -1279,8 +1337,17 @@ export async function buildAlertCharts(
   // before they existed still leads with the right graph through
   // `{chart.trigger}` — which is what the alias is for — rather than having
   // charts it never asked for stitched into it.
+  //
+  // An interface alert keeps the SD-WAN tokens and NOTHING else: the device
+  // charts are dropped as for an SD-WAN alert, and the sensor token has no
+  // sensor to draw. Whether the trio then renders depends on the port being a
+  // member (loadWanMemberSeries); a LAN port gets no rows and draws nothing.
   const sdwanScoped = isSdwanScopedAlert(opts?.metric);
-  for (const t of sdwanScoped ? DEVICE_CHART_TOKENS : SDWAN_CHART_TOKENS) wanted.delete(t);
+  if (interfaceScoped) {
+    for (const t of Array.from(wanted)) if (!SDWAN_CHART_TOKENS.includes(t)) wanted.delete(t);
+  } else {
+    for (const t of sdwanScoped ? DEVICE_CHART_TOKENS : SDWAN_CHART_TOKENS) wanted.delete(t);
+  }
   if (wanted.size === 0) return out;
 
   const now = opts?.now ?? new Date();
@@ -1333,9 +1400,13 @@ export async function buildAlertCharts(
         // lookup, then the health check's samples. An unresolvable path (a rule
         // with no performance SLA, a dimension from before the metric existed)
         // yields null and every SD-WAN token renders away.
+        // An interface alert takes the one-read member path instead: the port
+        // name is the member, and the health checks are whatever probed it.
         needSdwan
-          ? resolveSdwanTarget(assetId, opts?.metric, opts?.dimension ?? opts?.sensorName ?? null)
-              .then((target) => (target ? loadSdwanSeries(assetId, target, since) : null))
+          ? interfaceScoped
+            ? loadWanMemberSeries(assetId, wanPort!, since)
+            : resolveSdwanTarget(assetId, opts?.metric, opts?.dimension ?? opts?.sensorName ?? null)
+                .then((target) => (target ? loadSdwanSeries(assetId, target, since) : null))
           : Promise.resolve(null),
       ]);
       cpu = tel.cpu;
@@ -1349,6 +1420,11 @@ export async function buildAlertCharts(
       logger.warn({ err: (err as Error)?.message, assetId }, "alert chart sample load failed — sending without charts");
     }
   }
+  // An interface alert on a port that is not an SD-WAN member: nothing probed
+  // through it, so there is no picture of the link, and three "no data" boxes
+  // under "port7 is down" would read as Polaris failing to chart rather than as
+  // "nothing applies". Empty map, same as the early return above.
+  if (interfaceScoped && sdwan === null) return out;
 
   const series: Record<ChartToken, SparkPoint[]> = {
     // The alias never renders from here — it was resolved to a real token

@@ -39,6 +39,7 @@ import {
   ackUrlForEmail,
 } from "../utils/notificationTemplate.js";
 import { defaultAlertEmailTemplate, pruneDeadLinks, pruneEmptyDivs, pruneEmptyRows, pruneEmptyTextLines } from "../utils/alertEmailTemplate.js";
+import { isInterfaceDimensionMetric } from "./alertInterfaceService.js";
 import {
   normalizePermissions,
   permissionOf,
@@ -74,6 +75,37 @@ export interface ComposedEmail {
 }
 
 /**
+ * The device facts the default body drops on an INTERFACE alert.
+ *
+ * An alert about one port is not about the device, and the rows describing the
+ * device — its IP, the switch and AP it hangs off, its location, model and
+ * description — are the same filler the device charts were (see
+ * alertChartService.isPortScopedAlert): the reader wants the port and what was
+ * on it, which the Interface row and the LLDP block carry. Operators asked for
+ * them gone (2026-09-26). The subject line ({asset}) and the Open device button
+ * ({asset.link}) stay: which device, and the page the port lives on, are still
+ * the two things the reader needs.
+ */
+const INTERFACE_ALERT_HIDDEN_FACTS = [
+  "asset.ip", "asset.connectedSwitch", "asset.connectedAp",
+  "asset.location", "asset.manufacturer", "asset.model", "asset.description",
+] as const;
+
+/**
+ * The context the DEFAULT body renders against. Blanking the tokens is enough:
+ * `pruneEmptyRows` / `pruneEmptyTextLines` already drop a fact whose value came
+ * out empty, so the rows vanish exactly as they do on a device with no model.
+ * Only our default body gets this — an operator who wrote `{asset.ip}` into
+ * their own template asked for it, and gets it on every alert.
+ */
+export function defaultBodyContext(ctx: Record<string, string>): Record<string, string> {
+  if (!isInterfaceDimensionMetric(ctx.metric)) return ctx;
+  const out = { ...ctx };
+  for (const k of INTERFACE_ALERT_HIDDEN_FACTS) out[k] = "";
+  return out;
+}
+
+/**
  * Render the composed outbound email for a composition config from a built
  * context. Any piece the operator left blank falls back to the shared DEFAULT
  * alert template (alertEmailTemplate.ts) — the same strings the automation
@@ -93,6 +125,9 @@ export function buildComposedEmail(comp: EmailComposition, ctx: Record<string, s
   // them literal, so their typo stays visible instead of vanishing.
   const optsFor = (operatorAuthored: boolean, html?: boolean) =>
     ({ ...(html ? { html: true } : {}), ...(operatorAuthored ? {} : { unknown: "blank" as const }) });
+  // Our default body on an interface alert leaves the device facts out (see
+  // defaultBodyContext); an operator's own body gets the context untouched.
+  const ctxFor = (operatorAuthored: boolean) => (operatorAuthored ? ctx : defaultBodyContext(ctx));
 
   const subject = renderNotificationTemplate(
     own(comp.subjectTemplate) ? comp.subjectTemplate! : def.subjectTemplate,
@@ -101,12 +136,12 @@ export function buildComposedEmail(comp: EmailComposition, ctx: Record<string, s
   );
   const text = renderNotificationTemplate(
     own(comp.bodyTextTemplate) ? comp.bodyTextTemplate! : def.bodyTextTemplate,
-    ctx,
+    ctxFor(own(comp.bodyTextTemplate)),
     optsFor(own(comp.bodyTextTemplate)),
   );
   const html = renderNotificationTemplate(
     own(comp.bodyHtmlTemplate) ? comp.bodyHtmlTemplate! : def.bodyHtmlTemplate,
-    ctx,
+    ctxFor(own(comp.bodyHtmlTemplate)),
     optsFor(own(comp.bodyHtmlTemplate), true),
   );
   return {

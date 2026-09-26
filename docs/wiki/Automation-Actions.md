@@ -186,6 +186,29 @@ to edit; un-ticking clears nothing, it just stops collecting.
 stored and both are sent — a mail client picks the part it renders — so the
 toggle only chooses what is on screen.
 
+### What the default email shows for an interface alert
+
+An alert on an interface (oper status, admin status, IP address, PoE status,
+error rate or throughput) is about **one port, not the device**. The device is
+still answering, which is how Polaris knows the port is down, so its facts and
+graphs describe a healthy device. The default email therefore leaves out:
+
+- the device facts: IP address, connected switch and AP, location, model and
+  description
+- the device graphs: CPU, memory, response time and packet loss
+
+It keeps the device name, the **Interface** row, the automation and timing
+rows, and the LLDP neighbour that was last seen on the port.
+
+**A WAN port that is an SD-WAN member gets the SD-WAN graphs instead.** They
+show the last hour of latency, jitter and packet loss for that member, from the
+health checks probing through it, with the FortiGate's own SLA targets drawn as
+dashed lines. A port that no health check probes through gets no graphs.
+
+This applies to the **default** email only. If you tick **Customize the
+email**, your body is sent exactly as written. A `{asset.ip}` you put in it
+still prints.
+
 ### Template tokens
 
 Available in the message template, the email subject and body, the `api_call`

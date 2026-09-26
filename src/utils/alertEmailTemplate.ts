@@ -114,7 +114,11 @@ export const DEFAULT_ALERT_TEXT = [
   // What was on the port, when the alert is about ONE port. Renders away for
   // every other alert — and for a port that advertised no neighbour — so it
   // costs a non-interface alert nothing. Above the charts because on an
-  // interface alert the charts render away entirely (alertInterfaceService).
+  // interface alert the device charts never render (alertChartService's
+  // isPortScopedAlert) — only the SD-WAN trio, when the port is a WAN member.
+  // The device facts above (IP, switch, AP, location, description) are blanked
+  // for an interface alert too (notificationRecipientService's
+  // defaultBodyContext) and prune away.
   "{interface.lldp}",
   "",
   "{chart.trigger}",
@@ -300,6 +304,9 @@ export const DEFAULT_ALERT_HTML = [
   // (alertInterfaceService, like the charts) and is the substance of an
   // "interface down" email: the device is answering, so its own graphs explain
   // nothing, and "what was plugged into port2" is the question being asked.
+  // On any interface alert the device rows above prune away (their tokens are
+  // blanked by defaultBodyContext) and only a WAN member's SD-WAN charts can
+  // render below.
   "{interface.lldp}",
   // Charts — the last hour of the metrics that explain most alerts. The sensor
   // chart leads because when it renders at all, it IS what the alert is about:
