@@ -81,7 +81,8 @@ d("firmware repository routes", () => {
     await ensureTestUser();
     readerU  = await createRoleUser("reader",  matrix("read",  { firmware: "read" }));
     writerU  = await createRoleUser("writer",  matrix("read",  { firmware: "write", credentials: "read" }));
-    flasherU = await createRoleUser("flasher", matrix("read",  { firmware: "fullwrite" }));
+    // Flashing is assets:write (2026-09-26) — this role holds NO Repository access.
+    flasherU = await createRoleUser("flasher", matrix("read",  { assets: "write", firmware: "none" }));
     noneU    = await createRoleUser("none",    matrix("read",  { firmware: "none" }));
     // Two switches sharing a model, one AP, and a firewall that must never appear.
     for (const [hostname, assetType, model, serialNumber] of [
@@ -271,7 +272,7 @@ d("firmware repository routes", () => {
     expect(sw.effectiveBinding).toBeNull();
   });
 
-  it("per-asset availability at read; POST is fullwrite and needs the approved imageId; a firewall gets nothing", async () => {
+  it("per-asset availability at assets:read; POST is assets:write and needs the approved imageId; a firewall gets nothing", async () => {
     const [sw1, , , fg] = createdAssetIds;
     const reader = await loginAs(readerU);
     const avail = await reader.agent.get(`/api/v1/assets/${sw1}/firmware-upgrade`);
@@ -282,11 +283,17 @@ d("firmware repository routes", () => {
     expect(avail.body.credential.scope).toBe("model");
     expect(avail.body.blockers[0]).toMatch(/no IP address/);
 
+    // Repository Read-Write is not the flash: the writer holds assets:read only.
     const writer = await loginAs(writerU);
     const denied = await writer.agent.post(`/api/v1/assets/${sw1}/firmware-upgrade`).set("X-CSRF-Token", writer.csrf).send({ imageId: avail.body.image.id });
     expect(denied.status).toBe(403);
 
+    // The flasher holds assets:write and no Repository access at all: it sees
+    // the card (an assets:read read) and may start the run, while the
+    // Repository's own routes stay closed to it.
     const flasher = await loginAs(flasherU);
+    expect((await flasher.agent.get(`/api/v1/assets/${sw1}/firmware-upgrade`)).status).toBe(200);
+    expect((await flasher.agent.get("/api/v1/server-settings/firmware/tree")).status).toBe(403);
     const noImage = await flasher.agent.post(`/api/v1/assets/${sw1}/firmware-upgrade`).set("X-CSRF-Token", flasher.csrf).send({});
     expect(noImage.status).toBe(400);
     const blocked = await flasher.agent.post(`/api/v1/assets/${sw1}/firmware-upgrade`).set("X-CSRF-Token", flasher.csrf).send({ imageId: avail.body.image.id });
@@ -301,6 +308,20 @@ d("firmware repository routes", () => {
     const runs = await reader.agent.get(`/api/v1/assets/${sw1}/firmware-upgrade/runs`);
     expect(runs.status).toBe(200);
     expect(runs.body.runs).toEqual([]);
+
+    // One run, read through the asset (what the card polls): its own asset
+    // answers it, another asset's path answers 404 — the id is not a way in.
+    const [, sw2] = createdAssetIds;
+    const run = await prisma.firmwareUpgradeRun.create({
+      data: { assetId: sw1!, imageId: null, platform: "S108FF", fromVersion: "7.4.3 build0542", toVersion: "7.6.8 build1164", engine: "fortiswitch-https", status: "failed", result: "failed", error: "test", startedBy: "test", log: [{ t: new Date().toISOString(), level: "info", msg: "hello" }], finishedAt: new Date() },
+    });
+    const own = await flasher.agent.get(`/api/v1/assets/${sw1}/firmware-upgrade/runs/${run.id}`);
+    expect(own.status, JSON.stringify(own.body)).toBe(200);
+    expect(own.body.run.log[0].msg).toBe("hello");
+    expect((await flasher.agent.get(`/api/v1/assets/${sw2}/firmware-upgrade/runs/${run.id}`)).status).toBe(404);
+    // The Repository's run read stays on the Repository key.
+    expect((await flasher.agent.get(`/api/v1/server-settings/firmware/runs/${run.id}`)).status).toBe(403);
+    expect((await reader.agent.get(`/api/v1/server-settings/firmware/runs/${run.id}`)).status).toBe(200);
   });
 
   it("delete refuses at read and promotes the backup at write; purge empties a node", async () => {

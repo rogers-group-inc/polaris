@@ -955,6 +955,7 @@ const api = {
     firmwareUpgrade:      (id)       => request("GET",  `/assets/${id}/firmware-upgrade`),
     startFirmwareUpgrade: (id, body) => request("POST", `/assets/${id}/firmware-upgrade`, body),
     firmwareUpgradeRuns:  (id)       => request("GET",  `/assets/${id}/firmware-upgrade/runs`),
+    firmwareUpgradeRun:   (id, runId) => request("GET", `/assets/${id}/firmware-upgrade/runs/${encodeURIComponent(runId)}`),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
     // Agent API surface"). `agent.get` returns 404 when no agent is
     // installed yet; the caller should treat that as "no install" rather

@@ -591,6 +591,17 @@ export async function getRun(id: string): Promise<RunSummary & { log: Array<{ t:
   return { ...summarize(r), log: (r.log as Array<{ t: string; level: string; msg: string }>) ?? [], asset: r.asset };
 }
 
+/**
+ * One run, only if it belongs to `assetId` — the asset card's read, gated at
+ * `assets:read`. A run of another asset answers the same 404 as a missing one,
+ * so the id is not a way to read runs the caller was not shown.
+ */
+export async function getRunForAsset(assetId: string, runId: string): ReturnType<typeof getRun> {
+  const run = await getRun(runId);
+  if (run.assetId !== assetId) throw new AppError(404, "Firmware upgrade run not found");
+  return run;
+}
+
 export async function listRunsForAsset(assetId: string, limit = 20): Promise<RunSummary[]> {
   const rows = await prisma.firmwareUpgradeRun.findMany({ where: { assetId }, orderBy: { startedAt: "desc" }, take: Math.min(Math.max(limit, 1), 100) });
   return rows.map(summarize);

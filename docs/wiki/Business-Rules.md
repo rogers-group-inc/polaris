@@ -1212,9 +1212,11 @@ device and records the new version — the same path every other firmware
 change takes — and until then the card says *Flashed* rather than offering
 the same image again.
 
-Starting an upgrade is the **Full Read-Write** rung of the `firmware` key,
-seeded only for admin-equivalent roles: it reboots network hardware, and
-nothing in the catalogue implied that act before.
+Starting an upgrade needs **Read-Write on Assets**: whoever may edit an
+asset may upgrade it. The `firmware` key covers the Repository only — Read
+to see it, Read-Write to upload and manage images. Every role with Assets
+Read-Write can therefore reboot a switch or access point; the approval
+dialog and the checks above are what stand between a click and a flash.
 
 See [Server Settings → Repository](Server-Settings#repository) and
 [Assets → Firmware](Assets#firmware).

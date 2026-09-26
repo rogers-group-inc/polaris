@@ -44,6 +44,7 @@ import {
   getUpgradeAvailability,
   startFirmwareUpgrade,
   getRun,
+  getRunForAsset,
   listRunsForAsset,
 } from "../../services/firmwareUpgradeService.js";
 
@@ -231,22 +232,35 @@ firmwareRouter.get("/runs/:id", requirePermission("firmware", "read"), handle(as
 
 export const firmwareAssetRouter: Router = Router({ mergeParams: true });
 
-firmwareAssetRouter.get("/", requirePermission("firmware", "read"), handle(async (req, res) => {
+// The asset's Firmware card is part of the asset: every read here is
+// `assets:read`, so whoever can open the asset — and so whoever may flash it —
+// sees the card, its run history and a run's progress without also holding
+// the Repository key. Flashing itself is `assets:write` (operator decision,
+// 2026-09-26: whoever may edit an asset may upgrade it); the `firmware` key
+// governs the repository, not the device.
+firmwareAssetRouter.get("/", requirePermission("assets", "read"), handle(async (req, res) => {
   res.json(await getUpgradeAvailability(String(req.params.id)));
 }));
 
-// The named act: flashing a device. 202 — the run is watched, not awaited.
-firmwareAssetRouter.post("/", requirePermission("firmware", "fullwrite"), handle(async (req, res) => {
+// Flashing a device. 202 — the run is watched, not awaited.
+firmwareAssetRouter.post("/", requirePermission("assets", "write"), handle(async (req, res) => {
   const body = StartUpgradeSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown" });
   res.status(202).json({ run });
 }));
 
-firmwareAssetRouter.get("/runs", requirePermission("firmware", "read"), handle(async (req, res) => {
+firmwareAssetRouter.get("/runs", requirePermission("assets", "read"), handle(async (req, res) => {
   const q = RunsQuerySchema.safeParse(req.query);
   if (!q.success) throw new AppError(400, firstIssue(q.error));
   res.json({ runs: await listRunsForAsset(String(req.params.id), q.data.limit ?? 20) });
+}));
+
+// One run of THIS asset, with its log — what the card polls while a flash is
+// live and what View log opens. 404 when the run belongs to another asset, so
+// an assets:read caller cannot read any run by guessing an id.
+firmwareAssetRouter.get("/runs/:runId", requirePermission("assets", "read"), handle(async (req, res) => {
+  res.json({ run: await getRunForAsset(String(req.params.id), String(req.params.runId)) });
 }));
 
 export default firmwareRouter;

@@ -26,7 +26,8 @@
  *
  * Gates (permAtLeast on the `firmware` key): read = see everything here;
  * write = upload / delete / make-primary / purge / bind. Flashing a device is
- * the asset slide-over's verb (fullwrite), not this page's.
+ * the asset slide-over's verb, gated at assets:write — not this page's, and
+ * not this key's.
  */
 (function () {
   "use strict";

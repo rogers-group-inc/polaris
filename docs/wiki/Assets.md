@@ -343,8 +343,11 @@ device. It is one of:
   version, platform and which model node it came from), the login that will be
   used and where it is inherited from.
 
-**Upgrade firmware to …** needs `firmware:fullwrite`; at read the facts stay
-and the button is withheld. It opens an **approval dialog** naming the device
+**Upgrade firmware to …** needs **Read-Write on Assets**: whoever may edit an
+asset may upgrade it. The card itself shows to anyone who can open the asset;
+below Read-Write the facts stay and the button is withheld. Access to the
+Repository is not needed to upgrade a device, and Repository Read-Write
+alone does not allow it. It opens an **approval dialog** naming the device
 (host, serial, running version, login) and the exact image — version, build,
 platform, file name, SHA-256, where it is filed, who uploaded it — and, when
 the model's backup image is also newer than the device, lets you choose that
