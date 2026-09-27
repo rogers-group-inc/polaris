@@ -68,6 +68,49 @@
   // sections move together when the operator switches windows.
   var DEFAULT_RANGE = "24h";
   var RANGES = ["1h", "12h", "24h", "7d", "30d"];
+  var RANGE_MS = {
+    "1h": 3600000, "12h": 12 * 3600000, "24h": 24 * 3600000,
+    "7d": 7 * 86400000, "30d": 30 * 86400000,
+  };
+  // The [from, to] a chart of `range` covers — handed to lineChart so a
+  // maintenance band can widen the axis to the window's edge. Null for a range
+  // this table doesn't know, which just clips the bands to the samples.
+  function rangeBounds(range) {
+    var span = RANGE_MS[range];
+    if (!span) return null;
+    var to = Date.now();
+    return { from: to - span, to: to };
+  }
+
+  // Maintenance windows for the open asset, fetched ONCE per sheet open and
+  // shared by every chart on it — the phone half of `_loadMaintWindowsCache`
+  // in public/js/assets.js. The lookback covers the longest range (30d) plus a
+  // day's slack. Best effort: a failure means no bands, never a broken chart.
+  // A section subtitle with no stats to show. "No samples" reads as a fault;
+  // when a maintenance window overlaps the range, the absence is by design.
+  function emptyStatsLabel(windows, range) {
+    var b = rangeBounds(range);
+    var overlaps = (windows || []).some(function (w) {
+      var ws = +new Date(w.startedAt);
+      var we = w.endedAt ? +new Date(w.endedAt) : Date.now();
+      return isFinite(ws) && (!b || (we > b.from && ws < b.to));
+    });
+    return overlaps ? "Polling paused for maintenance" : "No samples";
+  }
+
+  var _maintWindows = { assetId: null, promise: null };
+  function maintWindowsFor(id) {
+    if (_maintWindows.assetId !== id || !_maintWindows.promise) {
+      var now = Date.now();
+      var promise = api.assets.maintenanceWindows(id, {
+        from: new Date(now - 31 * 86400000).toISOString(),
+        to:   new Date(now + 86400000).toISOString(),
+      }).then(function (res) { return (res && res.windows) || []; })
+        .catch(function () { return []; });
+      _maintWindows = { assetId: id, promise: promise };
+    }
+    return _maintWindows.promise;
+  }
 
   // Human labels for AssetSource.sourceKind — mirrors `_assetSourceLabels` in
   // the desktop assets.js so both surfaces name discovery sources the same.
@@ -418,6 +461,8 @@
     if (_openId === id && _state !== "closed") { expand(); return; }
 
     _openId = id;
+    // A fresh open re-reads the windows: one may have started or ended since.
+    _maintWindows = { assetId: null, promise: null };
     expandFresh(sheet);
 
     var st = mountState(id);
@@ -715,7 +760,9 @@
     var sub = document.getElementById("asset-monitor-sub");
     if (chartHost) chartHost.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
 
-    api.assets.monitorHistory(id, st.range).then(function (resp) {
+    var range = st.range;
+    Promise.all([api.assets.monitorHistory(id, range), maintWindowsFor(id)]).then(function (got) {
+      var resp = got[0], maint = got[1];
       if (_openId !== id || !resp) return;   // bail if a newer asset replaced us
       // Failed polls plot at the baseline in red (ok:false) so an outage reads
       // as the line diving to zero, matching the desktop response-time chart.
@@ -776,10 +823,16 @@
         }
       });
       if (chartHost) {
+        var bounds = rangeBounds(range);
         chartHost.innerHTML = PolarisCharts.lineChart({
           // The Up green rather than the app accent, mirroring desktop: the one
           // chart about reachability speaks the same colours as the status pill.
           series: [{ values: samples, color: "var(--md-success)", fill: true }],
+          // Polling stops for a maintenance window, so the series has a hole
+          // there; the band says why.
+          maintenance: maint,
+          from: bounds && bounds.from,
+          to: bounds && bounds.to,
           height: 120,
           yUnit: "ms",
           ariaLabel: "Response time over " + st.range,
@@ -793,7 +846,7 @@
         if (stats.packetLossRate != null && stats.packetLossRate > 0) {
           statBits.push((stats.packetLossRate * 100).toFixed(1) + "% loss");
         }
-        sub.textContent = statBits.length ? statBits.join(" · ") : "No samples";
+        sub.textContent = statBits.length ? statBits.join(" · ") : emptyStatsLabel(maint, range);
       }
     }).catch(function (err) {
       if (chartHost) chartHost.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">Couldn’t load monitor history: ' + escapeHtml(err && err.message ? err.message : "error") + '</div>';
@@ -806,7 +859,9 @@
     var sub = document.getElementById("asset-telemetry-sub");
     if (chartHost) chartHost.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
 
-    api.assets.telemetryHistory(id, st.range).then(function (resp) {
+    var range = st.range;
+    Promise.all([api.assets.telemetryHistory(id, range), maintWindowsFor(id)]).then(function (got) {
+      var resp = got[0], maint = got[1];
       if (_openId !== id || !resp) return;   // bail if a newer asset replaced us
       var samples = resp.samples || [];
       var cpuSeries = samples
@@ -828,7 +883,11 @@
         return;
       }
       if (chartHost) {
+        var bounds = rangeBounds(range);
         chartHost.innerHTML = PolarisCharts.lineChart({
+          maintenance: maint,
+          from: bounds && bounds.from,
+          to: bounds && bounds.to,
           // The telemetry stream carries no per-sample success flag — a failed
           // poll just leaves no row, because the telemetry cadence does not run
           // while the asset is down. `outages` carries the response-time probe’s
@@ -852,7 +911,7 @@
         if (stats.maxCpuPct != null) bits.push("max " + Math.round(stats.maxCpuPct) + "%");
         if (stats.avgMemPct != null) bits.push('<span style="color:var(--md-tertiary);">mem avg ' + Math.round(stats.avgMemPct) + "%</span>");
         if (stats.maxMemPct != null) bits.push("max " + Math.round(stats.maxMemPct) + "%");
-        sub.innerHTML = bits.length ? bits.join(" · ") : "No samples";
+        sub.innerHTML = bits.length ? bits.join(" · ") : escapeHtml(emptyStatsLabel(maint, range));
       }
     }).catch(function (err) {
       if (chartHost) chartHost.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">Couldn’t load telemetry: ' + escapeHtml(err && err.message ? err.message : "error") + '</div>';
@@ -1445,11 +1504,15 @@
     if (statsEl) statsEl.textContent = "Loading…";
     if (legendEl) legendEl.innerHTML = "";
 
+    // The windows ride as their own promise rather than a slot in the
+    // members array, so they can never shift a member's index.
+    var maint = [];
+    var maintP = maintWindowsFor(assetId).then(function (w) { maint = w; });
     Promise.all(members.map(function (m) {
       return api.assets.perfSlaHistory(assetId, m.healthCheck, m.link, { range: range })
         .then(function (data) { return { link: m.link, samples: (data && data.samples) || [] }; })
         .catch(function () { return { link: m.link, samples: [] }; });
-    })).then(function (results) {
+    })).then(function (results) { return maintP.then(function () { return results; }); }).then(function (results) {
       // Bail if the operator switched health-check/range or closed the sheet
       // while this fetch was in flight.
       if (!_sdwanSheetState || _sdwanSheetState.hcName !== hcName || _sdwanSheetState.range !== range) return;
@@ -1463,8 +1526,12 @@
               .map(function (s) { return { ts: s.timestamp, v: s[key] }; }),
           };
         });
+        var bounds = rangeBounds(range);
         host.innerHTML = PolarisCharts.lineChart({
           series: series,
+          maintenance: maint,
+          from: bounds && bounds.from,
+          to: bounds && bounds.to,
           height: 120,
           yMin: 0,
           yMax: yMax,
@@ -2532,6 +2599,10 @@
   // ─── helpers ───────────────────────────────────────────────────────────
   function monitorDotCls(asset) {
     if (!asset.monitored) return "";
+    // A maintenance window outranks everything — polling is paused, so the
+    // stored probe state is frozen at whatever it read when the window opened.
+    // Matches desktop assetMonitorBadge.
+    if (asset.status === "maintenance") return "maint";
     // Suppression outranks the probe state — matches desktop assetMonitorBadge.
     if (asset.dependencySuppressed) return "dep-down";
     switch (asset.monitorStatus) {
@@ -2558,6 +2629,11 @@
         return '<span class="status-pill unk"><span class="dot unk"></span>HA Standby</span>';
       }
       return '<span class="status-pill unk">Unmonitored</span>';
+    }
+    // In a maintenance window every server-driven poll is paused, so the
+    // five-state label would be a reading from before the window opened.
+    if (asset.status === "maintenance") {
+      return '<span class="status-pill maint"><span class="dot maint"></span>Maintenance</span>';
     }
     if (asset.dependencySuppressed) {
       var layerBit = (asset.dependencyLayer != null) ? " (Layer " + asset.dependencyLayer + ")" : "";
@@ -2593,6 +2669,14 @@
       return "";
     }
     var bits = [];
+    if (asset.status === "maintenance") {
+      bits.push("monitoring paused");
+      if (asset.maintenanceReturnStatus) bits.push("returns to " + asset.maintenanceReturnStatus);
+      // The last poll predates the window — still worth showing, since it
+      // says how long polling has been paused.
+      if (asset.lastMonitorAt) bits.push("last poll " + formatTimeAgo(asset.lastMonitorAt));
+      return bits.join(" · ");
+    }
     if (asset.dependencySuppressed) {
       bits.push("upstream parent down");
       // The pill hides the five-state label while suppressed; keep the own-probe

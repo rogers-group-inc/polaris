@@ -21,7 +21,9 @@ selection's bulk bar, or from the monitor pill's popover on a single device.
 
 Dashboards treat maintenance as **its own state, never an outage**. The monitor
 pill turns purple, and every asset chart draws a labelled translucent band over
-the window.
+the window — on the phone's asset sheet as well as the desktop. Because nothing
+is polled, the chart has no line inside the band; on the phone a chart section
+with no readings says *Polling paused for maintenance* rather than *No samples*.
 
 ### It retires live alerts — it does not freeze them
 
