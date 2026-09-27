@@ -87,17 +87,31 @@ async function writeDoc(doc: StatsDoc): Promise<void> {
   });
 }
 
+// Every unit shares ONE Setting row, so each record is a read-modify-write of
+// the whole document. An FMG run completes up to `discoveryParallelism` gates
+// at once and fires recordSample for each without awaiting it; unserialized,
+// two overlapping writes each start from the same read and the later one
+// silently drops the other's sample. Chaining the writes in-process is enough:
+// both callers live in runDiscovery, which only the discovery role executes.
+let writeChain: Promise<void> = Promise.resolve();
+
 /**
  * Record a successful run duration (ms) for a unit. Trims the samples array
- * to the last WINDOW entries.
+ * to the last WINDOW entries. Writes are serialized (see writeChain) so
+ * concurrent callers never lose each other's samples.
  */
-export async function recordSample(unitKey: string, durationMs: number): Promise<void> {
-  if (!Number.isFinite(durationMs) || durationMs < 0) return;
-  const doc = await readDoc();
-  const existing = doc.units[unitKey];
-  const samples = existing ? [...existing.samples, durationMs].slice(-WINDOW) : [durationMs];
-  doc.units[unitKey] = { samples, updatedAt: new Date().toISOString() };
-  await writeDoc(doc);
+export function recordSample(unitKey: string, durationMs: number): Promise<void> {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return Promise.resolve();
+  const run = writeChain.then(async () => {
+    const doc = await readDoc();
+    const existing = doc.units[unitKey];
+    const samples = existing ? [...existing.samples, durationMs].slice(-WINDOW) : [durationMs];
+    doc.units[unitKey] = { samples, updatedAt: new Date().toISOString() };
+    await writeDoc(doc);
+  });
+  // A failed write must not wedge every later one behind a rejected promise.
+  writeChain = run.catch(() => {});
+  return run;
 }
 
 export function computeBaseline(samples: number[]): Baseline | null {
