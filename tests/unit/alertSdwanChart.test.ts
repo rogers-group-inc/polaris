@@ -29,7 +29,14 @@ const { perfSlaRows, sdwanRule, calls } = vi.hoisted(() => ({
 vi.mock("../../src/db.js", () => ({
   prisma: {
     assetPerfSlaSample: {
-      findMany: vi.fn(async (args: { where?: { healthCheck?: { in?: string[] } } }) => {
+      findMany: vi.fn(async (args: { where?: { healthCheck?: { in?: string[] }; link?: string } }) => {
+        // A WAN-member read (an interface alert) is keyed on the LINK, not a
+        // health-check list, and must say so: it is the only thing stopping
+        // the fold from borrowing a sibling member.
+        if (args?.where?.link) {
+          calls.push(`perfSlaLink:${args.where.link}`);
+          return (perfSlaRows.rows as SdwanSampleRow[]).filter((r) => r.link === args.where!.link);
+        }
         calls.push(`perfSla:${(args?.where?.healthCheck?.in ?? []).join(",")}`);
         return perfSlaRows.rows;
       }),
@@ -67,6 +74,7 @@ import {
   resolveSdwanTarget,
   sdwanSeriesFrom,
   sdwanChartLabel,
+  wanMemberTarget,
   type SdwanSampleRow,
   type ChartToken,
 } from "../../src/services/alertChartService.js";
@@ -378,5 +386,69 @@ describe("the swap, end to end", () => {
     }
     expect(calls).not.toContain("perfSla:VPN-SLA");
     expect(calls).toContain("telemetry");
+  });
+});
+
+describe("an interface alert on a WAN member", () => {
+  beforeEach(() => {
+    calls.length = 0;
+    perfSlaRows.rows = [
+      row({ min: 0, latencyMs: 30 }),
+      row({ min: 1, latencyMs: 250, state: "down" }),
+      row({ min: 1, link: "wan2", latencyMs: 12 }),
+    ];
+    sdwanRule.row = null;
+  });
+
+  it("charts the port's health check and nothing about the device", async () => {
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "ifOperStatus",
+      dimension: "wan1",
+    });
+    expect([...charts.keys()].sort()).toEqual(["chart.sdwanJitter", "chart.sdwanLatency", "chart.sdwanLoss"]);
+    expect(charts.get("chart.sdwanLatency")!.summary).toContain("VPN-SLA / wan1");
+    expect(calls).toEqual(["perfSlaLink:wan1"]);
+  });
+
+  it("leaves the rate metrics on the device graphs, WAN member or not", async () => {
+    // Error rate and throughput plausibly correlate with the device's load,
+    // so they keep CPU / memory / response time / loss and get no SD-WAN swap.
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "ifInErrorRate",
+      dimension: "wan1",
+    });
+    const keys = [...charts.keys()];
+    expect(keys).toEqual(expect.arrayContaining(["chart.cpu", "chart.memory", "chart.responseTime", "chart.probeLoss"]));
+    expect(keys).not.toContain("chart.sdwanLatency");
+    expect(calls).not.toContain("perfSlaLink:wan1");
+    expect(calls).toContain("telemetry");
+  });
+
+  it("draws nothing for a port no health check probes through", async () => {
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "ifOperStatus",
+      dimension: "port7",
+    });
+    expect(charts.size).toBe(0);
+    expect(calls).toEqual(["perfSlaLink:port7"]);
+  });
+
+  it("draws nothing on a test alert — the invented device has no WAN to look up", async () => {
+    const charts = await buildAlertCharts(null, ALL_TOKENS, { sampleData: true, metric: "ifOperStatus", dimension: "wan1" });
+    expect(charts.size).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  it("leads with the freshest health check and pins the link to the port", () => {
+    const target = wanMemberTarget([
+      { healthCheck: "DC-SLA", timestamp: new Date(T0) },
+      { healthCheck: "Internet", timestamp: new Date(T0 + 60_000) },
+      { healthCheck: "DC-SLA", timestamp: new Date(T0 + 30_000) },
+    ], "wan1");
+    expect(target).toEqual({ healthChecks: ["Internet", "DC-SLA"], link: "wan1" });
+    expect(wanMemberTarget([], "wan1")).toBeNull();
   });
 });
