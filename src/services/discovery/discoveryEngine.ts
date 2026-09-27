@@ -11,6 +11,7 @@
 
 import { chunkArray } from "../../utils/chunk.js";
 import { mapSettledWithConcurrency } from "../../utils/concurrency.js";
+import { createTrailingThrottle } from "../../utils/trailingThrottle.js";
 import { prisma } from "../../db.js";
 import { AppError, throwIfAborted } from "../../utils/errors.js";
 import { armDiscoveryCancelWatchdog } from "../discoveryCancelWatchdog.js";
@@ -736,14 +737,16 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       [...acc.activeDevices.entries()].map(([name, startedAtMs]) => ({ name, startedAtMs })),
   });
 
-  // Throttled progress flush so a chatty FMG run doesn't hammer the DB.
-  let lastFlush = 0;
-  const flush = (force = false) => {
-    const now = Date.now();
-    if (!force && now - lastFlush < 1_500) return;
-    lastFlush = now;
-    void flushRunProgress(acc);
-  };
+  // Throttled progress flush so a chatty FMG run doesn't hammer the DB. It
+  // MUST be trailing, not leading-only: the last gates of an FMG run complete
+  // inside one window and the finalize pass that follows emits no progress,
+  // so a dropped flush left them "active" on the row for minutes — elapsed
+  // kept climbing and checkForSlowRuns flagged the same alphabetically-last
+  // gates slow every run while their real (normal) samples kept the baseline
+  // from ever adjusting. Terminal device events force a flush for the same
+  // reason. `progress.stop()` fences late flushes off before finishRun.
+  const progress = createTrailingThrottle(() => flushRunProgress(acc), 1_500);
+  const flush = (force = false) => progress.call(force);
 
   const verboseLogging = isVerboseLoggingActive(
     (integration.config && typeof integration.config === "object")
@@ -783,8 +786,9 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       acc.skippedErrorCount++;
       if (device) acc.skippedErrorDevices.add(device);
     }
+    let isTerminal = false;
     if (device) {
-      const isTerminal =
+      isTerminal =
         step === "discover.device.complete" ||
         step === "discover.device.skip" ||
         step === "discover.device.abort" ||
@@ -801,7 +805,9 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         acc.activeDevices.set(device, Date.now());
       }
     }
-    flush();
+    // A device leaving activeDevices is written at once, never left to a
+    // trailing window — it is the exact state checkForSlowRuns times against.
+    flush(isTerminal);
   };
 
   try {
@@ -1122,6 +1128,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       const abortSuffix = assetsOnly ? "" : " (stale-subnet deprecation skipped)";
       logEvent({ action: "integration.discover.aborted", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level: "warning", message: `${label} ${kindLabel} aborted for "${integrationName}" — ${syncTotals.created.length} created, ${syncTotals.updated.length} updated, ${syncTotals.skipped.length} skipped${abortSuffix}` });
       recordDiscovery(integrationType, (Date.now() - runStartedAt) / 1000, "aborted");
+      await progress.stop();
       await finishRun(integrationId, "aborted");
     } else {
       const deprecatedSuffix = assetsOnly ? "" : `, ${syncTotals.deprecated.length} deprecated`;
@@ -1153,23 +1160,29 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         autoMonitorStorage.computeAndCacheStorageAggregate(integrationId, integrationType, aggregateComputedAt)
           .catch((e: any) => logEvent({ action: "integration.aggregate_cache.error", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level: "warning", message: `Storage aggregate cache refresh failed for "${integrationName}": ${e?.message || "unknown error"}` })),
       ]);
+      await progress.stop();
       await finishRun(integrationId, "completed");
     }
   } catch (err: any) {
     if (err.name !== "AbortError") {
       logEvent({ action: "integration.discover.error", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level: "error", message: `${label} ${kindLabel} failed for "${integrationName}": ${err.message || "Unknown error"}` });
       recordDiscovery(integrationType, (Date.now() - runStartedAt) / 1000, "failure");
+      await progress.stop();
       await finishRun(integrationId, "error");
     } else {
       // AbortError caught here means the abort raced past the inner
       // ac.signal.aborted branch above. Count it the same way.
       recordDiscovery(integrationType, (Date.now() - runStartedAt) / 1000, "aborted");
+      await progress.stop();
       await finishRun(integrationId, "aborted");
     }
   } finally {
     disarmCancelWatchdog();
     clearInterval(cancelTimer);
     clearInterval(heartbeatTimer);
+    // Idempotent; covers any exit that skipped the stop-before-finishRun above,
+    // so no trailing flush timer outlives the run.
+    void progress.stop();
   }
 }
 
