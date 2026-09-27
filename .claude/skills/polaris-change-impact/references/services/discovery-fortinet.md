@@ -99,6 +99,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Auto-abort ceiling = `max(2× avg, thresholdMs)` — clamped to the slow threshold so the warning always fires at or before the abort, and tiny baselines keep the 60s floor instead of aborting at 2× a few seconds.
 - Unit key is either integrationId (overall) or `${integrationId}:${fortigateDevice}` (per-FG).
 - Stats are stored in Settings as `{ units: { [unitKey]: { samples: [ms], updatedAt } } }`.
+- `recordSample` writes are serialized in-process through a module-level promise chain. Every unit shares the ONE Setting row, so each write is a read-modify-write of the whole document; an FMG run completes up to `discoveryParallelism` gates at once and fires `recordSample` for each without awaiting, and unserialized overlaps silently dropped each other's samples. In-process is sufficient only because both callers live in `runDiscovery` (discovery role) — a writer added in another process needs a DB-level guard instead. A failed write rejects its own caller but never wedges the chain.
 
 **When changing this:**
 - Test threshold formula on small sample sets (3–5 entries) to ensure floor (60s) prevents false positives.
@@ -146,8 +147,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/services/discovery/discoveryEngine.ts` (discovery control), `src/api/routes/integrations.ts` (`/discoveries` list + cancel + backup-restore guard), `src/api/routes/assets.ts` (`POST /:id/rediscover` pre-check via `isRunActive`), `src/jobs/discoveryRunReaper.ts` (stale-run reaping), `src/services/discoveryCancelWatchdog.ts` (`finishRun("aborted")` before force-exit).
 
 **Invariants:**
-- Hot progress is coalesced in the accumulator (mutates synchronously, flushes throttled + on terminal transitions); `flushRunProgress` / `touchWorkerHeartbeat` are best-effort and never kill a run on a transient DB hiccup.
-- Slow-alert flags are owned by the web-role slow check, never touched by the worker flush; `createdAt` resets on every upsert so elapsed-time math reflects current run age.
+- Hot progress is coalesced in the accumulator (mutates synchronously, flushes throttled + on terminal transitions); `flushRunProgress` / `touchWorkerHeartbeat` are best-effort and never kill a run on a transient DB hiccup.- Slow-alert flags are owned by the web-role slow check, never touched by the worker flush; `createdAt` resets on every upsert so elapsed-time math reflects current run age.
 - `reapStaleRuns` marks any queued/running row with a stale heartbeat as error.
 - `scopeDeviceName` (single-FortiGate scoped re-discovery) is stamped by `upsertQueuedRun` and reset to NULL by the next run's upsert — it's part of the `base` reset object, so a full run never inherits a stale scope label.
 - **`skippedOfflineCount` and `skippedErrorCount` are different states and no surface may sum them into one "skipped" figure.** Offline is routine (a staged gate sits offline in FMG for weeks; discovery reads its cached CMDB on purpose); error means the device was never reached and silently kept its previous data. `app.js` and the Discovery Activity widget render them as separate `· N offline` / `· N unread` parts.

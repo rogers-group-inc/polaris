@@ -1,12 +1,74 @@
 /**
  * tests/unit/discoveryDurationService.test.ts
  *
- * Covers the pure threshold math. Storage-backed functions (recordSample /
- * getBaseline) hit Prisma and are exercised via integration tests.
+ * Covers the pure threshold math, plus recordSample's write serialization
+ * against an in-memory Setting row (the lost-update race needs overlapping
+ * async reads, which a mocked prisma with a delay reproduces exactly).
  */
 
-import { describe, it, expect } from "vitest";
-import { computeBaseline } from "../../src/services/discoveryDurationService.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const store = vi.hoisted(() => ({ value: null as unknown, failNextWrite: false }));
+
+vi.mock("../../src/db.js", () => {
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+  return {
+    prisma: {
+      setting: {
+        findUnique: async () => {
+          await tick();
+          return store.value === null ? null : { value: JSON.parse(JSON.stringify(store.value)) };
+        },
+        upsert: async (args: { update: { value: unknown } }) => {
+          await tick();
+          if (store.failNextWrite) {
+            store.failNextWrite = false;
+            throw new Error("db hiccup");
+          }
+          store.value = args.update.value;
+          return {};
+        },
+      },
+    },
+  };
+});
+
+import { computeBaseline, recordSample, getBaseline } from "../../src/services/discoveryDurationService.js";
+
+describe("recordSample", () => {
+  beforeEach(() => {
+    store.value = null;
+    store.failNextWrite = false;
+  });
+
+  it("keeps every sample when parallel gates complete at once", async () => {
+    // Five FortiGates finishing together — the discoveryParallelism default.
+    // Unserialized, every write starts from the same empty read and only the
+    // last one survives.
+    const gates = ["A", "B", "C", "D", "E"];
+    await Promise.all(gates.map((g, i) => recordSample(`int:${g}`, 1_000 * (i + 1))));
+    const units = (store.value as { units: Record<string, { samples: number[] }> }).units;
+    expect(Object.keys(units).sort()).toEqual(gates.map((g) => `int:${g}`));
+    expect(units["int:C"]!.samples).toEqual([3_000]);
+  });
+
+  it("keeps every sample for one unit under concurrent writes", async () => {
+    await Promise.all([10_000, 20_000, 30_000].map((ms) => recordSample("int:A", ms)));
+    const bl = await getBaseline("int:A");
+    expect(bl?.sampleCount).toBe(3);
+    expect(bl?.avgMs).toBe(20_000);
+  });
+
+  it("a failed write does not block the writes queued behind it", async () => {
+    store.failNextWrite = true;
+    const first = recordSample("int:A", 1_000);
+    const second = recordSample("int:B", 2_000);
+    await expect(first).rejects.toThrow("db hiccup");
+    await second;
+    const units = (store.value as { units: Record<string, { samples: number[] }> }).units;
+    expect(units["int:B"]!.samples).toEqual([2_000]);
+  });
+});
 
 describe("computeBaseline", () => {
   it("returns null with fewer than 3 samples", () => {
