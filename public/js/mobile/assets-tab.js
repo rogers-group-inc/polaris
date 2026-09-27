@@ -479,6 +479,9 @@
 
   function monitorDotCls(a) {
     if (!a.monitored) return "";
+    // Maintenance outranks everything — polling is paused, the probe state is
+    // frozen. Matches desktop assetMonitorBadge and the asset sheet.
+    if (a.status === "maintenance") return "maint";
     // Suppression outranks the probe state — matches desktop assetMonitorBadge.
     if (a.dependencySuppressed) return "dep-down";
     switch (a.monitorStatus) {
@@ -494,6 +497,7 @@
   }
   function monitorTitle(a) {
     if (!a.monitored) return "Unmonitored";
+    if (a.status === "maintenance")    return "Maintenance — monitoring and notifications paused";
     if (a.dependencySuppressed)        return "Dep. Down — upstream parent is down";
     if (a.monitorStatus === "up")      return "Up — last RTT " + (a.lastResponseTimeMs != null ? a.lastResponseTimeMs + " ms" : "n/a");
     if (a.monitorStatus === "down")    return "Down";

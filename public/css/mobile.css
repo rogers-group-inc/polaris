@@ -1513,6 +1513,28 @@ button, .list-item, .chip { touch-action: manipulation; }
   color: var(--md-on-surface-variant);
   pointer-events: none;
 }
+/* Maintenance-band labels (charts.js lineChart `maintenance`). The layer sits
+   exactly over the SVG plot box — the chart-wrap padding is the gutters. */
+.chart-wrap .chart-maint-labels {
+  position: absolute;
+  top: 4px;     /* TOP_GUTTER */
+  bottom: 18px; /* BOTTOM_GUTTER */
+  left: 36px;   /* LEFT_GUTTER */
+  right: 8px;   /* RIGHT_GUTTER */
+  pointer-events: none;
+}
+.chart-wrap .chart-maint-label {
+  position: absolute;
+  bottom: 2px;
+  padding-left: 4px;
+  box-sizing: border-box;
+  font-size: 9px;
+  letter-spacing: .2px;
+  color: #9575cd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .chart-wrap .chart-empty {
   position: absolute;
   inset: 0;
