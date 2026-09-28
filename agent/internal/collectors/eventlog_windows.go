@@ -168,7 +168,7 @@ func parseWevtutilXML(b []byte, channel string) []winParsedEvent {
 				Channel:   channel,
 				Provider:  e.System.Provider.Name,
 				EventID:   idPtr,
-				Level:     strings.TrimSpace(e.System.Level),
+				Level:     winLevelName(e.System.Level),
 				Message:   msg,
 			},
 		})

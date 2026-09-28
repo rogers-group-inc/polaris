@@ -110,6 +110,25 @@ func normalizeLevel(raw string) string {
 	}
 }
 
+// winLevelName maps a Windows event Level number (the System/Level element) to
+// its name. The number cannot go to normalizeLevel as-is: bare digits there are
+// journald priorities, where 2 is crit and 4 is warning — but Windows 2 is
+// Error, 3 Warning and 4 Information, so every level would read one step too
+// severe. 0 (LogAlways), 5 (Verbose) and anything unknown are informational.
+// Pure.
+func winLevelName(n string) string {
+	switch strings.TrimSpace(n) {
+	case "1":
+		return "critical"
+	case "2":
+		return "error"
+	case "3":
+		return "warning"
+	default:
+		return "info"
+	}
+}
+
 var levelRank = map[string]int{"info": 0, "warning": 1, "error": 2, "critical": 3}
 
 // meetsMinLevel reports whether `level` is at least `min` in severity. Pure.
