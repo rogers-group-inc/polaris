@@ -2202,9 +2202,9 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
           "Steady-state at current settings",
           _capacityFormatBytes(work.steadyStateSizeBytes),
           "Peak size the database grows to if nothing changes. Legitimately larger than " +
-          "the current size while sample tables are still filling. Retention windows are " +
-          "reclaimed a whole TimescaleDB chunk at a time, so each tier keeps its configured " +
-          "window plus one chunk interval plus one prune cycle.",
+          "the current size while sample tables are still filling. Retention is reclaimed a " +
+          "whole TimescaleDB chunk at a time, so tables grow and drop in a weekly cycle; this is " +
+          "the largest total they reach together, not each table's own peak added up.",
         ) +
         (allTables.length ? dbInfoRow("Tables", allTables.length) : "") +
         dbInfoRow("TimescaleDB", tsLabel) +
