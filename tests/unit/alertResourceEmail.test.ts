@@ -232,7 +232,10 @@ describe("loading", () => {
   it("fills the wizard's test email with invented rows, no query", async () => {
     const blocks = await buildTopProcessBlocks(null, "memPct", { sample: true, now: NOW });
     expect(blocks.text).toContain("Top 5 processes by memory");
-    expect(blocks.text).toContain("sqlservr.exe");
+    // Business rule 65: every name in a test email is invented and says so.
+    const names = blocks.text.split("\n").slice(2).map((l) => l.trim().split(/\s+/)[0]);
+    expect(names).toHaveLength(5);
+    for (const n of names) expect(n).toMatch(/^Example/);
     expect(calls).toEqual([]);
   });
 });

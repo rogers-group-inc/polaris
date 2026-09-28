@@ -65,14 +65,16 @@ export interface TopProcessList {
 }
 
 /** Invented programs for the automation wizard's test email — its device is
- *  made up (utils/sampleAlertDevice), so there is no inventory to read. */
+ *  made up (utils/sampleAlertDevice), so there is no inventory to read.
+ *  Every name "Example"-prefixed (business rule 65): a test email must never
+ *  read as a report about a real host's workload. */
 const SAMPLE_PROCESSES: TopProcessRow[] = [
-  { name: "sqlservr.exe", instanceCount: 1, cpuPct: 184.2, memRssBytes: 12_884_901_888n },
-  { name: "MsMpEng.exe", instanceCount: 1, cpuPct: 41.7, memRssBytes: 402_653_184n },
-  { name: "w3wp.exe", instanceCount: 4, cpuPct: 22.3, memRssBytes: 2_147_483_648n },
-  { name: "svchost.exe", instanceCount: 71, cpuPct: 6.1, memRssBytes: 1_288_490_189n },
-  { name: "powershell.exe", instanceCount: 2, cpuPct: 3.4, memRssBytes: 188_743_680n },
-  { name: "explorer.exe", instanceCount: 1, cpuPct: 0.4, memRssBytes: 125_829_120n },
+  { name: "ExampleDatabase.exe", instanceCount: 1, cpuPct: 184.2, memRssBytes: 12_884_901_888n },
+  { name: "ExampleScanner.exe", instanceCount: 1, cpuPct: 41.7, memRssBytes: 402_653_184n },
+  { name: "ExampleWebWorker.exe", instanceCount: 4, cpuPct: 22.3, memRssBytes: 2_147_483_648n },
+  { name: "ExampleServiceHost.exe", instanceCount: 71, cpuPct: 6.1, memRssBytes: 1_288_490_189n },
+  { name: "ExampleShell.exe", instanceCount: 2, cpuPct: 3.4, memRssBytes: 188_743_680n },
+  { name: "ExampleDesktop.exe", instanceCount: 1, cpuPct: 0.4, memRssBytes: 125_829_120n },
 ];
 
 /**

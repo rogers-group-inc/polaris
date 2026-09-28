@@ -558,6 +558,13 @@ real alert leads with — the very thing they are testing.
   `/automations.html` the same way.
 - `alertChartService` has no asset to query, which is what routes it to the generated series.
 
+The top-5 process table on a CPU / memory alert (`{processes.top}`, 2026-09-28) follows the
+same rule: a test reads no `AssetProcess` rows at all and draws `alertProcessService`'s
+`SAMPLE_PROCESSES`, every one "Example"-prefixed (`ExampleDatabase.exe`, `ExampleWebWorker.exe
+×4`). The first cut used real program names — `sqlservr.exe`, `MsMpEng.exe` — which read as a
+report on somebody's actual server; `tests/unit/alertResourceEmail.test.ts` now asserts the
+prefix on every invented row.
+
 ### No reading is quoted
 
 `triggerSummary` already had the behaviour this needed. Given no value it falls back to
