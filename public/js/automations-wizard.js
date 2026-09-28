@@ -7544,6 +7544,21 @@ async function openAutomationWizard(existing, opts) {
             : { field: "to", current: current },
         );
         if (!res) return;
+        // Current recipients the operator unticked come off wherever they sit —
+        // matched on kind + value, the same identity addPill dedupes on.
+        var removedAny = false;
+        (res.removed || []).forEach(function (r) {
+          var box = host.querySelector('.na-recip-box[data-field="' + r.field + '"]');
+          if (!box) return;
+          box.querySelectorAll(":scope > .tag-chip").forEach(function (chip) {
+            if (chip.getAttribute("data-kind") === r.kind &&
+                String(chip.getAttribute("data-value")).toLowerCase() === String(r.value).toLowerCase()) {
+              chip.remove();
+              removedAny = true;
+            }
+          });
+        });
+        if (removedAny) onChange();
         var dest = host.querySelector('.na-recip-box[data-field="' + res.field + '"]');
         if (!dest) return;
         var added = 0, refused = 0;
