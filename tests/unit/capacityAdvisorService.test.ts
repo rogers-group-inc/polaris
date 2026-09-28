@@ -130,6 +130,7 @@ function baseSnapshot(opts: {
       monitoredAssetCount: opts.monitoredAssetCount,
       monitoredInterfaceCount: opts.monitoredInterfaceCount ?? 0,
       monitoredStorageCount: 0,
+      agentCount: 0,
       cadences: { responseTimeSec: 60, telemetrySec: 60, systemInfoSec: 600 },
       retention: { monitorDays: 30, telemetryDays: 30, systemInfoDays: 30 },
       steadyStateSizeBytes: 5_000_000_000,
