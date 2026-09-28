@@ -1,6 +1,12 @@
 package collectors
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/polaris/agent/internal/transport"
+)
 
 func TestParseShowUnits(t *testing.T) {
 	out := "Id=truckscale-central.service\nMainPID=2589126\nMemoryCurrent=925368320\n\n" +
@@ -109,5 +115,96 @@ func TestParseListUnitFiles(t *testing.T) {
 	}
 	if _, ok := got["dbus.socket"]; ok {
 		t.Errorf("non-.service unit-file should be ignored")
+	}
+}
+
+func TestParseShowUnitsCPU(t *testing.T) {
+	out := "Id=a.service\nMainPID=10\nCPUUsageNSec=2500000000\n\n" +
+		"Id=b.service\nMainPID=11\nCPUUsageNSec=[not set]\n\n" +
+		"Id=c.service\nMainPID=12\nCPUUsageNSec=18446744073709551615\n"
+	got := parseShowUnits(out)
+	if a := got["a.service"]; !a.hasCPU || a.cpuNsec != 2500000000 {
+		t.Errorf("a cpu = (%d, has=%v), want 2500000000", a.cpuNsec, a.hasCPU)
+	}
+	if got["b.service"].hasCPU {
+		t.Error("[not set] CPUUsageNSec (accounting off) must be unaccounted")
+	}
+	if got["c.service"].hasCPU {
+		t.Error("uint64-max CPUUsageNSec must be unaccounted")
+	}
+}
+
+func svcRaw(unit string, cpuSec float64, key string) serviceRaw {
+	return serviceRaw{sample: &transport.ServiceSample{Unit: unit}, cpuSec: cpuSec, hasCPU: true, cpuKey: key}
+}
+
+func TestApplyServiceCPURates(t *testing.T) {
+	t0 := time.Unix(1_000_000, 0)
+	t1 := t0.Add(300 * time.Second)
+
+	// First scrape: no baseline, so no rate — never a guess.
+	first := []serviceRaw{svcRaw("steady", 100, "pid:1:5"), svcRaw("restarts", 50, "pid:2:5")}
+	prev := applyServiceCPURates(first, nil, t0)
+	for _, r := range first {
+		if r.sample.CpuPct != nil {
+			t.Errorf("%s: first scrape must carry no cpuPct, got %v", r.sample.Unit, *r.sample.CpuPct)
+		}
+	}
+
+	second := []serviceRaw{
+		svcRaw("steady", 130, "pid:1:5"),   // 30 s of CPU over 300 s = 10 %
+		svcRaw("restarts", 60, "pid:9:77"), // new process: baseline dropped
+		svcRaw("new", 5, "pid:3:5"),        // no prior row
+		{sample: &transport.ServiceSample{Unit: "stopped"}},
+	}
+	next := applyServiceCPURates(second, prev, t1)
+	if p := second[0].sample.CpuPct; p == nil || *p < 9.999 || *p > 10.001 {
+		t.Errorf("steady cpuPct = %v, want 10", p)
+	}
+	if second[1].sample.CpuPct != nil || second[2].sample.CpuPct != nil || second[3].sample.CpuPct != nil {
+		t.Error("restarted / new / CPU-less rows must carry no cpuPct")
+	}
+	if _, ok := next["stopped"]; ok {
+		t.Error("a row with no CPU counter must not leave a baseline")
+	}
+	if next["restarts"].key != "pid:9:77" {
+		t.Error("the restarted service must be re-baselined on its new process")
+	}
+
+	// A counter that went backwards (same key) is dropped, not reported negative.
+	third := []serviceRaw{svcRaw("steady", 120, "pid:1:5")}
+	applyServiceCPURates(third, next, t1.Add(300*time.Second))
+	if third[0].sample.CpuPct != nil {
+		t.Errorf("backwards counter must yield no cpuPct, got %v", *third[0].sample.CpuPct)
+	}
+}
+
+func TestXpathLiteral(t *testing.T) {
+	if l, ok := xpathLiteral("Spooler"); !ok || l != "'Spooler'" {
+		t.Errorf("plain = %q %v", l, ok)
+	}
+	if l, ok := xpathLiteral("O'Brien Svc"); !ok || l != `"O'Brien Svc"` {
+		t.Errorf("apostrophe = %q %v", l, ok)
+	}
+	if _, ok := xpathLiteral(`a'b"c`); ok {
+		t.Error("both quote kinds cannot be expressed in XPath 1.0")
+	}
+}
+
+func TestWinServiceLogQuery(t *testing.T) {
+	sys := winServiceLogQuery("System", []string{"Spooler", "Print Spooler"}, 42)
+	want := "*[System[EventRecordID>42] and ((System[Provider[@Name='Service Control Manager']] and EventData[Data='Spooler' or Data='Print Spooler']) or System[Provider[@Name='Spooler' or @Name='Print Spooler']])]"
+	if sys != want {
+		t.Errorf("System query:\n got %s\nwant %s", sys, want)
+	}
+	app := winServiceLogQuery("Application", []string{"Spooler"}, 0)
+	if app != "*[System[EventRecordID>0] and (System[Provider[@Name='Spooler']])]" {
+		t.Errorf("Application query = %s", app)
+	}
+	if strings.Contains(app, "Service Control Manager") {
+		t.Error("SCM writes only to System; the Application query must not look for it")
+	}
+	if q := winServiceLogQuery("System", []string{"", `a'b"c`}, 0); q != "" {
+		t.Errorf("no quotable name must yield no query, got %s", q)
 	}
 }

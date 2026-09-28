@@ -307,6 +307,7 @@ const ServiceSampleSchema = z.object({
   unit:         z.string().min(1).max(255),
   platform:     z.enum(["systemd", "windows"]),
   displayName:  z.string().max(512).nullable().optional(),
+  description:  z.string().max(4096).nullable().optional(),
   loadState:    z.string().max(64).nullable().optional(),
   activeState:  z.string().max(64).nullable().optional(),
   subState:     z.string().max(64).nullable().optional(),
@@ -314,6 +315,7 @@ const ServiceSampleSchema = z.object({
   mainPid:      z.number().int().min(0).nullable().optional(),
   mainProcess:  z.string().max(255).nullable().optional(),
   memBytes:     z.number().int().min(0).nullable().optional(),
+  cpuPct:       z.number().min(0).nullable().optional(),
 });
 
 // Per-pinned-unit journalctl log lines (Phase 2, service dimension). Same shape
@@ -706,6 +708,7 @@ async function ingestServiceInventory(assetId: string, samples: StreamSamples<"s
       unit:         s.unit,
       platform:     s.platform,
       displayName:  s.displayName ?? null,
+      description:  s.description ?? null,
       loadState:    s.loadState ?? null,
       activeState:  s.activeState ?? null,
       subState:     s.subState ?? null,
@@ -713,6 +716,7 @@ async function ingestServiceInventory(assetId: string, samples: StreamSamples<"s
       mainPid:      s.mainPid ?? null,
       mainProcess:  s.mainProcess ?? null,
       memBytes:     s.memBytes != null ? BigInt(Math.round(s.memBytes)) : null,
+      cpuPct:       s.cpuPct ?? null,
     })),
   );
   return samples.length;

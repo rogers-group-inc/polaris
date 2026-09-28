@@ -36,9 +36,9 @@ const ASSET = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 function svc(over: Partial<AssetServiceInput>): AssetServiceInput {
   return {
-    unit: "x.service", platform: "systemd", displayName: null, loadState: "loaded",
+    unit: "x.service", platform: "systemd", displayName: null, description: null, loadState: "loaded",
     activeState: "active", subState: "running", enabledState: "enabled",
-    mainPid: null, mainProcess: null, memBytes: null, ...over,
+    mainPid: null, mainProcess: null, memBytes: null, cpuPct: null, ...over,
   };
 }
 
@@ -90,6 +90,19 @@ describe("persistAssetServices", () => {
     expect(ts.memBytes).toBe(925368320n);
     expect(ts.assetId).toBe(ASSET);
     expect(payload.data.find((r) => r.unit === "masked.service")!.controllable).toBe(false);
+  });
+
+  it("carries a Windows service's description and CPU through to the row", async () => {
+    await persistAssetServices(ASSET, [
+      svc({ unit: "Spooler", platform: "windows", loadState: null, enabledState: "auto-delayed",
+        description: "Spools print jobs.", cpuPct: 1.25, memBytes: 12_000_000n }),
+    ]);
+    const payload = createMany.mock.calls.at(-1)![0] as { data: Array<Record<string, unknown>> };
+    const sp = payload.data[0]!;
+    expect(sp.description).toBe("Spools print jobs.");
+    expect(sp.cpuPct).toBe(1.25);
+    expect(sp.enabledState).toBe("auto-delayed");
+    expect(sp.memBytes).toBe(12_000_000n);
   });
 
   it("empty input issues a delete-only transaction (no createMany)", async () => {

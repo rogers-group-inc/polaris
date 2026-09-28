@@ -136,11 +136,16 @@ type wevtEvent struct {
 	EventData struct {
 		Data []string `xml:"Data"`
 	} `xml:"EventData"`
+	// Present only under /f:RenderedXml (the service-log reader's format).
+	RenderingInfo struct {
+		Message string `xml:"Message"`
+	} `xml:"RenderingInfo"`
 }
 
 // parseWevtutilXML decodes the event stream into parsed events. Pure given its
-// bytes. wevtutil doesn't render the publisher message, so the message is built
-// from the EventData Data values (the native wevtapi upgrade adds EvtFormatMessage).
+// bytes. Under /f:XML wevtutil doesn't render the publisher message, so the
+// message is built from the EventData Data values (the native wevtapi upgrade
+// adds EvtFormatMessage); under /f:RenderedXml the rendered message wins.
 func parseWevtutilXML(b []byte, channel string) []winParsedEvent {
 	if len(b) == 0 {
 		return nil
@@ -157,7 +162,10 @@ func parseWevtutilXML(b []byte, channel string) []winParsedEvent {
 		if id, err := strconv.ParseInt(strings.TrimSpace(e.System.EventID), 10, 64); err == nil {
 			idPtr = &id
 		}
-		msg := strings.TrimSpace(strings.Join(e.EventData.Data, " "))
+		msg := strings.TrimSpace(e.RenderingInfo.Message)
+		if msg == "" {
+			msg = strings.TrimSpace(strings.Join(e.EventData.Data, " "))
+		}
 		if msg == "" {
 			msg = e.System.Provider.Name + " event " + strings.TrimSpace(e.System.EventID)
 		}

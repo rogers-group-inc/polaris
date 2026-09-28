@@ -20268,7 +20268,7 @@ var _assetEventsLoaded = false;     // lazy-load guard (first tab click)
 function _assetServicesTabHTML() {
   return '<div class="section-block">' +
     '<div class="filter-bar" style="justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:0.5rem">' +
-      '<p class="hint" style="margin:0;max-width:600px">systemd units (Linux) and Windows services reported by the Polaris Agent. Check <strong>Monitor</strong> to tail a service\'s journal — or, for a process, to collect its CPU/RAM history + logs — and <strong>Map</strong> to attribute connections on the <a href="/appmap.html">Application Map</a>. Click a row to open it.</p>' +
+      '<p class="hint" style="margin:0;max-width:600px">systemd units (Linux) and Windows services reported by the Polaris Agent. Check <strong>Monitor</strong> to collect a service\'s log (its journal on Linux, its Event Log entries on Windows) — or, for a process, to collect its CPU/RAM history + logs — and <strong>Map</strong> to attribute connections on the <a href="/appmap.html">Application Map</a>. Click a row to open it.</p>' +
       '<div style="display:flex;align-items:center;gap:0.75rem;flex:none">' +
         '<label style="display:flex;align-items:center;gap:5px;font-size:0.8rem;white-space:nowrap"><input type="checkbox" id="asset-view-svc-include-proc">Include processes</label>' +
         '<button class="btn btn-secondary btn-sm" id="asset-view-svc-refresh">Refresh</button>' +
@@ -20304,6 +20304,44 @@ function _svcStatePill(activeState) {
   var label = activeState ? escapeHtml(activeState) : "—";
   return '<span style="display:inline-flex;align-items:center;gap:5px">' +
     '<span style="width:8px;height:8px;border-radius:50%;background:' + color + ';flex:none"></span>' + label + '</span>';
+}
+
+// Startup type in the Windows Services console's own words; a systemd
+// enablement state (enabled/disabled/static/…) is shown as reported.
+var _WIN_START_MODE_LABELS = {
+  "auto": "Automatic",
+  "auto-delayed": "Automatic (Delayed Start)",
+  "manual": "Manual",
+  "disabled": "Disabled",
+  "boot": "Boot",
+  "system": "System",
+};
+function _svcStartupLabel(svc) {
+  var e = svc && svc.enabledState;
+  if (!e) return "—";
+  if (svc.platform === "windows" && _WIN_START_MODE_LABELS[e]) return _WIN_START_MODE_LABELS[e];
+  return e;
+}
+
+// mainPid → the units running in that process. On Windows several services
+// can share one svchost.exe, and each then reports the WHOLE process's CPU and
+// memory — the table and the slide-in mark those figures as shared rather than
+// letting a group's total read as each member's own.
+function _svcSharedProcessIndex(rows) {
+  var byPid = {};
+  (rows || []).forEach(function (s) {
+    if (!s.mainPid) return;
+    (byPid[s.mainPid] = byPid[s.mainPid] || []).push(s.unit);
+  });
+  return byPid;
+}
+
+function _svcSharedTagHTML(svc, byPid) {
+  var units = svc.mainPid ? (byPid[svc.mainPid] || []) : [];
+  if (units.length < 2) return "";
+  var proc = svc.mainProcess || "one process";
+  var title = "Shared: " + units.length + " services run in " + proc + " (PID " + svc.mainPid + "). The figure is the whole process, not this service alone.";
+  return ' <span title="' + escapeHtml(title) + '" style="font-size:0.7rem;color:var(--color-text-tertiary)">shared</span>';
 }
 
 function _sizeAssetSvcTableWrapper() {
@@ -20347,7 +20385,7 @@ function _wireAssetServicesTab(asset) {
         sortName: s.unit || "",
         typeLabel: "Service",
         stateSort: s.activeState || "",
-        cpuPct: null,
+        cpuPct: (s.cpuPct != null ? Number(s.cpuPct) : null),
         memSort: (s.memBytes != null ? Number(s.memBytes) : null),
       };
     });
@@ -20404,20 +20442,24 @@ function _wireAssetServicesTab(asset) {
     var svcMapTitle = svcUnitAttribution
       ? "Attribute this unit's connections on the Application Map"
       : "Requires the Polaris Agent — agentless SSH/WinRM collection can't attribute a socket to a unit";
+    var byPid = _svcSharedProcessIndex(svcRows);
     tbody.innerHTML = data.map(function (r) {
       if (r.kind === "service") {
         var s = r.raw;
         var u = escapeHtml(s.unit);
         var logsChecked = svcMonitored.has(s.unit) ? " checked" : "";
         var mapChecked = svcMapped.has(s.unit) ? " checked" : "";
-        var mem = (s.memBytes != null) ? _fmtBytes(Number(s.memBytes)) : "—";
+        var shared = _svcSharedTagHTML(s, byPid);
+        var mem = (s.memBytes != null) ? _fmtBytes(Number(s.memBytes)) + shared : "—";
+        var cpu = (s.cpuPct != null) ? fmtPct(s.cpuPct) + shared : "—";
+        var logsTitle = s.platform === "windows" ? "Collect this service\'s Event Log entries" : "Tail this unit\'s journal";
         return '<tr>' +
-          '<td class="svc-pin-col"><input type="checkbox" class="asset-svc-logs-toggle" data-svc-unit="' + u + '" title="Tail this unit\'s journal"' + logsChecked + disabled + '></td>' +
+          '<td class="svc-pin-col"><input type="checkbox" class="asset-svc-logs-toggle" data-svc-unit="' + u + '" title="' + logsTitle + '"' + logsChecked + disabled + '></td>' +
           '<td class="svc-pin-col"><input type="checkbox" class="asset-svc-map-toggle" data-svc-unit="' + u + '" title="' + escapeHtml(svcMapTitle) + '"' + mapChecked + svcMapDisabled + '></td>' +
           '<td title="' + escapeHtml(s.displayName || "") + '"><a href="#" class="asset-svc-unit-link" data-svc-unit="' + u + '">' + u + '</a></td>' +
           '<td>Service</td>' +
           '<td>' + _svcStatePill(s.activeState) + '</td>' +
-          '<td>—</td>' +
+          '<td>' + cpu + '</td>' +
           '<td>' + mem + '</td>' +
         '</tr>';
       }
@@ -20576,7 +20618,8 @@ function _wireAssetServicesTab(asset) {
         var unit = svcLink.getAttribute("data-svc-unit");
         if (!unit) return;
         var svcRow = svcRows.filter(function (r) { return r.unit === unit; })[0] || null;
-        openServiceDetailPanel(asset, svcRow);
+        var sharedUnits = svcRow && svcRow.mainPid ? (_svcSharedProcessIndex(svcRows)[svcRow.mainPid] || []) : [];
+        openServiceDetailPanel(asset, svcRow, sharedUnits);
         return;
       }
       var procLink = e.target.closest ? e.target.closest(".asset-proc-name-link") : null;
@@ -20624,9 +20667,11 @@ function _wireAssetServicesTab(asset) {
 }
 
 // Per-service detail slide-in — reuses the process detail nested slide-over
-// shell. Unit metadata + journalctl log viewer + ports/connections. (Start/stop/
-// restart control was removed — Satellite-posture change.)
-function openServiceDetailPanel(asset, svc) {
+// shell. Unit metadata + log viewer (the journal on Linux, the service's Event
+// Log entries on Windows) + ports/connections. (Start/stop/restart control was
+// removed — Satellite-posture change.) sharedUnits: every unit running in this
+// service's process, itself included (see _svcSharedProcessIndex).
+function openServiceDetailPanel(asset, svc, sharedUnits) {
   if (!asset || !svc) return;
   _ensureProcPanelDOM();
   var titleEl = document.getElementById("proc-panel-title");
@@ -20644,19 +20689,38 @@ function openServiceDetailPanel(asset, svc) {
       '<span style="color:var(--color-text-secondary)">' + label + '</span>' +
       '<span style="text-align:right">' + value + '</span></div>';
   }
+  // Long text: label above, text below, left-aligned — a right-aligned
+  // paragraph beside its label reads as ragged.
+  function blockRow(label, value) {
+    return '<div style="padding:0.3rem 0;border-bottom:1px solid var(--color-border)">' +
+      '<div style="color:var(--color-text-secondary);margin-bottom:0.15rem">' + label + '</div>' +
+      '<div style="white-space:pre-wrap">' + value + '</div></div>';
+  }
+  var isWin = svc.platform === "windows";
+  var others = (sharedUnits || []).filter(function (u) { return u !== svc.unit; });
+  var sharedNote = others.length ? ' <span style="font-size:0.72rem;color:var(--color-text-tertiary)">(whole process)</span>' : "";
   var pidVal = svc.mainPid ? (escapeHtml(svc.mainProcess || "") + " (PID " + svc.mainPid + ")") : "—";
-  var memVal = (svc.memBytes != null) ? _fmtBytes(Number(svc.memBytes)) : "—";
+  var memVal = (svc.memBytes != null) ? _fmtBytes(Number(svc.memBytes)) + sharedNote : "—";
+  // Null until the agent's second inventory scrape (it is a mean since the
+  // previous one), and for a stopped service.
+  var cpuVal = (svc.cpuPct != null) ? Number(svc.cpuPct).toFixed(1) + "%" + sharedNote : "—";
 
   bodyEl.innerHTML =
     '<div style="padding:1rem 1.25rem">' +
       '<div style="font-size:0.85rem">' +
         metaRow("Display name", escapeHtml(svc.displayName || "—")) +
+        (svc.description ? blockRow("Description", escapeHtml(svc.description)) : "") +
         metaRow("Platform", escapeHtml(svc.platform || "—")) +
         metaRow("State", _svcStatePill(svc.activeState)) +
         (svc.subState ? metaRow("Sub-state", escapeHtml(svc.subState)) : "") +
-        metaRow("Enabled", escapeHtml(svc.enabledState || "—")) +
+        metaRow(isWin ? "Startup type" : "Enabled", escapeHtml(_svcStartupLabel(svc))) +
         metaRow("Main process", pidVal) +
+        metaRow("CPU", cpuVal) +
         metaRow("Memory", memVal) +
+        (others.length
+          ? blockRow("Shares its process with", escapeHtml(others.join(", ")) +
+              '<div style="font-size:0.75rem;color:var(--color-text-tertiary);margin-top:0.2rem">CPU and memory are the whole process\'s, not this service\'s alone.</div>')
+          : "") +
       '</div>' +
       // Ports & Connections (Phase 3) — populated when the unit is pinned for
       // Map (mappedServices); the agent attributes its PIDs' sockets to the unit.
@@ -20667,38 +20731,39 @@ function openServiceDetailPanel(asset, svc) {
         '</div>' +
         '<div id="svc-conn-view" style="font-size:0.8rem;color:var(--color-text-secondary)">Loading…</div>' +
       '</div>' +
-      // Journalctl viewer (Phase 2) — Linux units only; populated when the unit
-      // is pinned for Logs (monitoredServices) and the agent has tailed it.
+      // Log viewer (Phase 2) — populated when the unit is pinned for Monitor
+      // (monitoredServices) and the agent has read it: the unit's journal on
+      // Linux, the service's Event Log entries on Windows.
       '<div style="margin-top:1rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
         '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:0.25rem;gap:8px;flex-wrap:wrap">' +
-          '<h4 style="margin:0">Logs <span style="font-weight:400;font-size:0.75rem;color:var(--color-text-tertiary)">journalctl</span></h4>' +
+          '<h4 style="margin:0">Logs <span style="font-weight:400;font-size:0.75rem;color:var(--color-text-tertiary)">' + (isWin ? "Event Log" : "journalctl") + '</span></h4>' +
           '<div style="display:flex;align-items:center;gap:10px">' +
             '<label style="font-size:0.78rem;display:flex;align-items:center;gap:4px"><input type="checkbox" id="svc-logs-flagged-only">Flagged only</label>' +
             '<button class="btn btn-sm btn-secondary" id="btn-svc-logs-export" title="Download the collected log lines as CSV">Export</button>' +
             '<button class="btn btn-sm btn-secondary" id="btn-svc-logs-refresh">Refresh</button>' +
           '</div>' +
         '</div>' +
-        (svc.platform === "windows"
-          ? '<p class="hint" style="font-size:0.76rem">Windows service logs are collected via the Event Log stream, not here.</p>'
-          : '<p class="hint" style="font-size:0.76rem">Pin this unit\'s <strong>Logs</strong> box in the Services tab to start tailing its journal — lines appear within a minute or two.</p>') +
+        (isWin
+          ? '<p class="hint" style="font-size:0.76rem">Tick this service\'s <strong>Monitor</strong> box in the Services tab to collect its Event Log entries: the Service Control Manager\'s entries naming it in System (start, stop, crash, failed start, startup-type change) and whatever it logs under its own name in System or Application. The newest 50 from each log arrive within a minute or two, then new ones as they happen. Needs agent 0.22.0 or later.</p>'
+          : '<p class="hint" style="font-size:0.76rem">Tick this unit\'s <strong>Monitor</strong> box in the Services tab to start tailing its journal — lines appear within a minute or two.</p>') +
         '<div id="svc-logs-view" style="max-height:300px;overflow:auto;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px;padding:0.5rem;font-family:var(--font-mono);font-size:0.78rem;white-space:pre-wrap;color:var(--color-text-secondary)">Loading…</div>' +
       '</div>' +
     '</div>';
 
   var refreshLogs = document.getElementById("btn-svc-logs-refresh");
-  if (refreshLogs) refreshLogs.addEventListener("click", function () { _loadServiceLogsFor(asset.id, svc.unit); });
+  if (refreshLogs) refreshLogs.addEventListener("click", function () { _loadServiceLogsFor(asset.id, svc.unit, svc.platform); });
   var flaggedOnly = document.getElementById("svc-logs-flagged-only");
-  if (flaggedOnly) flaggedOnly.addEventListener("change", function () { _loadServiceLogsFor(asset.id, svc.unit); });
+  if (flaggedOnly) flaggedOnly.addEventListener("change", function () { _loadServiceLogsFor(asset.id, svc.unit, svc.platform); });
   var exportLogs = document.getElementById("btn-svc-logs-export");
   if (exportLogs) exportLogs.addEventListener("click", function () {
     var fl = document.getElementById("svc-logs-flagged-only");
     _exportPanelLogsCsv("service", asset, svc.unit, !!(fl && fl.checked), exportLogs);
   });
   _loadServiceConnectionsFor(asset.id, svc.unit);
-  _loadServiceLogsFor(asset.id, svc.unit);
+  _loadServiceLogsFor(asset.id, svc.unit, svc.platform);
 }
 
-async function _loadServiceLogsFor(assetId, unit) {
+async function _loadServiceLogsFor(assetId, unit, platform) {
   var el = document.getElementById("svc-logs-view");
   if (!el) return;
   var flaggedToggle = document.getElementById("svc-logs-flagged-only");
@@ -20709,7 +20774,9 @@ async function _loadServiceLogsFor(assetId, unit) {
     if (!logs.length) {
       el.textContent = flaggedOnly
         ? "No flagged log lines in this window."
-        : "No log lines collected yet. Pin this unit for Logs (Services tab) — journald tailing starts within a minute or two (Linux only).";
+        : (platform === "windows"
+          ? "No Event Log entries collected yet. Tick this service's Monitor box (Services tab); entries arrive within a minute or two. A service that has never started, stopped or failed may have none."
+          : "No log lines collected yet. Tick this unit's Monitor box (Services tab) — journald tailing starts within a minute or two.");
       return;
     }
     // Server returns newest-first; keep that order (newest at the top).

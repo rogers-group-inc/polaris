@@ -432,11 +432,37 @@ A merged unit and process inventory — systemd units / Windows services with
 state, and (with *Include processes* ticked) the per-program process inventory
 in the same table. Read-only: start/stop/restart control was removed.
 
+**CPU %** and **Memory** on a service row come from the agent (0.22.0+ for
+CPU, and for memory on Windows):
+
+- **CPU %** is the mean since the agent's previous inventory scrape, five
+  minutes by default. 100 means one full core, the same scale the process rows
+  use, so a busy service on a multi-core host can read above 100. It stays
+  **—** until the agent's second scrape after it starts, after the service
+  restarts, and while the service is stopped.
+- **Memory** is the unit's cgroup on Linux and the service process's working
+  set on Windows.
+- On Windows several services can share one `svchost.exe`. Each of them then
+  shows that **whole process's** figures, marked **shared**. Hover the tag for
+  the process and how many services it holds. Polaris does not split the
+  figure between them.
+
 Two pin columns:
 
-- **Monitor** — a service's journal tailing, or a process's CPU/RAM history and
-  logs.
+- **Monitor** — a service's log, or a process's CPU/RAM history and logs. On
+  Linux a service's log is its journal. On Windows it is the service's
+  **Event Log** entries (agent 0.22.0+): the Service Control Manager entries
+  that name it in System (started, stopped, crashed, failed to start, startup
+  type changed), plus anything it logs under its own name in System or
+  Application. Ticking it on Windows brings in the newest 50 entries from each
+  log, then new ones as they happen.
 - **Map** — include it on the [Application Map](Application-Map).
+
+Click a service's name to open its detail panel. It shows the display name,
+the **description** (Windows), state, **startup type** in the Services
+console's wording (*Automatic (Delayed Start)*, *Manual*, …; the enablement
+state on Linux), main process, CPU, memory, the other services sharing its
+process, its ports and connections, and its log.
 
 Mapping implies monitoring, one way. There is no Alert column, because
 [Automations](Automations) own alerting.

@@ -274,6 +274,13 @@ type ServiceSample struct {
 	MainPid      *int    `json:"mainPid,omitempty"`
 	MainProcess  *string `json:"mainProcess,omitempty"`
 	MemBytes     *uint64 `json:"memBytes,omitempty"`
+	// CpuPct is the interval mean since the previous inventory scrape (100 =
+	// one core, the process rows' convention). Omitted on the first scrape
+	// after the agent starts and whenever the measured process changed.
+	CpuPct *float64 `json:"cpuPct,omitempty"`
+	// Description is the Windows service description (Win32_Service
+	// .Description). nil on systemd, whose Description is DisplayName.
+	Description *string `json:"description,omitempty"`
 }
 
 // ServiceLogSample matches the server's ServiceLogSampleSchema — one journalctl

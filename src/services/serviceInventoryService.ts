@@ -18,6 +18,7 @@ export interface AssetServiceInput {
   unit:         string;
   platform:     "systemd" | "windows";
   displayName:  string | null;
+  description:  string | null;
   loadState:    string | null;
   activeState:  string | null;
   subState:     string | null;
@@ -25,6 +26,8 @@ export interface AssetServiceInput {
   mainPid:      number | null;
   mainProcess:  string | null;
   memBytes:     bigint | null;
+  /** Agent interval mean since its previous scrape; 100 = one core. */
+  cpuPct:       number | null;
 }
 
 /**
@@ -70,6 +73,7 @@ export async function persistAssetServices(
     unit:         r.unit,
     platform:     r.platform,
     displayName:  r.displayName,
+    description:  r.description,
     loadState:    r.loadState,
     activeState:  r.activeState,
     subState:     r.subState,
@@ -77,6 +81,7 @@ export async function persistAssetServices(
     mainPid:      r.mainPid,
     mainProcess:  r.mainProcess,
     memBytes:     r.memBytes,
+    cpuPct:       r.cpuPct,
     controllable: isServiceControllable(r),
   }));
   await retryOnDeadlock(() =>

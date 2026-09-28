@@ -58,7 +58,7 @@ Each rule has a **mode**:
 | Mode | |
 |---|---|
 | **Monitor + map** | Application Map **and** telemetry |
-| **Monitor only** | per-program CPU/RAM and logs, per-unit journal tailing — **never touches map pins** |
+| **Monitor only** | per-program CPU/RAM and logs, per-unit log collection (journal / Event Log) — **never touches map pins** |
 
 A four-step wizard: name → devices → items → summary. The **item step is
 scope-driven** — it lists only what the selected devices report, which keeps a
