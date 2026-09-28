@@ -19,12 +19,16 @@ import (
 //   - `list-units --all`      → load/active/sub/description (every loaded unit,
 //     including inactive-but-loaded + failed).
 //   - `list-unit-files`       → enablement (enabled/disabled/static/...).
-//   - `show -p Id,MainPID,...`→ MainPID + MemoryCurrent (one batched call).
+//   - `show -p Id,MainPID,...`→ MainPID + MemoryCurrent + CPUUsageNSec (one
+//     batched call).
+//
+// CPU is the unit's whole cgroup (CPUUsageNSec) when systemd accounts it, else
+// the main PID's own CPU time — the fallback misses a unit's child processes.
 //
 // Returns nil when systemctl is unavailable or the primary enumeration fails
 // (server treats a nil push as a no-op). cgo-free; shells out with hard
 // timeouts so a wedged systemctl can't stall the collection goroutine.
-func serviceInventoryOnce() []*transport.ServiceSample {
+func serviceInventoryOnce() []serviceRaw {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return nil
 	}
@@ -34,11 +38,12 @@ func serviceInventoryOnce() []*transport.ServiceSample {
 		return nil
 	}
 	enabled := listUnitFiles()          // unit → enablement state; best-effort
-	details := showUnits(keysOf(units)) // unit → {mainPid, memBytes}; best-effort
+	details := showUnits(keysOf(units)) // unit → {mainPid, memBytes, cpu}; best-effort
 
-	out := make([]*transport.ServiceSample, 0, len(units))
+	out := make([]serviceRaw, 0, len(units))
 	for name, u := range units {
 		s := &transport.ServiceSample{Unit: name, Platform: "systemd"}
+		raw := serviceRaw{sample: s}
 		if u.Description != "" {
 			d := u.Description
 			s.DisplayName = &d
@@ -70,8 +75,18 @@ func serviceInventoryOnce() []*transport.ServiceSample {
 				mem := d.memBytes
 				s.MemBytes = &mem
 			}
+			switch {
+			case d.hasCPU:
+				raw.cpuSec = float64(d.cpuNsec) / 1e9
+				raw.hasCPU = true
+				raw.cpuKey = "cgroup:" + strconv.Itoa(d.mainPid)
+			case d.mainPid > 0:
+				if sec, key, ok := pidCPUSeconds(int32(d.mainPid)); ok {
+					raw.cpuSec, raw.cpuKey, raw.hasCPU = sec, key, true
+				}
+			}
 		}
-		out = append(out, s)
+		out = append(out, raw)
 	}
 	return out
 }
@@ -117,7 +132,7 @@ func showUnits(units []string) map[string]unitDetail {
 	if len(units) == 0 {
 		return res
 	}
-	args := append([]string{"show", "-p", "Id", "-p", "MainPID", "-p", "MemoryCurrent", "--no-pager"}, units...)
+	args := append([]string{"show", "-p", "Id", "-p", "MainPID", "-p", "MemoryCurrent", "-p", "CPUUsageNSec", "--no-pager"}, units...)
 	out, err := runSystemctl(25*time.Second, args...)
 	if err != nil {
 		return res

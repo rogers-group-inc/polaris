@@ -214,6 +214,26 @@ export function storageThresholdFromTrigger(trigger: unknown): number | null {
   return typeof t.threshold === "number" && Number.isFinite(t.threshold) ? t.threshold : null;
 }
 
+/**
+ * Metrics whose alert is about the host's own LOAD — high CPU, high memory.
+ *
+ * The device is answering (that is how its CPU was read), so response time and
+ * packet loss are the story of a reachable host printed under "CPU is 97%":
+ * connectivity graphs that explain nothing about the fault. These alerts keep
+ * the CPU and memory charts — BOTH, whichever one fired, since a runaway
+ * process usually moves the two together and the reader wants to see whether
+ * it did — and drop the rest. The top-5 process table (alertProcessService)
+ * sits under them and names what is using the resource.
+ */
+const RESOURCE_SCOPED_METRICS: ReadonlySet<string> = new Set(["cpuPct", "memPct", "memUsedBytes"]);
+
+export function isResourceScopedAlert(metric: string | null | undefined): boolean {
+  return !!metric && RESOURCE_SCOPED_METRICS.has(metric);
+}
+
+/** The only charts a resource alert draws. */
+const RESOURCE_CHART_TOKENS: readonly ChartToken[] = ["chart.cpu", "chart.memory"];
+
 /** The SD-WAN health-check charts. The default body asks for all three, so a
  *  failover email shows every side of the SLA rather than whichever one the
  *  automation happened to watch; they all read one loaded `SdwanSeries`. */
@@ -1635,6 +1655,13 @@ export async function buildAlertCharts(
     for (const t of Array.from(wanted)) if (!SDWAN_CHART_TOKENS.includes(t)) wanted.delete(t);
   } else {
     for (const t of sdwanScoped ? DEVICE_CHART_TOKENS : SDWAN_CHART_TOKENS) wanted.delete(t);
+  }
+  // A CPU / memory alert keeps its two load charts and nothing else (see
+  // RESOURCE_SCOPED_METRICS): the response-time and packet-loss connectivity
+  // graphs come out even though the body asked for them. Nothing is added — a
+  // body that dropped {chart.memory} still gets only what it asked for.
+  if (isResourceScopedAlert(opts?.metric)) {
+    for (const t of Array.from(wanted)) if (!RESOURCE_CHART_TOKENS.includes(t)) wanted.delete(t);
   }
   if (wanted.size === 0) return out;
 

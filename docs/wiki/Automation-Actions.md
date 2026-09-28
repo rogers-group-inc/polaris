@@ -242,6 +242,39 @@ first thing you need.
 A test email from the automation wizard draws an example filesystem, and
 always forecasts 7 days ahead.
 
+### What the default email shows for a CPU or memory alert
+
+A high-CPU or high-memory alert is about the host's **load**. The host is
+answering, which is how its CPU was read, so its response-time and
+packet-loss graphs say nothing about the fault. Those are dropped.
+
+- **Graphs.** The last hour of **CPU and memory**, both of them whichever one
+  fired, since a runaway process usually moves the two together. The one
+  that fired comes first.
+- **Top 5 processes.** The five programs using the most of that resource:
+  ranked by **CPU** on a CPU alert, by **memory** on a memory alert, with the
+  other figure beside each. A program running as several processes is one row
+  with its count (`chrome.exe ×14`). CPU is summed across a program's
+  processes and across cores, so **100% means one full core** and a busy
+  program on a multi-core host can read higher.
+- **How old the list is.** The list comes from the host's process inventory,
+  which is refreshed every few minutes, not at alert time, so the email says
+  how long before it was sent the list was reported.
+
+The list appears only on a host that reports processes: one with the Polaris
+Agent, or one whose processes are collected over SSH or WinRM. An
+SNMP-polled device or a firewall gets the two graphs and no list. On an agent
+host the CPU figures need agent **0.22.1** or later. Older agents report each
+process's average since it started, which ranks a long-running process that
+has just started spinning near the bottom.
+
+Unlike the interface changes above, dropping the connectivity graphs applies to
+a **customized** email too: a `{chart.responseTime}` or `{chart.probeLoss}` in
+your body renders nothing on a CPU or memory alert. The process list is the
+`{processes.top}` token, which is in the default email. An automation whose
+email you customized before this existed does not have it, so add it where you
+want the list.
+
 ### Template tokens
 
 Available in the message template, the email subject and body, the `api_call`

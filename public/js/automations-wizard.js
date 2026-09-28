@@ -7724,7 +7724,8 @@ async function openAutomationWizard(existing, opts) {
               '<code>{ack}</code> becomes the recipient’s one-click acknowledge link — blank, and pruned away with its button, on an email announcing the alert is over — <code>{asset.link}</code> opens the device, and ' +
               '<code>{chart.cpu}</code> / <code>{chart.memory}</code> / <code>{chart.responseTime}</code> embed the last hour as charts, ' +
               '<code>{chart.sdwanLatency}</code> / <code>{chart.sdwanJitter}</code> / <code>{chart.sdwanLoss}</code> chart the SD-WAN health check an SD-WAN alert fired on (and replace the three above on one), and ' +
-              '<code>{interface.lldp}</code> lists what LLDP saw on the port an interface alert fired on. ' +
+              '<code>{interface.lldp}</code> lists what LLDP saw on the port an interface alert fired on, and ' +
+              '<code>{processes.top}</code> lists the five programs using the most CPU or memory on a CPU or memory alert (which keeps only the CPU and memory charts). ' +
               '<button type="button" class="na-comp-reset" style="background:none;border:0;padding:0;color:var(--color-primary);cursor:pointer;font:inherit;text-decoration:underline">Reset to the default</button></p>' +
             '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">Subject</label><input type="text" class="na-subject tpl-field" value="' + escapeHtml(compValue(comp, "subjectTemplate")) + '" placeholder="[{severity.upper}] {asset} — {metric} = {value}"></div>' +
             // ONE body editor with a view toggle. Both bodies are still stored

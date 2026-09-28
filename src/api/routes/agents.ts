@@ -301,12 +301,14 @@ const ProcessLogSampleSchema = z.object({
 });
 
 // Current-state service inventory — one row per systemd unit / Windows service.
-// Full-replaced per push (persistAssetServices). platform drives the state
+// Each push carries the whole list and replaces the stored one
+// (persistAssetServices writes it as a delta). platform drives the state
 // vocabulary; controllable is derived server-side.
 const ServiceSampleSchema = z.object({
   unit:         z.string().min(1).max(255),
   platform:     z.enum(["systemd", "windows"]),
   displayName:  z.string().max(512).nullable().optional(),
+  description:  z.string().max(4096).nullable().optional(),
   loadState:    z.string().max(64).nullable().optional(),
   activeState:  z.string().max(64).nullable().optional(),
   subState:     z.string().max(64).nullable().optional(),
@@ -314,6 +316,7 @@ const ServiceSampleSchema = z.object({
   mainPid:      z.number().int().min(0).nullable().optional(),
   mainProcess:  z.string().max(255).nullable().optional(),
   memBytes:     z.number().int().min(0).nullable().optional(),
+  cpuPct:       z.number().min(0).nullable().optional(),
 });
 
 // Per-pinned-unit journalctl log lines (Phase 2, service dimension). Same shape
@@ -618,8 +621,8 @@ async function ingestEventLog(assetId: string, samples: StreamSamples<"eventLog"
 }
 
 async function ingestProcessInventory(assetId: string, samples: StreamSamples<"processInventory">): Promise<number> {
-  // Current-state inventory: full-replace the asset's process rows. The
-  // agent aggregates by name; serviceUnit/controllable resolution lands in
+  // Current-state inventory: the pushed list replaces the asset's process
+  // rows (written as a delta — utils/inventoryDelta). The agent aggregates by name; serviceUnit/controllable resolution lands in
   // Phase 4 (the agent doesn't report it yet, so controllable stays false).
   await persistAssetProcesses(
     assetId,
@@ -698,14 +701,16 @@ async function ingestProcessConnections(assetId: string, samples: StreamSamples<
 }
 
 async function ingestServiceInventory(assetId: string, samples: StreamSamples<"serviceInventory">): Promise<number> {
-  // Current-state inventory: full-replace the asset's service rows. The
-  // server derives `controllable` from platform + load state.
+  // Current-state inventory: the pushed list replaces the asset's service
+  // rows (written as a delta). The server derives `controllable` from
+  // platform + load state.
   await persistAssetServices(
     assetId,
     samples.map((s) => ({
       unit:         s.unit,
       platform:     s.platform,
       displayName:  s.displayName ?? null,
+      description:  s.description ?? null,
       loadState:    s.loadState ?? null,
       activeState:  s.activeState ?? null,
       subState:     s.subState ?? null,
@@ -713,6 +718,7 @@ async function ingestServiceInventory(assetId: string, samples: StreamSamples<"s
       mainPid:      s.mainPid ?? null,
       mainProcess:  s.mainProcess ?? null,
       memBytes:     s.memBytes != null ? BigInt(Math.round(s.memBytes)) : null,
+      cpuPct:       s.cpuPct ?? null,
     })),
   );
   return samples.length;

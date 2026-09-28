@@ -2087,19 +2087,30 @@ model AssetService {
   platform     String
   // systemd Description / Windows DisplayName.
   displayName  String?
+  // Windows service description (Win32_Service.Description); null on systemd,
+  // whose Description is displayName.
+  description  String?
   // systemd load state (loaded/masked/not-found); "" for Windows.
   loadState    String?
   // systemd active state (active/inactive/failed) / Windows state (running/stopped).
   activeState  String?
   // systemd sub state (running/exited/dead/failed); "" for Windows.
   subState     String?
-  // systemd enablement (enabled/disabled/static) / Windows start mode (auto/manual/disabled).
+  // systemd enablement (enabled/disabled/static) / Windows start mode
+  // (auto/auto-delayed/manual/disabled/boot/system).
   enabledState String?
   // Main process PID + its program name (cross-links to the Processes tab).
   mainPid      Int?
   mainProcess  String?
-  // Current memory of the unit's cgroup (systemd MemoryCurrent); null when unset.
+  // Current memory: the unit's cgroup (systemd MemoryCurrent) / the service
+  // process's working set (Windows); null when unset. Windows services sharing
+  // one svchost.exe share its PID and so each carry the whole process's figure.
   memBytes     BigInt?
+  // Mean CPU over the agent's last inventory interval (100 = one core, the
+  // AssetProcess convention): the unit's cgroup (systemd CPUUsageNSec, else its
+  // main PID) / the service process (Windows). Null on the agent's first scrape,
+  // after a restart, and for a stopped service. Same sharing caveat as memBytes.
+  cpuPct       Float?
   // True when the unit is start/stop/restartable via the AgentCommand queue.
   controllable Boolean  @default(false)
   updatedAt    DateTime @updatedAt
@@ -2107,6 +2118,22 @@ model AssetService {
   @@unique([assetId, unit])
   @@index([assetId])
   @@map("asset_services")
+}
+
+// When each current-state inventory of an asset was last SCRAPED — one row per
+// (asset, kind), upserted in the same transaction as the inventory write.
+// AssetProcess / AssetService are delta-written (utils/inventoryDelta): an
+// unchanged row is not rewritten, so its updatedAt is "last CHANGED", and
+// "how old is this list" (the alert email's top-process block) has to be read
+// here instead. No FK to Asset — the AssetProcess / AssetService convention.
+model AssetInventoryScrape {
+  assetId   String
+  // "processes" | "services"
+  kind      String
+  scrapedAt DateTime
+
+  @@id([assetId, kind])
+  @@map("asset_inventory_scrapes")
 }
 
 // ACCUMULATE + AGE connection map for MAPPED processes (Asset.mappedProcesses).

@@ -66,6 +66,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{email.recipients}", label: "Email recipients", description: "Who this alert was also emailed to — the footer line beside {push.recipients}. Filled at send time from the alert's own email deliveries, deduped by address across every copy and every reminder; an address with a Polaris account prints as that account's name, anything else prints as the address. Bcc is never listed, and the line renders away entirely when there is nothing to name", group: "notification" },
   { token: "{interface.ip}", label: "Interface IP", description: "The IP address configured on the INTERFACE this alert fired on, as a complete \"Interface IP\" row (HTML facts table) or line (plain text). Renders away entirely unless the automation triggers on an interface (status, PoE, throughput, error rate) and the port has an address — an access port or a 0.0.0.0 interface prints nothing", group: "notification" },
   { token: "{interface.lldp}", label: "Interface LLDP neighbors", description: "The LLDP neighbours on the INTERFACE this alert fired on — what was plugged into the port, its own port, management IP and when it last advertised. Renders away entirely unless the automation triggers on an interface (status, PoE, throughput, error rate) and the port has a neighbour", group: "notification" },
+  { token: "{processes.top}", label: "Top 5 processes", description: "The five programs using the most of the resource a CPU or memory alert fired on — ranked by CPU for a CPU alert, by memory for a memory alert, with the other figure beside each — from the host's process inventory, with how long before the email it was reported. Renders away entirely on every other alert and on a host with no process inventory", group: "notification" },
   { token: "{time}", label: "Time", description: "Trigger time (ISO-8601)", group: "notification" },
   { token: "{time.local}", label: "Time (readable)", description: "Trigger time in this install's own timezone, e.g. \"Aug 12, 2026, 1:46 PM CDT\" — what the default email prints. Every copy of an alert reads the same clock, whichever zone its recipients sit in", group: "notification" },
   { token: "{time.zone}", label: "Timezone", description: "The timezone every time in this email is rendered in, named in full — e.g. \"CDT (America/Chicago)\". The default email prints it in the footer so a reader in another zone converts rather than guesses", group: "notification" },
@@ -538,6 +539,11 @@ const TOKEN_RE = /\{([a-zA-Z][\w.]*)\}/g;
  * same reason the charts are: it needs a DB read, and its HTML and plain-text
  * forms are different markup, which one context string can't carry.
  *
+ * The process half (`{processes.top}` — the top-5 programs by CPU or memory on a
+ * CPU / memory alert, read at delivery by alertProcessService) is deferred for
+ * the interface half's two reasons: a DB read, and different HTML and text
+ * markup.
+ *
  * The branding half (`{brand.header}` — the install's logo, application name and
  * subtitle in the email's top-right corner, built at delivery by
  * alertBrandService) is deferred for the same pair of reasons: the logo rides as
@@ -561,6 +567,7 @@ export function isDeferredToken(name: string): boolean {
     DEFERRED_TOKEN_NAMES.has(name) ||
     name.startsWith("chart.") ||
     name.startsWith("interface.") ||
+    name.startsWith("processes.") ||
     name.startsWith("brand.") ||
     name.startsWith("push.")
   );

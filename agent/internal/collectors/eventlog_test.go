@@ -19,6 +19,21 @@ func TestNormalizeLevel(t *testing.T) {
 	}
 }
 
+// Windows Level numbers are NOT journald priorities: 2 is Error (journald
+// crit), 4 is Information (journald warning). Each must survive normalizeLevel
+// as its own severity, which is how EventLogOnce consumes the parsed level.
+func TestWinLevelName(t *testing.T) {
+	cases := map[string]string{
+		"1": "critical", "2": "error", "3": "warning", "4": "info",
+		"0": "info", "5": "info", " 2 ": "error", "": "info",
+	}
+	for in, want := range cases {
+		if got := normalizeLevel(winLevelName(in)); got != want {
+			t.Errorf("normalizeLevel(winLevelName(%q)) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestMeetsMinLevel(t *testing.T) {
 	if !meetsMinLevel("critical", "error") {
 		t.Error("critical should meet error")

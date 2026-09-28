@@ -24,6 +24,7 @@ import { logger } from "../utils/logger.js";
 import { notificationsPageUrl, pushDeepLinkUrl, ackUrlForEmail, ackUrlForPush, assetUrlForPush } from "../utils/notificationTemplate.js";
 import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, isStorageScopedAlert, storageThresholdFromTrigger, type ChartToken, type RenderedChart } from "./alertChartService.js";
 import { buildInterfaceLldpBlocks, interfaceTokensIn, substituteInterfaceTokens } from "./alertInterfaceService.js";
+import { buildTopProcessBlocks, processTokensIn, substituteProcessTokens } from "./alertProcessService.js";
 import { buildAlertBrandBlock, brandTokensIn, substituteBrandTokens, BRAND_LOGO_CID } from "./alertBrandService.js";
 import {
   buildRecipientBlocks,
@@ -109,10 +110,12 @@ interface RenderMemo {
    *  reminder drained in the same pass gets its own. Both transports resolve
    *  together: one indexed read answers both. */
   recipients: Map<string, Promise<{ push: PushRecipientBlock; email: PushRecipientBlock }>>;
+  /** The top-process block, keyed by notification: one read per alert. */
+  processes: Map<string, Promise<{ html: string; text: string }>>;
 }
 
 function newRenderMemo(): RenderMemo {
-  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), recipients: new Map() };
+  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), recipients: new Map(), processes: new Map() };
 }
 
 /** Memoized read-through: one build per (alert, exact chart set) per drain. */
@@ -282,6 +285,20 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       );
       text = pruneEmptyTextLines(substituteInterfaceTokens(text, lldp.text, lldp.ipText));
       if (html) html = substituteInterfaceTokens(html, lldp.html, lldp.ipHtml);
+    }
+
+    // The top-5 process table on a CPU / memory alert — same contract as the
+    // interface block: built here so an escalation shows the host as it is
+    // now, one read for both bodies, and a complete block or nothing (every
+    // other alert returns before querying). Memoized per alert so the email
+    // rows of one fan-out share the read. A test alert gets invented rows,
+    // as its charts do.
+    if (processTokensIn(text, html).size > 0) {
+      const top = await memoize(memo.processes, d.notification.id, () =>
+        buildTopProcessBlocks(d.notification.assetId, d.notification.metric, { sample: d.notification.testRun }),
+      );
+      text = pruneEmptyTextLines(substituteProcessTokens(text, top.text));
+      if (html) html = substituteProcessTokens(html, top.html);
     }
 
     // The letterhead. Built here rather than at fire time for the same reason

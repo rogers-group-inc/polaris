@@ -341,9 +341,15 @@ single-pin key, so a downgrade to an older binary keeps working.
 | cpuMemory, temperature, interfaces, storage | host telemetry |
 | — *per-core CPU and the memory breakdown* | the agent's own accounting — see below. [vCenter](Integration-vCenter#per-core-cpu-and-the-memory-breakdown) reports both too, in its own vocabulary |
 | **processes** | **agent-default-ON** — an installed agent collects its process inventory automatically |
+| services | the unit / service inventory for the asset's [Services tab](Assets#services), with per-service CPU and memory (agent 0.22.0+ on Windows). Ticking a service's Monitor box also collects its log: the journal on Linux, its Event Log entries on Windows (0.22.0+) |
 | eventLog | opt-in, behind a global master switch (PII and volume) |
 | Application Map connections | needs the **`ptrace`** tier on Linux |
 | [Path checks](Path-Monitor) | agent **0.21.0+**; runs only the checks an operator created and pointed at this host. HTTP / HTTPS / TCP / ICMP plus traceroute, **no extra privilege** on any tier |
+
+> **Windows Event Log levels before agent 0.21.1** were stored one step too
+> severe: an Error came in as *critical*, a Warning as *error* and an
+> Information entry as *warning*. From 0.21.1 each keeps its own level.
+> Entries already stored keep the label they arrived with.
 
 The storage and interface collectors run under a 30-second guard, because
 `statfs` and interface ioctls can **block indefinitely** on a hung filesystem or
@@ -575,7 +581,7 @@ Each rule has a **mode**:
 | Mode | |
 |---|---|
 | **Monitor + map** | Application Map **and** telemetry — mapping implies monitoring |
-| **Monitor only** | per-program CPU/RAM and logs, per-unit journal tailing; never touches map pins |
+| **Monitor only** | per-program CPU/RAM and logs, per-unit log collection (journal / Event Log); never touches map pins |
 
 A four-step wizard: name → devices → items → summary. The **item step is
 scope-driven** — it lists only what the selected devices report, which is what
