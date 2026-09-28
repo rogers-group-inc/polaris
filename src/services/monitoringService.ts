@@ -54,6 +54,7 @@ import { buildHostVerifier } from "../utils/remoteExec.js";
 
 import { prisma } from "../db.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
+import { diffInventory, normalizeBytes, normalizeCpuPct, sameInventoryRow } from "../utils/inventoryDelta.js";
 // NOTE: agentlessProcessService imports back from this module with
 // `import type` only, so this pair can't cycle at runtime.
 import { collectProcessesSsh, collectProcessesWinrm, type AgentlessProcessResult } from "./agentlessProcessService.js";
@@ -10319,29 +10320,36 @@ export interface AssetProcessInput {
   controllable:  boolean;
 }
 
+/** The stored process columns a scrape can change. cpuPct / memRssBytes are
+ *  compared through the dead band (sameInventoryRow); the rest exactly. */
+const PROCESS_FIELDS = [
+  "instanceCount", "cpuPct", "memRssBytes", "exePath", "username", "startedAt", "serviceUnit", "controllable",
+] as const satisfies readonly (keyof AssetProcessInput)[];
+const PROCESS_EXACT_FIELDS = PROCESS_FIELDS.filter((f) => f !== "cpuPct" && f !== "memRssBytes");
+
 /**
- * Current-state process inventory full-replace for one asset. Mirrors
- * persistSdwanRules: delete-then-insert in one $transaction (retryOnDeadlock),
- * so a reader sees either the old set or the new set, never an empty
- * intermediate. An empty `rows` is a valid delete-only scrape.
+ * Current-state process inventory for one asset, written as a DELTA
+ * (utils/inventoryDelta) in one transaction: read the host's rows, create the
+ * programs that appeared, delete the ones that vanished, update only the ones
+ * that changed, and stamp the scrape time (AssetInventoryScrape). A reader sees
+ * either the old set or the new set, never a mix. An empty `rows` is a valid
+ * delete-only scrape. Same shape as serviceInventoryService.persistAssetServices;
+ * CPU and memory are stored rounded and compared through a dead band.
+ *
+ * The delta IS the started/stopped change set, so change detection costs no
+ * read of its own any more; only EMITTING is gated on a subscribed rule.
  */
 export async function persistAssetProcesses(
   assetId: string,
   rows: AssetProcessInput[],
-): Promise<void> {
-  // Change detection (gated): load the prior name set first only when a
-  // started/stopped change rule subscribes, so the common case adds nothing.
-  const watchChanges =
-    (await isChangeActionSubscribed("change.process.started")) ||
-    (await isChangeActionSubscribed("change.process.stopped"));
-  const priorNames = watchChanges
-    ? new Set((await prisma.assetProcess.findMany({ where: { assetId }, select: { name: true } })).map((p) => p.name))
-    : null;
-
-  const data = rows.map((r) => ({
-    id:            randomUUID(),
-    assetId,
-    name:          r.name,
+  now: Date = new Date(),
+): Promise<{ created: number; updated: number; removed: number; unchanged: number }> {
+  const incoming: AssetProcessInput[] = rows.map((r) => ({
+    ...r,
+    cpuPct: normalizeCpuPct(r.cpuPct),
+    memRssBytes: normalizeBytes(r.memRssBytes),
+  }));
+  const pick = (r: AssetProcessInput) => ({
     instanceCount: r.instanceCount,
     cpuPct:        r.cpuPct,
     memRssBytes:   r.memRssBytes,
@@ -10350,26 +10358,54 @@ export async function persistAssetProcesses(
     startedAt:     r.startedAt,
     serviceUnit:   r.serviceUnit,
     controllable:  r.controllable,
-  }));
-  await retryOnDeadlock(() =>
-    prisma.$transaction([
-      prisma.assetProcess.deleteMany({ where: { assetId } }),
-      ...(data.length > 0
-        ? [prisma.assetProcess.createMany({ data, skipDuplicates: true })]
-        : []),
-    ]),
+  });
+  const delta = await retryOnDeadlock(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.assetProcess.findMany({
+          where: { assetId },
+          select: { id: true, name: true, ...Object.fromEntries(PROCESS_FIELDS.map((f) => [f, true])) },
+        }) as unknown as Array<AssetProcessInput & { id: string }>;
+        const d = diffInventory(existing, incoming, (r) => r.name, (e) => e.name,
+          (e, n) => sameInventoryRow<AssetProcessInput>(e, n, PROCESS_EXACT_FIELDS, "cpuPct", "memRssBytes"));
+        if (d.remove.length > 0) {
+          await tx.assetProcess.deleteMany({ where: { id: { in: d.remove.map((e) => e.id) } } });
+        }
+        if (d.create.length > 0) {
+          await tx.assetProcess.createMany({
+            data: d.create.map((r) => ({ id: randomUUID(), assetId, name: r.name, ...pick(r) })),
+            skipDuplicates: true,
+          });
+        }
+        // updateMany: a concurrent push may have deleted the row since our read.
+        for (const { existing: e, next } of d.update) {
+          await tx.assetProcess.updateMany({ where: { id: e.id }, data: pick(next) });
+        }
+        await tx.assetInventoryScrape.upsert({
+          where: { assetId_kind: { assetId, kind: "processes" } },
+          create: { assetId, kind: "processes", scrapedAt: now },
+          update: { scrapedAt: now },
+        });
+        return d;
+      },
+      // The first write after the upgrade re-rounds every stored figure once.
+      { timeout: 30_000 },
+    ),
   );
 
-  if (priorNames) {
-    const newNames = new Set(rows.map((r) => r.name));
-    const started: ChangeItem[] = rows.filter((r) => !priorNames.has(r.name)).map((r) => ({ label: r.name, details: { name: r.name } }));
-    const stopped: ChangeItem[] = [...priorNames].filter((n) => !newNames.has(n)).map((n) => ({ label: n, details: { name: n } }));
+  const watchChanges =
+    (await isChangeActionSubscribed("change.process.started")) ||
+    (await isChangeActionSubscribed("change.process.stopped"));
+  if (watchChanges) {
+    const started: ChangeItem[] = delta.create.map((r) => ({ label: r.name, details: { name: r.name } }));
+    const stopped: ChangeItem[] = delta.remove.map((e) => ({ label: e.name, details: { name: e.name } }));
     if (started.length || stopped.length) {
       const assetName = (await prisma.asset.findUnique({ where: { id: assetId }, select: { hostname: true } }))?.hostname ?? null;
       await maybeEmitChangeEvents("change.process.started", assetId, assetName, started);
       await maybeEmitChangeEvents("change.process.stopped", assetId, assetName, stopped);
     }
   }
+  return { created: delta.create.length, updated: delta.update.length, removed: delta.remove.length, unchanged: delta.unchanged };
 }
 
 // ─── Application Map: process connection persistence ─────────────────────────

@@ -301,7 +301,8 @@ const ProcessLogSampleSchema = z.object({
 });
 
 // Current-state service inventory — one row per systemd unit / Windows service.
-// Full-replaced per push (persistAssetServices). platform drives the state
+// Each push carries the whole list and replaces the stored one
+// (persistAssetServices writes it as a delta). platform drives the state
 // vocabulary; controllable is derived server-side.
 const ServiceSampleSchema = z.object({
   unit:         z.string().min(1).max(255),
@@ -620,8 +621,8 @@ async function ingestEventLog(assetId: string, samples: StreamSamples<"eventLog"
 }
 
 async function ingestProcessInventory(assetId: string, samples: StreamSamples<"processInventory">): Promise<number> {
-  // Current-state inventory: full-replace the asset's process rows. The
-  // agent aggregates by name; serviceUnit/controllable resolution lands in
+  // Current-state inventory: the pushed list replaces the asset's process
+  // rows (written as a delta — utils/inventoryDelta). The agent aggregates by name; serviceUnit/controllable resolution lands in
   // Phase 4 (the agent doesn't report it yet, so controllable stays false).
   await persistAssetProcesses(
     assetId,
@@ -700,8 +701,9 @@ async function ingestProcessConnections(assetId: string, samples: StreamSamples<
 }
 
 async function ingestServiceInventory(assetId: string, samples: StreamSamples<"serviceInventory">): Promise<number> {
-  // Current-state inventory: full-replace the asset's service rows. The
-  // server derives `controllable` from platform + load state.
+  // Current-state inventory: the pushed list replaces the asset's service
+  // rows (written as a delta). The server derives `controllable` from
+  // platform + load state.
   await persistAssetServices(
     assetId,
     samples.map((s) => ({

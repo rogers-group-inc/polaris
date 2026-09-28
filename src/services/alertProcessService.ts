@@ -111,22 +111,27 @@ export async function loadTopProcesses(
     // The ranking happens in SQL (NULLS LAST, and the not-null filter makes
     // them absent anyway), so the read is five rows however many programs the
     // host runs — a Windows server can carry several hundred.
-    const rows = await prisma.assetProcess.findMany({
-      where: ranking === "cpu" ? { assetId, cpuPct: { not: null } } : { assetId, memRssBytes: { not: null } },
-      orderBy: [
-        ranking === "cpu" ? { cpuPct: { sort: "desc", nulls: "last" } } : { memRssBytes: { sort: "desc", nulls: "last" } },
-        { name: "asc" },
-      ],
-      take: TOP_PROCESS_COUNT,
-      select: { name: true, instanceCount: true, cpuPct: true, memRssBytes: true, updatedAt: true },
-    });
+    // The age comes from the SCRAPE stamp, not the rows' updatedAt: the
+    // inventory is delta-written (utils/inventoryDelta), so an unchanged row
+    // keeps the time it last CHANGED, which can be days ago on a list that
+    // was reported a minute before this email.
+    const [rows, scrape] = await Promise.all([
+      prisma.assetProcess.findMany({
+        where: ranking === "cpu" ? { assetId, cpuPct: { not: null } } : { assetId, memRssBytes: { not: null } },
+        orderBy: [
+          ranking === "cpu" ? { cpuPct: { sort: "desc", nulls: "last" } } : { memRssBytes: { sort: "desc", nulls: "last" } },
+          { name: "asc" },
+        ],
+        take: TOP_PROCESS_COUNT,
+        select: { name: true, instanceCount: true, cpuPct: true, memRssBytes: true },
+      }),
+      prisma.assetInventoryScrape.findUnique({
+        where: { assetId_kind: { assetId, kind: "processes" } },
+        select: { scrapedAt: true },
+      }),
+    ]);
     if (rows.length === 0) return null;
-    const reportedAt = rows.reduce<Date | null>((m, r) => (m == null || r.updatedAt > m ? r.updatedAt : m), null);
-    return {
-      ranking,
-      rows: rankProcesses(rows.map(({ updatedAt: _u, ...r }) => r), ranking),
-      reportedAt,
-    };
+    return { ranking, rows: rankProcesses(rows, ranking), reportedAt: scrape?.scrapedAt ?? null };
   } catch (err) {
     logger.debug({ err: (err as Error)?.message, assetId }, "top-process read failed — sending without the process list");
     return null;

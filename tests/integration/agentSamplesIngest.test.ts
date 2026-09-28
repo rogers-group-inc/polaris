@@ -192,7 +192,8 @@ d("POST /agents/samples", () => {
     expect(resp.status).toBe(200);
     const row = await prisma.assetService.findFirstOrThrow({ where: { assetId, unit: "Spooler" } });
     expect(row.description).toBe("Spools print jobs.");
-    expect(row.cpuPct).toBe(0.75);
+    // Stored to one decimal (utils/inventoryDelta.normalizeCpuPct).
+    expect(row.cpuPct).toBe(0.8);
     expect(row.memBytes).toBe(12_000_000n);
     expect(row.enabledState).toBe("auto-delayed");
   });

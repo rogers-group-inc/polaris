@@ -33,10 +33,14 @@ dbDescribe("top processes for a CPU / memory alert", () => {
         row("c.exe", 1, 128n * 1024n ** 2n),
       ],
     });
+    // The block's age reads the scrape stamp (the delta write keeps an
+    // unchanged row's updatedAt), so seed one as persistAssetProcesses would.
+    await prisma.assetInventoryScrape.create({ data: { assetId: ASSET, kind: "processes", scrapedAt: new Date() } });
   });
 
   afterAll(async () => {
     await prisma.assetProcess.deleteMany({ where: { assetId: ASSET } });
+    await prisma.assetInventoryScrape.deleteMany({ where: { assetId: ASSET } });
   });
 
   it("ranks by CPU, NULL CPU left out, capped at five", async () => {

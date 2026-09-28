@@ -408,9 +408,10 @@ async function ruleTargetIds(rule: AppMapRule): Promise<Set<string> | null> {
 // most one row per asset and the two are equivalent — but DISTINCT costs a sort
 // or hash per group over the whole table, which is most of what made this slow.
 // Deliberately NOT adding an index on name/unit to speed the GROUP BY: both
-// tables are delete-replaced per asset per scrape by persistAssetProcesses /
-// persistAssetServices, so an extra index would tax every one of those writes
-// fleet-wide to speed up one wizard step.
+// tables are written per asset per scrape by persistAssetProcesses /
+// persistAssetServices (a delta now, but every created row still pays for
+// every index), so an extra index would tax those writes fleet-wide to speed
+// up one wizard step.
 export async function getInventoryAggregate(
   scope: TagCriteria | null,
 ): Promise<{ processes: AggregateRow[]; services: AggregateRow[] }> {

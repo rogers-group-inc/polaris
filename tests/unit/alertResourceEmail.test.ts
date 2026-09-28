@@ -14,10 +14,11 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const { calls, processRows, lastProcessArgs } = vi.hoisted(() => ({
+const { calls, processRows, lastProcessArgs, scrape } = vi.hoisted(() => ({
   calls: [] as string[],
   processRows: { rows: [] as unknown[] },
   lastProcessArgs: { args: null as unknown },
+  scrape: { at: null as Date | null },
 }));
 
 vi.mock("../../src/db.js", () => ({
@@ -33,6 +34,9 @@ vi.mock("../../src/db.js", () => ({
         lastProcessArgs.args = args;
         return processRows.rows;
       }),
+    },
+    assetInventoryScrape: {
+      findUnique: vi.fn(async () => (scrape.at ? { scrapedAt: scrape.at } : null)),
     },
   },
 }));
@@ -74,6 +78,7 @@ const NOW = new Date("2026-09-28T15:00:00Z");
 beforeEach(() => {
   calls.length = 0;
   processRows.rows = [];
+  scrape.at = null;
   lastProcessArgs.args = null;
 });
 
@@ -203,7 +208,10 @@ describe("loading", () => {
   });
 
   it("asks SQL for five rows ranked by the resource, nulls last", async () => {
-    processRows.rows = [{ name: "x", instanceCount: 1, cpuPct: 3, memRssBytes: 1n, updatedAt: NOW }];
+    // The age is the SCRAPE stamp, not a row's updatedAt (the delta write leaves
+    // an unchanged row's updatedAt at the time it last changed).
+    processRows.rows = [{ name: "x", instanceCount: 1, cpuPct: 3, memRssBytes: 1n, updatedAt: new Date(0) }];
+    scrape.at = NOW;
     const list = await loadTopProcesses("a1", "cpuPct", { now: NOW });
     const args = lastProcessArgs.args as { where: Record<string, unknown>; orderBy: unknown[]; take: number };
     expect(args.take).toBe(5);

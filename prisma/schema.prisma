@@ -2110,6 +2110,22 @@ model AssetService {
   @@map("asset_services")
 }
 
+// When each current-state inventory of an asset was last SCRAPED — one row per
+// (asset, kind), upserted in the same transaction as the inventory write.
+// AssetProcess / AssetService are delta-written (utils/inventoryDelta): an
+// unchanged row is not rewritten, so its updatedAt is "last CHANGED", and
+// "how old is this list" (the alert email's top-process block) has to be read
+// here instead. No FK to Asset — the AssetProcess / AssetService convention.
+model AssetInventoryScrape {
+  assetId   String
+  // "processes" | "services"
+  kind      String
+  scrapedAt DateTime
+
+  @@id([assetId, kind])
+  @@map("asset_inventory_scrapes")
+}
+
 // ACCUMULATE + AGE connection map for MAPPED processes (Asset.mappedProcesses).
 // One row per observed socket fact for a mapped program; rows are UPSERTED on
 // the business key (lastSeen bumped — behind a 5-minute churn gate — firstSeen
