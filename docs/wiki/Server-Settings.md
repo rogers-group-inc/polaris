@@ -318,6 +318,12 @@ bytes, because TimescaleDB's absence is a broken install from the first byte,
 not a problem that begins at a threshold ([rule 52](Business-Rules#rule-52)).
 The old 1 GB threshold now only chooses *watch* vs *warning*.
 
+The **Monitoring workload** card lists how much Polaris is polling:
+**Assets** (monitored assets), **Interfaces** (pinned interfaces
+and IPsec tunnels), **Storage mounts** (pinned mounts) and **Agents** (every
+installed Polaris agent, whether or not its asset is monitored), followed by
+the cadences and retention windows in force.
+
 Every change of overall severity writes an Event, whether or not anyone has this
 tab open: `capacity.severity_changed` on the way up (and on a partial recovery
 that is still degraded), `capacity.severity_recovered` on a landing back at OK.

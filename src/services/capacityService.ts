@@ -398,6 +398,8 @@ export interface CapacitySnapshot {
      * asset.
      */
     monitoredStorageCount: number;
+    /** Installed Polaris agents (every `ManagedAgent` row). */
+    agentCount: number;
     cadences: { responseTimeSec: number; telemetrySec: number; systemInfoSec: number };
     retention: { monitorDays: number; telemetryDays: number; systemInfoDays: number };
     /**
@@ -2037,6 +2039,7 @@ export async function getCapacitySnapshot(opts: {
     sampleTables,
     connRow,
     dbIoState,
+    agentCount,
   ] = await Promise.all([
     getMonitorSettings(),
     getSampleRetention(),
@@ -2073,6 +2076,9 @@ export async function getCapacitySnapshot(opts: {
     getSampleTableStats(),
     readPgStatActivity(),
     computeDbIoState(),
+    // Every installed agent streams samples whether or not its asset is
+    // monitored, so the workload counts them all.
+    prisma.managedAgent.count(),
   ]);
   // Pull the rollup-job lastSuccess markers separately so the failure mode of
   // a missing Setting row stays simple to reason about (parallel fetch on the
@@ -2212,6 +2218,7 @@ export async function getCapacitySnapshot(opts: {
       monitoredAssetCount: monitoredCount,
       monitoredInterfaceCount,
       monitoredStorageCount,
+      agentCount,
       cadences,
       retention,
       steadyStateSizeBytes,
