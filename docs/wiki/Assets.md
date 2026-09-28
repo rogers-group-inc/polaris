@@ -30,8 +30,12 @@ is per view tab; widths and visibility are per screen.**
 
 **Tags** lists the asset's tags. Its filter matches any single tag containing
 the text (case doesn't matter), so `prod` finds `Production`; **Is empty** finds
-untagged assets. Sorting orders by each asset's alphabetically-first tag, and
-untagged assets sit at the bottom whichever way you sort.
+untagged assets. Clicking the filter box lists every tag in use, and the list
+narrows as you type; click one (or pick it with the arrow keys and Enter) to
+filter by it. A picked tag is still matched as text, so picking `prod` also
+shows assets tagged `production`, and a leading `!` (exclude) is kept. Sorting
+orders by each asset's alphabetically-first tag, and untagged assets sit at the
+bottom whichever way you sort.
 
 ### Two columns worth explaining
 
