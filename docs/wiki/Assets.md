@@ -442,6 +442,10 @@ CPU, and for memory on Windows):
   restarts, and while the service is stopped.
 - **Memory** is the unit's cgroup on Linux and the service process's working
   set on Windows.
+- A **process** row's CPU % is measured the same way from agent 0.22.1: the
+  mean since the previous scrape. Older agents showed each process's average
+  since it started, so a long-running process that had just started spinning
+  read low.
 - On Windows several services can share one `svchost.exe`. Each of them then
   shows that **whole process's** figures, marked **shared**. Hover the tag for
   the process and how many services it holds. Polaris does not split the

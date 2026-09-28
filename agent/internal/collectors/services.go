@@ -82,19 +82,29 @@ func applyServiceCPURates(rows []serviceRaw, prev map[string]cpuBaseline, now ti
 		}
 		unit := r.sample.Unit
 		next[unit] = cpuBaseline{cpuSec: r.cpuSec, key: r.cpuKey, at: now}
-		p, ok := prev[unit]
-		if !ok || p.key != r.cpuKey {
-			continue
+		if pct, ok := intervalCPUPct(prev, unit, r.cpuKey, r.cpuSec, now); ok {
+			r.sample.CpuPct = &pct
 		}
-		wall := now.Sub(p.at).Seconds()
-		d := r.cpuSec - p.cpuSec
-		if wall <= 0 || d < 0 {
-			continue
-		}
-		pct := d / wall * 100
-		r.sample.CpuPct = &pct
 	}
 	return next
+}
+
+// intervalCPUPct is the rate rule the service AND process inventories share:
+// the CPU seconds spent since id's previous baseline over the wall time between
+// them, ×100 (100 = one core). false when there is no baseline, it measured a
+// different process (key changed — a restart or a reused PID), or the counter
+// went backwards. Pure.
+func intervalCPUPct(prev map[string]cpuBaseline, id, key string, cpuSec float64, now time.Time) (float64, bool) {
+	p, ok := prev[id]
+	if !ok || p.key != key {
+		return 0, false
+	}
+	wall := now.Sub(p.at).Seconds()
+	d := cpuSec - p.cpuSec
+	if wall <= 0 || d < 0 {
+		return 0, false
+	}
+	return d / wall * 100, true
 }
 
 // pidStat is what the service collectors read from one PID: its program name,
