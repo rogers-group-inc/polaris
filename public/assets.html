@@ -131,7 +131,9 @@
               <th style="min-width:100px" data-sf-key="description" data-sf-type="string">Description</th>
               <!-- Asset.tags (String[]). Filter matches any single tag by
                    substring; sort orders by the alphabetically-first tag with
-                   untagged rows last — both server-side (assetTagListService). -->
+                   untagged rows last — both server-side (assetTagListService).
+                   The filter box lists the tags in use (GET /assets/tags) and
+                   narrows as you type — TableSF.setColumnSuggestions. -->
               <th data-sf-key="tags" data-sf-type="array">Tags</th>
               <th data-sf-key="assetTag" data-sf-type="string" data-col-default-hidden="true">Asset Tag</th>
               <th data-sf-key="manufacturer" data-sf-type="string" data-col-default-hidden="true">Manufacturer</th>

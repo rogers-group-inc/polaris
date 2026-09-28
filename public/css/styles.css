@@ -2454,6 +2454,11 @@ body.sf-resizing * { user-select: none !important; }
   color: var(--color-text-primary);
 }
 .sf-op-row:hover { background: var(--color-bg-secondary); }
+/* Text-filter suggestion list (TableSF.setColumnSuggestions) — same rows as the
+   mode popover; the keyboard-highlighted row reads like a hovered one. */
+.sf-suggest-popover { padding: 2px 0; max-width: 320px; }
+.sf-suggest-row { overflow: hidden; text-overflow: ellipsis; }
+.sf-suggest-row.sf-suggest-active { background: var(--color-bg-secondary); }
 
 /* ─── Date-range filter ───────────────────────────────────────────────────── */
 .sf-filter-date { position: relative; }
