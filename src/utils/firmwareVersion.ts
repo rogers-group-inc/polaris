@@ -53,9 +53,14 @@ export interface FirmwareImageIdentity {
 }
 
 // `v7.6.5`, `7.6.5 build1105`, `v7.6.5,build1105`, `FP432F-v7.6.5-build1105`.
-const FULL_RE = /v?(\d+)\.(\d+)\.(\d+)(?:[,\s-]*build[\s-]?(\d+))?/i;
+// Every repeat is bounded and a match may only START at the head of a digit
+// run: these run on uploaded file names and device-reported strings, and an
+// unbounded `\d+` restarted at every offset of a long digit run is quadratic
+// (CodeQL js/polynomial-redos). No real version component or separator comes
+// near the bounds.
+const FULL_RE = /(?<!\d)v?(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:[,\s-]{0,8}build[\s-]?(\d{1,9}))?/i;
 // `v7-build1164`, `v7.6-build1164` — the filename shape, which drops the patch.
-const MAJOR_BUILD_RE = /v(\d+)(?:\.(\d+))?[,\s-]*build[\s-]?(\d+)/i;
+const MAJOR_BUILD_RE = /v(\d{1,9})(?:\.(\d{1,9}))?[,\s-]{0,8}build[\s-]?(\d{1,9})/i;
 
 /** Parse a version out of any string a device or an image name reports. */
 export function parseFirmwareVersion(raw: string | null | undefined): FirmwareVersion | null {

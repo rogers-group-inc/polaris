@@ -28,6 +28,7 @@ import { Router } from "express";
 import { z } from "zod";
 import * as credentialService from "../../services/credentialService.js";
 import { requirePermission, requireOwnership, assertOwnership } from "../middleware/permissions.js";
+import { credentialTestLimiter } from "../middleware/rateLimits.js";
 import { logEvent } from "./events.js";
 import { AppError } from "../../utils/errors.js";
 import { probeCredentialAgainstHost } from "../../services/monitoringService.js";
@@ -161,7 +162,7 @@ router.put("/:id", requireOwnership("credentials"), async (req, res, next) => {
 // is set, masked secrets in `config` are merged from the stored credential so
 // the operator doesn't have to retype the password on edit. Returns the same
 // shape as a probe: { success, responseTimeMs, error?, host }.
-router.post("/test", requireOwnership("credentials"), async (req, res, next) => {
+router.post("/test", credentialTestLimiter, requireOwnership("credentials"), async (req, res, next) => {
   try {
     const input = TestSchema.parse(req.body);
 
