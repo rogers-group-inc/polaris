@@ -1199,41 +1199,66 @@ export async function getSubnetIps(id: string, page: number, pageSize: number) {
 
 // ─── Delete ───────────────────────────────────────────────────────────────────
 
-export async function deleteSubnet(id: string, actor?: string) {
+/**
+ * Delete a network and (by cascade) every reservation it holds.
+ *
+ * Refused (409) while the network holds an active reservation — except its
+ * `interface_ip` rows: the gate's own address on the network belongs to the
+ * network rather than claiming space in it, so it never blocks (rule 4).
+ * `force` — which the route admits for admin-equivalent callers only — skips
+ * the refusal. It removes Polaris records only; nothing is unpushed from a
+ * FortiGate, so the Event records every active reservation it overrode.
+ */
+export async function deleteSubnet(
+  id: string,
+  actor?: string,
+  opts: { force?: boolean } = {},
+) {
   const subnet = await prisma.subnet.findUnique({
     where: { id },
     include: {
       reservations: {
-        select: { id: true, ipAddress: true, hostname: true, owner: true, status: true },
+        select: {
+          id: true, ipAddress: true, hostname: true, owner: true, status: true, sourceType: true,
+        },
       },
     },
   });
 
   if (!subnet) throw new AppError(404, `Subnet ${id} not found`);
 
-  const activeCount = await prisma.reservation.count({
-    where: { subnetId: id, status: "active" },
-  });
-  if (activeCount > 0)
+  const blocking = subnet.reservations.filter(
+    (r) => r.status === "active" && r.sourceType !== "interface_ip",
+  );
+  if (blocking.length > 0 && !opts.force)
     throw new AppError(
       409,
-      `Cannot delete subnet ${subnet.cidr} — it has ${activeCount} active reservation(s)`
+      `Cannot delete subnet ${subnet.cidr} — it has ${blocking.length} active reservation(s)`
     );
 
   const deletedReservations = subnet.reservations;
   await prisma.subnet.delete({ where: { id } });
 
   const resCount = deletedReservations.length;
+  const forced = blocking.length > 0;
   void logEvent({
     action: "subnet.deleted",
+    level: forced ? "warning" : undefined,
     resourceType: "subnet",
     resourceId: id,
     resourceName: subnet.name,
     actor,
-    message: resCount > 0
-      ? `Subnet "${subnet.name}" (${subnet.cidr}) deleted with ${resCount} reservation(s)`
-      : `Subnet "${subnet.name}" (${subnet.cidr}) deleted`,
-    details: resCount > 0 ? { deletedReservations } : undefined,
+    message: forced
+      ? `Subnet "${subnet.name}" (${subnet.cidr}) force-deleted with ${blocking.length} active reservation(s)`
+      : resCount > 0
+        ? `Subnet "${subnet.name}" (${subnet.cidr}) deleted with ${resCount} reservation(s)`
+        : `Subnet "${subnet.name}" (${subnet.cidr}) deleted`,
+    details: resCount > 0
+      ? {
+          deletedReservations,
+          ...(forced ? { forced: true, overriddenActiveReservations: blocking.length } : {}),
+        }
+      : undefined,
   });
   return { ...subnet, deletedReservations };
 }

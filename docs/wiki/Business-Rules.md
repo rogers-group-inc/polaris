@@ -34,7 +34,11 @@ network, backed by a unique index.
 
 ### Rule 4
 **Block and network deletion are protected.** A network delete is refused (409)
-while any active reservation exists inside it. A block delete is refused (409)
+while any active reservation exists inside it — except the firewall's own
+interface IP on the network, which never counts and is deleted with it. An
+administrator (a role with full write on both Users and Roles) is warned and
+may delete the network anyway; its reservations go with it, nothing is removed
+from any FortiGate, and the Event is logged as a warning. A block delete is refused (409)
 while the block contains **any** network at all — move each one to another
 block (**Move to block…** on the Networks tab), archive it or delete it first.
 (Archiving is deliberately exempt — see [rule 41](#rule-41).)

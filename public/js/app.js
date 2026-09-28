@@ -470,6 +470,10 @@ function isAssetsAdmin() { return currentUserRole === "assetsadmin"; }
 // names map to the closest function-key check that matches the old
 // hardcoded-role behavior. Custom roles with the relevant grant pass.
 function canManageNetworks() { return permAtLeast("subnets", "fullwrite"); }
+// Mirrors the server's isAdminEquivalentPermissions (users + roles fullwrite):
+// the predicate behind admin-only overrides such as force-deleting a network
+// that still holds active reservations.
+function isAdminEquivalent() { return permAtLeast("users", "fullwrite") && permAtLeast("roles", "fullwrite"); }
 // IP blocks are their OWN function key: POST/PUT/DELETE /blocks gate on
 // ipBlocks:write, so the Blocks tab's Add / Edit / Delete must not ride the
 // subnets gate above (a subnets:fullwrite role without ipBlocks:write saw

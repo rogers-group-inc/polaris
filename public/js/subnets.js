@@ -1327,7 +1327,24 @@ async function confirmDeleteSubnet(id, cidr, reservationCount) {
     showToast("Network deleted");
     loadSubnets();
   } catch (err) {
-    showToast(err.message, "error");
+    // 409 = active reservations (the gate's interface IP never counts). An
+    // admin-equivalent role may override it after a second, explicit warning;
+    // the server re-checks the same predicate on ?force=true.
+    if (err.status !== 409 || !isAdminEquivalent()) {
+      showToast(err.message, "error");
+      return;
+    }
+    var warn = err.message + '.\n\nAs an administrator you can delete it anyway. ' +
+      'Every reservation on the network is deleted with it, and nothing is removed from ' +
+      'any FortiGate or DHCP server — pushed entries stay on the device.\n\nDelete "' + cidr + '" anyway?';
+    if (!(await showConfirm(warn))) return;
+    try {
+      await api.subnets.delete(id, true);
+      showToast("Network deleted");
+      loadSubnets();
+    } catch (err2) {
+      showToast(err2.message, "error");
+    }
   }
 }
 

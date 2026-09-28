@@ -8,7 +8,12 @@ import * as subnetService from "../../services/subnetService.js";
 import { refreshSubnet } from "../../services/subnetRefreshService.js";
 import * as subnetArchiveService from "../../services/subnetArchiveService.js";
 import * as subnetExclusionService from "../../services/subnetExclusionService.js";
-import { requirePermission, requireOwnership, assertOwnership } from "../middleware/permissions.js";
+import {
+  requirePermission,
+  requireOwnership,
+  assertOwnership,
+  callerIsAdminEquivalent,
+} from "../middleware/permissions.js";
 import { AppError } from "../../utils/errors.js";
 
 const router = Router();
@@ -380,15 +385,22 @@ router.post("/:id/move", requireOwnership("subnets"), async (req, res, next) => 
   }
 });
 
-// DELETE /subnets/:id
+// DELETE /subnets/:id[?force=true]
+// `force` deletes a network that still holds active reservations. It is an
+// admin-equivalent override (users + roles fullwrite), not a subnets rung: a
+// subnets:fullwrite network operator still gets the 409.
 router.delete("/:id", requireOwnership("subnets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
+    const force = req.query.force === "true" || req.query.force === "1";
+    if (force && !callerIsAdminEquivalent(req)) {
+      throw new AppError(403, "Only an administrator can delete a network that holds active reservations");
+    }
     if (req.permissionLevel !== "fullwrite") {
       const existing = await subnetService.getSubnet(id);
       assertOwnership(req, existing.createdBy, "delete networks");
     }
-    await subnetService.deleteSubnet(id, req.session?.username);
+    await subnetService.deleteSubnet(id, req.session?.username, { force });
     res.status(204).send();
   } catch (err) {
     next(err);

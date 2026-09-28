@@ -63,6 +63,10 @@ DHCP-discovered network this number is smaller than the number of rows the
 address list has ever had. (Deleting a network still removes that history, and
 the delete confirmation names the full row count it will take with it.)
 
+A network holding active reservations cannot be deleted — the firewall's own
+interface IP excepted — until they are released. An administrator instead sees
+a second warning and can delete it anyway; see [rule 4](Business-Rules#rule-4).
+
 **Utilization** is that count over the addresses the CIDR can hand out — a /24
 has 254, network and broadcast excluded. It draws as a bar so a page of
 networks reads as a shape: blue up to 50%, amber above it, red above 75%, the

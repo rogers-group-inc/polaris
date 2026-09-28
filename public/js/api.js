@@ -486,7 +486,8 @@ const api = {
     bulkAllocatePreview: (body) => request("POST", "/subnets/bulk-allocate/preview", body),
     refresh:       (id)     => request("POST", `/subnets/${id}/refresh`),
     update:        (id, b)  => request("PUT", `/subnets/${id}`, b),
-    delete:        (id)     => request("DELETE", `/subnets/${id}`),
+    // `force` overrides the active-reservation 409 — admin-equivalent only.
+    delete:        (id, force) => request("DELETE", `/subnets/${id}${force ? "?force=true" : ""}`),
     // The block a new network with this CIDR lands in (the most specific
     // containing block) — { block: { id, name, cidr } | null }.
     resolveBlock:  (cidr)   => request("GET", "/subnets/resolve-block" + toQuery({ cidr })),
