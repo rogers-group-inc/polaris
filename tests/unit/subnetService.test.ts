@@ -215,8 +215,38 @@ describe("deleteSubnet", () => {
   });
 
   it("throws 409 when subnet has active reservations", async () => {
-    prisma.subnet.findUnique.mockResolvedValue({ id: "s1", cidr: "10.0.1.0/24", _count: { reservations: 2 } });
-    prisma.reservation.count.mockResolvedValue(2);
-    await expect(deleteSubnet("s1")).rejects.toThrow(AppError);
+    prisma.subnet.findUnique.mockResolvedValue({
+      id: "s1", cidr: "10.0.1.0/24",
+      reservations: [
+        { id: "r1", ipAddress: "10.0.1.5", status: "active", sourceType: "manual" },
+        { id: "r2", ipAddress: "10.0.1.6", status: "active", sourceType: "dhcp_reservation" },
+      ],
+    });
+    await expect(deleteSubnet("s1")).rejects.toMatchObject({ httpStatus: 409 });
+    expect(prisma.subnet.delete).not.toHaveBeenCalled();
+  });
+
+  it("does not count the interface IP reservation against the delete", async () => {
+    prisma.subnet.findUnique.mockResolvedValue({
+      id: "s1", cidr: "10.0.1.0/24", name: "Office",
+      reservations: [
+        { id: "r1", ipAddress: "10.0.1.1", status: "active", sourceType: "interface_ip" },
+        { id: "r2", ipAddress: "10.0.1.9", status: "released", sourceType: "manual" },
+      ],
+    });
+    prisma.subnet.delete.mockResolvedValue({});
+    await deleteSubnet("s1");
+    expect(prisma.subnet.delete).toHaveBeenCalledWith({ where: { id: "s1" } });
+  });
+
+  it("deletes over active reservations when forced", async () => {
+    prisma.subnet.findUnique.mockResolvedValue({
+      id: "s1", cidr: "10.0.1.0/24", name: "Office",
+      reservations: [{ id: "r1", ipAddress: "10.0.1.5", status: "active", sourceType: "manual" }],
+    });
+    prisma.subnet.delete.mockResolvedValue({});
+    const out = await deleteSubnet("s1", "admin", { force: true });
+    expect(prisma.subnet.delete).toHaveBeenCalledWith({ where: { id: "s1" } });
+    expect(out.deletedReservations).toHaveLength(1);
   });
 });

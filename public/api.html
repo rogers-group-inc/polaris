@@ -1010,7 +1010,12 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /subnets/:id
             <span class="gate">subnets:write (own rows) / fullwrite</span></div>
-          <p><code>204</code>; <code>409</code> while the network holds active reservations.</p>
+          <p><code>204</code>; <code>409</code> while the network holds active reservations
+            (the gate's own <code>interface_ip</code> reservation does not count).
+            <code>?force=true</code> deletes it anyway, reservations included, and is
+            accepted only from an admin-equivalent role (users + roles fullwrite) —
+            <code>403</code> otherwise. A forced delete removes Polaris records only;
+            nothing is unpushed from a FortiGate.</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-post">POST</span> /subnets/:id/refresh

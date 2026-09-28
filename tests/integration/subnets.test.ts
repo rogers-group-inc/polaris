@@ -6,8 +6,10 @@
  */
 
 import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import request from "supertest";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
+import { hashPassword } from "../../src/utils/password.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser, waitForEventCount } from "./_helpers.js";
 
 const d = dbDescribe;
@@ -443,6 +445,65 @@ d("DELETE /api/v1/subnets/:id", () => {
       .send({ subnetId: sub.body.id, ipAddress: "10.81.1.5", hostname: "h01" });
     const resp = await agent.delete(`/api/v1/subnets/${sub.body.id}`).set("X-CSRF-Token", csrf);
     expect(resp.status).toBe(409);
+  });
+
+  it("does not let the interface IP reservation block the delete", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await createBlock(agent, csrf, "Parent", "10.82.0.0/16");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: block.id, cidr: "10.82.1.0/24", name: "S" });
+    await prisma.reservation.create({
+      data: { subnetId: sub.body.id, ipAddress: "10.82.1.1", hostname: "fgt-port1", sourceType: "interface_ip" },
+    });
+    const resp = await agent.delete(`/api/v1/subnets/${sub.body.id}`).set("X-CSRF-Token", csrf);
+    expect(resp.status).toBe(204);
+    expect(await prisma.reservation.count({ where: { subnetId: sub.body.id } })).toBe(0);
+  });
+
+  it("lets an admin force-delete over active reservations and logs a warning", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await createBlock(agent, csrf, "Parent", "10.83.0.0/16");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: block.id, cidr: "10.83.1.0/24", name: "S" });
+    await agent.post("/api/v1/reservations").set("X-CSRF-Token", csrf).send({ subnetId: sub.body.id, ipAddress: "10.83.1.5", hostname: "h01" });
+    const resp = await agent.delete(`/api/v1/subnets/${sub.body.id}?force=true`).set("X-CSRF-Token", csrf);
+    expect(resp.status).toBe(204);
+    expect(await prisma.subnet.findUnique({ where: { id: sub.body.id } })).toBeNull();
+    await waitForEventCount("subnet.deleted", 1, sub.body.id);
+    const ev = await prisma.event.findFirst({ where: { action: "subnet.deleted", resourceId: sub.body.id } });
+    expect(ev?.level).toBe("warning");
+    expect((ev?.details as any)?.forced).toBe(true);
+  });
+
+  it("refuses ?force=true from a non-admin role holding subnets:fullwrite", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const block = await createBlock(agent, csrf, "Parent", "10.85.0.0/16");
+    const sub = await agent.post("/api/v1/subnets").set("X-CSRF-Token", csrf).send({ blockId: block.id, cidr: "10.85.1.0/24", name: "S" });
+    await agent.post("/api/v1/reservations").set("X-CSRF-Token", csrf).send({ subnetId: sub.body.id, ipAddress: "10.85.1.5", hostname: "h01" });
+
+    const netRole = await prisma.role.findUniqueOrThrow({ where: { name: "networkadmin" } });
+    const username = "polaris-subnet-force-netadmin";
+    const password = "test-password-do-not-use-in-prod";
+    await prisma.user.upsert({
+      where: { username },
+      update: { roleId: netRole.id },
+      create: { username, passwordHash: await hashPassword(password), roleId: netRole.id, authProvider: "local" },
+    });
+    try {
+      const net = request.agent(app);
+      await net.get("/api/v1/auth/me");
+      const login = await net.post("/api/v1/auth/login").send({ username, password }).set("Content-Type", "application/json");
+      expect(login.status).toBe(200);
+      await net.get("/api/v1/auth/me");
+      const cookies = (net.jar as any).getCookies({ domain: "127.0.0.1", path: "/", secure: false, script: false });
+      const netCsrf = (cookies.find((c: any) => c.name === "polaris_csrf") || {}).value || "";
+
+      const forced = await net.delete(`/api/v1/subnets/${sub.body.id}?force=true`).set("X-CSRF-Token", netCsrf);
+      expect(forced.status).toBe(403);
+      const plain = await net.delete(`/api/v1/subnets/${sub.body.id}`).set("X-CSRF-Token", netCsrf);
+      expect(plain.status).toBe(409);
+      expect(await prisma.subnet.findUnique({ where: { id: sub.body.id } })).not.toBeNull();
+    } finally {
+      await prisma.user.deleteMany({ where: { username } });
+    }
   });
 });
 
