@@ -155,6 +155,11 @@ The same two panes open from a notify action's recipient fields.
 Differences:
 
 - Checkboxes and an **Add to To / Cc / Bcc** footer.
+- **Recipients the action already has come first** in each pane, badged
+  *In To* / *In Cc* / *In Bcc*, with their checkbox ticked and locked. The
+  picker only adds — remove a recipient with the × on its pill in the action.
+  A recipient no pane would otherwise list (a typed address, a tag since
+  deleted) still appears here, rebuilt from its pill.
 - Two **dynamic** entries sit **above** the results rather than in them — a
   query matching nobody must still leave the standing option on screen:
   - **Asset's Responsible Contacts** heads **People**.
