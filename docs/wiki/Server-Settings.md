@@ -367,9 +367,11 @@ conditions are called out in place rather than left to guess at:
 
 **Steady-state at current settings** is a projection, not a measurement: the
 peak size the database reaches if monitoring settings stay as they are. It
-legitimately sits ABOVE the current size while sample tables are still filling,
-and it accounts for retention being reclaimed a whole chunk at a time — each
-tier keeps its configured window plus one chunk interval plus one prune cycle.
+legitimately sits ABOVE the current size while sample tables are still filling.
+Old samples are removed a whole chunk (usually a week) at a time, so each table
+grows and drops in a regular cycle — and tables with different retention peak on
+different days. The figure is the largest size they reach *together*, which is
+what the disk actually has to hold.
 
 ### Platform Lifecycle
 

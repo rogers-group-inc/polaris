@@ -240,7 +240,7 @@ const dbSizeBytes = new Gauge({
 
 const dbSteadyStateSizeBytes = new Gauge({
   name: "polaris_db_steady_state_size_bytes",
-  help: "Projected PEAK steady-state DB size at current cadences, retention, and monitored asset count — what the database grows to if nothing changes. Computed by capacityService from each sample table's measured daily byte-rate × its EFFECTIVE retention (configured window + one TimescaleDB chunk interval + one prune cycle, since drop_chunks reclaims a whole chunk at a time). Legitimately exceeds polaris_db_size_bytes while tables are still filling; it read BELOW it before the 2026-09 fix.",
+  help: "Projected PEAK steady-state DB size at current cadences, retention, and monitored asset count — what the database grows to if nothing changes. Computed by capacityService from each sample table's measured daily byte-rate, modelled over the TimescaleDB chunk cycle (drop_chunks reclaims a whole chunk at a time; tiers shorter than the compression window also row-delete at the cutoff), and taken at the largest SIMULTANEOUS total across tables rather than the sum of each table's own peak. Legitimately exceeds polaris_db_size_bytes while tables are still filling.",
   registers: [registry],
 });
 
