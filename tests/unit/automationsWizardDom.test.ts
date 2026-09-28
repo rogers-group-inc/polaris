@@ -3989,6 +3989,30 @@ describe("web push recipients", () => {
     expect(toastErrors.join(" ")).toMatch(/Polaris account/i);
   });
 
+  it("hands the address book the action's pills and takes off the ones it unticks", async () => {
+    const fields = await openPushStep5();
+    const w = g.window as unknown as Record<string, unknown>;
+    const prior = w.PolarisAddressBook;
+    let seen: { current?: { kind: string; value: string; field: string }[] } | null = null;
+    w.PolarisAddressBook = {
+      openPicker: async (o: typeof seen) => {
+        seen = o;
+        return { field: "to", entries: [], removed: [{ kind: "user", value: "u2", label: "", field: "to" }] };
+      },
+    };
+    try {
+      (fields.querySelector(".na-book") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      w.PolarisAddressBook = prior;
+    }
+    expect(seen!.current!.map((p) => p.kind + ":" + p.value + "@" + p.field))
+      .toEqual(["deviceRegion:1@to", "user:u1@to", "user:u2@to"]);
+    const box = fields.querySelector('.na-recip-box[data-field="to"]')!;
+    const left = Array.from(box.querySelectorAll(":scope > .tag-chip")).map((el) => el.getAttribute("data-value"));
+    expect(left).toEqual(["1", "u1"]);
+  });
+
   it("offers no Responsible Contacts entry, which has no subscription behind it", async () => {
     const fields = await openPushStep5();
     const win = g.window as InstanceType<typeof Window>;
