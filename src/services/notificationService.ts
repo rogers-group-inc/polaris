@@ -572,7 +572,8 @@ export async function activeAlertSummaryByAsset(
 
 /**
  * The asset-details Notifications tab bundle: active (non-cleared)
- * notifications for the asset + the enabled rules whose scope matches it.
+ * notifications for the asset + the enabled rules that can trigger for it
+ * (scope matches, and no more-specific same-signature automation supersedes).
  */
 export async function getAssetNotifications(assetId: string) {
   const [active, matchingRules] = await Promise.all([
@@ -582,7 +583,7 @@ export async function getAssetNotifications(assetId: string) {
       take: 200,
       include: ACK_POLICY_INCLUDE,
     }),
-    findRulesMatchingAsset(assetId),
+    findRulesMatchingAsset(assetId, { carveOut: true }),
   ]);
   return { active: active.map(withAckPolicy), matchingRules };
 }

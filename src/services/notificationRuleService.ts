@@ -29,6 +29,10 @@ import {
   allRuleActionRefs,
   notifyChannelIds,
   evaluateScopeCondition,
+  buildShadowIndex,
+  isAssetShadowed,
+  triggerSignature,
+  scopeRank,
 } from "./notificationTypes.js";
 import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { listRegions, REGION_TAG_CATEGORY } from "./mapRegionService.js";
@@ -52,12 +56,19 @@ export { scopeMatchesAsset, type ScopeAsset } from "./notificationTypes.js";
  * asset-details Alerts tab's "automations that can trigger for this asset"
  * table. One findMany + in-memory filter (rule counts are small).
  *
+ * `carveOut` applies the engine's specificity precedence (business rule 18): a
+ * rule a more-specific same-signature peer has taken this asset from never
+ * evaluates for it, so it cannot trigger here — the Alerts tab listed
+ * "High CPU utilization" (all assets) beside "Server High CPU utilization"
+ * (servers) until this. Off by default because `getMetricSeverityTiers`
+ * deliberately wants the superseded rules too.
+ *
  * Rows go out through `withV2` like every other read path: clicking a name in
  * that table opens the SAME edit wizard the Automations page uses, and a
  * pre-v2 row handed over with NULL reset/actions would open with its actions
  * missing and save them away.
  */
-export async function findRulesMatchingAsset(assetId: string) {
+export async function findRulesMatchingAsset(assetId: string, opts: { carveOut?: boolean } = {}) {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
     // managedAgent: the `agentInstalled` condition field reads it on this
@@ -72,11 +83,18 @@ export async function findRulesMatchingAsset(assetId: string) {
     orderBy: { name: "asc" },
   });
 
+  const views = rules.map((r) => ({ id: r.id, trigger: r.trigger as unknown as Trigger, scope: (r.scope ?? {}) as RuleScope }));
+  // Indexed over the whole enabled set, as the engine does — a peer need not
+  // be listed to supersede.
+  const shadowIndex = opts.carveOut ? buildShadowIndex(views) : null;
   return rules
-    .filter((r) => {
-      const trigger = r.trigger as unknown as Trigger;
-      if (!isAssetScopedTrigger(trigger)) return false;
-      return scopeMatchesAsset((r.scope ?? {}) as RuleScope, asset);
+    .filter((_r, i) => {
+      const v = views[i];
+      if (!isAssetScopedTrigger(v.trigger)) return false;
+      if (!scopeMatchesAsset(v.scope, asset)) return false;
+      if (!shadowIndex) return true;
+      const sig = triggerSignature(v.trigger);
+      return !(sig && isAssetShadowed(shadowIndex, v, sig, scopeRank(v.scope), asset));
     })
     .map(withV2);
 }

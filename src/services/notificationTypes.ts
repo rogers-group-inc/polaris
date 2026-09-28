@@ -2488,6 +2488,83 @@ export function triggerSignature(trigger: Trigger): string | null {
   return null;
 }
 
+// ─── Specificity carve-out (shared by the engine and the asset Alerts tab) ──
+// A more-specific automation carves the assets it covers out of a
+// less-specific one watching the SAME triggerSignature. The engine builds the
+// index once per tick; findRulesMatchingAsset builds it over the enabled rule
+// set so the asset-details "automations that can trigger" list drops the ones
+// the engine would never evaluate for that asset.
+
+/** The rule fields the carve-out reads. */
+export interface ShadowRule {
+  id: string;
+  trigger: Trigger;
+  scope: RuleScope;
+}
+interface ShadowMember<R extends ShadowRule> {
+  rule: R;
+  rank: number;
+}
+export interface ShadowIndex<R extends ShadowRule = ShadowRule> {
+  /** signature → participating rules (with precomputed scopeRank). */
+  bySig: Map<string, ShadowMember<R>[]>;
+  /** signature → highest rank present (skip the per-asset check for max-rank rules). */
+  maxRankBySig: Map<string, number>;
+}
+
+export function buildShadowIndex<R extends ShadowRule>(rules: R[]): ShadowIndex<R> {
+  const bySig = new Map<string, ShadowMember<R>[]>();
+  const maxRankBySig = new Map<string, number>();
+  for (const rule of rules) {
+    const sig = triggerSignature(rule.trigger);
+    if (!sig) continue;
+    const rank = scopeRank(rule.scope);
+    const arr = bySig.get(sig);
+    if (arr) arr.push({ rule, rank });
+    else bySig.set(sig, [{ rule, rank }]);
+    maxRankBySig.set(sig, Math.max(maxRankBySig.get(sig) ?? 0, rank));
+  }
+  return { bySig, maxRankBySig };
+}
+
+/**
+ * Does a peer rule genuinely COVER this asset — i.e. could it produce a reading
+ * for it at all? Scope alone is not the whole answer: a trigger's device
+ * filter (hostname / IP / MAC / manufacturer / model) narrows the asset set
+ * just as scope does, so a peer scoped to all assets but filtered to
+ * `hostname matches "core-"` covers only the core switches.
+ *
+ * This used to be scope-only, which was safe while `triggerSignature` pinned
+ * the dimensionFilter — two differently-filtered rules were in different
+ * signature groups and never compared. Now that monitorStatus rules group by
+ * value instead (so down automations with different device filters CAN carve
+ * each other out), the filter has to be tested here or a filtered peer would
+ * shadow every asset in its scope, including ones it can never fire on.
+ *
+ * For asset_metric this is a no-op: peers in a signature group have identical
+ * filters by construction, so the predicate short-circuits in applyDeviceFilters'
+ * "no patterns set" check.
+ */
+function peerCoversAsset(peer: ShadowRule, asset: ScopeAsset): boolean {
+  if (!scopeMatchesAsset(peer.scope, asset)) return false;
+  const df = (peer.trigger as { dimensionFilter?: Parameters<typeof deviceFilterMatch>[0] }).dimensionFilter;
+  if (!df) return true;
+  const rec = df as Record<string, string | undefined>;
+  if (!DEVICE_FILTER_DIMENSIONS.some((d) => rec[d])) return true;
+  return deviceFilterMatch(df, asset);
+}
+
+/** Does a higher-rank same-signature rule also cover this asset? */
+export function isAssetShadowed(index: ShadowIndex<ShadowRule>, rule: ShadowRule, sig: string, rank: number, asset: ScopeAsset): boolean {
+  const group = index.bySig.get(sig);
+  if (!group) return false;
+  for (const other of group) {
+    if (other.rule.id === rule.id) continue;
+    if (other.rank > rank && peerCoversAsset(other.rule, asset)) return true;
+  }
+  return false;
+}
+
 /**
  * The missed-poll count applied to a device governed by a down-detection
  * automation that carries no explicit count — the pre-cutover baseline row, or
