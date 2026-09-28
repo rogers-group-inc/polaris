@@ -739,6 +739,12 @@ document.addEventListener("DOMContentLoaded", async function () {
   // Server-side mode: never call sf.apply(). Any filter/sort change resets to
   // page 1 and re-fetches with the new state translated into API params.
   _assetsSF = new TableSF("assets-tbody", assetsApplyFilterState);
+  // Tags is a finite set, so its filter box lists every tag in use and narrows
+  // as the operator types. Fetched on first open, refreshed when stale.
+  _assetsSF.setColumnSuggestions("tags", async function () {
+    var r = await api.assets.tags();
+    return (r && r.tags) || [];
+  });
   var assetsTable = document.querySelector("#assets-tbody").closest("table");
   // Widths + hidden columns persist per browser in the prefs blob; the column
   // ORDER additionally rides the active view tab (assets-tabs.js), so the
