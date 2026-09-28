@@ -33,6 +33,7 @@
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
+import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
 import {
   buildInterfaceIdentity,
   canonicalizeInterfacePins,
@@ -243,6 +244,62 @@ async function resolvePreservedTrunkNames(
  * set or the new set, never an empty intermediate — this table backs the System
  * tab, so an empty read would render as "this device has no interfaces".
  */
+/** How long a port remembers the address it last reported once it stops
+ *  reporting one (operator decision 2026-09-28). Long enough to span any
+ *  outage worth alerting on; short enough that a port retired from service
+ *  stops counting as "in use" a month later. */
+export const LAST_LEARNED_IP_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The next `lastLearnedIp` / `lastLearnedIpAt` for one port. Pure.
+ *
+ * - The scrape reports an address → that address (bare, no mask), stamped now.
+ * - It reports 0.0.0.0 — a DHCP WAN whose link dropped, or a port nothing was
+ *   ever plugged into — or NO address at all (null: this pass collected none,
+ *   never "unaddressed"; see notificationEngine.interfaceSampleCarries) → the
+ *   prior value, until it is `LAST_LEARNED_IP_TTL_MS` old, then nothing.
+ *
+ * Never learned stays null, which is the whole point: an unused port from a
+ * deployment template and a working WAN that just failed both read 0.0.0.0
+ * NOW, and this is the only field that tells them apart.
+ */
+export function nextLastLearnedIp(
+  prior: { ip: string | null; at: Date | null } | undefined,
+  reportedIp: string | null | undefined,
+  now: Date,
+): { lastLearnedIp: string | null; lastLearnedIpAt: Date | null } {
+  if (!interfaceIpIsUnaddressed(reportedIp)) {
+    return { lastLearnedIp: bareInterfaceIp(reportedIp), lastLearnedIpAt: now };
+  }
+  if (prior?.ip && prior.at && now.getTime() - prior.at.getTime() < LAST_LEARNED_IP_TTL_MS) {
+    return { lastLearnedIp: prior.ip, lastLearnedIpAt: prior.at };
+  }
+  return { lastLearnedIp: null, lastLearnedIpAt: null };
+}
+
+/**
+ * Is this port UNUSED — a port nothing has been plugged into, as opposed to one
+ * that is down? Pure; the "skip unused ports" condition option drops a
+ * reading when this says yes.
+ *
+ * Unused means all of: it is not a tunnel (an IPsec / GRE overlay carries no
+ * address the way a WAN does, and dropping one would silence a real overlay
+ * outage), it REPORTS an address field and that field is unaddressed (0.0.0.0
+ * — a port that reports no address field at all says nothing either way), and
+ * it has no remembered address younger than `LAST_LEARNED_IP_TTL_MS`. Anything
+ * short of that is kept: the option only ever removes a port Polaris has
+ * positive evidence was never in use, never one it merely knows little about.
+ */
+export function isUnusedPort(
+  row: { ifType: string | null; ipAddress: string | null; lastLearnedIp: string | null; lastLearnedIpAt: Date | null },
+  now: Date,
+): boolean {
+  if (row.ifType === "tunnel") return false;
+  if (row.ipAddress == null || !interfaceIpIsUnaddressed(row.ipAddress)) return false;
+  if (!row.lastLearnedIp || !row.lastLearnedIpAt) return true;
+  return now.getTime() - row.lastLearnedIpAt.getTime() >= LAST_LEARNED_IP_TTL_MS;
+}
+
 export async function persistInterfaces(
   assetId: string,
   interfaces: InterfaceSample[],
@@ -274,9 +331,12 @@ export async function persistInterfaceRows(
 
   const existing = await prisma.assetInterface.findMany({
     where: { assetId },
-    select: { ifName: true, firstSeen: true },
+    select: { ifName: true, firstSeen: true, lastLearnedIp: true, lastLearnedIpAt: true },
   });
   const priorFirstSeen = new Map(existing.map((e) => [e.ifName, e.firstSeen]));
+  // The remembered address rides the delete-replace the same way firstSeen
+  // does — read here, carried into the new row (nextLastLearnedIp).
+  const priorLearned = new Map(existing.map((e) => [e.ifName, { ip: e.lastLearnedIp, at: e.lastLearnedIpAt }]));
 
   // A FortiLink trunk aggregate leaves the ifTable while its link is down, so
   // "absent from the scrape" does not always mean "gone". Preserve trunk rows
@@ -300,6 +360,7 @@ export async function persistInterfaceRows(
             ...r,
             firstSeen: priorFirstSeen.get(r.ifName) ?? now,
             lastSeen:  now,
+            ...nextLastLearnedIp(priorLearned.get(r.ifName), r.ipAddress, now),
           })),
         })]
       : []),

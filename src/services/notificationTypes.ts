@@ -744,7 +744,38 @@ const assetMetricTrigger = z.object({
    * leaves every pre-existing rule behaving as it always has.
    */
   ignoreAtOrAbove: z.number().min(0).max(100).optional(),
+  /** SKIP UNUSED PORTS — see SKIP_UNUSED_PORT_TARGETS. SD-WAN metrics only. */
+  skipUnusedPorts: z.boolean().optional(),
 });
+
+/**
+ * SKIP UNUSED PORTS: the conditions that can drop a reading for a port that
+ * was never in use (interfaceInventoryService.isUnusedPort — a non-tunnel port
+ * reporting 0.0.0.0 with no address remembered in 30 days).
+ *
+ * The case it exists for (2026-09-28): a FortiGate deployment template enables
+ * wan1 AND wan2 on every gate, both SD-WAN members, whether or not the site has
+ * a second circuit — so an unplugged wan2 is down on every health check
+ * forever, and a "member is down" automation pages about it on every gate that
+ * has one. The unused port reads 0.0.0.0, but so does a working DHCP WAN whose
+ * link just dropped, so the current address cannot tell them apart; the port's
+ * REMEMBERED address (AssetInterface.lastLearnedIp) can.
+ *
+ * On the SD-WAN member conditions the port is the member's own name (the
+ * `link` of the `healthCheck|link` key — the SD-WAN tab joins a member to its
+ * interface the same way); on interface oper status it is the interface. A
+ * flag on the condition itself rather than a second condition, deliberately:
+ * a second "interface IP" condition is folded per DEVICE in a multi-condition
+ * automation, so it could never say which port it meant.
+ */
+export const SKIP_UNUSED_PORT_TARGETS: ReadonlySet<string> = new Set([
+  "sdwanMemberState", "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ifOperStatus",
+]);
+
+/** The metric/field a condition names, for the SKIP_UNUSED_PORT_TARGETS test. */
+export function leafTargetOf(leaf: { type: string; metric?: string; field?: string }): string | null {
+  return leaf.type === "asset_state" ? leaf.field ?? null : leaf.type === "asset_metric" ? leaf.metric ?? null : null;
+}
 
 const assetStateTrigger = z.object({
   type: z.literal("asset_state"),
@@ -783,6 +814,9 @@ const assetStateTrigger = z.object({
    * asked to be told about a parent's outage keeps not being told.
    */
   alertWhenDependencyDown: z.boolean().optional(),
+  /** SKIP UNUSED PORTS — see SKIP_UNUSED_PORT_TARGETS. SD-WAN member state and
+   *  interface oper status only. */
+  skipUnusedPorts: z.boolean().optional(),
 });
 
 const hostMetricTrigger = z.object({
@@ -2422,7 +2456,12 @@ function stableDimFilter(df: Record<string, unknown> | undefined | null): string
 }
 
 export function triggerSignature(trigger: Trigger): string | null {
-  if (trigger.type === "asset_metric") return `am:${trigger.metric}:${stableDimFilter(trigger.dimensionFilter)}`;
+  // "Skip unused ports" narrows WHICH PORTS a condition watches, exactly like a
+  // dimension filter, so it is part of the signature for the same reason: an
+  // automation that skips them and one that does not are watching different
+  // sets and must never carve each other out.
+  const skip = (trigger.type === "asset_metric" || trigger.type === "asset_state") && trigger.skipUnusedPorts ? ":skipUnused" : "";
+  if (trigger.type === "asset_metric") return `am:${trigger.metric}:${stableDimFilter(trigger.dimensionFilter)}${skip}`;
   if (trigger.type === "asset_state") {
     // monitorStatus is the one state field that is a SINGLE per-asset column
     // with no reading dimensions of its own (neither FIELD_DIMENSIONS nor
@@ -2444,7 +2483,7 @@ export function triggerSignature(trigger: Trigger): string | null {
     if (trigger.field === "monitorStatus") {
       return `as:monitorStatus:${trigger.operator}${String(trigger.value).toLowerCase()}`;
     }
-    return `as:${trigger.field}:${stableDimFilter(trigger.dimensionFilter)}`;
+    return `as:${trigger.field}:${stableDimFilter(trigger.dimensionFilter)}${skip}`;
   }
   return null;
 }
@@ -2927,6 +2966,27 @@ function validateMissedPolls(trigger: Trigger | undefined, ctx: z.RefinementCtx)
   }
 }
 
+/**
+ * `skipUnusedPorts` only means something on the conditions that name a port
+ * (SKIP_UNUSED_PORT_TARGETS). Anywhere else it would save, render as nothing
+ * and filter nothing — so it is refused rather than kept as an inert flag.
+ * Checked on the bare trigger and on every leaf of a composite.
+ */
+function validateSkipUnusedPorts(trigger: Trigger | undefined, ctx: z.RefinementCtx): void {
+  if (!trigger) return;
+  const leaves: Array<{ type: string; metric?: string; field?: string; skipUnusedPorts?: boolean }> =
+    trigger.type === "composite" ? (collectTriggerLeaves(trigger) as never) : [trigger as never];
+  const offender = leaves.find((l) => l.skipUnusedPorts != null && !SKIP_UNUSED_PORT_TARGETS.has(leafTargetOf(l) ?? ""));
+  if (offender) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: trigger.type === "composite" ? ["trigger", "children"] : ["trigger", "skipUnusedPorts"],
+      message:
+        "skipping unused ports only applies to SD-WAN member conditions (member state, latency, jitter, packet loss) and interface oper status — the conditions that name a port",
+    });
+  }
+}
+
 function validateRuleV2(
   v: {
     trigger?: Trigger;
@@ -2944,6 +3004,7 @@ function validateRuleV2(
   validateSeverityBands(v, ctx);
   validateRepeat(v, ctx);
   validateMissedPolls(trigger, ctx);
+  validateSkipUnusedPorts(trigger, ctx);
   if (reset.mode === "timed" && reset.afterSec == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reset", "afterSec"], message: "timed reset requires afterSec" });
   }
@@ -4208,6 +4269,9 @@ export function buildSchemaCatalog() {
     // Absent on a pre-upgrade server; the wizard treats that as "state leaves
     // take no dimensions", the old behavior.
     fieldDimensions: FIELD_DIMENSIONS,
+    // The conditions that offer "Skip unused ports" (SKIP_UNUSED_PORT_TARGETS).
+    // Absent on a pre-upgrade server; the wizard then renders no checkbox.
+    skipUnusedPortTargets: Array.from(SKIP_UNUSED_PORT_TARGETS),
     // Device-identifier dimensions, valid on every asset metric/state leaf —
     // the wizard's "+ Condition → Device identifier" filter rows. Absent on a
     // pre-upgrade server; the wizard then offers no identifier rows.
