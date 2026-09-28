@@ -7531,10 +7531,17 @@ async function openAutomationWizard(existing, opts) {
         // since this file already holds them.
         var srcBox = book.closest(".na-recip-row").querySelector(".na-recip-box");
         var bookMode = boxMode(srcBox);
+        // Every pill already on THIS action, tagged with its field, so the
+        // picker can head each pane with the recipients the operator has.
+        var current = [];
+        host.querySelectorAll(".na-recip-box").forEach(function (b) {
+          var f = b.getAttribute("data-field");
+          pillsOf(b).forEach(function (p) { current.push({ kind: p.kind, value: p.value, label: p.label, field: f }); });
+        });
         var res = await window.PolarisAddressBook.openPicker(
           bookMode === "push"
-            ? { field: "to", mode: "push", pushDevices: pushDeviceMap() }
-            : { field: "to" },
+            ? { field: "to", mode: "push", pushDevices: pushDeviceMap(), current: current }
+            : { field: "to", current: current },
         );
         if (!res) return;
         var dest = host.querySelector('.na-recip-box[data-field="' + res.field + '"]');

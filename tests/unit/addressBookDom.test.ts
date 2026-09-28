@@ -795,6 +795,76 @@ describe("picker selection", () => {
     expect(res!.entries).toHaveLength(1);
   });
 
+  describe("recipients the action already holds", () => {
+    type Picker = { openPicker: (o: unknown) => Promise<{ field: string; entries: Record<string, unknown>[] } | null> };
+    const AB = () => (window as unknown as { PolarisAddressBook: Picker }).PolarisAddressBook;
+    const rowText = (pane: string) =>
+      Array.from(doc.querySelectorAll('[data-ab-pane="' + pane + '"] tbody tr'))
+        .map((r) => (r as unknown as { textContent: string }).textContent);
+
+    it("heads the People pane with them, above the dynamic entry, labelled with their field", async () => {
+      AB().openPicker({
+        field: "to",
+        current: [{ kind: "address", value: "mine@example.com", label: "Mine <mine@example.com>", field: "cc" }],
+      });
+      await flush(5);
+      const rows = rowText("people");
+      expect(rows[0]).toContain("mine@example.com");
+      expect(rows[0]).toContain("In Cc");
+      expect(rows[1]).toContain("Responsible Contacts");
+      expect(rows[2]).toContain("jane@example.com");
+    });
+
+    it("shows them checked and locked, and never returns them as a new pick", async () => {
+      const p = AB().openPicker({
+        field: "to",
+        current: [{ kind: "user", value: "u1", label: "Jane Doe", field: "to" }],
+      });
+      await flush(5);
+      const first = doc.querySelector('[data-ab-pane="people"] tbody tr input[type="checkbox"]') as unknown as
+        { checked: boolean; disabled: boolean; hasAttribute: (a: string) => boolean };
+      expect(first.checked).toBe(true);
+      expect(first.disabled).toBe(true);
+      expect(first.hasAttribute("data-ab-pick")).toBe(false);
+      // Nothing else chosen: the locked row is not a selection.
+      click(doc.querySelector('[data-ab="add-to"]'));
+      await flush();
+      expect(toasts.join(" ")).toMatch(/select at least one/i);
+      click(doc.querySelector(".modal-close"));
+      await p;
+    });
+
+    it("lists a recipient the search did not return, rebuilt from its pill", async () => {
+      AB().openPicker({
+        field: "to",
+        current: [{ kind: "address", value: "noc@vendor.example", label: "Vendor NOC <noc@vendor.example>", field: "bcc" }],
+      });
+      await flush(5);
+      const rows = rowText("people");
+      expect(rows[0]).toContain("Vendor NOC");
+      expect(rows[0]).toContain("noc@vendor.example");
+      expect(rows[0]).toContain("In Bcc");
+    });
+
+    it("floats held tags and regions to the top of the Tags pane", async () => {
+      AB().openPicker({
+        field: "to",
+        current: [
+          { kind: "tag", value: "Datacenter", label: "Datacenter", field: "to" },
+          { kind: "region", value: "Memphis", label: "Memphis", field: "cc" },
+        ],
+      });
+      await flush(5);
+      const rows = rowText("tags");
+      // Catalogue order among the held rows (regions before tags), then the rest.
+      expect(rows[0]).toContain("Memphis Users");
+      expect(rows[0]).toContain("In Cc");
+      expect(rows[1]).toContain("Datacenter Users");
+      expect(rows[2]).toContain("Region Users");
+      expect(rows.filter((t) => t.includes("Datacenter Users"))).toHaveLength(1);
+    });
+  });
+
   it("resolves null when dismissed", async () => {
     const p = (window as unknown as { PolarisAddressBook: { openPicker: (o: unknown) => Promise<unknown> } })
       .PolarisAddressBook.openPicker({ field: "to" });
