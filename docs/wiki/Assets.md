@@ -473,7 +473,13 @@ Mapping implies monitoring, one way. There is no Alert column, because
 
 ### Alerts
 
-This asset's active alerts, above the automations whose scope matches it.
+This asset's active alerts, above the automations that can trigger for it.
+That list leaves out any automation a more-specific one over the same trigger
+has carved this device out of ([rule 18](Business-Rules#rule-18), see
+[Automations](Automations)) — with **High CPU utilization** on all assets and
+**Server High CPU utilization** on servers, a server lists only the second,
+because the first never evaluates it. The **Scope** column spells out a
+condition-built scope (`Device type equals server`) rather than showing `—`.
 **The tab itself strobes** in the colour of the worst of them, so the operator
 who opened the panel from a strobing row can see which tab it was about.
 

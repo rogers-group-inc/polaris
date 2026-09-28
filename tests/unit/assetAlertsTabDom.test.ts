@@ -33,7 +33,7 @@
  * @vitest-environment happy-dom
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { APP_SHELL_STUBS } from "./_appShellStubs.js";
@@ -89,6 +89,8 @@ const FN_NAMES = [
   "_clearAssetAlert",
   "_bulkAcknowledgeAssetAlerts",
   "_bulkClearAssetAlerts",
+  // The matching-automations table's Scope cell.
+  "_assetRuleScopeText",
 ];
 
 /** Two ports of one switch, down together — the shape that motivated all this. */
@@ -176,6 +178,28 @@ beforeEach(() => {
 
 const rows = () => Array.from(document.querySelectorAll("#asset-notif-active-tbody tr"));
 const cell = (tr: Element, i: number) => (tr.children[i] as HTMLElement).textContent!.trim();
+
+describe("asset Alerts tab — automations Scope cell", () => {
+  const scopeText = (sc: any) => g._assetRuleScopeText(sc);
+  afterEach(() => { delete g.window._ruleSchema; });
+
+  it("spells out a condition-built scope instead of a dash", () => {
+    g.window = g.window || g;
+    g.window._ruleSchema = { scopeCondition: { fields: [{ field: "assetType", label: "Device type" }], operatorLabels: { equals: "equals" } } };
+    expect(scopeText({ condition: { op: "and", children: [{ field: "assetType", operator: "equals", value: "server" }] } }))
+      .toBe("Device type equals server");
+  });
+
+  it("falls back to raw field names when the schema is not loaded", () => {
+    expect(scopeText({ condition: { op: "or", children: [{ field: "tag", operator: "has", value: "dc" }, { field: "tag", operator: "has", value: "core" }] } }))
+      .toBe("tag has dc OR tag has core");
+  });
+
+  it("reads all-assets and the flat dimensions", () => {
+    expect(scopeText({ allAssets: true })).toBe("All assets");
+    expect(scopeText({ assetTypes: ["server"], tags: ["dc"] })).toBe("types: server; tags: dc");
+  });
+});
 
 describe("asset Alerts tab — active list", () => {
   it("freezes the header by scrolling inside the table, not the panel", async () => {

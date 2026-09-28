@@ -21899,14 +21899,51 @@ async function _bulkClearAssetAlerts(ids, assetId, btn) {
   }
 }
 
+/**
+ * The Scope cell's text. A builder-authored scope is a condition TREE, which
+ * the old types-and-tags join read as "—" — so the more-specific automation in
+ * a pair looked like the unscoped one. Labels come from the automation schema
+ * when _assetRuleSentences has cached it, raw field/operator names otherwise
+ * (the Automations page's condTooltipText does the same).
+ */
+function _assetRuleScopeText(sc) {
+  if (!sc || typeof sc !== "object" || sc.allAssets) return "All assets";
+  if (sc.condition && (sc.condition.children || []).length) {
+    var meta = (window._ruleSchema && window._ruleSchema.scopeCondition) || {};
+    var fields = meta.fields || [];
+    var opLabels = meta.operatorLabels || {};
+    var render = function (node) {
+      var parts = (node.children || []).map(function (c) {
+        if (c.op !== undefined && Array.isArray(c.children)) return "(" + render(c) + ")";
+        var fm = fields.find(function (f) { return f.field === c.field; });
+        return (fm ? fm.label : c.field) + " " + (opLabels[c.operator] || c.operator) + " " + c.value;
+      });
+      if (node.op === "or") return parts.join(" OR ");
+      if (node.op === "none") return "NOT(" + parts.join(" OR ") + ")";
+      if (node.op === "notAll") return "NOT(" + parts.join(" AND ") + ")";
+      return parts.join(" AND ");
+    };
+    return render(sc.condition);
+  }
+  var parts = [];
+  if (sc.assetTypes && sc.assetTypes.length) parts.push("types: " + sc.assetTypes.join("/"));
+  if (sc.tags && sc.tags.length) parts.push("tags: " + sc.tags.join("/"));
+  if (sc.manufacturers && sc.manufacturers.length) parts.push("mfr: " + sc.manufacturers.join("/"));
+  if (sc.models && sc.models.length) parts.push("model: " + sc.models.join("/"));
+  if (sc.subnetCidrs && sc.subnetCidrs.length) parts.push("subnets: " + sc.subnetCidrs.join("/"));
+  if (sc.assetIds && sc.assetIds.length) parts.push(sc.assetIds.length + " asset(s)");
+  if (sc.integrationIds && sc.integrationIds.length) parts.push(sc.integrationIds.length + " integration(s)");
+  // Nothing narrowed at all — `{}` means "any device" (scopeIsUnconstrained).
+  return parts.length ? parts.join("; ") : "All assets";
+}
+
 function _renderAssetRuleRows(rTbody, rules, sent, assetId) {
   // Clicking an automation's name opens the same edit modal the Automations
   // page uses — offered only to operators who could actually save it (the
   // wizard is an editor, not a viewer).
   var canEdit = typeof openAutomationWizard === "function" && permAtLeast("automationManagement", "write");
   rTbody.innerHTML = rules.length ? rules.map(function (r, i) {
-    var scope = r.scope && r.scope.allAssets ? "All assets"
-      : (r.scope && ((r.scope.assetTypes || []).concat(r.scope.tags || []).join(", "))) || "—";
+    var scope = _assetRuleScopeText(r.scope);
     // Trigger column: the plain-English summary from the top of the edit
     // modal, severity ladder included — a banded automation names every tier
     // it can raise, not just the first. Falls back to the raw trigger-type
