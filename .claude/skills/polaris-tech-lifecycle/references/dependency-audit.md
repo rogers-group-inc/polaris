@@ -208,6 +208,18 @@ unmergeable. Lift the ignore when typescript-eslint's peer range opens past 6.1.
 whole group in one commit. The hold is recorded on the `typescript` row of
 `src/data/dependencyTargets.json` as well, which is where `check:deps` will point a future reader.
 
+**A `vitest`-group PR can change how an integration test's server lives, and only the
+`integration` job notices.** supertest 7.3.0 (PR #158, 2026-09-28) shares the server it
+auto-starts for `request.agent(app)` across that agent's requests and **closes it once none is
+in flight**. An agent kept past that point — `tests/integration/networkScans.test.ts` cached one
+logged-in agent per user across tests, to stay under the login rate limiter — then gets
+`ECONNREFUSED`, and every image build on `main` was red until the file was changed. The PR's own
+checks were green: pull requests run only `Check docs`, never the `integration` job. A test that
+reuses an agent across tests must hand supertest an `http.Server` it started itself (`listen(0)`
+in `beforeAll`, `close()` in `afterAll`): supertest never closes a server it did not start. Before
+merging a `vitest`-group PR, run `npx vitest run tests/integration --no-file-parallelism` against a
+real database.
+
 **gomod at `/agent`**, monthly, limit 3. See above.
 
 **github-actions at `/`**, weekly, one grouped PR. The pinned `actions/*` set rots invisibly.
