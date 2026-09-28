@@ -27,6 +27,7 @@
  * Skips cleanly when DATABASE_URL isn't reachable; see _helpers.ts.
  */
 
+import { createServer, type Server } from "node:http";
 import { it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { app } from "../../src/app.js";
@@ -57,11 +58,18 @@ async function createRoleUser(suffix: string, permissions: Record<string, string
 
 // The login limiter is 10 attempts / 15 min / IP across the process, so one
 // session per user, cached.
+//
+// The cached agents talk to a server this file starts and stops itself.
+// supertest >= 7.3 shares the server it auto-starts for `agent(app)` and
+// closes it once no request is in flight, so an agent reused in a later
+// test hits a closed port (ECONNREFUSED). A server handed in already
+// listening is never closed by supertest.
+let server: Server;
 const agentCache = new Map<string, ReturnType<typeof request.agent>>();
 async function loginAs(username: string): Promise<ReturnType<typeof request.agent>> {
   const cached = agentCache.get(username);
   if (cached) return cached;
-  const agent = request.agent(app);
+  const agent = request.agent(server);
   const seed = await agent.get("/api/v1/auth/me");
   const csrf = /polaris_csrf=([^;]+)/.exec(String(seed.headers["set-cookie"] ?? ""))?.[1] ?? "";
   await agent.post("/api/v1/auth/login").set("x-csrf-token", csrf).send({ username, password: PASSWORD });
@@ -85,6 +93,8 @@ let fullWriteUser = ""; // networkScan:fullwrite — the housekeeping override
 const madeScanIds: string[] = [];
 
 beforeAll(async () => {
+  server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
   noneUser = await createRoleUser("none", matrix("read", { networkScan: "none" }));
   readUser = await createRoleUser("read", matrix("read", { networkScan: "read" }));
   writeUser = await createRoleUser("write", matrix("read", { networkScan: "write", assets: "write" }));
@@ -98,6 +108,7 @@ afterAll(async () => {
   await prisma.networkScan.deleteMany({ where: { name: { startsWith: PFX } } }).catch(() => {});
   await prisma.user.deleteMany({ where: { username: { startsWith: PFX } } }).catch(() => {});
   await prisma.role.deleteMany({ where: { name: { startsWith: PFX } } }).catch(() => {});
+  await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
 });
 
 const body = (name: string) => ({
