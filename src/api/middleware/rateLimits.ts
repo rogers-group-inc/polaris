@@ -164,6 +164,20 @@ export const dashWeatherLimiter = makeRateLimiter({
 });
 
 /**
+ * Credential test (`POST /credentials/test`). Each call logs in to a device
+ * over SSH / SNMP / WinRM / HTTP with whatever secret the body carries, so
+ * without a ceiling it is a password-guessing oracle against the fleet for
+ * any session holding `credentials` write. An operator clicks Test a handful
+ * of times while editing one credential; 60 per 5 minutes per source IP is
+ * far above that and still makes grinding a device's password impractical.
+ */
+export const credentialTestLimiter = makeRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 60,
+  message: "Too many credential tests — wait a few minutes and retry.",
+});
+
+/**
  * Address-book recipient search. Session-gated and cheap while it stays local,
  * but with directory search on it PROXIES AN EXTERNAL API (Microsoft Graph / a
  * domain controller) from operator keystrokes, so a stuck key or a scripted

@@ -31,6 +31,7 @@ import {
   listImages,
   getImage,
   registerUploadedImage,
+  discardIncomingUpload,
   setPrimaryImage,
   deleteImage,
   purgeModelImages,
@@ -165,8 +166,7 @@ firmwareRouter.post("/images", requirePermission("firmware", "write"), uploadSin
   if (!req.file) throw new AppError(400, "Missing 'file' upload");
   const fields = ImageUploadFieldsSchema.safeParse(req.body ?? {});
   if (!fields.success) {
-    const { rm } = await import("node:fs/promises");
-    await rm(req.file.path, { force: true }).catch(() => undefined);
+    await discardIncomingUpload(req.file.path);
     throw new AppError(400, firstIssue(fields.error));
   }
   const result = await registerUploadedImage({

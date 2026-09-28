@@ -62,7 +62,7 @@ vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
 vi.mock("../../src/services/assetTypeService.js", () => ({ listAssetTypes: vi.fn(async () => [{ name: "switch", label: "Switch" }, { name: "access_point", label: "Access Point" }]) }));
 
-import { registerUploadedImage, setPrimaryImage, deleteImage, purgeModelImages, getFirmwareTree } from "../../src/services/firmwareRepositoryService.js";
+import { registerUploadedImage, discardIncomingUpload, setPrimaryImage, deleteImage, purgeModelImages, getFirmwareTree } from "../../src/services/firmwareRepositoryService.js";
 
 let n = 0;
 function stageUpload(header: string, filler = "x"): { tmpPath: string; sizeBytes: number } {
@@ -193,5 +193,24 @@ describe("make-primary, delete and purge", () => {
     tree = await getFirmwareTree();
     expect(tree.manufacturers).toHaveLength(0);
     expect(events().some((e) => e.action === "firmware.model_purged")).toBe(true);
+  });
+});
+
+describe("upload containment", () => {
+  it("refuses a temp path outside the incoming directory and leaves that file alone", async () => {
+    const outside = join(dirs.root, "not-an-upload.bin");
+    writeFileSync(outside, "keep me");
+    await expect(registerUploadedImage({ tmpPath: outside, sizeBytes: 7, originalName: "x.out", ...NODE })).rejects.toMatchObject({ httpStatus: 400 });
+    await discardIncomingUpload(outside);
+    expect(existsSync(outside)).toBe(true);
+    await discardIncomingUpload(join(dirs.incoming, "..", "not-an-upload.bin"));
+    expect(existsSync(outside)).toBe(true);
+    rmSync(outside);
+  });
+
+  it("discards a refused upload that is inside the incoming directory", async () => {
+    const { tmpPath } = stageUpload("S108FF-7.06-FW-build1164-260709-patch08");
+    await discardIncomingUpload(tmpPath);
+    expect(existsSync(tmpPath)).toBe(false);
   });
 });

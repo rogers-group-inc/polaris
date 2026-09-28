@@ -6,12 +6,12 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The firmware repository (Server Settings → Repository; business rule 87): the manufacturer › device type (`switch` / `access_point` only) › model TREE, the IMAGES filed under a model node (two per node — primary + backup — with the rotation an upload performs), the device-admin login BINDINGS at the three scopes, and the per-asset CANDIDATE lookup. Bytes on disk under `FIRMWARE_DIR`; identity from the image header, never the model string.
 
-**Public API:** `FIRMWARE_ASSET_TYPES`, `FIRMWARE_MAX_IMAGE_BYTES`, `isFirmwareAssetType`, `getFirmwareTree`, `listImages`, `getImage`, `registerUploadedImage`, `setPrimaryImage`, `deleteImage`, `purgeModelImages`, `resolveImagePath`, `ensureFirmwareDirs`, `listBindings`, `upsertBinding`, `deleteBinding`, `resolveFirmwareCredential`, `findUpgradeCandidates`, `listRecentRuns`, `listAssetsForNode` + `FIRMWARE_NODE_ASSET_LIMIT` (a tree node's device list — its `where` MUST stay the tree groupBy's: switch/AP, not decommissioned, stored manufacturer, null-or-blank model for the "" node, or the list disagrees with the count the operator clicked; a count + a capped tight-select findMany + one primaries read, compared in memory); the row / node / candidate types.
+**Public API:** `FIRMWARE_ASSET_TYPES`, `FIRMWARE_MAX_IMAGE_BYTES`, `isFirmwareAssetType`, `getFirmwareTree`, `listImages`, `getImage`, `registerUploadedImage`, `discardIncomingUpload`, `setPrimaryImage`, `deleteImage`, `purgeModelImages`, `resolveImagePath`, `ensureFirmwareDirs`, `listBindings`, `upsertBinding`, `deleteBinding`, `resolveFirmwareCredential`, `findUpgradeCandidates`, `listRecentRuns`, `listAssetsForNode` + `FIRMWARE_NODE_ASSET_LIMIT` (a tree node's device list — its `where` MUST stay the tree groupBy's: switch/AP, not decommissioned, stored manufacturer, null-or-blank model for the "" node, or the list disagrees with the count the operator clicked; a count + a capped tight-select findMany + one primaries read, compared in memory); the row / node / candidate types.
 
 **Cross-service deps:** `prisma` (asset groupBy + a tight-select serial scan, firmwareImage, firmwareCredentialBinding, firmwareUpgradeRun.count); `utils/firmwareVersion` (header/filename parse, compare, `platformFromSerial`); `utils/manufacturerNormalize.normalizeManufacturer`; `utils/paths` (`FIRMWARE_DIR`, `FIRMWARE_INCOMING_DIR`); `credentialService.getCredential({ revealSecrets: true })` (the ONE place a device password is read); `utils/httpCheck.isDeviceLoginCredential`; `firmwareEngines/index` (`engineFor`, `engineKindForType`); `assetTypeService.listAssetTypes` (labels); `eventLogService.logEvent`.
 
 **Used by:**
-- `src/api/routes/firmware.ts` — every repository route.
+- `src/api/routes/firmware.ts` — every repository route; `discardIncomingUpload` when the upload's text fields fail validation.
 - `src/services/firmwareUpgradeService.ts` — `findUpgradeCandidates`, `resolveFirmwareCredential`, `resolveImagePath`, `getImage`.
 - `public/js/server-settings-firmware.js` — the tab, through the routes.
 
@@ -21,6 +21,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Only a PRIMARY is offered unasked.** `findUpgradeCandidates` returns the strictly-newer primary for the platform (the asset's own model node preferred, else newest) and names the SAME node's backup only when it too is strictly newer. Zero queries when `engineFor` is null.
 - **Resolution is model › type › manufacturer, most specific LIVE row wins.** A binding whose credential was deleted (`credentialId` null) or whose credential is no longer a `form` login is SKIPPED, never a shadow — the rule-49 posture. Secrets are revealed only with `{ revealSecrets: true }`, which only `startFirmwareUpgrade` asks for.
 - **The same bytes are filed once** (`sha256 @unique` → 409 naming the node); the temp file is removed on every failure path; the final rename is same-filesystem (the incoming dir sits under FIRMWARE_DIR).
+- **An upload path is proven inside FIRMWARE_INCOMING_DIR before ANY file operation on it** — read, rename or delete (private `incomingPath()`, resolve + prefix check). A path that fails is refused (400) and left on disk: it is not ours to remove. `discardIncomingUpload` is the only way the route removes an upload it refused before registering, and it goes through the same check (CodeQL js/path-injection, 2026-09-28).
 - Never writes Asset. Never opens a socket to a device.
 
 **When changing this:**

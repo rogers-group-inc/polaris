@@ -39,6 +39,18 @@ Three things that cost time if you don't know them:
   as a false positive, check whether its presence is suppressing the finding you'd actually want.
   Prefer rewriting into an idiom the analyzer recognizes over dismissing — a dismissal is invisible
   in the source, and the next reader re-litigates it.
+- **CodeQL does not follow our HTML escaper** (`esc()` → `escapeHtml()` in `public/js/`), so
+  every `innerHTML = … esc(x) …` whose `x` came from the DOM or an exception reads as
+  `js/xss-through-dom` / `js/xss-through-exception`. Don't dismiss those: set operator text with
+  `textContent` after the markup lands, or build the element. It is the idiom the analyzer
+  recognizes, and it drops the dependence on every caller remembering `esc()`. The 2026-09-28
+  sweep cleared the firmware tab that way (`renderAssetList` in `server-settings-firmware.js`).
+- **Check whether the "incomplete" sanitizer is reachable at all.** The 2026-09-28
+  `js/incomplete-sanitization` on the firmware tab escaped `"` but not `\` in a selector built
+  from a node key, but `nodeKey()` URI-encodes every part, so neither character can occur. The
+  first regression test written for it passed against the old code. Proving a finding means
+  reverting the fix and watching the test fail. If it doesn't fail, the finding is a false
+  positive: say so, and remove the fragile idiom anyway (compare the value, don't splice it).
 - **A behaviour-preserving rewrite of a sanitizer or a guard regex needs a differential test, not
   a green suite.** Both 2026-09-11 regex fixes were proven by running old and new over a generated
   corpus and diffing the output. For `scripts/check-versions.mjs` this was the only possible proof:
