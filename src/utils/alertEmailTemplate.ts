@@ -142,6 +142,13 @@ export const DEFAULT_ALERT_TEXT = [
   "{chart.memory}",
   "{chart.responseTime}",
   "",
+  // What is using the CPU or memory, on an alert about either (alertProcessService).
+  // Under the charts because they show HOW MUCH and this shows WHO. Renders away,
+  // blank line and all, on every other alert — which is also when the
+  // response-time and packet-loss charts above are dropped (alertChartService's
+  // RESOURCE_SCOPED_METRICS), leaving CPU and memory.
+  "{processes.top}",
+  "",
   "Open device:      {asset.link}",
   "Acknowledge:      {ack}",
   "",
@@ -343,6 +350,9 @@ export const DEFAULT_ALERT_HTML = [
   "{chart.memory}",
   "{chart.responseTime}",
   "</td></tr>",
+  // The top-5 process table on a CPU / memory alert — a complete <tr> with its
+  // own heading, or nothing (see the text body). Filled at delivery.
+  "{processes.top}",
   // Actions
   '<tr><td style="padding:16px 22px 22px">',
   '<table role="presentation" cellpadding="0" cellspacing="0"><tr>',
