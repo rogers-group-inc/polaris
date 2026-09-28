@@ -31,6 +31,8 @@ import { sparklineSvg, seriesStats, formatReading, timeAxisLabel, type SparkPoin
 import { alarmStatusToFlag, convertSensorForDisplay, sensorDisplayUnit } from "../utils/hardwareSensors.js";
 import { getBranding } from "./brandingService.js";
 import { SAMPLE_SDWAN_HEALTH_CHECK, SAMPLE_SDWAN_LINK } from "../utils/sampleAlertDevice.js";
+import { forecastFromDailyPoints, loadStorageForecastSeries, type StorageForecastSeries } from "./storageForecastService.js";
+import type { TrendPoint } from "../utils/linearTrend.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 
 /**
@@ -46,6 +48,7 @@ export const CHART_TOKENS = [
   "chart.trigger", "chart.sensor", "chart.probeLoss",
   "chart.sdwanLatency", "chart.sdwanJitter", "chart.sdwanLoss",
   "chart.cpu", "chart.memory", "chart.responseTime",
+  "chart.storage",
 ] as const;
 export type ChartToken = (typeof CHART_TOKENS)[number];
 
@@ -90,10 +93,16 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
     case "sdwanSelectedMember":
     case "sdwanMemberState":
       return "chart.sdwanLatency";
+    // A storage alert charts its filesystem (STORAGE_SCOPED_METRICS): the
+    // 24-hour usage for the two usage metrics, the forecast for days-until-full.
+    case "storageUsedPct":
+    case "storageUsedBytes":
+    case "storageDaysUntilFull":
+      return "chart.storage";
     default:
-      // Storage and interface counters have no chart of their own yet, so the
-      // trigger token renders away and the generic charts below it still tell
-      // the device's story.
+      // Interface counters have no chart of their own yet, so the trigger
+      // token renders away and the generic charts below it still tell the
+      // device's story.
       return null;
   }
 }
@@ -176,6 +185,36 @@ export function isPathCheckScopedAlert(metric: string | null | undefined): boole
 }
 
 /**
+ * Metrics whose alert is about ONE FILESYSTEM — the storage triggers. The
+ * PORT_SCOPED_METRICS argument once more: a server whose /data is 96% full is
+ * answering its probes and idling, so its CPU, memory, response-time and loss
+ * graphs describe a healthy box under "Storage used on /data is 96%". Those
+ * four are dropped and `chart.storage` — the mount's own usage, or its forecast
+ * for a days-until-full alert — takes their place. Keyed on
+ * `Notification.dimension`, which for all three is the bare mount path.
+ */
+const STORAGE_SCOPED_METRICS: ReadonlySet<string> = new Set(["storageUsedPct", "storageUsedBytes", "storageDaysUntilFull"]);
+
+export function isStorageScopedAlert(metric: string | null | undefined): boolean {
+  return !!metric && STORAGE_SCOPED_METRICS.has(metric);
+}
+
+/**
+ * The automation threshold the storage chart draws, read off a stored rule
+ * trigger — or null when the trigger is not a plain storage-metric condition.
+ * Pure. A composite or grouped trigger returns null on purpose: which of its
+ * leaves the alert "is" is not recoverable from the notification, and a line
+ * (or a horizon) from the wrong leaf is worse than none.
+ */
+export function storageThresholdFromTrigger(trigger: unknown): number | null {
+  if (!trigger || typeof trigger !== "object") return null;
+  const t = trigger as { type?: unknown; metric?: unknown; threshold?: unknown };
+  if (t.type !== "asset_metric" && t.type !== "host_metric") return null;
+  if (typeof t.metric !== "string" || !STORAGE_SCOPED_METRICS.has(t.metric)) return null;
+  return typeof t.threshold === "number" && Number.isFinite(t.threshold) ? t.threshold : null;
+}
+
+/**
  * Metrics whose alert is about the host's own LOAD — high CPU, high memory.
  *
  * The device is answering (that is how its CPU was read), so response time and
@@ -251,13 +290,16 @@ const META: Record<ChartToken, { label: string; unit: string; color: string; per
   "chart.sdwanLatency": { label: "SD-WAN latency", unit: " ms", color: "#0e7490", percent: false },
   "chart.sdwanJitter": { label: "SD-WAN jitter", unit: " ms", color: "#b45309", percent: false },
   "chart.sdwanLoss": { label: "SD-WAN packet loss", unit: "%", color: "#be123c", percent: false },
+  // Label, unit and axis come from the storage spec (storageUsageSpec /
+  // storageForecastSpec); only the colour is read from here.
+  "chart.storage": { label: "Storage", unit: "%", color: "#0f766e", percent: true },
 };
 
 /** Even-ish downsample that always keeps the newest point (the alerting one). */
-function thin(points: SparkPoint[]): SparkPoint[] {
+function thin<T extends { t: number }>(points: T[]): T[] {
   if (points.length <= MAX_POINTS) return points;
   const step = Math.ceil(points.length / MAX_POINTS);
-  const out: SparkPoint[] = [];
+  const out: T[] = [];
   for (let i = 0; i < points.length; i += step) out.push(points[i]!);
   const last = points[points.length - 1]!;
   if (out[out.length - 1] !== last) out.push(last);
@@ -1134,6 +1176,230 @@ async function loadProbeLoss(assetId: string, since: Date, bucketMs: number = LO
   return probeLossSeriesFrom(rows, bucketMs);
 }
 
+// ─── The storage chart ────────────────────────────────────────────────────────
+//
+// A storage alert is about ONE FILESYSTEM, so it charts that mount rather than
+// the device (STORAGE_SCOPED_METRICS). Two shapes, one token:
+//
+//  - `storageUsedPct` / `storageUsedBytes`: the mount's last 24 hours
+//    (STORAGE_USAGE_WINDOW_MS — an hour of disk usage is almost always a flat
+//    line), in the unit the automation compares, with its threshold dashed.
+//  - `storageDaysUntilFull`: a FORECAST. The daily points the automation's
+//    number was fitted on (storageForecastService.loadStorageForecastSeries —
+//    the same SQL, the same regression), then the trend carried forward as a
+//    dashed line for the AUTOMATION's own horizon — its threshold in days — to
+//    the capacity line. The caption quotes the same "full in N d" the alert
+//    fired on, so the picture and the number cannot disagree.
+
+/** How far back a used-% / used-bytes storage chart looks (operator decision
+ *  2026-09-28: a day shows whether usage jumped or crept, an hour shows a flat
+ *  line). */
+export const STORAGE_USAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** A forecast chart's horizon when the automation's threshold is unknown (a
+ *  deleted rule, a composite trigger): enough past the projected fill date to
+ *  see it, never shorter than a week. */
+const STORAGE_FORECAST_DEFAULT_HORIZON_DAYS = 7;
+
+const DAY_MS = 86_400_000;
+
+/** Everything one storage chart draws, in its display unit. Pure output of
+ *  `storageUsageSpec` / `storageForecastSpec`, so the geometry is testable
+ *  without a rasterizer. */
+export interface StorageChartSpec {
+  label: string;
+  points: SparkPoint[];
+  projection: SparkPoint[];
+  unit: string;
+  percent: boolean;
+  threshold: number | null;
+  ceiling: number | null;
+  from: number;
+  to: number;
+  /** Set only on a forecast, where the axis runs past now. */
+  now: number | null;
+  /** Replaces the now/avg/peak caption (forecast only). */
+  caption: string | null;
+  /** The plain-text line — the img alt text and the text body. */
+  summary: string;
+}
+
+/** Bytes → the largest binary unit that keeps the number ≥ 1. */
+export function bytesDisplayScale(maxBytes: number): { divisor: number; unit: string } {
+  const units = [" B", " KB", " MB", " GB", " TB", " PB"];
+  let i = 0;
+  let d = 1;
+  while (i < units.length - 1 && maxBytes >= d * 1024) { d *= 1024; i++; }
+  return { divisor: d, unit: units[i]! };
+}
+
+/**
+ * The 24-hour usage chart for a used-% or used-bytes alert. Pure. Percent is
+ * pinned 0–100 like every percentage chart here; bytes self-scale in the unit
+ * that fits the larger of the data and the threshold, and the threshold is
+ * scaled with it so the dashed line lands where the automation compares.
+ */
+export function storageUsageSpec(
+  rows: Array<{ t: number; used: number | null; total: number | null }>,
+  opts: { metric: string; mountPath: string; threshold: number | null; now: number },
+): StorageChartSpec {
+  const from = opts.now - STORAGE_USAGE_WINDOW_MS;
+  const label = sdwanChartLabel("Storage used", opts.mountPath, "");
+  if (opts.metric === "storageUsedBytes") {
+    const maxBytes = Math.max(0, ...rows.map((r) => r.used ?? 0), opts.threshold ?? 0);
+    const { divisor, unit } = bytesDisplayScale(maxBytes);
+    const points = rows.filter((r) => r.used != null).map((r) => ({ t: r.t, v: r.used! / divisor }));
+    return {
+      label, points, projection: [], unit, percent: false,
+      threshold: opts.threshold != null ? opts.threshold / divisor : null,
+      ceiling: null, from, to: opts.now, now: null, caption: null,
+      summary: summaryLine(label, unit, points, STORAGE_USAGE_WINDOW_MS),
+    };
+  }
+  const points = rows
+    .filter((r) => r.used != null && r.total != null && r.total > 0)
+    .map((r) => ({ t: r.t, v: (r.used! / r.total!) * 100 }));
+  return {
+    label, points, projection: [], unit: "%", percent: true,
+    threshold: opts.threshold, ceiling: null, from, to: opts.now, now: null, caption: null,
+    summary: summaryLine(label, "%", points, STORAGE_USAGE_WINDOW_MS),
+  };
+}
+
+/**
+ * The forecast chart for a days-until-full alert. Pure.
+ *
+ * History: the fitted daily points, as % of capacity. Projection: from NOW at
+ * the latest day's usage — the point the fit measures "days until full" from —
+ * climbing at the fitted rate. It stops at 100% (the red dot is the projected
+ * full date) or at the horizon, whichever comes first. The horizon is the
+ * automation's threshold in days: an alert fires only when the fill date is
+ * inside it, so the line normally reaches the capacity line on the chart. A
+ * mount that no longer qualifies by delivery (cleaned up, too few points) gets
+ * its history and a caption saying so, rather than an invented projection.
+ */
+export function storageForecastSpec(
+  series: StorageForecastSeries,
+  opts: { mountPath: string; horizonDays: number | null; now: number },
+): StorageChartSpec {
+  const label = sdwanChartLabel("Storage forecast", opts.mountPath, "");
+  const total = series.totalBytes;
+  const pts = series.points;
+  const first = pts.length ? pts[0]!.t : opts.now - 30 * DAY_MS;
+  const from = Math.min(first, opts.now - DAY_MS);
+  const days = series.daysUntilFull;
+  const horizonDays = Math.min(
+    365,
+    Math.max(1, opts.horizonDays && opts.horizonDays > 0
+      ? opts.horizonDays
+      : Math.max(STORAGE_FORECAST_DEFAULT_HORIZON_DAYS, Math.ceil((days ?? 0) * 1.25))),
+  );
+  const to = opts.now + horizonDays * DAY_MS;
+  const histWin = timeAxisLabel(opts.now - from);
+  const aheadWin = timeAxisLabel(to - opts.now);
+
+  if (total == null || total <= 0) {
+    // No capacity, no percentage and no fill date — the history in bytes is all
+    // there is to show.
+    const { divisor, unit } = bytesDisplayScale(Math.max(0, ...pts.map((p) => p.v)));
+    const points = pts.map((p) => ({ t: p.t, v: p.v / divisor }));
+    return {
+      label, points, projection: [], unit, percent: false, threshold: null, ceiling: null,
+      from, to: opts.now, now: null, caption: "capacity unknown — no forecast",
+      summary: `${label} (last ${histWin}): capacity unknown, no forecast`,
+    };
+  }
+
+  const points = pts.map((p) => ({ t: p.t, v: (p.v / total) * 100 }));
+  const lastPct = points.length ? points[points.length - 1]!.v : null;
+  if (series.slopePerDay == null || days == null || lastPct == null) {
+    return {
+      label, points, projection: [], unit: "%", percent: true, threshold: null, ceiling: 100,
+      from, to, now: opts.now,
+      caption: lastPct != null ? `now ${formatReading(lastPct, "%")} · no longer growing` : "no data",
+      summary: lastPct != null
+        ? `${label} (last ${histWin}): now ${formatReading(lastPct, "%")}, no longer growing — no fill date`
+        : `${label} (last ${histWin}): no data`,
+    };
+  }
+
+  const pctPerDay = (series.slopePerDay / total) * 100;
+  const endDays = Math.min(days, horizonDays);
+  const projection = [
+    { t: opts.now, v: lastPct },
+    { t: opts.now + endDays * DAY_MS, v: Math.min(100, lastPct + pctPerDay * endDays) },
+  ];
+  const growth = `+${formatReading(pctPerDay, "%")}/day`;
+  const full = days <= 0 ? "full now" : `full in ${formatReading(days)} d`;
+  return {
+    label, points, projection, unit: "%", percent: true, threshold: null, ceiling: 100,
+    from, to, now: opts.now,
+    caption: `now ${formatReading(lastPct, "%")} · ${growth} · ${full}`,
+    summary: `${label} (last ${histWin}, next ${aheadWin}): now ${formatReading(lastPct, "%")}, growing ${formatReading(pctPerDay, "%")}/day, ` +
+      (days <= 0 ? "full now" : `projected full in ${formatReading(days)} days`),
+  };
+}
+
+/** The 24-hour read for a usage chart: one mount, one indexed range read on
+ *  `(assetId, mountPath, timestamp)`. */
+async function loadStorageUsage(assetId: string, mountPath: string, since: Date) {
+  const rows = await prisma.assetStorageSample.findMany({
+    where: { assetId, mountPath, timestamp: { gte: since } },
+    orderBy: { timestamp: "asc" },
+    select: { timestamp: true, usedBytes: true, totalBytes: true },
+  });
+  return thin(
+    rows.map((r) => ({ t: r.timestamp.getTime(), used: r.usedBytes != null ? Number(r.usedBytes) : null, total: r.totalBytes != null ? Number(r.totalBytes) : null })),
+  );
+}
+
+/** Invented storage series for a TEST alert (business rule 65): a mount
+ *  creeping up over the day, or a month of steady growth heading for full. */
+function sampleStorageSpec(metric: string, mountPath: string, threshold: number | null, now: number): StorageChartSpec {
+  if (metric === "storageDaysUntilFull") {
+    const total = 500 * 1024 ** 3;
+    const points: TrendPoint[] = [];
+    const today = Math.floor(now / DAY_MS) * DAY_MS;
+    for (let d = 29; d >= 0; d--) {
+      const i = 29 - d;
+      points.push({ t: today - d * DAY_MS, v: total * (0.62 + i * 0.011 + 0.004 * Math.sin(i * 1.7)) });
+    }
+    return storageForecastSpec(forecastFromDailyPoints(points, total), { mountPath, horizonDays: threshold, now });
+  }
+  const total = 500 * 1024 ** 3;
+  const from = now - STORAGE_USAGE_WINDOW_MS;
+  const rows = sampleWave(from, now, (f, i) => clamp(0.78 + 0.04 * f + 0.006 * Math.sin(i * 0.37) + (f > 0.85 ? (f - 0.85) * 0.9 : 0), 0, 1))
+    .filter((_, i) => i % 15 === 0)
+    .map((p) => ({ t: p.t, used: p.v * total, total }));
+  return storageUsageSpec(rows, { metric, mountPath, threshold, now });
+}
+
+/** Render one storage spec into the chart entry the email embeds. */
+async function renderStorageChart(spec: StorageChartSpec, color: string): Promise<RenderedChart> {
+  const svg = sparklineSvg(spec.points, {
+    label: spec.label,
+    unit: spec.unit,
+    color,
+    ...(spec.percent ? { yMin: 0, yMax: 100 } : {}),
+    threshold: spec.threshold,
+    ceiling: spec.ceiling,
+    projection: spec.projection,
+    from: spec.from,
+    to: spec.to,
+    ...(spec.now != null ? { now: spec.now } : {}),
+    ...(spec.caption ? { caption: spec.caption } : {}),
+  });
+  const png = spec.points.length > 0 ? await rasterize(svg) : null;
+  const cid = "polaris-chart-storage@polaris";
+  return {
+    token: "chart.storage",
+    cid,
+    hasData: spec.points.length > 0,
+    summary: spec.summary,
+    attachment: png ? { cid, filename: "chart-storage.png", contentType: "image/png", content: png } : null,
+  };
+}
+
 async function rasterize(svg: string): Promise<Buffer | null> {
   try {
     // Lazy import: resvg resolves a per-platform native binding, and an alert
@@ -1322,6 +1588,15 @@ export async function buildAlertCharts(
      * ought to borrow. Every other caller leaves this unset.
      */
     sampleData?: boolean;
+    /**
+     * The automation's own threshold, from its trigger (notificationDelivery-
+     * Service resolves it per rule). Only the storage chart reads it: on a
+     * used-% / used-bytes alert it is the dashed line, and on a days-until-full
+     * alert it is the forecast's HORIZON in days — how far forward the trend is
+     * drawn. Absent/null (a deleted rule, a composite trigger, a test alert
+     * without one) draws no line and picks a horizon from the forecast itself.
+     */
+    ruleThreshold?: number | null;
   },
 ): Promise<Map<ChartToken, RenderedChart>> {
   const wanted = new Set(tokens);
@@ -1364,6 +1639,17 @@ export async function buildAlertCharts(
   // charts are dropped as for an SD-WAN alert, and the sensor token has no
   // sensor to draw. Whether the trio then renders depends on the port being a
   // member (loadWanMemberSeries); a LAN port gets no rows and draws nothing.
+  // The storage swap (see STORAGE_SCOPED_METRICS) — the same shape as the
+  // SD-WAN one below: a storage alert loses the device charts and the sensor
+  // chart (its dimension is a mount path, not a sensor), and every other alert
+  // — or a storage alert with no mount to draw — loses the storage token.
+  const storageScoped = isStorageScopedAlert(opts?.metric);
+  const mountPath = storageScoped ? (opts?.dimension ?? opts?.sensorName ?? null) : null;
+  if (storageScoped) {
+    for (const t of DEVICE_CHART_TOKENS) wanted.delete(t);
+    wanted.delete("chart.sensor");
+  }
+  if (!mountPath) wanted.delete("chart.storage");
   const sdwanScoped = isSdwanScopedAlert(opts?.metric);
   if (interfaceScoped) {
     for (const t of Array.from(wanted)) if (!SDWAN_CHART_TOKENS.includes(t)) wanted.delete(t);
@@ -1386,6 +1672,28 @@ export async function buildAlertCharts(
   // was measured over. Every other chart keeps the last-hour context window.
   const lossWindowMs = opts?.lossWindowMs && opts.lossWindowMs > 0 ? opts.lossWindowMs : CHART_WINDOW_MS;
   const lossSince = new Date(now.getTime() - lossWindowMs);
+
+  // The storage chart is built on its own: it has its own window (a day, or a
+  // month of daily points plus a horizon) and its own spec, and on a storage
+  // alert it is the ONLY chart, so there is nothing to run it alongside.
+  let storage: StorageChartSpec | null = null;
+  if (wanted.has("chart.storage") && mountPath) {
+    const metric = opts!.metric!;
+    const threshold = opts?.ruleThreshold ?? null;
+    if (opts?.sampleData) {
+      storage = sampleStorageSpec(metric, mountPath, threshold, now.getTime());
+    } else if (assetId) {
+      try {
+        storage = metric === "storageDaysUntilFull"
+          ? storageForecastSpec(await loadStorageForecastSeries(assetId, mountPath), { mountPath, horizonDays: threshold, now: now.getTime() })
+          : storageUsageSpec(await loadStorageUsage(assetId, mountPath, new Date(now.getTime() - STORAGE_USAGE_WINDOW_MS)), {
+              metric, mountPath, threshold, now: now.getTime(),
+            });
+      } catch (err) {
+        logger.warn({ err: (err as Error)?.message, assetId, mountPath }, "alert storage chart load failed — sending without it");
+      }
+    }
+  }
 
   let cpu: SparkPoint[] = [];
   let mem: SparkPoint[] = [];
@@ -1467,6 +1775,8 @@ export async function buildAlertCharts(
     "chart.cpu": cpu,
     "chart.memory": mem,
     "chart.responseTime": rt,
+    // Rendered from its own spec above; never read from here.
+    "chart.storage": [],
   };
 
   /** The health check's own SLA target for a chart, when it configures one. */
@@ -1477,6 +1787,13 @@ export async function buildAlertCharts(
     : null;
 
   for (const token of wanted) {
+    // The storage chart carries its own spec — label, unit, axis, window,
+    // caption and summary are all decided there. A mount that could not be
+    // read renders away rather than drawing an empty box.
+    if (token === "chart.storage") {
+      if (storage) out.set(token, await renderStorageChart(storage, META[token].color));
+      continue;
+    }
     const meta = META[token];
     const points = series[token] ?? [];
     // The sensor chart labels itself from the sensor: its name (which is what

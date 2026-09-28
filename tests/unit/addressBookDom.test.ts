@@ -796,7 +796,11 @@ describe("picker selection", () => {
   });
 
   describe("recipients the action already holds", () => {
-    type Picker = { openPicker: (o: unknown) => Promise<{ field: string; entries: Record<string, unknown>[] } | null> };
+    type Picker = {
+      openPicker: (o: unknown) => Promise<{
+        field: string; entries: Record<string, unknown>[]; removed: Record<string, unknown>[];
+      } | null>;
+    };
     const AB = () => (window as unknown as { PolarisAddressBook: Picker }).PolarisAddressBook;
     const rowText = (pane: string) =>
       Array.from(doc.querySelectorAll('[data-ab-pane="' + pane + '"] tbody tr'))
@@ -815,23 +819,77 @@ describe("picker selection", () => {
       expect(rows[2]).toContain("jane@example.com");
     });
 
-    it("shows them checked and locked, and never returns them as a new pick", async () => {
+    type Box = { checked: boolean; disabled: boolean; dispatchEvent: (e: unknown) => void };
+    const firstBox = (pane: string) =>
+      doc.querySelector('[data-ab-pane="' + pane + '"] tbody tr input[type="checkbox"]') as unknown as Box;
+    const untick = (cb: Box) => { cb.checked = false; cb.dispatchEvent(new win.Event("change", { bubbles: true })); };
+
+    it("shows them ticked but changeable, and never returns them as a new pick", async () => {
       const p = AB().openPicker({
         field: "to",
         current: [{ kind: "user", value: "u1", label: "Jane Doe", field: "to" }],
       });
       await flush(5);
-      const first = doc.querySelector('[data-ab-pane="people"] tbody tr input[type="checkbox"]') as unknown as
-        { checked: boolean; disabled: boolean; hasAttribute: (a: string) => boolean };
+      const first = firstBox("people");
       expect(first.checked).toBe(true);
-      expect(first.disabled).toBe(true);
-      expect(first.hasAttribute("data-ab-pick")).toBe(false);
-      // Nothing else chosen: the locked row is not a selection.
+      expect(first.disabled).toBe(false);
+      // Nothing changed: a ticked current row is neither a pick nor a removal.
       click(doc.querySelector('[data-ab="add-to"]'));
       await flush();
       expect(toasts.join(" ")).toMatch(/select at least one/i);
       click(doc.querySelector(".modal-close"));
       await p;
+    });
+
+    it("returns an unticked recipient as removed, with the field it sits in", async () => {
+      const p = AB().openPicker({
+        field: "to",
+        current: [
+          { kind: "address", value: "mine@example.com", label: "Mine <mine@example.com>", field: "cc" },
+          { kind: "tag", value: "Datacenter", label: "Datacenter", field: "to" },
+        ],
+      });
+      await flush(5);
+      untick(firstBox("people"));
+      // Unticking alone is enough to confirm — no new pick needed.
+      click(doc.querySelector('[data-ab="add-to"]'));
+      await flush();
+      const res = await p;
+      expect(res!.entries).toEqual([]);
+      expect(res!.removed).toEqual([
+        { kind: "address", value: "mine@example.com", label: "Mine <mine@example.com>", field: "cc" },
+      ]);
+    });
+
+    it("re-ticking a recipient cancels its removal", async () => {
+      const p = AB().openPicker({
+        field: "to",
+        current: [{ kind: "region", value: "Memphis", label: "Memphis", field: "to" }],
+      });
+      await flush(5);
+      click(doc.querySelector('[data-ab-tab="tags"]'));
+      const cb = firstBox("tags");
+      untick(cb);
+      cb.checked = true;
+      cb.dispatchEvent(new win.Event("change", { bubbles: true }));
+      click(doc.querySelector('[data-ab="add-to"]'));
+      await flush();
+      expect(toasts.join(" ")).toMatch(/select at least one/i);
+      click(doc.querySelector(".modal-close"));
+      await p;
+    });
+
+    it("can untick a recipient no pane lists, rebuilt from its pill", async () => {
+      const p = AB().openPicker({
+        field: "to",
+        current: [{ kind: "address", value: "noc@vendor.example", label: "noc@vendor.example", field: "bcc" }],
+      });
+      await flush(5);
+      untick(firstBox("people"));
+      click(doc.querySelector('[data-ab="add-to"]'));
+      await flush();
+      const res = await p;
+      expect(res!.removed.map((r) => r.value)).toEqual(["noc@vendor.example"]);
     });
 
     it("lists a recipient the search did not return, rebuilt from its pill", async () => {

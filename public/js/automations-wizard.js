@@ -2962,6 +2962,24 @@ async function openAutomationWizard(existing, opts) {
       els.forEach(applyDimOptions);
     }
   }
+  /**
+   * "Skip unused ports" — offered on the conditions the server lists
+   * (skipUnusedPortTargets: SD-WAN member state / latency / jitter / loss and
+   * interface oper status). Absent list (a pre-upgrade server) = no checkbox.
+   * Collected by tgCollectLeaf; a row whose condition changes to one that does
+   * not offer it simply stops rendering it, so the flag is dropped on the next
+   * collect rather than riding along inert (the server would refuse it).
+   */
+  function tgSkipUnusedOffered(target) {
+    return !!target && Array.isArray(s.skipUnusedPortTargets) && s.skipUnusedPortTargets.indexOf(target) !== -1;
+  }
+  function tgSkipUnusedHtml(target, leaf) {
+    if (!tgSkipUnusedOffered(target)) return "";
+    return '<label style="flex-basis:100%;display:flex;gap:6px;align-items:center;font-size:0.8rem;cursor:pointer" ' +
+      'title="A port that reports 0.0.0.0 and has had no address in the last 30 days is treated as never connected (an unused WAN from a deployment template) and never alerts. A port that had an address recently — a DHCP WAN that just lost its lease, a static WAN that went down — still alerts. Tunnels are never skipped.">' +
+      '<input type="checkbox" class="tgl-skip-unused"' + (leaf && leaf.skipUnusedPorts ? " checked" : "") + '> ' +
+      'Skip unused ports (no address in the last 30 days)</label>';
+  }
   function tgLeafRowHtml(leaf, kind) {
     leaf = leaf || tgDefaultLeaf(kind);
     // A FILTER row: "<what> matches <value>". The value control is the same
@@ -3047,12 +3065,14 @@ async function openAutomationWizard(existing, opts) {
       // comparison is about.
       var fDims = kind === "host" ? [] : tgInlineDims((s.fieldDimensions && s.fieldDimensions[leaf.field]) || [], leaf.dimensionFilter, leaf);
       var isDD = ddMeta && isDownDetectionLeaf(leaf);
-      if (fDims.length || isDD) {
+      var fSkip = kind === "host" ? "" : tgSkipUnusedHtml(leaf.field, leaf);
+      if (fDims.length || isDD || fSkip) {
         var fDf = leaf.dimensionFilter || {};
         line2 =
           '<div class="tgl-line2" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 0 22px;font-size:0.8rem;color:var(--color-text-tertiary)">' +
             fDims.map(function (d) { return dimControlHtml(d, fDf, leaf.field, awDimStateOfLeaf(leaf)); }).join("") +
             (fDims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
+            fSkip +
             // Both painted asynchronously (syncDownDetection) and rendered
             // rather than omitted, so there is somewhere to paint into: the
             // coverage line depends on the carve-out preview, and the
@@ -3094,6 +3114,7 @@ async function openAutomationWizard(existing, opts) {
           aggControl +
           dimInputs +
           (dims.some(function (d) { return DIM_PICKERS[d]; }) ? '<span class="tgl-dim-note" style="flex-basis:100%;font-size:0.78rem"></span>' : "") +
+          (kind === "host" ? "" : tgSkipUnusedHtml(leaf.metric, leaf)) +
         '</div>';
     }
     var ceiling = !isState && !!leaf && isCeilingMetric(leaf.metric);
@@ -3132,6 +3153,8 @@ async function openAutomationWizard(existing, opts) {
       var sDf = {};
       rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = el.value.trim(); if (v) sDf[el.getAttribute("data-dim")] = v; });
       if (Object.keys(sDf).length) sLeaf.dimensionFilter = sDf;
+      var sSkip = rowEl.querySelector(".tgl-skip-unused");
+      if (sSkip && sSkip.checked) sLeaf.skipUnusedPorts = true;
       // No missed-poll count is read here any more: the row no longer states
       // one. On a sole down condition it comes off the trigger's "Sustained
       // for" field, stamped in collectStep3 once the tree is known to be that
@@ -3153,6 +3176,8 @@ async function openAutomationWizard(existing, opts) {
       var df = {};
       rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = el.value.trim(); if (v) df[el.getAttribute("data-dim")] = v; });
       if (Object.keys(df).length) leaf.dimensionFilter = df;
+      var mSkip = rowEl.querySelector(".tgl-skip-unused");
+      if (mSkip && mSkip.checked) leaf.skipUnusedPorts = true;
     }
     return leaf;
   }
@@ -7544,6 +7569,21 @@ async function openAutomationWizard(existing, opts) {
             : { field: "to", current: current },
         );
         if (!res) return;
+        // Current recipients the operator unticked come off wherever they sit —
+        // matched on kind + value, the same identity addPill dedupes on.
+        var removedAny = false;
+        (res.removed || []).forEach(function (r) {
+          var box = host.querySelector('.na-recip-box[data-field="' + r.field + '"]');
+          if (!box) return;
+          box.querySelectorAll(":scope > .tag-chip").forEach(function (chip) {
+            if (chip.getAttribute("data-kind") === r.kind &&
+                String(chip.getAttribute("data-value")).toLowerCase() === String(r.value).toLowerCase()) {
+              chip.remove();
+              removedAny = true;
+            }
+          });
+        });
+        if (removedAny) onChange();
         var dest = host.querySelector('.na-recip-box[data-field="' + res.field + '"]');
         if (!dest) return;
         var added = 0, refused = 0;

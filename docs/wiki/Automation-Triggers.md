@@ -612,6 +612,25 @@ different device filters **never carve each other out**.
 Every stream writes samples for unpinned members too, permanently inside the
 engine's lookback — so the pin is a **gate**, never a side effect of retention.
 
+### Skip unused ports
+
+**SD-WAN member state**, **SD-WAN latency / jitter / packet loss** and
+**Interface oper status** conditions offer a **Skip unused ports** checkbox
+([rule 88](Business-Rules#rule-88)). Tick it when your FortiGates have WAN ports
+that are enabled (often SD-WAN members) but not always plugged in, such as a
+template that turns on `wan1` and `wan2` everywhere.
+
+A port is skipped when it reports `0.0.0.0` **and** has had no address in the
+last 30 days. A port that had an address recently still alerts, so a DHCP WAN
+that just lost its lease is not mistaken for an unused one. Tunnels (the overlay
+members) are never skipped. An SD-WAN member is matched to the interface of the
+same name.
+
+Use this instead of adding an *Interface IP address is not 0.0.0.0* condition
+beside the member or port condition. With two conditions, each is checked across
+the whole device rather than on the same port: some other interface always has an
+address, so that second condition never filters anything.
+
 ---
 
 ## Testing the trigger

@@ -2202,9 +2202,9 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
           "Steady-state at current settings",
           _capacityFormatBytes(work.steadyStateSizeBytes),
           "Peak size the database grows to if nothing changes. Legitimately larger than " +
-          "the current size while sample tables are still filling. Retention windows are " +
-          "reclaimed a whole TimescaleDB chunk at a time, so each tier keeps its configured " +
-          "window plus one chunk interval plus one prune cycle.",
+          "the current size while sample tables are still filling. Retention is reclaimed a " +
+          "whole TimescaleDB chunk at a time, so tables grow and drop in a weekly cycle; this is " +
+          "the largest total they reach together, not each table's own peak added up.",
         ) +
         (allTables.length ? dbInfoRow("Tables", allTables.length) : "") +
         dbInfoRow("TimescaleDB", tsLabel) +
@@ -2226,9 +2226,10 @@ function renderCapacityCard(capacity, dbInfo, pgTuning) {
     '<div class="capacity-stat-card">' +
       '<h5>Monitoring workload</h5>' +
       '<div class="db-info-grid">' +
-        dbInfoRow("Monitored assets", formatNumber(work.monitoredAssetCount || 0)) +
-        dbInfoRow("Monitored interfaces", formatNumber(work.monitoredInterfaceCount || 0)) +
-        dbInfoRow("Monitored storage mounts", formatNumber(work.monitoredStorageCount || 0)) +
+        dbInfoRow("Assets", formatNumber(work.monitoredAssetCount || 0)) +
+        dbInfoRow("Interfaces", formatNumber(work.monitoredInterfaceCount || 0)) +
+        dbInfoRow("Storage mounts", formatNumber(work.monitoredStorageCount || 0)) +
+        dbInfoRow("Agents", formatNumber(work.agentCount || 0)) +
         (work.cadences
           ? dbInfoRow("Cadences",
               work.cadences.responseTimeSec + "s response · " +

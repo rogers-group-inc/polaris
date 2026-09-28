@@ -413,6 +413,22 @@ async function activeRunsReferencing(imageIds: string[]): Promise<number> {
 }
 
 /**
+ * Resolve a multer temp path and prove it sits inside FIRMWARE_INCOMING_DIR,
+ * or null. Every file operation on an upload goes through this first — a path
+ * that fails it is never read, renamed OR deleted.
+ */
+function incomingPath(tmpPath: string): string | null {
+  const tmp = resolve(tmpPath);
+  return tmp.startsWith(FIRMWARE_INCOMING_DIR + sep) ? tmp : null;
+}
+
+/** Remove an upload the route refused before registering it. A path outside the incoming directory is left alone. */
+export async function discardIncomingUpload(tmpPath: string): Promise<void> {
+  const tmp = incomingPath(tmpPath);
+  if (tmp) await rm(tmp, { force: true }).catch(() => undefined);
+}
+
+/**
  * Register an upload that multer already wrote under FIRMWARE_INCOMING_DIR.
  * Identity from the header (filename fallback), sha256 by stream, then ONE
  * transaction rotates the node: the current backup is deleted, the current
@@ -421,11 +437,9 @@ async function activeRunsReferencing(imageIds: string[]): Promise<number> {
  * and nothing rotated.
  */
 export async function registerUploadedImage(input: RegisterImageInput): Promise<RegisterImageResult> {
-  const tmp = resolve(input.tmpPath);
-  if (!tmp.startsWith(FIRMWARE_INCOMING_DIR + sep)) {
-    await rm(tmp, { force: true }).catch(() => undefined);
-    throw new AppError(400, "Upload landed outside the firmware incoming directory");
-  }
+  const tmp = incomingPath(input.tmpPath);
+  // Refused, NOT removed: a path that failed containment is not ours to delete.
+  if (!tmp) throw new AppError(400, "Upload landed outside the firmware incoming directory");
   try {
     const manufacturer = normalizeManufacturer(input.manufacturer.trim());
     if (!manufacturer) throw new AppError(400, "manufacturer is required");

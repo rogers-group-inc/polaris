@@ -112,6 +112,16 @@ describe("asset count → device list → asset details", () => {
     expect(opened).toEqual(["a2", "a1"]);
   });
 
+  it("a failed load shows the server's message as text", async () => {
+    const { tab, doc, settle, countOf, win } = await boot();
+    (win as unknown as { api: { serverSettings: Record<string, unknown> } }).api.serverSettings.listFirmwareNodeAssets = async () => { throw new Error('<b id="inj">nope</b>'); };
+    countOf(tab.nodeKey("Fortinet", "switch")).click();
+    await settle();
+    const body = doc.getElementById("fw-assets-body")!;
+    expect(body.querySelector("#inj")).toBeNull();
+    expect(body.querySelector(".empty-state")!.textContent).toBe('<b id="inj">nope</b>');
+  });
+
   it("the filter narrows the list in place", async () => {
     const { tab, doc, settle, countOf, win } = await boot();
     countOf(tab.nodeKey("Fortinet", "switch")).click();
@@ -122,6 +132,12 @@ describe("asset count → device list → asset details", () => {
     expect(Array.from(doc.querySelectorAll("#fw-assets-body .fw-asset-row")).map((r) => r.getAttribute("data-asset-id"))).toEqual(["a2"]);
     f.value = "nothing-like-this";
     f.dispatchEvent(new (win as unknown as { Event: typeof Event }).Event("input", { bubbles: true }));
-    expect(doc.getElementById("fw-assets-body")!.textContent).toContain("Nothing matches");
+    expect(doc.getElementById("fw-assets-body")!.textContent).toContain("Nothing matches “nothing-like-this”");
+    // The echo is text, never markup.
+    f.value = '<img src=x onerror="x">';
+    f.dispatchEvent(new (win as unknown as { Event: typeof Event }).Event("input", { bubbles: true }));
+    const body = doc.getElementById("fw-assets-body")!;
+    expect(body.querySelector("img")).toBeNull();
+    expect(body.textContent).toContain('<img src=x onerror="x">');
   });
 });

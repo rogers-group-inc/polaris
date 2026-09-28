@@ -456,7 +456,7 @@
       if (status) {
         status.style.display = f ? "" : "none";
         status.className = "fw-upload-status";
-        status.innerHTML = f ? esc(f.name + " · " + bytes(f.size)) : "";
+        status.textContent = f ? f.name + " · " + bytes(f.size) : "";
       }
     });
   }
@@ -538,7 +538,13 @@
       delete _uploading[node.key];
       await reload();
       if (res.warnings && res.warnings.length) {
-        var again = document.querySelector('.fw-node[data-fw-key="' + node.key.replace(/"/g, '\\"') + '"] .fw-upload-status');
+        // reload() re-rendered the node; find it again by key. Compared as a
+        // value rather than spliced into a selector: nodeKey() URI-encodes its
+        // parts so a splice was safe, but only by that distant invariant.
+        var again = null;
+        document.querySelectorAll(".fw-node[data-fw-key]").forEach(function (n) {
+          if (!again && n.getAttribute("data-fw-key") === node.key) again = n.querySelector(".fw-upload-status");
+        });
         if (again) { again.style.display = ""; again.className = "fw-upload-status is-warn"; again.textContent = res.warnings.join(" "); }
       }
     } catch (err) {
@@ -662,8 +668,18 @@
     var capped = res.total > rows.length
       ? '<p class="fw-node-meta" style="margin:0 0 0.5rem">Showing the first ' + rows.length + ' of ' + res.total + ' by hostname — filter to find the rest.</p>'
       : "";
-    if (shown.length === 0) return capped + '<p class="empty-state" style="padding:1rem 0">Nothing matches “' + esc(filter) + '”.</p>';
+    if (shown.length === 0) return capped + '<p class="empty-state" style="padding:1rem 0">Nothing matches “<span class="fw-assets-nomatch"></span>”.</p>';
     return capped + shown.map(assetListRowHTML).join("");
+  }
+
+  /**
+   * Fill the slide-in body. The filter is what the operator typed, so it is
+   * set as text after the markup lands rather than spliced into it.
+   */
+  function renderAssetList(body, res, filter) {
+    body.innerHTML = assetListBodyHTML(res, filter);
+    var echo = body.querySelector(".fw-assets-nomatch");
+    if (echo) echo.textContent = String(filter || "");
   }
 
   function ensureAssetListDOM() {
@@ -708,7 +724,7 @@
       if (row) { e.preventDefault(); openRow(row); }
     });
     document.getElementById("fw-assets-filter").addEventListener("input", function (e) {
-      body.innerHTML = assetListBodyHTML(_listRows, e.target.value);
+      renderAssetList(body, _listRows, e.target.value);
     });
 
     if (typeof initSlideoverResize === "function") initSlideoverResize(document.getElementById("fw-assets-panel"), "polaris.panel.width.firmwareassets");
@@ -763,9 +779,13 @@
       var behind = (res.assets || []).filter(function (a) { return a.firmwareVsPrimary === "older"; }).length;
       document.getElementById("fw-assets-meta").textContent =
         res.total + " device" + (res.total === 1 ? "" : "s") + (behind ? " · " + behind + " behind the primary image" : "") + " · click one to open its details";
-      body.innerHTML = assetListBodyHTML(res, filterEl.value);
+      renderAssetList(body, res, filterEl.value);
     } catch (err) {
-      body.innerHTML = '<p class="empty-state" style="padding:1rem 0;color:var(--color-danger)">' + esc(err && err.message ? err.message : "Could not load the devices") + '</p>';
+      var fail = document.createElement("p");
+      fail.className = "empty-state";
+      fail.style.cssText = "padding:1rem 0;color:var(--color-danger)";
+      fail.textContent = err && err.message ? err.message : "Could not load the devices";
+      body.replaceChildren(fail);
     }
   }
 
@@ -779,6 +799,7 @@
     bindingPillHTML: bindingPillHTML,
     manufacturerLoginPillHTML: manufacturerLoginPillHTML,
     assetListBodyHTML: assetListBodyHTML,
+    renderAssetList: renderAssetList,
     openAssetList: openAssetList,
     credentialOptionsHTML: credentialOptionsHTML,
     bindingEditorHTML: bindingEditorHTML,

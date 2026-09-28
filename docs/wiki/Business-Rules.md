@@ -1220,3 +1220,32 @@ dialog and the checks above are what stand between a click and a flash.
 
 See [Server Settings → Repository](Server-Settings#repository) and
 [Assets → Firmware](Assets#firmware).
+
+### Rule 88
+
+**A port Polaris has positive evidence was never in use does not alert when the
+automation asks it to skip unused ports. "Unused" is decided by the port's
+remembered address, never its current one.**
+
+Some deployment templates enable every WAN port on every FortiGate, as SD-WAN
+members, whether or not a circuit is plugged into them. An unused `wan2` is then
+down on every health check, and a "member is down" automation alerts about it on
+every gate that has one.
+
+An unused port reads `0.0.0.0`, but so does a working DHCP WAN whose link just
+dropped and whose lease was released. So the current address cannot tell them
+apart. Polaris therefore **remembers the last address each interface reported**,
+for 30 days after it last had one. A port counts as unused only when all of these
+are true:
+
+- it is not a tunnel (IPsec and other overlays are never skipped)
+- it reports an address, and that address is `0.0.0.0`
+- it has had no address in the last 30 days
+
+Tick **Skip unused ports** on an SD-WAN member state, SD-WAN latency / jitter /
+packet loss, or interface oper status condition to use it. A skipped port never
+raises an alert, and an alert already open on one clears. A port that had an
+address recently (a DHCP WAN that just lost its lease, a static WAN that went
+down) still alerts. A port down for more than 30 days is treated as unused.
+
+See [Automation Triggers → Skip unused ports](Automation-Triggers#skip-unused-ports).

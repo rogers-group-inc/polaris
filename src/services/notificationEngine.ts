@@ -106,6 +106,8 @@ import { computeStorageForecast } from "./storageForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
+import { isUnusedPort } from "./interfaceInventoryService.js";
+import { logger } from "../utils/logger.js";
 import { alarmStatusToFlag } from "../utils/hardwareSensors.js";
 import { median } from "../utils/stats.js";
 import {
@@ -851,6 +853,48 @@ function reduceReadings(
  * is exactly what business rule 29 exists to prevent. Composite leaves and the
  * preview pass nothing: they only need the reading gone.
  */
+/**
+ * "Skip unused ports" (SKIP_UNUSED_PORT_TARGETS): drop the readings whose port
+ * was never in use — interfaceInventoryService.isUnusedPort over the port's
+ * current-state row. `portOf` names the port a reading is about: the interface
+ * itself for ifOperStatus, the member (`link`, the second half of the
+ * `healthCheck|link` key) for the SD-WAN conditions.
+ *
+ * A dropped port produces NO reading, the same contract as an unpinned
+ * interface: a live alert on it is retired by clearVanishedStates, and one is
+ * never raised. ONE read on AssetInterface narrowed to the assets AND port
+ * names in play (a handful of WAN names per gate), so a 2000-gate fleet costs
+ * one small indexed query per evaluation, and none at all when the option is
+ * off. A failed read keeps every reading — the option removes ports it has
+ * positive evidence about, never ones it could not check.
+ */
+async function dropUnusedPorts(
+  trigger: { skipUnusedPorts?: boolean },
+  readings: Reading[],
+  portOf: (r: Reading) => string,
+  now: Date = new Date(),
+): Promise<Reading[]> {
+  if (!trigger.skipUnusedPorts || readings.length === 0) return readings;
+  const assetIds = Array.from(new Set(readings.map((r) => r.assetId)));
+  const names = Array.from(new Set(readings.map(portOf)));
+  let rows: Array<{ assetId: string; ifName: string; ifType: string | null; ipAddress: string | null; lastLearnedIp: string | null; lastLearnedIpAt: Date | null }>;
+  try {
+    rows = await prisma.assetInterface.findMany({
+      where: { assetId: { in: assetIds }, ifName: { in: names } },
+      select: { assetId: true, ifName: true, ifType: true, ipAddress: true, lastLearnedIp: true, lastLearnedIpAt: true },
+    });
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message }, "skip-unused-ports lookup failed — keeping every port");
+    return readings;
+  }
+  const unused = new Set(rows.filter((r) => isUnusedPort(r, now)).map((r) => `${r.assetId}|${r.ifName}`));
+  return unused.size === 0 ? readings : readings.filter((r) => !unused.has(`${r.assetId}|${portOf(r)}`));
+}
+
+/** The SD-WAN member a `healthCheck|link` reading is about. FortiOS object
+ *  names admit no `|`, so the first separator splits it. */
+const sdwanMemberOf = (r: Reading): string => r.dimKey.slice(r.dimKey.indexOf("|") + 1);
+
 async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "asset_metric" }>, assets: ScopeAssetRow[], saturated?: Set<string>): Promise<Reading[]> {
   const df = trigger.dimensionFilter ?? {};
   // The device-identifier dimensions narrow the ASSET set before any sample
@@ -1041,7 +1085,11 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       const col = trigger.metric === "sdwanLatencyMs" ? "latencyMs" : trigger.metric === "sdwanJitterMs" ? "jitterMs" : "packetLoss";
       const rows = await prisma.assetPerfSlaSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, healthCheck: true, link: true, latencyMs: true, jitterMs: true, packetLoss: true } });
       const filtered = rows.filter((r) => substringMatch(r.healthCheck, df.healthCheck) && substringMatch(r.link, df.link));
-      return reduceReadings(filtered, index, (r) => `${r.healthCheck}|${r.link}`, (r) => `${r.healthCheck} / ${r.link}`, (r) => r[col] ?? null, agg, winPolls);
+      return dropUnusedPorts(
+        trigger,
+        reduceReadings(filtered, index, (r) => `${r.healthCheck}|${r.link}`, (r) => `${r.healthCheck} / ${r.link}`, (r) => r[col] ?? null, agg, winPolls),
+        sdwanMemberOf,
+      );
     }
     case "customWidgetValue": {
       const rows = await prisma.assetCustomWidgetSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since }, kind: "scalar", ...(df.widgetId ? { widgetId: df.widgetId } : {}) }, select: { assetId: true, timestamp: true, widgetId: true, value: true } });
@@ -1547,7 +1595,8 @@ async function resolveAssetStateReadings(
       if (trigger.field === "poeStatus" && (poeFaultCoversUnpinned(trigger) || opts?.coverUnpinnedPoe)) {
         out.push(...await unpinnedPoeFaultReadings(index, ids, df, mk));
       }
-      return out;
+      // "Skip unused ports" — offered on oper status only (validateSkipUnusedPorts).
+      return trigger.field === "ifOperStatus" ? dropUnusedPorts(trigger, out, (r) => r.dimKey) : out;
     }
     case "ipsecStatus": {
       const since = new Date(Date.now() - lookbackMsFor(trigger));
@@ -1598,7 +1647,7 @@ async function resolveAssetStateReadings(
       const filtered = rows.filter((r) => substringMatch(r.healthCheck, df.healthCheck) && substringMatch(r.link, df.link));
       // dimKey matches the metrics' `healthCheck|link` so a member's state
       // alert and its loss alert name the same dimension.
-      return groupSeries(filtered, (r) => `${r.assetId}|${r.healthCheck}|${r.link}`).map((g) => {
+      const memberReadings: Reading[] = groupSeries(filtered, (r) => `${r.assetId}|${r.healthCheck}|${r.link}`).map((g) => {
         const r = g[0]!;
         const a = index.get(r.assetId)!;
         return {
@@ -1611,6 +1660,9 @@ async function resolveAssetStateReadings(
           readingAt: r.timestamp,
         };
       });
+      // "Skip unused ports": a template's unplugged wan2 is down on every
+      // health check forever — see SKIP_UNUSED_PORT_TARGETS.
+      return dropUnusedPorts(trigger, memberReadings, sdwanMemberOf);
     }
     case "sdwanRuleStatus": case "sdwanSelectedMember": {
       const rows = await prisma.assetSdwanRule.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, ruleName: true, status: true, selectedMember: true, updatedAt: true } });

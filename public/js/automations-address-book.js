@@ -1139,10 +1139,10 @@
   // The wizard hands the picker the pills already in the action's To/Cc/Bcc
   // (`opts.current`, each { kind, value, label, field }), so the operator
   // opening the book sees who is already on it before hunting for who isn't.
-  // Those rows float to the top of their pane, checked and locked: the picker
-  // only ever ADDS, so an untick here could not take anyone off the action —
-  // the pill's × does that — and a checkbox that looks like it removes someone
-  // and doesn't is worse than one that plainly can't be changed.
+  // Those rows float to the top of their pane, ticked. Unticking one takes that
+  // recipient OFF the action when the picker is confirmed (the result's
+  // `removed` list, which the wizard applies to its pills) — so the checkbox
+  // means the same thing on every row: ticked = on the action.
 
   /** Pill kinds that live in the People pane; everything else is a Tags row. */
   var PEOPLE_PILL_KINDS = { user: true, address: true, assetContacts: true };
@@ -1193,7 +1193,9 @@
   /**
    * Address-book picker. `field` is the recipient field it was opened from
    * ("to" | "cc" | "bcc") and comes back on the result so the caller knows
-   * where to drop the entries. Resolves { field, entries } or null.
+   * where to drop the entries. Resolves { field, entries, removed } or null:
+   * `entries` are the NEW picks (for `field`), `removed` the `opts.current`
+   * pills the operator unticked, which the caller takes off wherever they sit.
    */
   function openPicker(opts) {
     var field = (opts && opts.field) || "to";
@@ -1213,7 +1215,9 @@
     var pushDevices = (opts && opts.pushDevices) || {};
     var current = ((opts && opts.current) || []).filter(function (p) { return p && p.kind && p.value; });
     return new Promise(function (resolve) {
-      var chosen = {};       // pickKey → entry
+      var chosen = {};       // pickKey → entry (new picks)
+      var dropped = {};      // pickKey → entry (current recipients unticked)
+      var extras = { people: [], tags: [] }; // rows rebuilt from pills no pane lists
       var settled = null;
       var entries = [];       // People pane (search results)
       var tagEntries = [];    // Tags pane (one row per map region + registry tag)
@@ -1296,6 +1300,8 @@
           if (needle && (String(en.name) + " " + String(en.email || "")).toLowerCase().indexOf(needle) === -1) return;
           out.push(en);
         });
+        // Kept per pane so the change handler can resolve a tick on one.
+        extras[people ? "people" : "tags"] = out;
         return out;
       }
 
@@ -1304,17 +1310,18 @@
           {
             width: "36px",
             cell: function (en) {
-              // Already on the action: checked and locked, and outside
-              // `chosen`, so resolving the picker doesn't add it twice.
-              var on = currentFields(en);
-              if (on.length) {
-                return '<input type="checkbox" checked disabled title="Already a recipient — remove it with ' +
-                  'the × on its pill in the action">';
+              var key = pickKey(en);
+              // Already on the action: ticked unless the operator unticked it,
+              // and tracked in `dropped` rather than `chosen`, so confirming
+              // never adds it a second time.
+              if (currentFields(en).length) {
+                return '<input type="checkbox" data-ab-pick="' + escapeHtml(key) + '" data-ab-current-pick' +
+                  (dropped[key] ? "" : " checked") +
+                  ' title="Already a recipient — untick to remove it from this action">';
               }
               // No checkbox on a row push cannot reach — refusing the pick is
               // honest where a warning after the fact is not.
               if (isPush && !pushReachable(en)) return "";
-              var key = pickKey(en);
               return '<input type="checkbox" data-ab-pick="' + escapeHtml(key) + '"' +
                 (chosen[key] ? " checked" : "") + ">";
             },
@@ -1426,9 +1433,15 @@
         var key = cb.getAttribute("data-ab-pick");
         // Both panes' pools, so a selection survives switching tabs — every
         // paint re-reads the checkbox state from `chosen`.
-        var pool = entries.concat(peopleHead(), regionDynamicEntries(regionMaxLevel), tagEntries);
+        var pool = entries.concat(peopleHead(), regionDynamicEntries(regionMaxLevel), tagEntries,
+          extras.people, extras.tags);
         var entry = null;
         for (var i = 0; i < pool.length; i++) if (pickKey(pool[i]) === key) entry = pool[i];
+        if (cb.hasAttribute("data-ab-current-pick")) {
+          if (cb.checked) delete dropped[key];
+          else if (entry) dropped[key] = entry;
+          return;
+        }
         if (cb.checked && entry) chosen[key] = entry;
         else delete chosen[key];
       });
@@ -1463,8 +1476,13 @@
         if (!btn) return; // push mode renders To alone
         btn.addEventListener("click", function () {
           var picked = Object.keys(chosen).map(function (k) { return chosen[k]; });
-          if (!picked.length) { showToast("Select at least one recipient", "error"); return; }
-          settled = { field: f, entries: picked };
+          var gone = Object.keys(dropped).map(function (k) { return dropped[k]; });
+          var removed = current.filter(function (p) {
+            return gone.some(function (en) { return pillMatchesEntry(p, en); });
+          });
+          // Unticking alone is a change worth confirming, so it needs no new pick.
+          if (!picked.length && !removed.length) { showToast("Select at least one recipient", "error"); return; }
+          settled = { field: f, entries: picked, removed: removed };
           ui.close();
         });
       });
