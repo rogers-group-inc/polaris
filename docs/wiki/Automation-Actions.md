@@ -214,6 +214,34 @@ This applies to the **default** email only. If you tick **Customize the
 email**, your body is sent exactly as written. A `{asset.ip}` you put in it
 still prints.
 
+### What the default email shows for a storage alert
+
+A storage alert (used %, used bytes, or days until full) is about **one
+filesystem**, so the email graphs that filesystem instead of the device's CPU,
+memory, response time and packet loss. The device facts (IP address, location,
+model and so on) stay, because which server is filling up is usually the
+first thing you need.
+
+- **Used % and used bytes** show the last 24 hours of that filesystem's usage,
+  with the automation's threshold as a dashed red line.
+- **Days until full** shows a **forecast**:
+  - Left of "now": the daily usage the forecast was worked out from, up to
+    30 days of it.
+  - Right of "now": that trend carried forward as a dashed line, to the
+    grey **full** line. A red dot marks the projected full date.
+  - How far forward it draws is **the automation's own number of days**. A
+    "days until full is less than 7" automation draws 7 days ahead. The
+    alert only fires when the full date falls inside that window, so the line
+    normally reaches **full** on the graph.
+  - The caption gives the current usage, the growth per day, and how many
+    days until full. It is the same number the alert fired on.
+  - If the filesystem has stopped growing by the time the email is sent (for
+    example, on a reminder after someone cleaned it up), the graph shows the
+    history and says it is no longer growing.
+
+A test email from the automation wizard draws an example filesystem, and
+always forecasts 7 days ahead.
+
 ### Template tokens
 
 Available in the message template, the email subject and body, the `api_call`

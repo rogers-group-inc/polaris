@@ -249,8 +249,9 @@ describe("chart ordering follows the trigger", () => {
 
   it("has no chart for metrics that don't have one yet", () => {
     // The trigger token renders away and the generic charts still tell the
-    // device's story.
-    expect(chartTokenForMetric("storageUsedPct")).toBeNull();
+    // device's story. (Storage got its own chart on 2026-09-28 —
+    // alertStorageChart.test.ts; interface counters still have none.)
+    expect(chartTokenForMetric("ifInErrorRate")).toBeNull();
     expect(chartTokenForMetric(null)).toBeNull();
   });
 

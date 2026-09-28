@@ -138,6 +138,11 @@ export const DEFAULT_ALERT_TEXT = [
   "{chart.sdwanLatency}",
   "{chart.sdwanJitter}",
   "{chart.sdwanLoss}",
+  // The mount a storage alert fired on — its last day of usage, or its
+  // forecast for a days-until-full alert. Replaces the device charts below on
+  // a storage alert (alertChartService's STORAGE_SCOPED_METRICS) and renders
+  // away on every other alert.
+  "{chart.storage}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
@@ -339,6 +344,9 @@ export const DEFAULT_ALERT_HTML = [
   "{chart.sdwanLatency}",
   "{chart.sdwanJitter}",
   "{chart.sdwanLoss}",
+  // See the text body: the storage chart replaces the device charts on a
+  // storage alert.
+  "{chart.storage}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
