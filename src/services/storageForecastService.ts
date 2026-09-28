@@ -21,7 +21,7 @@
  */
 
 import { prisma } from "../db.js";
-import { daysUntilFull } from "../utils/linearTrend.js";
+import { daysUntilFull, leastSquaresSlopePerDay, type TrendPoint } from "../utils/linearTrend.js";
 
 export interface StorageForecastRow {
   assetId: string;
@@ -43,6 +43,39 @@ export const FORECAST_MIN_POINTS = 7;
 /** Forecasts beyond this horizon are dropped — beyond a year is noise, not planning. */
 export const FORECAST_MAX_DAYS = 365;
 
+/**
+ * The per-(asset, mount, day) points every forecast is fitted on, as a `WITH`
+ * clause ending in `dedup`. ONE definition, shared by the fleet-wide fit below
+ * and the single-mount series the alert email draws
+ * (loadStorageForecastSeries), so the picture under a "days until full" alert
+ * is fitted on exactly the points the automation's number came from. `$1` is
+ * always the lookback in days; the two filters add whatever else narrows it.
+ */
+function dailyPointsCte(detailFilter: string, dailyFilter: string): string {
+  return `WITH pts AS (
+       SELECT s."assetId" AS "assetId", s."mountPath" AS "mountPath",
+              date_trunc('day', s."timestamp") AS day,
+              avg(s."usedBytes")::float8 AS used,
+              (ARRAY_AGG(s."totalBytes" ORDER BY s."timestamp" DESC) FILTER (WHERE s."totalBytes" IS NOT NULL))[1]::float8 AS total
+       FROM "asset_storage_samples" s
+       WHERE s."timestamp" > (now() AT TIME ZONE 'UTC') - ($1 || ' days')::interval
+         AND s."usedBytes" IS NOT NULL${detailFilter}
+       GROUP BY 1, 2, 3
+       UNION ALL
+       SELECT d."assetId", d."mountPath", d."bucketStart" AS day,
+              d."avgUsedBytes"::float8, d."lastTotalBytes"::float8
+       FROM "asset_storage_samples_daily" d
+       WHERE d."bucketStart" > (now() AT TIME ZONE 'UTC') - ($1 || ' days')::interval
+         AND d."avgUsedBytes" IS NOT NULL${dailyFilter}
+     ),
+     dedup AS (
+       -- Fast-cadence assets have BOTH a detail bucket and a rollup bucket for
+       -- the same day; keep one per (asset, mount, day) — the values agree.
+       SELECT DISTINCT ON ("assetId", "mountPath", day) "assetId", "mountPath", day, used, total
+       FROM pts ORDER BY "assetId", "mountPath", day
+     )`;
+}
+
 export async function computeStorageForecast(
   assetIds: string[] | null = null,
   lookbackDays: number = FORECAST_LOOKBACK_DAYS,
@@ -61,28 +94,7 @@ export async function computeStorageForecast(
     last_used: number | null;
     total_bytes: number | null;
   }>>(
-    `WITH pts AS (
-       SELECT s."assetId" AS "assetId", s."mountPath" AS "mountPath",
-              date_trunc('day', s."timestamp") AS day,
-              avg(s."usedBytes")::float8 AS used,
-              (ARRAY_AGG(s."totalBytes" ORDER BY s."timestamp" DESC) FILTER (WHERE s."totalBytes" IS NOT NULL))[1]::float8 AS total
-       FROM "asset_storage_samples" s
-       WHERE s."timestamp" > (now() AT TIME ZONE 'UTC') - ($1 || ' days')::interval
-         AND s."usedBytes" IS NOT NULL${idDetail}
-       GROUP BY 1, 2, 3
-       UNION ALL
-       SELECT d."assetId", d."mountPath", d."bucketStart" AS day,
-              d."avgUsedBytes"::float8, d."lastTotalBytes"::float8
-       FROM "asset_storage_samples_daily" d
-       WHERE d."bucketStart" > (now() AT TIME ZONE 'UTC') - ($1 || ' days')::interval
-         AND d."avgUsedBytes" IS NOT NULL${idDaily}
-     ),
-     dedup AS (
-       -- Fast-cadence assets have BOTH a detail bucket and a rollup bucket for
-       -- the same day; keep one per (asset, mount, day) — the values agree.
-       SELECT DISTINCT ON ("assetId", "mountPath", day) "assetId", "mountPath", day, used, total
-       FROM pts ORDER BY "assetId", "mountPath", day
-     )
+    `${dailyPointsCte(idDetail, idDaily)}
      SELECT "assetId", "mountPath",
             regr_slope(used, extract(epoch from day)::float8 / 86400.0) AS slope_per_day,
             count(*)::int AS points,
@@ -113,4 +125,73 @@ export async function computeStorageForecast(
   // severity-first on top; equal ranks keep this).
   out.sort((a, b) => a.daysUntilFull - b.daysUntilFull);
   return out;
+}
+
+/** One mount's forecast, with the daily points it was fitted on. */
+export interface StorageForecastSeries {
+  /** Daily average used bytes, ascending by day (`t` = the day's UTC start). */
+  points: TrendPoint[];
+  /** Latest known capacity, or null when the mount never reported one. */
+  totalBytes: number | null;
+  /** Fitted growth (bytes/day) — null when the fit does not qualify. */
+  slopePerDay: number | null;
+  /** Projected days until full — null exactly when `computeStorageForecast`
+   *  would leave this mount out (too few points, not growing, no capacity,
+   *  beyond FORECAST_MAX_DAYS). */
+  daysUntilFull: number | null;
+}
+
+/**
+ * The fit, from one mount's daily points. Pure; mirrors
+ * `computeStorageForecast` rule for rule — the same minimum point count, the
+ * same "growing only" gate, the same capacity and horizon cut-offs, and the
+ * same regression (`leastSquaresSlopePerDay` is the documented JS twin of
+ * Postgres `regr_slope` over epoch days) — so the forecast drawn under an
+ * alert says the same number the alert fired on. Points that do not qualify
+ * still come back, so the history can be drawn without a projection.
+ */
+export function forecastFromDailyPoints(
+  points: TrendPoint[],
+  totalBytes: number | null,
+  minPoints: number = FORECAST_MIN_POINTS,
+): StorageForecastSeries {
+  const none = { points, totalBytes, slopePerDay: null, daysUntilFull: null };
+  if (points.length < minPoints || totalBytes == null || totalBytes <= 0) return none;
+  const slope = leastSquaresSlopePerDay(points);
+  if (slope == null || slope <= 0) return none;
+  const days = daysUntilFull({ slopePerDay: slope, currentUsed: points[points.length - 1]!.v, totalBytes });
+  if (days == null || days > FORECAST_MAX_DAYS) return none;
+  return { points, totalBytes, slopePerDay: slope, daysUntilFull: Math.round(days * 10) / 10 };
+}
+
+/**
+ * One mount's forecast series — what the alert email's storage forecast chart
+ * draws. ONE read of the same daily points as `computeStorageForecast`
+ * (`dailyPointsCte`, narrowed to the asset and mount), then the fit in JS.
+ * Read-only; a failed read is the caller's to degrade.
+ */
+export async function loadStorageForecastSeries(
+  assetId: string,
+  mountPath: string,
+  lookbackDays: number = FORECAST_LOOKBACK_DAYS,
+): Promise<StorageForecastSeries> {
+  const rows = await prisma.$queryRawUnsafe<Array<{ day: Date; used: number | null; total: number | null }>>(
+    `${dailyPointsCte(
+      ` AND s."assetId" = $2 AND s."mountPath" = $3`,
+      ` AND d."assetId" = $2 AND d."mountPath" = $3`,
+    )}
+     SELECT day, used, total FROM dedup ORDER BY day`,
+    String(lookbackDays),
+    assetId,
+    mountPath,
+  );
+  const points: TrendPoint[] = [];
+  let total: number | null = null;
+  for (const r of rows) {
+    if (r.used == null) continue;
+    points.push({ t: new Date(r.day).getTime(), v: Number(r.used) });
+    // The newest day that reported a capacity wins, as in the fleet query.
+    if (r.total != null) total = Number(r.total);
+  }
+  return forecastFromDailyPoints(points, total);
 }

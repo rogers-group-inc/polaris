@@ -303,16 +303,17 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Per-filesystem "days until full" forecasting — the ONE shared computation behind the Storage Forecast dashboard widget (nocDashboardService `storageForecast` feed) and the `storageDaysUntilFull` automation metric (notificationEngine's asset-metric resolver).
 
-**Public API:** `computeStorageForecast(assetIds | null, lookbackDays?, minPoints?)` → `StorageForecastRow[]` (assetId, mountPath, daysUntilFull, usedPct, slopeBytesPerDay, points; soonest-full first), plus the tuning constants `FORECAST_LOOKBACK_DAYS` (30), `FORECAST_MIN_POINTS` (7), `FORECAST_MAX_DAYS` (365).
+**Public API:** `computeStorageForecast(assetIds | null, lookbackDays?, minPoints?)` → `StorageForecastRow[]` (assetId, mountPath, daysUntilFull, usedPct, slopeBytesPerDay, points; soonest-full first); `loadStorageForecastSeries(assetId, mountPath, lookbackDays?)` → `StorageForecastSeries` (the daily points, totalBytes, slopePerDay, daysUntilFull — one mount); the pure `forecastFromDailyPoints(points, totalBytes, minPoints?)`; plus the tuning constants `FORECAST_LOOKBACK_DAYS` (30), `FORECAST_MIN_POINTS` (7), `FORECAST_MAX_DAYS` (365).
 
-**Cross-service deps:** `prisma` (raw regr_slope aggregate over `asset_storage_samples` + `asset_storage_samples_daily`), `utils/linearTrend.daysUntilFull`.
+**Cross-service deps:** `prisma` (raw regr_slope aggregate over `asset_storage_samples` + `asset_storage_samples_daily`), `utils/linearTrend.daysUntilFull` + `leastSquaresSlopePerDay`.
 
-**Used by:** `nocDashboardService.getStorageForecast` (widget feed), `notificationEngine.resolveAssetMetricReadings` (the `storageDaysUntilFull` case — dimKey = mountPath, so single-trigger rules alert per filesystem and composite leaves fold ANY-mount).
+**Used by:** `nocDashboardService.getStorageForecast` (widget feed), `notificationEngine.resolveAssetMetricReadings` (the `storageDaysUntilFull` case — dimKey = mountPath, so single-trigger rules alert per filesystem and composite leaves fold ANY-mount), `alertChartService` (`loadStorageForecastSeries` — the forecast chart on a days-until-full alert email).
 
 **Invariants:**
 - Trend source is a UNION of day-bucketed DETAIL samples (7-day retention — covers every storage-scraped asset, incl. the slow 24h cadence) and the DAILY rollups (365-day retention but **cadence='fast' pinned assets only** — sampleRollupService's sqlStorageHourly cadence filter). Never rely on the rollups alone: unpinned assets would silently vanish from the forecast.
 - Growing mounts only (regr_slope > 0 in the HAVING) with ≥ minPoints distinct days — a flat/shrinking/new filesystem produces NO row, which is what keeps `storageDaysUntilFull <= N` automations silent for healthy mounts (absence of a reading is never a firing signal).
 - READ-ONLY over the hypertable + rollup table; one aggregate query, flat at 2000 assets.
+- **The alert email's forecast chart must quote the number the alert fired on** (2026-09-28). `computeStorageForecast` and `loadStorageForecastSeries` read ONE definition of the daily points (`dailyPointsCte` — `$1` is always the lookback; the caller appends its own asset/mount filter), and `forecastFromDailyPoints` is the JS mirror of the fleet query's HAVING + JS tail rule for rule: the same `FORECAST_MIN_POINTS`, growing-only (slope > 0), known capacity, `FORECAST_MAX_DAYS` cut-off, and "currentUsed = the newest DAY's average" (not the newest sample). `leastSquaresSlopePerDay` is the JS twin of `regr_slope` over epoch days. **Change the fit in one and you must change the other** — `tests/integration/storageForecastSeries.test.ts` pins them to the same days-until-full on real rows (and pins that a second mount on the asset does not leak in).
 
 **When changing this:** The lookback/min-points defaults are user-visible semantics (widget copy + metric help in notificationTypes) — change them in lockstep. If storage rollups ever stop filtering on cadence, the UNION dedup keeps working but the detail arm becomes redundant past 7 days.
 

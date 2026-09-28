@@ -22,7 +22,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logger } from "../utils/logger.js";
 import { notificationsPageUrl, pushDeepLinkUrl, ackUrlForEmail, ackUrlForPush, assetUrlForPush } from "../utils/notificationTemplate.js";
-import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, type ChartToken, type RenderedChart } from "./alertChartService.js";
+import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, isStorageScopedAlert, storageThresholdFromTrigger, type ChartToken, type RenderedChart } from "./alertChartService.js";
 import { buildInterfaceLldpBlocks, interfaceTokensIn, substituteInterfaceTokens } from "./alertInterfaceService.js";
 import { buildAlertBrandBlock, brandTokensIn, substituteBrandTokens, BRAND_LOGO_CID } from "./alertBrandService.js";
 import {
@@ -102,6 +102,8 @@ interface DeliveryRow {
 interface RenderMemo {
   charts: Map<string, Promise<Map<ChartToken, RenderedChart>>>;
   lossWindow: Map<string, Promise<number | null>>;
+  /** Per rule: the storage chart's threshold / forecast horizon. */
+  storageThreshold: Map<string, Promise<number | null>>;
   /** Keyed by notification AND dispatch: the recipient lines describe one
    *  fan-out, so the two email rows of a single fire share an entry while a
    *  reminder drained in the same pass gets its own. Both transports resolve
@@ -110,7 +112,7 @@ interface RenderMemo {
 }
 
 function newRenderMemo(): RenderMemo {
-  return { charts: new Map(), lossWindow: new Map(), recipients: new Map() };
+  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), recipients: new Map() };
 }
 
 /** Memoized read-through: one build per (alert, exact chart set) per drain. */
@@ -139,6 +141,24 @@ async function lossChartWindowMs(ruleId: string | null): Promise<number | null> 
     return sec ? sec * 1000 : null;
   } catch (err) {
     logger.debug({ err: (err as Error)?.message, ruleId }, "loss chart window lookup failed — using the default");
+    return null;
+  }
+}
+
+/**
+ * The automation's threshold for a STORAGE alert's chart — the dashed line on
+ * a usage chart, the forecast horizon (in days) on a days-until-full chart.
+ * Same shape and same degrade-to-null posture as `lossChartWindowMs`: one
+ * indexed read per drain per rule, and only for an alert that draws a storage
+ * chart.
+ */
+async function storageChartThreshold(ruleId: string | null): Promise<number | null> {
+  if (!ruleId) return null;
+  try {
+    const rule = await prisma.notificationRule.findUnique({ where: { id: ruleId }, select: { trigger: true } });
+    return rule ? storageThresholdFromTrigger(rule.trigger) : null;
+  } catch (err) {
+    logger.debug({ err: (err as Error)?.message, ruleId }, "storage chart threshold lookup failed — drawing without it");
     return null;
   }
 }
@@ -177,6 +197,12 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
     const wanted = chartTokensIn(text, html);
     if (wanted.size > 0) {
       const assetId = d.notification.assetId;
+      // A storage alert's chart draws the automation's own threshold (or, for
+      // days-until-full, uses it as the forecast horizon). Read only for an
+      // alert that will actually draw one.
+      const ruleThreshold = isStorageScopedAlert(d.notification.metric) && (wanted.has("chart.storage") || wanted.has("chart.trigger"))
+        ? await memoize(memo.storageThreshold, d.notification.ruleId ?? "", () => storageChartThreshold(d.notification.ruleId))
+        : null;
       // A test alert has no asset and no telemetry — it is about an invented
       // device — so its charts are GENERATED. Same memo key shape, same
       // pruning afterwards: the operator is testing what the email looks like,
@@ -192,6 +218,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
                 dimension: d.notification.dimension,
                 metric: d.notification.metric,
                 lossWindowMs: null,
+                ruleThreshold,
               }),
           )
         : assetId
@@ -211,6 +238,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
                 // instead of making `sensorName` mean four things.
                 dimension: d.notification.dimension,
                 metric: d.notification.metric,
+                ruleThreshold,
                 // The loss chart follows the automation's own History window; only
                 // resolved when the body embeds one, and only meaningful there.
                 lossWindowMs: wanted.has("chart.probeLoss") || wanted.has("chart.trigger")

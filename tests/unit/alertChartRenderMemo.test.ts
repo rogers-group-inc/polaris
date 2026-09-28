@@ -75,6 +75,8 @@ vi.mock("../../src/services/alertChartService.js", () => ({
   chartTokensIn: () => new Set(["chart.cpu"]),
   substituteChartTokens: (t: string) => t,
   attachmentsFor: () => [],
+  isStorageScopedAlert: () => false,
+  storageThresholdFromTrigger: () => null,
 }));
 
 vi.mock("../../src/services/alertInterfaceService.js", () => ({
