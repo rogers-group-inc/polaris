@@ -156,3 +156,27 @@ describe("pickSampleTier — FOREVER / off encoding", () => {
     expect(pickSampleTier(daysAgo(50), { detailDays: 7, hourlyDays: FOREVER }).tier).toBe("hourly");
   });
 });
+
+// The 30d preset equals hourlyDays and 7d equals detailDays. The route
+// computes `since` a few ms before the picker reads the clock, so without
+// slack a 30-day chart read hourly on a warm settings cache and daily on a
+// cold one — the chart redrew coarser minutes after opening.
+describe("pickSampleTier — preset range on the tier boundary", () => {
+  const msAgo = (days: number, extraMs: number) => new Date(Date.now() - days * 86400_000 - extraMs);
+
+  it("a 30d range computed moments earlier still reads hourly", () => {
+    expect(pickSampleTier(msAgo(30, 250), { detailDays: 7, hourlyDays: 30 }).tier).toBe("hourly");
+  });
+
+  it("a 7d range computed moments earlier still reads detail", () => {
+    expect(pickSampleTier(msAgo(7, 250), { detailDays: 7, hourlyDays: 30 }).tier).toBe("detail");
+  });
+
+  it("a range well past the window still drops a tier", () => {
+    expect(pickSampleTier(msAgo(30, 60 * 60_000), { detailDays: 7, hourlyDays: 30 }).tier).toBe("daily");
+  });
+
+  it("the grace never turns a tier that is off back on", () => {
+    expect(pickSampleTier(new Date(Date.now() - 1000), { detailDays: 0, hourlyDays: 0 }).tier).toBe("daily");
+  });
+});

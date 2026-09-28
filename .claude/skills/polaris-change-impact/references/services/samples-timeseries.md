@@ -132,6 +132,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - Tier decision uses ONLY the `since` timestamp (the oldest point binds the tier), not `until`; `DEFAULT_TIER_RETENTION` applies when per-asset overrides aren't available.
+- Each tier boundary carries a 5-minute grace (`TIER_BOUNDARY_GRACE_MS`). The 7d / 30d presets equal the default detail / hourly windows, and the route computes `since` before the picker reads its own clock across an await, so without slack the pick depended on whether the retention cache was warm — a 30-day chart opened on hourly and redrew on daily at the next refresh (fixed 2026-09-28). A tier set to 0 (off) stays off; the grace never re-enables it.
 - The returned `bucketSeconds` (0 / 3600 / 86400) signals to the client whether rates are pre-computed (rollup) or client-diffed (detail).
 
 **When changing this:**
