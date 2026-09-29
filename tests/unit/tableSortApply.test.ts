@@ -65,6 +65,24 @@ describe("TableSF.apply typed sorting", () => {
     expect(sf.apply(rows).map((r: any) => r.count)).toEqual([1, 2, 10]);
   });
 
+  it("number and date sorts put blank values last in both directions and fully order the rest", () => {
+    const sf = setup();
+    const mixed = [
+      { count: 40 }, { count: null }, { count: 5 }, { count: "" }, { count: 1800 },
+      { count: undefined }, { count: 26 }, { count: null }, { count: 7 },
+    ];
+    sf.setPrefs({ sortKey: "count", sortDir: "desc" });
+    expect(sf.apply(mixed).map((r: any) => r.count).slice(0, 5)).toEqual([1800, 40, 26, 7, 5]);
+    sf.setPrefs({ sortKey: "count", sortDir: "asc" });
+    const asc = sf.apply(mixed).map((r: any) => r.count);
+    expect(asc.slice(0, 5)).toEqual([5, 7, 26, 40, 1800]);
+    expect(asc.slice(5).every((v: unknown) => v == null || v === "")).toBe(true);
+
+    sf.setPrefs({ sortKey: "seen", sortDir: "asc" });
+    const dated = [{ seen: null }, { seen: "2026-02-01T00:00:00Z" }, { seen: "" }, { seen: "2026-01-01T00:00:00Z" }];
+    expect(sf.apply(dated).map((r: any) => r.seen).slice(0, 2)).toEqual(["2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"]);
+  });
+
   it("string sort walks dotted key paths case-insensitively and never reorders its input", () => {
     const sf = setup();
     sf.setPrefs({ sortKey: "block.name", sortDir: "asc" });

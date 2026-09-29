@@ -857,7 +857,15 @@ TableSF.prototype.apply = function (data) {
       return { row: row, v: sv };
     });
     decorated.sort(function (a, b) {
-      if (type === "number" || type === "date") return (a.v - b.v) * dir;
+      if (type === "number" || type === "date") {
+        // A blank cell (null / "" / unparseable) resolves to NaN, and
+        // `NaN - x` is NaN — an inconsistent comparator that leaves the
+        // column sorted only in the runs between blanks. Blanks sort last
+        // in both directions.
+        var an = a.v !== a.v, bn = b.v !== b.v;
+        if (an || bn) return an === bn ? 0 : (an ? 1 : -1);
+        return (a.v - b.v) * dir;
+      }
       return (a.v < b.v ? -1 : a.v > b.v ? 1 : 0) * dir;
     });
     result = decorated.map(function (d) { return d.row; });
