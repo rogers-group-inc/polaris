@@ -40,6 +40,7 @@ import { regionLevelIndex } from "./regionHierarchyService.js";
 import { ipInCidr } from "../utils/cidr.js";
 import { invalidateDownDetectionCache } from "./downDetectionService.js";
 import { scopeMatchesAsset } from "./notificationTypes.js";
+import { sdwanFilterSelects } from "../utils/sdwanDimensions.js";
 
 /**
  * Scope membership (ScopeAsset + scopeMatchesAsset) now lives in
@@ -140,10 +141,33 @@ function orderedOperator(op: string): MetricSeverityTier["operator"] | null {
 export async function getMetricSeverityTiers(
   assetId: string,
   metric: string,
-  dimension?: { sensorName?: string; sensorClass?: string; checkId?: string },
+  dimension?: MetricSeverityDimension,
 ): Promise<MetricSeverityTier[]> {
+  return (await getMetricSeverityTierResolver(assetId))(metric, dimension);
+}
+
+/** The concrete thing a chart (or strip segment) draws — see getMetricSeverityTiers. */
+export interface MetricSeverityDimension {
+  sensorName?: string;
+  sensorClass?: string;
+  checkId?: string;
+  /** SD-WAN pair (sdwan* metrics): a rule filtered to other health checks /
+   *  members must not shade this one. */
+  healthCheck?: string;
+  link?: string;
+}
+
+/**
+ * getMetricSeverityTiers with the rule + asset reads hoisted: load once, then
+ * ask for any number of (metric, dimension) pairs. The SD-WAN Members strip
+ * asks for three metrics across every (health check, member) pair of a gate —
+ * a dozen pairs — and one `findRulesMatchingAsset` per ask would be 36 reads
+ * for one table.
+ */
+export async function getMetricSeverityTierResolver(
+  assetId: string,
+): Promise<(metric: string, dimension?: MetricSeverityDimension) => MetricSeverityTier[]> {
   const rules = await findRulesMatchingAsset(assetId);
-  const collected: MetricSeverityTier[] = [];
   // A trigger carrying device-identifier dimensions (hostname / IP / MAC /
   // manufacturer / model) only evaluates devices it matches — shading this
   // asset's chart with a rule that filters it out would paint thresholds that
@@ -158,50 +182,60 @@ export async function getMetricSeverityTiers(
     : null;
   const deviceFilterSelects = (df: Parameters<typeof deviceFilterMatch>[0]): boolean =>
     deviceFilterMatch(df, asset ?? {});
+  // An SD-WAN chart / strip segment is ONE (health check, member) pair, and the
+  // pair filter is any-of ("|"-joined terms, utils/sdwanDimensions).
+  const sdwanSelects = (metric: string, df: unknown, dimension?: MetricSeverityDimension): boolean =>
+    !metric.startsWith("sdwan") || !dimension?.healthCheck || !dimension.link
+      || sdwanFilterSelects(df as { healthCheck?: string; link?: string } | undefined, { healthCheck: dimension.healthCheck, link: dimension.link });
 
-  for (const row of rules) {
-    const v2 = normalizeRuleToV2(row as Parameters<typeof normalizeRuleToV2>[0]);
-    const trigger = row.trigger as unknown as Trigger;
-    const ruleSeverity = String(row.severity) as Severity;
-    const push = (op: string, threshold: unknown, severity: Severity) => {
-      const operator = orderedOperator(op);
-      if (!operator || typeof threshold !== "number" || !Number.isFinite(threshold)) return;
-      collected.push({ severity, operator, threshold, ruleId: row.id, ruleName: row.name });
-    };
+  return (metric, dimension) => {
+    const collected: MetricSeverityTier[] = [];
+    for (const row of rules) {
+      const v2 = normalizeRuleToV2(row as Parameters<typeof normalizeRuleToV2>[0]);
+      const trigger = row.trigger as unknown as Trigger;
+      const ruleSeverity = String(row.severity) as Severity;
+      const push = (op: string, threshold: unknown, severity: Severity) => {
+        const operator = orderedOperator(op);
+        if (!operator || typeof threshold !== "number" || !Number.isFinite(threshold)) return;
+        collected.push({ severity, operator, threshold, ruleId: row.id, ruleName: row.name });
+      };
 
-    if (trigger.type === "asset_metric" && trigger.metric === metric) {
-      if (!deviceFilterSelects(trigger.dimensionFilter)) continue;
-      if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(trigger.dimensionFilter, dimension)) continue;
-      // A path-check chart is ONE check's series: a rule filtered to another
-      // check must not shade it.
-      if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(trigger.dimensionFilter, dimension)) continue;
-      for (const tier of resolveTierLadder(trigger.operator, trigger.threshold, ruleSeverity, trigger.forDurationSec ?? 0, v2.severityBands)) {
-        push(tier.operator, tier.threshold, tier.severity as Severity);
+      if (trigger.type === "asset_metric" && trigger.metric === metric) {
+        if (!deviceFilterSelects(trigger.dimensionFilter)) continue;
+        if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(trigger.dimensionFilter, dimension)) continue;
+        // A path-check chart is ONE check's series: a rule filtered to another
+        // check must not shade it.
+        if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(trigger.dimensionFilter, dimension)) continue;
+        if (!sdwanSelects(metric, trigger.dimensionFilter, dimension)) continue;
+        for (const tier of resolveTierLadder(trigger.operator, trigger.threshold, ruleSeverity, trigger.forDurationSec ?? 0, v2.severityBands)) {
+          push(tier.operator, tier.threshold, tier.severity as Severity);
+        }
+        continue;
       }
-      continue;
+
+      if (trigger.type === "composite") {
+        for (const leaf of collectCompositeMetricLeaves(trigger)) {
+          if (leaf.type !== "asset_metric" || leaf.metric !== metric) continue;
+          if (!deviceFilterSelects(leaf.dimensionFilter)) continue;
+          if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(leaf.dimensionFilter, dimension)) continue;
+          if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(leaf.dimensionFilter, dimension)) continue;
+          if (!sdwanSelects(metric, leaf.dimensionFilter, dimension)) continue;
+          push(leaf.operator, leaf.threshold, ruleSeverity);
+        }
+      }
     }
 
-    if (trigger.type === "composite") {
-      for (const leaf of collectCompositeMetricLeaves(trigger)) {
-        if (leaf.type !== "asset_metric" || leaf.metric !== metric) continue;
-        if (!deviceFilterSelects(leaf.dimensionFilter)) continue;
-        if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(leaf.dimensionFilter, dimension)) continue;
-        if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(leaf.dimensionFilter, dimension)) continue;
-        push(leaf.operator, leaf.threshold, ruleSeverity);
-      }
+    // One tier per severity: keep the most sensitive threshold in its direction.
+    const bySeverity = new Map<string, MetricSeverityTier>();
+    for (const t of collected) {
+      const key = `${t.severity}|${t.operator === ">" || t.operator === ">=" ? "up" : "down"}`;
+      const prev = bySeverity.get(key);
+      if (!prev) { bySeverity.set(key, t); continue; }
+      const moreSensitive = key.endsWith("up") ? t.threshold < prev.threshold : t.threshold > prev.threshold;
+      if (moreSensitive) bySeverity.set(key, t);
     }
-  }
-
-  // One tier per severity: keep the most sensitive threshold in its direction.
-  const bySeverity = new Map<string, MetricSeverityTier>();
-  for (const t of collected) {
-    const key = `${t.severity}|${t.operator === ">" || t.operator === ">=" ? "up" : "down"}`;
-    const prev = bySeverity.get(key);
-    if (!prev) { bySeverity.set(key, t); continue; }
-    const moreSensitive = key.endsWith("up") ? t.threshold < prev.threshold : t.threshold > prev.threshold;
-    if (moreSensitive) bySeverity.set(key, t);
-  }
-  return Array.from(bySeverity.values()).sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+    return Array.from(bySeverity.values()).sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+  };
 }
 
 /** Flatten a composite trigger's tree to its leaves (groups nest ≤3 deep).

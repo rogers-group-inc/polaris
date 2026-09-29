@@ -33,6 +33,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { triggerDimensionApplicable, type RuleScope } from "./notificationTypes.js";
 import { poeIsFault } from "../utils/poePorts.js";
+import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
 import { loadScopeAssetIds } from "./notificationEngine.js";
 import { listStateProbes } from "./manufacturerProfileService.js";
 
@@ -296,17 +297,23 @@ const DIMENSION_SOURCES: Record<string, DimensionSource> = {
     noun: "SD-WAN WAN members",
     strict: false,
     candidateWhere: { assetType: "firewall" },
-    narrowLabel: (n) => (n.healthCheck ? ` for health check ${n.healthCheck}` : ""),
-    pairs: async (ids, since, narrow) =>
-      (await prisma.assetPerfSlaSample.groupBy({
+    narrowLabel: (n) => {
+      const terms = sdwanDimensionTerms(n.healthCheck);
+      return terms.length === 0 ? "" : terms.length === 1 ? ` for health check ${terms[0]}` : ` for health checks ${terms.join(" or ")}`;
+    },
+    pairs: async (ids, since, narrow) => {
+      // Any-of substring over the "|"-joined health checks, mirroring how the
+      // engine filters it (utils/sdwanDimensions → sdwanDimensionMatch).
+      const terms = sdwanDimensionTerms(narrow.healthCheck);
+      return (await prisma.assetPerfSlaSample.groupBy({
         by: ["link", "assetId"],
         where: {
           assetId: { in: ids },
           timestamp: { gte: since },
-          // substringMatch semantics, mirroring how the engine filters it.
-          ...(narrow.healthCheck ? { healthCheck: { contains: narrow.healthCheck, mode: "insensitive" as const } } : {}),
+          ...(terms.length ? { OR: terms.map((t) => ({ healthCheck: { contains: t, mode: "insensitive" as const } })) } : {}),
         },
-      })).map((r) => ({ value: r.link, assetId: r.assetId })),
+      })).map((r) => ({ value: r.link, assetId: r.assetId }));
+    },
   },
   tunnelName: {
     // The pin set (`Asset.monitoredIpsecTunnels`), mirroring ifNamePattern:

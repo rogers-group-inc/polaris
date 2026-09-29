@@ -22,7 +22,7 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-const { getMetricSeverityTiers } = await import("../../src/services/notificationRuleService.js");
+const { getMetricSeverityTiers, getMetricSeverityTierResolver } = await import("../../src/services/notificationRuleService.js");
 
 const ASSET = {
   id: "a1",
@@ -98,6 +98,24 @@ describe("getMetricSeverityTiers", () => {
     ]);
     expect(await getMetricSeverityTiers("a1", "hwSensorValue", { sensorName: "CPU ON-DIE Temperature", sensorClass: "temperature" })).toHaveLength(1);
     expect(await getMetricSeverityTiers("a1", "hwSensorValue", { sensorName: "TMP1 External Temperature", sensorClass: "temperature" })).toEqual([]);
+  });
+
+  it("shades an SD-WAN pair only with rules whose any-of health-check / member filter selects it", async () => {
+    const loss = (id: string, dimensionFilter?: Record<string, string>, threshold = 5) => rule({
+      id, name: id, severity: "warning",
+      trigger: { type: "asset_metric", metric: "sdwanPacketLoss", operator: ">=", threshold, forDurationSec: 0, aggregation: "latest", windowSec: 0, ...(dimensionFilter ? { dimensionFilter } : {}) },
+    });
+    findMany.mockResolvedValue([
+      loss("underlays", { healthCheck: "Primary WAN|Secondary WAN", link: "wan" }, 2),
+      loss("everything", undefined, 10),
+    ]);
+    const tierFor = await getMetricSeverityTierResolver("a1");
+    // The pair both select: the more sensitive threshold wins its severity.
+    expect(tierFor("sdwanPacketLoss", { healthCheck: "Secondary WAN", link: "wan2" }).map((t) => t.ruleId)).toEqual(["underlays"]);
+    // An overlay on another health check: only the unfiltered rule applies.
+    expect(tierFor("sdwanPacketLoss", { healthCheck: "Metrocenter", link: "Overlay-3" }).map((t) => t.ruleId)).toEqual(["everything"]);
+    // One rule read for any number of questions.
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 
   it("ignores rules on other metrics and non-numeric comparators", async () => {

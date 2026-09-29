@@ -146,7 +146,7 @@ const dimensionValuesSchema = z.object({
   // health-check) so the picker can't offer a value that matches nothing.
   narrow: z.object({
     sensorClass: z.string().max(100).optional(),
-    healthCheck: z.string().max(200).optional(),
+    healthCheck: z.string().max(1000).optional(), // "|"-joined any-of, like the dimensionFilter
     // State-probe rows belong to one probe (the row list for "PSU alarm" is not
     // the row list for "fan tray OK").
     stateProbeId: z.string().max(200).optional(),

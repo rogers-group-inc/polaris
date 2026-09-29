@@ -651,8 +651,11 @@ const dimensionFilterSchema = z
     // per ruleName dimension; this narrows to the named rule[s]). Substring-
     // matched like every other *Pattern dimension.
     sdwanRulePattern: z.string().max(200).optional(),
-    healthCheck: z.string().max(200).optional(),
-    link: z.string().max(200).optional(),
+    // SD-WAN pair: one value, or several joined by "|" — any-of, each term a
+    // substring (utils/sdwanDimensions). Longer than the single-pattern
+    // dimensions because it holds a list.
+    healthCheck: z.string().max(1000).optional(),
+    link: z.string().max(1000).optional(),
     tunnelName: z.string().max(200).optional(),
     widgetId: z.string().max(200).optional(),
     processNamePattern: z.string().max(200).optional(),
