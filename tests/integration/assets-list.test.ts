@@ -418,3 +418,73 @@ d("GET /api/v1/assets — tags column", () => {
     expect(resp.body.total).toBe(3);
   });
 });
+
+// ─── IP Address column: network filter (in_networks) + Network column ────────
+
+d("GET /api/v1/assets — IP network filter", () => {
+  const IPS: Record<string, string | null> = {
+    "alpha-srv": "10.1.2.3",
+    "beta-sw": "10.10.2.3",
+    "gamma-fw": "10.1.20.9",
+    "delta-srv": "192.168.5.200",
+    "epsilon-srv": "not-an-ip",
+    "zeta-wks": null,
+  };
+  async function seedIps() {
+    await seedAssets();
+    for (const [hostname, ipAddress] of Object.entries(IPS)) {
+      await prisma.asset.updateMany({ where: { hostname }, data: { ipAddress } });
+    }
+  }
+  const get = async (qs: string) => {
+    const { agent } = await authedAgent(app);
+    return agent.get("/api/v1/assets?sortBy=hostname&sortDir=asc&ipAddressOp=in_networks&" + qs);
+  };
+
+  it("a partial address matches by whole octets, never a longer octet", async () => {
+    await seedIps();
+    const resp = await get("ipAddress=10.1");
+    expect(resp.status).toBe(200);
+    expect(hostnames(resp.body)).toEqual(["alpha-srv", "gamma-fw"]);
+  });
+
+  it("a CIDR off an octet boundary selects exactly its range", async () => {
+    await seedIps();
+    expect(hostnames((await get("ipAddress=" + encodeURIComponent("10.1.16.0/20"))).body)).toEqual(["gamma-fw"]);
+    expect(hostnames((await get("ipAddress=" + encodeURIComponent("192.168.5.128/25"))).body)).toEqual(["delta-srv"]);
+  });
+
+  it("several networks OR together, and a malformed stored IP never breaks the query", async () => {
+    await seedIps();
+    const resp = await get("ipAddress=" + encodeURIComponent("10.10,192.168.5.0/24"));
+    expect(resp.status).toBe(200);
+    expect(hostnames(resp.body)).toEqual(["beta-sw", "delta-srv"]);
+    expect(resp.body.total).toBe(2);
+  });
+
+  it("an invalid term is a 400, not a silently wider filter", async () => {
+    await seedIps();
+    const resp = await get("ipAddress=" + encodeURIComponent("10.1,10.1.300"));
+    expect(resp.status).toBe(400);
+  });
+
+  it("list rows name the IPAM network the IP sits in (most specific)", async () => {
+    await seedIps();
+    const block = await prisma.ipBlock.create({ data: { name: "t-in-networks", cidr: "10.1.0.0/16", ipVersion: "v4" } });
+    try {
+      await prisma.subnet.create({ data: { blockId: block.id, cidr: "10.1.0.0/16", name: "Plant wide" } });
+      await prisma.subnet.create({ data: { blockId: block.id, cidr: "10.1.2.0/24", name: "Scale house" } });
+      const { agent } = await authedAgent(app);
+      const resp = await agent.get("/api/v1/assets?limit=100");
+      const ctx = Object.fromEntries(
+        (resp.body.assets as Array<{ hostname: string; ipContext: { subnetName: string } | null }>)
+          .map((a) => [a.hostname, a.ipContext?.subnetName ?? null]),
+      );
+      expect(ctx["alpha-srv"]).toBe("Scale house");
+      expect(ctx["gamma-fw"]).toBe("Plant wide");
+      expect(ctx["beta-sw"]).toBeNull();
+    } finally {
+      await prisma.ipBlock.delete({ where: { id: block.id } }); // cascades its subnets
+    }
+  });
+});

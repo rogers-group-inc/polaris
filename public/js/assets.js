@@ -1106,6 +1106,12 @@ function _pushAssetText(params, paramKey, raw) {
       if (!q) return;
       params[paramKey] = q;
       params[paramKey + "Op"] = "not_contains";
+    } else if (raw.op === "in-networks") {
+      // IP Address column: any-of IPv4 prefixes / CIDRs (TableSF ipnet filter).
+      var terms = (raw.terms || []).map(function (t) { return String(t).trim(); }).filter(Boolean);
+      if (!terms.length) return;
+      params[paramKey] = terms.join(",");
+      params[paramKey + "Op"] = "in_networks";
     }
   }
 }
@@ -1173,7 +1179,7 @@ async function fetchAssetsPage() {
     _assetsData = all.map(_mapAsset);
     renderAssetsPage();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="23" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="24" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
   }
 }
 
@@ -1731,8 +1737,8 @@ function renderAssetsPage() {
   if (_assetsData.length === 0) {
     var hasFilters = _assetsSF && _assetsSF._filters && Object.keys(_assetsSF._filters).length > 0;
     tbody.innerHTML = hasFilters
-      ? '<tr><td colspan="23" class="empty-state">No results match the current filters.</td></tr>'
-      : '<tr><td colspan="23" class="empty-state">No assets found. Add one to get started.</td></tr>';
+      ? '<tr><td colspan="24" class="empty-state">No results match the current filters.</td></tr>'
+      : '<tr><td colspan="24" class="empty-state">No assets found. Add one to get started.</td></tr>';
     _renderAssetsPageControls();
     _assetsUpdateSelectAll();
     return;
@@ -1755,6 +1761,7 @@ function renderAssetsPage() {
         (a.assetTag ? '<br><span class="asset-tag-label">' + escapeHtml(a.assetTag) + '</span>' : '') +
       '</td>' +
       '<td class="mono">' + ipCellHTML(a) + '</td>' +
+      '<td>' + assetNetworkCellHTML(a) + '</td>' +
       '<td>' + _copyableCell(a.serialNumber) + '</td>' +
       '<td>' + assetTypeBadge(a.assetType, a) + '</td>' +
       '<td>' + assetStatusBadge(a) + '</td>' +
@@ -1896,6 +1903,16 @@ function _assetsUpdateBulkBar() {
 // "Open in Networks" button is the escape hatch when they want the full
 // subnet IP table. Hidden when the asset has no IP or no non-deprecated
 // containing subnet — there is nothing to look at.
+// Network column (hidden by default): the IPAM network the primary IP sits in
+// — the same most-specific containing subnet ipContext resolves for View
+// Lease. Name first, CIDR on hover; a network with no name shows its CIDR.
+function assetNetworkCellHTML(a) {
+  var ctx = a && a.ipContext;
+  if (!ctx || !ctx.subnetCidr) return "-";
+  var name = (ctx.subnetName || "").trim();
+  return '<span title="' + escapeHtml(ctx.subnetCidr) + '">' + escapeHtml(name || ctx.subnetCidr) + '</span>';
+}
+
 function _viewLeaseActionHTML(a) {
   if (!a.ipAddress) return '';
   var ctx = a.ipContext;

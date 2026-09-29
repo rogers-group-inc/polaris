@@ -359,6 +359,11 @@
                 <code>dnsName</code>, <code>description</code>) plus an optional
                 <code>&lt;column&gt;Op</code> of <code>contains</code> (default),
                 <code>not_contains</code>, <code>empty</code>, <code>is_not_empty</code>.</li>
+            <li><code>ipAddress</code> also takes <code>ipAddressOp=in_networks</code>: a
+                comma-separated list of IPv4 networks, matched when the primary IP falls in
+                <em>any</em> of them. Each entry is a partial address (<code>10.1</code> =
+                10.1.0.0/16), a full address (exact) or a CIDR (<code>10.1.16.0/20</code>); at
+                most 50, and an invalid entry is a <code>400</code>.</li>
             <li><code>department</code> (contains match), <code>lastSeenFrom</code> /
                 <code>lastSeenTo</code> (<code>YYYY-MM-DD</code>).</li>
             <li><code>sortBy</code> (whitelisted column names; an unknown value is a

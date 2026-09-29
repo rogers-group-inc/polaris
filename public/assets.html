@@ -110,7 +110,13 @@
               <th class="cb-col"><input type="checkbox" id="assets-select-all" title="Select all on this page"></th>
               <th class="fav-col" title="Favorites pin to the top"></th>
               <th data-sf-key="hostname" data-sf-type="string">Hostname</th>
-              <th data-sf-key="ipAddress" data-sf-type="ip">IP Address</th>
+              <!-- data-sf-filter="ipnet": the filter takes IPv4 prefixes
+                   (10.1) or CIDRs (10.1.0.0/16), "+" for more, any-of —
+                   matched server-side by the in_networks op. -->
+              <th data-sf-key="ipAddress" data-sf-type="ip" data-sf-filter="ipnet">IP Address</th>
+              <!-- The IPAM network (most-specific non-deprecated subnet) the
+                   primary IP sits in — ipContext.subnetName. Display only. -->
+              <th data-col-id="network" data-col-default-hidden="true">Network</th>
               <th data-sf-key="serialNumber" data-sf-type="string">Serial Number</th>
               <!-- data-sf-options here is only the pre-fetch seed (the built-in
                    registry rows). assets.js replaces the list with the live
@@ -153,7 +159,7 @@
             </tr>
           </thead>
           <tbody id="assets-tbody">
-            <tr><td colspan="23" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="24" class="empty-state">Loading...</td></tr>
           </tbody>
         </table>
       </div>

@@ -20,13 +20,28 @@ serial — describes.
 
 ## The list
 
-**Columns:** Hostname · IP Address · Serial Number · Type · State · **Status** ·
+**Columns:** Hostname · IP Address · Network · Serial Number · Type · State · **Status** ·
 **Sources** · Description · Tags · Asset Tag · Manufacturer · Model · OS / Firmware ·
 MAC Address · Assigned To · Purchase Order · DNS Name · Latitude · Longitude ·
 Last Seen.
 
 Columns are sortable, inline-filterable, resizable and hideable. **Column order
 is per view tab; widths and visibility are per screen.**
+
+**IP Address** filters by network, not by text. Type the first one, two or
+three octets (`10`, `10.1`, `10.1.2`) to see every device in that range —
+`10.1` never matches `10.10.x.x` — or a network in CIDR form (`10.1.16.0/20`,
+`192.168.5.128/25`) to see just the devices inside it. A full address matches
+that one device. The **+** beside the box adds another box, as many as you
+like, and a device shows when it is in **any** of them; **×** removes one. A
+box that isn't a valid prefix or CIDR is outlined red and ignored. The **▾**
+menu still offers *Is empty* / *Is not empty*. The filter looks at each
+device's primary IP.
+
+**Network** (hidden by default — turn it on from the column gear) names the
+IPAM network the device's primary IP sits in: the most specific
+non-deprecated network that contains it, the same one **View Lease** opens.
+Hover it for the CIDR; a device whose IP is in no recorded network shows `-`.
 
 **Tags** lists the asset's tags. Its filter matches any single tag containing
 the text (case doesn't matter), so `prod` finds `Production`; **Is empty** finds
