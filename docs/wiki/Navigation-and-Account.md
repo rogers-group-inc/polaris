@@ -72,6 +72,7 @@ Click your username, top right. What appears depends on your account:
 |---|---|
 | **Notifications: …** | always — names your current delivery preference and opens the three-way chooser |
 | **Timezone: …** | always |
+| **Layout: …** | always — names the page layout in force and opens the three-way chooser |
 | **Change password** | local accounts only |
 | **Set up two-factor auth** | local accounts only |
 | **Passkeys** | local accounts, where the install allows them and the browser can host one |
@@ -122,6 +123,21 @@ Polaris server's clock and names that zone in its footer — "Times shown in CDT
 (America/Chicago)". Rendering per reader would mean a separate copy per zone,
 and a copy per zone is a To line that no longer shows you who else is on the
 alert.
+
+### Layout
+
+How wide Polaris may grow in your browser window:
+
+| Layout | What you get |
+|---|---|
+| **16:9** (default) | a 16:9 column centred in the window — on a wider monitor the sidebar, tables and slide-overs keep to that column and the sides stay empty |
+| **16:10** | the same, a little wider — suits 16:10 laptops and monitors (1920×1200, 2560×1600) |
+| **Auto** | fills the window, however wide it is — on an ultrawide the sidebar sits at the far left, tables use the full width and slide-overs open at the far right edge |
+
+The choice applies straight away and is kept **per browser**, not per account.
+The right answer depends on the monitor, so you can use Auto on an ultrawide
+at your desk and 16:9 on a laptop. The Dash wallboard and the phone app ignore
+this setting.
 
 ### Change password
 

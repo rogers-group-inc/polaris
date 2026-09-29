@@ -50,6 +50,7 @@ interface Item {
 function open(opts: {
   pref?: Item | null;
   tz?: Item | null;
+  layout?: Item | null;
   pw?: Item | null;
   totp?: Item | null;
   passkeys?: Item | null;
@@ -65,6 +66,10 @@ function open(opts: {
   };
   g._notifPrefMenuItem = () => (opts.pref === undefined ? null : opts.pref);
   g._tzMenuItem = () => (opts.tz === undefined ? null : opts.tz);
+  // Stubbed to absent by default so the label-order cases below keep pinning
+  // the other rows; the real row (which always renders) is covered in the
+  // layout describe at the bottom.
+  g._layoutMenuItem = () => (opts.layout === undefined ? null : opts.layout);
   g._changePasswordMenuItem = () => (opts.pw === undefined ? null : opts.pw);
   g._totpMenuItem = () => (opts.totp === undefined ? null : opts.totp);
   g._passkeyMenuItem = () => (opts.passkeys === undefined ? null : opts.passkeys);
@@ -180,6 +185,23 @@ describe("openUserMenu", () => {
     expect(r.labels).toEqual(["Timezone: Automatic", "—", "Help", "—", "Logout"]);
   });
 
+  it("slots the layout row after the timezone, with the display preferences", () => {
+    const r = open({
+      tz: { label: "Timezone: Automatic", icon: "<svg/>", onSelect: () => {} },
+      layout: { label: "Layout: 16:9", icon: "<svg/>", onSelect: () => {} },
+      pw: { label: "Change password", icon: "<svg/>", onSelect: () => {} },
+    });
+    expect(r.labels).toEqual([
+      "Timezone: Automatic",
+      "Layout: 16:9",
+      "Change password",
+      "—",
+      "Help",
+      "—",
+      "Logout",
+    ]);
+  });
+
   it("omits the two-factor row for an SSO account without disturbing the rest", () => {
     const r = open({ pref: { label: "Notifications: Email", icon: "<svg/>", onSelect: () => {} }, totp: null });
     expect(r.labels).toEqual(["Notifications: Email", "—", "Help", "—", "Logout"]);
@@ -226,5 +248,74 @@ describe("openUserMenu", () => {
     const r = open();
     r.items[r.items.length - 1].onSelect!();
     expect(r.fetches).toEqual(["/api/v1/auth/logout"]);
+  });
+});
+
+/**
+ * The layout preference (16:9 / 16:10 / Auto). It is per BROWSER, held in
+ * localStorage["polaris-layout"] and applied as data-layout on <html>, which
+ * the --layout-max-width token in styles.css keys on. Evaluated from the real
+ * source: the constants, the boot IIFE and the three helpers.
+ */
+describe("layout preference", () => {
+  function load(saved: string | null) {
+    const start = APP_JS.indexOf("var LAYOUTS = [");
+    const bootKey = "localStorage.getItem(LAYOUT_STORAGE_KEY)";
+    const end = APP_JS.indexOf("})();", APP_JS.indexOf(bootKey)) + "})();".length;
+    if (start < 0 || end < start) throw new Error("layout block not found in app.js");
+
+    document.documentElement.removeAttribute("data-layout");
+    localStorage.clear();
+    if (saved !== null) localStorage.setItem("polaris-layout", saved);
+
+    const menus: { items: Item[]; opts: Record<string, unknown> }[] = [];
+    const g = globalThis as Record<string, unknown>;
+    g.showRowMenu = (_a: unknown, items: Item[], o: Record<string, unknown>) => { menus.push({ items, opts: o }); };
+    g.ICONS = { monitor: "<svg id='monitor'/>" };
+
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const api = new Function(
+      APP_JS.slice(start, end) + "\n" +
+      extractFn("_layoutMenuItem") + "\n" + extractFn("_openLayoutMenu") + "\n" + extractFn("_setLayout") +
+      "\nreturn { _layoutMenuItem: _layoutMenuItem, _setLayout: _setLayout };",
+    )() as { _layoutMenuItem: (a: unknown) => Item; _setLayout: (id: string) => void };
+    return { ...api, menus };
+  }
+
+  it("defaults to 16:9 on a fresh browser", () => {
+    load(null);
+    expect(document.documentElement.getAttribute("data-layout")).toBe("16x9");
+  });
+
+  it("restores a saved layout at boot", () => {
+    load("auto");
+    expect(document.documentElement.getAttribute("data-layout")).toBe("auto");
+  });
+
+  it("falls back to 16:9 for an unknown saved value rather than going full-bleed", () => {
+    load("21x9");
+    expect(document.documentElement.getAttribute("data-layout")).toBe("16x9");
+  });
+
+  it("labels the row with the layout in force", () => {
+    const l = load("16x10");
+    const row = l._layoutMenuItem({});
+    expect(row.label).toBe("Layout: 16:10");
+    expect(row.icon).toBeTruthy();
+  });
+
+  it("opens a three-way chooser that ticks the current layout", () => {
+    const l = load(null);
+    l._layoutMenuItem({}).onSelect!();
+    expect(l.menus).toHaveLength(1);
+    expect(l.menus[0].items.map((i) => i.label)).toEqual(["16:9  ✓", "16:10", "Auto"]);
+  });
+
+  it("applies and persists a choice without a reload", () => {
+    const l = load(null);
+    l._layoutMenuItem({}).onSelect!();
+    l.menus[0].items[2].onSelect!();
+    expect(document.documentElement.getAttribute("data-layout")).toBe("auto");
+    expect(localStorage.getItem("polaris-layout")).toBe("auto");
   });
 });
