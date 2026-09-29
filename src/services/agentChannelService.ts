@@ -51,7 +51,7 @@ import { CMD_WAKE_CHANNEL, CFG_REFRESH_CHANNEL } from "./agentCommandWake.js";
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const PROBE_NOW_DEFAULT_TIMEOUT_MS = 10_000;
 
-interface Session {
+export interface Session {
   ws:        WebSocket;
   assetId:   string;
   /**
@@ -74,6 +74,18 @@ const sessions = new Map<string, Session>();
 // ─── Lifecycle ────────────────────────────────────────────────────────
 
 export function attach(managedAgentId: string, assetId: string, ws: WebSocket): void {
+  // A socket that is no longer OPEN is an attempt the agent already abandoned
+  // (its 10s handshake timeout ran out while the bearer verify queued behind a
+  // restart's reconnect herd) and has since redialed. Registering it would
+  // write agent.connected, then displace the live retry below, then write a
+  // warning agent.disconnected when it finishes dying — so it is dropped
+  // before it can touch the map. 1 = WebSocket.OPEN (ws is a type-only import).
+  if (ws.readyState !== 1) {
+    logger.info({ managedAgentId, readyState: ws.readyState }, "Dropping agent WS that closed before attach");
+    try { ws.terminate(); } catch { /* already gone */ }
+    return;
+  }
+
   // Replace any existing session — the new attach wins. (Operator reinstall
   // on the same host stamps a fresh row; or a transient network blip caused
   // the agent to reconnect before our half noticed the drop.)
@@ -101,14 +113,21 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
 
   // Wire incoming frames (only thing we expect at this layer is
   // probe-now-response; other frame types are forwarded to handlers).
+  //
+  // close / error / heartbeat are bound to THIS session, not to the agent id.
+  // A replaced socket's close event lands asynchronously — after the closing
+  // handshake, well after the new session took the map slot — and an id-keyed
+  // detach from it tore down the agent's live replacement and wrote a warning
+  // `agent.disconnected` for a connection that was fine. That fired for every
+  // agent that double-dialed during a server restart's reconnect herd.
   ws.on("message", (data) => onFrame(managedAgentId, data));
   ws.on("pong", () => { session.pongSeen = true; });
   ws.on("close", (code, reason) => {
-    detach(managedAgentId, `socket closed: ${code} ${reason.toString().slice(0, 80)}`);
+    detach(managedAgentId, `socket closed: ${code} ${reason.toString().slice(0, 80)}`, session);
   });
   ws.on("error", (err) => {
     logger.warn({ err, managedAgentId }, "Agent WS error");
-    detach(managedAgentId, "socket error");
+    detach(managedAgentId, "socket error", session);
   });
 
   // Heartbeat — ping every 30s; if no pong came back since the last ping,
@@ -116,7 +135,7 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
   // flips pongSeen=true when the agent replies.
   session.pingTimer = setInterval(() => {
     if (!session.pongSeen) {
-      detach(managedAgentId, "heartbeat timeout");
+      detach(managedAgentId, "heartbeat timeout", session);
       return;
     }
     session.pongSeen = false;
@@ -165,9 +184,15 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
   })();
 }
 
-export function detach(managedAgentId: string, reason: string): void {
+/**
+ * `only` scopes the detach to one session: when the map already holds a
+ * different one (this socket was replaced), nothing is torn down and no event
+ * is written — the replacement is the agent's live connection.
+ */
+export function detach(managedAgentId: string, reason: string, only?: Session): void {
   const session = sessions.get(managedAgentId);
   if (!session) return;
+  if (only && session !== only) return;
   sessions.delete(managedAgentId);
   teardown(session, reason);
   void prisma.managedAgent.update({
