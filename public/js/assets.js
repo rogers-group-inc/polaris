@@ -15253,25 +15253,53 @@ function _sdwanMemberColor(name, members) {
   return _SDWAN_MEMBER_COLORS[idx % _SDWAN_MEMBER_COLORS.length];
 }
 
-// Compact green/red "Health Check Status" strip — one segment per recent scrape.
+// Compact "Health Check Status" strip — one segment per recent scrape.
+//
+// A segment is judged server-side (readSdwanMembers → sdwanSegmentVerdict):
+//   red    — dead in some health check, or alive but over that health check's
+//            own SLA target (`outOfSla`): the FortiGate's verdict wins outright;
+//   severity colour — alive and in SLA, but an SD-WAN automation's severity
+//            tier would fire on the reading (`severity`), in the flat per-
+//            severity palette (PolarisChartSeverity.downColorOf) that holds on
+//            every theme;
+//   green  — alive, in SLA, and no automation tier crossed.
 //
 // The strip is pure color: its segments carry no text at all. The table
 // screenshot rasterizes the live DOM, so the strip reaches the image as it
 // looks here — but its FALLBACK composer (_screenshotTableElText) re-draws cell
 // TEXT, and there the column came out blank. data-shot-text/-color hand that
 // path the summary the segments add up to instead.
+function _sdwanStripSegment(r) {
+  var UP = "#2ecc40", DOWN = "#e02020";
+  if (!r.up) return { color: DOWN, label: "down" };
+  if (r.outOfSla) return { color: DOWN, label: "out of SLA" };
+  if (r.severity) {
+    var cs = window.PolarisChartSeverity;
+    return { color: cs && cs.downColorOf ? cs.downColorOf(r.severity) : DOWN, label: "up — " + r.severity + " by automation" };
+  }
+  return { color: UP, label: "up" };
+}
 function _sdwanStatusStripHTML(recent) {
   if (!recent || !recent.length) return '<span style="color:var(--color-text-tertiary)">—</span>';
+  // `up` counts alive, in-SLA scrapes — a severity-shaded one is still up, and
+  // the summary names the worst severity beside the count instead.
   var up = 0;
+  var worst = null;
+  var order = (window.PolarisChartSeverity && window.PolarisChartSeverity.SEV_ORDER) || [];
   var segs = recent.map(function (r) {
-    if (r.up) up++;
-    var c = r.up ? "#2ecc40" : "#e02020";
-    return '<span title="' + escapeHtml(_fmtTooltipTs(r.timestamp)) + (r.up ? ' — up' : ' — down') +
-      '" style="flex:1 1 auto;min-width:2px;height:16px;background:' + c + '"></span>';
+    var seg = _sdwanStripSegment(r);
+    if (r.up && !r.outOfSla) {
+      up++;
+      if (r.severity && (worst === null || order.indexOf(r.severity) > order.indexOf(worst))) worst = r.severity;
+    }
+    return '<span title="' + escapeHtml(_fmtTooltipTs(r.timestamp) + ' — ' + seg.label) +
+      '" style="flex:1 1 auto;min-width:2px;height:16px;background:' + seg.color + '"></span>';
   }).join("");
   var allUp = up === recent.length;
-  return '<span data-shot-text="' + (allUp ? '▲ ' : '▼ ') + up + '/' + recent.length + ' up"' +
-    ' data-shot-color="' + (allUp ? MONITOR_STATE_COLORS.up : MONITOR_STATE_COLORS.down) + '"' +
+  var shotColor = !allUp ? MONITOR_STATE_COLORS.down
+    : worst ? _sdwanStripSegment({ up: true, severity: worst }).color : MONITOR_STATE_COLORS.up;
+  return '<span data-shot-text="' + (allUp ? '▲ ' : '▼ ') + up + '/' + recent.length + ' up' + (worst ? ' · ' + worst : '') + '"' +
+    ' data-shot-color="' + shotColor + '"' +
     ' style="display:flex;gap:1px;align-items:stretch;min-width:120px;max-width:340px">' + segs + '</span>';
 }
 

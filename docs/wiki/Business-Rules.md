@@ -1273,3 +1273,24 @@ alert clears, the per-core automation can alert again if a core is still hot.
 Per-core conditions inside a multi-condition automation are not affected.
 
 See [Automation Triggers → CPU core utilization](Automation-Triggers#cpu-core-utilization).
+
+### Rule 90
+
+**An SD-WAN member riding a parent that is over the same line does not alert;
+the parent's alert names the cause.**
+
+An overlay (an IPsec tunnel that is an SD-WAN member) rides an underlay port:
+Overlay-3 over wan2. When wan2 loses packets, every overlay on it loses
+packets too. Instead of one alert for wan2 and one for each overlay, Polaris
+raises only the wan2 alert.
+
+This applies to SD-WAN packet loss, latency, jitter and member state. An
+overlay's alert is held back while its underlay is over the same line in the
+same automation, or while any automation has an open alert on the same
+condition about the underlay. Polaris learns which port a tunnel rides from
+the FortiGate's IPsec configuration. An overlay alert that was already open
+clears as *superseded*, with no "resolved" notification: the overlay has not
+recovered, its parent's alert covers it. An overlay whose underlay is
+healthy alerts as usual.
+
+See [Automation Triggers → SD-WAN](Automation-Triggers#sd-wan).

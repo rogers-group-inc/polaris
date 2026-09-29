@@ -163,7 +163,7 @@ Individual tables and charts have their own camera buttons: for a table, beside
 its column-chooser gear, and for a chart, in its corner. A table's camera
 captures just that table exactly as it is drawn for you — the columns you have
 visible, in the order and widths you have set, with the status dots, health-check
-chips and green/red per-scrape strips intact — titled with the table name and
+chips and coloured per-scrape strips intact — titled with the table name and
 the device. Rows hidden underneath a collapsed parent are left out, and the
 image says how many, so it cannot be mistaken for the full list: expand them
 first if you want them in.
@@ -600,11 +600,19 @@ three: click a member to hide or show it, double-click to show only that
 member, and **Show all** brings everything back.
 
 Each member's **Health Check Status** strip covers the **last 30 minutes**, one
-segment per SD-WAN poll. A segment is **green** when the FortiGate reported the
-member alive in every health check it belongs to at that poll, and **red** when
-any of those health checks reported it dead. There is no amber state: missing
-the SLA targets for latency, jitter or loss does not turn a segment red — the
-Performance SLA charts show that. A poll that never ran leaves no segment.
+segment per SD-WAN poll. Each segment is one colour:
+
+- **Red** — a health check reported the member dead at that poll, **or** the
+  member was alive but its latency, jitter or loss was above that health
+  check's own SLA target.
+- **A severity colour** — the member was alive and within its SLA targets, but
+  the reading crosses a severity level of one of your SD-WAN
+  [automations](Automation-Triggers#sd-wan). The colour is that severity's.
+  Automations filtered to other health checks or members do not colour it.
+- **Green** — alive, within its SLA targets, and no automation level crossed.
+
+Hover a segment for its time and state: *down*, *out of SLA*, or
+*up — warning by automation*. A poll that never ran leaves no segment.
 
 Each section states **where its data came from and how old it is** — the polling
 method, transport and cadence, then `updated 8m ago`, amber with a ⚠ once the

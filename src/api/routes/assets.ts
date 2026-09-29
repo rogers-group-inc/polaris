@@ -93,7 +93,7 @@ import {
 } from "../../services/sampleHistoryService.js";
 import { evaluateLogFlags } from "../../services/logFlagRuleService.js";
 import { getAssetNotifications, activeAlertSummaryByAsset } from "../../services/notificationService.js";
-import { getMetricSeverityTiers, listScopeOptions } from "../../services/notificationRuleService.js";
+import { getMetricSeverityTiers, getMetricSeverityTierResolver, listScopeOptions } from "../../services/notificationRuleService.js";
 import { SCOPE_FIELD_OPS, scopeConditionMeta, scopeConditionSchema } from "../../services/notificationTypes.js";
 import { loadScopeAssetIds } from "../../services/notificationEngine.js";
 import { listAssetTypes } from "../../services/assetTypeService.js";
@@ -3525,8 +3525,12 @@ router.get("/:id/perf-sla-links", requirePermission("assets", "read"), async (re
 router.get("/:id/sdwan-members", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
+    // The strip shades an in-SLA scrape by the severity tier an SD-WAN
+    // automation would fire at on it — the same lookup the asset charts shade
+    // with, loaded once for every (metric, health check, member) the table asks.
+    const tierFor = await getMetricSeverityTierResolver(id);
     const [result, pollIntervalSec] = await Promise.all([
-      readSdwanMembers(id),
+      readSdwanMembers(id, (metric, healthCheck, link) => tierFor(metric, { healthCheck, link })),
       resolveSdwanPollIntervalForAsset(id),
     ]);
     res.json({ ...result, pollIntervalSec });

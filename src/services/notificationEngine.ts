@@ -114,6 +114,7 @@ import { logger } from "../utils/logger.js";
 import { alarmStatusToFlag } from "../utils/hardwareSensors.js";
 import { median } from "../utils/stats.js";
 import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreList } from "../utils/cpuCores.js";
+import { sdwanDimensionMatch, sdwanChildrenYielding } from "../utils/sdwanDimensions.js";
 import {
   buildTemplateContext,
   renderNotificationTemplate,
@@ -954,7 +955,127 @@ function reduceCoreReadings(
  *  names admit no `|`, so the first separator splits it. */
 const sdwanMemberOf = (r: Reading): string => r.dimKey.slice(r.dimKey.indexOf("|") + 1);
 
-async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "asset_metric" }>, assets: ScopeAssetRow[], saturated?: Set<string>): Promise<Reading[]> {
+/** How far back an IPsec tunnel sample may be to name the port the tunnel
+ *  rides. The phase-1 `interface` is configuration, not state — it only moves
+ *  when someone re-homes the tunnel — so a day-old full scrape is still true. */
+const SDWAN_PARENT_LOOKBACK_HOURS = 48;
+
+/**
+ * Business rule 90 — the port each SD-WAN member rides, for the members
+ * named: `${assetId}|${member}` → parent name. Two sources, both already
+ * collected:
+ *  - an overlay member IS an IPsec phase-1 interface, and its sample row
+ *    carries the phase-1 `interface` (`AssetIpsecTunnelSample.parentInterface`
+ *    — "Overlay-3" rides "wan2");
+ *  - a VLAN sub-interface names its physical port (`AssetInterface.ifParent`
+ *    on an `ifType = "vlan"` row), so a tunnel homed on "wan1.100" still
+ *    reaches wan1. Only VLAN rows: the aggregate back-fill writes ifParent on
+ *    a trunk's MEMBER ports pointing at the trunk, which is the opposite
+ *    direction (the trunk rides the ports, not the other way round).
+ * Called only for the gates that have a reading over the line this tick, so a
+ * healthy fleet costs no query at all.
+ */
+async function loadSdwanParents(assetIds: string[], names: string[]): Promise<Map<string, string>> {
+  const [tunnels, vlans] = await Promise.all([
+    prisma.$queryRawUnsafe<Array<{ assetId: string; tunnelName: string; parentInterface: string }>>(
+      `SELECT DISTINCT ON ("assetId", "tunnelName") "assetId", "tunnelName", "parentInterface"
+         FROM "asset_ipsec_tunnel_samples"
+        WHERE "assetId" = ANY($1::text[]) AND "tunnelName" = ANY($2::text[])
+          AND "parentInterface" IS NOT NULL
+          AND "timestamp" > now() - make_interval(hours => $3::int)
+        ORDER BY "assetId", "tunnelName", "timestamp" DESC`,
+      assetIds, names, SDWAN_PARENT_LOOKBACK_HOURS,
+    ),
+    prisma.assetInterface.findMany({
+      where: { assetId: { in: assetIds }, ifType: "vlan", ifParent: { not: null } },
+      select: { assetId: true, ifName: true, ifParent: true },
+    }),
+  ]);
+  const out = new Map<string, string>();
+  for (const v of vlans) if (v.ifParent) out.set(`${v.assetId}|${v.ifName}`, v.ifParent);
+  // A tunnel's own phase-1 wins over anything an interface row says about it.
+  for (const t of tunnels) out.set(`${t.assetId}|${t.tunnelName}`, t.parentInterface);
+  return out;
+}
+
+/** Members carrying a LIVE alert on this condition (`target` = the metric or
+ *  field the alert stamped), from ANY automation: `${assetId}|${member}`. The
+ *  alert's dimension is the `healthCheck|link` key, so the member is its tail.
+ *  Acknowledged still counts — acknowledging an alert does not end it. */
+async function liveSdwanAlertMembers(assetIds: string[], target: string): Promise<Set<string>> {
+  const rows = await prisma.notification.findMany({
+    where: { assetId: { in: assetIds }, metric: target, cleared: false, testRun: false, ruleId: { not: null } },
+    select: { assetId: true, dimension: true },
+  });
+  const out = new Set<string>();
+  for (const r of rows) {
+    if (!r.assetId || !r.dimension || r.dimension.indexOf("|") < 0) continue;
+    out.add(`${r.assetId}|${r.dimension.slice(r.dimension.indexOf("|") + 1)}`);
+  }
+  return out;
+}
+
+/**
+ * Business rule 90 — a member riding a parent that is itself over the line
+ * takes no reading: the parent's alert is the one that names the cause. A
+ * lossy wan2 makes Overlay-3 and Overlay-4 lossy too; without this an operator
+ * reads three alerts about one circuit.
+ *
+ * "Over the line" is the SAME condition (utils/sdwanDimensions →
+ * sdwanChildrenYielding): a meeting reading on the parent in this automation
+ * this tick, or an uncleared alert any automation raised on this metric/field
+ * about the parent. Only a reading that MEETS yields — a child that has come
+ * back under the line keeps its reading and recovers normally.
+ *
+ * Applied ONLY when the caller passes `yielded` — the threshold path, which
+ * collects `${assetId}|${dimKey}` → parent there and retires the child's live
+ * alert as superseded rather than letting it read as "no longer reported".
+ * Every other caller keeps every reading, and must: a reset leaf is the
+ * trigger INVERTED, so "meets" there means recovered, and yielding a
+ * recovered child to its recovered parent would strand the child's alert with
+ * no reading to reset on; a composite leaf folds per device, where the parent
+ * reading already carries the device. A failed lookup keeps every reading —
+ * the rule removes readings it has evidence about, never ones it could not
+ * check.
+ */
+async function yieldToSdwanParents(
+  trigger: Trigger,
+  target: string,
+  readings: Reading[],
+  yielded?: Map<string, string>,
+): Promise<Reading[]> {
+  if (!yielded) return readings;
+  const meets = (r: Reading) => readingMeets(trigger, r.value);
+  const hot = readings.filter(meets);
+  if (hot.length === 0) return readings;
+  const assetIds = Array.from(new Set(hot.map((r) => r.assetId)));
+  const names = Array.from(new Set(hot.map(sdwanMemberOf)));
+  let parentOf: Map<string, string>;
+  let live: Set<string>;
+  try {
+    [parentOf, live] = await Promise.all([loadSdwanParents(assetIds, names), liveSdwanAlertMembers(assetIds, target)]);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message }, "SD-WAN parent lookup failed — keeping every member reading");
+    return readings;
+  }
+  if (parentOf.size === 0) return readings;
+  const out = sdwanChildrenYielding(
+    readings.map((r) => ({ assetId: r.assetId, member: sdwanMemberOf(r), dimKey: r.dimKey, meets: meets(r) })),
+    parentOf,
+    live,
+  );
+  if (out.size === 0) return readings;
+  for (const [k, v] of out) yielded.set(k, v);
+  return readings.filter((r) => !out.has(`${r.assetId}|${r.dimKey}`));
+}
+
+async function resolveAssetMetricReadings(
+  trigger: Extract<Trigger, { type: "asset_metric" }>,
+  assets: ScopeAssetRow[],
+  saturated?: Set<string>,
+  /** Business rule 90 out-param — see yieldToSdwanParents. */
+  sdwanYielded?: Map<string, string>,
+): Promise<Reading[]> {
   const df = trigger.dimensionFilter ?? {};
   // The device-identifier dimensions narrow the ASSET set before any sample
   // query — every metric takes them (they name the device rather than a
@@ -1156,12 +1277,15 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
     case "sdwanLatencyMs": case "sdwanJitterMs": case "sdwanPacketLoss": {
       const col = trigger.metric === "sdwanLatencyMs" ? "latencyMs" : trigger.metric === "sdwanJitterMs" ? "jitterMs" : "packetLoss";
       const rows = await prisma.assetPerfSlaSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, healthCheck: true, link: true, latencyMs: true, jitterMs: true, packetLoss: true } });
-      const filtered = rows.filter((r) => substringMatch(r.healthCheck, df.healthCheck) && substringMatch(r.link, df.link));
-      return dropUnusedPorts(
+      // Any-of over "|"-joined terms (utils/sdwanDimensions) — a single
+      // pattern is one term and reads exactly as it always did.
+      const filtered = rows.filter((r) => sdwanDimensionMatch(r.healthCheck, df.healthCheck) && sdwanDimensionMatch(r.link, df.link));
+      const kept = await dropUnusedPorts(
         trigger,
         reduceReadings(filtered, index, (r) => `${r.healthCheck}|${r.link}`, (r) => `${r.healthCheck} / ${r.link}`, (r) => r[col] ?? null, agg, winPolls),
         sdwanMemberOf,
       );
+      return yieldToSdwanParents(trigger, trigger.metric, kept, sdwanYielded);
     }
     case "customWidgetValue": {
       const rows = await prisma.assetCustomWidgetSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since }, kind: "scalar", ...(df.widgetId ? { widgetId: df.widgetId } : {}) }, select: { assetId: true, timestamp: true, widgetId: true, value: true } });
@@ -1549,6 +1673,8 @@ async function resolveAssetStateReadings(
      *  probe's verdict. Set only by a down automation that opted in — the gate
      *  loop keeps every other automation's suppressed assets out of `assets`. */
     dependencyDownReadsDown?: boolean;
+    /** Business rule 90 out-param — see yieldToSdwanParents. */
+    sdwanYielded?: Map<string, string>;
   },
 ): Promise<Reading[]> {
   const df = trigger.dimensionFilter ?? {};
@@ -1716,7 +1842,7 @@ async function resolveAssetStateReadings(
       // filter them — an operator who narrowed a packet-loss rule to "Primary
       // WAN" must get the same set here or the two rules disagree about which
       // members they are about.
-      const filtered = rows.filter((r) => substringMatch(r.healthCheck, df.healthCheck) && substringMatch(r.link, df.link));
+      const filtered = rows.filter((r) => sdwanDimensionMatch(r.healthCheck, df.healthCheck) && sdwanDimensionMatch(r.link, df.link));
       // dimKey matches the metrics' `healthCheck|link` so a member's state
       // alert and its loss alert name the same dimension.
       const memberReadings: Reading[] = groupSeries(filtered, (r) => `${r.assetId}|${r.healthCheck}|${r.link}`).map((g) => {
@@ -1734,7 +1860,9 @@ async function resolveAssetStateReadings(
       });
       // "Skip unused ports": a template's unplugged wan2 is down on every
       // health check forever — see SKIP_UNUSED_PORT_TARGETS.
-      return dropUnusedPorts(trigger, memberReadings, sdwanMemberOf);
+      const kept = await dropUnusedPorts(trigger, memberReadings, sdwanMemberOf);
+      // Business rule 90: a dead wan2 explains its dead overlays.
+      return yieldToSdwanParents(trigger, trigger.field, kept, opts?.sdwanYielded);
     }
     case "sdwanRuleStatus": case "sdwanSelectedMember": {
       const rows = await prisma.assetSdwanRule.findMany({ where: { assetId: { in: ids } }, select: { assetId: true, ruleName: true, status: true, selectedMember: true, updatedAt: true } });
@@ -2180,6 +2308,10 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
   // there is no reading this tick. Handled like notAnswering: cleared, not
   // frozen (business rule 29).
   const saturatedIds = new Set<string>();
+  // Business rule 90 — SD-WAN member readings that yielded to a parent member
+  // over the same line: `${assetId}|${dimKey}` → the parent. Per DIMENSION,
+  // unlike the per-asset handoffs above: wan1 keeps alerting on the same gate.
+  const sdwanYielded = new Map<string, string>();
   // Every asset the scope resolved this tick (incl. suppressed/shadowed);
   // null for host rules, which have no asset scope to leave.
   let scopeIds: Set<string> | null = null;
@@ -2229,8 +2361,8 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
     }
     activeAssets = coreSupersededIds.size ? active.filter((a) => !coreSupersededIds.has(a.id)) : active;
     readings = trigger.type === "asset_metric"
-      ? await resolveAssetMetricReadings(trigger, activeAssets, saturatedIds)
-      : await resolveAssetStateReadings(trigger, activeAssets, { dependencyDownReadsDown: speaksForSuppressed });
+      ? await resolveAssetMetricReadings(trigger, activeAssets, saturatedIds, sdwanYielded)
+      : await resolveAssetStateReadings(trigger, activeAssets, { dependencyDownReadsDown: speaksForSuppressed, sdwanYielded });
   } else {
     return;
   }
@@ -2532,6 +2664,42 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
           ? `Cleared: ${rule.name} — the device is no longer answering, so its outage is the asset-down alert`
           : `Cleared: ${rule.name} — the reading reached the automation's ignore-at-or-above ceiling, so it describes an outage rather than a lossy link`,
         details: { ruleId: rule.id, assetId: st.assetId, reason: handoff },
+      }).catch(() => {});
+    } else if (st.state === "pending") {
+      await prisma.notificationRuleState.update({
+        where: { id: st.id },
+        data: { state: "clear", conditionMetSince: null, bandMetSince: Prisma.DbNull },
+      });
+    }
+  }
+
+  // Business rule 90 — a member whose parent is over the same line hands its
+  // alert to the parent's. Same shape as the carve-out: the live alert CLEARS
+  // as superseded, with no reset actions — the child has not recovered, and
+  // mailing "packet loss resolved" about an overlay still dropping packets
+  // would be a lie. Marked seen so the vanished sweep below does not also
+  // retire it as "no longer reported".
+  for (const st of states) {
+    if (!st.assetId) continue;
+    const key = `${st.assetId}|${st.dimensionKey}`;
+    const parent = sdwanYielded.get(key);
+    if (parent === undefined) continue;
+    seen.add(key);
+    if (st.state === "firing") {
+      await clearActiveNotification(st, "system:superseded");
+      await prisma.notificationRuleState.update({
+        where: { id: st.id },
+        data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
+      });
+      const member = st.dimensionKey.slice(st.dimensionKey.indexOf("|") + 1);
+      await logEvent({
+        action: "notification.superseded",
+        resourceType: "notification",
+        resourceId: st.notificationId ?? undefined,
+        resourceName: rule.name,
+        actor: "system:notification-engine",
+        message: `Cleared: ${rule.name} on ${member} — it rides ${parent}, which is over the same line; ${parent}'s alert speaks for it`,
+        details: { ruleId: rule.id, assetId: st.assetId, dimension: st.dimensionKey, reason: "sdwan-parent", parent },
       }).catch(() => {});
     } else if (st.state === "pending") {
       await prisma.notificationRuleState.update({

@@ -577,6 +577,8 @@ function makeAutomationSentences(s) {
   /** One dimension clause: the DIM_PHRASE template with its value. */
   function dimPhrase(k, value) {
     var v = k === "checkId" && value && value !== "…" ? checkNameOf(value) : value;
+    // A multi value reads as a list: "for health check Microsoft or Primary WAN".
+    if (awDimIsMulti(k) && value && value !== "…") v = awDimTerms(value).join(" or ");
     return (DIM_PHRASE[k] || k + " = {value}").replace("{value}", v);
   }
 
@@ -1227,12 +1229,87 @@ function awMacDimensionMatch(mac, pattern) {
   return strip(mac).indexOf(needle) !== -1;
 }
 
+/** The SD-WAN pair takes SEVERAL values — "these two health checks", "wan1 and
+ *  wan2" — stored joined by "|" (FortiOS object names admit no "|"), any-of,
+ *  each term a substring. Mirror of the server's utils/sdwanDimensions; keep
+ *  the two in lockstep. A plain function test rather than a lookup table so the
+ *  sentence factory above can call it before this part of the file has run. */
+function awDimIsMulti(dim) { return dim === "healthCheck" || dim === "link"; }
+
+/** The "|"-separated terms of a multi value — trimmed, blanks dropped. */
+function awDimTerms(value) {
+  return String(value == null ? "" : value).split("|").map(function (t) { return t.trim(); }).filter(Boolean);
+}
+
+/** Canonical stored form: de-duplicated case-insensitively (first spelling
+ *  kept), joined by "|" with no padding. */
+function awDimJoinTerms(terms) {
+  var seen = {};
+  var out = [];
+  (terms || []).forEach(function (t) {
+    var v = String(t == null ? "" : t).trim();
+    if (!v || seen[v.toLowerCase()]) return;
+    seen[v.toLowerCase()] = true;
+    out.push(v);
+  });
+  return out.join("|");
+}
+
+/** What the input shows for a stored value — the terms spaced out, so the
+ *  list reads as a list. Single-value dims are shown as stored. */
+function awDimDisplayValue(dim, stored) {
+  return awDimIsMulti(dim) ? awDimTerms(stored).join(" | ") : String(stored == null ? "" : stored);
+}
+
+/** What a dim control's text is stored as — canonical for a multi dim. */
+function awDimStoredValue(dim, text) {
+  return awDimIsMulti(dim) ? awDimJoinTerms(awDimTerms(text)) : String(text == null ? "" : text).trim();
+}
+
+/** Mirror of the server's `sdwanDimensionMatch`: any term a case-insensitive
+ *  substring. No terms = match. */
+function awSdwanDimensionMatch(value, pattern) {
+  var terms = awDimTerms(pattern);
+  if (!terms.length) return true;
+  return terms.some(function (t) { return awDimSubstringMatch(value, t); });
+}
+
+/**
+ * A multi dim's text split into what is PICKED and what is still being TYPED.
+ * Every term before the last "|" is picked. The last term is the fragment
+ * being typed — unless the text ends with "|", or the last term is exactly a
+ * reported value (it was clicked, or typed out in full), in which case it is
+ * picked too and the fragment is empty. The fragment is what the suggestion
+ * list filters by, so after a pick the whole list is back on offer.
+ */
+function awDimMultiState(res, text) {
+  var raw = String(text == null ? "" : text);
+  var terms = awDimTerms(raw);
+  var reported = {};
+  ((res && res.values) || []).forEach(function (v) { reported[String(v.value).toLowerCase()] = true; });
+  var fragment = "";
+  if (terms.length && !/\|\s*$/.test(raw) && !reported[terms[terms.length - 1].toLowerCase()]) fragment = terms.pop();
+  return { picked: terms, fragment: fragment };
+}
+
+/** Clicking a suggestion on a multi dim: toggle it. Already picked → removed;
+ *  otherwise added in place of whatever fragment was being typed. Returns the
+ *  new display text. */
+function awDimTogglePick(res, text, value) {
+  var st = awDimMultiState(res, text);
+  var lc = String(value).toLowerCase();
+  var had = st.picked.some(function (t) { return t.toLowerCase() === lc; });
+  var next = had ? st.picked.filter(function (t) { return t.toLowerCase() !== lc; }) : st.picked.concat([value]);
+  return awDimTerms(awDimJoinTerms(next)).join(" | ");
+}
+
 /** Which matcher selects readings for a dimension — the two identity dims with
- *  value shapes substring can't honestly serve get their own; everything else
- *  is the shared substring the engine uses. */
+ *  value shapes substring can't honestly serve get their own, the SD-WAN pair
+ *  is any-of; everything else is the shared substring the engine uses. */
 function awDimMatcher(dim) {
   if (dim === "ipPattern") return awIpDimensionMatch;
   if (dim === "macPattern") return awMacDimensionMatch;
+  if (awDimIsMulti(dim)) return awSdwanDimensionMatch;
   return awDimSubstringMatch;
 }
 
@@ -1259,6 +1336,7 @@ function awDimSuggestHtml(res, query, dim) {
     return '<div class="aw-suggest-empty">The selected devices report no ' + escapeHtml(noun + (res.narrowLabel || "")) + '.</div>';
   }
   var q = String(query == null ? "" : query).trim();
+  if (awDimIsMulti(dim)) return awDimMultiSuggestHtml(res, query, noun);
   var hits = awDimHits(res, q, dim);
   if (!hits.length) {
     return '<div class="aw-suggest-empty">None of the ' + res.values.length + ' reported ' + escapeHtml(noun) +
@@ -1268,6 +1346,32 @@ function awDimSuggestHtml(res, query, dim) {
     var count = v.assetCount ? ' <span style="color:var(--color-text-tertiary)">(' + v.assetCount + ')</span>' : "";
     return '<div class="aw-suggest-item" data-val="' + escapeHtml(v.value) + '" title="' + escapeHtml(v.value) + '">' +
       escapeHtml(v.value) + count + '</div>';
+  }).join("");
+  if (hits.length > AW_DIM_SUGGEST_CAP) {
+    html += '<div class="aw-suggest-empty">+' + (hits.length - AW_DIM_SUGGEST_CAP) + ' more — keep typing to narrow.</div>';
+  }
+  return html;
+}
+
+/** The pick-several list for a multi dim: every reported value (filtered by
+ *  the fragment being typed), each ticked when it is picked, clicking one
+ *  toggles it and the list stays open for the next. */
+function awDimMultiSuggestHtml(res, text, noun) {
+  var st = awDimMultiState(res, text);
+  var picked = {};
+  st.picked.forEach(function (t) { picked[t.toLowerCase()] = true; });
+  var hits = res.values.filter(function (v) { return awDimSubstringMatch(v.value, st.fragment); });
+  if (!hits.length) {
+    return '<div class="aw-suggest-empty">None of the ' + res.values.length + ' reported ' + escapeHtml(noun) +
+      ' contain “' + escapeHtml(st.fragment) + '”.</div>';
+  }
+  var html = '<div class="aw-suggest-empty">Click to add or remove — pick as many as you need.</div>';
+  html += hits.slice(0, AW_DIM_SUGGEST_CAP).map(function (v) {
+    var on = !!picked[String(v.value).toLowerCase()];
+    var count = v.assetCount ? ' <span style="color:var(--color-text-tertiary)">(' + v.assetCount + ')</span>' : "";
+    return '<div class="aw-suggest-item' + (on ? ' aw-suggest-picked' : '') + '" data-val="' + escapeHtml(v.value) + '" title="' + escapeHtml(v.value) + '"' +
+      ' aria-selected="' + (on ? "true" : "false") + '">' +
+      '<span style="display:inline-block;width:1.1em">' + (on ? "✓" : "") + '</span>' + escapeHtml(v.value) + count + '</div>';
   }).join("");
   if (hits.length > AW_DIM_SUGGEST_CAP) {
     html += '<div class="aw-suggest-empty">+' + (hits.length - AW_DIM_SUGGEST_CAP) + ' more — keep typing to narrow.</div>';
@@ -1287,6 +1391,14 @@ function awDimMatchCue(res, value, dim) {
   var hits = awDimHits(res, q, dim);
   if (!hits.length) {
     return { text: "✕ matches none of the " + res.values.length + " reported " + noun + " — this condition would never fire", warn: true };
+  }
+  // Any-of: the list as a whole can match while one entry in it is a typo
+  // that selects nothing. Name it — the condition still fires, on the rest.
+  if (awDimIsMulti(dim)) {
+    var dead = awDimTerms(q).filter(function (t) { return !awDimHits(res, t, dim).length; });
+    if (dead.length) {
+      return { text: "✕ “" + dead.join("”, “") + "” matches none of the reported " + noun + " — the rest still apply", warn: true };
+    }
   }
   if (hits.length === 1 && hits[0].value.toLowerCase() === q.toLowerCase()) {
     return { text: "✓ exact match", warn: false };
@@ -1445,6 +1557,8 @@ if (typeof window !== "undefined") {
   window.PolarisAutomationDimensions = {
     optionsHtml: awDimOptionsHtml, suggestHtml: awDimSuggestHtml, matchCue: awDimMatchCue,
     substringMatch: awDimSubstringMatch, ipMatch: awIpDimensionMatch, macMatch: awMacDimensionMatch,
+    sdwanMatch: awSdwanDimensionMatch, isMulti: awDimIsMulti, terms: awDimTerms, joinTerms: awDimJoinTerms,
+    displayValue: awDimDisplayValue, storedValue: awDimStoredValue, multiState: awDimMultiState, togglePick: awDimTogglePick,
     note: awDimNote, narrow: awDimNarrow,
   };
   window.PolarisTriggerFilters = { compile: tgFilterCompile, lift: tgFilterLift };
@@ -1617,7 +1731,7 @@ async function openAutomationWizard(existing, opts) {
       dependencyDownMeta = _sent.dependencyDownMeta, leafAlertsWhenDependencyDown = _sent.leafAlertsWhenDependencyDown,
       monStatusWord = _sent.monStatusWord,
       CMP_PHRASE = _sent.CMP_PHRASE, INV_CMP = _sent.INV_CMP;
-  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick", link: "any WAN member — click to pick", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick" };
+  var DIM_PLACEHOLDER = { hostnamePattern: "any device — click to pick a hostname, or type to filter", ipPattern: "click to pick an IP — a prefix like 10.4. or a CIDR like 10.4.0.0/16 also works", macPattern: "click to pick a MAC, or type one in any separator style", manufacturerPattern: "any manufacturer — click to pick, or type to filter", modelPattern: "any model — click to pick, or type to filter", sdwanRulePattern: "any SD-WAN rule — click to pick, or type to filter", ifNamePattern: "any interface — click to pick, or type to filter", sensorClass:"sensor class (temperature / fan / voltage / current / optical / poe / power / disk)", sensorNamePattern: "any sensor — click to pick one, or type to filter", mountPathPattern: "any mount — click to pick, or type to filter", healthCheck: "any health check — click to pick one or more", link: "any WAN member — click to pick one or more", tunnelName: "any tunnel — click to pick, or type to filter", widgetId: "custom widget id", stateProbeId: "which state probe", stateRowPattern: "every row — click to pick one, or type to filter", checkId: "which path check — click to pick" };
   // The same placeholders when the dimension is INTEGRAL to the condition (see
   // tgIntegralDimOf): the row is about ONE component, so the hint asks which
   // and says what blank does instead of describing an optional narrowing.
@@ -2714,7 +2828,7 @@ async function openAutomationWizard(existing, opts) {
   // the values the scoped devices report, or type a pattern); anything else stays
   // the plain text box it always was.
   function dimControlHtml(d, df, metric, state) {
-    var value = (df && df[d]) || "";
+    var value = awDimDisplayValue(d, (df && df[d]) || "");
     var meta = DIM_PICKERS[d];
     // An INTEGRAL dimension's hint says what the row is about and what leaving
     // it blank means, rather than the generic "any interface" a filter row's
@@ -2761,7 +2875,7 @@ async function openAutomationWizard(existing, opts) {
     var df = {};
     if (!row) return df;
     row.querySelectorAll(".tgl-dim").forEach(function (el) {
-      var v = (el.value || "").trim();
+      var v = awDimStoredValue(el.getAttribute("data-dim"), el.value || "");
       if (v) df[el.getAttribute("data-dim")] = v;
     });
     return df;
@@ -2857,6 +2971,17 @@ async function openAutomationWizard(existing, opts) {
    *  once per panel (guarded) so tier rows and re-rendered condition rows are
    *  covered without re-binding — a panel's innerHTML being replaced doesn't
    *  drop panel-level listeners. */
+  /** A suggestion was clicked (or Entered). A single-value dim takes it and
+   *  closes; a multi dim (the SD-WAN pair) TOGGLES it and stays open for the
+   *  next pick. Notify first, close second — the input event reopens the
+   *  list, so closing before it would leave the picked-and-still-open state. */
+  function pickDimValue(input, val) {
+    var d = input.getAttribute("data-dim");
+    var multi = awDimIsMulti(d);
+    input.value = multi ? awDimTogglePick(dimResultOf(input), input.value, val) : val;
+    fireInputChange(input);
+    if (!multi) scCloseSuggest(dimSuggestOf(input));
+  }
   function wireDimCombo(panel) {
     if (!panel || panel._dimComboWired) return;
     panel._dimComboWired = true;
@@ -2893,11 +3018,7 @@ async function openAutomationWizard(existing, opts) {
       var input = combo && combo.querySelector("input.tgl-dim");
       if (!input) return;
       e.preventDefault(); // keep focus on the input
-      input.value = item.getAttribute("data-val");
-      // Notify first, close second — the input event reopens the list, so
-      // closing before it would leave the picked-and-still-open state.
-      fireInputChange(input);
-      scCloseSuggest(dimSuggestOf(input));
+      pickDimValue(input, item.getAttribute("data-val"));
     });
     panel.addEventListener("keydown", function (e) {
       var input = e.target;
@@ -2920,9 +3041,7 @@ async function openAutomationWizard(existing, opts) {
         if (items[next].scrollIntoView) items[next].scrollIntoView({ block: "nearest" });
       } else if (e.key === "Enter" && idx >= 0) {
         e.preventDefault();
-        input.value = items[idx].getAttribute("data-val");
-        fireInputChange(input);
-        scCloseSuggest(dimSuggestOf(input)); // after, for the same reason as the click path
+        pickDimValue(input, items[idx].getAttribute("data-val"));
       }
     });
   }
@@ -3151,7 +3270,7 @@ async function openAutomationWizard(existing, opts) {
       var vEl = rowEl.querySelector(".tgl-value");
       var sLeaf = { type: "asset_state", field: what.slice(2), operator: op, value: vEl ? vEl.value : "" };
       var sDf = {};
-      rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = el.value.trim(); if (v) sDf[el.getAttribute("data-dim")] = v; });
+      rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = awDimStoredValue(el.getAttribute("data-dim"), el.value); if (v) sDf[el.getAttribute("data-dim")] = v; });
       if (Object.keys(sDf).length) sLeaf.dimensionFilter = sDf;
       var sSkip = rowEl.querySelector(".tgl-skip-unused");
       if (sSkip && sSkip.checked) sLeaf.skipUnusedPorts = true;
@@ -3174,7 +3293,7 @@ async function openAutomationWizard(existing, opts) {
     };
     if (kind !== "host") {
       var df = {};
-      rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = el.value.trim(); if (v) df[el.getAttribute("data-dim")] = v; });
+      rowEl.querySelectorAll(".tgl-dim").forEach(function (el) { var v = awDimStoredValue(el.getAttribute("data-dim"), el.value); if (v) df[el.getAttribute("data-dim")] = v; });
       if (Object.keys(df).length) leaf.dimensionFilter = df;
       var mSkip = rowEl.querySelector(".tgl-skip-unused");
       if (mSkip && mSkip.checked) leaf.skipUnusedPorts = true;

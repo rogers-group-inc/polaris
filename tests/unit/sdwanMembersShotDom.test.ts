@@ -42,6 +42,7 @@ function fnSrc(name: string): string {
 }
 
 const FN_NAMES = [
+  "_sdwanStripSegment",
   "_sdwanStatusStripHTML",
   "_sdwanMembersTableHTML",
   "_shotCellText",
@@ -129,6 +130,39 @@ describe("SD-WAN Members table — screenshot legibility", () => {
     expect(shotText("Overlay-1", "hcstatus")).toBe("▼ 3/4 up");
     expect(shotColor("wan1", "hcstatus")).toBe(UP);
     expect(shotColor("Overlay-1", "hcstatus")).toBe(DOWN);
+  });
+
+  it("paints an out-of-SLA scrape red and an automation-tiered one in its severity", () => {
+    (win as any).PolarisChartSeverity = {
+      SEV_ORDER: ["notice", "informational", "warning", "serious", "critical"],
+      downColorOf: (s: string) => ({ warning: "#f9a825", serious: "#e65100" } as Record<string, string>)[s] ?? "#d32f2f",
+    };
+    const ts = "2026-08-20T12:00:00.000Z";
+    const span = doc.createElement("div");
+    span.innerHTML = g._sdwanStatusStripHTML([
+      { timestamp: ts, up: true, outOfSla: false, severity: null },
+      { timestamp: ts, up: true, outOfSla: true, severity: null },
+      { timestamp: ts, up: true, outOfSla: false, severity: "warning" },
+      { timestamp: ts, up: true, outOfSla: false, severity: "serious" },
+    ]);
+    const segs = Array.from(span.querySelectorAll("span[title]")) as HTMLElement[];
+    expect(segs.map((s) => s.getAttribute("style")!.match(/background:([^;"]+)/)![1])).toEqual(["#2ecc40", "#e02020", "#f9a825", "#e65100"]);
+    expect(segs[1]!.getAttribute("title")).toContain("out of SLA");
+    // Out of SLA is not "up" for the count; the tiered ones still are, and
+    // the summary names the worst severity beside it.
+    expect(g._shotCellText(span)).toBe("▼ 3/4 up · serious");
+  });
+
+  it("colours an all-up strip's summary by the worst severity it carries", () => {
+    (win as any).PolarisChartSeverity = { SEV_ORDER: ["warning", "serious"], downColorOf: () => "#f9a825" };
+    const ts = "2026-08-20T12:00:00.000Z";
+    const span = doc.createElement("div");
+    span.innerHTML = g._sdwanStatusStripHTML([
+      { timestamp: ts, up: true, outOfSla: false, severity: null },
+      { timestamp: ts, up: true, outOfSla: false, severity: "warning" },
+    ]);
+    expect(g._shotCellText(span)).toBe("▲ 2/2 up · warning");
+    expect(g._shotCellColor(span)).toBe("#f9a825");
   });
 
   it("keeps the '—' fallback when no scrapes are in the window", () => {
