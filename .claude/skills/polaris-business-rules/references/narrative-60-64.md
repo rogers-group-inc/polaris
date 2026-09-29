@@ -458,7 +458,10 @@ browser answers that with a bare `SecurityError` naming no cause. `PolarisWebAut
 (`public/js/webauthn.js`) compares the availability payload's `rpId` against
 `location.hostname` and says which header is at fault; the account modal prints it and the
 login page silently withholds the button, because the reason describes the install's plumbing
-to someone who has not yet signed in.
+to someone who has not yet signed in. It also withholds the button while no LOCAL account has
+registered a passkey (`anyRegistered` on the config payload, `anyLoginPasskeyRegistered`): an
+install that allows passkey login but where nobody has one can only offer a button that fails.
+The first passkey is always set up from the account menu after a password login.
 
 **The passwordless options endpoint names no credentials.** `allowCredentials` is left empty
 on purpose: naming a user's authenticators before they have authenticated would turn the

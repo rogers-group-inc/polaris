@@ -43,7 +43,7 @@ import {
   invalidatePasswordPolicyCache,
 } from "../../src/services/passwordPolicyService.js";
 import { defaultPasswordPolicy } from "../../src/utils/passwordPolicy.js";
-import { dbDescribe, dbReachable, authedAgent } from "./_helpers.js";
+import { dbDescribe, dbReachable, authedAgent, ensureTestUser } from "./_helpers.js";
 
 const d = dbDescribe;
 
@@ -68,6 +68,10 @@ async function allowEveryone(): Promise<void> {
 
 beforeAll(async () => {
   if (!dbReachable) return;
+  // authedAgent logs in as the shared tester; create it here rather than
+  // relying on an earlier file in the suite to have done so, or this file
+  // fails its admin cases when run on its own against a fresh database.
+  await ensureTestUser();
   const role = await prisma.role.findUnique({ where: { name: "readonly" } });
   if (!role) throw new Error("built-in 'readonly' Role row missing — run `npx prisma migrate deploy` first");
   await prisma.user.deleteMany({ where: { username: READER } });
@@ -134,6 +138,27 @@ d("GET /auth/passkeys/config", () => {
     expect(res.body.loginEnabled).toBe(true);
     expect(res.body.secondFactorEnabled).toBe(false);
     expect(res.body.rpId).toBe("localhost");
+  });
+
+  it("says a passkey is registered once a local account holds one, and not while the mode is off", async () => {
+    // The login page hides its button until anyRegistered is true. What this
+    // pins is the plumbing end to end; the "none registered" half is covered
+    // by the unit test, since a shared test DB may already hold someone's.
+    const reader = await prisma.user.findUniqueOrThrow({ where: { username: READER } });
+    const pk = await prisma.userPasskey.create({
+      data: { userId: reader.id, credentialId: `test-cred-${Date.now()}`, publicKey: Buffer.from([1]), name: "test" },
+    });
+    try {
+      await setPasskeyMode("login");
+      const on = await asLocalhost(request(app).get("/api/v1/auth/passkeys/config"));
+      expect(on.body.anyRegistered).toBe(true);
+
+      await setPasskeyMode("off");
+      const off = await asLocalhost(request(app).get("/api/v1/auth/passkeys/config"));
+      expect(off.body.anyRegistered).toBe(false);
+    } finally {
+      await prisma.userPasskey.delete({ where: { id: pk.id } });
+    }
   });
 
   it("discloses nothing about who is enrolled", async () => {

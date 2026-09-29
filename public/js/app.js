@@ -78,6 +78,37 @@ var DEFAULT_THEME = "nightfall";
   document.documentElement.setAttribute("data-theme", saved);
 })();
 
+// Page layout: how wide the shell may grow. Two capped columns centred in the
+// window (the sidebar, tables and slide-overs all follow the column's edges)
+// and one that fills the window. Stored per BROWSER, like the theme, because
+// the right answer is a property of the monitor, not of the account — the same
+// operator wants Auto on the ultrawide and 16:9 on the laptop. The CSS side is
+// the --layout-max-width token keyed on :root[data-layout] in styles.css.
+var LAYOUTS = [
+  { id: "16x9",  label: "16:9",  title: "A 16:9 column centred in the window" },
+  { id: "16x10", label: "16:10", title: "A 16:10 column centred in the window" },
+  { id: "auto",  label: "Auto",  title: "Fill the browser window, however wide it is" },
+];
+var DEFAULT_LAYOUT = "16x9";
+var LAYOUT_STORAGE_KEY = "polaris-layout";
+
+// Unknown, missing or retired values land on the default rather than on a
+// layout the stylesheet does not define (which would silently mean full-bleed).
+function _layoutId(v) {
+  for (var i = 0; i < LAYOUTS.length; i++) if (LAYOUTS[i].id === v) return v;
+  return DEFAULT_LAYOUT;
+}
+
+function _currentLayout() {
+  return _layoutId(document.documentElement.getAttribute("data-layout"));
+}
+
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem(LAYOUT_STORAGE_KEY); } catch (e) {}
+  document.documentElement.setAttribute("data-layout", _layoutId(saved));
+})();
+
 // SELECTABLE ids only — transit palettes are deliberately absent, so a saved
 // "afternoon" (which nothing should ever write) is rejected here the same way
 // a retired "dark" is, and the browser lands on a real theme.
@@ -835,6 +866,48 @@ function _tzMenuItem() {
     icon: ICONS.clock,
     onSelect: function () { _openTimezoneModal(); },
   };
+}
+
+/**
+ * The user menu's layout row. No permission gate and no async state: it is a
+ * display preference held in this browser, so it always renders, labelled with
+ * the layout in force.
+ */
+function _layoutMenuItem(anchor) {
+  var cur = _currentLayout();
+  var label = cur;
+  for (var i = 0; i < LAYOUTS.length; i++) if (LAYOUTS[i].id === cur) label = LAYOUTS[i].label;
+  return {
+    label: "Layout: " + label,
+    icon: ICONS.monitor,
+    onSelect: function () { _openLayoutMenu(anchor); },
+  };
+}
+
+/**
+ * The three-way layout chooser, opened on the same anchor once the account
+ * menu has closed (showRowMenu closes before it runs a handler) — the same
+ * shape as the notification-preference chooser.
+ */
+function _openLayoutMenu(anchor) {
+  if (typeof showRowMenu !== "function") return;
+  var cur = _currentLayout();
+  var items = LAYOUTS.map(function (l) {
+    return {
+      label: l.label + (l.id === cur ? "  ✓" : ""),
+      title: l.title,
+      onSelect: function () { _setLayout(l.id); },
+    };
+  });
+  showRowMenu(anchor, items, { label: "Page layout", align: "end" });
+}
+
+// Applies live: the shell width and the slide-over offset both read the CSS
+// token, so an open panel moves with the column and nothing needs a reload.
+function _setLayout(id) {
+  id = _layoutId(id);
+  document.documentElement.setAttribute("data-layout", id);
+  try { localStorage.setItem(LAYOUT_STORAGE_KEY, id); } catch (e) {}
 }
 
 /**
@@ -2262,7 +2335,7 @@ var WIKI_URL = "https://github.com/rogers-group-inc/polaris/wiki";
 
 /**
  * The account menu behind the page-header user badge: notification
- * preference, two-factor enrollment, help, logout. Items are built per open so
+ * preference, timezone, page layout, credentials, help, logout. Items are built per open so
  * the preference / 2FA rows reflect current state without anything to keep
  * repainted. The theme
  * toggle lives at the bottom of the sidebar, not here — it is a display
@@ -2279,6 +2352,9 @@ function openUserMenu(anchor) {
 
   var tz = _tzMenuItem();
   if (tz) items.push(tz);
+
+  var layout = _layoutMenuItem(anchor);
+  if (layout) items.push(layout);
 
   // Credentials group: password first, then the second factor on it.
   var pw = _changePasswordMenuItem();

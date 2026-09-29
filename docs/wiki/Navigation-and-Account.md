@@ -72,6 +72,7 @@ Click your username, top right. What appears depends on your account:
 |---|---|
 | **Notifications: …** | always — names your current delivery preference and opens the three-way chooser |
 | **Timezone: …** | always |
+| **Layout: …** | always — names the page layout in force and opens the three-way chooser |
 | **Change password** | local accounts only |
 | **Set up two-factor auth** | local accounts only |
 | **Passkeys** | local accounts, where the install allows them and the browser can host one |
@@ -123,6 +124,21 @@ Polaris server's clock and names that zone in its footer — "Times shown in CDT
 and a copy per zone is a To line that no longer shows you who else is on the
 alert.
 
+### Layout
+
+How wide Polaris may grow in your browser window:
+
+| Layout | What you get |
+|---|---|
+| **16:9** (default) | a 16:9 column centred in the window — on a wider monitor the sidebar, tables and slide-overs keep to that column and the sides stay empty |
+| **16:10** | the same idea with a slightly narrower column, since 16:10 is squarer than 16:9 — it fills a 16:10 monitor exactly and leaves a thin margin at each side of anything wider |
+| **Auto** | fills the window, however wide it is — on an ultrawide the sidebar sits at the far left, tables use the full width and slide-overs open at the far right edge |
+
+The choice applies straight away and is kept **per browser**, not per account.
+The right answer depends on the monitor, so you can use Auto on an ultrawide
+at your desk and 16:9 on a laptop. The Dash wallboard and the phone app ignore
+this setting.
+
 ### Change password
 
 Local accounts only — every other provider's credential belongs to its
@@ -158,6 +174,10 @@ by the install, at Users → Authentication:
 
 Under any mode including `second-factor`, registering a passkey makes your
 login two-step, exactly as enrolling TOTP does.
+
+The login page's **Sign in with a passkey** button appears only once at least
+one local account has registered a passkey. Until then it could only fail. The
+first passkey is set up from this menu after signing in with a password.
 
 **Two deployment shapes cannot host passkeys at all** and say so rather than
 throwing a browser error: plain HTTP off localhost, and an install reached by IP

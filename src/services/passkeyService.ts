@@ -206,6 +206,22 @@ export async function getPasskeyAvailability(req: RequestLike): Promise<{
   };
 }
 
+/**
+ * Whether ANY account that could sign in with a passkey holds one. The login
+ * page withholds its passkey button until this is true: on an install where
+ * nobody has registered a passkey the button can only ever fail. It names no
+ * account and no count — "someone here uses passkeys" is all it tells an
+ * unsigned-in visitor, the same fact the button's presence always told them.
+ * Local accounts only, because passwordless login refuses every other provider.
+ */
+export async function anyLoginPasskeyRegistered(): Promise<boolean> {
+  const row = await prisma.userPasskey.findFirst({
+    where: { user: { authProvider: "local" } },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 // ─── Stored credentials ─────────────────────────────────────────────────────
 
 export interface PasskeySummary {

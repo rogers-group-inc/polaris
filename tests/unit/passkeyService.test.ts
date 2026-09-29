@@ -54,6 +54,7 @@ import {
   passkeyLoginEnabled,
   passkeySecondFactorEnabled,
   getPasskeyAvailability,
+  anyLoginPasskeyRegistered,
   requireRelyingParty,
   startRegistration,
   finishRegistration,
@@ -204,6 +205,24 @@ describe("getPasskeyAvailability", () => {
       get: (name: string) => (name === "host" ? "other.example.com" : undefined),
     });
     expect(a.rpId).toBe("other.example.com");
+  });
+});
+
+describe("anyLoginPasskeyRegistered", () => {
+  it("is false on an install where nobody has registered a passkey", async () => {
+    pk.findFirst.mockResolvedValue(null);
+    await expect(anyLoginPasskeyRegistered()).resolves.toBe(false);
+  });
+
+  it("is true once a local account holds one, and asks only about local accounts", async () => {
+    // Passwordless login refuses every other provider, so an SSO account's
+    // leftover credential must not bring the login-page button back.
+    pk.findFirst.mockResolvedValue({ id: "pk-1" });
+    await expect(anyLoginPasskeyRegistered()).resolves.toBe(true);
+    expect(pk.findFirst).toHaveBeenCalledWith({
+      where: { user: { authProvider: "local" } },
+      select: { id: true },
+    });
   });
 });
 

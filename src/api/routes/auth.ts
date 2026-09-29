@@ -65,6 +65,7 @@ import {
   savePasskeySettings,
   passkeySecondFactorEnabled,
   getPasskeyAvailability,
+  anyLoginPasskeyRegistered,
   userHasPasskey,
   listPasskeys,
   renamePasskey,
@@ -509,7 +510,11 @@ router.post("/login/totp", async (req, res, next) => {
 // GET /api/v1/auth/passkeys/config
 router.get("/passkeys/config", async (req, res, next) => {
   try {
-    res.json(await getPasskeyAvailability(req));
+    const availability = await getPasskeyAvailability(req);
+    // Only asked when the button could otherwise be drawn — a disabled or
+    // unreachable install needs no lookup to know the answer is "hide it".
+    const anyRegistered = availability.loginEnabled ? await anyLoginPasskeyRegistered() : false;
+    res.json({ ...availability, anyRegistered });
   } catch (err) {
     next(err);
   }
