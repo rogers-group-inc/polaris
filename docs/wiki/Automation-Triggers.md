@@ -24,6 +24,7 @@ A number, compared against a threshold.
 | Metric | Unit | Dimension |
 |---|---|---|
 | `cpuPct` — CPU utilization | % | — |
+| `cpuCorePct` — **CPU core utilization** | % | — (one alert per device, naming the hot cores — see below) |
 | `memPct` — Memory utilization | % | — |
 | `memUsedBytes` — Memory used | bytes | — |
 | `sessionCount` — Active sessions | — | — |
@@ -51,6 +52,34 @@ The `path*` metrics come from [agent-run path checks](Path-Monitor).
 The device they are about is the **host that ran the check**, not the target, and
 they never change that host's Up / Down status. Pick the check on the condition
 row; blank means every check the host runs, one alert each.
+
+### CPU core utilization
+
+`cpuCorePct` finds a **single-threaded application**: one thread pinning one
+core of a 16-core server reads about 6% as **CPU utilization**, so the
+all-cores condition never sees it.
+
+**The hold is counted per core.** "Above 90% sustained for 3 polls" means the
+**same core** was above 90% on three polls in a row. Different cores each going
+over 90% once, which is how ordinary multi-threaded load looks, does not fire.
+Set the number of polls in **Sustained for**, as for any other condition.
+
+- **One alert per device.** It names the cores that stayed over the line for
+  the whole hold, busiest first, for example `Core 3 (97%)`. The email shows
+  them in a **CPU cores** row, with the **top 5 processes by CPU** and the CPU
+  and memory charts.
+- **It clears when every core is back under the line** for the reset's
+  clear-sustain count, not just the core that fired.
+- **Only hosts that report per-core figures**: the Polaris Agent and vCenter
+  (VMs and ESXi hosts). SNMP, FortiOS, WinRM and SSH do not report cores, so
+  those devices never fire this condition.
+- **The regular CPU alert wins.** While a device has an open **CPU
+  utilization** (`cpuPct`) alert from any automation, a per-core automation
+  stays quiet on that device. If it had already alerted, its alert clears as
+  *superseded*, because when every core is busy the device-wide alert already
+  says so. Acknowledging the CPU alert does not change this; clearing it does.
+  This does not apply to a per-core condition inside a multi-condition
+  automation. See [rule 89](Business-Rules#rule-89).
 
 ### Prefer the device's own alarm bit
 

@@ -113,6 +113,7 @@ import { isUnusedPort } from "./interfaceInventoryService.js";
 import { logger } from "../utils/logger.js";
 import { alarmStatusToFlag } from "../utils/hardwareSensors.js";
 import { median } from "../utils/stats.js";
+import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreList } from "../utils/cpuCores.js";
 import {
   buildTemplateContext,
   renderNotificationTemplate,
@@ -291,6 +292,13 @@ interface Reading {
    * satisfying a hold with one stale sample re-read at every tick.
    */
   series?: (number | string | boolean | null)[];
+  /**
+   * The series the RECOVERY run is counted off, when it is not `series` — set
+   * only by cpuCorePct (business rule 89), whose `series` is a per-core
+   * envelope that counts one core's run and would read a single recovered poll
+   * as a whole run of them. Newest first, like `series`.
+   */
+  clearSeries?: (number | string | boolean | null)[];
   /**
    * When this reading was taken: the newest sample's timestamp for a series
    * source, that stream's poll anchor on the Asset for a current-state one
@@ -894,6 +902,54 @@ async function dropUnusedPorts(
   return unused.size === 0 ? readings : readings.filter((r) => !unused.has(`${r.assetId}|${portOf(r)}`));
 }
 
+/**
+ * cpuCorePct readings (business rule 89): ONE reading per device, whose hold is
+ * counted PER CORE — "over 90% for 3 polls" means the same core on three
+ * consecutive polls, which is what a single-threaded application pinning one
+ * core looks like (three different cores each spiking once is ordinary load).
+ *
+ * `utils/cpuCores.coreSeries` does the work: `series` is an envelope whose
+ * leading run under any threshold equals the longest single-core run, so the
+ * ordinary hold, band and tier counting below needs no per-core knowledge;
+ * `clearSeries` is the most extreme core of each poll, so recovery waits until
+ * EVERY core has stayed back under the line. The label names the cores whose
+ * own run reached the hold (coresToName). Dimension key "": the label changes
+ * as cores heat and cool, and state is keyed per device.
+ */
+function reduceCoreReadings(
+  rows: Array<{ assetId: string; timestamp: Date; cpuCorePcts: unknown }>,
+  assetIndex: Map<string, ScopeAssetRow>,
+  trigger: Extract<Trigger, { type: "asset_metric" }>,
+  windowPolls: number,
+): Reading[] {
+  const byAsset = new Map<string, Array<{ ts: number; vec: number[] }>>();
+  for (const r of rows) {
+    const vec = coreVector(r.cpuCorePcts);
+    if (!vec || !assetIndex.has(r.assetId)) continue;
+    let list = byAsset.get(r.assetId);
+    if (!list) byAsset.set(r.assetId, (list = []));
+    list.push({ ts: r.timestamp.getTime(), vec });
+  }
+  const below = coreConditionIsBelow(trigger.operator);
+  const holdPolls = triggerHoldPolls(trigger);
+  const out: Reading[] = [];
+  for (const [assetId, list] of byAsset) {
+    list.sort((a, b) => b.ts - a.ts);
+    const cs = coreSeries(list.map((x) => x.vec), { aggregation: trigger.aggregation, windowPolls, below }, rollingAggregate);
+    if (!cs) continue;
+    const asset = assetIndex.get(assetId)!;
+    out.push({
+      assetId, hostname: asset.hostname, tags: asset.tags, dimKey: "",
+      dimLabel: formatCoreList(coresToName(cs, (v) => readingMeets(trigger, v), holdPolls, below)),
+      value: cs.value,
+      series: cs.series.slice(0, SERIES_CAP),
+      clearSeries: cs.clearSeries.slice(0, SERIES_CAP),
+      readingAt: new Date(list[0]!.ts),
+    });
+  }
+  return out;
+}
+
 /** The SD-WAN member a `healthCheck|link` reading is about. FortiOS object
  *  names admit no `|`, so the first separator splits it. */
 const sdwanMemberOf = (r: Reading): string => r.dimKey.slice(r.dimKey.indexOf("|") + 1);
@@ -922,6 +978,19 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
       const rows = await prisma.assetTelemetrySample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, sessionCount: true } });
       const pick = (r: any) => trigger.metric === "memUsedBytes" ? num(r.memUsedBytes) : (r[trigger.metric] ?? null);
       return reduceReadings(rows, index, () => "", () => "", pick, agg, winPolls);
+    }
+    case "cpuCorePct": {
+      // One reading per DEVICE (dimension ""), valued at each sample's hottest
+      // core, then labelled with the cores that are over the line — so a
+      // 64-core host with three hot cores raises one alert naming three cores,
+      // not three alerts. Only rows that carry a vector are read: every other
+      // telemetry source leaves the column null, and a device with no per-core
+      // data has no reading rather than a zero.
+      const rows = await prisma.assetTelemetrySample.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since }, cpuCorePcts: { not: Prisma.DbNull } },
+        select: { assetId: true, timestamp: true, cpuCorePcts: true },
+      });
+      return reduceCoreReadings(rows, index, trigger, winPolls);
     }
     case "responseTimeMs": case "uptimeSec": {
       // Response-time poll only (probeKind): the ICMP loss sampler writes a
@@ -2062,6 +2131,35 @@ async function clearVanishedStates(
   }
 }
 
+/**
+ * Business rule 89 — which of these assets carry a LIVE all-cores CPU alert
+ * (an uncleared, real — not test — alert some automation raised on the
+ * `cpuPct` asset metric). A per-core CPU automation hands those assets off:
+ * the all-cores alert already says the device is busy, and a second alert
+ * listing its cores says the same thing again. Acknowledged still counts —
+ * acknowledging an alert does not end it. One indexed query per per-core
+ * rule per tick, narrowed to the assets that rule is about to evaluate.
+ */
+async function assetsWithLiveAllCoresCpuAlert(assetIds: string[]): Promise<Set<string>> {
+  const rows = await prisma.notification.findMany({
+    where: { assetId: { in: assetIds }, metric: "cpuPct", cleared: false, testRun: false, ruleId: { not: null } },
+    select: { assetId: true },
+  });
+  return new Set(rows.map((r) => r.assetId).filter((id): id is string => !!id));
+}
+
+/** Tick order: every rule before a per-core CPU rule, so the all-cores alert a
+ *  per-core rule defers to (rule 89) is raised or cleared in the SAME tick it
+ *  is read — otherwise a device crossing both lines at once would get both
+ *  alerts for one tick before the handoff. Stable: nothing else reorders. */
+export function evaluationOrder<T extends { trigger: unknown }>(rules: T[]): T[] {
+  const late = (r: T) => {
+    const t = r.trigger as { type?: string; metric?: string } | null;
+    return t?.type === "asset_metric" && t.metric === "cpuCorePct" ? 1 : 0;
+  };
+  return rules.map((r, i) => ({ r, i })).sort((a, b) => late(a.r) - late(b.r) || a.i - b.i).map((x) => x.r);
+}
+
 async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): Promise<void> {
   const trigger = rule.trigger;
   let readings: Reading[] = [];
@@ -2072,6 +2170,9 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
   const speaksForSuppressed = ruleAlertsWhenDependencyDown(trigger);
   // Assets carved out this tick by a more-specific same-signature automation.
   const shadowedIds = new Set<string>();
+  // Business rule 89 — a per-core CPU rule's assets that carry a live
+  // all-cores CPU alert this tick. Handed off like a carve-out.
+  const coreSupersededIds = new Set<string>();
   // Assets whose device isn't answering, on a rule whose metric needs it to be
   // (packet loss — business rule 29). Handed off to asset-down alerting.
   const notAnsweringIds = new Set<string>();
@@ -2123,10 +2224,13 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
       else if (needsAnswering && !assetIsAnsweringProbes(a)) notAnsweringIds.add(a.id);
       else active.push(a);
     }
-    activeAssets = active;
+    if (trigger.type === "asset_metric" && trigger.metric === "cpuCorePct" && active.length > 0) {
+      for (const id of await assetsWithLiveAllCoresCpuAlert(active.map((a) => a.id))) coreSupersededIds.add(id);
+    }
+    activeAssets = coreSupersededIds.size ? active.filter((a) => !coreSupersededIds.has(a.id)) : active;
     readings = trigger.type === "asset_metric"
-      ? await resolveAssetMetricReadings(trigger, active, saturatedIds)
-      : await resolveAssetStateReadings(trigger, active, { dependencyDownReadsDown: speaksForSuppressed });
+      ? await resolveAssetMetricReadings(trigger, activeAssets, saturatedIds)
+      : await resolveAssetStateReadings(trigger, activeAssets, { dependencyDownReadsDown: speaksForSuppressed });
   } else {
     return;
   }
@@ -2358,7 +2462,9 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
   // takeover is a real handoff — clear any active alert (superseded) and reset
   // pending debounce so the general rule no longer alerts for these assets.
   for (const st of states) {
-    if (!st.assetId || !shadowedIds.has(st.assetId)) continue;
+    if (!st.assetId) continue;
+    const allCores = coreSupersededIds.has(st.assetId);
+    if (!allCores && !shadowedIds.has(st.assetId)) continue;
     if (st.state === "firing") {
       await clearActiveNotification(st, "system:superseded");
       await prisma.notificationRuleState.update({
@@ -2371,8 +2477,10 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
         resourceId: st.notificationId ?? undefined,
         resourceName: rule.name,
         actor: "system:notification-engine",
-        message: `Cleared: ${rule.name} superseded by a more-specific automation`,
-        details: { ruleId: rule.id, assetId: st.assetId },
+        message: allCores
+          ? `Cleared: ${rule.name} superseded by the device's all-cores CPU utilization alert`
+          : `Cleared: ${rule.name} superseded by a more-specific automation`,
+        details: { ruleId: rule.id, assetId: st.assetId, ...(allCores ? { reason: "all-cores-cpu" } : {}) },
       }).catch(() => {});
     } else if (st.state === "pending") {
       await prisma.notificationRuleState.update({
@@ -2438,7 +2546,7 @@ async function evaluateThresholdRule(rule: DbRule, shadowIndex?: ShadowIndex): P
   // (suppressed assets stay frozen, in-scope assets with no readings at all
   // stay frozen; see clearVanishedStates).
   if (scopeIds) {
-    const handled = new Set([...suppressedIds, ...shadowedIds, ...notAnsweringIds, ...saturatedIds]);
+    const handled = new Set([...suppressedIds, ...shadowedIds, ...coreSupersededIds, ...notAnsweringIds, ...saturatedIds]);
     const assetsWithReadings = new Set(readings.map((r) => r.assetId).filter(Boolean));
     // activeAssets suffices as the pin-test index: any state row that passes
     // the handled/scope checks belongs to an active asset by construction.
@@ -3133,7 +3241,8 @@ function readingRuns(
 ): ReadingRuns {
   const met = seriesRun(reading, (v) => readingMeets(trigger, v));
   if (met !== null) {
-    const clear = seriesRun(reading, (v) => recoveredMeets(trigger, reset, v)) ?? 0;
+    const clearOf = reading.clearSeries ? { ...reading, series: reading.clearSeries } : reading;
+    const clear = seriesRun(clearOf, (v) => recoveredMeets(trigger, reset, v)) ?? 0;
     return { metRun: met, clearRun: clear, stateful: false, advanced: false };
   }
   const m = advanceRun(st?.metRun ?? 0, meets, reading.readingAt, st?.lastReadingAt);
@@ -4235,7 +4344,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // of which (same trigger signature, higher scope specificity). Built once.
   const shadowIndex = buildShadowIndex(rules);
 
-  for (const rule of rules) {
+  for (const rule of evaluationOrder(rules)) {
     try {
       if (rule.trigger.type === "composite") {
         await evaluateCompositeRule(rule);

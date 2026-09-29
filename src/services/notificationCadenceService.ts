@@ -77,6 +77,7 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   status: "responseTime",
   // Telemetry pass (assetTelemetrySample).
   cpuPct: "cpuMemory",
+  cpuCorePct: "cpuMemory",
   memPct: "cpuMemory",
   memUsedBytes: "cpuMemory",
   sessionCount: "cpuMemory",

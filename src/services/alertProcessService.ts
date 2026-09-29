@@ -41,6 +41,7 @@ export type ProcessRanking = "cpu" | "memory";
 export function processRankingForMetric(metric: string | null | undefined): ProcessRanking | null {
   switch (metric) {
     case "cpuPct":
+    case "cpuCorePct":
       return "cpu";
     case "memPct":
     case "memUsedBytes":

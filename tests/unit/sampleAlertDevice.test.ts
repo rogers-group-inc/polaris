@@ -81,6 +81,10 @@ describe("sampleDimensionFor", () => {
     expect(sampleDimensionFor("sdwanLatency")).toBe(`${SAMPLE_SDWAN_HEALTH_CHECK}|${SAMPLE_SDWAN_LINK}`);
   });
 
+  it("names sample cores for a per-core CPU automation", () => {
+    expect(sampleDimensionFor("cpuCorePct")).toBe("Core 3, Core 7");
+  });
+
   it("is null for a whole-device metric", () => {
     expect(sampleDimensionFor("cpuPct")).toBeNull();
     expect(sampleDimensionFor(null)).toBeNull();

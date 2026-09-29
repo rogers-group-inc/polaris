@@ -42,32 +42,21 @@
 
 import { prisma } from "../db.js";
 import type { SampleTier } from "./sampleQueryRouter.js";
+import { coreVector } from "../utils/cpuCores.js";
 
 function bn(v: bigint | null | undefined): number | null {
   if (v == null) return null;
   return Number(v);
 }
 
-/**
- * Narrow `AssetTelemetrySample.cpuCorePcts` (jsonb, therefore `JsonValue` to
- * Prisma) to the number vector the chart wants.
- *
- * jsonb is schemaless from the database's point of view, so this is the
- * boundary where the shape is actually checked rather than asserted — an
- * older agent, a hand-written row or a future shape change reaches here as
- * whatever it is, and anything that is not a finite-number array becomes
- * null (charted as "no per-core data") instead of reaching the browser as a
- * ragged array that renders as NaN coordinates in an SVG path.
- */
-function coreVector(v: unknown): number[] | null {
-  if (!Array.isArray(v) || v.length === 0) return null;
-  const out: number[] = [];
-  for (const x of v) {
-    if (typeof x !== "number" || !Number.isFinite(x)) return null;
-    out.push(x);
-  }
-  return out;
-}
+// `coreVector` (utils/cpuCores) narrows `AssetTelemetrySample.cpuCorePcts`
+// (jsonb, therefore `JsonValue` to Prisma) to the number vector the chart
+// wants. jsonb is schemaless from the database's point of view, so that is the
+// boundary where the shape is actually checked rather than asserted — anything
+// that is not a finite-number array becomes null (charted as "no per-core
+// data") instead of reaching the browser as a ragged array that renders as NaN
+// coordinates in an SVG path. The cpuCorePct automation metric reads through
+// the same narrowing.
 
 /**
  * Counter-rate helper. `first` and `last` are cumulative counter values at

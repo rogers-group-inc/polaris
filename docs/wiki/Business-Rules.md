@@ -1253,3 +1253,23 @@ address recently (a DHCP WAN that just lost its lease, a static WAN that went
 down) still alerts. A port down for more than 30 days is treated as unused.
 
 See [Automation Triggers → Skip unused ports](Automation-Triggers#skip-unused-ports).
+
+### Rule 89
+
+**A per-core CPU hold follows one core, the alert names it, and it yields to the
+all-cores alert on the same device.**
+
+The **CPU core utilization** condition (`cpuCorePct`) finds single-threaded
+applications. "Above 90% for 3 polls" means the **same core** was above 90% on
+three polls in a row. Different cores each spiking once does not count. It
+raises **one alert per device**, naming the cores that stayed over the line,
+with the top five processes by CPU. Only the Polaris Agent and vCenter report
+per-core figures; any other device has no reading for it.
+
+When the whole device is busy, every core is hot. So while the device has an
+open **CPU utilization** alert, the per-core automation does not alert on it,
+and an alert it already raised clears as *superseded*. Once the CPU utilization
+alert clears, the per-core automation can alert again if a core is still hot.
+Per-core conditions inside a multi-condition automation are not affected.
+
+See [Automation Triggers → CPU core utilization](Automation-Triggers#cpu-core-utilization).
