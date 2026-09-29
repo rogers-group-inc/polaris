@@ -58,7 +58,11 @@ beforeAll(() => {
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
   ({ optionsHtml, suggestHtml, matchCue, note, narrow } = sandbox.window.PolarisAutomationDimensions);
+  dims = sandbox.window.PolarisAutomationDimensions;
 });
+
+// The pick-several helpers for the SD-WAN pair (health check / member).
+let dims: Record<string, any>;
 
 const result = (over: Partial<DimResult> = {}): DimResult => ({
   values: [{ value: "temperature", assetCount: 8 }, { value: "fan", assetCount: 6 }],
@@ -333,5 +337,66 @@ describe("sibling narrowing", () => {
     const poe = { stateOperator: "==", stateValue: "fault" };
     expect(narrow("mountPathPattern", {}, poe)).toEqual({});
     expect(narrow("tunnelName", {}, poe)).toEqual({});
+  });
+});
+
+describe("SD-WAN multi-value health check / member", () => {
+  const hc = (over: Partial<DimResult> = {}): DimResult => result({
+    values: [{ value: "Microsoft", assetCount: 4 }, { value: "Primary WAN", assetCount: 4 }, { value: "Secondary WAN", assetCount: 2 }],
+    noun: "SD-WAN health checks",
+    ...over,
+  });
+
+  it("is the SD-WAN pair only", () => {
+    expect(dims.isMulti("healthCheck")).toBe(true);
+    expect(dims.isMulti("link")).toBe(true);
+    expect(dims.isMulti("ifNamePattern")).toBe(false);
+  });
+
+  it("stores canonically and displays spaced, so a list reads as a list", () => {
+    expect(dims.storedValue("healthCheck", " Microsoft | Primary WAN | microsoft ")).toBe("Microsoft|Primary WAN");
+    expect(dims.displayValue("healthCheck", "Microsoft|Primary WAN")).toBe("Microsoft | Primary WAN");
+    // A single-value dim is untouched — a "|" in an interface pattern is not a list.
+    expect(dims.storedValue("ifNamePattern", " a|b ")).toBe("a|b");
+    expect(dims.displayValue("ifNamePattern", "a|b")).toBe("a|b");
+  });
+
+  it("matches any term, mirroring the server's sdwanDimensionMatch", () => {
+    expect(dims.sdwanMatch("Primary WAN", "Microsoft|primary")).toBe(true);
+    expect(dims.sdwanMatch("Metrocenter", "Microsoft|primary")).toBe(false);
+    expect(dims.sdwanMatch("anything", "")).toBe(true);
+  });
+
+  it("splits picked terms from the fragment still being typed", () => {
+    expect(dims.multiState(hc(), "Microsoft | Prim")).toEqual({ picked: ["Microsoft"], fragment: "Prim" });
+    // A last term that IS a reported value was picked, so the whole list is back on offer.
+    expect(dims.multiState(hc(), "Microsoft | Primary WAN")).toEqual({ picked: ["Microsoft", "Primary WAN"], fragment: "" });
+    expect(dims.multiState(hc(), "WAN |")).toEqual({ picked: ["WAN"], fragment: "" });
+  });
+
+  it("toggles a clicked value: add replacing the fragment, remove when already picked", () => {
+    expect(dims.togglePick(hc(), "Microsoft | Prim", "Primary WAN")).toBe("Microsoft | Primary WAN");
+    expect(dims.togglePick(hc(), "Microsoft | Primary WAN", "Microsoft")).toBe("Primary WAN");
+    expect(dims.togglePick(hc(), "", "Secondary WAN")).toBe("Secondary WAN");
+  });
+
+  it("ticks the picked values in the suggestion list and keeps offering the rest", () => {
+    const html = suggestHtml(hc(), "Microsoft | Primary WAN", "healthCheck" as never);
+    expect(html).toContain("pick as many as you need");
+    expect((html.match(/aw-suggest-picked/g) || []).length).toBe(2);
+    expect(html).toContain('data-val="Secondary WAN"');
+  });
+
+  it("filters the list by the fragment only", () => {
+    const html = suggestHtml(hc(), "Microsoft | Second", "healthCheck" as never);
+    expect(html).toContain('data-val="Secondary WAN"');
+    expect(html).not.toContain('data-val="Primary WAN"');
+  });
+
+  it("names a term that matches nothing, even while the rest of the list matches", () => {
+    const cue = matchCue(hc(), "Microsoft | Typo", "healthCheck" as never);
+    expect(cue.warn).toBe(true);
+    expect(cue.text).toContain("Typo");
+    expect(matchCue(hc(), "Microsoft | Primary WAN", "healthCheck" as never).warn).toBe(false);
   });
 });

@@ -48,8 +48,8 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | touch subnets, blocks, reservations, CIDR math, DHCP leases | rules 1–7 and 11; 20a, 23, 26, 41, 42, 69, 77 |
 | touch what the IP panel's Status column SAYS about an address, a FortiGate VIP or virtual server, `vipInfo`, or whether an address can be reserved at all | 23 first (the two-facts split), then 77 (the third fact and the composed pill) |
 | touch Asset status, `monitored`, `lastSeen`, `acquiredAt` | 9, 10; 12, 16, 36, 37 |
-| touch probes, `monitorStatus`, the failure bucket, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 66, 67, 78, 86 — the state machine itself is `polaris-change-impact` → cross-cutting/five-state-monitor-machine.md |
-| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 65, 66, 67, 78, 85, 89 |
+| touch probes, `monitorStatus`, the failure bucket, packet loss, dependency suppression | 29, 30, 36, 38, 55, 59, 66, 67, 78, 86, 90 — the state machine itself is `polaris-change-impact` → cross-cutting/five-state-monitor-machine.md |
+| touch automations, alerts, delivery, acknowledge, reset, escalation, reminders | 18, 19, 24, 25, 32, 39, 44, 46, 56, 58, 59, 60, 65, 66, 67, 78, 85, 89, 90 |
 | touch what an alert says about a device that is dependency-down, or who may alert about one | 16 and 37 (the silence), then 78 (the one opt-out from it) |
 | touch what an alert EMAIL says — the timezone a timestamp is drawn in, who is on the To line, whether one send may become two, the Acknowledge button | 25 first (it forbids splitting a send), then 56 and 60 |
 | touch a maintenance window, a hold Polaris takes for itself, or any surface that REPORTS one | 16 (what a window does), 37 (the gate that reads it), 80 + 80a (holds and event-time), 73 (reporting) |
@@ -97,13 +97,13 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 - [references/narrative-36-43.md](references/narrative-36-43.md) — narrative, rules 36–43
 - [references/narrative-44-48.md](references/narrative-44-48.md) — narrative, rules 44–59 (split 2026-09-09 when 36–43 passed 100 KB)
 - [references/narrative-60-64.md](references/narrative-60-64.md) — narrative, rules 60–74 (split 2026-09-15; rules 76, 77 and 79 moved out to their own files 2026-09-22 to keep it under the ceiling)
-- one file per rule from here on: [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md)
+- one file per rule from here on: [narrative-76.md](references/narrative-76.md), [narrative-77.md](references/narrative-77.md), [narrative-78.md](references/narrative-78.md), [narrative-79.md](references/narrative-79.md), [narrative-80.md](references/narrative-80.md) (80 and 80a), [narrative-82.md](references/narrative-82.md), [narrative-83.md](references/narrative-83.md), [narrative-84.md](references/narrative-84.md), [narrative-85.md](references/narrative-85.md), [narrative-86.md](references/narrative-86.md), [narrative-87.md](references/narrative-87.md), [narrative-88.md](references/narrative-88.md), [narrative-89.md](references/narrative-89.md), [narrative-90.md](references/narrative-90.md)
 
 ## Rules 1–11
 
 One-line invariants, in [references/invariants-01-11.md](references/invariants-01-11.md): no overlapping subnets (1), subnet within block (2), no duplicate reservations (3), deletion protection (4), CIDR normalization (5), `sourceType` tracking (6), conflict detection (7), event retention (8), `acquiredAt ≤ lastSeen` (9), the four unmonitorable statuses (10), DNS-resolved reservations (11).
 
-## Rules 12–89 (index)
+## Rules 12–90 (index)
 
 Pairs that are two halves of one concern are marked; each keeps its own number because code cites both.
 
@@ -188,6 +188,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 87 | A firmware image is offered only to a device whose serial names the image's platform, and only forward; the flash takes a hold and never records a version it has not read back | invariants-30-43 | narrative-87 |
 | 88 | A port Polaris has positive evidence was never in use does not alert when the automation asks it to skip unused ports; "unused" is decided by the port's remembered address, never its current one | invariants-30-43 | narrative-88 |
 | 89 | A per-core CPU hold follows ONE core, the alert names it, and it yields to the all-cores alert on the same device | invariants-30-43 | narrative-89 |
+| 90 | An SD-WAN member riding a parent that is over the same line does not alert; the parent's alert names the cause | invariants-30-43 | narrative-90 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain, and the dormant
 columns they retired), `polaris-change-impact` (who else reads or writes the fields a rule

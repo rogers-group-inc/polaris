@@ -662,6 +662,60 @@ address, so that second condition never filters anything.
 
 ---
 
+## SD-WAN
+
+The SD-WAN conditions are **SD-WAN latency**, **SD-WAN jitter** and **SD-WAN
+packet loss** (asset metrics) and **SD-WAN member state** (asset state). Each
+one is about a health check's view of a member. The condition row has a picker
+for each: **health check** and **member**.
+
+### Pick several health checks or members
+
+Both pickers take more than one value. Click a name in the list to add it, and
+click it again to remove it. Picked names show a ✓, and the list stays open so
+you can pick the next one. The box shows your picks separated by `|`, for
+example `Microsoft | Primary WAN`. The sentence reads *"for health check
+Microsoft or Primary WAN"*.
+
+- **Any of them matches.** A condition with several picks alerts on a member
+  that matches any one of them.
+- **Each pick matches part of a name**, as a single value always has: `wan`
+  matches `wan1` and `wan2`.
+- **Blank means all.** Leave a picker empty to cover every health check or
+  every member.
+- **Typing filters the list** by what you type after the last `|`.
+- **A pick that matches nothing is named** by the match cue. The condition
+  still fires on the other picks.
+
+The member list follows the health checks you picked: it shows only the members
+of those health checks. Automations saved with one value work exactly as before.
+
+### Overlays stay quiet while their underlay is over the line
+
+An overlay tunnel rides an underlay port: Overlay-3 over wan2. When wan2 loses
+packets, every overlay on it loses packets too. Polaris raises the wan2 alert
+and holds back the overlay alerts
+([rule 90](Business-Rules#rule-90)).
+
+- It applies to all four SD-WAN conditions above.
+- An overlay is held back while its underlay is over the same line in the same
+  automation, or while any automation has an open alert on the same condition
+  about the underlay.
+- An overlay alert that was already open clears as *superseded*. No "resolved"
+  notification is sent: the overlay has not recovered.
+- An overlay whose underlay is healthy alerts as usual, and so does every other
+  member on the same FortiGate.
+
+Polaris learns which port a tunnel rides from the FortiGate's IPsec
+configuration. A tunnel on a VLAN sub-interface (such as `wan1.100`) is traced
+back to its physical port.
+
+The **Health Check Status** strip on the device's SD-WAN tab also uses these
+automations: a poll that would cross one of their severity levels is coloured by
+that severity. See [Assets](Assets#sd-wan-fortigate-firewalls).
+
+---
+
 ## Testing the trigger
 
 **"Test against current data"** on the step, and on step 6 a full

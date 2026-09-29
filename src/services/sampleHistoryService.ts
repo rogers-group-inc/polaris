@@ -43,6 +43,8 @@
 import { prisma } from "../db.js";
 import type { SampleTier } from "./sampleQueryRouter.js";
 import { coreVector } from "../utils/cpuCores.js";
+import { sdwanSegmentVerdict, type SdwanStripMetric, type SdwanStripSample, type SdwanStripTier } from "../utils/sdwanDimensions.js";
+import { severityRank } from "./notificationTypes.js";
 
 function bn(v: bigint | null | undefined): number | null {
   if (v == null) return null;
@@ -1210,16 +1212,35 @@ export interface SdwanMemberRow {
   txBytes:      number | null; // interface outOctets (cumulative)
   rxBytes:      number | null; // interface inOctets (cumulative)
   healthChecks: SdwanMemberHealthCheck[];
-  recent:       Array<{ timestamp: Date; up: boolean }>; // recent per-scrape up/down for the status strip
+  recent:       SdwanStripSegment[]; // recent per-scrape verdicts for the status strip
 }
+
+/** One scrape of one member on the Health Check Status strip. */
+export interface SdwanStripSegment {
+  timestamp: Date;
+  /** Alive in every health check it belongs to. */
+  up:        boolean;
+  /** Alive, but some health check read it over that check's own SLA target. */
+  outOfSla:  boolean;
+  /** Worst severity tier an SD-WAN automation would fire at on these readings
+   *  (latency / jitter / loss); only for an alive, in-SLA scrape, else null. */
+  severity:  string | null;
+}
+
+/** The tier lookup readSdwanMembers colours the strip with — the route hands
+ *  in notificationRuleService.getMetricSeverityTierResolver so this module
+ *  takes no dependency on the automation layer. Absent = no severity shading. */
+export type SdwanStripTiersFor = (metric: SdwanStripMetric, healthCheck: string, link: string) => SdwanStripTier[];
 
 /**
  * Per-member SD-WAN health summary for the asset modal's "SD-WAN Members" table.
  * Aggregates the perfSla stream by WAN member (a member can appear in several
  * health-checks) and joins the latest interface sample for IP / link / byte
- * counters. `recent` powers the green/red health-check status strip — one entry
- * per scrape over the last SDWAN_STATUS_STRIP_MINUTES (30), `up` = up in every
- * health-check at that time.
+ * counters. `recent` powers the health-check status strip — one entry per
+ * scrape over the last SDWAN_STATUS_STRIP_MINUTES (30), judged by
+ * utils/sdwanDimensions → sdwanSegmentVerdict: `up` = up in every health-check
+ * at that time, `outOfSla` = a reading over its health check's own SLA target,
+ * `severity` = the worst tier `tiersFor` says an automation would fire at.
  * Reads the `perfSla` (+ `interfaces`) retention entities; current values come
  * from the latest rows, the strip from recent detail samples.
  *
@@ -1228,6 +1249,7 @@ export interface SdwanMemberRow {
  */
 export async function readSdwanMembers(
   assetId: string,
+  tiersFor?: SdwanStripTiersFor,
 ): Promise<{ members: SdwanMemberRow[]; collectedAt: Date | null }> {
   // A: latest sample per (member, health-check). `timestamp` comes back too:
   // the newest of these IS the SD-WAN scrape stamp, and the tab's freshness
@@ -1253,17 +1275,24 @@ export async function readSdwanMembers(
     if (r.timestamp && (!collectedAt || r.timestamp > collectedAt)) collectedAt = r.timestamp;
   }
 
-  // B: recent per-(member, scrape) aggregated up/down for the status strip.
-  // The window alone bounds the strip: the SD-WAN cadence floors at 60s, so 30
-  // minutes is at most ~30 segments (plus any Poll Now reads). It used to be 90
-  // minutes cut to the newest 48 readings — which, once SD-WAN moved to its own
-  // 60s cadence, meant the strip spanned "the last 48 minutes", a figure nobody
-  // chose.
-  const recentRows = await prisma.$queryRawUnsafe<Array<{ link: string; timestamp: Date; up: boolean }>>(
-    `SELECT "link", "timestamp", bool_and("state" = 'up') AS up
+  // B: recent per-(member, health check, scrape) readings for the status
+  // strip, folded per (member, scrape) below. The window alone bounds the
+  // strip: the SD-WAN cadence floors at 60s, so 30 minutes is at most ~30
+  // scrapes (plus any Poll Now reads) × the gate's handful of pairs. It used to
+  // be 90 minutes cut to the newest 48 readings — which, once SD-WAN moved to
+  // its own 60s cadence, meant the strip spanned "the last 48 minutes", a
+  // figure nobody chose. Raw rows rather than a bool_and: a segment is now
+  // judged on its VALUES too (SLA targets, automation tiers), not liveness alone.
+  const recentRows = await prisma.$queryRawUnsafe<Array<{
+    link: string; healthCheck: string; timestamp: Date; state: string;
+    latencyMs: number | null; jitterMs: number | null; packetLoss: number | null;
+    latencyThresholdMs: number | null; jitterThresholdMs: number | null; packetLossThreshold: number | null;
+  }>>(
+    `SELECT "link", "healthCheck", "timestamp", "state", "latencyMs", "jitterMs", "packetLoss",
+            "latencyThresholdMs", "jitterThresholdMs", "packetLossThreshold"
      FROM "asset_perf_sla_samples"
      WHERE "assetId" = $1 AND "timestamp" > now() - make_interval(mins => $2::int)
-     GROUP BY "link", "timestamp" ORDER BY "link", "timestamp" ASC`,
+     ORDER BY "link", "timestamp" ASC`,
     assetId,
     SDWAN_STATUS_STRIP_MINUTES,
   );
@@ -1282,10 +1311,24 @@ export async function readSdwanMembers(
     },
   });
   const ifaceByName = new Map(ifaceRows.map((r) => [r.ifName, r]));
-  const recentByLink = new Map<string, Array<{ timestamp: Date; up: boolean }>>();
+  // Fold per (member, scrape): rows arrive ordered by link then timestamp, so
+  // each scrape's health checks are adjacent.
+  const recentByLink = new Map<string, SdwanStripSegment[]>();
+  const stripGroups: Array<{ link: string; timestamp: Date; samples: SdwanStripSample[] }> = [];
   for (const r of recentRows) {
-    if (!recentByLink.has(r.link)) recentByLink.set(r.link, []);
-    recentByLink.get(r.link)!.push({ timestamp: r.timestamp, up: r.up });
+    const last = stripGroups[stripGroups.length - 1];
+    const sample: SdwanStripSample = {
+      healthCheck: r.healthCheck, state: r.state,
+      latencyMs: r.latencyMs, jitterMs: r.jitterMs, packetLoss: r.packetLoss,
+      latencyThresholdMs: r.latencyThresholdMs, jitterThresholdMs: r.jitterThresholdMs, packetLossThreshold: r.packetLossThreshold,
+    };
+    if (last && last.link === r.link && last.timestamp.getTime() === r.timestamp.getTime()) last.samples.push(sample);
+    else stripGroups.push({ link: r.link, timestamp: r.timestamp, samples: [sample] });
+  }
+  for (const g of stripGroups) {
+    const v = sdwanSegmentVerdict(g.samples, (metric, hc) => (tiersFor ? tiersFor(metric, hc, g.link) : []), severityRank);
+    if (!recentByLink.has(g.link)) recentByLink.set(g.link, []);
+    recentByLink.get(g.link)!.push({ timestamp: g.timestamp, up: v.up, outOfSla: v.outOfSla, severity: v.severity });
   }
 
   const hcByLink = new Map<string, SdwanMemberHealthCheck[]>();
