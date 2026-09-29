@@ -12859,21 +12859,33 @@ function _streamBadgeText(asset, stream, resolvedRaw, provenanceTier, intervalSe
 // System tab open path fires _updateStreamSourceBadgesFromEffective()
 // right after to overwrite it with the authoritative provenance from
 // /effective-monitor-settings (covers class overrides + integration tier).
-function _streamSourceBadgeHTML(asset, stream) {
+//
+// `opts.intervalSec` (optional) states a cadence that is NOT the stream's own:
+// SD-WAN borrows the Interfaces stream's method + tier (it is only scheduled
+// when Interfaces is on FortiOS REST) but polls on the integration's
+// sdwanIntervalSeconds, so its badge read "every 10m" over a 60s table. The
+// figure rides the span as data-interval-sec so the async rewrite keeps it;
+// null states "no cadence" and drops the "every" slot.
+function _streamSourceBadgeHTML(asset, stream, opts) {
   var integration = asset.discoveredByIntegration;
   var sourceKind  = (integration && integration.type) || "manual";
   if (!_POLLING_COMPAT[sourceKind]) sourceKind = "manual";
   var assetField  = _streamFieldPrefix(stream) + "Polling";
   var resolvedRaw = asset[assetField] || _polarisSourceDefaultPolling(sourceKind, stream);
   if (!resolvedRaw) return "";
+  var hasOverride = !!opts && Object.prototype.hasOwnProperty.call(opts, "intervalSec");
   // Coarse interval guess for the sync render: per-asset override only.
   // The async path overwrites with the authoritative resolved value from
   // /effective-monitor-settings (covers class/integration/manual tiers).
   var intervalAssetField = _streamIntervalAssetField(stream);
-  var intervalSeconds = (intervalAssetField && asset[intervalAssetField] != null) ? asset[intervalAssetField] : null;
+  var intervalSeconds = hasOverride
+    ? (opts.intervalSec != null ? opts.intervalSec : null)
+    : ((intervalAssetField && asset[intervalAssetField] != null) ? asset[intervalAssetField] : null);
   var label = _streamBadgeText(asset, stream, resolvedRaw, null, intervalSeconds);
   var titleLabel = "Polling method · Where this setting comes from";
-  return '<span class="asset-stream-source-badge" data-asset-id="' + escapeHtml(asset.id) + '" data-stream="' + escapeHtml(stream) + '" title="' + escapeHtml(titleLabel) + '" style="font-size:0.75rem;padding:2px 6px;border-radius:10px;background:var(--color-bg-primary);border:1px solid var(--color-border);color:var(--color-text-secondary);white-space:nowrap">' +
+  return '<span class="asset-stream-source-badge" data-asset-id="' + escapeHtml(asset.id) + '" data-stream="' + escapeHtml(stream) + '"' +
+    (hasOverride ? ' data-interval-sec="' + escapeHtml(intervalSeconds != null ? String(intervalSeconds) : "") + '"' : "") +
+    ' title="' + escapeHtml(titleLabel) + '" style="font-size:0.75rem;padding:2px 6px;border-radius:10px;background:var(--color-bg-primary);border:1px solid var(--color-border);color:var(--color-text-secondary);white-space:nowrap">' +
     escapeHtml(label) +
   '</span>';
 }
@@ -12928,6 +12940,12 @@ async function _updateStreamSourceBadgesFromEffective(assetId, asset, effP) {
     var prov = eff.provenance && eff.provenance[prefix + "Polling"];
     var intervalField = _streamIntervalEffectiveField(stream);
     var intervalSeconds = intervalField ? eff.resolved[intervalField] : null;
+    // A caller-stated cadence (see _streamSourceBadgeHTML opts.intervalSec)
+    // wins: the resolver's figure is the borrowed stream's, not this table's.
+    if (span.hasAttribute("data-interval-sec")) {
+      var stated = Number(span.getAttribute("data-interval-sec"));
+      intervalSeconds = span.getAttribute("data-interval-sec") !== "" && isFinite(stated) ? stated : null;
+    }
     // Per-stream MIB id + provenance — only response-time / telemetry /
     // interfaces / lldp carry a *MibId column. The same provenance tier
     // (asset|class|integration|manual) feeds the tooltip so operators can
@@ -15362,7 +15380,10 @@ function _sdwanMembersTableHTML(members) {
 // range buttons). Both empty for the two tables, which then render as a plain
 // left-aligned strip.
 function _sdwanSectionHeaderHTML(a, title, lastAt, cadenceSec, neverText, extraHTML, rightHTML) {
-  var badge = _streamSourceBadgeHTML(a, "interfaces");
+  // Method + tier are the Interfaces stream's (SD-WAN runs only when it is on
+  // FortiOS REST); the cadence is SD-WAN's own — the same figure the stamp
+  // ambers against, so the badge and the stamp never disagree.
+  var badge = _streamSourceBadgeHTML(a, "interfaces", { intervalSec: cadenceSec });
   return '<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin:0 0 0.5rem">' +
       '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap">' +
         '<h4 style="margin:0">' + escapeHtml(title) + '</h4>' +
