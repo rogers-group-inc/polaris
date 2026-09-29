@@ -2439,6 +2439,30 @@ body.sf-resizing * { user-select: none !important; }
   background: var(--color-bg-primary);
 }
 .sf-filter-text .sf-filter { flex: 1; min-width: 0; }
+/* IP network filter (data-sf-filter="ipnet"): one row per network, "+" adds. */
+.sf-filter-ipnet { display: flex; flex-direction: column; gap: 2px; position: relative; }
+.sf-ipnet-row { display: flex; align-items: stretch; gap: 2px; }
+.sf-ipnet-row .sf-filter { flex: 1; min-width: 0; }
+.sf-ipnet-spacer { flex-shrink: 0; width: 18px; }
+.sf-ipnet-add,
+.sf-ipnet-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.sf-ipnet-add:hover:not(:disabled),
+.sf-ipnet-remove:hover { color: var(--color-text-primary); border-color: var(--color-accent); }
+.sf-ipnet-add:disabled { opacity: 0.4; cursor: default; }
+.sf-filter.sf-filter-invalid { border-color: var(--color-danger); }
 .sf-filter-readonly {
   font-style: italic;
   color: var(--color-text-tertiary);

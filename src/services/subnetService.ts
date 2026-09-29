@@ -168,6 +168,8 @@ export async function createSubnetRowChecked(
 export interface IpContext {
   subnetId: string;
   subnetCidr: string;
+  /** The network's IPAM name — the Assets list's Network column. */
+  subnetName: string;
   reservation: { id: string; createdBy: string | null; sourceType: string } | null;
 }
 
@@ -185,6 +187,7 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
     ip: string;
     subnet_id: string;
     subnet_cidr: string;
+    subnet_name: string;
     reservation_id: string | null;
     reservation_created_by: string | null;
     reservation_source_type: string | null;
@@ -194,6 +197,7 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
       i.ip                  AS ip,
       s.id                  AS subnet_id,
       s.cidr                AS subnet_cidr,
+      s.name                AS subnet_name,
       r.id                  AS reservation_id,
       r."createdBy"         AS reservation_created_by,
       r."sourceType"::text  AS reservation_source_type
@@ -212,6 +216,7 @@ export async function buildIpContexts(ips: string[]): Promise<Map<string, IpCont
     out.set(row.ip, {
       subnetId: row.subnet_id,
       subnetCidr: row.subnet_cidr,
+      subnetName: row.subnet_name,
       reservation: row.reservation_id
         ? { id: row.reservation_id, createdBy: row.reservation_created_by, sourceType: row.reservation_source_type as string }
         : null,

@@ -87,6 +87,15 @@ TableSF.prototype._setup = function () {
             '<div class="sf-date-actions"><button type="button" class="sf-btn-clear">Clear</button></div>' +
           '</div>' +
         '</div>';
+    } else if (th.getAttribute("data-sf-filter") === "ipnet") {
+      th.innerHTML = headerHtml +
+        '<div class="sf-filter-ipnet">' +
+          '<div class="sf-multi-popover sf-op-popover" hidden>' +
+            '<div class="sf-op-row" data-op="in-networks">In network</div>' +
+            '<div class="sf-op-row" data-op="empty">Is empty</div>' +
+            '<div class="sf-op-row" data-op="notempty">Is not empty</div>' +
+          '</div>' +
+        '</div>';
     } else {
       th.innerHTML = headerHtml +
         '<div class="sf-filter-text">' +
@@ -143,6 +152,8 @@ TableSF.prototype._setup = function () {
       });
     } else if (typeAttr === "date") {
       self._wireDateFilter(th, key);
+    } else if (th.querySelector(".sf-filter-ipnet")) {
+      self._wireIpNetFilter(th, key);
     } else {
       self._wireTextFilter(th, key);
     }
@@ -260,6 +271,187 @@ TableSF.prototype._wireTextFilter = function (th, key) {
     self._updateTextOpUI(th, key);
     self._onChange();
   });
+};
+
+// IP network filter (th data-sf-filter="ipnet"). Each box takes one IPv4 term —
+// a partial address typed octet by octet ("10", "10.1.2"), a full address, or a
+// CIDR ("10.1.0.0/16") — and "+" adds another box; a row matches when its IP
+// falls in ANY term. Stored as { op: "in-networks", terms: [...] } (valid,
+// non-empty terms only — an invalid box is marked, never sent). The ▾ menu
+// keeps is empty / is not empty. The term grammar mirrors
+// ipv4TermToMatchPrefixes in src/utils/cidr.ts, which is what matches it
+// server-side; TableSF.parseIpNetTerm is the browser half.
+TableSF.IPNET_PLACEHOLDER = "10.1 or 10.1.0.0/16";
+
+/** Pure: an IPv4 filter term → { base: BigInt, len } (the network it names), or null. */
+TableSF.parseIpNetTerm = function (raw) {
+  var term = String(raw == null ? "" : raw).trim();
+  if (!term) return null;
+  var addr = term, len = null;
+  var slash = term.indexOf("/");
+  if (slash >= 0) {
+    addr = term.slice(0, slash);
+    var lenStr = term.slice(slash + 1);
+    if (!/^\d{1,2}$/.test(lenStr)) return null;
+    len = parseInt(lenStr, 10);
+    if (len > 32) return null;
+  }
+  if (len == null && addr.charAt(addr.length - 1) === ".") addr = addr.slice(0, -1);
+  var parts = addr.split(".");
+  if (parts.length < 1 || parts.length > 4) return null;
+  var octets = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (!/^\d{1,3}$/.test(parts[i])) return null;
+    var n = parseInt(parts[i], 10);
+    if (n > 255) return null;
+    octets.push(n);
+  }
+  if (len == null) len = octets.length * 8;
+  else if (octets.length !== 4) return null;
+  while (octets.length < 4) octets.push(0);
+  var num = 0n;
+  for (var j = 0; j < 4; j++) num = (num << 8n) | BigInt(octets[j]);
+  var mask = len === 0 ? 0n : ((0xffffffffn << BigInt(32 - len)) & 0xffffffffn);
+  return { base: num & mask, mask: mask, len: len };
+};
+
+/** The filter value's terms (a legacy plain-string value reads as one term). */
+TableSF._ipNetTerms = function (raw) {
+  if (raw && typeof raw === "object" && raw.op === "in-networks") return (raw.terms || []).slice();
+  if (typeof raw === "string" && raw.trim() && raw.charAt(0) !== "!") return [raw.trim()];
+  return [];
+};
+
+TableSF.prototype._wireIpNetFilter = function (th, key) {
+  var self = this;
+  var wrap = th.querySelector(".sf-filter-ipnet");
+  var pop  = wrap.querySelector(".sf-op-popover");
+  wrap.addEventListener("click", function (e) { e.stopPropagation(); });
+
+  function boxes() { return Array.prototype.slice.call(wrap.querySelectorAll(".sf-ipnet-input")); }
+
+  function commit() {
+    var raw = self._filters[key];
+    if (raw && typeof raw === "object" && (raw.op === "empty" || raw.op === "notempty")) return;
+    var terms = [];
+    boxes().forEach(function (inp) {
+      var v = inp.value.trim();
+      var ok = !v || !!TableSF.parseIpNetTerm(v);
+      inp.classList.toggle("sf-filter-invalid", !ok);
+      inp.title = ok ? "Type 1–3 octets (10.1) or a network in CIDR form (10.1.0.0/16)"
+                     : "Not an IPv4 prefix or CIDR — this box is ignored";
+      if (v && ok && terms.indexOf(v) < 0) terms.push(v);
+    });
+    if (terms.length) self._filters[key] = { op: "in-networks", terms: terms };
+    else              delete self._filters[key];
+    self._updateIpNetOpUI(th, key);
+    self._onChange();
+  }
+  var debounced = debounce(commit, 200);
+  self._ipNetCommit = self._ipNetCommit || {};
+  self._ipNetCommit[key] = commit;
+
+  wrap.addEventListener("input", function (e) {
+    if (e.target.classList.contains("sf-ipnet-input")) debounced();
+  });
+  wrap.addEventListener("click", function (e) {
+    var add = e.target.closest(".sf-ipnet-add");
+    var rm  = e.target.closest(".sf-ipnet-remove");
+    var opBtn = e.target.closest(".sf-filter-op");
+    if (add) {
+      var values = boxes().map(function (i) { return i.value; });
+      values.push("");
+      self._renderIpNetRows(th, key, values);
+      var all = boxes();
+      all[all.length - 1].focus();
+    } else if (rm) {
+      var row = rm.closest(".sf-ipnet-row");
+      var idx = Array.prototype.indexOf.call(wrap.querySelectorAll(".sf-ipnet-row"), row);
+      var vals = boxes().map(function (i) { return i.value; });
+      vals.splice(idx, 1);
+      self._renderIpNetRows(th, key, vals);
+      commit();
+    } else if (opBtn) {
+      var willOpen = pop.hasAttribute("hidden");
+      document.querySelectorAll(".sf-multi-popover").forEach(function (p) { p.setAttribute("hidden", ""); });
+      if (willOpen) {
+        pop.removeAttribute("hidden");
+        self._positionPopover(opBtn, pop);
+      }
+    }
+  });
+  pop.addEventListener("click", function (e) {
+    var row = e.target.closest(".sf-op-row");
+    if (!row) return;
+    var op = row.getAttribute("data-op");
+    pop.setAttribute("hidden", "");
+    if (op === "empty" || op === "notempty") {
+      self._filters[key] = { op: op };
+      self._renderIpNetRows(th, key, [""]);
+      self._updateIpNetOpUI(th, key);
+      self._onChange();
+    } else {
+      delete self._filters[key];
+      self._renderIpNetRows(th, key, [""]);
+      commit();
+    }
+  });
+  self._renderIpNetRows(th, key, TableSF._ipNetTerms(self._filters[key]));
+  self._updateIpNetOpUI(th, key);
+};
+
+// (Re)draw the boxes: the first row carries ▾ and +, each extra row a × to drop it.
+TableSF.prototype._renderIpNetRows = function (th, key, values) {
+  var wrap = th.querySelector(".sf-filter-ipnet");
+  if (!wrap) return;
+  var pop = wrap.querySelector(".sf-op-popover");
+  wrap.querySelectorAll(".sf-ipnet-row").forEach(function (r) { r.remove(); });
+  var list = values && values.length ? values : [""];
+  list.forEach(function (v, i) {
+    var row = document.createElement("div");
+    row.className = "sf-ipnet-row";
+    row.innerHTML =
+      (i === 0
+        ? '<button type="button" class="sf-filter-op" title="Filter mode">▾</button>'
+        : '<span class="sf-ipnet-spacer" aria-hidden="true"></span>') +
+      '<input class="sf-filter sf-ipnet-input" type="text" spellcheck="false" autocomplete="off"' +
+        ' placeholder="' + escapeHtml(i === 0 ? TableSF.IPNET_PLACEHOLDER : "another network…") + '"' +
+        ' aria-label="IP network ' + (i + 1) + '">' +
+      (i === 0
+        ? '<button type="button" class="sf-ipnet-add" title="Add another network (matches any)">+</button>'
+        : '<button type="button" class="sf-ipnet-remove" title="Remove this network">×</button>');
+    row.querySelector("input").value = v || "";
+    wrap.insertBefore(row, pop);
+  });
+  this._updateIpNetOpUI(th, key);
+};
+
+TableSF.prototype._updateIpNetOpUI = function (th, key) {
+  var wrap = th.querySelector(".sf-filter-ipnet");
+  if (!wrap) return;
+  var raw = this._filters[key];
+  var op = raw && typeof raw === "object" && raw.op ? raw.op : "in-networks";
+  var fixed = op === "empty" || op === "notempty";
+  var first = wrap.querySelector(".sf-ipnet-input");
+  var add = wrap.querySelector(".sf-ipnet-add");
+  if (first) {
+    first.readOnly = fixed;
+    first.classList.toggle("sf-filter-readonly", fixed);
+    if (fixed) {
+      first.value = "";
+      first.placeholder = op === "empty" ? "(is empty)" : "(is not empty)";
+    } else {
+      first.placeholder = TableSF.IPNET_PLACEHOLDER;
+    }
+  }
+  if (add) add.disabled = fixed;
+  var opBtn = wrap.querySelector(".sf-filter-op");
+  if (opBtn) {
+    opBtn.classList.toggle("sf-filter-op-active", raw != null);
+    opBtn.title = "Filter mode — current: " + (
+      op === "empty" ? "is empty" : op === "notempty" ? "is not empty" : "in network"
+    );
+  }
 };
 
 // Suggestion list under a text filter. A column whose values come from a small,
@@ -646,6 +838,20 @@ TableSF.prototype.restoreFilterUI = function () {
     var multi = th.querySelector(".sf-filter-multi");
     var dateWrap = th.querySelector(".sf-filter-date");
     var textWrap = th.querySelector(".sf-filter-text");
+    var ipWrap = th.querySelector(".sf-filter-ipnet");
+    if (ipWrap) {
+      // A preset saved before this column became a network filter holds a
+      // plain "contains" string: read it as one term when it is a valid one,
+      // drop anything else (a "!" exclude, a not-contains object).
+      var isFixed = raw && typeof raw === "object" && (raw.op === "empty" || raw.op === "notempty");
+      var terms = isFixed ? [] : TableSF._ipNetTerms(raw).filter(function (t) { return !!TableSF.parseIpNetTerm(t); });
+      if (!isFixed) {
+        if (terms.length) self._filters[key] = { op: "in-networks", terms: terms };
+        else if (raw != null) delete self._filters[key];
+      }
+      self._renderIpNetRows(th, key, terms);
+      return;
+    }
     if (multi) {
       var values = Array.isArray(raw) ? raw : [];
       if (!Array.isArray(raw) && raw != null) delete self._filters[key];
@@ -780,6 +986,7 @@ TableSF.prototype.apply = function (data) {
   var result = data;
 
   var fKeys = Object.keys(self._filters);
+  var ipNets = {}; // in-networks terms, parsed once per apply
   if (fKeys.length) {
     result = result.filter(function (row) {
       return fKeys.every(function (k) {
@@ -810,6 +1017,14 @@ TableSF.prototype.apply = function (data) {
             var qn = String(raw.q || "").toLowerCase();
             if (!qn) return true;
             return !String(self._val(row, k)).toLowerCase().includes(qn);
+          }
+          if (raw.op === "in-networks") {
+            var nets = ipNets[k] || (ipNets[k] = (raw.terms || []).map(TableSF.parseIpNetTerm).filter(Boolean));
+            if (!nets.length) return true;
+            // Only a full dotted-quad row value can be in a network.
+            var ipv = TableSF.parseIpNetTerm(self._val(row, k));
+            if (!ipv || ipv.len !== 32) return false;
+            return nets.some(function (n) { return (ipv.base & n.mask) === n.base; });
           }
           // Date range
           if (raw.type === "date") {

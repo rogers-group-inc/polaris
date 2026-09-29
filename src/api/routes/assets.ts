@@ -43,7 +43,7 @@ import {
 } from "../../services/assetQuarantineService.js";
 import { syncDescriptionsOnSave } from "../../services/descriptionSyncService.js";
 import { descriptionSyncEnabledForRole } from "../../utils/descriptionSyncFlags.js";
-import { cidrContains, isValidIpAddress } from "../../utils/cidr.js";
+import { cidrContains, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
 import { buildIpContexts } from "../../services/subnetService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
@@ -560,6 +560,39 @@ const csvToArray = csvParam;
  */
 const buildAssetTextFilter = buildPrismaTextFilter;
 
+// Cap on the IP Address column's network terms — each can expand to 256 match
+// entries (ipv4TermToMatchPrefixes), so this bounds the OR at ~12.8k arms.
+const IP_NETWORK_TERMS_MAX = 50;
+
+/**
+ * The IP Address column's `in_networks` op: `value` is a CSV of IPv4 terms —
+ * partial addresses ("10", "10.1.2"), full addresses, or CIDRs — and a row
+ * matches when its primary IP falls in ANY of them. Matched as exact values +
+ * dotted prefixes on the string column (never an inet cast: one malformed
+ * Asset.ipAddress would make the cast throw for the whole list). A term that
+ * is not valid IPv4 is a 400, not silently ignored — dropping it would widen
+ * the filter to more devices than the operator asked for.
+ */
+function buildIpNetworksFilter(value: string | undefined): Record<string, unknown> | undefined {
+  const terms = (value || "").split(",").map((t) => t.trim()).filter(Boolean);
+  if (!terms.length) return undefined;
+  if (terms.length > IP_NETWORK_TERMS_MAX) {
+    throw new AppError(400, `At most ${IP_NETWORK_TERMS_MAX} networks can be filtered at once`);
+  }
+  const equals = new Set<string>();
+  const startsWith = new Set<string>();
+  for (const t of terms) {
+    const m = ipv4TermToMatchPrefixes(t);
+    if (!m) throw new AppError(400, `Not an IPv4 address, prefix or CIDR: ${t}`);
+    m.equals.forEach((e) => equals.add(e));
+    m.startsWith.forEach((p) => startsWith.add(p));
+  }
+  const arms: Record<string, unknown>[] = [];
+  if (equals.size) arms.push({ ipAddress: { in: Array.from(equals) } });
+  startsWith.forEach((p) => arms.push({ ipAddress: { startsWith: p } }));
+  return arms.length === 1 ? arms[0] : { OR: arms };
+}
+
 /**
  * The `_server` column displays `location || learnedLocation`, so its filter
  * spans both columns: contains → match either, not_contains → match neither,
@@ -824,6 +857,11 @@ function buildAssetListWhere(
     const value = typeof raw[key] === "string" ? (raw[key] as string) : undefined;
     const op = typeof raw[key + "Op"] === "string" ? (raw[key + "Op"] as string) : undefined;
     if (value == null && op == null) continue;
+    if (key === "ipAddress" && op === "in_networks") {
+      const netFrag = buildIpNetworksFilter(value);
+      if (netFrag) and.push(netFrag);
+      continue;
+    }
     const frag = buildAssetTextFilter(column, value, op);
     if (!frag) continue;
     // The Hostname cell shows two names on a pinned row (the pin, plus the

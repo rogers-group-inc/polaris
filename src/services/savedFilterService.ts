@@ -107,6 +107,7 @@ export function normalizeName(raw: unknown): string {
  *   ["a","b"]                                — multi-select checked values
  *   { op: "contains"|"not-contains", q }     — operator text filter
  *   { op: "empty"|"notempty" }               — emptiness filter
+ *   { op: "in-networks", terms: [...] }      — IP network filter (IPv4 prefixes / CIDRs, any-of)
  *   { type: "date", from?, to? }             — date range
  */
 export function sanitizeFilterState(raw: unknown): SavedFilterState {
@@ -164,6 +165,11 @@ function sanitizeFilterValue(key: string, value: unknown): unknown {
     if (obj.op === "empty" || obj.op === "notempty") return { op: obj.op };
     if (obj.op === "contains" || obj.op === "not-contains") {
       return { op: obj.op, q: obj.q == null ? "" : assertShortString(obj.q, `${where}.q`) };
+    }
+    if (obj.op === "in-networks") {
+      if (!Array.isArray(obj.terms)) throw new AppError(400, `${where}.terms must be an array`);
+      if (obj.terms.length > MAX_FILTER_VALUES) throw new AppError(400, `${where} exceeds ${MAX_FILTER_VALUES} values`);
+      return { op: "in-networks", terms: obj.terms.map((t) => assertShortString(t, `${where}.terms`)) };
     }
     throw new AppError(400, `${where} is not a recognized filter shape`);
   }

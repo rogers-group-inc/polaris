@@ -115,6 +115,7 @@ function _sflDescribeFilter(key, raw) {
     if (raw.op === "notempty")     return label + " is not empty";
     if (raw.op === "not-contains") return label + " excludes " + (raw.q || "");
     if (raw.op === "contains")     return label + " contains " + (raw.q || "");
+    if (raw.op === "in-networks")  return label + " in " + (raw.terms || []).join(" or ");
   }
   return label;
 }
