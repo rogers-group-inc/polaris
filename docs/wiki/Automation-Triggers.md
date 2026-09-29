@@ -24,6 +24,7 @@ A number, compared against a threshold.
 | Metric | Unit | Dimension |
 |---|---|---|
 | `cpuPct` — CPU utilization | % | — |
+| `cpuCorePct` — **Highest CPU core utilization** | % | — (one alert per device, naming the hot cores — see below) |
 | `memPct` — Memory utilization | % | — |
 | `memUsedBytes` — Memory used | bytes | — |
 | `sessionCount` — Active sessions | — | — |
@@ -51,6 +52,29 @@ The `path*` metrics come from [agent-run path checks](Path-Monitor).
 The device they are about is the **host that ran the check**, not the target, and
 they never change that host's Up / Down status. Pick the check on the condition
 row; blank means every check the host runs, one alert each.
+
+### Highest CPU core utilization
+
+`cpuCorePct` catches the fault the all-cores average hides: one runaway thread
+pinning a single core of a 16-core server reads about 6% as **CPU utilization**.
+Each reading is the **hottest core** of that sample, so "above 90% sustained for
+3 polls" means three samples in a row in which *some* core was above 90%, even
+if the busy thread moved between cores.
+
+- **One alert per device.** It names every core over the threshold, hottest
+  first, for example `Core 3 (97%), Core 7 (93%)`. The email shows them in a
+  **CPU cores** row, with the **top 5 processes by CPU** and the CPU and
+  memory charts.
+- **Only hosts that report per-core figures**: the Polaris Agent and vCenter
+  (VMs and ESXi hosts). SNMP, FortiOS, WinRM and SSH do not report cores, so
+  those devices never fire this condition.
+- **The regular CPU alert wins.** While a device has an open **CPU
+  utilization** (`cpuPct`) alert from any automation, a per-core automation
+  stays quiet on that device. If it had already alerted, its alert clears as
+  *superseded*, because when every core is busy the device-wide alert already
+  says so. Acknowledging the CPU alert does not change this; clearing it does.
+  This does not apply to a per-core condition inside a multi-condition
+  automation. See [rule 89](Business-Rules#rule-89).
 
 ### Prefer the device's own alarm bit
 

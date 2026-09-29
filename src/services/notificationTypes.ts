@@ -479,7 +479,12 @@ export function tierMetSinceChanged(
 // Numeric thresholds over the telemetry / sample tables. `dimensionFilter`
 // narrows multi-row streams (interfaces, sensors, mounts, SD-WAN members).
 export const ASSET_METRICS = [
-  "cpuPct", "memPct", "memUsedBytes", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
+  // cpuCorePct is the HOTTEST logical core of each sample
+  // (AssetTelemetrySample.cpuCorePcts — Polaris Agent + vCenter only). One
+  // alert per device naming every core over the line, and superseded on a
+  // device while that device carries a live all-cores cpuPct alert
+  // (business rule 89).
+  "cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
   "hwSensorValue", "hwSensorAlarm", "storageUsedPct", "storageUsedBytes", "storageDaysUntilFull",
   "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
@@ -3891,6 +3896,8 @@ export function probeLossWindowSecFromTrigger(trigger: unknown): number | null {
 export const METRIC_META: Record<string, { label: string; unit: string }> = {
   // asset_metric
   cpuPct: { label: "CPU utilization", unit: "%" },
+  // The hottest logical core of each sample — agent and vCenter hosts only.
+  cpuCorePct: { label: "Highest CPU core utilization", unit: "%" },
   memPct: { label: "Memory utilization", unit: "%" },
   memUsedBytes: { label: "Memory used", unit: "bytes" },
   sessionCount: { label: "Active sessions", unit: "" },
@@ -4318,9 +4325,22 @@ export function dimensionNounOf(
   const keys = t.type === "asset_metric"
     ? METRIC_DIMENSIONS[t.metric ?? ""]
     : t.type === "asset_state" ? STATE_FIELD_DIMENSIONS[t.field ?? ""] : null;
-  const noun = keys?.length ? DIMENSION_NOUNS[keys[0]!] : undefined;
+  const noun = keys?.length
+    ? DIMENSION_NOUNS[keys[0]!]
+    : t.type === "asset_metric" ? METRIC_COMPONENT_NOUNS[t.metric ?? ""] : undefined;
   return noun ? noun.charAt(0).toUpperCase() + noun.slice(1) : "";
 }
+
+/**
+ * A WHOLE-DEVICE metric whose alert still names components: cpuCorePct raises
+ * one alert per device (dimension key "") but labels it with the cores that are
+ * over the line, so the email's component row reads "CPU cores — Core 3 (97%)".
+ * Deliberately not a METRIC_DIMENSIONS entry: that would give the metric a
+ * dimension space and a filter input, and there is one alert per device here.
+ */
+export const METRIC_COMPONENT_NOUNS: Record<string, string> = {
+  cpuCorePct: "CPU cores",
+};
 
 /**
  * The catalog the builder UI reads from GET /notification-rules/schema, so the

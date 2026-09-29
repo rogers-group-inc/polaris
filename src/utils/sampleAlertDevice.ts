@@ -82,6 +82,9 @@ export const SAMPLE_INTERFACE_NAME = "port12";
 
 /** The filesystem a test of a storage* automation names. */
 export const SAMPLE_MOUNT_PATH = "/data";
+/** The cores a TEST of a per-core CPU automation names. Core numbers only — a
+ *  percentage beside them would read as a measurement of a real device. */
+export const SAMPLE_CPU_CORES = "Core 3, Core 7";
 
 /** The path check a test of a path* automation names (a made-up check,
  *  business rule 65 — never one from this install). */
@@ -104,5 +107,8 @@ export function sampleDimensionFor(metric: string | null | undefined): string | 
   if (metric.startsWith("if") || metric === "poeStatus") return SAMPLE_INTERFACE_NAME;
   if (metric.startsWith("path")) return SAMPLE_PATH_CHECK;
   if (metric.startsWith("storage")) return SAMPLE_MOUNT_PATH;
+  // A per-core CPU alert is keyed per device, but its component row names the
+  // cores over the line — so a test names some, or the row would vanish.
+  if (metric === "cpuCorePct") return SAMPLE_CPU_CORES;
   return null;
 }
