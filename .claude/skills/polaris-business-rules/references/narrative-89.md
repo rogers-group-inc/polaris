@@ -6,11 +6,11 @@
 
 Verbatim from BUSINESS-RULES.md: each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 89](#rule-89) — A per-core CPU alert names the cores and yields to the all-cores alert on the same device
+- [Rule 89](#rule-89) — A per-core CPU hold follows ONE core, the alert names it, and it yields to the all-cores alert on the same device
 
 <a id="rule-89"></a>
 
-## Rule 89 — A per-core CPU alert names the cores and yields to the all-cores alert on the same device
+## Rule 89 — A per-core CPU hold follows ONE core, the alert names it, and it yields to the all-cores alert on the same device
 
 ### The case
 
@@ -26,21 +26,46 @@ to the regular CPU alert when the whole device is busy.
 
 ### What was built
 
-**`cpuCorePct` — "Highest CPU core utilization"** is an ordinary asset metric. Each
-sample's reading is its hottest core (`utils/cpuCores.ts → hottestCorePct`), so the
-aggregation, the window, the poll-counted hold (rule 19), severity bands and hysteresis all
-work unchanged: "sustained for 3 polls" means three samples in each of which SOME core was
-over the line. That is deliberate — a scheduler moves a hot thread between cores, and a
-per-core hold would restart every time it moved.
+**`cpuCorePct` — "CPU core utilization"** is an ordinary asset metric whose HOLD is
+counted per core. The purpose is to find a single-threaded application: one thread pins
+one core and keeps it pinned. So "over 90% sustained for 3 polls" means the SAME core was
+over 90% on three consecutive polls. Three different cores each crossing 90% once is
+ordinary multi-threaded load and must not fire.
+
+The first build (same day) got this wrong: it valued each sample at its hottest core and
+counted the hold off that, so "3 polls" meant "some core on each of 3 polls" and a thread
+hopping between cores fired. The operator's correction: "I want it to alert if the same
+core is over 90% for 3 polls, or however many polls the user sets — the idea is to
+identify single-threaded applications."
+
+How the engine counts it without learning about cores (`utils/cpuCores.ts → coreSeries`,
+called from `notificationEngine → reduceCoreReadings`):
+
+- **`Reading.series` is an envelope**: `series[k]` = the maximum over cores of the
+  minimum of that core's newest k+1 values (min and max swapped for a `<` condition).
+  `series[k]` meets a threshold exactly when some single core met it on every one of the
+  newest k+1 polls, for ANY threshold in the condition's direction — so the ordinary
+  poll-counted hold (rule 19) AND every severity tier's own run count per core, off the
+  one series, with no change to the hold machinery.
+- **`Reading.clearSeries` is the busiest core of each poll**, and the recovery run is
+  counted off it (`readingRuns` prefers it when present). The envelope only ever falls as
+  k grows, so counting recovery off it would read one recovered poll as a whole run; an
+  alert about a pinned core must clear only once EVERY core has stayed back under the line
+  for the clear-sustain count.
+- **The value** is the most extreme core by the trigger's aggregation: the newest poll's
+  busiest core for `latest`, the busiest core's newest poll GROUP under a count window
+  (each core aggregated into its own disjoint groups, rule 66), the busiest per-core
+  aggregate over a time window.
+- Only samples as wide as the newest one count, so a VM resized mid-window never strings
+  a run across two different sets of cores.
 
 **One alert per device, not one per core.** The dimension key is `""`. A 64-core host with
 three hot cores raises one alert, not three, and the reset, acknowledge and escalation
-machinery sees one thing. Which cores are hot is the reading's LABEL, computed by
-`notificationEngine → labelHotCores`: each core is reduced over the same samples the
-reading was (the same aggregation, the last N for a count window, the newest for `latest`)
-and named when that value meets the base threshold (`coresOver`). When no single core
-meets it — the per-sample hottest core can clear the line while no one core's average does
-— the hottest core is named, so the alert never names nothing. The label renders into the
+machinery sees one thing. Which cores are hot is the reading's LABEL (`coresToName`): with a hold, a core is named
+when ITS OWN leading run of qualifying readings has reached the hold — the cores that are
+the reason the alert fired, not a core that merely spiked on the newest poll; without a
+hold, every core currently over the line. The most extreme core is named if none
+qualifies (a pending or recovering row), so the label never names nothing. The label renders into the
 message (`[Core 3 (97%), Core 7 (93%)]`), the trigger sentence and the email's component
 row, which `METRIC_COMPONENT_NOUNS` captions "CPU cores" (the metric deliberately has no
 `METRIC_DIMENSIONS` entry: that would give it a dimension space and a filter input).
@@ -88,10 +113,11 @@ one-tick per-core alert beside it.
 - **One alert per core** (dimension key = core index). Faithful to the data, useless to the
   reader: a pegged 32-core host would page 32 times, and a thread hopping cores would
   retire one alert and raise another every poll.
-- **Reading = the highest per-core AVERAGE** (max over cores of each core's mean). It
-  answers "is one core sustained high" more literally, but it has no per-sample series, so
-  the poll-counted hold (rule 19) could not be counted off it, and a migrating hot thread
-  would never read high at all.
+- **Reading = the hottest core of each sample** (the first build). It counts "some core
+  over the line on each poll", which a thread migrating between cores satisfies and a
+  single-threaded application is only one of many ways to satisfy — it would page on
+  ordinary bursty multi-threaded load, which is exactly what the all-cores metric already
+  covers.
 - **Supersede by coverage (rule 18 style).** Described above: it would silence the
   per-core rule wherever the baseline CPU automation runs, which is everywhere.
 - **Suppress per-core while the all-cores VALUE is high, alert or not.** It would make one
@@ -105,5 +131,10 @@ a composite has no single metric to supersede, and the author of a tree chose it
 conditions together. The asset Alerts tab's "can trigger" list is a coverage question and
 still lists a per-core automation beside the CPU one: whether it will speak depends on a
 live alert, which that list does not model.
+
+A scheduler that migrates a single CPU-bound thread between cores on every poll would
+spread its load and defeat a same-core hold. That is the trade the operator chose: in
+practice a thread that saturates a core tends to stay on it (cache affinity), and the
+alternative fires on ordinary load.
 
 Pinned by `tests/unit/cpuCores.test.ts` and `tests/integration/cpuCoreAlert.test.ts`.

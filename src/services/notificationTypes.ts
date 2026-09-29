@@ -479,11 +479,11 @@ export function tierMetSinceChanged(
 // Numeric thresholds over the telemetry / sample tables. `dimensionFilter`
 // narrows multi-row streams (interfaces, sensors, mounts, SD-WAN members).
 export const ASSET_METRICS = [
-  // cpuCorePct is the HOTTEST logical core of each sample
-  // (AssetTelemetrySample.cpuCorePcts — Polaris Agent + vCenter only). One
-  // alert per device naming every core over the line, and superseded on a
-  // device while that device carries a live all-cores cpuPct alert
-  // (business rule 89).
+  // cpuCorePct is per-core CPU (AssetTelemetrySample.cpuCorePcts — Polaris
+  // Agent + vCenter only), for finding a single-threaded application: its
+  // hold is counted PER CORE (the same core over the line for N polls). One
+  // alert per device naming the cores, superseded on a device while that
+  // device carries a live all-cores cpuPct alert (business rule 89).
   "cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
   "hwSensorValue", "hwSensorAlarm", "storageUsedPct", "storageUsedBytes", "storageDaysUntilFull",
   "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps",
@@ -3896,8 +3896,8 @@ export function probeLossWindowSecFromTrigger(trigger: unknown): number | null {
 export const METRIC_META: Record<string, { label: string; unit: string }> = {
   // asset_metric
   cpuPct: { label: "CPU utilization", unit: "%" },
-  // The hottest logical core of each sample — agent and vCenter hosts only.
-  cpuCorePct: { label: "Highest CPU core utilization", unit: "%" },
+  // Any ONE logical core, its hold counted per core — agent and vCenter hosts only.
+  cpuCorePct: { label: "CPU core utilization", unit: "%" },
   memPct: { label: "Memory utilization", unit: "%" },
   memUsedBytes: { label: "Memory used", unit: "bytes" },
   sessionCount: { label: "Active sessions", unit: "" },

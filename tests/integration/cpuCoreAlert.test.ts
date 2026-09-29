@@ -1,10 +1,12 @@
 /**
  * tests/integration/cpuCoreAlert.test.ts
  *
- * The per-core CPU automation metric (`cpuCorePct`, "Highest CPU core
- * utilization") and business rule 89:
- *  - one alert per DEVICE, valued at the hottest core, whose message names
- *    every core over the line — even while the all-cores average is low;
+ * The per-core CPU automation metric (`cpuCorePct`, "CPU core utilization")
+ * and business rule 89:
+ *  - the hold is counted PER CORE: the same core over the line for N polls
+ *    fires, a hot thread hopping between cores does not;
+ *  - one alert per DEVICE, whose message names the cores — even while the
+ *    all-cores average is low;
  *  - a device with no per-core data has no reading at all;
  *  - while the device carries a live all-cores `cpuPct` alert, the per-core
  *    automation does not fire on it, and an alert it already raised is
@@ -52,13 +54,13 @@ async function seed(samples: Array<{ cpuPct: number; cores: number[] | null }>):
   });
 }
 
-async function seedRule(name: string, metric: "cpuPct" | "cpuCorePct"): Promise<string> {
+async function seedRule(name: string, metric: "cpuPct" | "cpuCorePct", over: Record<string, unknown> = {}): Promise<string> {
   const rule = await prisma.notificationRule.create({
     data: {
       name: `${RULE} ${name}`,
       enabled: true,
       severity: "warning",
-      trigger: { type: "asset_metric", metric, aggregation: "latest", windowSec: 0, operator: ">=", threshold: 90, forDurationSec: 0 },
+      trigger: { type: "asset_metric", metric, aggregation: "latest", windowSec: 0, operator: ">=", threshold: 90, forDurationSec: 0, ...over },
       scope: { allAssets: true },
       reset: { mode: "auto" },
       actions: [],
@@ -96,6 +98,31 @@ d("per-core CPU alert (business rule 89)", () => {
     expect(alerts[0]!.metric).toBe("cpuCorePct");
     expect(alerts[0]!.message).toContain("Core 1 (97%), Core 3 (93%)");
     expect(alerts[0]!.message).not.toContain("Core 0");
+  });
+
+  it("fires when the SAME core is over the line for the held number of polls, naming it", async () => {
+    const coreRule = await seedRule("core", "cpuCorePct", { forPolls: 3, forDurationSec: 180 });
+    await seed([
+      { cpuPct: 20, cores: [10, 96, 12, 5] },
+      { cpuPct: 20, cores: [10, 94, 12, 5] },
+      { cpuPct: 20, cores: [91, 97, 12, 5] },
+    ]);
+    await evaluateAllNotificationRules();
+    const alerts = await live(coreRule);
+    expect(alerts).toHaveLength(1);
+    // core 0 is over the line too, but only on the newest poll — not named
+    expect(alerts[0]!.message).toContain("[Core 1 (97%)]");
+  });
+
+  it("does not fire when a different core is hot on each poll", async () => {
+    const coreRule = await seedRule("core", "cpuCorePct", { forPolls: 3, forDurationSec: 180 });
+    await seed([
+      { cpuPct: 30, cores: [96, 10, 10, 10] },
+      { cpuPct: 30, cores: [10, 96, 10, 10] },
+      { cpuPct: 30, cores: [10, 10, 96, 10] },
+    ]);
+    await evaluateAllNotificationRules();
+    expect(await live(coreRule)).toHaveLength(0);
   });
 
   it("has no reading on a device that reports no per-core data", async () => {

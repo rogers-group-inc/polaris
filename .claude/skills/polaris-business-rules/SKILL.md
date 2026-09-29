@@ -187,7 +187,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 86 | An agent that deployed and went quiet has missed its poll — unless Polaris is the one that stopped listening | invariants-30-43 | narrative-86 |
 | 87 | A firmware image is offered only to a device whose serial names the image's platform, and only forward; the flash takes a hold and never records a version it has not read back | invariants-30-43 | narrative-87 |
 | 88 | A port Polaris has positive evidence was never in use does not alert when the automation asks it to skip unused ports; "unused" is decided by the port's remembered address, never its current one | invariants-30-43 | narrative-88 |
-| 89 | A per-core CPU alert names the cores and yields to the all-cores alert on the same device | invariants-30-43 | narrative-89 |
+| 89 | A per-core CPU hold follows ONE core, the alert names it, and it yields to the all-cores alert on the same device | invariants-30-43 | narrative-89 |
 
 Related skills: `polaris-domain-model` (the entities these rules constrain, and the dormant
 columns they retired), `polaris-change-impact` (who else reads or writes the fields a rule

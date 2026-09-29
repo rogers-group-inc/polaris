@@ -24,7 +24,7 @@ A number, compared against a threshold.
 | Metric | Unit | Dimension |
 |---|---|---|
 | `cpuPct` — CPU utilization | % | — |
-| `cpuCorePct` — **Highest CPU core utilization** | % | — (one alert per device, naming the hot cores — see below) |
+| `cpuCorePct` — **CPU core utilization** | % | — (one alert per device, naming the hot cores — see below) |
 | `memPct` — Memory utilization | % | — |
 | `memUsedBytes` — Memory used | bytes | — |
 | `sessionCount` — Active sessions | — | — |
@@ -53,18 +53,23 @@ The device they are about is the **host that ran the check**, not the target, an
 they never change that host's Up / Down status. Pick the check on the condition
 row; blank means every check the host runs, one alert each.
 
-### Highest CPU core utilization
+### CPU core utilization
 
-`cpuCorePct` catches the fault the all-cores average hides: one runaway thread
-pinning a single core of a 16-core server reads about 6% as **CPU utilization**.
-Each reading is the **hottest core** of that sample, so "above 90% sustained for
-3 polls" means three samples in a row in which *some* core was above 90%, even
-if the busy thread moved between cores.
+`cpuCorePct` finds a **single-threaded application**: one thread pinning one
+core of a 16-core server reads about 6% as **CPU utilization**, so the
+all-cores condition never sees it.
 
-- **One alert per device.** It names every core over the threshold, hottest
-  first, for example `Core 3 (97%), Core 7 (93%)`. The email shows them in a
-  **CPU cores** row, with the **top 5 processes by CPU** and the CPU and
-  memory charts.
+**The hold is counted per core.** "Above 90% sustained for 3 polls" means the
+**same core** was above 90% on three polls in a row. Different cores each going
+over 90% once, which is how ordinary multi-threaded load looks, does not fire.
+Set the number of polls in **Sustained for**, as for any other condition.
+
+- **One alert per device.** It names the cores that stayed over the line for
+  the whole hold, busiest first, for example `Core 3 (97%)`. The email shows
+  them in a **CPU cores** row, with the **top 5 processes by CPU** and the CPU
+  and memory charts.
+- **It clears when every core is back under the line** for the reset's
+  clear-sustain count, not just the core that fired.
 - **Only hosts that report per-core figures**: the Polaris Agent and vCenter
   (VMs and ESXi hosts). SNMP, FortiOS, WinRM and SSH do not report cores, so
   those devices never fire this condition.

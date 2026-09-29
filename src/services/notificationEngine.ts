@@ -113,7 +113,7 @@ import { isUnusedPort } from "./interfaceInventoryService.js";
 import { logger } from "../utils/logger.js";
 import { alarmStatusToFlag } from "../utils/hardwareSensors.js";
 import { median } from "../utils/stats.js";
-import { coreVector, hottestCorePct, aggregateCores, coresOver, formatCoreList } from "../utils/cpuCores.js";
+import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreList } from "../utils/cpuCores.js";
 import {
   buildTemplateContext,
   renderNotificationTemplate,
@@ -292,6 +292,13 @@ interface Reading {
    * satisfying a hold with one stale sample re-read at every tick.
    */
   series?: (number | string | boolean | null)[];
+  /**
+   * The series the RECOVERY run is counted off, when it is not `series` — set
+   * only by cpuCorePct (business rule 89), whose `series` is a per-core
+   * envelope that counts one core's run and would read a single recovered poll
+   * as a whole run of them. Newest first, like `series`.
+   */
+  clearSeries?: (number | string | boolean | null)[];
   /**
    * When this reading was taken: the newest sample's timestamp for a series
    * source, that stream's poll anchor on the Asset for a current-state one
@@ -896,37 +903,51 @@ async function dropUnusedPorts(
 }
 
 /**
- * Name the cores a cpuCorePct reading is about, in its `dimLabel` — which is
- * what the message, the email's component row ("CPU cores — Core 3 (97%)") and
- * the trigger sentence render. Each core is reduced over the SAME samples the
- * reading was (the last N for a count window, the newest for `latest`, the
- * whole window otherwise), by the same aggregation, and a core is named when
- * that value meets the base threshold (coresOver). The dimension KEY stays "":
- * the label changes as cores cool and heat, and state is keyed per device.
+ * cpuCorePct readings (business rule 89): ONE reading per device, whose hold is
+ * counted PER CORE — "over 90% for 3 polls" means the same core on three
+ * consecutive polls, which is what a single-threaded application pinning one
+ * core looks like (three different cores each spiking once is ordinary load).
+ *
+ * `utils/cpuCores.coreSeries` does the work: `series` is an envelope whose
+ * leading run under any threshold equals the longest single-core run, so the
+ * ordinary hold, band and tier counting below needs no per-core knowledge;
+ * `clearSeries` is the most extreme core of each poll, so recovery waits until
+ * EVERY core has stayed back under the line. The label names the cores whose
+ * own run reached the hold (coresToName). Dimension key "": the label changes
+ * as cores heat and cool, and state is keyed per device.
  */
-function labelHotCores(
-  readings: Reading[],
+function reduceCoreReadings(
   rows: Array<{ assetId: string; timestamp: Date; cpuCorePcts: unknown }>,
+  assetIndex: Map<string, ScopeAssetRow>,
   trigger: Extract<Trigger, { type: "asset_metric" }>,
   windowPolls: number,
-): void {
-  if (readings.length === 0) return;
+): Reading[] {
   const byAsset = new Map<string, Array<{ ts: number; vec: number[] }>>();
   for (const r of rows) {
     const vec = coreVector(r.cpuCorePcts);
-    if (!vec) continue;
+    if (!vec || !assetIndex.has(r.assetId)) continue;
     let list = byAsset.get(r.assetId);
     if (!list) byAsset.set(r.assetId, (list = []));
     list.push({ ts: r.timestamp.getTime(), vec });
   }
-  for (const reading of readings) {
-    const list = byAsset.get(reading.assetId);
-    if (!list?.length) continue;
+  const below = coreConditionIsBelow(trigger.operator);
+  const holdPolls = triggerHoldPolls(trigger);
+  const out: Reading[] = [];
+  for (const [assetId, list] of byAsset) {
     list.sort((a, b) => b.ts - a.ts);
-    const vectors = (windowPolls > 0 ? list.slice(0, windowPolls) : list).map((x) => x.vec);
-    const perCore = aggregateCores(vectors, trigger.aggregation);
-    reading.dimLabel = formatCoreList(coresOver(perCore, (v) => readingMeets(trigger, v)));
+    const cs = coreSeries(list.map((x) => x.vec), { aggregation: trigger.aggregation, windowPolls, below }, rollingAggregate);
+    if (!cs) continue;
+    const asset = assetIndex.get(assetId)!;
+    out.push({
+      assetId, hostname: asset.hostname, tags: asset.tags, dimKey: "",
+      dimLabel: formatCoreList(coresToName(cs, (v) => readingMeets(trigger, v), holdPolls, below)),
+      value: cs.value,
+      series: cs.series.slice(0, SERIES_CAP),
+      clearSeries: cs.clearSeries.slice(0, SERIES_CAP),
+      readingAt: new Date(list[0]!.ts),
+    });
   }
+  return out;
 }
 
 /** The SD-WAN member a `healthCheck|link` reading is about. FortiOS object
@@ -969,9 +990,7 @@ async function resolveAssetMetricReadings(trigger: Extract<Trigger, { type: "ass
         where: { assetId: { in: ids }, timestamp: { gte: since }, cpuCorePcts: { not: Prisma.DbNull } },
         select: { assetId: true, timestamp: true, cpuCorePcts: true },
       });
-      const out = reduceReadings(rows, index, () => "", () => "", (r) => hottestCorePct(r.cpuCorePcts), agg, winPolls);
-      labelHotCores(out, rows, trigger, winPolls);
-      return out;
+      return reduceCoreReadings(rows, index, trigger, winPolls);
     }
     case "responseTimeMs": case "uptimeSec": {
       // Response-time poll only (probeKind): the ICMP loss sampler writes a
@@ -3222,7 +3241,8 @@ function readingRuns(
 ): ReadingRuns {
   const met = seriesRun(reading, (v) => readingMeets(trigger, v));
   if (met !== null) {
-    const clear = seriesRun(reading, (v) => recoveredMeets(trigger, reset, v)) ?? 0;
+    const clearOf = reading.clearSeries ? { ...reading, series: reading.clearSeries } : reading;
+    const clear = seriesRun(clearOf, (v) => recoveredMeets(trigger, reset, v)) ?? 0;
     return { metRun: met, clearRun: clear, stateful: false, advanced: false };
   }
   const m = advanceRun(st?.metRun ?? 0, meets, reading.readingAt, st?.lastReadingAt);
