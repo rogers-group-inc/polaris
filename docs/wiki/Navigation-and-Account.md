@@ -175,6 +175,10 @@ by the install, at Users → Authentication:
 Under any mode including `second-factor`, registering a passkey makes your
 login two-step, exactly as enrolling TOTP does.
 
+The login page's **Sign in with a passkey** button appears only once at least
+one local account has registered a passkey. Until then it could only fail. The
+first passkey is set up from this menu after signing in with a password.
+
 **Two deployment shapes cannot host passkeys at all** and say so rather than
 throwing a browser error: plain HTTP off localhost, and an install reached by IP
 address. Two more are misconfigured proxies wearing those refusals — TLS

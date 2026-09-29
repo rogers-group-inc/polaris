@@ -136,6 +136,27 @@ d("GET /auth/passkeys/config", () => {
     expect(res.body.rpId).toBe("localhost");
   });
 
+  it("says a passkey is registered once a local account holds one, and not while the mode is off", async () => {
+    // The login page hides its button until anyRegistered is true. What this
+    // pins is the plumbing end to end; the "none registered" half is covered
+    // by the unit test, since a shared test DB may already hold someone's.
+    const reader = await prisma.user.findUniqueOrThrow({ where: { username: READER } });
+    const pk = await prisma.userPasskey.create({
+      data: { userId: reader.id, credentialId: `test-cred-${Date.now()}`, publicKey: Buffer.from([1]), name: "test" },
+    });
+    try {
+      await setPasskeyMode("login");
+      const on = await asLocalhost(request(app).get("/api/v1/auth/passkeys/config"));
+      expect(on.body.anyRegistered).toBe(true);
+
+      await setPasskeyMode("off");
+      const off = await asLocalhost(request(app).get("/api/v1/auth/passkeys/config"));
+      expect(off.body.anyRegistered).toBe(false);
+    } finally {
+      await prisma.userPasskey.delete({ where: { id: pk.id } });
+    }
+  });
+
   it("discloses nothing about who is enrolled", async () => {
     const res = await asLocalhost(request(app).get("/api/v1/auth/passkeys/config"));
     expect(JSON.stringify(res.body)).not.toMatch(/user|account|credential/i);

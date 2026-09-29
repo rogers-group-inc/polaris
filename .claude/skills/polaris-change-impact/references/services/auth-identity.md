@@ -471,7 +471,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Why it exists:** A passkey is the one credential that is both unphishable and nothing to type, and it is the only stronger login path Polaris can offer that does not depend on an identity provider existing. `mode` is what makes it deployable into a FOSS fleet that disagrees about how much to trust it.
 
-**Public API:** `getPasskeySettings`, `savePasskeySettings`, `invalidatePasskeyCache`, `defaultPasskeySettings`, `normalizeRpId`, `passkeyLoginEnabled`, `passkeySecondFactorEnabled`, `getPasskeyAvailability`, `requireRelyingParty`, `startRegistration`, `finishRegistration`, `startLogin`, `startSecondFactor`, `finishAuthentication`, `listPasskeys`, `countPasskeysByUser`, `renamePasskey`, `deletePasskey`, `deleteAllPasskeys`, `userHasPasskey`, `PASSKEY_SETTING_KEY`
+**Public API:** `getPasskeySettings`, `savePasskeySettings`, `invalidatePasskeyCache`, `defaultPasskeySettings`, `normalizeRpId`, `passkeyLoginEnabled`, `passkeySecondFactorEnabled`, `getPasskeyAvailability`, `anyLoginPasskeyRegistered`, `requireRelyingParty`, `startRegistration`, `finishRegistration`, `startLogin`, `startSecondFactor`, `finishAuthentication`, `listPasskeys`, `countPasskeysByUser`, `renamePasskey`, `deletePasskey`, `deleteAllPasskeys`, `userHasPasskey`, `PASSKEY_SETTING_KEY`
 
 **Cross-service deps:** `@simplewebauthn/server` (the only verification), `src/utils/webauthnRp.ts` (`resolveRelyingParty`, `forwardedProtoClaim`), `src/utils/webauthnChallenge.ts` (the in-flight ceremony store), `settingsStore`, `AppError`.
 
