@@ -43,7 +43,7 @@ import {
   invalidatePasswordPolicyCache,
 } from "../../src/services/passwordPolicyService.js";
 import { defaultPasswordPolicy } from "../../src/utils/passwordPolicy.js";
-import { dbDescribe, dbReachable, authedAgent } from "./_helpers.js";
+import { dbDescribe, dbReachable, authedAgent, ensureTestUser } from "./_helpers.js";
 
 const d = dbDescribe;
 
@@ -68,6 +68,10 @@ async function allowEveryone(): Promise<void> {
 
 beforeAll(async () => {
   if (!dbReachable) return;
+  // authedAgent logs in as the shared tester; create it here rather than
+  // relying on an earlier file in the suite to have done so, or this file
+  // fails its admin cases when run on its own against a fresh database.
+  await ensureTestUser();
   const role = await prisma.role.findUnique({ where: { name: "readonly" } });
   if (!role) throw new Error("built-in 'readonly' Role row missing — run `npx prisma migrate deploy` first");
   await prisma.user.deleteMany({ where: { username: READER } });
