@@ -1283,6 +1283,10 @@ export async function readSdwanMembers(
   // its own 60s cadence, meant the strip spanned "the last 48 minutes", a
   // figure nobody chose. Raw rows rather than a bool_and: a segment is now
   // judged on its VALUES too (SLA targets, automation tiers), not liveness alone.
+  // `timestamp` is naive UTC (Prisma DateTime), so the cutoff must be naive
+  // UTC too. Bare now() is compared in the server's TimeZone: on a UTC-5
+  // database the 30-minute strip reached 5h30m back and painted a recovered
+  // morning outage red across a healthy member.
   const recentRows = await prisma.$queryRawUnsafe<Array<{
     link: string; healthCheck: string; timestamp: Date; state: string;
     latencyMs: number | null; jitterMs: number | null; packetLoss: number | null;
@@ -1291,7 +1295,7 @@ export async function readSdwanMembers(
     `SELECT "link", "healthCheck", "timestamp", "state", "latencyMs", "jitterMs", "packetLoss",
             "latencyThresholdMs", "jitterThresholdMs", "packetLossThreshold"
      FROM "asset_perf_sla_samples"
-     WHERE "assetId" = $1 AND "timestamp" > now() - make_interval(mins => $2::int)
+     WHERE "assetId" = $1 AND "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(mins => $2::int)
      ORDER BY "link", "timestamp" ASC`,
     assetId,
     SDWAN_STATUS_STRIP_MINUTES,
