@@ -85,6 +85,17 @@ describe("readSdwanMembers status strip", () => {
     expect(minutes).toBe(30);
   });
 
+  it("bounds the window with a timezone-proof now() (naive-UTC column vs server TimeZone)", async () => {
+    // Bare now() is read in the DB server's zone, so on a UTC-5 server the
+    // 30-minute strip reached 5h30m back into a recovered outage and showed a
+    // healthy wan1 (and the overlays riding it) solid red.
+    mockSamples([latestRow]);
+    await readSdwanMembers("asset-1");
+    const sql = String(h.prisma.$queryRawUnsafe.mock.calls[1]![0]);
+    expect(sql).toContain(`(now() AT TIME ZONE 'UTC') - make_interval`);
+    expect(sql).not.toMatch(/[^)]now\(\) -/);
+  });
+
   it("returns every reading in the window — no count cap", async () => {
     // 60 readings is more than the old 48 cap; the window, not a count, bounds it.
     const strip = Array.from({ length: 60 }, (_, i) => ({

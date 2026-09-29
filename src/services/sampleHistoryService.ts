@@ -1259,10 +1259,14 @@ export async function readSdwanMembers(
   // minutes cut to the newest 48 readings — which, once SD-WAN moved to its own
   // 60s cadence, meant the strip spanned "the last 48 minutes", a figure nobody
   // chose.
+  // `timestamp` is naive UTC (Prisma DateTime), so the cutoff must be naive
+  // UTC too. Bare now() is compared in the server's TimeZone: on a UTC-5
+  // database the 30-minute strip reached 5h30m back and painted a recovered
+  // morning outage red across a healthy member.
   const recentRows = await prisma.$queryRawUnsafe<Array<{ link: string; timestamp: Date; up: boolean }>>(
     `SELECT "link", "timestamp", bool_and("state" = 'up') AS up
      FROM "asset_perf_sla_samples"
-     WHERE "assetId" = $1 AND "timestamp" > now() - make_interval(mins => $2::int)
+     WHERE "assetId" = $1 AND "timestamp" > (now() AT TIME ZONE 'UTC') - make_interval(mins => $2::int)
      GROUP BY "link", "timestamp" ORDER BY "link", "timestamp" ASC`,
     assetId,
     SDWAN_STATUS_STRIP_MINUTES,
