@@ -554,6 +554,23 @@ var _rulesPage = 1;
     if (f && f.isDownDetectionTrigger) return f.isDownDetectionTrigger(r.trigger);
     return false;
   }
+  /** The Severity cell. An automation with severity bands escalates, so one
+   *  level would misstate it: the pill reads "Escalation", coloured by the
+   *  base severity (the first tier it fires at), with the ladder on hover.
+   *  The column's filter/sort still key on that base severity. */
+  function severityPill(r) {
+    var base = r.severity || "info";
+    var bands = Array.isArray(r.severityBands) ? r.severityBands : [];
+    if (!bands.length) {
+      return '<span class="badge badge-level-' + escapeHtml(base) + '">' + escapeHtml(base.toUpperCase()) + '</span>';
+    }
+    var ladder = [base.toUpperCase()].concat(bands.map(function (b) {
+      return String((b && b.severity) || "").toUpperCase() + (b && b.threshold != null ? " (" + b.threshold + ")" : "");
+    }));
+    return '<span class="badge badge-level-' + escapeHtml(base) + '" title="' + escapeHtml("Escalates: " + ladder.join(" → ")) + '">ESCALATION</span>';
+  }
+  window._severityPill = severityPill;
+
   function renderRules() {
     var tbody = document.getElementById("rules-tbody");
     var data = _rules.map(function (r) {
@@ -624,7 +641,7 @@ var _rulesPage = 1;
       return '<tr>' +
         '<td>' + nameCell + '</td>' +
         '<td><span class="badge">' + escapeHtml(r.triggerType) + '</span></td>' +
-        '<td><span class="badge badge-level-' + escapeHtml(r.severity || "info") + '">' + escapeHtml((r.severity || "info").toUpperCase()) + '</span></td>' +
+        '<td>' + severityPill(r) + '</td>' +
         '<td>' + enabledCell + '</td>' +
         // Each prose cell carries its own full text as the title: the columns
         // are resizable and the sentences are long, so the hover is what makes a

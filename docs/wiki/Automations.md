@@ -55,6 +55,11 @@ channel rather than people who would never receive it.
 **Type** is the narrow trigger-kind column. It stays because prose cannot be
 filtered by kind.
 
+**Severity** shows the automation's one severity — unless it has severity bands,
+in which case the pill reads **Escalation**, coloured by the base severity (the
+first tier it fires at). Hovering it lists the ladder, e.g. *Warning → Serious
+(20) → Critical (30)*. The column's filter and sort use that base severity.
+
 Clicking an automation's **name** opens a menu: **Edit**, **Clone**, **Delete**.
 Below `automationManagement:write` the name renders as plain text.
 
