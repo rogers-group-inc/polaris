@@ -39,9 +39,29 @@ type ipOptionInformation struct {
 // ICMP_ECHO_REPLY32 layout differs.
 const icmpEchoReplySize = 40
 
+// icmpErrorRoom is reply-buffer headroom past the MSDN minimum
+// (ICMP_ECHO_REPLY + request data + 8 bytes of ICMP error + IO_STATUS_BLOCK),
+// so an ICMP error carrying a longer quote or RFC 4884 extensions can never
+// fail the call for want of room. Hardening, not a fix: on a live MPLS path
+// the minimum buffer received the core hops fine — their silence was ICMP
+// rate limiting of concurrent probes (see tracerouteOptsFrom). 4 KB covers
+// any ICMP error a router sends (RFC 1812 caps them near 576 bytes).
+const icmpErrorRoom = 4096
+
+// icmpReplyBufRetry is the one bigger buffer a probe retries with if Windows
+// still reports the reply does not fit.
+const icmpReplyBufRetry = 64 * 1024
+
+// icmpReplyBufSize is the reply buffer a probe carrying payloadLen bytes
+// passes. Pure — unit-tested.
+func icmpReplyBufSize(payloadLen int) int {
+	return icmpEchoReplySize + payloadLen + 8 + 16 + icmpErrorRoom
+}
+
 // Status values from ipexport.h that the probes distinguish.
 const (
 	ipSuccess             = 0
+	ipBufTooSmall         = 11001
 	ipDestNetUnreachable  = 11002
 	ipDestHostUnreachable = 11003
 	ipDestPortUnreachable = 11005
@@ -85,13 +105,27 @@ func (h *icmpHandle) Close() {
 // RoundTripTime is whole milliseconds and reads 0 under 1 ms (rule 71: don't
 // report a measurement the mechanism cannot make).
 func (h *icmpHandle) echo(dst net.IP, ttl uint8, payload []byte, timeout time.Duration) (net.IP, uint32, time.Duration, error) {
+	from, status, rtt, err := h.echoBuf(dst, ttl, payload, timeout, icmpReplyBufSize(len(payload)))
+	if err == nil && replyDidNotFit(status) {
+		from, status, rtt, err = h.echoBuf(dst, ttl, payload, timeout, icmpReplyBufRetry)
+	}
+	return from, status, rtt, err
+}
+
+// replyDidNotFit: Windows' two ways of saying the reply buffer was too small.
+// Pure — unit-tested.
+func replyDidNotFit(status uint32) bool {
+	return status == ipBufTooSmall || status == uint32(windows.ERROR_INSUFFICIENT_BUFFER)
+}
+
+func (h *icmpHandle) echoBuf(dst net.IP, ttl uint8, payload []byte, timeout time.Duration, bufSize int) (net.IP, uint32, time.Duration, error) {
 	v4 := dst.To4()
 	if v4 == nil {
 		return nil, 0, 0, ErrIPv6Unsupported
 	}
 	addr := binary.LittleEndian.Uint32(v4) // memory layout == network order
 	opts := ipOptionInformation{Ttl: ttl}
-	reply := make([]byte, icmpEchoReplySize+len(payload)+8+16)
+	reply := make([]byte, bufSize)
 	ms := uint32(timeout / time.Millisecond)
 	if ms == 0 {
 		ms = 1

@@ -52,9 +52,12 @@ type pendingProbe struct {
 
 // platformTraceroute probes up to o.inflightTTLs TTLs at a time, each on its
 // own socket, o.probesPerHop datagrams per TTL to distinct ports so a reply's
-// original destination port identifies the probe. A batch ends when every
-// probe is answered or the probe timeout passes; the trace ends at the
-// destination, a hard ICMP error, the silent-hop limit or maxHops.
+// original destination port identifies the probe. The probes of a TTL go one
+// round at a time — probe 0 for the batch, then probe 1 — never as a burst:
+// MPLS core routers rate-limit a burst of Time Exceeded replies and drop most
+// of it. A round ends when its probes are answered or the probe timeout
+// passes; the trace ends at the destination, a hard ICMP error, the
+// silent-hop limit or maxHops.
 func platformTraceroute(ctx context.Context, dst net.IP, o tracerouteOpts) ([]probeResult, error) {
 	dst4 := dst.To4()
 	if dst4 == nil {
@@ -70,11 +73,18 @@ func platformTraceroute(ctx context.Context, dst net.IP, o tracerouteOpts) ([]pr
 		if lastTTL > o.maxHops {
 			lastTTL = o.maxHops
 		}
-		batch, err := traceBatch(ctx, dst4, first, lastTTL, o)
-		results = append(results, batch...)
-		if err != nil {
-			return results, err
+		var batch []probeResult
+		for idx := 0; idx < o.probesPerHop; idx++ {
+			if ctx.Err() != nil {
+				break
+			}
+			round, err := traceBatch(ctx, dst4, first, lastTTL, idx, o)
+			batch = append(batch, round...)
+			if err != nil {
+				return append(results, batch...), err
+			}
 		}
+		results = append(results, batch...)
 		// Stop once the destination answered or a hop refused the path.
 		end := false
 		for ttl := first; ttl <= lastTTL && !end; ttl++ {
@@ -104,7 +114,9 @@ func platformTraceroute(ctx context.Context, dst net.IP, o tracerouteOpts) ([]pr
 	return results, nil
 }
 
-func traceBatch(ctx context.Context, dst4 net.IP, firstTTL, lastTTL int, o tracerouteOpts) ([]probeResult, error) {
+// traceBatch sends probe number idx to every TTL in [firstTTL, lastTTL] and
+// collects what answers before the probe timeout.
+func traceBatch(ctx context.Context, dst4 net.IP, firstTTL, lastTTL, idx int, o tracerouteOpts) ([]probeResult, error) {
 	type sock struct {
 		fd  int
 		ttl int
@@ -129,17 +141,15 @@ func traceBatch(ctx context.Context, dst4 net.IP, firstTTL, lastTTL int, o trace
 		if err := unix.SetsockoptInt(fd, unix.SOL_IP, unix.IP_RECVERR, 1); err != nil {
 			return nil, fmt.Errorf("IP_RECVERR: %w", err)
 		}
-		for idx := 0; idx < o.probesPerHop; idx++ {
-			sa := &unix.SockaddrInet4{Port: probePort(ttl, idx, o.probesPerHop)}
-			copy(sa.Addr[:], dst4)
-			p := &pendingProbe{ttl: ttl, idx: idx, sent: time.Now()}
-			if err := unix.Sendto(fd, payload, 0, sa); err != nil {
-				// A send error (EHOSTUNREACH etc.) is itself an answer: nothing
-				// will come back for this probe. Leave it unanswered.
-				p.done = true
-			}
-			pending[[2]int{ttl, idx}] = p
+		sa := &unix.SockaddrInet4{Port: probePort(ttl, idx, o.probesPerHop)}
+		copy(sa.Addr[:], dst4)
+		p := &pendingProbe{ttl: ttl, idx: idx, sent: time.Now()}
+		if err := unix.Sendto(fd, payload, 0, sa); err != nil {
+			// A send error (EHOSTUNREACH etc.) is itself an answer: nothing
+			// will come back for this probe. Leave it unanswered.
+			p.done = true
 		}
+		pending[[2]int{ttl, idx}] = p
 	}
 
 	var results []probeResult
@@ -194,8 +204,8 @@ func traceBatch(ctx context.Context, dst4 net.IP, firstTTL, lastTTL int, o trace
 				if perr != nil || orig == nil {
 					continue
 				}
-				idx := probeIndex(s.ttl, orig.Port, o.probesPerHop)
-				p := pending[[2]int{s.ttl, idx}]
+				ridx := probeIndex(s.ttl, orig.Port, o.probesPerHop)
+				p := pending[[2]int{s.ttl, ridx}]
 				if p == nil || p.done {
 					continue
 				}
@@ -208,7 +218,7 @@ func traceBatch(ctx context.Context, dst4 net.IP, firstTTL, lastTTL int, o trace
 						continue
 					}
 					p.done = true
-					r := probeResult{ttl: s.ttl, idx: idx, from: offender, rtt: time.Since(p.sent)}
+					r := probeResult{ttl: s.ttl, idx: ridx, from: offender, rtt: time.Since(p.sent)}
 					switch {
 					case typ == icmpTypeTimeExceed:
 					case typ == icmpTypeDestUnreach && code == 3: // port unreachable

@@ -123,7 +123,9 @@ describe("assembleTrace", () => {
 
 describe("tracerArgs", () => {
   it("passes numeric output, hop cap, probes and wait to each tool", () => {
-    expect(tracerArgs("traceroute", "8.8.8.8", O)).toEqual(["-n", "-q", "3", "-w", "1", "-m", "30", "8.8.8.8"]);
+    // -N 1: one probe in flight — a burst is rate-limited by MPLS core routers.
+    expect(tracerArgs("traceroute", "8.8.8.8", O)).toEqual(["-n", "-N", "1", "-q", "3", "-w", "1", "-m", "30", "8.8.8.8"]);
+    expect(tracerArgs("traceroute", "8.8.8.8", O, false)).toEqual(["-n", "-q", "3", "-w", "1", "-m", "30", "8.8.8.8"]);
     expect(tracerArgs("tracepath", "8.8.8.8", O)).toEqual(["-n", "-m", "30", "8.8.8.8"]);
     expect(tracerArgs("tracert", "8.8.8.8", O)).toEqual(["-d", "-h", "30", "-w", "1000", "8.8.8.8"]);
   });
