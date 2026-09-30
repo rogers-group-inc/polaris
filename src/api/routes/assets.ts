@@ -1931,6 +1931,9 @@ router.get("/:id/monitor-history", requirePermission("assets", "read"), async (r
           }
         : null,
       samples: result.samples,
+      // The packet-loss line the chart overlays on its right axis — every
+      // probe kind, the ICMP sweep's packets included (see MonitorLossSeries).
+      loss: result.loss,
       stats: result.stats,
     });
   } catch (err) { next(err); }

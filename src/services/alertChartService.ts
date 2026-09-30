@@ -1173,8 +1173,10 @@ export function probeLossSeriesFrom(
 async function loadProbeLoss(assetId: string, since: Date, bucketMs: number = LOSS_BUCKET_MS): Promise<ProbeLossSeries> {
   const rows = await prisma.assetMonitorSample.findMany({
     // EVERY probeKind, deliberately — this is a loss chart, and the ICMP sweep
-    // exists to give it resolution. One of only two all-kinds readers (with
-    // probeLossQuery); everything else is response-time-poll only.
+    // exists to give it resolution. One of only three all-kinds readers (with
+    // probeLossQuery and readMonitorHistory's `loss` line, which buckets
+    // through probeLossSeriesFrom too); everything else is response-time-poll
+    // only.
     where: { assetId, timestamp: { gte: since } },
     orderBy: { timestamp: "asc" },
     select: { timestamp: true, success: true, packetsSent: true, packetsReceived: true, assetDown: true },

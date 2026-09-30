@@ -45,6 +45,7 @@ import type { SampleTier } from "./sampleQueryRouter.js";
 import { coreVector } from "../utils/cpuCores.js";
 import { sdwanSegmentVerdict, type SdwanStripMetric, type SdwanStripSample, type SdwanStripTier } from "../utils/sdwanDimensions.js";
 import { severityRank } from "./notificationTypes.js";
+import { probeLossSeriesFrom } from "./alertChartService.js";
 
 function bn(v: bigint | null | undefined): number | null {
   if (v == null) return null;
@@ -94,8 +95,40 @@ export interface MonitorHistoryRow {
   maxResponseTimeMs?: number | null;
 }
 
+/**
+ * The packet-loss line the response-time chart overlays on its right-hand axis.
+ *
+ * PACKETS, NOT POLL OUTCOMES, and every probe kind — the ICMP burst sweep's
+ * rows are the reason this series has any resolution, and they are exactly
+ * what the `samples` beside it exclude (their RTTs are a different transport's).
+ * Detail tier buckets the raw rows through `probeLossSeriesFrom`, the same
+ * arithmetic the alert email's loss chart draws, so the device page and the
+ * email cannot disagree about one window. Rollup tiers read the bucket's own
+ * columns, which split the same way the detail rows do: `sampleCount` /
+ * `successCount` are the response-time poll's (one packet each) and
+ * `packetsSent` / `packetsReceived` are the sweep's — added together they are
+ * the same total the detail tier counts.
+ *
+ * `ratioPct` covers the VISIBLE window only (the lookback overflow feeds the
+ * line's continuity, not the figure), and is what the chart's "Packet loss"
+ * stat prints so the number beside the chart is the one its line averages to.
+ * Null when the window held nothing countable.
+ */
+export interface MonitorLossSeries {
+  bucketMs: number;
+  points: Array<{ t: number; v: number }>;
+  ratioPct: number | null;
+}
+
+/** 2-minute floor (finer only draws 0 %/100 % spikes between sweeps), scaled so
+ *  a long detail window still plots ~120 points. Exported for tests. */
+export function monitorLossBucketMs(windowMs: number): number {
+  return Math.max(2 * 60 * 1000, Math.round(windowMs / 120));
+}
+
 export interface MonitorHistoryResult {
   samples: MonitorHistoryRow[];
+  loss: MonitorLossSeries;
   stats: {
     total: number;
     failed: number;
@@ -117,22 +150,38 @@ export async function readMonitorHistory(
   const queryFrom = fetchSince ?? since;
   const sinceMs = since.getTime();
   if (tier === "detail") {
-    const rows = await prisma.assetMonitorSample.findMany({
-      // Response-time poll only, matching the hourly/daily rollups this same
-      // function reads at coarser tiers — otherwise the panel's packet-loss
-      // and sample counts would change meaning as the operator widened the
-      // range. The dense ICMP sampler rows serve the probeLossPct metric, the
-      // NOC Packet Loss widget and the alert-email loss chart.
-      where: { assetId, timestamp: { gte: queryFrom, lte: until }, OR: [{ probeKind: null }, { probeKind: "primary" }] },
+    // EVERY probe kind in one read, split below: the ICMP sweep's rows feed the
+    // `loss` line only, and `samples` / `stats` stay response-time poll only,
+    // matching the hourly/daily rollups this same function reads at coarser
+    // tiers — otherwise the sample counts would change meaning as the operator
+    // widened the range.
+    const allRows = await prisma.assetMonitorSample.findMany({
+      where: { assetId, timestamp: { gte: queryFrom, lte: until } },
       orderBy: { timestamp: "asc" },
-      select: { timestamp: true, success: true, responseTimeMs: true, error: true, dependencyDown: true },
+      select: {
+        timestamp: true, success: true, responseTimeMs: true, error: true, dependencyDown: true,
+        probeKind: true, packetsSent: true, packetsReceived: true,
+      },
     });
+    const bucketMs = monitorLossBucketMs(until.getTime() - sinceMs);
+    const loss: MonitorLossSeries = {
+      bucketMs,
+      points: probeLossSeriesFrom(allRows, bucketMs).points,
+      ratioPct: probeLossSeriesFrom(allRows.filter((r) => r.timestamp.getTime() >= sinceMs), bucketMs).ratioPct,
+    };
+    const rows = allRows
+      .filter((r) => r.probeKind == null || r.probeKind === "primary")
+      .map((r) => ({
+        timestamp: r.timestamp, success: r.success, responseTimeMs: r.responseTimeMs,
+        error: r.error, dependencyDown: r.dependencyDown,
+      }));
     const visible = rows.filter((s) => s.timestamp.getTime() >= sinceMs);
     const total = visible.length;
     const failed = visible.filter((s) => !s.success).length;
     const ok = visible.filter((s) => s.success && typeof s.responseTimeMs === "number").map((s) => s.responseTimeMs as number);
     return {
       samples: rows,
+      loss,
       stats: {
         total,
         failed,
@@ -155,10 +204,13 @@ export async function readMonitorHistory(
     avgResponseTimeMs: number | null;
     minResponseTimeMs: number | null;
     maxResponseTimeMs: number | null;
+    packetsSent: number | null;
+    packetsReceived: number | null;
   }>>(
     `SELECT "bucketStart", "sampleCount", "successCount", "failureCount",
             "dependencyFailureCount",
-            "avgResponseTimeMs", "minResponseTimeMs", "maxResponseTimeMs"
+            "avgResponseTimeMs", "minResponseTimeMs", "maxResponseTimeMs",
+            "packetsSent", "packetsReceived"
      FROM "${table}"
      WHERE "assetId" = $1 AND "bucketStart" >= $2 AND "bucketStart" <= $3
      ORDER BY "bucketStart" ASC`,
@@ -180,6 +232,7 @@ export async function readMonitorHistory(
     if (r.maxResponseTimeMs != null) maxMs = maxMs == null ? r.maxResponseTimeMs : Math.max(maxMs, r.maxResponseTimeMs);
   }
   return {
+    loss: rollupLossSeries(rows, sinceMs, tier === "hourly" ? 3_600_000 : 86_400_000),
     samples: rows.map((r) => ({
       timestamp:         r.bucketStart,
       responseTimeMs:    r.avgResponseTimeMs,
@@ -199,6 +252,43 @@ export async function readMonitorHistory(
       minMs,
       maxMs,
     },
+  };
+}
+
+/**
+ * A rollup tier's loss line: one point per bucket. The poll columns count one
+ * packet per row and the sweep columns count their own packets, so the two sum
+ * to what `probeLossSeriesFrom` counts on the detail tier. NULL sweep columns
+ * (no sweep ran in that bucket) add nothing rather than reading as zero sent.
+ * A bucket with nothing sent is skipped, never plotted as 0 % — a gap in
+ * polling is not a period of perfect health. Pure; exported for tests.
+ */
+export function rollupLossSeries(
+  rows: Array<{
+    bucketStart: Date;
+    sampleCount: number;
+    successCount: number;
+    packetsSent: number | null;
+    packetsReceived: number | null;
+  }>,
+  sinceMs: number,
+  bucketMs: number,
+): MonitorLossSeries {
+  const points: Array<{ t: number; v: number }> = [];
+  let sent = 0;
+  let recv = 0;
+  for (const r of rows) {
+    const s = (r.sampleCount || 0) + (r.packetsSent ?? 0);
+    if (s <= 0) continue;
+    const v = Math.min((r.successCount || 0) + (r.packetsReceived ?? 0), s);
+    const t = r.bucketStart.getTime();
+    points.push({ t, v: Math.round(((s - v) / s) * 1000) / 10 });
+    if (t >= sinceMs) { sent += s; recv += v; }
+  }
+  return {
+    bucketMs,
+    points,
+    ratioPct: sent ? Math.round(((sent - recv) / sent) * 1000) / 10 : null,
   };
 }
 
