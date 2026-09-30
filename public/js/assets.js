@@ -24354,8 +24354,13 @@ function _pathResultPill(latest) {
   if (!latest || !latest.lastSampleAt || latest.lastOk === null || latest.lastOk === undefined) {
     return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
   }
+  // A failed run that still got an HTTP answer reads "Unexpected response",
+  // the same three words as the Path Monitor page (path-checks.js resultState).
+  if (!latest.lastOk && latest.lastHttpStatus != null) {
+    return '<span class="badge" style="background:#e07b00;color:#fff">Unexpected response</span>';
+  }
   return '<span class="badge" style="background:' + (latest.lastOk ? MONITOR_STATE_COLORS.up : MONITOR_STATE_COLORS.down) + ';color:#fff">' +
-    (latest.lastOk ? "Reachable" : "Failing") + "</span>";
+    (latest.lastOk ? "OK" : "Fail") + "</span>";
 }
 
 function _pathFmtWhen(v) {

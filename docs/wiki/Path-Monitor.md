@@ -1,8 +1,8 @@
 # Path Monitor
 
 A path check tests whether a web page, a service or an address can be
-reached **from the machines that run the Polaris Agent**, **from the Polaris
-server itself**, or both. Each source runs the check on its own schedule and
+reached **from the machines that run the Polaris Agent** or **from the Polaris
+server itself**. Each source runs the check on its own schedule and
 reports:
 
 - whether it passed, and how long it took (split into DNS, connect, TLS and
@@ -33,9 +33,9 @@ its own row.
 - To run a check **from the Polaris server**, *Read-Write* on **Network
   Discovery** as well. The server probes from its own network, which is often
   one no agent host can reach, so pointing it at a target is treated like a
-  Discovery sweep. Without it the *Run from this Polaris server* box is greyed
-  out. You can still turn the server off on an existing check, rename it, or
-  change its agent hosts.
+  Discovery sweep. Without it the *Run from this Polaris server* toggle is
+  greyed out. You can still turn the server off on an existing check (it then
+  runs from agent hosts), or rename it.
 
 No extra privilege is needed on the hosts. HTTP, HTTPS, TCP, ping and
 traceroute all run under the agent's normal (unprivileged) service account. The
@@ -81,8 +81,8 @@ it and show *upgrade agent* until they are upgraded.
 
 **Authentication runs only from the Polaris server.** A check that
 authenticates is never sent to an agent, so the password or token stays on the
-Polaris server. Choosing a credential ticks *Run from this Polaris server* and
-clears the agent hosts. Anyone with at least *Read-Only* on Credentials can
+Polaris server. Choosing a credential turns on *Run from this Polaris server* and
+locks it on; setting Authentication back to *None* hands the toggle back. Anyone with at least *Read-Only* on Credentials can
 pick any credential and test with it; changing the credential still needs the
 Credentials permissions it always did. A credential a check
 uses cannot be deleted until the check stops using it. Authentication and the
@@ -131,15 +131,21 @@ installed, its traces come back empty with a note saying so (see
 
 ### Sources
 
-Where the check runs from. Pick either source, or both:
+Where the check runs from. One toggle, **Run from this Polaris server**,
+picks the source:
 
-- **Run from this Polaris server**: the server that hosts Polaris runs the
-  check itself, whether it is installed on Linux or in a container, with no
-  agent needed. This is the one vantage point every install has.
-- **Agent hosts**: always limited to hosts with an active Polaris Agent.
-  Either tick **All agent hosts**, or build a device filter with the same
-  condition builder the automation wizard uses (for example *Tag has
-  branch-office*). The preview underneath lists the hosts that will run it.
+- **On**: the server that hosts Polaris runs the check itself, whether it is
+  installed on Linux or in a container, with no agent needed. This is the one
+  vantage point every install has. The agent-host filter is hidden.
+- **Off**: **agent hosts** run it, always limited to hosts with an active
+  Polaris Agent. Either tick **All agent hosts**, or build a device filter
+  with the same condition builder the automation wizard uses (for example
+  *Tag has branch-office*). The preview underneath lists the hosts that will
+  run it.
+
+A check made before the toggle may run from both. Editing one says so; saving
+it with the toggle on keeps only the server, and with it off only the agent
+hosts.
 
 Tick the box beside a host to **pin** it: a pinned host keeps running the check
 even if it stops matching the filter.
@@ -148,6 +154,17 @@ A host runs at most 20 checks. If it matches more, it runs the oldest 20, and
 Polaris writes a `path_check.agent_over_cap` event naming it.
 
 ## Reading the results
+
+The list's **Result** column sums up every source's latest run in one word:
+
+| Result | Means |
+|---|---|
+| **OK** | every source that has run it passed |
+| **Unexpected response** | a source got an answer from the target, just not the expected one: a status code outside *Accepted status codes*, or a body that failed its check |
+| **Fail** | a source got no answer at all (timeout, refused connection, DNS or TLS failure). It wins over *Unexpected response* when sources disagree |
+
+The Results view and a host's Paths tab use the same three words for each
+source.
 
 **Results** (from a check's row menu) lists every source that runs it, with
 the latest result, latency, HTTP status, resolved address, hop count and the
@@ -243,7 +260,7 @@ out on the retention schedule.
 | Symptom | Look at |
 |---|---|
 | A host never shows results | the agent version (0.21.0+), and whether the host appears on the check's Results view. A host that is not listed does not match the Sources |
-| The Polaris server row never shows results | that the check is enabled and *Run from this Polaris server* is ticked. Server-run checks start within a minute of saving and run on the **web** role, so on a split install look at that service's log |
+| The Polaris server row never shows results | that the check is enabled and *Run from this Polaris server* is on. Server-run checks start within a minute of saving and run on the **web** role, so on a split install look at that service's log |
 | The server's traces have no hops and a note about a missing tool | install `traceroute` on the Polaris host and restart Polaris. The check itself is unaffected |
 | An ICMP check from the server fails with `icmp unsupported on this server` | the system `ping` could not run for the Polaris service account. The same `ping` serves Polaris's own ICMP monitoring, so fix it there |
 | ICMP check fails with `icmp unsupported on this host (ping_group_range)` | Linux only. See [Polaris Agent → Troubleshooting](Polaris-Agent#troubleshooting) for the one-line fix. HTTP, TCP and traceroute are unaffected |

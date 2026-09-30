@@ -738,7 +738,9 @@
           <p><code>{ checks: [...] }</code>, by name. Each check carries its definition (below)
             plus a fleet summary: <code>sourceCount</code> (hosts running it),
             <code>okCount</code> / <code>failCount</code> (hosts whose latest run passed / failed
-            — a host with no result yet is in neither) and <code>lastRunAt</code>.</p>
+            — a host with no result yet is in neither), <code>unexpectedCount</code> (of the
+            failing, those whose run still got an HTTP answer, just not the expected status or
+            body) and <code>lastRunAt</code>.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
   "<span class="js-base-url">/api/v1</span>/path-checks"</code></pre>
         </div>

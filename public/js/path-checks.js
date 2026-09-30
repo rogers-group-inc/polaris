@@ -3,7 +3,7 @@
  *
  * Path checks: an HTTP / HTTPS / TCP / ICMP check (+ an optional
  * traceroute) run from every source the check picks — the Polaris Agent on
- * each matching host, and/or this Polaris server itself. This file owns the
+ * each matching host, or this Polaris server itself (one toggle picks). This file owns the
  * list, the check wizard (General → Expectations → Traceroute → Sources, a
  * stepper with Back / Next — the automations wizard's idiom, its own steps)
  * and the fleet Results view. The per-source charts and hop table live in
@@ -17,7 +17,7 @@
  * (create, edit, duplicate, enable, delete). UP_TO_WRITE ladder — never test
  * fullwrite on it (rule 43d). Aiming the SERVER at a target is chained on
  * networkScan write as well (canRunOnServer) — the server enforces it; the
- * checkbox only says so up front.
+ * toggle only says so up front.
  */
 (function () {
   "use strict";
@@ -81,13 +81,38 @@
 
   var OK_COLOR = "#2a9d8f";
   var FAIL_COLOR = "#d32f2f";
+  var UNEXPECTED_COLOR = "#e07b00";
 
-  function resultPill(lastOk, hasSample) {
-    if (!hasSample || lastOk === null || lastOk === undefined) {
-      return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
-    }
-    return '<span class="badge" style="background:' + (lastOk ? OK_COLOR : FAIL_COLOR) + ';color:#fff">' +
-      (lastOk ? "Reachable" : "Failing") + "</span>";
+  /**
+   * Pure (tested): a source's latest run as one word. A failed run that still
+   * got an HTTP answer is "Unexpected response" — the target answered, just
+   * not with what the check expects (status code or body match).
+   */
+  function resultState(lastOk, lastHttpStatus) {
+    if (lastOk === true) return "ok";
+    if (lastOk === false) return lastHttpStatus != null ? "unexpected" : "fail";
+    return null;
+  }
+  var RESULT_LABELS = { ok: "OK", fail: "Fail", unexpected: "Unexpected response" };
+  var RESULT_COLORS = { ok: OK_COLOR, fail: FAIL_COLOR, unexpected: UNEXPECTED_COLOR };
+
+  function resultPill(lastOk, hasSample, lastHttpStatus) {
+    var st = hasSample ? resultState(lastOk, lastHttpStatus) : null;
+    if (!st) return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
+    return '<span class="badge" style="background:' + RESULT_COLORS[st] + ';color:#fff">' + RESULT_LABELS[st] + "</span>";
+  }
+
+  /**
+   * Pure (tested): a check's Result cell across all its sources, no counts.
+   * A source that got no answer at all outranks one that got the wrong answer.
+   */
+  function checkResultState(c) {
+    var fail = c.failCount || 0;
+    var unexpected = Math.min(c.unexpectedCount || 0, fail);
+    if (fail > unexpected) return "fail";
+    if (unexpected) return "unexpected";
+    if (c.okCount) return "ok";
+    return null;
   }
 
   // ─── List ───────────────────────────────────────────────────────────────
@@ -186,10 +211,11 @@
     tbody.innerHTML = rows.map(function (c) {
       var result;
       if (!c.sourceCount) result = '<span style="color:var(--color-text-tertiary)">no sources</span>';
-      else if (!c.okCount && !c.failCount) result = '<span style="color:var(--color-text-tertiary)">no results yet</span>';
       else {
-        result = '<span style="color:' + OK_COLOR + '">' + c.okCount + " ok</span>";
-        if (c.failCount) result += ' · <strong style="color:' + FAIL_COLOR + '">' + c.failCount + " failing</strong>";
+        var st = checkResultState(c);
+        result = st
+          ? '<strong style="color:' + RESULT_COLORS[st] + '">' + RESULT_LABELS[st] + "</strong>"
+          : '<span style="color:var(--color-text-tertiary)">no results yet</span>';
       }
       var enabledCell = editor
         ? '<label class="toggle-switch" title="' + (c.enabled ? "Enabled — click to disable" : "Disabled — click to enable") + '">' +
@@ -483,16 +509,21 @@
 
   function sourcesTab(c) {
     var mayServer = canRunOnServer();
-    return sectionHeading("This Polaris server") +
-      checkboxLine("pc-server", "Run from this Polaris server", false,
-        "The server that hosts Polaris runs the check itself, whether it is installed on Linux or in a container, with no agent needed. " +
-        "Its results appear as the <strong>Polaris server</strong> row in Results, with the same charts and path graph. " +
-        "Automations alert on agent hosts only: the server is not an asset." +
-        (mayServer ? "" : " <strong>Needs Read-Write on Network Discovery</strong> as well as Path Monitor, because the server probes from its own network.")) +
-      formDivider() +
-      sectionHeading("Agent hosts") +
-      '<div id="pc-server-only-note" style="display:none">' + infoBox("This check <strong>authenticates</strong>, so it runs only from this Polaris server — its credential is never sent to an agent. To run it from agent hosts too, set Authentication to <em>None</em> on the General step.") + "</div>" +
+    // One toggle picks the source: on, this server runs the check; off, the
+    // agent hosts the filter below selects. The filter is hidden (and not
+    // collected) while the server is the source.
+    return '<div class="form-group"><label style="display:flex;align-items:center;gap:8px;font-weight:500">' +
+        '<span class="toggle-switch"><input type="checkbox" id="pc-server"><span class="toggle-slider"></span></span>' +
+        "Run from this Polaris server</label>" +
+        '<p class="hint" style="margin:2px 0 0 42px">On: the server that hosts Polaris runs the check itself, whether it is installed on Linux or in a container, with no agent needed. ' +
+        "Its results appear as the <strong>Polaris server</strong> row in Results, with the same charts and path graph; automations alert on agent hosts only, because the server is not an asset. " +
+        "Off: the agent hosts you pick below run it." +
+        (mayServer ? "" : " <strong>Needs Read-Write on Network Discovery</strong> as well as Path Monitor to turn on, because the server probes from its own network.") + "</p></div>" +
+      '<div id="pc-server-only-note" style="display:none">' + infoBox("This check <strong>authenticates</strong>, so it runs only from this Polaris server — its credential is never sent to an agent. To run it from agent hosts instead, set Authentication to <em>None</em> on the General step.") + "</div>" +
+      '<div id="pc-both-note" style="display:none">' + infoBox("This check runs from <strong>both</strong> this server and agent hosts. A check now has one source: saving with the toggle on keeps only the server; turning it off keeps only the agent hosts.") + "</div>" +
       '<div id="pc-agent-sources">' +
+        formDivider() +
+        sectionHeading("Agent hosts") +
         infoBox("An agent host runs a check only if it has an active <strong>Polaris Agent</strong> (0.21.0 or later). This filter is always combined with <em>Polaris Agent installed = yes</em>.") +
         checkboxLine("pc-all-hosts", "All agent hosts", false) +
         '<div id="pc-cond-wrap"><div id="pc-cond-root"></div></div>' +
@@ -505,7 +536,7 @@
     { key: "general", label: "General", question: "What should this check test?", explain: "Name it, pick the kind, and say where it points and how often it runs." },
     { key: "expect", label: "Expectations", question: "What counts as a pass?", explain: "For HTTP and HTTPS, the status codes and body text a run must see. TCP and ICMP pass when the target answers." },
     { key: "trace", label: "Traceroute", question: "Should it trace the route?", explain: "A traceroute records every hop between the source and the target, so a failure shows where the path broke." },
-    { key: "sources", label: "Sources", question: "Where should it run from?", explain: "This Polaris server, the agent hosts you pick, or both. Each source keeps its own results." },
+    { key: "sources", label: "Sources", question: "Where should it run from?", explain: "This Polaris server, or the agent hosts you pick. Each source keeps its own results." },
   ];
 
   /** Pure: the step (1-based) a validateCheck refusal belongs to. */
@@ -581,18 +612,27 @@
     // who may not aim the server; ticking it ON is refused up front (and by
     // the server, which also refuses re-aiming a server-run check).
     if (!canRunOnServer() && !serverCb.checked) serverCb.disabled = true;
-    serverCb.addEventListener("change", schedulePreview);
+    var hadAgentSources = !!(scope.allAssets || scope.condition || (c.assetIds && c.assetIds.length));
+    body.querySelector("#pc-both-note").style.display = editingId && c.runOnServer === true && hadAgentSources ? "" : "none";
     var allCb = body.querySelector("#pc-all-hosts");
     allCb.checked = scope.allAssets === true;
     var condRoot = body.querySelector("#pc-cond-root");
     condRoot.innerHTML = builder.groupHtml(scope.condition || { op: "and", children: [] }, 0);
     builder.wire(body, "#pc-cond-root");
+    // The blank condition row is seeded only while the agent filter is the
+    // source: seeding it under a server-run check left an unfilled row that
+    // then refused the save.
     function syncAll() {
       body.querySelector("#pc-cond-wrap").style.display = allCb.checked ? "none" : "block";
-      if (!allCb.checked) builder.seedIfEmpty(condRoot);
+      if (!allCb.checked && !serverCb.checked) builder.seedIfEmpty(condRoot);
+    }
+    function syncSource() {
+      body.querySelector("#pc-agent-sources").style.display = serverCb.checked ? "none" : "";
+      syncAll();
     }
     allCb.addEventListener("change", function () { syncAll(); schedulePreview(); });
-    syncAll();
+    serverCb.addEventListener("change", function () { syncSource(); schedulePreview(); });
+    syncSource();
 
     function syncKind() {
       var k = body.querySelector("#pc-kind").value;
@@ -620,11 +660,14 @@
       var serverOnly = !!cred;
       var lock = body.querySelector("#pc-server-only-note");
       if (lock) lock.style.display = serverOnly ? "" : "none";
-      var agentWrap = body.querySelector("#pc-agent-sources");
-      if (agentWrap) agentWrap.style.display = serverOnly ? "none" : "";
-      if (serverOnly) serverCb.checked = true;
+      // Forced on while the check authenticates; clearing Authentication hands
+      // the toggle back as the operator left it.
+      if (serverOnly && !serverCb.checked) { serverCb.checked = true; forcedServer = true; }
+      if (!serverOnly && forcedServer) { serverCb.checked = false; forcedServer = false; }
       serverCb.disabled = serverOnly || (!canRunOnServer() && !serverCb.checked);
+      syncSource();
     }
+    var forcedServer = false;
     body.querySelector("#pc-kind").addEventListener("change", syncKind);
     ["#pc-method", "#pc-credential", "#pc-body-mode"].forEach(function (sel) { body.querySelector(sel).addEventListener("change", syncRequest); });
     body.querySelector("#pc-host-header").addEventListener("input", syncRequest);
@@ -693,9 +736,10 @@
       body.querySelector("#pc-preview").innerHTML = '<div style="font-size:0.85rem;margin-bottom:0.5rem">' + head + "</div>" + (inner || "");
     }
     async function runPreview() {
+      if (serverCb.checked) { ++previewSeq; return; } // the agent half is hidden
       var sc = collectScope();
       if (sc.error && !pins.size) {
-        previewShell('<span class="hint">' + esc(sc.empty && serverCb.checked ? "No agent hosts — only this Polaris server will run this check." : sc.error) + "</span>");
+        previewShell('<span class="hint">' + esc(sc.error) + "</span>");
         return;
       }
       var seq = ++previewSeq;
@@ -735,6 +779,7 @@
       });
     }
     function collectScope() {
+      if (serverCb.checked) return { scope: {} };
       if (allCb.checked) return { scope: { allAssets: true } };
       var group = body.querySelector("#pc-cond-root > .scg-group");
       var tree = group ? builder.collect(group) : { op: "and", children: [] };
@@ -749,8 +794,7 @@
     function stepProblem(n) {
       var sc = collectScope();
       var payload = collectCheck(body, sc.scope || {}, Array.from(pins));
-      var problem = validateCheck(payload);
-      if (!problem) problem = scopeProblem(sc, payload);
+      var problem = checkProblem(sc, payload);
       return problem && stepOfTab(problem.tab) === n ? problem : null;
     }
     function updateStepper() {
@@ -806,7 +850,7 @@
     document.getElementById("pc-save").addEventListener("click", async function () {
       var sc = collectScope();
       var payload = collectCheck(body, sc.scope || {}, Array.from(pins));
-      var problem = validateCheck(payload) || scopeProblem(sc, payload);
+      var problem = checkProblem(sc, payload);
       if (problem) {
         goToStep(stepOfTab(problem.tab));
         showToast(problem.message, "error");
@@ -829,14 +873,24 @@
 
   /**
    * Pure: the Sources refusal the condition tree adds on top of validateCheck.
-   * A tree with a bad row is always refused; an EMPTY tree only when nothing
-   * else runs the check (no pins, not all hosts, not the server).
+   * A server-run check has no agent filter to refuse. Otherwise a tree with a
+   * bad row is always refused; an EMPTY tree only when nothing else runs the
+   * check (no pins, not all hosts).
    */
+  var NO_SOURCE_MESSAGE = 'Turn on "Run from this Polaris server", or add a condition, pin a host, or check "All agent hosts"';
+
   function scopeProblem(sc, payload) {
-    if (!sc || !sc.error) return null;
-    var elsewhere = (payload.assetIds && payload.assetIds.length) || payload.runOnServer || (payload.scope && payload.scope.allAssets);
+    if (!sc || !sc.error || payload.runOnServer) return null;
+    var elsewhere = (payload.assetIds && payload.assetIds.length) || (payload.scope && payload.scope.allAssets);
     if (sc.empty && elsewhere) return null;
-    return { tab: "sources", message: sc.empty ? 'Tick "Run from this Polaris server", add a condition, pin a host, or check "All agent hosts"' : sc.error };
+    return { tab: "sources", message: sc.empty ? NO_SOURCE_MESSAGE : sc.error };
+  }
+
+  /** Pure: the first refusal; an unfilled filter row says so itself rather than "no source". */
+  function checkProblem(sc, payload) {
+    var p = validateCheck(payload);
+    var s = scopeProblem(sc, payload);
+    return p && p.tab === "sources" && s ? s : (p || s);
   }
 
   function uniqueName(base) {
@@ -884,13 +938,14 @@
         probesPerHop: Math.round(Number(v("pc-tr-probes")) || 3),
       },
       keepBodyExcerpt: isHttp && on("pc-keep-excerpt"),
-      // An authenticating check is server-only: its agent Sources are dropped
-      // here, and the server refuses them if they arrive anyway.
-      scope: credentialId ? {} : scope,
-      assetIds: credentialId ? [] : (assetIds || []),
-      runOnServer: credentialId ? true : on("pc-server"),
       credentialId: credentialId,
     };
+    // One source: the server (always, for an authenticating check — the
+    // server refuses agent Sources on one) or the agent hosts, never both.
+    var server = !!credentialId || on("pc-server");
+    out.scope = server ? {} : scope;
+    out.assetIds = server ? [] : (assetIds || []);
+    out.runOnServer = server;
     return out;
   }
 
@@ -925,7 +980,7 @@
     }
     var hasScope = p.scope && (p.scope.allAssets || p.scope.condition);
     if (!hasScope && !(p.assetIds && p.assetIds.length) && !p.runOnServer) {
-      return { tab: "sources", message: 'Tick "Run from this Polaris server", add a condition, pin a host, or check "All agent hosts"' };
+      return { tab: "sources", message: NO_SOURCE_MESSAGE };
     }
     return null;
   }
@@ -965,7 +1020,7 @@
       var data = sf ? sf.apply(rows.slice()) : rows;
       if (!data.length) {
         tbody.innerHTML = '<tr><td colspan="8" class="empty-state">' +
-          (rows.length ? "No sources match the filters." : "Nothing runs this check yet. Check its Sources: tick this Polaris server, or pick agent hosts running agent 0.21.0 or later.") + "</td></tr>";
+          (rows.length ? "No sources match the filters." : "Nothing runs this check yet. Check its Sources: turn on this Polaris server, or pick agent hosts running agent 0.21.0 or later.") + "</td></tr>";
         return;
       }
       tbody.innerHTML = data.map(function (r) {
@@ -978,7 +1033,7 @@
             esc(r.hostname || r.ipAddress || r.assetId) + "</button>" +
             (r.server ? ' <span class="badge" title="The Polaris server runs this check itself">server</span>' : "") +
             (r.supported ? "" : ' <span class="hint" title="Needs agent 0.21.0+">upgrade agent</span>') + "</td>" +
-          "<td>" + resultPill(r.lastOk, !!r.lastSampleAt) + "</td>" +
+          "<td>" + resultPill(r.lastOk, !!r.lastSampleAt, r.lastHttpStatus) + "</td>" +
           "<td>" + (r.lastLatencyMs != null ? Math.round(r.lastLatencyMs) + " ms" : "—") + "</td>" +
           "<td>" + (r.lastHttpStatus != null ? r.lastHttpStatus : "—") + "</td>" +
           "<td>" + esc(r.lastResolvedIp || "—") + "</td>" +
@@ -1072,6 +1127,8 @@
     validateCheck: validateCheck,
     collectCheck: collectCheck,
     scopeProblem: scopeProblem,
+    resultState: resultState,
+    checkResultState: checkResultState,
     testResultHtml: testResultHtml,
     usableHttpCredentials: usableHttpCredentials,
     stepOfTab: stepOfTab,

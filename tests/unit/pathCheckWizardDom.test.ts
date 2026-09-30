@@ -32,6 +32,7 @@ const g = globalThis as Record<string, any>;
 let doc: Window["document"];
 let toasts: { msg: string; kind?: string }[];
 let posted: any[];
+let seeded = 0;
 
 function load(opts: { networkScan?: "read" | "write" } = {}) {
   const win = new Window();
@@ -63,14 +64,16 @@ function load(opts: { networkScan?: "read" | "write" } = {}) {
     overlay.querySelector(".modal-body")!.innerHTML = body;
     overlay.querySelector(".modal-footer")!.innerHTML = footer;
   };
-  // A minimal condition builder: an empty tree, and a "rule" when seeded.
+  // A minimal condition builder: an empty tree until seeded, and then — like
+  // the real one — one unfilled row that refuses validation.
+  seeded = 0;
   (win as any).PolarisConditionBuilder = {
     create: () => ({
       groupHtml: () => '<div class="scg-group"></div>',
       wire: () => {},
-      collect: () => ({ op: "and", children: [] }),
-      validate: () => null,
-      seedIfEmpty: () => {},
+      collect: () => ({ op: "and", children: seeded ? [{ field: "", op: "eq", value: "" }] : [] }),
+      validate: (tree: any) => (tree.children.some((r: any) => !r.field) ? "Pick a field" : null),
+      seedIfEmpty: () => { seeded++; },
     }),
   };
   g.api = {
@@ -194,6 +197,57 @@ describe("path check wizard — the Polaris server source", () => {
     expect(toasts.pop()?.msg).toMatch(/Run from this Polaris server/);
   });
 
+  const serverOnly = {
+    id: "c7", name: "ERP", kind: "https", target: "https://erp.example/", intervalSec: 60, timeoutMs: 5000, enabled: true,
+    http: { expectStatus: "", verifyTls: true, bodyMatch: null }, traceroute: { enabled: true, everyNRuns: 5, maxHops: 30, probesPerHop: 3 },
+    scope: {}, assetIds: [], runOnServer: true,
+  };
+  const change = (id: string) => (doc.getElementById(id) as HTMLElement).dispatchEvent(new (g.window as any).Event("change"));
+
+  it("is a toggle switch, and hides the agent filter while it is on", async () => {
+    const PC = load();
+    await PC.openCheckModal(null);
+    const cb = doc.getElementById("pc-server") as HTMLInputElement;
+    expect(cb.closest(".toggle-switch")).not.toBeNull();
+    expect(shown("pc-agent-sources")).toBe(true);
+    cb.checked = true; change("pc-server");
+    expect(shown("pc-agent-sources")).toBe(false);
+    cb.checked = false; change("pc-server");
+    expect(shown("pc-agent-sources")).toBe(true);
+  });
+
+  it("edits a server-only check without seeding a condition row, and saves it unchanged", async () => {
+    const PC = load();
+    await PC.openCheckModal(serverOnly);
+    expect(seeded).toBe(0);
+    expect(shown("pc-agent-sources")).toBe(false);
+    click("pc-save");
+    await flush();
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    expect(posted[0]).toMatchObject({ runOnServer: true, scope: {}, assetIds: [] });
+  });
+
+  it("seeds the filter when the toggle is turned off, and then refuses the unfilled row", async () => {
+    const PC = load();
+    await PC.openCheckModal(serverOnly);
+    const cb = doc.getElementById("pc-server") as HTMLInputElement;
+    cb.checked = false; change("pc-server");
+    expect(seeded).toBe(1);
+    click("pc-save");
+    await flush();
+    expect(posted).toHaveLength(0);
+    expect(toasts.pop()?.msg).toBe("Pick a field");
+  });
+
+  it("drops the agent hosts of a check that ran from both when saved with the toggle on, and says so first", async () => {
+    const PC = load();
+    await PC.openCheckModal({ ...serverOnly, scope: { allAssets: true }, assetIds: ["a1"] });
+    expect(shown("pc-both-note")).toBe(true);
+    click("pc-save");
+    await flush();
+    expect(posted[0]).toMatchObject({ runOnServer: true, scope: {}, assetIds: [] });
+  });
+
   it("disables the server box for a caller without networkScan:write", async () => {
     const PC = load({ networkScan: "read" });
     await PC.openCheckModal(null);
@@ -214,8 +268,25 @@ describe("pure helpers", () => {
     expect(PC.scopeProblem(empty, { runOnServer: true, assetIds: [], scope: {} })).toBeNull();
     expect(PC.scopeProblem(empty, { runOnServer: false, assetIds: ["a1"], scope: {} })).toBeNull();
     expect(PC.scopeProblem(empty, { runOnServer: false, assetIds: [], scope: {} })).toMatchObject({ tab: "sources" });
-    // A tree with a bad row is refused even when the server runs the check.
-    expect(PC.scopeProblem({ error: "Pick a value" }, { runOnServer: true, assetIds: [], scope: {} })).toMatchObject({ tab: "sources", message: "Pick a value" });
+    // A server-run check has no agent filter, so a bad row cannot refuse it;
+    // an agent-run one is still refused on it.
+    expect(PC.scopeProblem({ error: "Pick a value" }, { runOnServer: true, assetIds: [], scope: {} })).toBeNull();
+    expect(PC.scopeProblem({ error: "Pick a value" }, { runOnServer: false, assetIds: ["a1"], scope: {} })).toMatchObject({ tab: "sources", message: "Pick a value" });
+  });
+  it("names a run OK, Fail, or Unexpected response when an HTTP answer came back wrong", () => {
+    const PC = load();
+    expect(PC.resultState(true, 200)).toBe("ok");
+    expect(PC.resultState(false, 503)).toBe("unexpected");
+    expect(PC.resultState(false, null)).toBe("fail");
+    expect(PC.resultState(null, null)).toBeNull();
+  });
+  it("folds a check's sources into one Result, without counts", () => {
+    const PC = load();
+    expect(PC.checkResultState({ okCount: 3, failCount: 0 })).toBe("ok");
+    expect(PC.checkResultState({ okCount: 3, failCount: 1, unexpectedCount: 1 })).toBe("unexpected");
+    // No answer at all outranks a wrong answer.
+    expect(PC.checkResultState({ okCount: 0, failCount: 2, unexpectedCount: 1 })).toBe("fail");
+    expect(PC.checkResultState({ okCount: 0, failCount: 0 })).toBeNull();
   });
   it("offers the server row its charts, and an agent row its asset", () => {
     const PC = load();
