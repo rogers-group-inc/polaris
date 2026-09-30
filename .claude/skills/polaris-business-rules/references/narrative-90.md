@@ -98,7 +98,12 @@ underlay died. Both halves of "over the line" were blind to it: the filter is ap
 before the yield, and the underlays are members of other health checks (or none), so the
 automation never had a reading on wan2; and no automation carried a live member-state alert
 about wan2. A physically down port that is in no health check was invisible to the rule
-entirely.
+entirely. Split into its companion "FortiGate WAN is down" automation (same field,
+`Primary WAN|Secondary WAN`, 3-poll hold) the live-alert half was a RACE, not a guard: the
+WAN alert is live only once its own hold completes, the overlay automation's hold runs in
+parallel, and whichever automation evaluated first that tick decided whether the overlay
+email went out before the next tick superseded it. "During the parent's hold nothing
+alerts" (below) holds only inside ONE automation.
 
 So a third source: `notificationEngine → downSdwanParents` marks an ancestor over the line
 when its `AssetInterface.operStatus` is `down`, or its newest perf-SLA read within 15 min is

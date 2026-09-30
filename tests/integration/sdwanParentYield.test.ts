@@ -98,7 +98,7 @@ async function seedState(rows: Array<[healthCheck: string, link: string, state: 
   });
 }
 
-async function seedStateRule(name: string, dimensionFilter?: Record<string, string>): Promise<string> {
+async function seedStateRule(name: string, dimensionFilter?: Record<string, string>, forDurationSec = 0): Promise<string> {
   const rule = await prisma.notificationRule.create({
     data: {
       name: `${RULE} ${name}`,
@@ -106,7 +106,7 @@ async function seedStateRule(name: string, dimensionFilter?: Record<string, stri
       severity: "warning",
       trigger: {
         type: "asset_state", field: "sdwanMemberState", operator: "==", value: "down",
-        forDurationSec: 0, ...(dimensionFilter ? { dimensionFilter } : {}),
+        forDurationSec, ...(dimensionFilter ? { dimensionFilter } : {}),
       },
       scope: { allAssets: true },
       reset: { mode: "auto" },
@@ -206,6 +206,20 @@ d("SD-WAN parent members (business rule 90)", () => {
     const rule = await seedStateRule("filtered", { healthCheck: "Metrocenter|Flexential" });
     await evaluateAllNotificationRules();
     expect(await liveMembers(rule)).toEqual([]);
+  });
+
+  it("an overlay automation stays quiet while a SEPARATE underlay automation is still in its hold", async () => {
+    // The prod shape: "FortiGate WAN is down" (Primary/Secondary WAN checks)
+    // and "FortiGate Overlay is down" (Metrocenter/Flexential). The WAN rule
+    // is still pending — no live alert to yield to — so only the dead read on
+    // the underlay's own health check can hold the overlay back.
+    await seedTunnels({ "Overlay-1": "wan1" });
+    await seedState([["Primary WAN", "wan1", "down"], ["Metrocenter", "Overlay-1", "down"]]);
+    const underlays = await seedStateRule("wan", { healthCheck: "Primary WAN|Secondary WAN" }, 3600);
+    const overlays = await seedStateRule("overlay", { healthCheck: "Metrocenter|Flexential" });
+    await evaluateAllNotificationRules();
+    expect(await liveMembers(underlays)).toEqual([]);
+    expect(await liveMembers(overlays)).toEqual([]);
   });
 
   it("yields to an operationally-down port that is in no health check", async () => {
