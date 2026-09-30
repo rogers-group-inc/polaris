@@ -161,6 +161,8 @@ export interface PathCheckInput {
   scope?: RuleScope | null;
   assetIds?: string[];
   runOnServer?: boolean;
+  /** The wizard's finder filter ({ condition }) — stored for display, never membership. */
+  sourceFilter?: RuleScope | null;
 }
 
 /** The normalized definition a check row stores. */
@@ -178,6 +180,7 @@ export interface NormalizedCheck {
   scope: RuleScope;
   assetIds: string[];
   runOnServer: boolean;
+  sourceFilter: RuleScope | null;
   credentialId: string | null;
 }
 
@@ -443,6 +446,9 @@ export async function normalizeCheckInput(input: PathCheckInput): Promise<Normal
     scope,
     assetIds,
     runOnServer,
+    // Only a condition is kept, and only on an agent-run check; it is the
+    // wizard's finder, so it never reaches membersFor.
+    sourceFilter: !runOnServer && input.sourceFilter?.condition ? { condition: input.sourceFilter.condition } : null,
     credentialId,
   };
 }
@@ -677,6 +683,7 @@ export async function createCheck(input: PathCheckInput, actor?: string, opts?: 
       scope: jsonOf(n.scope),
       assetIds: n.assetIds,
       runOnServer: n.runOnServer,
+      sourceFilter: n.sourceFilter ? jsonOf(n.sourceFilter) : Prisma.DbNull,
       credentialId: n.credentialId,
       definitionSha256: sha,
       createdBy: actor ?? null,
@@ -737,6 +744,7 @@ export async function updateCheck(id: string, input: PathCheckInput, actor?: str
       scope: jsonOf(n.scope),
       assetIds: n.assetIds,
       runOnServer: n.runOnServer,
+      sourceFilter: n.sourceFilter ? jsonOf(n.sourceFilter) : Prisma.DbNull,
       credentialId: n.credentialId,
       definitionSha256: sha,
     },
@@ -1095,6 +1103,9 @@ export async function previewSources(input: PreviewSourcesInput) {
   const matchedNoAgent = [...filterIds].filter((id) => !agents.has(id)).length;
   return {
     total: ids.length,
+    // Every member, not just the rows shown, so the wizard's Select all can
+    // tick hosts past PREVIEW_ROW_CAP (the pin list caps at 2000 anyway).
+    ids: ids.slice(0, 2000),
     pinned: ids.filter((id) => members.get(id)!.explicit).length,
     matchedWithoutAgent: matchedNoAgent,
     agents: assets.map((a) => ({

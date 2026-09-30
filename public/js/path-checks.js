@@ -524,10 +524,11 @@
       '<div id="pc-agent-sources">' +
         formDivider() +
         sectionHeading("Agent hosts") +
-        infoBox("An agent host runs a check only if it has an active <strong>Polaris Agent</strong> (0.21.0 or later). This filter is always combined with <em>Polaris Agent installed = yes</em>.") +
-        checkboxLine("pc-all-hosts", "All agent hosts", false) +
-        '<div id="pc-cond-wrap"><div id="pc-cond-root"></div></div>' +
-        '<div class="aw-preview-box" id="pc-preview" style="margin-top:0.75rem;max-height:260px;overflow:auto"></div>' +
+        infoBox("Use the filter to <strong>find</strong> hosts, then tick the ones that should run this check — only ticked hosts run it, and a host that matches the filter later does not join by itself. Only hosts with an active <strong>Polaris Agent</strong> (0.21.0 or later) are listed.") +
+        checkboxLine("pc-all-hosts", "All agent hosts", false, "Every host with an active agent runs it, including hosts added later.") +
+        '<div id="pc-follow-note" style="display:none">' + infoBox("This check used to run on <strong>every host its filter matched</strong>. Those hosts are ticked below; saving keeps exactly the ticked hosts, so a host that matches later will not join by itself.") + "</div>" +
+        '<div id="pc-cond-wrap"><div id="pc-cond-root"></div>' +
+        '<div class="aw-preview-box" id="pc-preview" style="margin-top:0.75rem;max-height:320px;overflow:auto"></div></div>' +
       "</div>";
   }
 
@@ -616,8 +617,14 @@
     body.querySelector("#pc-both-note").style.display = editingId && c.runOnServer === true && hadAgentSources ? "" : "none";
     var allCb = body.querySelector("#pc-all-hosts");
     allCb.checked = scope.allAssets === true;
+    // The filter only FINDS hosts; the ticked ones (pins) run the check. It
+    // reopens from sourceFilter — or, on a check saved before that, from the
+    // scope condition it used to follow, whose matches are ticked on the first
+    // preview so saving keeps the hosts it was running on.
+    var legacyFollow = !!scope.condition && !scope.allAssets;
+    body.querySelector("#pc-follow-note").style.display = legacyFollow && existing ? "" : "none";
     var condRoot = body.querySelector("#pc-cond-root");
-    condRoot.innerHTML = builder.groupHtml(scope.condition || { op: "and", children: [] }, 0);
+    condRoot.innerHTML = builder.groupHtml(scope.condition || (c.sourceFilter && c.sourceFilter.condition) || { op: "and", children: [] }, 0);
     builder.wire(body, "#pc-cond-root");
     // The blank condition row is seeded only while the agent filter is the
     // source: seeding it under a server-run check left an unfilled row that
@@ -736,65 +743,103 @@
       body.querySelector("#pc-preview").innerHTML = '<div style="font-size:0.85rem;margin-bottom:0.5rem">' + head + "</div>" + (inner || "");
     }
     async function runPreview() {
-      if (serverCb.checked) { ++previewSeq; return; } // the agent half is hidden
-      var sc = collectScope();
-      if (sc.error && !pins.size) {
-        previewShell('<span class="hint">' + esc(sc.error) + "</span>");
+      if (serverCb.checked || allCb.checked) { ++previewSeq; return; } // nothing to pick
+      var finder = collectFinder();
+      if (!finder.condition && !pins.size) {
+        previewShell('<span class="hint">' + esc(finder.error || "Add a condition to find agent hosts, then tick the ones that should run this check.") + "</span>");
         return;
       }
       var seq = ++previewSeq;
-      previewShell('<span class="hint">Resolving agent hosts…</span>');
+      previewShell('<span class="hint">Finding agent hosts…</span>');
       try {
-        var res = await api.pathChecks.previewSources({ scope: sc.scope || {}, assetIds: Array.from(pins) });
+        var res = await api.pathChecks.previewSources({ scope: finder.condition ? { condition: finder.condition } : {}, assetIds: Array.from(pins) });
         if (seq !== previewSeq) return;
+        if (legacyFollow) {
+          // A check saved while it followed its filter: tick what it ran on.
+          (res.ids || []).forEach(function (id) { pins.add(id); });
+          legacyFollow = false;
+        }
+        lastPreview = res;
         renderPreview(res);
       } catch (err) {
         if (seq === previewSeq) previewShell('<span class="hint">' + esc(err.message || "Preview unavailable") + "</span>");
       }
     }
+    var lastPreview = null;
     function renderPreview(res) {
-      var head = "<strong>" + res.total + "</strong> agent host" + (res.total === 1 ? "" : "s") + " will run this check" +
-        (res.pinned ? " (" + res.pinned + " pinned)" : "") +
-        (res.total > res.agents.length ? " · showing the first " + res.agents.length : "") +
-        (res.matchedWithoutAgent ? ' · <span class="hint">' + res.matchedWithoutAgent + " matching device(s) have no active agent</span>" : "");
       var rows = res.agents.map(function (a) {
-        return '<tr><td style="width:28px"><input type="checkbox" class="pc-pin" data-id="' + esc(a.assetId) + '" title="Pin this host — it keeps running the check even if the filter stops matching"' + (pins.has(a.assetId) ? " checked" : "") + ' style="width:auto"></td>' +
+        return '<tr><td style="width:28px"><input type="checkbox" class="pc-pin" data-id="' + esc(a.assetId) + '" title="Run this check on this host"' + (pins.has(a.assetId) ? " checked" : "") + ' style="width:auto"></td>' +
           '<td><span title="' + (a.online ? "online" : "offline") + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + (a.online ? "var(--color-success,#2a9d8f)" : "var(--color-text-tertiary)") + '"></span></td>' +
-          "<td>" + esc(a.hostname || a.ipAddress || a.assetId) + (a.pinnedOnly ? ' <span class="tag-chip">pinned — outside filter</span>' : "") + "</td>" +
+          "<td>" + esc(a.hostname || a.ipAddress || a.assetId) + (a.pinnedOnly ? ' <span class="tag-chip" title="Ticked earlier; the filter no longer finds it">outside filter</span>' : "") + "</td>" +
           "<td>" + esc(a.ipAddress || "") + "</td>" +
           '<td style="font-size:0.8rem">' + esc(a.os || "") + "</td>" +
           "<td><code>" + esc(a.agentVersion ? "v" + a.agentVersion : "—") + "</code>" +
             (a.supported ? "" : ' <span class="hint" title="Path checks need agent ' + esc(res.minAgentVersion) + '+">upgrade</span>') + "</td></tr>";
       }).join("");
       var missing = (res.pinnedWithoutAgent || []).map(function (a) {
-        return '<li>' + esc(a.hostname || a.ipAddress || a.assetId) + " — pinned, but has no active agent</li>";
+        return '<li>' + esc(a.hostname || a.ipAddress || a.assetId) + " — ticked, but has no active agent</li>";
       }).join("");
-      previewShell(head, (rows ? '<table class="data-table" style="width:100%"><tbody>' + rows + "</tbody></table>" : '<p class="hint">No agent hosts match.</p>') +
+      var selectAll = '<thead><tr><th style="width:28px"><input type="checkbox" id="pc-select-all" title="Select all / none" style="width:auto"></th>' +
+        '<th colspan="5" style="font-weight:500">Select all / none</th></tr></thead>';
+      previewShell('<span id="pc-selection-head"></span>',
+        (rows ? '<table class="data-table" style="width:100%">' + selectAll + "<tbody>" + rows + "</tbody></table>" : '<p class="hint">No agent hosts match.</p>') +
         (missing ? '<ul class="hint" style="margin:0.5rem 0 0 1rem">' + missing + "</ul>" : ""));
       body.querySelectorAll(".pc-pin").forEach(function (cb) {
         cb.addEventListener("change", function () {
           if (cb.checked) pins.add(cb.dataset.id); else pins.delete(cb.dataset.id);
-          schedulePreview();
+          syncSelection();
         });
       });
+      var all = body.querySelector("#pc-select-all");
+      if (all) {
+        all.addEventListener("change", function () {
+          // Every match, not only the rows shown past the preview cap.
+          (res.ids || []).forEach(function (id) { if (all.checked) pins.add(id); else pins.delete(id); });
+          body.querySelectorAll(".pc-pin").forEach(function (cb) { cb.checked = pins.has(cb.dataset.id); });
+          syncSelection();
+        });
+      }
+      syncSelection();
     }
+    /** The head count and the Select-all box's tri-state, from pins — no refetch per tick. */
+    function syncSelection() {
+      var res = lastPreview;
+      if (!res) return;
+      var s = selectionState(res.ids || [], pins);
+      var all = body.querySelector("#pc-select-all");
+      if (all) { all.checked = s.all; all.indeterminate = s.some && !s.all; }
+      var head = body.querySelector("#pc-selection-head");
+      if (head) {
+        head.innerHTML = "<strong>" + s.selected + "</strong> of " + res.total + " agent host" + (res.total === 1 ? "" : "s") + " selected to run this check" +
+          (res.total > res.agents.length ? " · showing the first " + res.agents.length : "") +
+          (res.matchedWithoutAgent ? ' · <span class="hint">' + res.matchedWithoutAgent + " matching device(s) have no active agent</span>" : "");
+      }
+    }
+    /** Who runs the check: this server, every agent host, or the ticked hosts (pins). */
     function collectScope() {
       if (serverCb.checked) return { scope: {} };
       if (allCb.checked) return { scope: { allAssets: true } };
+      return { scope: {} };
+    }
+    /** The finder filter: a valid condition, or why there is none. Never refuses a save. */
+    function collectFinder() {
       var group = body.querySelector("#pc-cond-root > .scg-group");
       var tree = group ? builder.collect(group) : { op: "and", children: [] };
-      if (!tree.children.length) return { scope: {}, empty: true, error: 'Add a condition, pin a host, or check "All agent hosts".' };
+      if (!tree.children.length) return { condition: null };
       var problem = builder.validate(tree);
-      if (problem) return { scope: {}, error: problem };
-      return { scope: { condition: tree } };
+      return problem ? { condition: null, error: problem } : { condition: tree };
+    }
+    function collectPayload() {
+      var agentPick = !serverCb.checked && !allCb.checked;
+      var finder = agentPick ? collectFinder() : { condition: null };
+      return collectCheck(body, collectScope().scope, agentPick ? Array.from(pins) : [],
+        finder.condition ? { condition: finder.condition } : null);
     }
     runPreview();
 
     // ── Stepper navigation ──
     function stepProblem(n) {
-      var sc = collectScope();
-      var payload = collectCheck(body, sc.scope || {}, Array.from(pins));
-      var problem = checkProblem(sc, payload);
+      var problem = validateCheck(collectPayload());
       return problem && stepOfTab(problem.tab) === n ? problem : null;
     }
     function updateStepper() {
@@ -848,9 +893,8 @@
     // ── Save ──
     document.getElementById("pc-cancel").addEventListener("click", closeModal);
     document.getElementById("pc-save").addEventListener("click", async function () {
-      var sc = collectScope();
-      var payload = collectCheck(body, sc.scope || {}, Array.from(pins));
-      var problem = checkProblem(sc, payload);
+      var payload = collectPayload();
+      var problem = validateCheck(payload);
       if (problem) {
         goToStep(stepOfTab(problem.tab));
         showToast(problem.message, "error");
@@ -871,26 +915,18 @@
     });
   }
 
+  // The filter only finds hosts, so an unfilled or empty filter row never
+  // refuses a save — only having no source at all does.
+  var NO_SOURCE_MESSAGE = 'Turn on "Run from this Polaris server", tick at least one agent host, or check "All agent hosts"';
+
   /**
-   * Pure: the Sources refusal the condition tree adds on top of validateCheck.
-   * A server-run check has no agent filter to refuse. Otherwise a tree with a
-   * bad row is always refused; an EMPTY tree only when nothing else runs the
-   * check (no pins, not all hosts).
+   * Pure (tested): the Select-all box's state over every match the preview
+   * returned (not just the rows shown) against the ticked set.
    */
-  var NO_SOURCE_MESSAGE = 'Turn on "Run from this Polaris server", or add a condition, pin a host, or check "All agent hosts"';
-
-  function scopeProblem(sc, payload) {
-    if (!sc || !sc.error || payload.runOnServer) return null;
-    var elsewhere = (payload.assetIds && payload.assetIds.length) || (payload.scope && payload.scope.allAssets);
-    if (sc.empty && elsewhere) return null;
-    return { tab: "sources", message: sc.empty ? NO_SOURCE_MESSAGE : sc.error };
-  }
-
-  /** Pure: the first refusal; an unfilled filter row says so itself rather than "no source". */
-  function checkProblem(sc, payload) {
-    var p = validateCheck(payload);
-    var s = scopeProblem(sc, payload);
-    return p && p.tab === "sources" && s ? s : (p || s);
+  function selectionState(ids, picked) {
+    var inView = 0;
+    ids.forEach(function (id) { if (picked.has(id)) inView++; });
+    return { selected: picked.size, all: ids.length > 0 && inView === ids.length, some: inView > 0 };
   }
 
   function uniqueName(base) {
@@ -904,7 +940,7 @@
   }
 
   /** Read the whole form into the POST body. Pure over the DOM (tested). */
-  function collectCheck(root, scope, assetIds) {
+  function collectCheck(root, scope, assetIds, sourceFilter) {
     var v = function (id) { var el = root.querySelector("#" + id); return el ? el.value : ""; };
     var on = function (id) { var el = root.querySelector("#" + id); return !!(el && el.checked); };
     var kind = v("pc-kind");
@@ -946,6 +982,9 @@
     out.scope = server ? {} : scope;
     out.assetIds = server ? [] : (assetIds || []);
     out.runOnServer = server;
+    // The finder filter rides along for the wizard to reopen with; it never
+    // decides membership, so a server-run check keeps none.
+    out.sourceFilter = server ? null : (sourceFilter || null);
     return out;
   }
 
@@ -1126,7 +1165,7 @@
     parseStatusSpec: parseStatusSpec,
     validateCheck: validateCheck,
     collectCheck: collectCheck,
-    scopeProblem: scopeProblem,
+    selectionState: selectionState,
     resultState: resultState,
     checkResultState: checkResultState,
     testResultHtml: testResultHtml,

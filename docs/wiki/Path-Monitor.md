@@ -138,17 +138,29 @@ picks the source:
   installed on Linux or in a container, with no agent needed. This is the one
   vantage point every install has. The agent-host filter is hidden.
 - **Off**: **agent hosts** run it, always limited to hosts with an active
-  Polaris Agent. Either tick **All agent hosts**, or build a device filter
-  with the same condition builder the automation wizard uses (for example
-  *Tag has branch-office*). The preview underneath lists the hosts that will
-  run it.
+  Polaris Agent. Either:
+  - tick **All agent hosts**: every host with an active agent runs it,
+    including hosts added later; or
+  - **find and pick hosts**: build a device filter with the same condition
+    builder the automation wizard uses (for example *Tag is applied Camera
+    Station*). The list underneath shows every agent host it finds. **Tick the
+    hosts that should run the check**; only ticked hosts run it. The **Select
+    all / none** box at the top of the list ticks or clears every match,
+    including matches past the first 100 rows shown.
 
-A check made before the toggle may run from both. Editing one says so; saving
-it with the toggle on keeps only the server, and with it off only the agent
-hosts.
+The filter only **finds** hosts. It is saved so the check reopens with it, but
+a host that matches it later does **not** join the check by itself: open the
+check and tick it. A ticked host keeps running the check even if it stops
+matching the filter (it is marked *outside filter*).
 
-Tick the box beside a host to **pin** it: a pinned host keeps running the check
-even if it stops matching the filter.
+A check made before this change may:
+
+- **run from both** the server and agent hosts. Editing one says so; saving it
+  with the toggle on keeps only the server, and with it off only the agent
+  hosts;
+- **follow its filter**, so every matching host ran it. Editing one ticks every
+  host the filter matches now and says so; saving keeps exactly the ticked
+  hosts.
 
 A host runs at most 20 checks. If it matches more, it runs the oldest 20, and
 Polaris writes a `path_check.agent_over_cap` event naming it.
@@ -259,7 +271,7 @@ out on the retention schedule.
 
 | Symptom | Look at |
 |---|---|
-| A host never shows results | the agent version (0.21.0+), and whether the host appears on the check's Results view. A host that is not listed does not match the Sources |
+| A host never shows results | the agent version (0.21.0+), and whether the host appears on the check's Results view. A host that is not listed is not ticked on the Sources step (matching the filter is not enough) |
 | The Polaris server row never shows results | that the check is enabled and *Run from this Polaris server* is on. Server-run checks start within a minute of saving and run on the **web** role, so on a split install look at that service's log |
 | The server's traces have no hops and a note about a missing tool | install `traceroute` on the Polaris host and restart Polaris. The check itself is unaffected |
 | An ICMP check from the server fails with `icmp unsupported on this server` | the system `ping` could not run for the Polaris service account. The same `ping` serves Polaris's own ICMP monitoring, so fix it there |

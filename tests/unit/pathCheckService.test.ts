@@ -545,6 +545,23 @@ describe("authentication — server-only, and only with a credential you may use
   });
 });
 
+describe("sourceFilter — the wizard's finder, never membership", () => {
+  const TREE = { op: "and", children: [{ field: "tag", op: "has", value: "Camera Station" }] } as any;
+  it("keeps only the condition, and only on an agent-run check", async () => {
+    const n = await normalizeCheckInput({ ...base, scope: {}, assetIds: ["a1"], sourceFilter: { condition: TREE, allAssets: true } as any });
+    expect(n.sourceFilter).toEqual({ condition: TREE });
+    const s = await normalizeCheckInput({ ...base, scope: {}, runOnServer: true, sourceFilter: { condition: TREE } as any });
+    expect(s.sourceFilter).toBeNull();
+  });
+  it("never widens who runs the check", async () => {
+    db.agents = [{ id: "ma1", assetId: "a1", installStatus: "active" }, { id: "ma2", assetId: "a2", installStatus: "active" }];
+    loadScopeAssetIds.mockResolvedValue(["a1", "a2"]);
+    db.checks.push({ id: "f1", name: "f1", scope: {}, assetIds: ["a1"], runOnServer: false, credentialId: null, sourceFilter: { condition: TREE } });
+    await reconcilePathCheckSources("f1");
+    expect(db.sources.map((s) => s.assetId)).toEqual(["a1"]);
+  });
+});
+
 describe("check summaries — the Result column's inputs", () => {
   it("counts a failing source that still got an HTTP answer as unexpected, apart from one that got none", async () => {
     db.checks.push({ id: "k1", name: "k1" });

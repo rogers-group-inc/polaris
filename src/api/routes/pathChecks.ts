@@ -103,6 +103,8 @@ export const pathCheckInputSchema = z.object({
   scope: scopeSchema.nullable().optional(),
   assetIds: z.array(z.string().max(64)).max(2000).optional(),
   runOnServer: z.boolean().optional(),
+  // The wizard's finder filter, stored for display only (never membership).
+  sourceFilter: scopeSchema.nullable().optional(),
   credentialId: z.string().max(64).nullable().optional(),
 });
 

@@ -33,6 +33,10 @@ let doc: Window["document"];
 let toasts: { msg: string; kind?: string }[];
 let posted: any[];
 let seeded = 0;
+let filledTree: any = null; // a finder condition the mock builder "holds"
+let previewCalls: any[] = [];
+const EMPTY_PREVIEW = { total: 0, ids: [], pinned: 0, matchedWithoutAgent: 0, agents: [], pinnedWithoutAgent: [], minAgentVersion: "0.21.0" };
+let previewRes: any = EMPTY_PREVIEW;
 
 function load(opts: { networkScan?: "read" | "write" } = {}) {
   const win = new Window();
@@ -67,11 +71,14 @@ function load(opts: { networkScan?: "read" | "write" } = {}) {
   // A minimal condition builder: an empty tree until seeded, and then — like
   // the real one — one unfilled row that refuses validation.
   seeded = 0;
+  filledTree = null;
+  previewCalls = [];
+  previewRes = EMPTY_PREVIEW;
   (win as any).PolarisConditionBuilder = {
     create: () => ({
       groupHtml: () => '<div class="scg-group"></div>',
       wire: () => {},
-      collect: () => ({ op: "and", children: seeded ? [{ field: "", op: "eq", value: "" }] : [] }),
+      collect: () => filledTree || ({ op: "and", children: seeded ? [{ field: "", op: "eq", value: "" }] : [] }),
       validate: (tree: any) => (tree.children.some((r: any) => !r.field) ? "Pick a field" : null),
       seedIfEmpty: () => { seeded++; },
     }),
@@ -86,7 +93,7 @@ function load(opts: { networkScan?: "read" | "write" } = {}) {
     },
     pathChecks: {
       filterSchema: async () => ({ scopeCondition: { fields: [] }, options: {} }),
-      previewSources: async () => ({ total: 0, pinned: 0, matchedWithoutAgent: 0, agents: [], pinnedWithoutAgent: [], minAgentVersion: "0.21.0" }),
+      previewSources: async (b: any) => { previewCalls.push(b); return previewRes; },
       create: async (body: any) => { posted.push(body); return { id: "c1" }; },
       update: async (_id: string, body: any) => { posted.push(body); return { id: "c1" }; },
       list: async () => ({ checks: [] }),
@@ -227,7 +234,7 @@ describe("path check wizard — the Polaris server source", () => {
     expect(posted[0]).toMatchObject({ runOnServer: true, scope: {}, assetIds: [] });
   });
 
-  it("seeds the filter when the toggle is turned off, and then refuses the unfilled row", async () => {
+  it("seeds the finder when the toggle is turned off, and refuses the save until a host is ticked", async () => {
     const PC = load();
     await PC.openCheckModal(serverOnly);
     const cb = doc.getElementById("pc-server") as HTMLInputElement;
@@ -236,7 +243,8 @@ describe("path check wizard — the Polaris server source", () => {
     click("pc-save");
     await flush();
     expect(posted).toHaveLength(0);
-    expect(toasts.pop()?.msg).toBe("Pick a field");
+    // An unfilled finder row is not the refusal; having no source is.
+    expect(toasts.pop()?.msg).toMatch(/tick at least one agent host/);
   });
 
   it("drops the agent hosts of a check that ran from both when saved with the toggle on, and says so first", async () => {
@@ -257,21 +265,92 @@ describe("path check wizard — the Polaris server source", () => {
   });
 });
 
+describe("path check wizard — find hosts with the filter, tick the ones that run it", () => {
+  const TREE = { op: "and", children: [{ field: "tag", op: "has", value: "Camera Station" }] };
+  const host = (id: string) => ({ assetId: id, hostname: id.toUpperCase(), ipAddress: "10.0.0.1", os: "Windows", agentVersion: "0.23.0", online: true, supported: true, pinned: false, pinnedOnly: false });
+  // Three matches, but only two rows shown (the preview's display cap).
+  const THREE = { ...EMPTY_PREVIEW, total: 3, ids: ["h1", "h2", "h3"], agents: [host("h1"), host("h2")] };
+  const agentCheck = {
+    id: "c5", name: "Cams", kind: "https", target: "https://cams.example/", intervalSec: 60, timeoutMs: 5000, enabled: true,
+    http: { expectStatus: "", verifyTls: true, bodyMatch: null }, traceroute: { enabled: true, everyNRuns: 5, maxHops: 30, probesPerHop: 3 },
+    runOnServer: false,
+  };
+  const pinBox = (id: string) => doc.querySelector(`.pc-pin[data-id="${id}"]`) as HTMLInputElement;
+  const tick = (el: HTMLInputElement, on: boolean) => { el.checked = on; el.dispatchEvent(new (g.window as any).Event("change")); };
+
+  it("lists the matches unticked, with a Select all / none box at the top", async () => {
+    const PC = load();
+    filledTree = TREE; previewRes = THREE;
+    await PC.openCheckModal({ ...agentCheck, scope: {}, assetIds: [], sourceFilter: { condition: TREE } });
+    await flush();
+    expect(previewCalls[0]).toMatchObject({ scope: { condition: TREE }, assetIds: [] });
+    const all = doc.getElementById("pc-select-all") as HTMLInputElement;
+    expect(all).not.toBeNull();
+    expect(all.checked).toBe(false);
+    expect(pinBox("h1").checked).toBe(false);
+    expect(doc.getElementById("pc-selection-head")!.textContent).toMatch(/0 of 3 agent hosts selected/);
+  });
+
+  it("Select all ticks every match — past the rows shown — and none clears them; ticked hosts are what saves", async () => {
+    const PC = load();
+    filledTree = TREE; previewRes = THREE;
+    await PC.openCheckModal({ ...agentCheck, scope: {}, assetIds: [], sourceFilter: { condition: TREE } });
+    await flush();
+    const all = doc.getElementById("pc-select-all") as HTMLInputElement;
+    tick(all, true);
+    expect(pinBox("h1").checked && pinBox("h2").checked).toBe(true);
+    expect(doc.getElementById("pc-selection-head")!.textContent).toMatch(/3 of 3/);
+    tick(all, false);
+    expect(pinBox("h1").checked || pinBox("h2").checked).toBe(false);
+    expect(doc.getElementById("pc-selection-head")!.textContent).toMatch(/0 of 3/);
+    tick(all, true);
+    tick(pinBox("h2"), false);
+    expect(all.checked).toBe(false);
+    expect(all.indeterminate).toBe(true);
+    click("pc-save");
+    await flush();
+    // Only the ticked hosts run it; the filter is kept for display, not membership.
+    expect(posted[0]).toMatchObject({ scope: {}, runOnServer: false, sourceFilter: { condition: TREE } });
+    expect([...posted[0].assetIds].sort()).toEqual(["h1", "h3"]);
+  });
+
+  it("ticks what a check that used to follow its filter was running on, and says so", async () => {
+    const PC = load();
+    filledTree = TREE; previewRes = THREE;
+    await PC.openCheckModal({ ...agentCheck, scope: { condition: TREE }, assetIds: [] });
+    await flush();
+    expect(shown("pc-follow-note")).toBe(true);
+    expect(pinBox("h1").checked).toBe(true);
+    click("pc-save");
+    await flush();
+    expect(posted[0]).toMatchObject({ scope: {}, sourceFilter: { condition: TREE } });
+    expect([...posted[0].assetIds].sort()).toEqual(["h1", "h2", "h3"]);
+  });
+
+  it("keeps All agent hosts as the one dynamic choice, with no host list and no pins", async () => {
+    const PC = load();
+    await PC.openCheckModal({ ...agentCheck, scope: { allAssets: true }, assetIds: ["h1"] });
+    await flush();
+    expect(previewCalls).toHaveLength(0);
+    click("pc-save");
+    await flush();
+    expect(posted[0]).toMatchObject({ scope: { allAssets: true }, assetIds: [], sourceFilter: null });
+  });
+});
+
 describe("pure helpers", () => {
   it("maps each validation tab to its step", () => {
     const PC = load();
     expect(["general", "expect", "trace", "sources"].map(PC.stepOfTab)).toEqual([1, 2, 3, 4]);
   });
-  it("lets an empty condition tree stand when something else runs the check", () => {
+  it("reads the Select-all state over every match against the ticked set", () => {
     const PC = load();
-    const empty = { error: "x", empty: true };
-    expect(PC.scopeProblem(empty, { runOnServer: true, assetIds: [], scope: {} })).toBeNull();
-    expect(PC.scopeProblem(empty, { runOnServer: false, assetIds: ["a1"], scope: {} })).toBeNull();
-    expect(PC.scopeProblem(empty, { runOnServer: false, assetIds: [], scope: {} })).toMatchObject({ tab: "sources" });
-    // A server-run check has no agent filter, so a bad row cannot refuse it;
-    // an agent-run one is still refused on it.
-    expect(PC.scopeProblem({ error: "Pick a value" }, { runOnServer: true, assetIds: [], scope: {} })).toBeNull();
-    expect(PC.scopeProblem({ error: "Pick a value" }, { runOnServer: false, assetIds: ["a1"], scope: {} })).toMatchObject({ tab: "sources", message: "Pick a value" });
+    expect(PC.selectionState(["a", "b"], new Set(["a", "b"]))).toEqual({ selected: 2, all: true, some: true });
+    expect(PC.selectionState(["a", "b"], new Set(["a"]))).toEqual({ selected: 1, all: false, some: true });
+    expect(PC.selectionState(["a", "b"], new Set())).toEqual({ selected: 0, all: false, some: false });
+    // A tick outside the filter counts as selected but not toward "all".
+    expect(PC.selectionState(["a"], new Set(["z"]))).toEqual({ selected: 1, all: false, some: false });
+    expect(PC.selectionState([], new Set())).toMatchObject({ all: false });
   });
   it("names a run OK, Fail, or Unexpected response when an HTTP answer came back wrong", () => {
     const PC = load();
