@@ -345,7 +345,7 @@
       ? "Listing credentials needs the <strong>Credentials</strong> permission."
       : !creds.length
         ? "No HTTP credentials with Bearer, Basic or Digest yet. Add one under Server Settings → Credentials."
-        : "A check that authenticates runs <strong>only from this Polaris server</strong>, so the password or token never leaves it. You can use a credential you created, or any with Full Read-Write on Credentials.";
+        : "A check that authenticates runs <strong>only from this Polaris server</strong>, so the password or token never leaves it.";
     return '<div id="pc-request-fields">' + formDivider() + sectionHeading("Request") +
       '<div style="display:flex;gap:1rem;flex-wrap:wrap">' +
         field("Method", '<select id="pc-method" style="max-width:140px"><option value="GET">GET</option><option value="HEAD">HEAD</option></select>',

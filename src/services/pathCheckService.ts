@@ -604,28 +604,28 @@ function jsonOf<T>(v: T): object {
  */
 export interface CheckWriteOpts {
   mayRunOnServer?: boolean;
-  /** The caller's `credentials` level and username — who may USE which stored secret. */
+  /** The caller's `credentials` level — any rung (read and up) may USE a stored secret. */
   credentialAccess?: "none" | "read" | "write" | "fullwrite";
-  username?: string | null;
 }
 
 export const CREDENTIAL_USE_MESSAGE =
-  "A path check can use only a credential you created (Read-Write on Credentials), or any credential with Full Read-Write";
+  "Using a stored credential in a path check needs at least Read-Only on Credentials";
 
 /**
- * Pointing a stored secret at an operator-chosen target is USING it — the
- * same act as testing a credential by id (business rule 43): at `write` only
- * rows the caller created, at `fullwrite` any, and never at `read` (which
- * only lists names). Without this, anyone who may edit a check could aim a
- * peer's admin password at a server of their own and read it off the wire.
+ * Pointing a stored secret at an operator-chosen target is USING it. The
+ * operator's decision (2026-09-30): anyone who can SEE the credential list
+ * (`credentials:read`) may pick any credential for a check and test with it —
+ * deliberately looser than credential test-by-id (business rule 43, own rows
+ * at write), because a path check is aimed by someone who already holds
+ * pathChecks:write AND networkScan:write. Changing the credential itself stays
+ * on the Credentials page's own ownership rules. What still holds: the secret
+ * never leaves the server (no agent source), never follows a redirect off the
+ * target's origin, and every create / re-aim / test is audited with the
+ * credential id.
  */
-async function assertMayUseCredential(credentialId: string, opts: CheckWriteOpts | undefined): Promise<void> {
+async function assertMayUseCredential(_credentialId: string, opts: CheckWriteOpts | undefined): Promise<void> {
   const level = opts?.credentialAccess ?? "none";
-  if (level === "fullwrite") return;
-  if (level === "write" && opts?.username) {
-    const c = await prisma.credential.findUnique({ where: { id: credentialId }, select: { createdBy: true } });
-    if (c?.createdBy && c.createdBy === opts.username) return;
-  }
+  if (level === "read" || level === "write" || level === "fullwrite") return;
   throw new AppError(403, CREDENTIAL_USE_MESSAGE);
 }
 

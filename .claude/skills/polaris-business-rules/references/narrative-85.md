@@ -196,10 +196,14 @@ was explicit: the credential must not be sent to agents. So a check with a crede
 ONLY from the Polaris server: it may carry no agent scope or pins, reconcile gives it no agent
 member, and the agent config filters it out besides — the definition an agent receives never
 names a credential at all, and the agent has no auth code. Choosing one is a USE of a stored
-secret against an operator-chosen target, which is rule 43's test-by-id act, so it takes the
-same scoping: a credential the caller created at `credentials:write`, any at `fullwrite`,
-never at `read`; re-checked whenever the credential or the traffic changes. Without that, a
-caller who may edit checks could aim a peer's admin password at a host of their own. A
+secret against an operator-chosen target. It was first scoped like rule 43's test-by-id (own
+row at `credentials:write`, any at fullwrite); the operator loosened it the same day: **anyone
+with `credentials:read` may pick any credential and test with it — they just cannot change
+it.** The residual risk is accepted knowingly: a caller who can see the list and may aim the
+server (pathChecks:write + networkScan:write) can point a stored password at a host of their
+choosing. What bounds it: both of those grants are deliberate and admin-seeded, the secret
+never reaches an agent or follows a redirect off the target's origin, and every create,
+re-aim and test is audited with the credential id. A
 followed redirect that leaves the target's origin gets no credential and no Host override.
 Basic and Bearer over plain HTTP are allowed (internal apps do it) but the wizard warns.
 

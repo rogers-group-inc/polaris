@@ -1138,8 +1138,8 @@ describes whether that source can reach the target, so:
 - **A check that signs in runs only from the Polaris server.** A web check can
   authenticate with an HTTP credential (Bearer, Basic or Digest), and such a
   check is never sent to an agent, so the password or token never leaves the
-  server. You can use a credential you created, or any with Full Read-Write
-  on Credentials. Checks only ever send GET or HEAD.
+  server. Anyone with Read-Only on Credentials can pick a credential and test
+  with it, but not change it. Checks only ever send GET or HEAD.
 
 See [Path Checks](Path-Monitor) and [Automation Triggers](Automation-Triggers).
 

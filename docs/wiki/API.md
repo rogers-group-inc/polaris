@@ -269,8 +269,8 @@ describe that asset.
   `followRedirects` and `bodyMatch.negate`; a check using any of them needs
   agent 0.23.0. `credentialId` (an HTTP credential, Bearer / Basic / Digest)
   makes the check server-only: agent `scope` / `assetIds` are refused with
-  `400`, and using the credential needs `credentials:write` on one you
-  created, or `credentials:fullwrite` (`403` otherwise).
+  `400`, and using the credential needs at least `credentials:read`
+  (`403` otherwise).
 - `test` runs a draft once from the Polaris server and returns the verdict,
   timings and, for HTTP / HTTPS, the headers (cookie values redacted) and the
   first 64 KB of the body. Nothing is saved but an audit event. Same

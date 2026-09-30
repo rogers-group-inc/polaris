@@ -494,21 +494,29 @@ describe("authentication — server-only, and only with a credential you may use
     await expect(normalizeCheckInput({ ...input("ok"), scope: { allAssets: true } })).rejects.toThrow(/runs only from this Polaris server/);
     await expect(normalizeCheckInput({ ...input("ok"), assetIds: ["a1"] })).rejects.toThrow(/runs only from this Polaris server/);
   });
-  it("lets a caller use only a credential they created (write), or any (fullwrite), never at read", async () => {
-    db.credentials = [cred("mine", { createdBy: "alice" }), cred("theirs", { createdBy: "bob" }), cred("unowned", { createdBy: null })];
-    const as = (credentialAccess: any, username = "alice") => ({ mayRunOnServer: true, credentialAccess, username });
-    await expect(createCheck({ ...input("mine"), name: "a" }, "alice", as("read"))).rejects.toMatchObject({ httpStatus: 403 });
-    await expect(createCheck({ ...input("theirs"), name: "b" }, "alice", as("write"))).rejects.toMatchObject({ httpStatus: 403 });
-    await expect(createCheck({ ...input("unowned"), name: "c" }, "alice", as("write"))).rejects.toMatchObject({ httpStatus: 403 });
-    await expect(createCheck({ ...input("mine"), name: "d" }, "alice", as("write"))).resolves.toMatchObject({ credentialId: "mine" });
-    await expect(createCheck({ ...input("theirs"), name: "e" }, "alice", as("fullwrite"))).resolves.toMatchObject({ credentialId: "theirs" });
+  it("lets anyone with credentials:read use ANY credential — their own or not — and nobody without it", async () => {
+    db.credentials = [cred("theirs", { createdBy: "bob" }), cred("unowned", { createdBy: null })];
+    const as = (credentialAccess: any) => ({ mayRunOnServer: true, credentialAccess });
+    await expect(createCheck({ ...input("theirs"), name: "a" }, "alice", as("none"))).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(createCheck({ ...input("theirs"), name: "a2" }, "alice", {})).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(createCheck({ ...input("theirs"), name: "b" }, "alice", as("read"))).resolves.toMatchObject({ credentialId: "theirs" });
+    await expect(createCheck({ ...input("unowned"), name: "c" }, "alice", as("write"))).resolves.toMatchObject({ credentialId: "unowned" });
+    await expect(createCheck({ ...input("theirs"), name: "d" }, "alice", as("fullwrite"))).resolves.toMatchObject({ credentialId: "theirs" });
   });
   it("re-checks the use when the credential changes or the check is re-aimed, not on a rename", async () => {
     db.credentials = [cred("theirs", { createdBy: "bob" })];
-    const c = await createCheck({ ...input("theirs"), name: "x" }, "admin", { mayRunOnServer: true, credentialAccess: "fullwrite" });
-    const alice = { mayRunOnServer: true, credentialAccess: "write" as const, username: "alice" };
-    await expect(updateCheck(c.id, { ...input("theirs"), name: "renamed" }, "alice", alice)).resolves.toMatchObject({ name: "renamed" });
-    await expect(updateCheck(c.id, { ...input("theirs"), name: "renamed", target: "https://attacker.example/" }, "alice", alice)).rejects.toMatchObject({ httpStatus: 403 });
+    const c = await createCheck({ ...input("theirs"), name: "x" }, "admin", { mayRunOnServer: true, credentialAccess: "read" });
+    const noCreds = { mayRunOnServer: true, credentialAccess: "none" as const };
+    await expect(updateCheck(c.id, { ...input("theirs"), name: "renamed" }, "carol", noCreds)).resolves.toMatchObject({ name: "renamed" });
+    await expect(updateCheck(c.id, { ...input("theirs"), name: "renamed", target: "https://elsewhere.example/" }, "carol", noCreds)).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(updateCheck(c.id, { ...input("theirs"), name: "renamed", target: "https://elsewhere.example/" }, "dave", { mayRunOnServer: true, credentialAccess: "read" }))
+      .resolves.toMatchObject({ target: "https://elsewhere.example/" });
+  });
+  it("lets a credentials:read caller TEST with any credential", async () => {
+    _resetTestRunLimiter();
+    db.credentials = [cred("theirs", { createdBy: "bob" })];
+    await expect(testCheck({ ...input("theirs"), name: "" }, "alice", { mayRunOnServer: true, credentialAccess: "none" })).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(testCheck({ ...input("theirs"), name: "" }, "alice", { mayRunOnServer: true, credentialAccess: "read" })).resolves.toMatchObject({ source: "server" });
   });
   it("never ships an authenticating check to an agent, even with a stray agent source row", async () => {
     db.checks.push({

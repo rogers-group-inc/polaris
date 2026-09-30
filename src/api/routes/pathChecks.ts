@@ -29,9 +29,9 @@
  * networkScan:write (pathCheckService.CheckWriteOpts) — decided by the service
  * from `mayRunOnServer`, because only it knows whether an edit re-aims the server.
  * A `credentialId` (authenticate with an http Credential) makes the check
- * server-only and is a USE of that secret: the caller needs `credentials`
- * write on a row they created, or fullwrite for any (business rule 43's
- * test-by-id scoping).
+ * server-only and is a USE of that secret: any `credentials` rung from read
+ * up may use any credential (the operator's decision); changing it is the
+ * /credentials routes' business.
  *
  * Zod validates the outer shape; the semantic checks (target refusal, status
  * spec, RE2-compatible regex, interval / timeout rules) live in
@@ -125,11 +125,7 @@ function writeOpts(req: Parameters<typeof hasPermission>[0]) {
   const credentialAccess = hasPermission(req, "credentials", "fullwrite") ? "fullwrite" as const
     : hasPermission(req, "credentials", "write") ? "write" as const
     : hasPermission(req, "credentials", "read") ? "read" as const : "none" as const;
-  return {
-    mayRunOnServer: hasPermission(req, "networkScan", "write"),
-    credentialAccess,
-    username: (req as { session?: { username?: string } }).session?.username ?? null,
-  };
+  return { mayRunOnServer: hasPermission(req, "networkScan", "write"), credentialAccess };
 }
 
 export const pathChecksRouter = Router();

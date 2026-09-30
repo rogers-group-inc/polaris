@@ -82,8 +82,9 @@ it and show *upgrade agent* until they are upgraded.
 **Authentication runs only from the Polaris server.** A check that
 authenticates is never sent to an agent, so the password or token stays on the
 Polaris server. Choosing a credential ticks *Run from this Polaris server* and
-clears the agent hosts. You can use a credential you created (*Read-Write* on
-Credentials), or any credential with *Full Read-Write*. A credential a check
+clears the agent hosts. Anyone with at least *Read-Only* on Credentials can
+pick any credential and test with it; changing the credential still needs the
+Credentials permissions it always did. A credential a check
 uses cannot be deleted until the check stops using it. Authentication and the
 Host header are sent only to the original site: a redirect that leaves it gets
 neither. Basic and Bearer over plain `http://` send the secret unencrypted, and

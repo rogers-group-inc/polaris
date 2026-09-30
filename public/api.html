@@ -794,9 +794,9 @@
               (Bearer, Basic or Digest) to authenticate with. It makes the check
               <strong>server-only</strong>: it sets <code>runOnServer</code>, agent
               <code>scope</code> / <code>assetIds</code> are refused with <code>400</code>, and the
-              secret is never sent to an agent. Using it needs <code>credentials:write</code> on a
-              credential you created, or <code>credentials:fullwrite</code> for any
-              (<code>403</code>). A credential in use cannot be deleted
+              secret is never sent to an agent. Using it — for a check or a test run — needs at
+              least <code>credentials:read</code> (<code>403</code> otherwise); changing the
+              credential is the <code>/credentials</code> routes' business. A credential in use cannot be deleted
               (<code>409</code>).</li>
             <li><code>traceroute?: { enabled?</code> (default <code>true</code>),
               <code>everyNRuns?</code> (1–100, default 5), <code>maxHops?</code> (1–64, default 30),
