@@ -22,6 +22,16 @@ machine.
 
 The card hosts the **alert / event message template** and nothing else.
 
+Under the template, an **Example** line shows the alert as the Alerts tab
+would show it for one of the devices you selected — Polaris picks one at
+random. Pick another from the drop-down beside it, or press **Random**. The
+example follows your typing, and uses the device's current reading as
+`{value}` (it shows `n/a` when the device has no reading for the trigger).
+Hover over a chip under **Insert variable…** to see what that variable would
+be for the example device. Variables marked "Filled in when the alert is
+sent" — the acknowledge link, charts, recipients — only exist once a real
+alert is delivered.
+
 > The **audit Event** is separate and *is* removable — a "Create an Event"
 > action row, present by default, with no config. It is a no-op on event and
 > change triggers, and flagged as such: an automation that wrote an Event on an

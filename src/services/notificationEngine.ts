@@ -4968,3 +4968,126 @@ async function previewCompositeRule(trigger: CompositeTrigger, input: PreviewRul
     emailPreview,
   };
 }
+
+/** How many of the draft's devices the in-app example's picker offers. */
+const MESSAGE_EXAMPLE_CANDIDATE_CAP = 200;
+
+export interface MessageExampleResult {
+  /** The devices the example can be about — the draft's monitored scope, capped. */
+  candidates: Array<{ id: string; hostname: string | null }>;
+  /** More devices matched than `candidates` carries. */
+  truncated: boolean;
+  /** The device the example is about; null for a host trigger or an empty scope. */
+  asset: { id: string; hostname: string | null } | null;
+  /** The in-app alert text, rendered exactly the way a fire renders it. */
+  message: string;
+  severity: string;
+  /** Token (no braces) → what it renders to for this device. Deferred tokens
+   *  ({ack}, {chart.*} …) are absent: they are filled at delivery time. */
+  values: Record<string, string>;
+  /** The draft has no readings for this device right now — {value} is "n/a". */
+  noReading: boolean;
+}
+
+/**
+ * The wizard's In-app Alert example: the draft's message rendered against ONE
+ * real device from its own scope — `assetId` when it is in scope, otherwise a
+ * random pick — through the same context builder and `renderMessage` a fire
+ * uses, so the example cannot word itself differently from the real alert.
+ *
+ * Read-only, like previewRule. The value is the device's CURRENT reading (the
+ * first one that meets the trigger, else the first at all); an event/change
+ * trigger has no reading to take, so its `{value}` is a stand-in that says so.
+ */
+export async function previewAlertMessage(input: PreviewRuleInput, assetId?: string | null): Promise<MessageExampleResult> {
+  const trigger = input.trigger;
+  const isHost = !!trigger && (trigger.type === "host_metric" || (trigger.type === "composite" && trigger.kind === "host"));
+  const scopeAssets = isHost ? [] : await loadScopeAssets(input.scope, { monitoredOnly: true });
+  const candidates = scopeAssets
+    .map((a) => ({ id: a.id, hostname: a.hostname }))
+    .sort((a, b) => (a.hostname ?? a.id).localeCompare(b.hostname ?? b.id));
+  const picked = isHost
+    ? null
+    : scopeAssets.find((a) => a.id === assetId) ?? (scopeAssets.length ? scopeAssets[Math.floor(Math.random() * scopeAssets.length)] : null);
+
+  // The draft's trigger, or a stand-in state trigger for a draft that has none
+  // yet — readingContextParts / renderMessage need SOME trigger to word from.
+  const draftTrigger = (trigger ?? { type: "asset_state", field: "monitorStatus", operator: "==", value: "down" }) as DbRule["trigger"];
+  const draft = draftRuleForPreview(input, draftTrigger);
+
+  let reading: Reading = {
+    assetId: picked?.id ?? "",
+    hostname: picked?.hostname ?? (isHost ? "Polaris" : null),
+    tags: [], dimKey: "", dimLabel: "", value: null,
+  };
+  let fireInfo: CompositeFireInfo | undefined;
+  let noReading = false;
+  if (trigger && trigger.type === "host_metric") {
+    const r = await resolveHostMetricReading(trigger);
+    if (r) reading = r; else noReading = true;
+  } else if (picked && trigger && (trigger.type === "asset_metric" || trigger.type === "asset_state")) {
+    const rs = trigger.type === "asset_metric"
+      ? await resolveAssetMetricReadings(trigger, [picked])
+      : await resolveAssetStateReadings(trigger, [picked]);
+    const r = rs.find((x) => readingMeets(trigger, x.value)) ?? rs[0];
+    if (r) reading = r; else noReading = true;
+  } else if (trigger && trigger.type === "composite") {
+    const assets = trigger.kind === "host" ? [HOST_PSEUDO_ASSET] : picked ? [picked] : [];
+    if (assets.length) {
+      const leaves = collectLeafRefs(trigger);
+      const truths = await resolveLeafTruths(leaves, assets);
+      const outcome = compositeOutcomeForAsset(trigger, assets[0].id, leaves, truths);
+      if (outcome.hasAnyReading) fireInfo = compositeFireInfo(outcome); else noReading = true;
+    }
+  }
+
+  const severity = (trigger && (trigger.type === "asset_metric" || trigger.type === "host_metric") && input.severityBands && input.severityBands.length && typeof reading.value === "number")
+    ? severityForValue(trigger.operator, trigger.threshold, input.severity as Severity, input.severityBands as SeverityBand[], reading.value) ?? input.severity
+    : input.severity;
+
+  const detail = picked
+    ? await prisma.asset.findUnique({ where: { id: picked.id }, select: ASSET_DETAIL_SELECT })
+    : null;
+  const isEvent = !!trigger && (trigger.type === "event" || trigger.type === "change");
+  const eventStandIn = "(the source event’s own message)";
+  const eventAction = trigger && trigger.type === "event" ? trigger.actionPattern ?? ""
+    : trigger && trigger.type === "change" ? trigger.changeType ?? "" : "";
+  const parts: TemplateContextParts = isEvent
+    ? {
+      asset: picked?.hostname ?? "",
+      metric: eventAction,
+      value: eventStandIn,
+      threshold: "",
+      dimension: "",
+      severity,
+      time: new Date(),
+      link: notificationsPageUrl(),
+      ruleName: draft.name,
+      ruleDescription: draft.description,
+      event: { action: eventAction || null, message: eventStandIn, resourceName: picked?.hostname ?? null, resourceType: picked ? "asset" : null },
+      triggerSummary: triggerSummary({ trigger: trigger as never, eventResource: picked?.hostname ?? null }),
+    }
+    : { ...readingContextParts(draft, reading, new Date(), fireInfo), severity };
+  const ctx = buildTemplateContext({
+    ...parts,
+    assetDetail: detail ? { ...detail, status: String(detail.status) } : null,
+  });
+  let message: string;
+  if (isEvent) {
+    const tmpl = draft.messageTemplate;
+    message = tmpl && tmpl.trim() ? renderNotificationTemplate(tmpl, ctx) : `${draft.name}: ${eventStandIn}`;
+  } else {
+    message = renderMessage(draft, reading, ctx);
+  }
+  ctx["message"] = message;
+
+  return {
+    candidates: candidates.slice(0, MESSAGE_EXAMPLE_CANDIDATE_CAP),
+    truncated: candidates.length > MESSAGE_EXAMPLE_CANDIDATE_CAP,
+    asset: picked ? { id: picked.id, hostname: picked.hostname } : null,
+    message,
+    severity,
+    values: ctx,
+    noReading,
+  };
+}

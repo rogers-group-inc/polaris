@@ -6419,6 +6419,21 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 .aw5-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .aw5-head .aw5-head-title { margin: 0; }
+/* In-app Alert example (actions step): one of the selected devices, rendered
+   the way the Alerts tab will show it. */
+.aw-msg-example { margin-top: 8px; }
+.aw-msg-example-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.78rem; margin-bottom: 4px; }
+.aw-msg-example-label { font-weight: 600; color: var(--color-text-secondary); }
+.aw-msg-example-asset { width: auto; max-width: 260px; font-size: 0.78rem; padding: 1px 4px; }
+.aw-msg-example-alert {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-surface);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
 .aw5-help {
   font-size: 0.78rem;
   color: var(--color-text-tertiary);
