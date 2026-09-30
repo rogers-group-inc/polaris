@@ -195,7 +195,7 @@ function _renderPanelHeader(data) {
         '<button data-fmt="csv">Export as CSV</button>' +
       '</div>' +
     '</div>' +
-    (s.refreshEligible && canReserveIps() ? '<button class="btn btn-sm btn-secondary" id="ip-panel-refresh-btn" title="Query the FortiGate and update Polaris">Discover</button>' : '') +
+    (s.refreshEligible && canReserveIps() ? '<button class="btn btn-sm btn-primary" id="ip-panel-refresh-btn" title="Query the FortiGate and update Polaris">Discover</button>' : '') +
     (canReserveIps() && !data.ipv6 ? '<button class="btn btn-sm btn-secondary" id="ip-panel-auto-alloc-btn">Auto-Allocate Next</button>' : '') +
     (canReserveIps() ? '<button class="btn btn-sm btn-primary" id="ip-panel-reserve-btn">+ Reserve IP</button>' : '') +
     '</span>';
