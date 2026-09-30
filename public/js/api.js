@@ -1119,6 +1119,9 @@ const api = {
     // hold + window fields in polls and converts through this.
     pollCadence: (body) => request("POST", "/automations/poll-cadence", body),
     preview: (body)    => request("POST", "/automations/preview", body),
+    // {rule, assetId?} → the In-app Alert example for one of the draft's devices
+    // ({candidates, asset, message, values}) — the actions step's example line.
+    messageExample: (body) => request("POST", "/automations/message-example", body),
     // Fires ONE action of a draft for real (creates a test-flagged alert and
     // dispatches immediately) — the wizard's Summary-step test buttons.
     testDelivery: (body) => request("POST", "/automations/test-delivery", body),

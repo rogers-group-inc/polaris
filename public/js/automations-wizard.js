@@ -2220,9 +2220,111 @@ async function openAutomationWizard(existing, opts) {
     var vars = s.templateVariables || [];
     if (!vars.length) return "";
     return vars.map(function (v) {
-      return '<button type="button" class="btn btn-sm btn-secondary tpl-token" data-token="' + escapeHtml(v.token) + '" title="' + escapeHtml(v.description) + '" style="margin:2px 4px 2px 0;font-family:var(--font-mono);font-size:0.72rem;padding:1px 6px">' + escapeHtml(v.token) + '</button>';
+      return '<button type="button" class="btn btn-sm btn-secondary tpl-token" data-token="' + escapeHtml(v.token) + '" title="' + escapeHtml(tokenChipTitle(v.token, v.description)) + '" style="margin:2px 4px 2px 0;font-family:var(--font-mono);font-size:0.72rem;padding:1px 6px">' + escapeHtml(v.token) + '</button>';
     }).join("");
   }
+  // ── In-app Alert example ───────────────────────────────────────────────
+  // The last /message-example answer: which of the draft's devices the example
+  // is about and what every token renders to for it. It survives re-renders of
+  // the actions step (and feeds the chips on later steps too), so the chosen
+  // device stays chosen until the operator picks another.
+  var _awExample = null;
+  var _awExampleAssetId = null;
+  var _awExampleTimer = null;
+  var _awExampleSeq = 0;
+  /** The chip tooltip: the token's description, then what it is for the example device. */
+  function tokenChipTitle(token, description) {
+    var ex = _awExample;
+    if (!ex) return description || "";
+    var name = token.replace(/^\{|\}$/g, "");
+    var who = ex.asset ? (ex.asset.hostname || "the example device") : "this example";
+    var line;
+    if (!Object.prototype.hasOwnProperty.call(ex.values || {}, name)) line = "Filled in when the alert is sent";
+    else if (ex.values[name] === "") line = "(blank)";
+    else line = ex.values[name];
+    return (description || "") + "\n\nFor " + who + ": " + line;
+  }
+  function refreshTokenChipTitles() {
+    var byToken = {};
+    (s.templateVariables || []).forEach(function (v) { byToken[v.token] = v.description; });
+    document.querySelectorAll(".tpl-token").forEach(function (chip) {
+      var tok = chip.getAttribute("data-token");
+      chip.setAttribute("title", tokenChipTitle(tok, byToken[tok]));
+    });
+  }
+  function scheduleMessageExample(delay) {
+    if (_awExampleTimer) clearTimeout(_awExampleTimer);
+    _awExampleTimer = setTimeout(runMessageExample, delay == null ? 400 : delay);
+  }
+  function messageExampleHtml(ex, state) {
+    var head = '<span class="aw-msg-example-label">Example</span>';
+    if (state) return '<div class="aw-msg-example-head">' + head + '<span class="aw-preview-muted">' + escapeHtml(state) + '</span></div>';
+    var picker = "";
+    var cands = ex.candidates || [];
+    if (ex.asset && cands.length) {
+      picker = '<select id="aw-msg-example-asset" class="aw-msg-example-asset" title="Show the example for another of the selected devices">' +
+        cands.map(function (c) {
+          return '<option value="' + escapeHtml(c.id) + '"' + (c.id === ex.asset.id ? " selected" : "") + '>' + escapeHtml(c.hostname || c.id) + '</option>';
+        }).join("") +
+        '</select>' +
+        (cands.length > 1 ? '<button type="button" class="btn btn-sm btn-secondary" id="aw-msg-example-shuffle" title="Pick another of the selected devices at random">Random</button>' : "") +
+        (ex.truncated ? '<span class="aw-preview-muted">first ' + cands.length + ' devices</span>' : "");
+    } else if (!ex.asset) {
+      picker = '<span class="aw-preview-muted">' + (draft.trigger && (draft.trigger.type === "host_metric" || (draft.trigger.type === "composite" && draft.trigger.kind === "host")) ? "About the Polaris server" : "No monitored devices match the Devices step") + '</span>';
+    }
+    return '<div class="aw-msg-example-head">' + head + picker + '</div>' +
+      '<div class="aw-msg-example-alert" style="border-left-color:' + sevColor(ex.severity) + '">' +
+        '<span class="badge badge-level-' + escapeHtml(ex.severity) + '">' + escapeHtml(String(ex.severity || "").toUpperCase()) + '</span> ' +
+        '<span class="aw-msg-example-text">' + escapeHtml(ex.message) + '</span>' +
+      '</div>' +
+      (ex.noReading ? '<p class="aw5-help" style="margin:4px 0 0">This device has no current reading for the trigger, so {value} shows n/a.</p>' : "");
+  }
+  async function runMessageExample() {
+    var box = document.getElementById("aw-msg-example");
+    if (!box) return;
+    var seq = ++_awExampleSeq;
+    var msgEl = document.getElementById("aw-msg");
+    // Only what the message is built from: sending the half-built action list
+    // too would let an unfinished Notify row 400 the example.
+    var body = {
+      name: draft.name || "Untitled automation",
+      description: draft.description,
+      severity: draft.severity,
+      trigger: draft.trigger,
+      scope: isTriggerScoped(draft.trigger) ? draft.scope : {},
+      reset: draft.reset || undefined,
+      // Bands carry only what picks the severity — never their action lists.
+      severityBands: bandsApplicable(draft.trigger) && draft.severityBands && draft.severityBands.length
+        ? draft.severityBands.map(function (b) { return { threshold: b.threshold, severity: b.severity, operator: b.operator || undefined }; })
+        : undefined,
+      messageTemplate: msgEl ? msgEl.value : (draft.messageTemplate || ""),
+    };
+    var ex;
+    try {
+      ex = await api.automations.messageExample({ rule: body, assetId: _awExampleAssetId });
+    } catch (err) {
+      if (seq !== _awExampleSeq) return;
+      box.innerHTML = messageExampleHtml(null, err.message || "Example unavailable");
+      return;
+    }
+    // A newer request (typing, a device pick) owns the box now.
+    if (seq !== _awExampleSeq || !document.getElementById("aw-msg-example")) return;
+    _awExample = ex;
+    _awExampleAssetId = ex.asset ? ex.asset.id : null;
+    box = document.getElementById("aw-msg-example");
+    box.innerHTML = messageExampleHtml(ex);
+    refreshTokenChipTitles();
+    var sel = box.querySelector("#aw-msg-example-asset");
+    if (sel) sel.addEventListener("change", function () { _awExampleAssetId = sel.value; scheduleMessageExample(0); });
+    var shuffle = box.querySelector("#aw-msg-example-shuffle");
+    if (shuffle) shuffle.addEventListener("click", function () {
+      var others = (ex.candidates || []).filter(function (c) { return !ex.asset || c.id !== ex.asset.id; });
+      if (!others.length) return;
+      _awExampleAssetId = others[Math.floor(Math.random() * others.length)].id;
+      scheduleMessageExample(0);
+    });
+  }
+
   function tokenPaletteHtml(id) {
     var chips = tokenChipsHtml();
     if (!chips) return "";
@@ -2475,6 +2577,7 @@ async function openAutomationWizard(existing, opts) {
       // one and paint the old draft's device count into it.
       if (scopePreviewTimer) { clearTimeout(scopePreviewTimer); scopePreviewTimer = null; }
       if (trigPreviewTimer) { clearTimeout(trigPreviewTimer); trigPreviewTimer = null; }
+      if (_awExampleTimer) { clearTimeout(_awExampleTimer); _awExampleTimer = null; }
 
       // Reopen rather than mutate: steps 1-3 were rendered once at open, so
       // swapping `draft` underneath them would leave stale DOM. openModal
@@ -5943,6 +6046,10 @@ async function openAutomationWizard(existing, opts) {
         '<p class="aw5-help">' + cardHelp + '</p>' +
         tokenPaletteHtml("aw-token-palette") +
         '<input type="text" id="aw-msg" class="tpl-field" value="' + escapeHtml(draft.messageTemplate || "") + '" placeholder="' + (isEC ? "{rule}: {value}" : "{asset} {metric} = {value} (threshold {threshold})") + '" style="width:100%;margin-top:4px">' +
+        // One of the selected devices, picked at random, rendered through the
+        // server's own message path (/message-example) — hover a variable chip
+        // to see what it is for this device.
+        '<div id="aw-msg-example" class="aw-msg-example">' + (_awExample ? messageExampleHtml(_awExample) : messageExampleHtml(null, "Loading…")) + '</div>' +
       '</div>';
 
     // Per-severity action sections: with severity bands, each tier CAN get its
@@ -6130,6 +6237,9 @@ async function openAutomationWizard(existing, opts) {
     }
     wireTokenPalette(panel);
     wireCollapsibles(panel);
+    var msgInput = panel.querySelector("#aw-msg");
+    if (msgInput) msgInput.addEventListener("input", function () { scheduleMessageExample(); });
+    scheduleMessageExample(0);
   }
   /** Whether the per-severity action sections are in play. Explicit once the
    *  operator touches the toggle; inferred from the record otherwise, so an
@@ -8934,6 +9044,7 @@ async function openAutomationWizard(existing, opts) {
         } else {
           el.value += tok;
         }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
         el.focus();
       });
     });

@@ -9,6 +9,8 @@
  *   POST /poll-cadence      automationManagement:read  (how often those devices
  *        take the reading — the wizard counts its holds in polls)
  *   POST /preview  automationManagement:fullwrite  (dry-run a draft)
+ *   POST /message-example  automationManagement:write  (the In-app Alert
+ *        card's example: the draft's message rendered for one of its devices)
  *   POST / PUT/:id / DELETE/:id   automationManagement:fullwrite  (CRUD)
  *
  * Validation via ruleInputSchema (notificationTypes); business logic in
@@ -23,7 +25,7 @@ import { AppError } from "../../utils/errors.js";
 import { ruleInputSchema, previewInputSchema, buildSchemaCatalog, allRuleActionRefs, scopeSchema, type RuleInput } from "../../services/notificationTypes.js";
 import { listRules, createRule, updateRule, deleteRule, listScopeOptions } from "../../services/notificationRuleService.js";
 import { previewDownDetectionRemoval } from "../../services/downDetectionService.js";
-import { previewRule } from "../../services/notificationEngine.js";
+import { previewRule, previewAlertMessage } from "../../services/notificationEngine.js";
 import { listDimensionValues, dimensionPickerMeta } from "../../services/notificationDimensionService.js";
 import { resolveScopeCadence } from "../../services/notificationCadenceService.js";
 import { listRecipientUsers } from "../../services/notificationRecipientService.js";
@@ -84,6 +86,22 @@ notificationRulesRouter.post("/preview", requirePermission("automationManagement
   try {
     const input = previewInputSchema.parse(req.body);
     res.json(await previewRule(input));
+  } catch (err) { next(err); }
+});
+
+// The In-app Alert card's example: the draft's message rendered against ONE of
+// its own devices (`assetId`, or a random pick when absent / out of scope), plus
+// every token's value for that device so the variable chips can show it on
+// hover. Same gate as /preview — it is the same dry run, read-only.
+const messageExampleSchema = z.object({
+  rule: previewInputSchema,
+  assetId: z.string().max(100).nullish(),
+});
+
+notificationRulesRouter.post("/message-example", requirePermission("automationManagement", "write"), async (req, res, next) => {
+  try {
+    const body = messageExampleSchema.parse(req.body);
+    res.json(await previewAlertMessage(body.rule, body.assetId ?? null));
   } catch (err) { next(err); }
 });
 
