@@ -36,13 +36,12 @@ async function runEvaluateNotificationRules(): Promise<void> {
   running = true;
   try {
     await runInstrumentedJob("evaluateNotificationRules", async () => {
-      // Before the rules run, not after: an asset that entered suppression
-      // since the last tick must not carry a live alert through its
-      // maintenance window (business rule 16). The scheduler clears the
-      // assets it puts into a window itself, so this is the safety net —
-      // and the only thing that catches dependency suppression, which has
-      // no edge of its own. Best-effort; a failure here must not cost the
-      // fleet a tick of evaluation.
+      // Before the rules run, not after: an asset that went dark behind a
+      // down parent since the last tick must not carry a live alert through
+      // the outage (business rule 16 — maintenance windows are exempt and
+      // never retire an alert). Dependency suppression has no edge of its
+      // own, so this tick is the only thing that catches it. Best-effort; a
+      // failure here must not cost the fleet a tick of evaluation.
       await clearSuppressedAlerts().catch((err: any) => {
         logger.warn({ err: err?.message }, "clearSuppressedAlerts sweep failed (non-fatal)");
       });

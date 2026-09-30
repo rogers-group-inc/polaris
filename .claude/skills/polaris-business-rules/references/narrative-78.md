@@ -18,7 +18,7 @@ point, server and camera behind it stops answering too, and without suppression 
 raises its own Down alert about an outage that has exactly one cause. So a device behind a
 confirmed-down parent is marked `dependencySuppressed`, `assetCanTrigger` drops it from every
 automation (rule 37), and any alert already live on it is retired by the 60-second sweep (rule
-16). For the NOC that is the right answer: one alert, on the gate, is the outage.
+16 — a genuine outage only; a device silenced by a maintained parent keeps its alert frozen). For the NOC that is the right answer: one alert, on the gate, is the outage.
 
 ### The plant operator hears nothing
 
@@ -146,7 +146,8 @@ met reading triggers the handoff; a released device reading `recovering` or `war
 held until it reads `up`, as every down alert is (rule 36).
 
 The 60-second sweep normally does the first half a tick early: `clearSuppressedAlerts` still
-retires a plain alert on a suppressed asset, and the next engine tick raises the dependency
+retires a plain alert on an asset suppressed behind a genuinely down parent (never one whose
+blame chain runs through a maintenance window), and the next engine tick raises the dependency
 flavour. The in-loop handoff exists for the race where the flag flips between the sweep and the
 loop, and for the reverse direction, which the sweep cannot see.
 

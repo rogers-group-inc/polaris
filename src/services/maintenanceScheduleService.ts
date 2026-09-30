@@ -54,7 +54,6 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
-import { clearSuppressedAlerts } from "./notificationService.js";
 import {
   normalizeCriteria,
   resolveMatchingAssetIds,
@@ -1376,15 +1375,9 @@ async function runReconcile(): Promise<void> {
         details: { schedules: schedNames(assetId) },
       })),
     );
-    // A window is announced downtime, so it must not open on top of a live
-    // alert (business rule 16). The 60s engine sweep would catch these
-    // anyway; doing it on the edge is what makes an ad-hoc "enter
-    // maintenance now" clear the board while the operator is still looking
-    // at it. Best-effort — a failed sweep must never leave the status flip
-    // half-applied.
-    await clearSuppressedAlerts(entering).catch((err) => {
-      logger.warn({ err: (err as Error)?.message }, "clearSuppressedAlerts on maintenance entry failed (non-fatal)");
-    });
+    // Deliberately NO alert sweep here: entering a window never retires a
+    // live alert (business rule 16). It stays frozen through the window and
+    // recovers, or doesn't, on its own evidence once polling resumes.
   }
 
   // EXITS: restore the parked status — but only when status is still

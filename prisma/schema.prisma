@@ -3304,6 +3304,11 @@ model PathCheck {
   // AND'd with "Polaris Agent installed and active", plus explicit pins.
   scope            Json
   assetIds         String[] @default([])
+  // The wizard's FINDER filter ({ condition }): the device filter the operator
+  // used to find hosts before ticking them into assetIds. Stored only so the
+  // wizard reopens with it; it never decides who runs the check (scope and
+  // assetIds do). Null = none saved.
+  sourceFilter     Json?
   // Also run it from THIS Polaris server (the scheduler-role process —
   // jobs/runServerPathChecks). Its source row is the one with assetId NULL.
   runOnServer      Boolean  @default(false)

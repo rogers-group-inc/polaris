@@ -204,8 +204,9 @@ still answering, which is how Polaris knows the port is down, so its facts
 describe a healthy device. The default email therefore leaves out the device
 facts: IP address, connected switch and AP, location, model and description.
 
-It keeps the device name, the **Interface** row, the automation and timing
-rows, and the LLDP neighbour that was last seen on the port. **If the port has
+It keeps the device name, the **Interface** row, the **Managed by** row, the
+automation and timing rows, and the LLDP neighbour that was last seen on the
+port. **If the port has
 an IP address configured, an Interface IP row shows it.** An access port, or
 one at 0.0.0.0, shows nothing.
 
@@ -314,7 +315,14 @@ the subject fragment away when they are.
 `{asset.ip}` `{asset.mac}` `{asset.type}` `{asset.status}` `{asset.location}`
 `{asset.description}` `{asset.manufacturer}` `{asset.model}` `{asset.serial}`
 `{asset.os}` `{asset.osVersion}` `{asset.department}` `{asset.assignedTo}`
-`{asset.tags}` `{asset.connectedSwitch}` `{asset.connectedAp}` `{asset.link}`
+`{asset.tags}` `{asset.connectedSwitch}` `{asset.connectedAp}`
+`{asset.managedBy}` `{asset.link}`
+
+> `{asset.managedBy}` is the device page's **Managed by** row: the integration
+> that owns the device, such as `FortiManager: FMG-01`. A managed FortiSwitch or
+> FortiAP also names its FortiGate (`FortiManager: FMG-01 → FGT-SITE-01`). A
+> device no integration owns says `Manual`. The default email prints it on
+> every alert about a device, interface alerts included.
 
 > `{asset.link}` — the default email's **Open device** button — is one address
 > for every reader. Opened on a phone it lands on the mobile app's device

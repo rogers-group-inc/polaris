@@ -10,7 +10,10 @@
  *    superseded (Event reason "sdwan-parent"), never as "resolved";
  *  - a live parent alert from ANOTHER automation silences the overlay too;
  *  - an overlay on a HEALTHY underlay keeps alerting;
- *  - the health-check / member filters take several values, any-of.
+ *  - the health-check / member filters take several values, any-of;
+ *  - a parent that is DOWN outright (dead on a health check the automation's
+ *    filter excludes, or an oper-down port in no health check at all) silences
+ *    the overlays riding it.
  *
  * The pure walk is pinned in tests/unit/sdwanDimensions.test.ts.
  */
@@ -39,6 +42,7 @@ async function wipe(): Promise<void> {
     const aIds = assets.map((a) => a.id);
     await prisma.assetPerfSlaSample.deleteMany({ where: { assetId: { in: aIds } } });
     await prisma.assetIpsecTunnelSample.deleteMany({ where: { assetId: { in: aIds } } });
+    await prisma.assetInterface.deleteMany({ where: { assetId: { in: aIds } } });
     await prisma.asset.deleteMany({ where: { id: { in: aIds } } });
   }
   await prisma.event.deleteMany({ where: { resourceName: { startsWith: RULE } } });
@@ -74,6 +78,35 @@ async function seedRule(name: string, dimensionFilter?: Record<string, string>):
       trigger: {
         type: "asset_metric", metric: "sdwanPacketLoss", aggregation: "latest", windowSec: 0,
         operator: ">=", threshold: 5, forDurationSec: 0, ...(dimensionFilter ? { dimensionFilter } : {}),
+      },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      actions: [],
+    } as never,
+  });
+  return rule.id;
+}
+
+/** Member state per (health check, member), taken just now. */
+async function seedState(rows: Array<[healthCheck: string, link: string, state: "up" | "down"]>): Promise<void> {
+  const ts = new Date(Date.now() - 1_000);
+  await prisma.assetPerfSlaSample.createMany({
+    data: rows.map(([healthCheck, link, state]) => ({
+      assetId, timestamp: ts, cadence: "fast", healthCheck, link, zone: null,
+      state, latencyMs: null, jitterMs: null, packetLoss: state === "down" ? 100 : 0,
+    })),
+  });
+}
+
+async function seedStateRule(name: string, dimensionFilter?: Record<string, string>, forDurationSec = 0): Promise<string> {
+  const rule = await prisma.notificationRule.create({
+    data: {
+      name: `${RULE} ${name}`,
+      enabled: true,
+      severity: "warning",
+      trigger: {
+        type: "asset_state", field: "sdwanMemberState", operator: "==", value: "down",
+        forDurationSec, ...(dimensionFilter ? { dimensionFilter } : {}),
       },
       scope: { allAssets: true },
       reset: { mode: "auto" },
@@ -161,5 +194,49 @@ d("SD-WAN parent members (business rule 90)", () => {
     await evaluateAllNotificationRules();
     const rows = await prisma.notification.findMany({ where: { ruleId: rule, cleared: false }, select: { dimension: true } });
     expect(rows.map((r) => r.dimension).sort()).toEqual(["Flexential|Overlay-2", "Primary WAN|wan1"]);
+  });
+
+  it("a state automation narrowed to the overlay health checks yields to an underlay dead on ANOTHER health check", async () => {
+    await seedTunnels({ "Overlay-3": "wan2", "Overlay-1": "wan1" });
+    await seedState([
+      ["Internet", "wan2", "down"], ["Internet", "wan1", "up"],
+      ["Metrocenter", "Overlay-3", "down"], ["Flexential", "Overlay-3", "down"],
+      ["Metrocenter", "Overlay-1", "up"],
+    ]);
+    const rule = await seedStateRule("filtered", { healthCheck: "Metrocenter|Flexential" });
+    await evaluateAllNotificationRules();
+    expect(await liveMembers(rule)).toEqual([]);
+  });
+
+  it("an overlay automation stays quiet while a SEPARATE underlay automation is still in its hold", async () => {
+    // The prod shape: "FortiGate WAN is down" (Primary/Secondary WAN checks)
+    // and "FortiGate Overlay is down" (Metrocenter/Flexential). The WAN rule
+    // is still pending — no live alert to yield to — so only the dead read on
+    // the underlay's own health check can hold the overlay back.
+    await seedTunnels({ "Overlay-1": "wan1" });
+    await seedState([["Primary WAN", "wan1", "down"], ["Metrocenter", "Overlay-1", "down"]]);
+    const underlays = await seedStateRule("wan", { healthCheck: "Primary WAN|Secondary WAN" }, 3600);
+    const overlays = await seedStateRule("overlay", { healthCheck: "Metrocenter|Flexential" });
+    await evaluateAllNotificationRules();
+    expect(await liveMembers(underlays)).toEqual([]);
+    expect(await liveMembers(overlays)).toEqual([]);
+  });
+
+  it("yields to an operationally-down port that is in no health check", async () => {
+    await seedTunnels({ "Overlay-3": "wan2" });
+    await prisma.assetInterface.create({ data: { assetId, ifName: "wan2", operStatus: "down", adminStatus: "up" } as never });
+    await seedLoss([["Metrocenter", "Overlay-3", 100]]);
+    const rule = await seedRule("oper-down");
+    await evaluateAllNotificationRules();
+    expect(await liveMembers(rule)).toEqual([]);
+  });
+
+  it("still alerts on an overlay whose underlay is up on every health check and port", async () => {
+    await seedTunnels({ "Overlay-3": "wan2" });
+    await prisma.assetInterface.create({ data: { assetId, ifName: "wan2", operStatus: "up", adminStatus: "up" } as never });
+    await seedState([["Internet", "wan2", "up"], ["Metrocenter", "Overlay-3", "down"]]);
+    const rule = await seedStateRule("healthy-parent", { healthCheck: "Metrocenter|Flexential" });
+    await evaluateAllNotificationRules();
+    expect(await liveMembers(rule)).toEqual(["Overlay-3"]);
   });
 });

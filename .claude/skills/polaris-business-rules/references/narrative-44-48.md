@@ -111,8 +111,10 @@ Two things a reader should not expect. `stopAfterHours` is wall time from the fi
 time included — a quiet period outlasting the cut-off means no further reminders at all, and
 the wizard says so in a warning rather than quietly extending an operator's own deadline.
 And the maintenance / dependency-suppression pause is not a quiet hold: it `continue`s
-above the repeat pass and retires the live alert outright (business rule 16), so nothing
-is held and nothing is reported afterwards.
+above the repeat pass, so nothing is held and nothing is reported afterwards. Behind a
+genuinely down parent the sweep retires the live alert outright; under a maintenance window
+the alert stays live and frozen (business rule 16, 2026-09-30), and reminders simply resume
+on their normal cadence once the window ends.
 
 ---
 

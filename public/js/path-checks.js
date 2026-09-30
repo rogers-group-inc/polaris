@@ -3,7 +3,7 @@
  *
  * Path checks: an HTTP / HTTPS / TCP / ICMP check (+ an optional
  * traceroute) run from every source the check picks — the Polaris Agent on
- * each matching host, and/or this Polaris server itself. This file owns the
+ * each matching host, or this Polaris server itself (one toggle picks). This file owns the
  * list, the check wizard (General → Expectations → Traceroute → Sources, a
  * stepper with Back / Next — the automations wizard's idiom, its own steps)
  * and the fleet Results view. The per-source charts and hop table live in
@@ -17,7 +17,7 @@
  * (create, edit, duplicate, enable, delete). UP_TO_WRITE ladder — never test
  * fullwrite on it (rule 43d). Aiming the SERVER at a target is chained on
  * networkScan write as well (canRunOnServer) — the server enforces it; the
- * checkbox only says so up front.
+ * toggle only says so up front.
  */
 (function () {
   "use strict";
@@ -81,13 +81,38 @@
 
   var OK_COLOR = "#2a9d8f";
   var FAIL_COLOR = "#d32f2f";
+  var UNEXPECTED_COLOR = "#e07b00";
 
-  function resultPill(lastOk, hasSample) {
-    if (!hasSample || lastOk === null || lastOk === undefined) {
-      return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
-    }
-    return '<span class="badge" style="background:' + (lastOk ? OK_COLOR : FAIL_COLOR) + ';color:#fff">' +
-      (lastOk ? "Reachable" : "Failing") + "</span>";
+  /**
+   * Pure (tested): a source's latest run as one word. A failed run that still
+   * got an HTTP answer is "Unexpected response" — the target answered, just
+   * not with what the check expects (status code or body match).
+   */
+  function resultState(lastOk, lastHttpStatus) {
+    if (lastOk === true) return "ok";
+    if (lastOk === false) return lastHttpStatus != null ? "unexpected" : "fail";
+    return null;
+  }
+  var RESULT_LABELS = { ok: "OK", fail: "Fail", unexpected: "Unexpected response" };
+  var RESULT_COLORS = { ok: OK_COLOR, fail: FAIL_COLOR, unexpected: UNEXPECTED_COLOR };
+
+  function resultPill(lastOk, hasSample, lastHttpStatus) {
+    var st = hasSample ? resultState(lastOk, lastHttpStatus) : null;
+    if (!st) return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
+    return '<span class="badge" style="background:' + RESULT_COLORS[st] + ';color:#fff">' + RESULT_LABELS[st] + "</span>";
+  }
+
+  /**
+   * Pure (tested): a check's Result cell across all its sources, no counts.
+   * A source that got no answer at all outranks one that got the wrong answer.
+   */
+  function checkResultState(c) {
+    var fail = c.failCount || 0;
+    var unexpected = Math.min(c.unexpectedCount || 0, fail);
+    if (fail > unexpected) return "fail";
+    if (unexpected) return "unexpected";
+    if (c.okCount) return "ok";
+    return null;
   }
 
   // ─── List ───────────────────────────────────────────────────────────────
@@ -186,10 +211,11 @@
     tbody.innerHTML = rows.map(function (c) {
       var result;
       if (!c.sourceCount) result = '<span style="color:var(--color-text-tertiary)">no sources</span>';
-      else if (!c.okCount && !c.failCount) result = '<span style="color:var(--color-text-tertiary)">no results yet</span>';
       else {
-        result = '<span style="color:' + OK_COLOR + '">' + c.okCount + " ok</span>";
-        if (c.failCount) result += ' · <strong style="color:' + FAIL_COLOR + '">' + c.failCount + " failing</strong>";
+        var st = checkResultState(c);
+        result = st
+          ? '<strong style="color:' + RESULT_COLORS[st] + '">' + RESULT_LABELS[st] + "</strong>"
+          : '<span style="color:var(--color-text-tertiary)">no results yet</span>';
       }
       var enabledCell = editor
         ? '<label class="toggle-switch" title="' + (c.enabled ? "Enabled — click to disable" : "Disabled — click to enable") + '">' +
@@ -483,20 +509,26 @@
 
   function sourcesTab(c) {
     var mayServer = canRunOnServer();
-    return sectionHeading("This Polaris server") +
-      checkboxLine("pc-server", "Run from this Polaris server", false,
-        "The server that hosts Polaris runs the check itself, whether it is installed on Linux or in a container, with no agent needed. " +
-        "Its results appear as the <strong>Polaris server</strong> row in Results, with the same charts and path graph. " +
-        "Automations alert on agent hosts only: the server is not an asset." +
-        (mayServer ? "" : " <strong>Needs Read-Write on Network Discovery</strong> as well as Path Monitor, because the server probes from its own network.")) +
-      formDivider() +
-      sectionHeading("Agent hosts") +
-      '<div id="pc-server-only-note" style="display:none">' + infoBox("This check <strong>authenticates</strong>, so it runs only from this Polaris server — its credential is never sent to an agent. To run it from agent hosts too, set Authentication to <em>None</em> on the General step.") + "</div>" +
+    // One toggle picks the source: on, this server runs the check; off, the
+    // agent hosts the filter below selects. The filter is hidden (and not
+    // collected) while the server is the source.
+    return '<div class="form-group"><label style="display:flex;align-items:center;gap:8px;font-weight:500">' +
+        '<span class="toggle-switch"><input type="checkbox" id="pc-server"><span class="toggle-slider"></span></span>' +
+        "Run from this Polaris server</label>" +
+        '<p class="hint" style="margin:2px 0 0 42px">On: the server that hosts Polaris runs the check itself, whether it is installed on Linux or in a container, with no agent needed. ' +
+        "Its results appear as the <strong>Polaris server</strong> row in Results, with the same charts and path graph; automations alert on agent hosts only, because the server is not an asset. " +
+        "Off: the agent hosts you pick below run it." +
+        (mayServer ? "" : " <strong>Needs Read-Write on Network Discovery</strong> as well as Path Monitor to turn on, because the server probes from its own network.") + "</p></div>" +
+      '<div id="pc-server-only-note" style="display:none">' + infoBox("This check <strong>authenticates</strong>, so it runs only from this Polaris server — its credential is never sent to an agent. To run it from agent hosts instead, set Authentication to <em>None</em> on the General step.") + "</div>" +
+      '<div id="pc-both-note" style="display:none">' + infoBox("This check runs from <strong>both</strong> this server and agent hosts. A check now has one source: saving with the toggle on keeps only the server; turning it off keeps only the agent hosts.") + "</div>" +
       '<div id="pc-agent-sources">' +
-        infoBox("An agent host runs a check only if it has an active <strong>Polaris Agent</strong> (0.21.0 or later). This filter is always combined with <em>Polaris Agent installed = yes</em>.") +
-        checkboxLine("pc-all-hosts", "All agent hosts", false) +
-        '<div id="pc-cond-wrap"><div id="pc-cond-root"></div></div>' +
-        '<div class="aw-preview-box" id="pc-preview" style="margin-top:0.75rem;max-height:260px;overflow:auto"></div>' +
+        formDivider() +
+        sectionHeading("Agent hosts") +
+        infoBox("Use the filter to <strong>find</strong> hosts, then tick the ones that should run this check — only ticked hosts run it, and a host that matches the filter later does not join by itself. Only hosts with an active <strong>Polaris Agent</strong> (0.21.0 or later) are listed.") +
+        checkboxLine("pc-all-hosts", "All agent hosts", false, "Every host with an active agent runs it, including hosts added later.") +
+        '<div id="pc-follow-note" style="display:none">' + infoBox("This check used to run on <strong>every host its filter matched</strong>. Those hosts are ticked below; saving keeps exactly the ticked hosts, so a host that matches later will not join by itself.") + "</div>" +
+        '<div id="pc-cond-wrap"><div id="pc-cond-root"></div>' +
+        '<div class="aw-preview-box" id="pc-preview" style="margin-top:0.75rem;max-height:320px;overflow:auto"></div></div>' +
       "</div>";
   }
 
@@ -505,7 +537,7 @@
     { key: "general", label: "General", question: "What should this check test?", explain: "Name it, pick the kind, and say where it points and how often it runs." },
     { key: "expect", label: "Expectations", question: "What counts as a pass?", explain: "For HTTP and HTTPS, the status codes and body text a run must see. TCP and ICMP pass when the target answers." },
     { key: "trace", label: "Traceroute", question: "Should it trace the route?", explain: "A traceroute records every hop between the source and the target, so a failure shows where the path broke." },
-    { key: "sources", label: "Sources", question: "Where should it run from?", explain: "This Polaris server, the agent hosts you pick, or both. Each source keeps its own results." },
+    { key: "sources", label: "Sources", question: "Where should it run from?", explain: "This Polaris server, or the agent hosts you pick. Each source keeps its own results." },
   ];
 
   /** Pure: the step (1-based) a validateCheck refusal belongs to. */
@@ -581,18 +613,33 @@
     // who may not aim the server; ticking it ON is refused up front (and by
     // the server, which also refuses re-aiming a server-run check).
     if (!canRunOnServer() && !serverCb.checked) serverCb.disabled = true;
-    serverCb.addEventListener("change", schedulePreview);
+    var hadAgentSources = !!(scope.allAssets || scope.condition || (c.assetIds && c.assetIds.length));
+    body.querySelector("#pc-both-note").style.display = editingId && c.runOnServer === true && hadAgentSources ? "" : "none";
     var allCb = body.querySelector("#pc-all-hosts");
     allCb.checked = scope.allAssets === true;
+    // The filter only FINDS hosts; the ticked ones (pins) run the check. It
+    // reopens from sourceFilter — or, on a check saved before that, from the
+    // scope condition it used to follow, whose matches are ticked on the first
+    // preview so saving keeps the hosts it was running on.
+    var legacyFollow = !!scope.condition && !scope.allAssets;
+    body.querySelector("#pc-follow-note").style.display = legacyFollow && existing ? "" : "none";
     var condRoot = body.querySelector("#pc-cond-root");
-    condRoot.innerHTML = builder.groupHtml(scope.condition || { op: "and", children: [] }, 0);
+    condRoot.innerHTML = builder.groupHtml(scope.condition || (c.sourceFilter && c.sourceFilter.condition) || { op: "and", children: [] }, 0);
     builder.wire(body, "#pc-cond-root");
+    // The blank condition row is seeded only while the agent filter is the
+    // source: seeding it under a server-run check left an unfilled row that
+    // then refused the save.
     function syncAll() {
       body.querySelector("#pc-cond-wrap").style.display = allCb.checked ? "none" : "block";
-      if (!allCb.checked) builder.seedIfEmpty(condRoot);
+      if (!allCb.checked && !serverCb.checked) builder.seedIfEmpty(condRoot);
+    }
+    function syncSource() {
+      body.querySelector("#pc-agent-sources").style.display = serverCb.checked ? "none" : "";
+      syncAll();
     }
     allCb.addEventListener("change", function () { syncAll(); schedulePreview(); });
-    syncAll();
+    serverCb.addEventListener("change", function () { syncSource(); schedulePreview(); });
+    syncSource();
 
     function syncKind() {
       var k = body.querySelector("#pc-kind").value;
@@ -620,11 +667,14 @@
       var serverOnly = !!cred;
       var lock = body.querySelector("#pc-server-only-note");
       if (lock) lock.style.display = serverOnly ? "" : "none";
-      var agentWrap = body.querySelector("#pc-agent-sources");
-      if (agentWrap) agentWrap.style.display = serverOnly ? "none" : "";
-      if (serverOnly) serverCb.checked = true;
+      // Forced on while the check authenticates; clearing Authentication hands
+      // the toggle back as the operator left it.
+      if (serverOnly && !serverCb.checked) { serverCb.checked = true; forcedServer = true; }
+      if (!serverOnly && forcedServer) { serverCb.checked = false; forcedServer = false; }
       serverCb.disabled = serverOnly || (!canRunOnServer() && !serverCb.checked);
+      syncSource();
     }
+    var forcedServer = false;
     body.querySelector("#pc-kind").addEventListener("change", syncKind);
     ["#pc-method", "#pc-credential", "#pc-body-mode"].forEach(function (sel) { body.querySelector(sel).addEventListener("change", syncRequest); });
     body.querySelector("#pc-host-header").addEventListener("input", syncRequest);
@@ -693,64 +743,103 @@
       body.querySelector("#pc-preview").innerHTML = '<div style="font-size:0.85rem;margin-bottom:0.5rem">' + head + "</div>" + (inner || "");
     }
     async function runPreview() {
-      var sc = collectScope();
-      if (sc.error && !pins.size) {
-        previewShell('<span class="hint">' + esc(sc.empty && serverCb.checked ? "No agent hosts — only this Polaris server will run this check." : sc.error) + "</span>");
+      if (serverCb.checked || allCb.checked) { ++previewSeq; return; } // nothing to pick
+      var finder = collectFinder();
+      if (!finder.condition && !pins.size) {
+        previewShell('<span class="hint">' + esc(finder.error || "Add a condition to find agent hosts, then tick the ones that should run this check.") + "</span>");
         return;
       }
       var seq = ++previewSeq;
-      previewShell('<span class="hint">Resolving agent hosts…</span>');
+      previewShell('<span class="hint">Finding agent hosts…</span>');
       try {
-        var res = await api.pathChecks.previewSources({ scope: sc.scope || {}, assetIds: Array.from(pins) });
+        var res = await api.pathChecks.previewSources({ scope: finder.condition ? { condition: finder.condition } : {}, assetIds: Array.from(pins) });
         if (seq !== previewSeq) return;
+        if (legacyFollow) {
+          // A check saved while it followed its filter: tick what it ran on.
+          (res.ids || []).forEach(function (id) { pins.add(id); });
+          legacyFollow = false;
+        }
+        lastPreview = res;
         renderPreview(res);
       } catch (err) {
         if (seq === previewSeq) previewShell('<span class="hint">' + esc(err.message || "Preview unavailable") + "</span>");
       }
     }
+    var lastPreview = null;
     function renderPreview(res) {
-      var head = "<strong>" + res.total + "</strong> agent host" + (res.total === 1 ? "" : "s") + " will run this check" +
-        (res.pinned ? " (" + res.pinned + " pinned)" : "") +
-        (res.total > res.agents.length ? " · showing the first " + res.agents.length : "") +
-        (res.matchedWithoutAgent ? ' · <span class="hint">' + res.matchedWithoutAgent + " matching device(s) have no active agent</span>" : "");
       var rows = res.agents.map(function (a) {
-        return '<tr><td style="width:28px"><input type="checkbox" class="pc-pin" data-id="' + esc(a.assetId) + '" title="Pin this host — it keeps running the check even if the filter stops matching"' + (pins.has(a.assetId) ? " checked" : "") + ' style="width:auto"></td>' +
+        return '<tr><td style="width:28px"><input type="checkbox" class="pc-pin" data-id="' + esc(a.assetId) + '" title="Run this check on this host"' + (pins.has(a.assetId) ? " checked" : "") + ' style="width:auto"></td>' +
           '<td><span title="' + (a.online ? "online" : "offline") + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + (a.online ? "var(--color-success,#2a9d8f)" : "var(--color-text-tertiary)") + '"></span></td>' +
-          "<td>" + esc(a.hostname || a.ipAddress || a.assetId) + (a.pinnedOnly ? ' <span class="tag-chip">pinned — outside filter</span>' : "") + "</td>" +
+          "<td>" + esc(a.hostname || a.ipAddress || a.assetId) + (a.pinnedOnly ? ' <span class="tag-chip" title="Ticked earlier; the filter no longer finds it">outside filter</span>' : "") + "</td>" +
           "<td>" + esc(a.ipAddress || "") + "</td>" +
           '<td style="font-size:0.8rem">' + esc(a.os || "") + "</td>" +
           "<td><code>" + esc(a.agentVersion ? "v" + a.agentVersion : "—") + "</code>" +
             (a.supported ? "" : ' <span class="hint" title="Path checks need agent ' + esc(res.minAgentVersion) + '+">upgrade</span>') + "</td></tr>";
       }).join("");
       var missing = (res.pinnedWithoutAgent || []).map(function (a) {
-        return '<li>' + esc(a.hostname || a.ipAddress || a.assetId) + " — pinned, but has no active agent</li>";
+        return '<li>' + esc(a.hostname || a.ipAddress || a.assetId) + " — ticked, but has no active agent</li>";
       }).join("");
-      previewShell(head, (rows ? '<table class="data-table" style="width:100%"><tbody>' + rows + "</tbody></table>" : '<p class="hint">No agent hosts match.</p>') +
+      var selectAll = '<thead><tr><th style="width:28px"><input type="checkbox" id="pc-select-all" title="Select all / none" style="width:auto"></th>' +
+        '<th colspan="5" style="font-weight:500">Select all / none</th></tr></thead>';
+      previewShell('<span id="pc-selection-head"></span>',
+        (rows ? '<table class="data-table" style="width:100%">' + selectAll + "<tbody>" + rows + "</tbody></table>" : '<p class="hint">No agent hosts match.</p>') +
         (missing ? '<ul class="hint" style="margin:0.5rem 0 0 1rem">' + missing + "</ul>" : ""));
       body.querySelectorAll(".pc-pin").forEach(function (cb) {
         cb.addEventListener("change", function () {
           if (cb.checked) pins.add(cb.dataset.id); else pins.delete(cb.dataset.id);
-          schedulePreview();
+          syncSelection();
         });
       });
+      var all = body.querySelector("#pc-select-all");
+      if (all) {
+        all.addEventListener("change", function () {
+          // Every match, not only the rows shown past the preview cap.
+          (res.ids || []).forEach(function (id) { if (all.checked) pins.add(id); else pins.delete(id); });
+          body.querySelectorAll(".pc-pin").forEach(function (cb) { cb.checked = pins.has(cb.dataset.id); });
+          syncSelection();
+        });
+      }
+      syncSelection();
     }
+    /** The head count and the Select-all box's tri-state, from pins — no refetch per tick. */
+    function syncSelection() {
+      var res = lastPreview;
+      if (!res) return;
+      var s = selectionState(res.ids || [], pins);
+      var all = body.querySelector("#pc-select-all");
+      if (all) { all.checked = s.all; all.indeterminate = s.some && !s.all; }
+      var head = body.querySelector("#pc-selection-head");
+      if (head) {
+        head.innerHTML = "<strong>" + s.selected + "</strong> of " + res.total + " agent host" + (res.total === 1 ? "" : "s") + " selected to run this check" +
+          (res.total > res.agents.length ? " · showing the first " + res.agents.length : "") +
+          (res.matchedWithoutAgent ? ' · <span class="hint">' + res.matchedWithoutAgent + " matching device(s) have no active agent</span>" : "");
+      }
+    }
+    /** Who runs the check: this server, every agent host, or the ticked hosts (pins). */
     function collectScope() {
+      if (serverCb.checked) return { scope: {} };
       if (allCb.checked) return { scope: { allAssets: true } };
+      return { scope: {} };
+    }
+    /** The finder filter: a valid condition, or why there is none. Never refuses a save. */
+    function collectFinder() {
       var group = body.querySelector("#pc-cond-root > .scg-group");
       var tree = group ? builder.collect(group) : { op: "and", children: [] };
-      if (!tree.children.length) return { scope: {}, empty: true, error: 'Add a condition, pin a host, or check "All agent hosts".' };
+      if (!tree.children.length) return { condition: null };
       var problem = builder.validate(tree);
-      if (problem) return { scope: {}, error: problem };
-      return { scope: { condition: tree } };
+      return problem ? { condition: null, error: problem } : { condition: tree };
+    }
+    function collectPayload() {
+      var agentPick = !serverCb.checked && !allCb.checked;
+      var finder = agentPick ? collectFinder() : { condition: null };
+      return collectCheck(body, collectScope().scope, agentPick ? Array.from(pins) : [],
+        finder.condition ? { condition: finder.condition } : null);
     }
     runPreview();
 
     // ── Stepper navigation ──
     function stepProblem(n) {
-      var sc = collectScope();
-      var payload = collectCheck(body, sc.scope || {}, Array.from(pins));
-      var problem = validateCheck(payload);
-      if (!problem) problem = scopeProblem(sc, payload);
+      var problem = validateCheck(collectPayload());
       return problem && stepOfTab(problem.tab) === n ? problem : null;
     }
     function updateStepper() {
@@ -804,9 +893,8 @@
     // ── Save ──
     document.getElementById("pc-cancel").addEventListener("click", closeModal);
     document.getElementById("pc-save").addEventListener("click", async function () {
-      var sc = collectScope();
-      var payload = collectCheck(body, sc.scope || {}, Array.from(pins));
-      var problem = validateCheck(payload) || scopeProblem(sc, payload);
+      var payload = collectPayload();
+      var problem = validateCheck(payload);
       if (problem) {
         goToStep(stepOfTab(problem.tab));
         showToast(problem.message, "error");
@@ -827,16 +915,18 @@
     });
   }
 
+  // The filter only finds hosts, so an unfilled or empty filter row never
+  // refuses a save — only having no source at all does.
+  var NO_SOURCE_MESSAGE = 'Turn on "Run from this Polaris server", tick at least one agent host, or check "All agent hosts"';
+
   /**
-   * Pure: the Sources refusal the condition tree adds on top of validateCheck.
-   * A tree with a bad row is always refused; an EMPTY tree only when nothing
-   * else runs the check (no pins, not all hosts, not the server).
+   * Pure (tested): the Select-all box's state over every match the preview
+   * returned (not just the rows shown) against the ticked set.
    */
-  function scopeProblem(sc, payload) {
-    if (!sc || !sc.error) return null;
-    var elsewhere = (payload.assetIds && payload.assetIds.length) || payload.runOnServer || (payload.scope && payload.scope.allAssets);
-    if (sc.empty && elsewhere) return null;
-    return { tab: "sources", message: sc.empty ? 'Tick "Run from this Polaris server", add a condition, pin a host, or check "All agent hosts"' : sc.error };
+  function selectionState(ids, picked) {
+    var inView = 0;
+    ids.forEach(function (id) { if (picked.has(id)) inView++; });
+    return { selected: picked.size, all: ids.length > 0 && inView === ids.length, some: inView > 0 };
   }
 
   function uniqueName(base) {
@@ -850,7 +940,7 @@
   }
 
   /** Read the whole form into the POST body. Pure over the DOM (tested). */
-  function collectCheck(root, scope, assetIds) {
+  function collectCheck(root, scope, assetIds, sourceFilter) {
     var v = function (id) { var el = root.querySelector("#" + id); return el ? el.value : ""; };
     var on = function (id) { var el = root.querySelector("#" + id); return !!(el && el.checked); };
     var kind = v("pc-kind");
@@ -884,13 +974,17 @@
         probesPerHop: Math.round(Number(v("pc-tr-probes")) || 3),
       },
       keepBodyExcerpt: isHttp && on("pc-keep-excerpt"),
-      // An authenticating check is server-only: its agent Sources are dropped
-      // here, and the server refuses them if they arrive anyway.
-      scope: credentialId ? {} : scope,
-      assetIds: credentialId ? [] : (assetIds || []),
-      runOnServer: credentialId ? true : on("pc-server"),
       credentialId: credentialId,
     };
+    // One source: the server (always, for an authenticating check — the
+    // server refuses agent Sources on one) or the agent hosts, never both.
+    var server = !!credentialId || on("pc-server");
+    out.scope = server ? {} : scope;
+    out.assetIds = server ? [] : (assetIds || []);
+    out.runOnServer = server;
+    // The finder filter rides along for the wizard to reopen with; it never
+    // decides membership, so a server-run check keeps none.
+    out.sourceFilter = server ? null : (sourceFilter || null);
     return out;
   }
 
@@ -925,7 +1019,7 @@
     }
     var hasScope = p.scope && (p.scope.allAssets || p.scope.condition);
     if (!hasScope && !(p.assetIds && p.assetIds.length) && !p.runOnServer) {
-      return { tab: "sources", message: 'Tick "Run from this Polaris server", add a condition, pin a host, or check "All agent hosts"' };
+      return { tab: "sources", message: NO_SOURCE_MESSAGE };
     }
     return null;
   }
@@ -965,7 +1059,7 @@
       var data = sf ? sf.apply(rows.slice()) : rows;
       if (!data.length) {
         tbody.innerHTML = '<tr><td colspan="8" class="empty-state">' +
-          (rows.length ? "No sources match the filters." : "Nothing runs this check yet. Check its Sources: tick this Polaris server, or pick agent hosts running agent 0.21.0 or later.") + "</td></tr>";
+          (rows.length ? "No sources match the filters." : "Nothing runs this check yet. Check its Sources: turn on this Polaris server, or pick agent hosts running agent 0.21.0 or later.") + "</td></tr>";
         return;
       }
       tbody.innerHTML = data.map(function (r) {
@@ -978,7 +1072,7 @@
             esc(r.hostname || r.ipAddress || r.assetId) + "</button>" +
             (r.server ? ' <span class="badge" title="The Polaris server runs this check itself">server</span>' : "") +
             (r.supported ? "" : ' <span class="hint" title="Needs agent 0.21.0+">upgrade agent</span>') + "</td>" +
-          "<td>" + resultPill(r.lastOk, !!r.lastSampleAt) + "</td>" +
+          "<td>" + resultPill(r.lastOk, !!r.lastSampleAt, r.lastHttpStatus) + "</td>" +
           "<td>" + (r.lastLatencyMs != null ? Math.round(r.lastLatencyMs) + " ms" : "—") + "</td>" +
           "<td>" + (r.lastHttpStatus != null ? r.lastHttpStatus : "—") + "</td>" +
           "<td>" + esc(r.lastResolvedIp || "—") + "</td>" +
@@ -1071,7 +1165,9 @@
     parseStatusSpec: parseStatusSpec,
     validateCheck: validateCheck,
     collectCheck: collectCheck,
-    scopeProblem: scopeProblem,
+    selectionState: selectionState,
+    resultState: resultState,
+    checkResultState: checkResultState,
     testResultHtml: testResultHtml,
     usableHttpCredentials: usableHttpCredentials,
     stepOfTab: stepOfTab,

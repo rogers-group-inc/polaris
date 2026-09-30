@@ -738,7 +738,9 @@
           <p><code>{ checks: [...] }</code>, by name. Each check carries its definition (below)
             plus a fleet summary: <code>sourceCount</code> (hosts running it),
             <code>okCount</code> / <code>failCount</code> (hosts whose latest run passed / failed
-            — a host with no result yet is in neither) and <code>lastRunAt</code>.</p>
+            — a host with no result yet is in neither), <code>unexpectedCount</code> (of the
+            failing, those whose run still got an HTTP answer, just not the expected status or
+            body) and <code>lastRunAt</code>.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
   "<span class="js-base-url">/api/v1</span>/path-checks"</code></pre>
         </div>
@@ -808,6 +810,10 @@
             <li><code>scope?</code> — the automation device-filter tree
               (<code>{ "allAssets": true }</code> for every agent host), and
               <code>assetIds?</code> (≤2000) to pin hosts regardless of the filter.</li>
+            <li><code>sourceFilter?</code> — <code>{ condition }</code> or <code>null</code>: the
+              filter the UI used to <em>find</em> hosts before ticking them into
+              <code>assetIds</code>. Stored and returned for display only; it never decides who
+              runs the check. Dropped on a server-run check.</li>
             <li><code>runOnServer?</code> (default <code>false</code>) — also run the check from
               the Polaris server. Needs <code>networkScan:write</code>, else <code>403</code>. At
               least one of <code>scope</code>, <code>assetIds</code> and <code>runOnServer</code>
@@ -849,8 +855,9 @@
           <div class="endpoint-head"><span class="method m-post">POST</span> /path-checks/preview-sources
             <span class="gate">pathChecks:write</span></div>
           <p>Dry-run a Sources selection without saving: body <code>{ scope?, assetIds? }</code>.
-            Returns <code>{ total, pinned, matchedWithoutAgent, agents[], pinnedWithoutAgent[],
-            minAgentVersion }</code>; <code>agents</code> (first 100) is <code>{ assetId, hostname,
+            Returns <code>{ total, ids[], pinned, matchedWithoutAgent, agents[], pinnedWithoutAgent[],
+            minAgentVersion }</code>; <code>ids</code> is every selected host id (up to 2000, so a
+            caller can select all past the row cap); <code>agents</code> (first 100) is <code>{ assetId, hostname,
             ipAddress, os, agentVersion, online, supported, pinned, pinnedOnly }</code>.</p>
         </div>
 

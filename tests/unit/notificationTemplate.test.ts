@@ -59,6 +59,7 @@ const FULL_PARTS: TemplateContextParts = {
     department: "IT",
     assignedTo: "netops",
     tags: ["prod", "region:Atlanta"],
+    discoveredByIntegration: { type: "fortimanager", name: "FMG-01" },
   },
   triggerSummary: "Response time (median over 5 minutes) is 760 ms",
   // An event-triggered alert usually fires on something that isn't a device,

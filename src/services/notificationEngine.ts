@@ -544,13 +544,13 @@ export async function loadScopeAssetIds(scope: RuleScope, opts?: { monitoredOnly
  *    alerts for every device behind it.
  * Suppressed assets are dropped from rule evaluation and their `pending` state
  * rows reset to clear — a still-bad condition re-earns its full debounce after
- * the window. Their live ALERTS are retired rather than frozen, by
- * `clearSuppressedAlerts` (notificationService) rather than here: an alert
- * raised before the window opened has nothing left that could clear it (the
- * readings that would recover it are what maintenance stops collecting), and
- * event/change alerts carry no state row at all, so the sweep has to run over
- * Notification rows. Once it has, the firing row is already `clear` and the
- * loops below never see it.
+ * the window. Their live ALERTS are frozen, not retired, when the cause is a
+ * maintenance window (the asset's own, or a maintained parent's) — business
+ * rule 16: an alert raised before the window stays live and recovers on its
+ * own evidence once polling resumes. Behind a parent that is genuinely DOWN
+ * they are retired, by `clearSuppressedAlerts` (notificationService) rather
+ * than here, because event/change alerts carry no state row at all and the
+ * sweep has to run over Notification rows.
  */
 export function isSuppressedForNotifications(a: { status: string; dependencySuppressed: boolean }): boolean {
   return String(a.status) === "maintenance" || a.dependencySuppressed === true;
@@ -1038,6 +1038,50 @@ async function liveSdwanAlertMembers(assetIds: string[], target: string): Promis
 }
 
 /**
+ * Business rule 90 — the parents that are DOWN outright, whatever the
+ * automation's own filter or condition: `${assetId}|${name}` for every
+ * ancestor named in `parentOf` whose port is operationally down
+ * (`AssetInterface.operStatus`), or whose newest health-check read calls it
+ * dead on ANY health check. A dead wan2 explains everything wrong with the
+ * overlays riding it — the state, the loss, the latency — even when the
+ * automation is narrowed to health checks wan2 is not a member of, or wan2 is
+ * in no health check at all. Without this, an automation filtered to the
+ * overlay health checks ("Metrocenter|Flexential") never sees the underlay and
+ * pages once per overlay for one dead circuit.
+ */
+async function downSdwanParents(assetIds: string[], parentOf: Map<string, string>): Promise<Set<string>> {
+  const names = Array.from(new Set(parentOf.values()));
+  const out = new Set<string>();
+  if (names.length === 0) return out;
+  const since = new Date(Date.now() - SDWAN_PARENT_DOWN_LOOKBACK_MS);
+  const [ports, sla] = await Promise.all([
+    prisma.assetInterface.findMany({
+      where: { assetId: { in: assetIds }, ifName: { in: names }, operStatus: "down" },
+      select: { assetId: true, ifName: true },
+    }),
+    prisma.assetPerfSlaSample.findMany({
+      where: { assetId: { in: assetIds }, link: { in: names }, timestamp: { gte: since } },
+      orderBy: { timestamp: "desc" },
+      select: { assetId: true, healthCheck: true, link: true, state: true },
+    }),
+  ]);
+  for (const p of ports) out.add(`${p.assetId}|${p.ifName}`);
+  // Newest read per (gate, health check, member) — dead on any one is down.
+  const newest = new Set<string>();
+  for (const r of sla) {
+    const k = `${r.assetId}|${r.healthCheck}|${r.link}`;
+    if (newest.has(k)) continue;
+    newest.add(k);
+    if (r.state === "down") out.add(`${r.assetId}|${r.link}`);
+  }
+  return out;
+}
+
+/** How far back a parent's health-check read may be to call it dead — a few
+ *  SD-WAN scrapes; a member no longer reported says nothing either way. */
+const SDWAN_PARENT_DOWN_LOOKBACK_MS = 15 * 60_000;
+
+/**
  * Business rule 90 — a member riding a parent that is itself over the line
  * takes no reading: the parent's alert is the one that names the cause. A
  * lossy wan2 makes Overlay-3 and Overlay-4 lossy too; without this an operator
@@ -1046,7 +1090,9 @@ async function liveSdwanAlertMembers(assetIds: string[], target: string): Promis
  * "Over the line" is the SAME condition (utils/sdwanDimensions →
  * sdwanChildrenYielding): a meeting reading on the parent in this automation
  * this tick, or an uncleared alert any automation raised on this metric/field
- * about the parent. Only a reading that MEETS yields — a child that has come
+ * about the parent — or the parent is DOWN outright (downSdwanParents: an
+ * oper-down port, or dead on any health check, whatever this automation's
+ * filter). Only a reading that MEETS yields — a child that has come
  * back under the line keeps its reading and recovers normally.
  *
  * Applied ONLY when the caller passes `yielded` — the threshold path, which
@@ -1081,6 +1127,11 @@ async function yieldToSdwanParents(
     return readings;
   }
   if (parentOf.size === 0) return readings;
+  try {
+    for (const k of await downSdwanParents(assetIds, parentOf)) live.add(k);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message }, "SD-WAN parent down lookup failed — yielding on same-condition evidence only");
+  }
   const out = sdwanChildrenYielding(
     readings.map((r) => ({ assetId: r.assetId, member: sdwanMemberOf(r), dimKey: r.dimKey, meets: meets(r) })),
     parentOf,
@@ -2696,12 +2747,10 @@ async function evaluateThresholdRule(
 
   // Suppressed assets produced no readings this tick. Reset their `pending`
   // rows — the debounce restarts from scratch after the window, a dropped
-  // reading being evidence of nothing. Their `firing` rows are the
-  // suppression sweep's business (clearSuppressedAlerts, run ahead of this
-  // tick), which retires the alert and resets the row in one place for every
-  // trigger type; by the time this loop runs there is normally nothing firing
-  // left to see, and a row that entered suppression mid-tick is picked up by
-  // the next one.
+  // reading being evidence of nothing. Their `firing` rows are left alone:
+  // frozen through a maintenance window (rule 16 — a window never retires an
+  // alert), or retired by the suppression sweep (clearSuppressedAlerts, run
+  // ahead of this tick) when the asset is dark behind a parent that is down.
   for (const st of states) {
     if (st.state === "pending" && st.assetId && suppressedIds.has(st.assetId)) {
       await prisma.notificationRuleState.update({
@@ -5342,6 +5391,12 @@ const ASSET_DETAIL_SELECT = {
   // already cover, so the event tail can test a device filter (business rule
   // 46) against the row it primed for the alert text.
   discoveredByIntegrationId: true,
+  // {asset.managedBy} — the owning integration's type + name, and the
+  // controller FortiGate a managed switch/AP is labelled with: one joined row
+  // and one small JSON blob per asset, fetched with the rest of the detail
+  // (and cached per tick with it).
+  discoveredByIntegration: { select: { type: true, name: true } },
+  fortinetTopology: true,
 } as const;
 
 /** Also a `ScopeAsset`: the event tail evaluates device filters against it, and

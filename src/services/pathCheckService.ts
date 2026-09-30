@@ -161,6 +161,8 @@ export interface PathCheckInput {
   scope?: RuleScope | null;
   assetIds?: string[];
   runOnServer?: boolean;
+  /** The wizard's finder filter ({ condition }) — stored for display, never membership. */
+  sourceFilter?: RuleScope | null;
 }
 
 /** The normalized definition a check row stores. */
@@ -178,6 +180,7 @@ export interface NormalizedCheck {
   scope: RuleScope;
   assetIds: string[];
   runOnServer: boolean;
+  sourceFilter: RuleScope | null;
   credentialId: string | null;
 }
 
@@ -443,6 +446,9 @@ export async function normalizeCheckInput(input: PathCheckInput): Promise<Normal
     scope,
     assetIds,
     runOnServer,
+    // Only a condition is kept, and only on an agent-run check; it is the
+    // wizard's finder, so it never reaches membersFor.
+    sourceFilter: !runOnServer && input.sourceFilter?.condition ? { condition: input.sourceFilter.condition } : null,
     credentialId,
   };
 }
@@ -532,26 +538,42 @@ export interface CheckSummary {
   sourceCount: number;
   okCount: number;
   failCount: number;
+  /** Of failCount: sources whose failing run still got an HTTP answer (wrong
+   *  status or body) — the list shows those as "Unexpected response". */
+  unexpectedCount: number;
   lastRunAt: Date | null;
 }
+
+const EMPTY_SUMMARY: CheckSummary = { sourceCount: 0, okCount: 0, failCount: 0, unexpectedCount: 0, lastRunAt: null };
 
 async function summariesFor(checkIds: string[]): Promise<Map<string, CheckSummary>> {
   const out = new Map<string, CheckSummary>();
   if (checkIds.length === 0) return out;
-  const rows = await prisma.pathCheckSource.groupBy({
-    by: ["checkId", "lastOk"],
-    where: { checkId: { in: checkIds } },
-    _count: { _all: true },
-    _max: { lastSampleAt: true },
-  });
+  const [rows, unexpected] = await Promise.all([
+    prisma.pathCheckSource.groupBy({
+      by: ["checkId", "lastOk"],
+      where: { checkId: { in: checkIds } },
+      _count: { _all: true },
+      _max: { lastSampleAt: true },
+    }),
+    prisma.pathCheckSource.groupBy({
+      by: ["checkId"],
+      where: { checkId: { in: checkIds }, lastOk: false, lastHttpStatus: { not: null } },
+      _count: { _all: true },
+    }),
+  ]);
   for (const r of rows) {
-    const s = out.get(r.checkId) ?? { sourceCount: 0, okCount: 0, failCount: 0, lastRunAt: null };
+    const s = out.get(r.checkId) ?? { ...EMPTY_SUMMARY };
     s.sourceCount += r._count._all;
     if (r.lastOk === true) s.okCount += r._count._all;
     if (r.lastOk === false) s.failCount += r._count._all;
     const m = r._max.lastSampleAt;
     if (m && (!s.lastRunAt || m > s.lastRunAt)) s.lastRunAt = m;
     out.set(r.checkId, s);
+  }
+  for (const r of unexpected) {
+    const s = out.get(r.checkId);
+    if (s) s.unexpectedCount = r._count._all;
   }
   return out;
 }
@@ -561,7 +583,7 @@ export async function listChecks() {
   const sums = await summariesFor(checks.map((c) => c.id));
   return checks.map((c) => ({
     ...c,
-    ...(sums.get(c.id) ?? { sourceCount: 0, okCount: 0, failCount: 0, lastRunAt: null }),
+    ...(sums.get(c.id) ?? EMPTY_SUMMARY),
   }));
 }
 
@@ -579,7 +601,7 @@ export async function getCheck(id: string) {
   const check = await prisma.pathCheck.findUnique({ where: { id } });
   if (!check) throw new AppError(404, "Path check not found");
   const sums = await summariesFor([id]);
-  return { ...check, ...(sums.get(id) ?? { sourceCount: 0, okCount: 0, failCount: 0, lastRunAt: null }) };
+  return { ...check, ...(sums.get(id) ?? EMPTY_SUMMARY) };
 }
 
 async function assertEnabledCap(excludeId?: string): Promise<void> {
@@ -661,6 +683,7 @@ export async function createCheck(input: PathCheckInput, actor?: string, opts?: 
       scope: jsonOf(n.scope),
       assetIds: n.assetIds,
       runOnServer: n.runOnServer,
+      sourceFilter: n.sourceFilter ? jsonOf(n.sourceFilter) : Prisma.DbNull,
       credentialId: n.credentialId,
       definitionSha256: sha,
       createdBy: actor ?? null,
@@ -721,6 +744,7 @@ export async function updateCheck(id: string, input: PathCheckInput, actor?: str
       scope: jsonOf(n.scope),
       assetIds: n.assetIds,
       runOnServer: n.runOnServer,
+      sourceFilter: n.sourceFilter ? jsonOf(n.sourceFilter) : Prisma.DbNull,
       credentialId: n.credentialId,
       definitionSha256: sha,
     },
@@ -1079,6 +1103,9 @@ export async function previewSources(input: PreviewSourcesInput) {
   const matchedNoAgent = [...filterIds].filter((id) => !agents.has(id)).length;
   return {
     total: ids.length,
+    // Every member, not just the rows shown, so the wizard's Select all can
+    // tick hosts past PREVIEW_ROW_CAP (the pin list caps at 2000 anyway).
+    ids: ids.slice(0, 2000),
     pinned: ids.filter((id) => members.get(id)!.explicit).length,
     matchedWithoutAgent: matchedNoAgent,
     agents: assets.map((a) => ({

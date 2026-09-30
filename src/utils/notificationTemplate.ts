@@ -78,6 +78,7 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
   { token: "{asset.link}", label: "Open asset", description: "URL that opens this device in Polaris — the phone app on a phone, the desktop page anywhere else (empty if POLARIS_PUBLIC_URL unset)", group: "asset" },
   { token: "{asset.connectedSwitch}", label: "Connected switch", description: "Switch/port the device was last seen on, e.g. FS-248E-01/port15", group: "asset" },
   { token: "{asset.connectedAp}", label: "Connected AP", description: "Access point the device was last seen on", group: "asset" },
+  { token: "{asset.managedBy}", label: "Managed by", description: "The integration that owns this device, as the System tab's \"Managed by\" row words it — e.g. \"FortiManager: FMG-01 → FGT-SITE-01\" (a managed switch or AP names its controller FortiGate), or \"Manual\" for a device no integration owns. Empty on an alert with no device", group: "asset" },
   { token: "{trigger.summary}", label: "What fired", description: "The trigger in the builder's own words, with the observed value — e.g. \"Response time (median over 5 minutes) is 760 ms\"", group: "notification" },
   { token: "{event.action}", label: "Event action", description: "Event-triggered alerts: the audit action that fired (e.g. integration.discover.error)", group: "notification" },
   { token: "{event.resource}", label: "Event resource", description: "Event-triggered alerts: what it happened to — the integration, user or device name", group: "notification" },
@@ -215,6 +216,48 @@ export interface AssetTemplateDetail {
   department?: string | null;
   assignedTo?: string | null;
   tags?: string[] | null;
+  /**
+   * The integration that OWNS the device (`Asset.discoveredByIntegrationId`) —
+   * `{asset.managedBy}`. `null` means no integration owns it ("Manual");
+   * `undefined` means the caller didn't load it, and the row renders blank
+   * rather than claiming a device is manual when nobody looked.
+   */
+  discoveredByIntegration?: { type: string; name: string } | null;
+  /** Read for `controllerFortigate` only — the parent FortiGate a managed
+   *  switch or AP is labelled with. */
+  fortinetTopology?: unknown;
+}
+
+const INTEGRATION_TYPE_LABELS: Record<string, string> = {
+  fortimanager: "FortiManager",
+  fortigate: "FortiGate",
+  activedirectory: "Active Directory",
+  entraid: "Entra ID",
+  windowsserver: "Windows Server",
+  vcenter: "vCenter",
+  azurearc: "Azure Arc",
+};
+
+/**
+ * The `{asset.managedBy}` value — the same words as the asset page's System-tab
+ * "Managed by" row (public/js/assets.js `_assetIntegrationLabelWithController`
+ * with the ": " joiner); the two must stay in step. A managed FortiSwitch or
+ * FortiAP appends its controller FortiGate unless the integration IS that gate
+ * (a standalone FortiGate integration). The controller is FortiManager's device
+ * name, printed as-is — it is a label here, never matched against a hostname.
+ */
+export function managedByLabel(a: AssetTemplateDetail | null | undefined): string {
+  if (!a || a.discoveredByIntegration === undefined) return "";
+  const integration = a.discoveredByIntegration;
+  if (!integration) return "Manual";
+  const label = `${INTEGRATION_TYPE_LABELS[integration.type] ?? integration.type}: ${integration.name}`;
+  if (a.assetType !== "switch" && a.assetType !== "access_point") return label;
+  if (integration.type !== "fortimanager" && integration.type !== "fortigate") return label;
+  const topo = a.fortinetTopology;
+  const controller = topo && typeof topo === "object" ? (topo as { controllerFortigate?: unknown }).controllerFortigate : null;
+  if (typeof controller !== "string" || !controller) return label;
+  if (controller.toLowerCase() === integration.name.toLowerCase()) return label;
+  return `${label} → ${controller}`;
 }
 
 export interface TemplateContextParts {
@@ -488,6 +531,7 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     "asset.tags": (a?.tags ?? []).join(", "),
     "asset.connectedSwitch": str(a?.lastSeenSwitch),
     "asset.connectedAp": str(a?.lastSeenAp),
+    "asset.managedBy": managedByLabel(a),
     "asset.link": a?.id ? (assetPageUrl(a.id) ?? "") : "",
     // NOTE: no "ack" key — see the TEMPLATE_VARIABLES comment. It is
     // substituted per recipient at delivery-expansion time.
